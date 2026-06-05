@@ -7,6 +7,7 @@ ApplicationWindow {
     width: 900
     height: 760
     title: "minNotes"
+    color: Theme.colors.bg
 
     // The validated passive-surface editor (model owns the cursor; blocks are
     // passive; overlay-drawn caret/selection). Ported from the spike's Arm C.

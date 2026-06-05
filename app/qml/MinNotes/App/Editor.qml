@@ -14,7 +14,7 @@ FocusScope {
     id: root
     focus: true
     Component.onCompleted: forceActiveFocus()
-    property real colWidth: Math.min(width - 40, 760)
+    property real colWidth: Math.min(width - 40, Theme.dim.columnWidth)
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
     property bool caretOn: true
@@ -25,7 +25,7 @@ FocusScope {
     property real dragX: 0
     property real dragViewY: 0
 
-    Rectangle { anchors.fill: parent; color: "#ffffff" }
+    Rectangle { anchors.fill: parent; color: Theme.colors.surface }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
     // --- Logical cursor + editing ops. Sole owner of caret/selection/content.
@@ -262,7 +262,7 @@ FocusScope {
                     delegate: Rectangle {
                         required property int index
                         readonly property rect rr: cell.selRects[index]
-                        color: "#b3d4fc"
+                        color: Theme.colors.selectionBg
                         z: 0
                         x: te.x + rr.x
                         y: te.y + rr.y
@@ -282,8 +282,9 @@ FocusScope {
 
                 Rectangle {  // code background
                     visible: cell.active && !cell.isMedia && blockModel.typeForRow(cell.logicalRow) === 2
-                    anchors.fill: te; anchors.margins: -6
-                    color: "#1e1e28"; radius: 4
+                    anchors.fill: te; anchors.margins: -8
+                    color: Theme.colors.codeBg; radius: Theme.dim.radius
+                    border.width: 1; border.color: Theme.colors.border
                 }
 
                 readonly property real colLeft: (width - root.colWidth) / 2
@@ -309,11 +310,15 @@ FocusScope {
                     readonly property int btype: (blockModel.layoutRevision, blockModel.contentRevision,
                                                   cell.active ? blockModel.typeForRow(cell.logicalRow) : 0)
                     readonly property var headingSizes: [26, 30, 26, 22, 19, 17, 16]   // index by level (1–6)
-                    color: btype === 2 ? "#d4d4e8" : "#1a1a22"
-                    font.family: btype === 2 ? "Menlo" : "Helvetica Neue"
+                    color: btype === 1 ? Theme.colors.textBright
+                         : btype === 2 ? Theme.colors.codeText
+                         : btype === 4 ? Theme.colors.textMuted   // quote
+                         : Theme.colors.text
+                    font.family: btype === 2 ? Theme.font.mono : Theme.font.family
                     font.pixelSize: {
                         var _ = blockModel.layoutRevision + blockModel.contentRevision   // deps
-                        if (btype !== 1 || !cell.active) return 15
+                        if (btype === 2) return Theme.font.sizeMono
+                        if (btype !== 1 || !cell.active) return Theme.font.sizeBody
                         return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
                     }
                     font.bold: btype === 1
@@ -321,7 +326,7 @@ FocusScope {
 
                 Rectangle {  // caret
                     visible: cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6
-                    color: "#1a1a22"
+                    color: Theme.colors.accent
                     width: 2
                     property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))
                     x: te.x + cr.x
@@ -334,18 +339,18 @@ FocusScope {
                     visible: cell.active && te.btype === 4
                     x: cell.colLeft + 4; y: te.y
                     width: 3; height: te.implicitHeight
-                    radius: 1; color: "#b0b6c0"
+                    radius: 1; color: Theme.colors.quoteBar
                 }
                 Text {  // list: bullet
                     visible: cell.active && te.btype === 5
                     x: cell.colLeft + 6; y: te.y
-                    text: "•"; color: "#5a6070"; font.pixelSize: 15
+                    text: "•"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeBody
                 }
                 Rectangle {  // divider: horizontal rule
                     visible: cell.active && te.btype === 6
                     x: cell.colLeft; y: cell.height / 2 - 1
-                    width: root.colWidth; height: 2
-                    radius: 1; color: "#d0d4dc"
+                    width: root.colWidth; height: 1
+                    color: Theme.colors.divider
                 }
 
             }
@@ -404,6 +409,16 @@ FocusScope {
             }
         }
 
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+        ScrollBar.vertical: ScrollBar {
+            id: vbar
+            policy: ScrollBar.AsNeeded
+            width: Theme.dim.scrollBarWidth
+            contentItem: Rectangle {
+                radius: width / 2
+                color: Theme.colors.textSubtle
+                opacity: vbar.pressed ? 0.85 : (vbar.hovered ? 0.65 : 0.40)
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+        }
     }
 }
