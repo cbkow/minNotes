@@ -32,12 +32,14 @@ public:
     // Lazy fat fetch of one block's content.
     QString contentFor(const QString& id) const;
 
-    // --- Seeding (placeholder until import / new-doc exists) ---
-    // Wrap appendBlock() calls in begin/commit for a fast bulk insert.
+    // --- Write path (Phase 1b) ---
+    // Wrap a batch of writes in begin/commit (also used for fast bulk seeding).
     void begin();
     void commit();
     void appendBlock(const QString& id, const QString& rank, int depth,
                      const QString& type, const QString& attrs, const QString& content);
+    void updateContent(const QString& id, const QString& content);
+    void deleteBlock(const QString& id);
 
 private:
     bool exec(const QString& sql) const;

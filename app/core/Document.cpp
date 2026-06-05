@@ -131,3 +131,21 @@ void Document::appendBlock(const QString& id, const QString& rank, int depth,
     if (!q.exec())
         qWarning() << "Document appendBlock failed:" << q.lastError().text();
 }
+
+void Document::updateContent(const QString& id, const QString& content) {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("UPDATE blocks SET content = ?, modified = ? WHERE id = ?");
+    q.addBindValue(content);
+    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document updateContent failed:" << q.lastError().text();
+}
+
+void Document::deleteBlock(const QString& id) {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("DELETE FROM blocks WHERE id = ?");
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document deleteBlock failed:" << q.lastError().text();
+}

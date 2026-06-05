@@ -17,6 +17,19 @@ constexpr double kLine     = 22.0;   // px per text line
 constexpr double kPadV     = 16.0;   // vertical padding per block
 constexpr double kHeading  = 40.0;
 constexpr double kWidthEst = 760.0;  // assumed content width for media estimate
+
+// Fractional-rank alphabet: 62 digits in ascending ASCII order, so plain
+// string comparison == numeric order. Shared by encode62 + rankBetween.
+const QString kRankAlpha =
+    QStringLiteral("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+
+// Fixed-width base-62 of v. Used to seed evenly-spaced, non-minimum ranks
+// (NOT all-'0', which would leave no room for inserts before the first block).
+QString encode62(quint64 v, int width) {
+    QString s(width, QLatin1Char('0'));
+    for (int i = width - 1; i >= 0; --i) { s[i] = kRankAlpha[int(v % 62)]; v /= 62; }
+    return s;
+}
 }
 
 BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
@@ -51,13 +64,42 @@ const char* BlockModel::typeToString(uint8_t t) {
     }
 }
 
+QString BlockModel::rankBetween(const QString& a, const QString& b) {
+    const QString& kAlpha = kRankAlpha;
+    const int B = kAlpha.size();
+    auto val = [&](QChar c) { return kAlpha.indexOf(c); };
+
+    QString r;
+    int i = 0;
+    bool bInf = b.isEmpty();   // b exhausted → treat as +infinity
+    while (true) {
+        const int ca = (i < a.size()) ? val(a[i]) : 0;           // a padded with min digit
+        const int cb = (bInf || i >= b.size()) ? B : val(b[i]);  // b padded with one-past-max
+        if (ca + 1 < cb) {                 // room for a digit strictly between
+            r += kAlpha[(ca + cb) / 2];
+            return r;
+        }
+        r += kAlpha[ca];                   // ca == cb, or adjacent (ca+1 == cb)
+        if (ca < cb) bInf = true;          // placed a digit below b → b no longer bounds us
+        ++i;
+    }
+}
+
+void BlockModel::persistContent(int row) {
+    if (doc_.isOpen() && row >= 0 && row < static_cast<int>(ids_.size()))
+        doc_.updateContent(ids_[row], content_[row]);
+}
+
 void BlockModel::seedSyntheticStore(int n) {
-    // One-time fill of an empty doc so there's something to edit. Sequential
-    // zero-padded ranks keep visible order; fractional inserts come in Phase 1b.
+    // One-time fill of an empty doc so there's something to edit. Evenly-spaced
+    // width-4 base-62 ranks (NOT zero-padded — those are all-minimum and leave
+    // no room to insert before block 0); rankBetween subdivides for inserts.
+    const quint64 span = 62ull * 62 * 62 * 62;
+    const quint64 step = std::max<quint64>(1, span / static_cast<quint64>(n + 1));
     doc_.begin();
     for (int i = 0; i < n; ++i) {
         Row r{}; r.type = Paragraph; r.param = 1;
-        const QString rank = QString::number(i).rightJustified(10, QLatin1Char('0'));
+        const QString rank = encode62(static_cast<quint64>(i + 1) * step, 4);
         doc_.appendBlock(makeUlid(), rank, 0, QString::fromLatin1(typeToString(r.type)),
                          QString(), genBase(i, r));
     }
@@ -68,12 +110,13 @@ void BlockModel::loadFromStore() {
     beginResetModel();
     rows_.clear();
     ids_.clear();
+    ranks_.clear();
     content_.clear();
-    edits_.clear();
 
     const std::vector<Document::BlockMeta> metas = doc_.skinnyScan();
     rows_.reserve(metas.size());
     ids_.reserve(metas.size());
+    ranks_.reserve(metas.size());
     content_.reserve(metas.size());
     std::vector<double> heights;
     heights.reserve(metas.size());
@@ -85,6 +128,7 @@ void BlockModel::loadFromStore() {
         r.param = static_cast<uint16_t>(std::max<int>(1, text.count(QLatin1Char('\n')) + 1));
         rows_.push_back(r);
         ids_.push_back(m.id);
+        ranks_.push_back(m.rank);
         content_.push_back(text);
         heights.push_back(estimatedHeight(r));
     }
@@ -99,7 +143,8 @@ void BlockModel::rebuild(int n, int distribution) {
     beginResetModel();
     rows_.clear();
     content_.clear();
-    edits_.clear();
+    ids_.clear();
+    ranks_.clear();
     rows_.reserve(static_cast<size_t>(std::max(0, n)));
     content_.reserve(static_cast<size_t>(std::max(0, n)));
     std::vector<double> heights;
@@ -127,6 +172,9 @@ void BlockModel::rebuild(int n, int distribution) {
         }
         rows_.push_back(r);
         content_.push_back(genBase(i, r));   // generate text ONCE, here — not per scroll frame
+        ids_.push_back(makeUlid());
+        ranks_.push_back(encode62(static_cast<quint64>(i + 1)
+                         * std::max<quint64>(1, (62ull*62*62*62) / static_cast<quint64>(n + 1)), 4));
         heights.push_back(estimatedHeight(r));
     }
     fenwick_.reset(std::move(heights));
@@ -193,7 +241,6 @@ QString BlockModel::genBase(int row, const Row& r) const {
 }
 
 QString BlockModel::textAt(int row) const {
-    if (const auto it = edits_.constFind(row); it != edits_.constEnd()) return it.value();
     return (row >= 0 && row < static_cast<int>(content_.size())) ? content_[row] : QString();
 }
 
@@ -241,11 +288,12 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
 
 void BlockModel::setContent(int row, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
-    edits_[row] = text;
+    content_[row] = text;
+    persistContent(row);                          // write-through to SQLite
     const QModelIndex idx = index(row);
-    emit dataChanged(idx, idx, {ContentRole});   // ListView arm reacts to this
+    emit dataChanged(idx, idx, {ContentRole});
     ++contentRevision_;
-    emit contentChangedSpike();                   // Flickable arm reacts to this
+    emit contentChangedSpike();
     // Height re-measure follows from the delegate's implicitHeight change.
 }
 
@@ -263,11 +311,14 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     const QString hiText = textAt(hiRow);
     const QString merged = loText.left(std::min<int>(loCol, loText.size()))
                          + hiText.mid(std::min<int>(hiCol, hiText.size()));
-    edits_[loRow] = merged;
+    content_[loRow] = merged;
+    persistContent(loRow);
     emit dataChanged(index(loRow), index(loRow), {ContentRole});
 
     if (hiRow > loRow) {
         const int first = loRow + 1, last = hiRow, cnt = last - first + 1;
+        for (int i = first; i <= last; ++i)
+            if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);   // ids still valid pre-erase
         beginRemoveRows({}, first, last);
         // Gather current (measured/estimated) heights of surviving rows.
         std::vector<double> hs;
@@ -277,13 +328,7 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
         rows_.erase(rows_.begin() + first, rows_.begin() + last + 1);
         content_.erase(content_.begin() + first, content_.begin() + last + 1);
         ids_.erase(ids_.begin() + first, ids_.begin() + last + 1);
-        // Re-key sparse edits across the removed range.
-        QHash<int, QString> shifted;
-        for (auto it = edits_.constBegin(); it != edits_.constEnd(); ++it) {
-            if (it.key() < first) shifted.insert(it.key(), it.value());
-            else if (it.key() > last) shifted.insert(it.key() - cnt, it.value());
-        }
-        edits_ = std::move(shifted);
+        ranks_.erase(ranks_.begin() + first, ranks_.begin() + last + 1);
         fenwick_.reset(std::move(hs));
         endRemoveRows();
         bumpLayout();
@@ -294,9 +339,10 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
 
 void BlockModel::insertText(int row, int col, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
-    QString s = textAt(row);
+    const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));
-    edits_[row] = s.left(col) + text + s.mid(col);
+    content_[row] = s.left(col) + text + s.mid(col);
+    persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
@@ -304,22 +350,29 @@ void BlockModel::insertText(int row, int col, const QString& text) {
 
 void BlockModel::splitBlock(int row, int col) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
-    QString s = textAt(row);
+    const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));
-    edits_[row] = s.left(col);
+    const QString left = s.left(col), right = s.mid(col);
     const int at = row + 1;
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(ranks_[row],
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+
+    content_[row] = left;
+    persistContent(row);
+
     beginInsertRows({}, at, at);
     Row r{}; r.type = Paragraph; r.param = 1;
     rows_.insert(rows_.begin() + at, r);
-    content_.insert(content_.begin() + at, QString());   // base; edit overlay below holds the text
-    ids_.insert(ids_.begin() + at, makeUlid());
-    QHash<int, QString> shifted;
-    for (auto it = edits_.constBegin(); it != edits_.constEnd(); ++it)
-        shifted.insert(it.key() >= at ? it.key() + 1 : it.key(), it.value());
-    edits_ = std::move(shifted);
-    edits_[at] = s.mid(col);
+    content_.insert(content_.begin() + at, right);
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
     fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), right);
+
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
@@ -327,33 +380,34 @@ void BlockModel::splitBlock(int row, int col) {
 
 void BlockModel::insertBlock(int row) {
     row = std::clamp(row, 0, static_cast<int>(rows_.size()));
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(
+        (row > 0) ? ranks_[row - 1] : QString(),
+        (row < static_cast<int>(ranks_.size())) ? ranks_[row] : QString());
+
     beginInsertRows({}, row, row);
     Row r{}; r.type = Paragraph; r.param = 1;
     rows_.insert(rows_.begin() + row, r);
     content_.insert(content_.begin() + row, QString());
-    ids_.insert(ids_.begin() + row, makeUlid());
-    // Shift sparse edits at/after row.
-    QHash<int, QString> shifted;
-    for (auto it = edits_.constBegin(); it != edits_.constEnd(); ++it)
-        shifted.insert(it.key() >= row ? it.key() + 1 : it.key(), it.value());
-    edits_ = std::move(shifted);
+    ids_.insert(ids_.begin() + row, newId);
+    ranks_.insert(ranks_.begin() + row, newRank);
     fenwick_.insert(static_cast<size_t>(row), estimatedHeight(r));
     endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), QString());
+
     bumpLayout();
 }
 
 void BlockModel::removeBlock(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (doc_.isOpen()) doc_.deleteBlock(ids_[row]);
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);
     content_.erase(content_.begin() + row);
     ids_.erase(ids_.begin() + row);
-    QHash<int, QString> shifted;
-    for (auto it = edits_.constBegin(); it != edits_.constEnd(); ++it) {
-        if (it.key() == row) continue;
-        shifted.insert(it.key() > row ? it.key() - 1 : it.key(), it.value());
-    }
-    edits_ = std::move(shifted);
+    ranks_.erase(ranks_.begin() + row);
     fenwick_.erase(static_cast<size_t>(row));
     endRemoveRows();
     bumpLayout();

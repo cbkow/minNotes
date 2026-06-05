@@ -94,17 +94,21 @@ private:
     QString textAt(int row) const;                  // edit override else loaded content
     void bumpLayout();
 
-    // --- SQLite store (Phase 1a) ---
-    void loadFromStore();             // skinny-scan → rows_/ids_/content_/fenwick
+    // --- SQLite store (Phase 1a/1b) ---
+    void loadFromStore();             // skinny-scan → rows_/ids_/ranks_/content_/fenwick
     void seedSyntheticStore(int n);   // write N synthetic blocks if the DB is empty
+    void persistContent(int row);     // write content_[row] back to the DB
     static BlockType typeFromString(const QString& s);
     static const char* typeToString(uint8_t t);
+    // Lexicographic fractional rank strictly between a and b (DESIGN §4).
+    // Empty a = "before all", empty b = "after all". O(shared-prefix length).
+    static QString rankBetween(const QString& a, const QString& b);
 
     Document doc_;
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
-    std::vector<QString> content_;   // content per row (loaded from the DB)
-    QHash<int, QString> edits_;      // sparse content overrides for edited (not-yet-persisted) rows
+    std::vector<QString> ranks_;     // fractional rank per row, parallel to rows_
+    std::vector<QString> content_;   // content per row (the in-memory truth; write-through to DB)
     FenwickTree fenwick_;
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
