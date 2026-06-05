@@ -19,6 +19,12 @@ FocusScope {
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
     property bool caretOn: true
 
+    // Mouse drag-select state. dragX is content-x; dragViewY is viewport-y (so
+    // edge auto-scroll keeps extending under the held cursor as content moves).
+    property bool dragging: false
+    property real dragX: 0
+    property real dragViewY: 0
+
     Rectangle { anchors.fill: parent; color: "#ffffff" }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
@@ -103,6 +109,26 @@ FocusScope {
             flick.contentY = Math.min(flick.contentHeight - flick.height, y + h - flick.height)
     }
 
+    // --- Mouse hit-testing. The passive-surface architecture makes this the
+    // clean path to cross-block selection: rowForY() finds the block, then that
+    // block's own TextEdit maps pixels → column via positionAt().
+    function cellForRow(r) {
+        for (var i = 0; i < pool.count; ++i) {
+            var c = pool.itemAt(i)
+            if (c && c.active && c.logicalRow === r) return c
+        }
+        return null
+    }
+    // (cx, cy) in CONTENT coordinates → {row, col}.
+    function hitTest(cx, cy) {
+        var row = blockModel.rowForY(Math.max(0, cy))
+        var cell = cellForRow(row)
+        if (!cell || cell.isMedia) return { row: row, col: 0 }
+        var te = cell.teItem
+        var col = te.positionAt(cx - te.x, cy - cell.y - te.y)
+        return { row: row, col: col }
+    }
+
     // --- Central navigation. Uses the focus block's text layout for vertical
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
@@ -185,6 +211,7 @@ FocusScope {
         }
 
         Repeater {
+            id: pool
             model: root.poolSize
             delegate: Item {
                 id: cell
@@ -195,6 +222,7 @@ FocusScope {
                 readonly property bool isMedia: active && blockModel.typeForRow(logicalRow) === 3
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
+                readonly property Item teItem: te    // layout oracle, for hit-testing
 
                 width: flick.width
                 visible: active
@@ -275,14 +303,59 @@ FocusScope {
                     z: 2
                 }
 
-                TapHandler {
-                    acceptedButtons: Qt.LeftButton
-                    onTapped: (ep) => {
-                        if (!cell.active || cell.isMedia) return
-                        cursor.setCaret(cell.logicalRow, te.positionAt(ep.position.x - te.x, ep.position.y - te.y))
-                        root.forceActiveFocus()
-                    }
-                }
+            }
+        }
+
+        // Central mouse handling — click to place the caret, drag to select
+        // ACROSS blocks (preventStealing keeps Flickable from hijacking the drag
+        // for a flick; wheel/trackpad scroll still works since we don't take it).
+        MouseArea {
+            id: mouse
+            width: flick.contentWidth
+            height: flick.contentHeight
+            acceptedButtons: Qt.LeftButton
+            preventStealing: true
+            cursorShape: Qt.IBeamCursor
+
+            onPressed: (m) => {
+                root.forceActiveFocus()
+                var h = root.hitTest(m.x, m.y)
+                if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
+                else cursor.setCaret(h.row, h.col)
+                root.dragging = true
+                root.dragX = m.x; root.dragViewY = m.y - flick.contentY
+            }
+            onPositionChanged: (m) => {
+                if (!root.dragging) return
+                root.dragX = m.x; root.dragViewY = m.y - flick.contentY
+                var h = root.hitTest(m.x, m.y)
+                cursor.move(h.row, h.col, true)
+            }
+            onReleased: root.dragging = false
+            onCanceled: root.dragging = false
+            onDoubleClicked: (m) => {
+                // select the word under the cursor
+                var h = root.hitTest(m.x, m.y)
+                var t = blockModel.contentForRow(h.row)
+                var s = h.col, e = h.col
+                while (s > 0 && /\w/.test(t.charAt(s - 1))) s--
+                while (e < t.length && /\w/.test(t.charAt(e))) e++
+                cursor.setCaret(h.row, s); cursor.move(h.row, e, true)
+            }
+        }
+
+        // Edge auto-scroll while drag-selecting near the top/bottom of the view.
+        Timer {
+            interval: 16; repeat: true; running: root.dragging
+            onTriggered: {
+                var margin = 44, sp = 0
+                if (root.dragViewY < margin) sp = -Math.max(6, margin - root.dragViewY)
+                else if (root.dragViewY > flick.height - margin) sp = Math.max(6, root.dragViewY - (flick.height - margin))
+                if (sp === 0) return
+                flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, flick.contentY + sp))
+                var cy = root.dragViewY + flick.contentY      // content point under the held cursor
+                var h = root.hitTest(root.dragX, cy)
+                cursor.move(h.row, h.col, true)
             }
         }
 
