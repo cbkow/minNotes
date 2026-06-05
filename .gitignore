@@ -1,0 +1,14 @@
+# Build output
+/build/
+
+# clangd / IDE index caches
+.cache/
+compile_commands.json
+
+# macOS / editor cruft
+.DS_Store
+*.user
+*.swp
+
+# Spike harness build dir (throwaway; sources kept for reference)
+/spike/build/
