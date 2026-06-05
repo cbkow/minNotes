@@ -71,6 +71,12 @@ FocusScope {
             if (hasSel) deleteSelection()
             blockModel.insertText(focusRow, focusCol, ch)
             setCaret(focusRow, focusCol + ch.length)
+            // Markdown autoformat fires on the space that completes a prefix
+            // (e.g. "## "): the prefix is consumed, so pull the caret back.
+            if (ch === " ") {
+                var strip = blockModel.applyMarkdownTrigger(focusRow)
+                if (strip > 0) setCaret(focusRow, Math.max(0, focusCol - strip))
+            }
         }
         function splitLine() {
             if (hasSel) deleteSelection()
@@ -285,10 +291,19 @@ FocusScope {
                     text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
                     wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
-                    readonly property int btype: cell.active ? blockModel.typeForRow(cell.logicalRow) : 0
+                    // Revision deps: re-evaluate type/level when autoformat changes
+                    // a block in place (Q_INVOKABLE isn't reactive). contentRevision
+                    // propagates reliably (the text binding uses it), so include it.
+                    readonly property int btype: (blockModel.layoutRevision, blockModel.contentRevision,
+                                                  cell.active ? blockModel.typeForRow(cell.logicalRow) : 0)
+                    readonly property var headingSizes: [26, 30, 26, 22, 19, 17, 16]   // index by level (1–6)
                     color: btype === 2 ? "#d4d4e8" : "#1a1a22"
                     font.family: btype === 2 ? "Menlo" : "Helvetica Neue"
-                    font.pixelSize: btype === 1 ? 26 : 15
+                    font.pixelSize: {
+                        var _ = blockModel.layoutRevision + blockModel.contentRevision   // deps
+                        if (btype !== 1 || !cell.active) return 15
+                        return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
+                    }
                     font.bold: btype === 1
                 }
 

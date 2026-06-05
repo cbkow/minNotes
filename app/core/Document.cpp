@@ -142,6 +142,17 @@ void Document::updateContent(const QString& id, const QString& content) {
         qWarning() << "Document updateContent failed:" << q.lastError().text();
 }
 
+void Document::updateMeta(const QString& id, const QString& type, const QString& attrs) {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("UPDATE blocks SET type = ?, attrs = ?, modified = ? WHERE id = ?");
+    q.addBindValue(type);
+    q.addBindValue(attrs);
+    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document updateMeta failed:" << q.lastError().text();
+}
+
 void Document::deleteBlock(const QString& id) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare("DELETE FROM blocks WHERE id = ?");

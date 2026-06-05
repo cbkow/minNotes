@@ -2,6 +2,8 @@
 #include <QStringBuilder>
 #include <QStandardPaths>
 #include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <algorithm>
 
 namespace {
@@ -126,6 +128,10 @@ void BlockModel::loadFromStore() {
         Row r{};
         r.type = typeFromString(m.type);
         r.param = static_cast<uint16_t>(std::max<int>(1, text.count(QLatin1Char('\n')) + 1));
+        if (r.type == Heading) {
+            const QJsonObject o = QJsonDocument::fromJson(m.attrs.toUtf8()).object();
+            r.level = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("level")).toInt(1), 1, 6));
+        }
         rows_.push_back(r);
         ids_.push_back(m.id);
         ranks_.push_back(m.rank);
@@ -206,6 +212,50 @@ int BlockModel::rowCount(const QModelIndex& parent) const {
 int BlockModel::typeForRow(int row) const {
     if (rows_.empty()) return Paragraph;
     return rows_[clampRow(row)].type;
+}
+
+int BlockModel::levelForRow(int row) const {
+    if (rows_.empty()) return 0;
+    return rows_[clampRow(row)].level;
+}
+
+bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, int& level, int& strip) {
+    // Headings: 1–6 leading '#' followed by a space → heading of that level.
+    int h = 0;
+    while (h < content.size() && h < 6 && content[h] == QLatin1Char('#')) ++h;
+    if (h > 0 && h < content.size() && content[h] == QLatin1Char(' ')) {
+        type = Heading; level = h; strip = h + 1; return true;
+    }
+    // (quote ">", list "- ", divider "---" join this table next.)
+    return false;
+}
+
+void BlockModel::persistMeta(int row) {
+    if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
+    QString attrs;
+    if (rows_[row].type == Heading && rows_[row].level > 0) {
+        QJsonObject o; o.insert(QStringLiteral("level"), rows_[row].level);
+        attrs = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    }
+    doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(rows_[row].type)), attrs);
+}
+
+int BlockModel::applyMarkdownTrigger(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return 0;
+    if (rows_[row].type != Paragraph) return 0;   // only transform plain paragraphs
+    BlockType t = Paragraph; int level = 0, strip = 0;
+    if (!matchMarkdownPrefix(content_[row], t, level, strip)) return 0;
+
+    rows_[row].type = static_cast<uint8_t>(t);
+    rows_[row].level = static_cast<uint8_t>(level);
+    content_[row] = content_[row].mid(strip);
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
+    bumpLayout();                 // type change → height changes; delegate re-measures
+    ++contentRevision_;
+    emit contentChangedSpike();
+    return strip;
 }
 
 QString BlockModel::genBase(int row, const Row& r) const {

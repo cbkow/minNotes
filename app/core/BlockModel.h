@@ -54,7 +54,13 @@ public:
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;
+    Q_INVOKABLE int levelForRow(int row) const;       // heading level 1–6, else 0
     Q_INVOKABLE QString contentForRow(int row) const;
+
+    // type↔markdown autoformat: if content at `row` now starts with a recognised
+    // prefix (e.g. "## "), consume it, set type/level, persist, and return the
+    // number of chars stripped (so the editor can shift the caret). Else 0.
+    Q_INVOKABLE int applyMarkdownTrigger(int row);
 
     // --- Feedback from delegates / edits ---
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so
@@ -85,8 +91,15 @@ private:
     struct Row {
         uint8_t type;
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0
+        uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
         bool measured = false;
     };
+
+    // Rule table: does `content` start with a markdown trigger? Fills type/
+    // level and the prefix length to strip. The single source of truth that
+    // (later) also drives import + export.
+    static bool matchMarkdownPrefix(const QString& content, BlockType& type, int& level, int& strip);
+    void persistMeta(int row);   // write type/attrs of content_[row]'s block
 
     int clampRow(int row) const;
     double estimatedHeight(const Row& r) const;
