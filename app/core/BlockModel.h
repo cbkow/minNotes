@@ -29,7 +29,10 @@ public:
         HeightRole,
         MeasuredRole,
     };
-    enum BlockType : uint8_t { Paragraph = 0, Heading = 1, Code = 2, Media = 3 };
+    enum BlockType : uint8_t {
+        Paragraph = 0, Heading = 1, Code = 2, Media = 3,
+        Quote = 4, ListItem = 5, Divider = 6
+    };
     enum Distribution { Uniform = 0, Mixed = 1, Adversarial = 2 };
 
     explicit BlockModel(QObject* parent = nullptr);
@@ -61,6 +64,9 @@ public:
     // prefix (e.g. "## "), consume it, set type/level, persist, and return the
     // number of chars stripped (so the editor can shift the caret). Else 0.
     Q_INVOKABLE int applyMarkdownTrigger(int row);
+    // Enter-triggered: a block whose whole content is "---"/"***"/"___" becomes
+    // a divider. Returns true if it converted.
+    Q_INVOKABLE bool makeDividerIfMarker(int row);
 
     // --- Feedback from delegates / edits ---
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so

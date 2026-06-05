@@ -51,18 +51,24 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
 }
 
 BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
-    if (s == QLatin1String("heading")) return Heading;
-    if (s == QLatin1String("code"))    return Code;
-    if (s == QLatin1String("media"))   return Media;
+    if (s == QLatin1String("heading"))   return Heading;
+    if (s == QLatin1String("code"))      return Code;
+    if (s == QLatin1String("media"))     return Media;
+    if (s == QLatin1String("quote"))     return Quote;
+    if (s == QLatin1String("list_item")) return ListItem;
+    if (s == QLatin1String("divider"))   return Divider;
     return Paragraph;
 }
 
 const char* BlockModel::typeToString(uint8_t t) {
     switch (t) {
-    case Heading: return "heading";
-    case Code:    return "code";
-    case Media:   return "media";
-    default:      return "paragraph";
+    case Heading:  return "heading";
+    case Code:     return "code";
+    case Media:    return "media";
+    case Quote:    return "quote";
+    case ListItem: return "list_item";
+    case Divider:  return "divider";
+    default:       return "paragraph";
     }
 }
 
@@ -194,9 +200,10 @@ double BlockModel::estimatedHeight(const Row& r) const {
     switch (r.type) {
     case Heading: return kHeading + kPadV;
     case Media:   return kWidthEst * (r.param / 100.0) + kPadV;  // aspect = param/100
+    case Divider: return 24.0;
     case Code:
     case Paragraph:
-    default:      return r.param * kLine + kPadV;
+    default:      return r.param * kLine + kPadV;  // quote/list ≈ paragraph
     }
 }
 
@@ -220,13 +227,20 @@ int BlockModel::levelForRow(int row) const {
 }
 
 bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, int& level, int& strip) {
-    // Headings: 1–6 leading '#' followed by a space → heading of that level.
+    level = 0;
+    // Headings: 1–6 leading '#' then a space → heading of that level.
     int h = 0;
     while (h < content.size() && h < 6 && content[h] == QLatin1Char('#')) ++h;
     if (h > 0 && h < content.size() && content[h] == QLatin1Char(' ')) {
         type = Heading; level = h; strip = h + 1; return true;
     }
-    // (quote ">", list "- ", divider "---" join this table next.)
+    // Quote: "> "
+    if (content.startsWith(QLatin1String("> "))) { type = Quote; strip = 2; return true; }
+    // Unordered list: "- ", "* ", or "+ "
+    if (content.startsWith(QLatin1String("- ")) || content.startsWith(QLatin1String("* "))
+        || content.startsWith(QLatin1String("+ "))) { type = ListItem; strip = 2; return true; }
+    // Divider: "--- " (markers + content consumed entirely)
+    if (content.startsWith(QLatin1String("--- "))) { type = Divider; strip = 4; return true; }
     return false;
 }
 
@@ -256,6 +270,24 @@ int BlockModel::applyMarkdownTrigger(int row) {
     ++contentRevision_;
     emit contentChangedSpike();
     return strip;
+}
+
+bool BlockModel::makeDividerIfMarker(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    if (rows_[row].type != Paragraph) return false;
+    const QString c = content_[row].trimmed();
+    if (c != QLatin1String("---") && c != QLatin1String("***") && c != QLatin1String("___"))
+        return false;
+    rows_[row].type = Divider;
+    rows_[row].level = 0;
+    content_[row].clear();
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    return true;
 }
 
 QString BlockModel::genBase(int row, const Row& r) const {

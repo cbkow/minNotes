@@ -80,6 +80,13 @@ FocusScope {
         }
         function splitLine() {
             if (hasSel) deleteSelection()
+            // "---"/"***"/"___" + Enter → divider, then a fresh paragraph below.
+            if (blockModel.makeDividerIfMarker(focusRow)) {
+                blockModel.insertBlock(focusRow + 1)
+                setCaret(focusRow + 1, 0)
+                root.ensureVisible(focusRow + 1)
+                return
+            }
             blockModel.splitBlock(focusRow, focusCol)
             setCaret(focusRow + 1, 0)
             root.ensureVisible(focusRow + 1)
@@ -233,7 +240,7 @@ FocusScope {
                 width: flick.width
                 visible: active
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
-                height: 12 + (isMedia ? root.colWidth * 0.5 : te.implicitHeight)
+                height: 12 + (isMedia ? root.colWidth * 0.5 : (te.btype === 6 ? 18 : te.implicitHeight))
 
                 onHeightChanged: if (active) blockModel.setMeasuredHeight(logicalRow, height)
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
@@ -279,15 +286,20 @@ FocusScope {
                     color: "#1e1e28"; radius: 4
                 }
 
+                readonly property real colLeft: (width - root.colWidth) / 2
+
                 TextEdit {
                     id: te
-                    visible: !cell.isMedia
+                    visible: !cell.isMedia && btype !== 6   // hidden for divider
                     readOnly: true
                     activeFocusOnPress: false
                     selectByMouse: false
-                    x: (parent.width - width) / 2
-                    width: root.colWidth
+                    // quote/list get a left indent; the decoration sits in it.
+                    readonly property real deco: (btype === 4 || btype === 5) ? 22 : 0
+                    x: cell.colLeft + deco
+                    width: root.colWidth - deco
                     y: 6
+                    font.italic: btype === 4   // quote
                     text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
                     wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
@@ -308,7 +320,7 @@ FocusScope {
                 }
 
                 Rectangle {  // caret
-                    visible: cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia
+                    visible: cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6
                     color: "#1a1a22"
                     width: 2
                     property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))
@@ -316,6 +328,24 @@ FocusScope {
                     y: te.y + cr.y
                     height: cr.height > 0 ? cr.height : 18
                     z: 2
+                }
+
+                Rectangle {  // quote: left bar
+                    visible: cell.active && te.btype === 4
+                    x: cell.colLeft + 4; y: te.y
+                    width: 3; height: te.implicitHeight
+                    radius: 1; color: "#b0b6c0"
+                }
+                Text {  // list: bullet
+                    visible: cell.active && te.btype === 5
+                    x: cell.colLeft + 6; y: te.y
+                    text: "•"; color: "#5a6070"; font.pixelSize: 15
+                }
+                Rectangle {  // divider: horizontal rule
+                    visible: cell.active && te.btype === 6
+                    x: cell.colLeft; y: cell.height / 2 - 1
+                    width: root.colWidth; height: 2
+                    radius: 1; color: "#d0d4dc"
                 }
 
             }
