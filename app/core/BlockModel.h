@@ -81,6 +81,9 @@ public:
     Q_INVOKABLE void setContent(int row, const QString& text);
     Q_INVOKABLE void insertBlock(int row);
     Q_INVOKABLE void removeBlock(int row);
+    // Reorder: move the block at `from` so it ends up at final index `to`. Just a
+    // fractional-rank rewrite (no renumbering); undoable. No-op if out of range.
+    Q_INVOKABLE void moveBlock(int from, int to);
 
     // P8: delete a logical selection spanning (aRow,aCol)..(fRow,fCol). Merges
     // the surviving head of the lo block with the tail of the hi block and

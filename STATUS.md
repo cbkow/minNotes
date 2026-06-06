@@ -149,6 +149,16 @@ DESIGN.md  SPIKE.md  STATUS.md
       mark them) with all four faces (regular/bold/italic/bold-italic) bundled so
       bold/italic spans inside a quote render real faces. `Theme.font.serif`.
 
+- [x] **Block drag-reorder** — hover a block → a `dots-six-vertical` grip in the
+      left gutter; press+drag it to reorder. `BlockModel.moveBlock(from, to)` is a
+      pure **fractional-rank rewrite** (`rankBetween` + `Document.updateRank`), no
+      renumbering, O(log n) + one DB write, undoable (region-snapshot txn;
+      `applySnapshot` now restores rank too). Drag is owned by the **persistent
+      content-level `mouse` MouseArea** (not a recycled cell), so it survives
+      scroll/recycle and edge **auto-scroll** with no replica needed; a floating
+      ghost + accent drop-line follow the cursor; on release → `moveBlock`. Verified
+      headless: move/undo/redo correct.
+
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
       (today only Cmd+B/I); active-format-at-caret (type after toggling with no

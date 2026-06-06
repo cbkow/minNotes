@@ -153,6 +153,16 @@ void Document::updateMeta(const QString& id, const QString& type, const QString&
         qWarning() << "Document updateMeta failed:" << q.lastError().text();
 }
 
+void Document::updateRank(const QString& id, const QString& rank) {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("UPDATE blocks SET rank = ?, modified = ? WHERE id = ?");
+    q.addBindValue(rank);
+    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document updateRank failed:" << q.lastError().text();
+}
+
 void Document::deleteBlock(const QString& id) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare("DELETE FROM blocks WHERE id = ?");

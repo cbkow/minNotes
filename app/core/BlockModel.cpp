@@ -339,8 +339,13 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         if (doc_.isOpen()) {
             const QString attrs = attrsJson(s.type, s.level, s.spans);
             const QString type = QString::fromLatin1(typeToString(s.type));
-            if (oldIds.contains(s.id)) { doc_.updateContent(s.id, s.content); doc_.updateMeta(s.id, type, attrs); }
-            else doc_.appendBlock(s.id, s.rank, 0, type, attrs, s.content);   // re-born (undo of a delete)
+            if (oldIds.contains(s.id)) {   // survived: content/meta/rank may all have changed (incl. reorder)
+                doc_.updateContent(s.id, s.content);
+                doc_.updateMeta(s.id, type, attrs);
+                doc_.updateRank(s.id, s.rank);
+            } else {
+                doc_.appendBlock(s.id, s.rank, 0, type, attrs, s.content);   // re-born (undo of a delete)
+            }
         }
         ++at;
     }
@@ -1019,5 +1024,40 @@ void BlockModel::removeBlock(int row) {
     fenwick_.erase(static_cast<size_t>(row));
     endRemoveRows();
     bumpLayout();
+    endTxn();
+}
+
+void BlockModel::moveBlock(int from, int to) {
+    const int n = static_cast<int>(rows_.size());
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
+    beginTxn(std::min(from, to), std::max(from, to));
+
+    // Lift the block out (its content/type/spans travel with it).
+    Row r = rows_[from];
+    const QString id = ids_[from], content = content_[from];
+    const double h = fenwick_.height(static_cast<size_t>(from));
+    rows_.erase(rows_.begin() + from);
+    content_.erase(content_.begin() + from);
+    ids_.erase(ids_.begin() + from);
+    ranks_.erase(ranks_.begin() + from);
+    fenwick_.erase(static_cast<size_t>(from));
+
+    // New fractional rank between the destination neighbours (reduced list).
+    const int sz = static_cast<int>(ranks_.size());
+    const QString prev = (to > 0)  ? ranks_[to - 1] : QString();
+    const QString next = (to < sz) ? ranks_[to]     : QString();
+    const QString newRank = rankBetween(prev, next);
+
+    rows_.insert(rows_.begin() + to, r);
+    content_.insert(content_.begin() + to, content);
+    ids_.insert(ids_.begin() + to, id);
+    ranks_.insert(ranks_.begin() + to, newRank);
+    fenwick_.insert(static_cast<size_t>(to), h);
+
+    if (doc_.isOpen()) doc_.updateRank(id, newRank);
+
+    bumpLayout();                 // positions change; cells re-read yForRow/content
+    ++contentRevision_;
+    emit contentChangedSpike();
     endTxn();
 }

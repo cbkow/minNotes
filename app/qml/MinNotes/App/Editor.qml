@@ -25,6 +25,42 @@ FocusScope {
     property real dragX: 0
     property real dragViewY: 0
 
+    // Block drag-reorder state. The persistent content-level `mouse` MouseArea
+    // (not a recycled cell) owns the grab, so this survives scroll/recycle and
+    // auto-scroll. The dragged block is tracked by index; a floating ghost +
+    // a drop-indicator line follow the cursor; on release → blockModel.moveBlock.
+    property bool blockDragging: false
+    property int  blockDragRow: -1       // logical row being dragged
+    property string blockDragText: ""    // first line, shown in the ghost
+    property real blockDragViewY: 0       // viewport y of the cursor
+    property int  dropGap: -1            // insertion gap 0..count (line at its top)
+    property int  hoverRow: -1           // row whose grip is lit
+    readonly property real gutterX: (flick.width - colWidth) / 2   // == cell.colLeft
+
+    // Is a content-x in the left grip gutter (just left of the text column)?
+    function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
+    // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
+    function gapForY(cy) {
+        var n = blockModel.count
+        if (cy <= 0) return 0
+        var row = blockModel.rowForY(cy)
+        var mid = blockModel.yForRow(row) + blockModel.heightForRow(row) / 2
+        return (cy < mid) ? row : row + 1
+    }
+    // Content-y of a gap's drop line (top of that block, or doc end).
+    function gapY(gap) {
+        var n = blockModel.count
+        return (gap >= n) ? blockModel.yForRow(n - 1) + blockModel.heightForRow(n - 1)
+                          : blockModel.yForRow(gap)
+    }
+    function commitBlockDrag() {
+        if (blockDragRow >= 0 && dropGap >= 0) {
+            var to = (dropGap > blockDragRow) ? dropGap - 1 : dropGap
+            blockModel.moveBlock(blockDragRow, to)
+        }
+        blockDragging = false; blockDragRow = -1; dropGap = -1
+    }
+
     Rectangle { anchors.fill: parent; color: Theme.colors.surface }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
@@ -59,9 +95,14 @@ FocusScope {
         }
         function clearMarks() { activeMarks = 0 }
 
+        // The caret stays hidden until the user first interacts (click / key /
+        // type), so the app opens with nothing active. sync() is the chokepoint
+        // for every caret change, so flag it active there.
+        property bool active: false
+
         // Mirror the caret into the model so undo transactions can snapshot it
         // (and stamp a just-pushed entry's caret-after). Called after any change.
-        function sync() { blockModel.noteCaret(focusRow, focusCol, anchorRow, anchorCol) }
+        function sync() { active = true; blockModel.noteCaret(focusRow, focusCol, anchorRow, anchorCol) }
 
         function setCaret(r, col) { anchorRow = r; anchorCol = col; focusRow = r; focusCol = col; goalX = -1; sync() }
         function move(r, col, extend) {
@@ -295,7 +336,16 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
+        if (k === Qt.Key_Escape) {
+            // Cancel the current op: block-drag (revert, no move) → text-drag →
+            // collapse selection → disarm format toggle.
+            if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
+            else if (root.dragging) { root.dragging = false }
+            else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
+            else if (cursor.activeMarks !== 0) { cursor.clearMarks() }
+            event.accepted = true
+        }
+        else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
@@ -505,7 +555,7 @@ FocusScope {
                 }
 
                 Rectangle {  // caret
-                    visible: cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6
+                    visible: cursor.active && cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6
                     color: Theme.colors.accent
                     width: 2
                     property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))
@@ -533,6 +583,20 @@ FocusScope {
                     color: Theme.colors.divider
                 }
 
+                // drag-reorder grip (left gutter). Lit on row hover or while this
+                // block is the one being dragged. Press starts the drag (handled
+                // by the persistent `mouse` area via the gutter zone).
+                Icon {
+                    visible: cell.active && !cell.isMedia
+                    name: "dots-six-vertical"
+                    size: Theme.icon.sizeToolbar
+                    x: cell.colLeft - 26; y: te.y
+                    color: Theme.colors.textMuted
+                    opacity: (root.blockDragRow === cell.logicalRow) ? 1.0
+                           : (root.hoverRow === cell.logicalRow ? 0.7 : 0.0)
+                    Behavior on opacity { NumberAnimation { duration: 90 } }
+                }
+
             }
         }
 
@@ -545,10 +609,22 @@ FocusScope {
             height: flick.contentHeight
             acceptedButtons: Qt.LeftButton
             preventStealing: true
-            cursorShape: Qt.IBeamCursor
+            hoverEnabled: true
+            property bool overGrip: false
+            cursorShape: root.blockDragging ? Qt.ClosedHandCursor
+                       : (overGrip ? Qt.OpenHandCursor : Qt.IBeamCursor)
 
             onPressed: (m) => {
                 root.forceActiveFocus()
+                // Press in the grip gutter → start a block drag-reorder.
+                if (root.inGutter(m.x) && !(m.modifiers & Qt.ShiftModifier)) {
+                    root.blockDragRow = blockModel.rowForY(m.y)
+                    root.blockDragText = blockModel.contentForRow(root.blockDragRow).split("\n")[0]
+                    root.blockDragViewY = m.y - flick.contentY
+                    root.dropGap = root.gapForY(m.y)
+                    root.blockDragging = true
+                    return
+                }
                 cursor.resetGoalX(); cursor.clearMarks()
                 var h = root.hitTest(m.x, m.y)
                 if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
@@ -561,13 +637,27 @@ FocusScope {
                 root.dragX = m.x; root.dragViewY = m.y - flick.contentY
             }
             onPositionChanged: (m) => {
-                if (!root.dragging) return
-                root.dragX = m.x; root.dragViewY = m.y - flick.contentY
-                var h = root.hitTest(m.x, m.y)
-                cursor.move(h.row, h.col, true)
+                if (root.blockDragging) {
+                    root.blockDragViewY = m.y - flick.contentY
+                    root.dropGap = root.gapForY(m.y)
+                    return
+                }
+                if (root.dragging) {
+                    root.dragX = m.x; root.dragViewY = m.y - flick.contentY
+                    var h = root.hitTest(m.x, m.y)
+                    cursor.move(h.row, h.col, true)
+                    return
+                }
+                // hover (not pressed): light the row's grip; gutter → grab cursor.
+                root.hoverRow = blockModel.rowForY(m.y)
+                mouse.overGrip = root.inGutter(m.x)
             }
-            onReleased: root.dragging = false
-            onCanceled: root.dragging = false
+            onExited: { root.hoverRow = -1; mouse.overGrip = false }
+            onReleased: { if (root.blockDragging) root.commitBlockDrag(); else root.dragging = false }
+            onCanceled: {
+                if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
+                else root.dragging = false
+            }
             onDoubleClicked: (m) => {
                 // End the press-drag the 2nd press armed, so a tiny mouse jitter
                 // before release can't re-extend the selection back to the click
@@ -583,16 +673,19 @@ FocusScope {
             }
         }
 
-        // Edge auto-scroll while drag-selecting near the top/bottom of the view.
+        // Edge auto-scroll while drag-selecting OR drag-reordering near the
+        // top/bottom (the persistent `mouse` area keeps its grab through scroll).
         Timer {
-            interval: 16; repeat: true; running: root.dragging
+            interval: 16; repeat: true; running: root.dragging || root.blockDragging
             onTriggered: {
                 var margin = 44, sp = 0
-                if (root.dragViewY < margin) sp = -Math.max(6, margin - root.dragViewY)
-                else if (root.dragViewY > flick.height - margin) sp = Math.max(6, root.dragViewY - (flick.height - margin))
+                var viewY = root.blockDragging ? root.blockDragViewY : root.dragViewY
+                if (viewY < margin) sp = -Math.max(6, margin - viewY)
+                else if (viewY > flick.height - margin) sp = Math.max(6, viewY - (flick.height - margin))
                 if (sp === 0) return
                 flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, flick.contentY + sp))
-                var cy = root.dragViewY + flick.contentY      // content point under the held cursor
+                var cy = viewY + flick.contentY               // content point under the held cursor
+                if (root.blockDragging) { root.dropGap = root.gapForY(cy); return }
                 var h = root.hitTest(root.dragX, cy)
                 cursor.move(h.row, h.col, true)
             }
@@ -607,6 +700,40 @@ FocusScope {
                 color: Theme.colors.textSubtle
                 opacity: vbar.pressed ? 0.85 : (vbar.hovered ? 0.65 : 0.40)
                 Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+        }
+    }
+
+    // --- Block-drag overlays (viewport-fixed, on top of the document) ---
+    // Drop-indicator line at the insertion gap.
+    Rectangle {
+        visible: root.blockDragging && root.dropGap >= 0
+        x: root.gutterX; width: root.colWidth; height: 2; radius: 1
+        y: (blockModel.layoutRevision, root.gapY(root.dropGap)) - flick.contentY - 1
+        color: Theme.colors.accent
+        z: 50
+    }
+    // Floating ghost of the dragged block — an accent outline with a barely-there
+    // translucent fill (the document shows through), following the cursor.
+    Rectangle {
+        visible: root.blockDragging
+        x: root.gutterX; width: root.colWidth; height: 30
+        y: root.blockDragViewY - height / 2
+        readonly property color _a: Theme.colors.accent
+        color: Qt.rgba(_a.r, _a.g, _a.b, 0.06)
+        border.width: 1; border.color: Qt.rgba(_a.r, _a.g, _a.b, 0.55)
+        radius: Theme.dim.radius; z: 51
+        Row {
+            anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8
+                      verticalCenter: parent.verticalCenter }
+            spacing: 6
+            Icon { name: "dots-six-vertical"; size: Theme.icon.sizeToolbar
+                   color: Theme.colors.textMuted; anchors.verticalCenter: parent.verticalCenter }
+            Text {
+                width: parent.width - 30
+                text: root.blockDragText; color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter
             }
         }
     }
