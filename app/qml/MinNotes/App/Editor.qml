@@ -816,7 +816,10 @@ FocusScope {
                 readonly property int logicalRow: root.firstRow
                     + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
                 readonly property bool active: logicalRow >= 0 && logicalRow < blockModel.count
-                readonly property bool isMedia: active && blockModel.typeForRow(logicalRow) === 3
+                // Include both revisions (like te.btype) so a row-shift can't leave
+                // this stale — otherwise a recycled delegate mis-renders the block.
+                readonly property bool isMedia: active
+                    && (blockModel.layoutRevision, blockModel.contentRevision, blockModel.typeForRow(logicalRow)) === 3
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
@@ -937,6 +940,7 @@ FocusScope {
                 Rectangle {  // code background — matches the syntax theme's fill
                     visible: cell.active && !cell.isMedia && te.btype === 2
                     anchors.fill: te; anchors.margins: -8
+                    z: -1   // behind the selection highlight (else it hides the selection)
                     color: codeHl.backgroundColor.a > 0 ? codeHl.backgroundColor : Theme.colors.codeBg
                     radius: Theme.dim.radius
                     border.width: 1; border.color: Theme.colors.border
