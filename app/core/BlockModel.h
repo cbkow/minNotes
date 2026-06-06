@@ -2,6 +2,7 @@
 #include <QAbstractListModel>
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 #include <vector>
 #include <cstdint>
@@ -181,6 +182,12 @@ public:
     Q_INVOKABLE QString tableRangeHtml(int row, int r0, int c0, int r1, int c1) const;
     // Clear every cell in an inclusive range (one undo step).
     Q_INVOKABLE void tableClearRange(int row, int r0, int c0, int r1, int c1);
+    // Ordered block ids of every table in the document (for the table-tab strip).
+    Q_INVOKABLE QStringList tableBlockIds() const;
+    // Current row of a block id, or -1 if it no longer exists.
+    Q_INVOKABLE int rowForId(const QString& id) const;
+    // Block id at `row` (empty if out of range).
+    Q_INVOKABLE QString idForRow(int row) const;
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).

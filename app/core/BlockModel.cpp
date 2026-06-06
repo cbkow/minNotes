@@ -737,6 +737,23 @@ void BlockModel::tableClearRange(int row, int r0, int c0, int r1, int c1) {
     });
 }
 
+QStringList BlockModel::tableBlockIds() const {
+    QStringList out;
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (rows_[i].type == Table) out.append(ids_[i]);
+    return out;
+}
+
+int BlockModel::rowForId(const QString& id) const {
+    for (size_t i = 0; i < ids_.size(); ++i)
+        if (ids_[i] == id) return static_cast<int>(i);
+    return -1;
+}
+
+QString BlockModel::idForRow(int row) const {
+    return (row >= 0 && row < static_cast<int>(ids_.size())) ? ids_[row] : QString();
+}
+
 void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
     nRows = std::max(1, nRows); nCols = std::max(1, nCols);

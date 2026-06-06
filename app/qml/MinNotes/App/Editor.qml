@@ -21,6 +21,21 @@ FocusScope {
     readonly property real leftEdge: (flick.width - pageWidth) / 2
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
+
+    // Active table-tab: "" = the Document view; otherwise a table block's id shown
+    // full-frame (see Tabs B). Reactive row of that table, -1 if it's gone.
+    property string activeTableId: ""
+    readonly property int activeTableRow: (blockModel.layoutRevision, blockModel.contentRevision,
+        activeTableId === "" ? -1 : blockModel.rowForId(activeTableId))
+    // If the active table is deleted, fall back to the Document tab.
+    onActiveTableRowChanged: if (activeTableId !== "" && activeTableRow < 0) activeTableId = ""
+    // Opening a table tab pins the caret into that table so tcur drives editing.
+    onActiveTableIdChanged: {
+        forceActiveFocus()
+        if (activeTableId === "") return
+        var r = blockModel.rowForId(activeTableId)
+        if (r >= 0) { cursor.setCaret(r, 0); tcur.place(0, 0, 0) }
+    }
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
     property bool caretOn: true
@@ -408,6 +423,41 @@ FocusScope {
         return { row: row, r: hit.r, c: hit.c, pos: hit.pos }
     }
 
+    // Shared table mouse interaction (used by both the document central handler and
+    // the full-frame tab view). `bt` is the BlockTable; (lx,ly) are bt-local coords.
+    function beginTableInteraction(bt, row, lx, ly) {
+        var bc = bt.columnBorderAt(lx)
+        if (bc >= 0) {                                       // near a border → resize
+            root.tableResizing = true; root.resizeRow = row; root.resizeColIdx = bc
+            root.resizeW = bt.widthForDrag(bc, lx)
+            return
+        }
+        var hit = bt.cellAtPoint(lx, ly)
+        if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
+        cursor.setCaret(row, 0)
+        tcur.place(hit.r, hit.c, hit.pos)
+        root.tableDragging = true
+        root.tableAnchorR = hit.r; root.tableAnchorC = hit.c; root.tableAnchorPos = hit.pos
+    }
+    function updateTableInteraction(bt, lx, ly) {
+        if (root.tableResizing) { root.resizeW = bt.widthForDrag(root.resizeColIdx, lx); return }
+        if (root.tableDragging) {
+            var hit = bt.cellAtPoint(lx, ly)
+            if (hit.r === root.tableAnchorR && hit.c === root.tableAnchorC) {
+                tcur.clearRange(); tcur.cr = hit.r; tcur.cc = hit.c
+                tcur.anchorPos = root.tableAnchorPos; tcur.pos = hit.pos
+            } else tcur.setRange(root.tableAnchorR, root.tableAnchorC, hit.r, hit.c)
+            cursor.sync()
+        }
+    }
+    function endTableInteraction() {
+        if (root.tableResizing) {
+            blockModel.tableSetColWidth(root.resizeRow, root.resizeColIdx, root.resizeW)
+            root.tableResizing = false; root.resizeColIdx = -1
+        }
+        root.tableDragging = false
+    }
+
     // --- Central navigation. Uses the focus block's text layout for vertical
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
@@ -720,6 +770,7 @@ FocusScope {
 
     Flickable {
         id: flick
+        visible: root.activeTableRow < 0     // hidden while a table tab is open
         anchors.fill: parent
         contentWidth: width
         contentHeight: blockModel.totalHeight
@@ -1022,22 +1073,8 @@ FocusScope {
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
                 if (th) {
-                    // Near a column border → start a resize drag instead of editing.
                     var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
-                    if (bt) {
-                        var lp = bt.mapFromItem(mouse, m.x, m.y)
-                        var bc = bt.columnBorderAt(lp.x)
-                        if (bc >= 0) {
-                            root.tableResizing = true; root.resizeRow = th.row; root.resizeColIdx = bc
-                            root.resizeW = bt.widthForDrag(bc, lp.x)
-                            return
-                        }
-                    }
-                    if (th.row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
-                    cursor.setCaret(th.row, 0)
-                    tcur.place(th.r, th.c, th.pos)
-                    root.tableDragging = true
-                    root.tableAnchorR = th.r; root.tableAnchorC = th.c; root.tableAnchorPos = th.pos
+                    if (bt) { var lp = bt.mapFromItem(mouse, m.x, m.y); root.beginTableInteraction(bt, th.row, lp.x, lp.y) }
                     return
                 }
                 var h = root.hitTest(m.x, m.y)
@@ -1056,23 +1093,10 @@ FocusScope {
                     root.dropGap = root.gapForY(m.y)
                     return
                 }
-                if (root.tableResizing) {
-                    var rdcell = root.cellForRow(root.resizeRow), rbt = rdcell ? rdcell.tableItem : null
-                    if (rbt) { var rlp = rbt.mapFromItem(mouse, m.x, m.y); root.resizeW = rbt.widthForDrag(root.resizeColIdx, rlp.x) }
-                    return
-                }
-                if (root.tableDragging) {
-                    var th = root.tableHitAt(m.x, m.y)
-                    if (th && th.row === cursor.focusRow) {
-                        if (th.r === root.tableAnchorR && th.c === root.tableAnchorC) {
-                            tcur.clearRange()                      // same cell → in-cell text selection
-                            tcur.cr = th.r; tcur.cc = th.c
-                            tcur.anchorPos = root.tableAnchorPos; tcur.pos = th.pos
-                        } else {
-                            tcur.setRange(root.tableAnchorR, root.tableAnchorC, th.r, th.c)   // cross-cell range
-                        }
-                        cursor.sync()
-                    }
+                if (root.tableResizing || root.tableDragging) {
+                    var ddcell = root.cellForRow(root.tableResizing ? root.resizeRow : cursor.focusRow)
+                    var dbt = ddcell ? ddcell.tableItem : null
+                    if (dbt) { var dlp = dbt.mapFromItem(mouse, m.x, m.y); root.updateTableInteraction(dbt, dlp.x, dlp.y) }
                     return
                 }
                 if (root.dragging) {
@@ -1095,10 +1119,8 @@ FocusScope {
             onExited: { root.hoverRow = -1; mouse.overGrip = false; root.tableOverBorder = false }
             onReleased: {
                 if (root.blockDragging) root.commitBlockDrag()
-                else if (root.tableResizing) {
-                    blockModel.tableSetColWidth(root.resizeRow, root.resizeColIdx, root.resizeW)
-                    root.tableResizing = false; root.resizeColIdx = -1
-                } else { root.dragging = false; root.tableDragging = false }
+                else if (root.tableResizing || root.tableDragging) root.endTableInteraction()
+                else root.dragging = false
             }
             onCanceled: {
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
@@ -1161,6 +1183,69 @@ FocusScope {
         }
     }
 
+    // --- Full-frame table view (the active table tab). Fills the editor; vertical
+    // scroll for tall tables, the BlockTable handles horizontal internally. Reuses
+    // the same tcur edit model (the cursor is pinned to this table row). ---
+    Flickable {
+        id: tableFrame
+        visible: root.activeTableRow >= 0
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: frameTable.implicitHeight + 40
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar {
+            id: fvbar
+            policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
+            contentItem: Rectangle {
+                radius: width / 2; color: Theme.colors.textSubtle
+                opacity: fvbar.pressed ? 0.85 : (fvbar.hovered ? 0.65 : 0.40)
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+        }
+        BlockTable {
+            id: frameTable
+            active: root.activeTableRow >= 0
+            logicalRow: root.activeTableRow
+            x: 20; y: 20
+            maxWidth: tableFrame.width - 40        // full editor width
+            width: implicitWidth
+            height: implicitHeight
+            focused: root.activeTableRow >= 0
+            caretOn: root.caretOn
+            focusR: tcur.cr; focusC: tcur.cc
+            caretPos: tcur.pos
+            selFrom: Math.min(tcur.pos, tcur.anchorPos)
+            selTo: Math.max(tcur.pos, tcur.anchorPos)
+            rangeR0: tcur.rangeR0; rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
+            resizeCol: (root.tableResizing && root.resizeRow === root.activeTableRow) ? root.resizeColIdx : -1
+            resizeW: root.resizeW
+        }
+
+        // Full-frame mouse handling — this view is a dedicated mode (no document
+        // mouse layer above it), so a direct MouseArea works. Coords are already
+        // frameTable-local. Reuses the same begin/update/end helpers.
+        MouseArea {
+            id: frameMA
+            anchors.fill: frameTable
+            hoverEnabled: true; preventStealing: true
+            acceptedButtons: Qt.LeftButton
+            cursorShape: (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor : Qt.IBeamCursor
+            onPressed: (m) => { root.forceActiveFocus(); root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y) }
+            onPositionChanged: (m) => {
+                if (root.tableResizing || root.tableDragging) { root.updateTableInteraction(frameTable, m.x, m.y); return }
+                root.tableOverBorder = frameTable.columnBorderAt(m.x) >= 0
+            }
+            onExited: root.tableOverBorder = false
+            onReleased: root.endTableInteraction()
+            onCanceled: { root.tableResizing = false; root.tableDragging = false }
+            onDoubleClicked: (m) => {
+                var bc = frameTable.columnBorderAt(m.x)
+                if (bc >= 0) blockModel.tableSetColWidth(root.activeTableRow, bc, 0)
+            }
+        }
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
@@ -1203,7 +1288,7 @@ FocusScope {
         readonly property Item dlg: (blockModel.layoutRevision, blockModel.contentRevision, flick.contentY,
             tcur.active ? root.cellForRow(cursor.focusRow) : null)
         readonly property Item tItem: dlg ? dlg.tableItem : null
-        visible: tItem !== null
+        visible: tItem !== null && root.activeTableRow < 0   // Document view only
         readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
@@ -1309,6 +1394,7 @@ FocusScope {
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { visible: blockMenu.isTable; text: "Open in tab"; onActivated: root.activeTableId = blockModel.idForRow(root.menuRow) }
             MenuRow { visible: blockMenu.isTable; text: "Insert row above";  onActivated: root.tblInsRowAbove() }
             MenuRow { visible: blockMenu.isTable; text: "Insert row below";  onActivated: root.tblInsRowBelow() }
             MenuRow { visible: blockMenu.isTable; text: "Insert column left";  onActivated: root.tblInsColLeft() }

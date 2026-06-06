@@ -236,14 +236,19 @@ DESIGN.md  SPIKE.md  STATUS.md
       Cmd-C/V/X + a "Copy" menu item also work for normal text/blocks. Image read
       is shaped but unwired (future media paste).
 
+- [x] **Table tabs** — a bottom tab strip (`TableTabs.qml`, above BottomRail, shown
+      only when a table exists): **Document** + one tab per table in appearance
+      order, keyed by block id (`tableBlockIds`/`rowForId`/`idForRow`) so the active
+      tab follows its table across reorders while label/position derive live ("Table
+      N"). A table tab shows it **full-frame** (full editor width + height, vertical
+      Flickable + inner horizontal scroll) — reusing the SAME edit model: the cursor
+      is pinned to that table and the press/drag/resize logic is shared via
+      `beginTableInteraction`/`updateTableInteraction`/`endTableInteraction` (the doc
+      central handler and the full-frame MouseArea both call them). Right-click a
+      table → "Open in tab"; deleting the active table falls back to Document.
+      *Remaining:* full-frame +row/+column buttons and a horizontal scrollbar.
+
 ## Next (rough order)
-- [ ] **Table tabs** — a bottom tab strip (above the BottomRail, shown only when a
-      table exists): **Document** tab + one tab per table in appearance order,
-      identified by block id (label/position derived live so reorders renumber but
-      the active tab follows its table). Selecting a table tab shows it **full-frame**
-      (full width + height, both scrollbars) — reusing the existing edit model by
-      pinning the cursor to that table and swapping the render + hit-test target.
-      Tables auto-named "Table N"; right-click a table → "Open in tab".
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
       (today only Cmd+B/I); active-format-at-caret (type after toggling with no
       selection); source-mode toggle (reveal raw markdown); markdown typing
