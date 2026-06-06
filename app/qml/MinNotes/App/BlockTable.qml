@@ -17,6 +17,15 @@ Item {
     property bool active: false
     property real maxWidth: 760            // available width handed down by the editor
 
+    // Focus + in-cell caret/selection, driven by the editor's table sub-cursor.
+    property bool focused: false
+    property bool caretOn: true
+    property int  focusR: -1
+    property int  focusC: -1
+    property int  caretPos: 0
+    property int  selFrom: 0
+    property int  selTo: 0
+
     readonly property int  defaultColWidth: 160
     readonly property int  cellPadH: 8
     readonly property int  cellPadV: 5
@@ -77,6 +86,7 @@ Item {
                             required property int index
                             readonly property int c: index
                             readonly property bool isHeader: gridRow.r < tv.headerRows
+                            readonly property bool isFocusedCell: tv.focused && gridRow.r === tv.focusR && c === tv.focusC
                             readonly property real contentH: cellText.implicitHeight + 2 * tv.cellPadV
                             width: tv.colW(c)
                             height: gridRow.rowHeight
@@ -84,6 +94,18 @@ Item {
                             Component.onCompleted: gridRow.recompute()
                             color: isHeader ? Theme.colors.surfaceHover : "transparent"
                             border.width: 1; border.color: Theme.colors.border
+
+                            // in-cell selection highlight (behind glyphs); single
+                            // visual line — fine for short cell text.
+                            Rectangle {
+                                visible: cellRect.isFocusedCell && tv.selFrom !== tv.selTo
+                                z: -1; color: Theme.colors.selectionBg
+                                readonly property rect a: cellText.positionToRectangle(Math.min(tv.selFrom, cellText.length))
+                                readonly property rect b: cellText.positionToRectangle(Math.min(tv.selTo, cellText.length))
+                                x: cellText.x + a.x; y: cellText.y + a.y
+                                width: Math.max(2, b.x - a.x)
+                                height: a.height > 0 ? a.height : 18
+                            }
                             TextEdit {
                                 id: cellText
                                 x: tv.cellPadH; y: tv.cellPadV
@@ -102,6 +124,14 @@ Item {
                                     return a === 1 ? TextEdit.AlignHCenter
                                          : a === 2 ? TextEdit.AlignRight : TextEdit.AlignLeft
                                 }
+                            }
+                            // in-cell caret (focused cell, no selection)
+                            Rectangle {
+                                visible: cellRect.isFocusedCell && tv.caretOn && tv.selFrom === tv.selTo
+                                z: 1; color: Theme.colors.accent; width: 2
+                                readonly property rect cr: cellText.positionToRectangle(Math.min(tv.caretPos, cellText.length))
+                                x: cellText.x + cr.x; y: cellText.y + cr.y
+                                height: cr.height > 0 ? cr.height : 18
                             }
                         }
                     }

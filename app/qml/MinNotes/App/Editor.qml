@@ -204,6 +204,114 @@ FocusScope {
         }
     }
 
+    // --- Table sub-cursor. Active only while the main caret sits on a table
+    // block (cursor.focusRow). Tracks the active cell (cr,cc) and an in-cell text
+    // caret/selection (pos/anchorPos). Edits go through BlockModel's table seam;
+    // navigation off the grid edge hands back to the main cursor (exitTable).
+    QtObject {
+        id: tcur
+        property int cr: 0
+        property int cc: 0
+        property int pos: 0
+        property int anchorPos: 0
+        readonly property int row: cursor.focusRow
+        readonly property bool active: (blockModel.layoutRevision, blockModel.contentRevision,
+                                        blockModel.typeForRow(cursor.focusRow) === 7)
+
+        function rows() { return Math.max(1, blockModel.tableRows(row)) }
+        function cols() { return Math.max(1, blockModel.tableColumns(row)) }
+        function text() { return blockModel.tableCell(row, cr, cc) }
+        function clampPos() { pos = Math.max(0, Math.min(pos, text().length)) }
+
+        // Place the caret at cell (r,c), char `p` (default end), collapsing selection.
+        function place(r, c, p) {
+            cr = Math.max(0, Math.min(r, rows() - 1))
+            cc = Math.max(0, Math.min(c, cols() - 1))
+            pos = (p === undefined) ? text().length : p
+            clampPos(); anchorPos = pos
+            cursor.sync()
+        }
+
+        function delSel() {
+            var lo = Math.min(pos, anchorPos), hi = Math.max(pos, anchorPos)
+            var t = text()
+            blockModel.tableSetCell(row, cr, cc, t.slice(0, lo) + t.slice(hi))
+            pos = lo; anchorPos = lo
+        }
+        function type(ch) {
+            if (pos !== anchorPos) delSel()
+            var t = text()
+            blockModel.tableSetCell(row, cr, cc, t.slice(0, pos) + ch + t.slice(pos))
+            pos += ch.length; anchorPos = pos; cursor.sync()
+        }
+        function backspace() {
+            if (pos !== anchorPos) { delSel(); cursor.sync(); return }
+            if (pos > 0) { var t = text(); blockModel.tableSetCell(row, cr, cc, t.slice(0, pos - 1) + t.slice(pos)); pos--; anchorPos = pos }
+            cursor.sync()
+        }
+        function forwardDelete() {
+            if (pos !== anchorPos) { delSel(); cursor.sync(); return }
+            var t = text(); if (pos < t.length) blockModel.tableSetCell(row, cr, cc, t.slice(0, pos) + t.slice(pos + 1))
+            cursor.sync()
+        }
+        function left(shift) {
+            if (pos > 0) pos--
+            else if (cc > 0) { cc--; pos = text().length }
+            else if (cr > 0) { cr--; cc = cols() - 1; pos = text().length }
+            if (!shift) anchorPos = pos
+            cursor.sync()
+        }
+        function right(shift) {
+            if (pos < text().length) pos++
+            else if (cc < cols() - 1) { cc++; pos = 0 }
+            else if (cr < rows() - 1) { cr++; cc = 0; pos = 0 }
+            if (!shift) anchorPos = pos
+            cursor.sync()
+        }
+        function up() {
+            if (cr > 0) { cr--; clampPos(); anchorPos = pos; cursor.sync() }
+            else root.exitTable(-1)
+        }
+        function down() {
+            if (cr < rows() - 1) { cr++; clampPos(); anchorPos = pos; cursor.sync() }
+            else root.exitTable(1)
+        }
+        function tab(shift) {
+            if (shift) {
+                if (cc > 0) cc--
+                else if (cr > 0) { cr--; cc = cols() - 1 }
+            } else {
+                if (cc < cols() - 1) cc++
+                else {
+                    if (cr >= rows() - 1) blockModel.tableInsertRow(row, rows())   // grow off the end
+                    cr++; cc = 0
+                }
+            }
+            pos = 0; anchorPos = text().length     // select the cell (Excel-style)
+            cursor.sync()
+        }
+        function enter(shift) {
+            if (shift) { type("\n"); return }       // newline within the cell
+            if (cr < rows() - 1) cr++
+            else { blockModel.tableInsertRow(row, rows()); cr++ }
+            pos = 0; anchorPos = 0; cursor.sync()
+        }
+    }
+
+    // Move the main caret out of the focused table (dir<0 up, dir>0 down).
+    function exitTable(dir) {
+        var r = cursor.focusRow, n = blockModel.count
+        if (dir < 0 && r > 0) cursor.setCaret(r - 1, blockModel.contentForRow(r - 1).length)
+        else if (dir > 0 && r < n - 1) cursor.setCaret(r + 1, 0)
+        root.ensureVisible(cursor.focusRow)
+    }
+    // Enter a table at `row` from an adjacent block: top-left from above, bottom-
+    // left from below; `edge` is -1 (came from below) or +1 (came from above).
+    function enterTable(row, fromAbove) {
+        cursor.setCaret(row, 0)
+        tcur.place(fromAbove ? 0 : tcur.rows() - 1, 0, 0)
+    }
+
     // Undo/redo restore the caret (and selection) the model snapshotted.
     Connections {
         target: blockModel
@@ -275,13 +383,18 @@ FocusScope {
         cursor.resetGoalX(); cursor.clearMarks()
         var fb = root.focusBlockItem, n = blockModel.count
         if (fb && cursor.focusCol < fb.length) cursor.move(cursor.focusRow, cursor.focusCol + 1, shift)
-        else if (cursor.focusRow < n - 1) cursor.move(cursor.focusRow + 1, 0, shift)
+        else if (cursor.focusRow < n - 1) {
+            if (blockModel.typeForRow(cursor.focusRow + 1) === 7) root.enterTable(cursor.focusRow + 1, true)
+            else cursor.move(cursor.focusRow + 1, 0, shift)
+        }
     }
     function navLeft(shift) {
         cursor.resetGoalX(); cursor.clearMarks()
         if (cursor.focusCol > 0) cursor.move(cursor.focusRow, cursor.focusCol - 1, shift)
-        else if (cursor.focusRow > 0)
-            cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
+        else if (cursor.focusRow > 0) {
+            if (blockModel.typeForRow(cursor.focusRow - 1) === 7) root.enterTable(cursor.focusRow - 1, false)
+            else cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
+        }
     }
     // Map the sticky goal-x onto a visual line of `row`'s block (te-local y),
     // returning the column there. Falls back to col 0 if that block has no live
@@ -300,8 +413,10 @@ FocusScope {
         if (cursor.goalX < 0) cursor.goalX = r.x          // capture at the start of a vertical run
         if (r.y < fb.contentHeight - lh * 1.5)            // another visual line below in this block
             cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX, r.y + lh * 1.5), shift)
-        else if (cursor.focusRow < n - 1)                 // cross into the next block at goal-x
-            cursor.move(cursor.focusRow + 1, colAtGoalX(cursor.focusRow + 1, 2), shift)
+        else if (cursor.focusRow < n - 1) {               // cross into the next block at goal-x
+            if (blockModel.typeForRow(cursor.focusRow + 1) === 7) root.enterTable(cursor.focusRow + 1, true)
+            else cursor.move(cursor.focusRow + 1, colAtGoalX(cursor.focusRow + 1, 2), shift)
+        }
     }
     function navUp(shift) {
         cursor.clearMarks()
@@ -313,6 +428,7 @@ FocusScope {
         if (r.y > lh * 0.5)                               // another visual line above in this block
             cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX, r.y - lh * 0.5), shift)
         else if (cursor.focusRow > 0) {                   // cross into the previous block's last line
+            if (blockModel.typeForRow(cursor.focusRow - 1) === 7) { root.enterTable(cursor.focusRow - 1, false); return }
             var prev = cellForRow(cursor.focusRow - 1)
             var yLast = (prev && !prev.isMedia) ? prev.teItem.contentHeight - 2 : 0
             cursor.move(cursor.focusRow - 1, colAtGoalX(cursor.focusRow - 1, yLast), shift)
@@ -385,7 +501,7 @@ FocusScope {
     function addBlockBelow(row) { blockModel.insertBlock(row + 1); cursor.setCaret(row + 1, 0); cursor.sync() }
     function duplicateBlock(row) { blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync() }
     function makeCodeAt(row)    { blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
-    function insertTableAt(row) { blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); cursor.sync() }
+    function insertTableAt(row) { blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); tcur.place(0, 0, 0); root.ensureVisible(row + 1) }
     function deleteBlock(row) {
         if (blockModel.count > 1) {
             blockModel.removeBlock(row)
@@ -434,11 +550,14 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
+        var inTable = tcur.active
         if (k === Qt.Key_Escape) {
             // Cancel the current op: block-drag (revert, no move) → text-drag →
-            // collapse selection → disarm format toggle.
+            // collapse selection → disarm format toggle. In a table: collapse the
+            // cell selection, else step the caret out below the table.
             if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
+            else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
             else if (cursor.activeMarks !== 0) { cursor.clearMarks() }
             event.accepted = true
@@ -446,6 +565,20 @@ FocusScope {
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
+        // Table mode: route editing/navigation to the cell sub-cursor.
+        else if (inTable) {
+            if (k === Qt.Key_Right) tcur.right(shift)
+            else if (k === Qt.Key_Left) tcur.left(shift)
+            else if (k === Qt.Key_Down) tcur.down()
+            else if (k === Qt.Key_Up) tcur.up()
+            else if (k === Qt.Key_Backspace) tcur.backspace()
+            else if (k === Qt.Key_Delete) tcur.forwardDelete()
+            else if (k === Qt.Key_Tab) tcur.tab(false)
+            else if (k === Qt.Key_Backtab) tcur.tab(true)
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) tcur.enter(shift)
+            else if (event.text.length === 1 && event.text >= " ") tcur.type(event.text)
+            event.accepted = true
+        }
         else if (cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
         else if (cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
         else if (cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
@@ -606,6 +739,13 @@ FocusScope {
                     maxWidth: Math.min(root.pageWidth, flick.width - cell.colLeft - 20)
                     width: implicitWidth
                     height: implicitHeight   // a bare Item won't adopt implicitHeight itself
+                    // Focus / in-cell caret + selection (driven by the table sub-cursor).
+                    focused: cell.isFocus && te.btype === 7
+                    caretOn: root.caretOn
+                    focusR: tcur.cr; focusC: tcur.cc
+                    caretPos: tcur.pos
+                    selFrom: Math.min(tcur.pos, tcur.anchorPos)
+                    selTo: Math.max(tcur.pos, tcur.anchorPos)
                 }
 
                 Rectangle {  // code background — matches the syntax theme's fill
