@@ -37,6 +37,12 @@ FocusScope {
     property int  hoverRow: -1           // row whose grip is lit
     readonly property real gutterX: (flick.width - colWidth) / 2   // == cell.colLeft
 
+    // Block context-menu state: the right-clicked row and where the menu opened
+    // (viewport coords; reused to anchor the language picker).
+    property int  menuRow: -1
+    property real menuX: 0
+    property real menuY: 0
+
     // Is a content-x in the left grip gutter (just left of the text column)?
     function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
     // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
@@ -134,6 +140,17 @@ FocusScope {
                 root.ensureVisible(focusRow - 1)
             }
         }
+        function forwardDelete() {
+            if (hasSel) { deleteSelection(); return }
+            var len = blockModel.contentForRow(focusRow).length
+            if (focusCol < len) {
+                blockModel.deleteRange(focusRow, focusCol, focusRow, focusCol + 1)
+            } else if (focusRow < blockModel.count - 1) {
+                // At a block's end: pull the next block up onto this one (caret stays).
+                blockModel.deleteRange(focusRow, len, focusRow + 1, 0)
+            }
+            setCaret(focusRow, focusCol)
+        }
         function insertChar(ch) {
             if (hasSel) deleteSelection()
             blockModel.insertText(focusRow, focusCol, ch, activeMarks)   // armed attrs → span the run
@@ -147,6 +164,23 @@ FocusScope {
         }
         function splitLine() {
             if (hasSel) deleteSelection()
+            // "```" / "```lang" + Enter → an (empty) code block; caret stays inside.
+            if (blockModel.makeCodeBlockIfFence(focusRow)) { setCaret(focusRow, 0); return }
+            // Inside a code block, Enter adds a newline; pressing it on an empty
+            // trailing line exits to a fresh paragraph below.
+            if (blockModel.typeForRow(focusRow) === 2) {
+                var c = blockModel.contentForRow(focusRow)
+                var atEnd = focusCol >= c.length
+                if (atEnd && (c.length === 0 || c.charAt(c.length - 1) === "\n")) {
+                    if (c.length > 0) blockModel.deleteRange(focusRow, c.length - 1, focusRow, c.length)
+                    blockModel.splitBlock(focusRow, blockModel.contentForRow(focusRow).length)
+                    setCaret(focusRow + 1, 0); root.ensureVisible(focusRow + 1)
+                    return
+                }
+                blockModel.insertText(focusRow, focusCol, "\n", 0)
+                setCaret(focusRow, focusCol + 1)
+                return
+            }
             // "---"/"***"/"___" + Enter → divider, then a fresh paragraph below.
             if (blockModel.makeDividerIfMarker(focusRow)) {
                 blockModel.insertBlock(focusRow + 1)
@@ -328,6 +362,45 @@ FocusScope {
         cursor.sync()
     }
     function addDivider() { blockModel.insertDivider(cursor.focusRow); cursor.sync() }
+    // Toggle the caret block to/from a (plain) code block. ```lang + Enter sets a
+    // language; this button makes/removes a code block without one.
+    function toggleCodeBlock() {
+        var r = cursor.focusRow
+        if (blockModel.typeForRow(r) === 2) blockModel.setBlockType(r, 0)
+        else blockModel.makeCodeBlock(r, "")
+        cursor.sync()
+    }
+    // --- Block context-menu actions (operate on the right-clicked row) ---
+    function addBlockAbove(row) { blockModel.insertBlock(row);     cursor.setCaret(row, 0);     cursor.sync() }
+    function addBlockBelow(row) { blockModel.insertBlock(row + 1); cursor.setCaret(row + 1, 0); cursor.sync() }
+    function duplicateBlock(row) { blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync() }
+    function makeCodeAt(row)    { blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
+    function deleteBlock(row) {
+        if (blockModel.count > 1) {
+            blockModel.removeBlock(row)
+            cursor.setCaret(Math.max(0, row - (row >= blockModel.count ? 1 : 0)), 0)
+        } else {
+            blockModel.setContent(row, "")        // last block: clear rather than leave an empty doc
+            cursor.setCaret(row, 0)
+        }
+        cursor.sync()
+    }
+
+    // Open the block context menu at viewport (vx,vy) for `row`. (vx,vy) is also
+    // reused to anchor the language picker if "Change language…" is chosen.
+    function openBlockMenu(vx, vy, row) {
+        root.menuRow = row; root.menuX = vx; root.menuY = vy
+        blockMenu.x = vx; blockMenu.y = vy
+        blockMenu.open()
+    }
+    // Language picker for the code block at `row`, anchored where the menu was.
+    function openLangPopupForRow(row) {
+        langPopup.targetRow = row
+        langPopup.x = root.menuX; langPopup.y = root.menuY
+        langField.text = blockModel.languageForRow(row)
+        langPopup.open()
+        langField.selectAll(); langField.forceActiveFocus()
+    }
 
     // Clear ALL formatting → plain paragraph: reset heading/quote/list block
     // style AND strip inline spans. Acts on the caret's block (no selection
@@ -371,7 +444,8 @@ FocusScope {
         else if (k === Qt.Key_Left) { navLeft(shift); event.accepted = true }
         else if (k === Qt.Key_Down) { navDown(shift); event.accepted = true }
         else if (k === Qt.Key_Up) { navUp(shift); event.accepted = true }
-        else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) { cursor.backspace(); event.accepted = true }
+        else if (k === Qt.Key_Backspace) { cursor.backspace(); event.accepted = true }
+        else if (k === Qt.Key_Delete) { cursor.forwardDelete(); event.accepted = true }
         else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(); event.accepted = true }
         else if (event.text.length === 1 && event.text >= " ") { cursor.insertChar(event.text); event.accepted = true }
     }
@@ -431,7 +505,9 @@ FocusScope {
                 width: flick.width
                 visible: active
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
-                height: 12 + (isMedia ? root.colWidth * 0.5 : (te.btype === 6 ? 18 : te.implicitHeight))
+                // Code blocks get double vertical padding (24 vs 12) so the
+                // syntax-themed background has breathing room above/below.
+                height: (te.btype === 2 ? 24 : 12) + (isMedia ? root.colWidth * 0.5 : (te.btype === 6 ? 18 : te.implicitHeight))
 
                 onHeightChanged: if (active) blockModel.setMeasuredHeight(logicalRow, height)
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
@@ -501,10 +577,11 @@ FocusScope {
                     Text { anchors.centerIn: parent; color: "white"; text: "▶ " + (cell.active ? blockModel.contentForRow(cell.logicalRow) : ""); font.pixelSize: 14 }
                 }
 
-                Rectangle {  // code background
-                    visible: cell.active && !cell.isMedia && blockModel.typeForRow(cell.logicalRow) === 2
+                Rectangle {  // code background — matches the syntax theme's fill
+                    visible: cell.active && !cell.isMedia && te.btype === 2
                     anchors.fill: te; anchors.margins: -8
-                    color: Theme.colors.codeBg; radius: Theme.dim.radius
+                    color: codeHl.backgroundColor.a > 0 ? codeHl.backgroundColor : Theme.colors.codeBg
+                    radius: Theme.dim.radius
                     border.width: 1; border.color: Theme.colors.border
                 }
 
@@ -520,7 +597,7 @@ FocusScope {
                     readonly property real deco: (btype === 4 || btype === 5) ? 22 : 0
                     x: cell.colLeft + deco
                     width: root.colWidth - deco
-                    y: 6
+                    y: btype === 2 ? 12 : 6   // code: centered in the taller (doubled-margin) cell
                     // Quotes are upright Merriweather (serif + bar + muted colour
                     // mark them); italic/bold come from spans so all four faces
                     // are reachable, rather than forcing the whole block italic.
@@ -554,7 +631,9 @@ FocusScope {
                 // HTML, identity caret positions. Off for code (markdown is
                 // literal inside a fence) and non-text blocks.
                 InlineMarkdownHighlighter {
-                    document: te.textDocument
+                    // Attach ONLY for text blocks; a document can have one
+                    // highlighter, so code blocks detach this and use codeHl.
+                    document: (te.btype === 0 || te.btype === 4 || te.btype === 5) ? te.textDocument : null
                     enabled: cell.active && (te.btype === 0 || te.btype === 4 || te.btype === 5)
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
@@ -568,6 +647,15 @@ FocusScope {
                     // selected (markers only appear while typing, rarely selected).
                     // semantic format spans (clean bold/italic/mono, no markers)
                     spans: (blockModel.contentRevision, blockModel.spansForRow(cell.logicalRow))
+                }
+
+                // Code-block syntax colouring (KSyntaxHighlighting). Attaches only
+                // for code blocks; `backgroundColor` is the theme's editor fill so
+                // the block background matches the token colours.
+                CodeHighlighter {
+                    id: codeHl
+                    document: te.btype === 2 ? te.textDocument : null
+                    language: te.btype === 2 ? (blockModel.contentRevision, blockModel.languageForRow(cell.logicalRow)) : ""
                 }
 
                 Rectangle {  // caret
@@ -623,7 +711,7 @@ FocusScope {
             id: mouse
             width: flick.contentWidth
             height: flick.contentHeight
-            acceptedButtons: Qt.LeftButton
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
             preventStealing: true
             hoverEnabled: true
             property bool overGrip: false
@@ -632,6 +720,11 @@ FocusScope {
 
             onPressed: (m) => {
                 root.forceActiveFocus()
+                // Right-click anywhere on a block → its context menu.
+                if (m.button === Qt.RightButton) {
+                    root.openBlockMenu(m.x, m.y - flick.contentY, blockModel.rowForY(m.y))
+                    return
+                }
                 // Press in the grip gutter → start a block drag-reorder.
                 if (root.inGutter(m.x) && !(m.modifiers & Qt.ShiftModifier)) {
                     root.blockDragRow = blockModel.rowForY(m.y)
@@ -750,6 +843,119 @@ FocusScope {
                 text: root.blockDragText; color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
                 elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    // One row of a hand-rolled menu (matches the app's flat dark style rather
+    // than the default Controls Menu chrome). `danger` tints destructive items.
+    component MenuRow: Rectangle {
+        property alias text: menuRowLabel.text
+        property bool danger: false
+        signal activated()
+        width: 184; height: 28; radius: 4
+        color: menuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+        Text {
+            id: menuRowLabel
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left; anchors.leftMargin: 10
+            color: parent.danger ? Theme.colors.error : Theme.colors.text
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+        }
+        MouseArea {
+            id: menuRowMA
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onClicked: { parent.activated(); blockMenu.close() }
+        }
+    }
+
+    // --- Block context menu (right-click a block / its grip) ---
+    Popup {
+        id: blockMenu
+        readonly property bool isCode: root.menuRow >= 0
+            && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 2)
+        padding: 4; z: 60
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
+        onClosed: root.forceActiveFocus()
+        background: Rectangle { color: Theme.colors.surface; radius: 6
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 1
+            MenuRow { text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
+            MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
+            MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
+            Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow {
+                text: blockMenu.isCode ? "Change language…" : "Make code block"
+                onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
+                                              : root.makeCodeAt(root.menuRow)
+            }
+            Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
+        }
+    }
+
+    // --- Code-block language picker (shared; positioned where the menu opened) ---
+    // Type any language (lenient: js, bash, python…; blank = plain) or pick a
+    // common one. Applies to langPopup.targetRow via blockModel.setCodeLanguage.
+    Popup {
+        id: langPopup
+        property int targetRow: -1
+        readonly property var quick: ["javascript", "typescript", "python", "bash", "json",
+                                      "html", "css", "cpp", "c", "go", "rust", "sql", "yaml", "markdown"]
+        width: 250; padding: 8; focus: true; z: 60
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: { targetRow = -1; root.forceActiveFocus() }
+        background: Rectangle { color: Theme.colors.surface; radius: 6
+                                border.width: 1; border.color: Theme.colors.border }
+        function apply(lang) {
+            if (langPopup.targetRow >= 0)
+                blockModel.setCodeLanguage(langPopup.targetRow, (lang || "").trim())
+            langPopup.close()
+        }
+        contentItem: Column {
+            spacing: 8
+            // Plain TextInput (not a Controls TextField, which the native macOS
+            // style refuses to theme) in a themed frame, with a placeholder overlay.
+            Rectangle {
+                width: parent.width; height: 30; radius: 4
+                color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
+                TextInput {
+                    id: langField
+                    anchors.fill: parent
+                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true; selectByMouse: true
+                    color: Theme.colors.text; selectionColor: Theme.colors.selectionBg
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    onAccepted: langPopup.apply(text)
+                    Keys.onEscapePressed: langPopup.close()
+                    Text {
+                        anchors.fill: parent; verticalAlignment: Text.AlignVCenter
+                        visible: langField.text.length === 0
+                        text: "language — e.g. js, bash (blank = plain)"
+                        color: Theme.colors.textSubtle; font: langField.font
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+            Flow {
+                width: parent.width; spacing: 4
+                Repeater {
+                    model: langPopup.quick
+                    delegate: Rectangle {
+                        required property string modelData
+                        height: 20; width: chipText.implicitWidth + 14; radius: 3
+                        color: chipMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.codeBg
+                        border.width: 1; border.color: Theme.colors.border
+                        Text { id: chipText; anchors.centerIn: parent; text: modelData
+                               color: Theme.colors.textMuted
+                               font.family: Theme.font.family; font.pixelSize: 11 }
+                        MouseArea { id: chipMA; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: langPopup.apply(modelData) }
+                    }
+                }
             }
         }
     }

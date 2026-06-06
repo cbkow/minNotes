@@ -12,3 +12,7 @@ compile_commands.json
 
 # Spike harness build dir (throwaway; sources kept for reference)
 /spike/build/
+
+# KSyntaxHighlighting built from source (run external/build-ksyntax.sh)
+/external/kf6/
+/external/src/

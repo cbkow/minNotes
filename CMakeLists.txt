@@ -24,4 +24,10 @@ endif()
 find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql)
 qt_standard_project_setup(REQUIRES 6.11)
 
+# Code-block syntax highlighting: KSyntaxHighlighting (KDE) — a QSyntaxHighlighter
+# over QTextDocument, the same mechanism the inline highlighter uses. Built once
+# from source into external/kf6 (gitignored); see external/build-ksyntax.sh.
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/external/kf6")
+find_package(KF6SyntaxHighlighting 6.0 REQUIRED)
+
 add_subdirectory(app)

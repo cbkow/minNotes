@@ -10,6 +10,8 @@ qt_add_executable(minnotesapp
     core/Document.cpp
     core/InlineMarkdownHighlighter.h
     core/InlineMarkdownHighlighter.cpp
+    core/CodeHighlighter.h
+    core/CodeHighlighter.cpp
 )
 
 # Mark Theme.qml as a QML singleton BEFORE qt_add_qml_module so the generated
@@ -59,4 +61,5 @@ target_link_libraries(minnotesapp PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Sql
+    KF6::SyntaxHighlighting
 )

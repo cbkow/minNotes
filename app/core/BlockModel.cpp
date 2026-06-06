@@ -141,6 +141,8 @@ void BlockModel::loadFromStore() {
         const QJsonObject o = QJsonDocument::fromJson(m.attrs.toUtf8()).object();
         if (r.type == Heading)
             r.level = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("level")).toInt(1), 1, 6));
+        if (r.type == Code)
+            r.lang = o.value(QStringLiteral("lang")).toString();
         for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
             const QJsonObject so = sv.toObject();
             const uint8_t k = spanKindFromString(so.value(QStringLiteral("k")).toString());
@@ -275,9 +277,11 @@ bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, in
     return false;
 }
 
-QString BlockModel::attrsJson(uint8_t type, uint8_t level, const std::vector<Span>& spans) const {
+QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
+                              const std::vector<Span>& spans) const {
     QJsonObject o;
     if (type == Heading && level > 0) o.insert(QStringLiteral("level"), level);
+    if (type == Code && !lang.isEmpty()) o.insert(QStringLiteral("lang"), lang);
     if (!spans.empty()) {
         QJsonArray arr;
         for (const Span& sp : spans) {
@@ -296,7 +300,7 @@ void BlockModel::persistMeta(int row) {
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
-                    attrsJson(r.type, r.level, r.spans));
+                    attrsJson(r.type, r.level, r.lang, r.spans));
 }
 
 // === Undo / redo: region-snapshot transactions ===========================
@@ -304,6 +308,7 @@ BlockModel::BlockSnap BlockModel::snapAt(int row) const {
     BlockSnap s;
     s.id = ids_[row]; s.rank = ranks_[row]; s.content = content_[row];
     s.type = rows_[row].type; s.level = rows_[row].level; s.spans = rows_[row].spans;
+    s.lang = rows_[row].lang;
     return s;
 }
 
@@ -331,14 +336,14 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     ranks_.erase(ranks_.begin() + lo, ranks_.begin() + last);
     int at = lo;
     for (const BlockSnap& s : snaps) {
-        Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans;
+        Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans; r.lang = s.lang;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
         rows_.insert(rows_.begin() + at, r);
         content_.insert(content_.begin() + at, s.content);
         ids_.insert(ids_.begin() + at, s.id);
         ranks_.insert(ranks_.begin() + at, s.rank);
         if (doc_.isOpen()) {
-            const QString attrs = attrsJson(s.type, s.level, s.spans);
+            const QString attrs = attrsJson(s.type, s.level, s.lang, s.spans);
             const QString type = QString::fromLatin1(typeToString(s.type));
             if (oldIds.contains(s.id)) {   // survived: content/meta/rank may all have changed (incl. reorder)
                 doc_.updateContent(s.id, s.content);
@@ -515,13 +520,15 @@ void BlockModel::setHeading(int row, int level) {
 void BlockModel::setBlockType(int row, int type) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     Row& r = rows_[row];
-    if (r.type != Paragraph && r.type != Heading && r.type != Quote && r.type != ListItem) return;
+    if (r.type != Paragraph && r.type != Heading && r.type != Quote
+        && r.type != ListItem && r.type != Code) return;
     const uint8_t t = static_cast<uint8_t>(type);
-    if (t != Paragraph && t != Quote && t != ListItem) return;   // headings go through setHeading
+    if (t != Paragraph && t != Quote && t != ListItem) return;   // headings/code have their own paths
     if (r.type == t) return;
     beginTxn(row, row);
     r.type = t;
     r.level = 0;                 // leaving a heading clears its level
+    r.lang.clear();              // leaving a code block clears its language
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole});
     bumpLayout();
@@ -552,6 +559,58 @@ void BlockModel::insertDivider(int afterRow) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+}
+
+QString BlockModel::languageForRow(int row) const {
+    if (rows_.empty()) return {};
+    return rows_[clampRow(row)].lang;
+}
+
+void BlockModel::makeCodeBlock(int row, const QString& lang) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    Row& r = rows_[row];
+    if (r.type == Code && r.lang == lang) return;
+    beginTxn(row, row);
+    r.type = Code; r.level = 0; r.lang = lang;
+    r.spans.clear();             // inline markdown/spans are literal inside code
+    persistContent(row);         // (spans went to attrs; content unchanged but persist meta)
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {TypeRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+void BlockModel::setCodeLanguage(int row, const QString& lang) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    Row& r = rows_[row];
+    if (r.type != Code || r.lang == lang) return;
+    beginTxn(row, row);
+    r.lang = lang;
+    persistMeta(row);
+    ++contentRevision_;          // CodeHighlighter.language binding depends on contentRevision
+    emit contentChangedSpike();
+    endTxn();
+}
+
+bool BlockModel::makeCodeBlockIfFence(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    if (rows_[row].type != Paragraph) return false;
+    if (!content_[row].startsWith(QLatin1String("```"))) return false;
+    const QString lang = content_[row].mid(3).trimmed();   // "```python" → "python"
+    beginTxn(row, row);
+    rows_[row].type = Code; rows_[row].level = 0; rows_[row].lang = lang;
+    rows_[row].spans.clear();
+    content_[row].clear();                                  // consume the fence line
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
 }
 
 void BlockModel::clearFormat(int row, int start, int end) {
@@ -760,6 +819,9 @@ QVariantList BlockModel::codeRangesForRow(int row) const {
         out.append(m);
     };
     const QString& s = content_[row];
+    // No inline-code chips inside a real code block, nor on a "```" fence line
+    // (the backticks there are a code-block trigger, kept literal).
+    if (rows_[row].type == Code || s.startsWith(QLatin1String("```"))) return out;
     for (int i = 0, n = s.size(); i < n; ) {                  // markdown `code` inner runs
         if (s[i] == QLatin1Char('`')) {
             const int j = s.indexOf(QLatin1Char('`'), i + 1);
@@ -828,6 +890,9 @@ void BlockModel::commitMarkdown(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     const uint8_t t = rows_[row].type;
     if (t != Paragraph && t != Quote && t != ListItem) return;   // where inline md renders
+    // A "```"/"```lang" fence is a code-block trigger (consumed on Enter); never
+    // run inline conversion on it, which would eat the backticks into a stray span.
+    if (content_[row].startsWith(QLatin1String("```"))) return;
     QString clean; std::vector<Span> spans;
     if (!convertMarkdown(content_[row], rows_[row].spans, clean, spans)) return;
     beginTxn(row, row);
@@ -1058,6 +1123,35 @@ void BlockModel::insertBlock(int row) {
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), QString());
 
     bumpLayout();
+    endTxn();
+}
+
+void BlockModel::duplicateBlock(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    const int at = row + 1;
+    beginTxn(at, at - 1);                        // empty `before`; after = [at,at]
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(ranks_[row],
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+
+    beginInsertRows({}, at, at);
+    Row r = rows_[row];                          // copies type/level/lang/spans/param
+    r.measured = false;
+    const QString text = content_[row];
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, text);
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
+    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)),
+                         attrsJson(r.type, r.level, r.lang, r.spans), text);
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
     endTxn();
 }
 

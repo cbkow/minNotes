@@ -171,6 +171,26 @@ DESIGN.md  SPIKE.md  STATUS.md
       `BlockModel.documentPath` exposes the open doc; `Main.qml` is now
       `Row { LeftRail; Column { Editor; BottomRail } }`. `FlatButton` gained a
       `tooltipSide` ("right"|"top") so the bottom buttons' tooltips point up.
+- [x] **Code blocks + syntax highlighting** — a real `code` block type: create via
+      a ` ```lang ` fence + Enter (`makeCodeBlockIfFence`) or the rail Code-block
+      toggle (`makeCodeBlock`); Enter inserts a newline inside, an empty trailing
+      line exits to a paragraph. Language in `attrs` (`lang`), round-trips, undoable.
+      **Syntax colouring** via **KSyntaxHighlighting** (KDE) — a `QSyntaxHighlighter`
+      (`CodeHighlighter`, same mechanism as the inline one), dark theme, the block
+      fill matches the theme. A block's document attaches to ONE highlighter by type
+      (inline-md for text, code for code). The library is **built from source** into
+      `external/kf6` (gitignored) by `external/build-ksyntax.sh`; root CMake
+      `find_package`s it. Code blocks get double vertical padding. Fence lines are
+      kept literal (inline-md + `commitMarkdown` skip a leading ` ``` `) so typing a
+      fence no longer flashes/clobbers into inline code. Language resolution is
+      lenient (`js`/`bash`/`javascript`/`c++`… → the right definition).
+- [x] **Block context menu + forward delete** — right-click any block →
+      a themed `Popup` menu (Add block above/below, Duplicate, Make code block /
+      Change language…, Delete; last block clears instead of vanishing). Backed by
+      `setCodeLanguage`, `duplicateBlock`, and the existing insert/remove — all
+      undoable. "Change language…" opens a language picker (typed `TextInput` +
+      common quick-picks). `Del` now deletes **forward** (`forwardDelete`) instead of
+      mirroring Backspace.
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

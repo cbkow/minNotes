@@ -155,6 +155,12 @@ Rectangle {
                 onClicked: rail.act(function() { rail.editor.toggleBlock(5) })
             }
             RailBtn {
+                iconName: "code-block"; tooltip: "Code block"
+                enabled_: !!rail.editor
+                checked: !!rail.editor && rail.editor.caretType === 2
+                onClicked: rail.act(function() { rail.editor.toggleCodeBlock() })
+            }
+            RailBtn {
                 iconName: "minus"; tooltip: "Divider"
                 enabled_: !!rail.editor
                 onClicked: rail.act(function() { rail.editor.addDivider() })

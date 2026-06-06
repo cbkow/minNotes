@@ -85,6 +85,9 @@ public:
     Q_INVOKABLE void setContent(int row, const QString& text);
     Q_INVOKABLE void insertBlock(int row);
     Q_INVOKABLE void removeBlock(int row);
+    // Insert a copy of `row` (content/type/level/lang/spans) directly below it
+    // (undoable). The caret-worthy new row is `row + 1`.
+    Q_INVOKABLE void duplicateBlock(int row);
     // Reorder: move the block at `from` so it ends up at final index `to`. Just a
     // fractional-rank rewrite (no renumbering); undoable. No-op if out of range.
     Q_INVOKABLE void moveBlock(int from, int to);
@@ -139,6 +142,16 @@ public:
     // Insert a divider block after `afterRow` (undoable).
     Q_INVOKABLE void insertDivider(int afterRow);
 
+    // --- Code blocks ---
+    Q_INVOKABLE QString languageForRow(int row) const;          // syntax language, "" if none
+    // Convert a block to a code block with `lang` (undoable). Empty lang = plain.
+    Q_INVOKABLE void makeCodeBlock(int row, const QString& lang);
+    // Change an existing code block's syntax language in place (undoable).
+    Q_INVOKABLE void setCodeLanguage(int row, const QString& lang);
+    // Enter trigger: if the block's whole content is a "```"/"```lang" fence,
+    // turn it into an (empty) code block of that language. Returns true if it did.
+    Q_INVOKABLE bool makeCodeBlockIfFence(int row);
+
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
     bool canUndo() const;
@@ -168,12 +181,13 @@ private:
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0
         uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
         bool measured = false;
+        QString lang;       // code blocks: syntax-highlight language (else empty)
         std::vector<Span> spans;   // travels with the row on insert/erase
     };
 
     // Full, restorable state of one block — the unit an undo transaction snaps.
     struct BlockSnap {
-        QString id, rank, content;
+        QString id, rank, content, lang;
         uint8_t type = 0, level = 0;
         std::vector<Span> spans;
     };
@@ -205,7 +219,7 @@ private:
                                 QString& cleanText, std::vector<Span>& outSpans);
 
     // --- Undo internals ---
-    QString attrsJson(uint8_t type, uint8_t level, const std::vector<Span>& spans) const;
+    QString attrsJson(uint8_t type, uint8_t level, const QString& lang, const std::vector<Span>& spans) const;
     BlockSnap snapAt(int row) const;
     std::vector<BlockSnap> snapshotRange(int lo, int hi) const;
     // Replace the current rows [lo, lo+oldCount) with `snaps` (in-memory + DB +

@@ -52,8 +52,12 @@ protected:
         };
 
         // --- markdown markers (`**b**`, `*i*`, `` `c` ``) ---
+        // A line that begins with a "```" fence is a code-block trigger (Enter
+        // turns it into a code block), NOT inline code — leave its backticks
+        // literal so they don't flash as an empty inline-code chip while typing.
+        const bool fenceLine = text.startsWith(QLatin1String("```"));
         int i = 0;
-        while (i < n) {
+        while (i < n && !fenceLine) {
             const QChar c = text[i];
             if (c == QLatin1Char('`')) {
                 const int j = text.indexOf(QLatin1Char('`'), i + 1);
