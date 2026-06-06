@@ -161,6 +161,11 @@ Rectangle {
                 onClicked: rail.act(function() { rail.editor.toggleCodeBlock() })
             }
             RailBtn {
+                iconName: "table"; tooltip: "Table"
+                enabled_: !!rail.editor
+                onClicked: rail.act(function() { rail.editor.insertTableAtCaret() })
+            }
+            RailBtn {
                 iconName: "minus"; tooltip: "Divider"
                 enabled_: !!rail.editor
                 onClicked: rail.act(function() { rail.editor.addDivider() })

@@ -52,6 +52,8 @@ FocusScope {
     property int  menuRow: -1
     property real menuX: 0
     property real menuY: 0
+    property int  menuCellR: 0     // right-clicked table cell (for table menu ops)
+    property int  menuCellC: 0
 
     // Table mouse-drag state: anchor cell/char captured on press, so drag extends
     // an in-cell text selection (same cell) or a rectangular cell range (across).
@@ -530,6 +532,16 @@ FocusScope {
     function duplicateBlock(row) { blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync() }
     function makeCodeAt(row)    { blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
     function insertTableAt(row) { blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); tcur.place(0, 0, 0); root.ensureVisible(row + 1) }
+    function insertTableAtCaret() { insertTableAt(cursor.focusRow) }
+    // Table context-menu ops — act on the right-clicked block (menuRow) + cell.
+    function tblInsRowAbove() { blockModel.tableInsertRow(menuRow, menuCellR) }
+    function tblInsRowBelow() { blockModel.tableInsertRow(menuRow, menuCellR + 1) }
+    function tblInsColLeft()  { blockModel.tableInsertColumn(menuRow, menuCellC) }
+    function tblInsColRight() { blockModel.tableInsertColumn(menuRow, menuCellC + 1) }
+    function tblDelRow()      { blockModel.tableDeleteRow(menuRow, menuCellR) }
+    function tblDelCol()      { blockModel.tableDeleteColumn(menuRow, menuCellC) }
+    function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
+    function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
     function deleteBlock(row) {
         if (blockModel.count > 1) {
             blockModel.removeBlock(row)
@@ -923,9 +935,15 @@ FocusScope {
 
             onPressed: (m) => {
                 root.forceActiveFocus()
-                // Right-click anywhere on a block → its context menu.
+                // Right-click anywhere on a block → its context menu (capturing the
+                // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
-                    root.openBlockMenu(m.x, m.y - flick.contentY, blockModel.rowForY(m.y))
+                    var trow = blockModel.rowForY(m.y)
+                    if (blockModel.typeForRow(trow) === 7) {
+                        var th = root.tableHitAt(m.x, m.y)
+                        root.menuCellR = th ? th.r : 0; root.menuCellC = th ? th.c : 0
+                    }
+                    root.openBlockMenu(m.x, m.y - flick.contentY, trow)
                     return
                 }
                 // Press in the grip gutter → start a block drag-reorder.
@@ -1075,6 +1093,43 @@ FocusScope {
         }
     }
 
+    // +row / +column affordances for the focused table. Root overlays (above the
+    // document mouse layer) — a clickable strip inside the table couldn't receive
+    // events, since that mouse layer stacks over every delegate.
+    Item {
+        id: tableAdd
+        readonly property Item dlg: (blockModel.layoutRevision, blockModel.contentRevision, flick.contentY,
+            tcur.active ? root.cellForRow(cursor.focusRow) : null)
+        readonly property Item tItem: dlg ? dlg.tableItem : null
+        visible: tItem !== null
+        readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
+        readonly property real cw: tItem ? tItem.width : 0
+        readonly property real ch: tItem ? tItem.height : 0
+
+        Rectangle {   // + row, bottom edge
+            x: root.leftEdge; y: tableAdd.topV + tableAdd.ch + 2
+            width: tableAdd.cw; height: 14; radius: 3; z: 40
+            color: addRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+            border.width: 1; border.color: Theme.colors.border
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            MouseArea {
+                id: addRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: blockModel.tableInsertRow(cursor.focusRow, blockModel.tableRows(cursor.focusRow))
+            }
+        }
+        Rectangle {   // + column, right edge
+            x: root.leftEdge + tableAdd.cw + 2; y: tableAdd.topV
+            width: 14; height: tableAdd.ch; radius: 3; z: 40
+            color: addColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+            border.width: 1; border.color: Theme.colors.border
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            MouseArea {
+                id: addColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: blockModel.tableInsertColumn(cursor.focusRow, blockModel.tableColumns(cursor.focusRow))
+            }
+        }
+    }
+
     // One row of a hand-rolled menu (matches the app's flat dark style rather
     // than the default Controls Menu chrome). `danger` tints destructive items.
     component MenuRow: Rectangle {
@@ -1102,6 +1157,8 @@ FocusScope {
         id: blockMenu
         readonly property bool isCode: root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 2)
+        readonly property bool isTable: root.menuRow >= 0
+            && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 7)
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
         onClosed: root.forceActiveFocus()
@@ -1112,9 +1169,25 @@ FocusScope {
             MenuRow { text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
             MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
             MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
-            MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
-            Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
+            // --- table cell/row/column ops (table blocks only) ---
+            Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { visible: blockMenu.isTable; text: "Insert row above";  onActivated: root.tblInsRowAbove() }
+            MenuRow { visible: blockMenu.isTable; text: "Insert row below";  onActivated: root.tblInsRowBelow() }
+            MenuRow { visible: blockMenu.isTable; text: "Insert column left";  onActivated: root.tblInsColLeft() }
+            MenuRow { visible: blockMenu.isTable; text: "Insert column right"; onActivated: root.tblInsColRight() }
+            Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { visible: blockMenu.isTable; text: "Align left";   onActivated: root.tblAlign(0) }
+            MenuRow { visible: blockMenu.isTable; text: "Align center"; onActivated: root.tblAlign(1) }
+            MenuRow { visible: blockMenu.isTable; text: "Align right";  onActivated: root.tblAlign(2) }
+            MenuRow { visible: blockMenu.isTable; text: blockModel.tableHeaderRows(root.menuRow) > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
+            Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { visible: blockMenu.isTable; text: "Delete row";    danger: true; onActivated: root.tblDelRow() }
+            MenuRow { visible: blockMenu.isTable; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
+            // --- code (non-table) ---
+            Rectangle { visible: !blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow {
+                visible: !blockMenu.isTable
                 text: blockMenu.isCode ? "Change language…" : "Make code block"
                 onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
                                               : root.makeCodeAt(root.menuRow)

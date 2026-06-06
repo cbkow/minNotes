@@ -215,9 +215,13 @@ DESIGN.md  SPIKE.md  STATUS.md
       **Mouse (P4)**: routed through the document's central mouse layer (delegates
       can't own a MouseArea) — `BlockTable.cellAtPoint` hit-tests a click → click
       to place the cell caret, drag within a cell for text selection, drag across
-      cells for a rectangular cell-range highlight (`tcur` range state). Remaining:
-      structure ops + entry points (P5), column widths/single-hairline grid (P6),
-      clipboard tier (P7).
+      cells for a rectangular cell-range highlight (`tcur` range state).
+      **Structure + entry points (P5)**: a LeftRail **Table** button + block-menu
+      "Insert table below"; Notion-style **+row/+column** strips on the focused
+      table (root overlays — a button inside the table can't receive clicks under
+      the mouse layer); right-click a cell → insert/delete row & column, align
+      left/center/right, toggle header row. Remaining: column widths/single-
+      hairline grid (P6), clipboard tier (P7).
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
