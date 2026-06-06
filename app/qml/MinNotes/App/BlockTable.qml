@@ -25,6 +25,16 @@ Item {
     property int  caretPos: 0
     property int  selFrom: 0
     property int  selTo: 0
+    // Rectangular cell-range selection (−1 = none); inclusive corners.
+    property int  rangeR0: -1
+    property int  rangeC0: -1
+    property int  rangeR1: -1
+    property int  rangeC1: -1
+    function inRange(r, c) {
+        if (rangeR0 < 0) return false
+        return r >= Math.min(rangeR0, rangeR1) && r <= Math.max(rangeR0, rangeR1)
+            && c >= Math.min(rangeC0, rangeC1) && c <= Math.max(rangeC0, rangeC1)
+    }
 
     readonly property int  defaultColWidth: 160
     readonly property int  cellPadH: 8
@@ -48,6 +58,25 @@ Item {
     implicitWidth:  Math.min(contentW, maxWidth)
     implicitHeight: grid.implicitHeight + 1
 
+    // Hit-test a point (in this item's coords) → {r, c, pos}. Used by the editor's
+    // central mouse handler to place the table caret (delegates can't own a
+    // MouseArea — the document's mouse layer sits above them).
+    function cellAtPoint(px, py) {
+        var cx = px + hflick.contentX, accX = 0, c = colCount - 1
+        for (var i = 0; i < colCount; ++i) { accX += tv.colW(i); if (cx < accX) { c = i; break } }
+        var accY = 0, r = rowCount - 1
+        for (var j = 0; j < rowCount; ++j) {
+            var ri = rowRep.itemAt(j); var h = ri ? ri.rowHeight : 24
+            if (py < accY + h) { r = j; break }
+            accY += h
+        }
+        var pos = 0
+        var rowItem = rowRep.itemAt(r)
+        var te = rowItem ? rowItem.cellTe(c) : null
+        if (te) { var lp = te.mapFromItem(tv, px, py); pos = te.positionAt(lp.x, lp.y) }
+        return { r: Math.max(0, r), c: Math.max(0, c), pos: pos }
+    }
+
     Flickable {
         id: hflick
         anchors.fill: parent
@@ -61,11 +90,13 @@ Item {
         Column {
             id: grid
             Repeater {
+                id: rowRep
                 model: tv.rowCount
                 delegate: Row {
                     id: gridRow
                     required property int index
                     readonly property int r: index
+                    function cellTe(c) { var it = cellRep.itemAt(c); return it ? it.teItem : null }
                     // Row height = tallest cell's content, computed into a PLAIN
                     // number (not the positioner's implicitHeight, which derives
                     // from child heights — binding a cell's height to it loops).
@@ -87,12 +118,15 @@ Item {
                             readonly property int c: index
                             readonly property bool isHeader: gridRow.r < tv.headerRows
                             readonly property bool isFocusedCell: tv.focused && gridRow.r === tv.focusR && c === tv.focusC
+                            readonly property bool isSelected: tv.inRange(gridRow.r, c)
                             readonly property real contentH: cellText.implicitHeight + 2 * tv.cellPadV
+                            property alias teItem: cellText
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
                             Component.onCompleted: gridRow.recompute()
-                            color: isHeader ? Theme.colors.surfaceHover : "transparent"
+                            color: isSelected ? Theme.colors.selectionBg
+                                 : isHeader   ? Theme.colors.surfaceHover : "transparent"
                             border.width: 1; border.color: Theme.colors.border
 
                             // in-cell selection highlight (behind glyphs); single

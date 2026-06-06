@@ -211,9 +211,13 @@ DESIGN.md  SPIKE.md  STATUS.md
       table) — type/backspace/delete in a cell, arrows move within/across cells,
       Up/Down past the edge exits the table, Tab/Shift-Tab move cells (Tab past the
       last adds a row, lands select-all), Enter → cell below (Shift-Enter = newline
-      in cell), Esc collapses/exits; in-cell caret + selection overlays. Remaining:
-      mouse/selection (P4), structure ops + entry points (P5), column widths/single-
-      hairline grid (P6), clipboard tier (P7).
+      in cell), Esc collapses/exits; in-cell caret + selection overlays.
+      **Mouse (P4)**: routed through the document's central mouse layer (delegates
+      can't own a MouseArea) — `BlockTable.cellAtPoint` hit-tests a click → click
+      to place the cell caret, drag within a cell for text selection, drag across
+      cells for a rectangular cell-range highlight (`tcur` range state). Remaining:
+      structure ops + entry points (P5), column widths/single-hairline grid (P6),
+      clipboard tier (P7).
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

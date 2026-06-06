@@ -53,6 +53,13 @@ FocusScope {
     property real menuX: 0
     property real menuY: 0
 
+    // Table mouse-drag state: anchor cell/char captured on press, so drag extends
+    // an in-cell text selection (same cell) or a rectangular cell range (across).
+    property bool tableDragging: false
+    property int  tableAnchorR: 0
+    property int  tableAnchorC: 0
+    property int  tableAnchorPos: 0
+
     // Is a content-x in the left grip gutter (just left of the text column)?
     function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
     // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
@@ -214,6 +221,13 @@ FocusScope {
         property int cc: 0
         property int pos: 0
         property int anchorPos: 0
+        // Rectangular cell-range selection (−1 = none); set by cross-cell drag.
+        property int rangeR0: -1
+        property int rangeC0: -1
+        property int rangeR1: -1
+        property int rangeC1: -1
+        function clearRange() { rangeR0 = -1; rangeC0 = -1; rangeR1 = -1; rangeC1 = -1 }
+        function setRange(r0, c0, r1, c1) { rangeR0 = r0; rangeC0 = c0; rangeR1 = r1; rangeC1 = c1 }
         readonly property int row: cursor.focusRow
         readonly property bool active: (blockModel.layoutRevision, blockModel.contentRevision,
                                         blockModel.typeForRow(cursor.focusRow) === 7)
@@ -229,6 +243,7 @@ FocusScope {
             cc = Math.max(0, Math.min(c, cols() - 1))
             pos = (p === undefined) ? text().length : p
             clampPos(); anchorPos = pos
+            clearRange()
             cursor.sync()
         }
 
@@ -374,6 +389,19 @@ FocusScope {
         var te = cell.teItem
         var col = te.positionAt(cx - te.x, cy - cell.y - te.y)
         return { row: row, col: col }
+    }
+    // (cx, cy) in CONTENT coordinates → {row, r, c, pos} if over a table, else
+    // null. Delegates to the table's own BlockTable.cellAtPoint (its delegate
+    // can't own a MouseArea — the document mouse layer sits above it).
+    function tableHitAt(cx, cy) {
+        var row = blockModel.rowForY(Math.max(0, cy))
+        if (blockModel.typeForRow(row) !== 7) return null
+        var dcell = cellForRow(row)
+        var bt = dcell ? dcell.tableItem : null
+        if (!bt) return null
+        var p = bt.mapFromItem(mouse, cx, cy)
+        var hit = bt.cellAtPoint(p.x, p.y)
+        return { row: row, r: hit.r, c: hit.c, pos: hit.pos }
     }
 
     // --- Central navigation. Uses the focus block's text layout for vertical
@@ -567,6 +595,7 @@ FocusScope {
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
         // Table mode: route editing/navigation to the cell sub-cursor.
         else if (inTable) {
+            if (tcur.rangeR0 >= 0) tcur.clearRange()   // any key collapses a cell-range selection
             if (k === Qt.Key_Right) tcur.right(shift)
             else if (k === Qt.Key_Left) tcur.left(shift)
             else if (k === Qt.Key_Down) tcur.down()
@@ -645,6 +674,7 @@ FocusScope {
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
+                readonly property Item tableItem: tableHost   // BlockTable, for table hit-testing
                 // Horizontal measure for this block by type (page vs text bound).
                 // Keyed off te.btype (already reactive) — NOT the layout revision,
                 // which the measured height bumps and would form a binding loop.
@@ -746,6 +776,8 @@ FocusScope {
                     caretPos: tcur.pos
                     selFrom: Math.min(tcur.pos, tcur.anchorPos)
                     selTo: Math.max(tcur.pos, tcur.anchorPos)
+                    rangeR0: focused ? tcur.rangeR0 : -1
+                    rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
                 }
 
                 Rectangle {  // code background — matches the syntax theme's fill
@@ -906,6 +938,17 @@ FocusScope {
                     return
                 }
                 cursor.resetGoalX(); cursor.clearMarks()
+                // Click into a table cell → place the table caret; arm drag for
+                // in-cell text selection / cross-cell range.
+                var th = root.tableHitAt(m.x, m.y)
+                if (th) {
+                    if (th.row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
+                    cursor.setCaret(th.row, 0)
+                    tcur.place(th.r, th.c, th.pos)
+                    root.tableDragging = true
+                    root.tableAnchorR = th.r; root.tableAnchorC = th.c; root.tableAnchorPos = th.pos
+                    return
+                }
                 var h = root.hitTest(m.x, m.y)
                 if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
                 else {
@@ -922,6 +965,20 @@ FocusScope {
                     root.dropGap = root.gapForY(m.y)
                     return
                 }
+                if (root.tableDragging) {
+                    var th = root.tableHitAt(m.x, m.y)
+                    if (th && th.row === cursor.focusRow) {
+                        if (th.r === root.tableAnchorR && th.c === root.tableAnchorC) {
+                            tcur.clearRange()                      // same cell → in-cell text selection
+                            tcur.cr = th.r; tcur.cc = th.c
+                            tcur.anchorPos = root.tableAnchorPos; tcur.pos = th.pos
+                        } else {
+                            tcur.setRange(root.tableAnchorR, root.tableAnchorC, th.r, th.c)   // cross-cell range
+                        }
+                        cursor.sync()
+                    }
+                    return
+                }
                 if (root.dragging) {
                     root.dragX = m.x; root.dragViewY = m.y - flick.contentY
                     var h = root.hitTest(m.x, m.y)
@@ -933,10 +990,10 @@ FocusScope {
                 mouse.overGrip = root.inGutter(m.x)
             }
             onExited: { root.hoverRow = -1; mouse.overGrip = false }
-            onReleased: { if (root.blockDragging) root.commitBlockDrag(); else root.dragging = false }
+            onReleased: { if (root.blockDragging) root.commitBlockDrag(); else { root.dragging = false; root.tableDragging = false } }
             onCanceled: {
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
-                else root.dragging = false
+                else { root.dragging = false; root.tableDragging = false }
             }
             onDoubleClicked: (m) => {
                 // End the press-drag the 2nd press armed, so a tiny mouse jitter
