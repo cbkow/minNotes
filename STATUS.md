@@ -245,8 +245,11 @@ DESIGN.md  SPIKE.md  STATUS.md
       is pinned to that table and the press/drag/resize logic is shared via
       `beginTableInteraction`/`updateTableInteraction`/`endTableInteraction` (the doc
       central handler and the full-frame MouseArea both call them). Right-click a
-      table → "Open in tab"; deleting the active table falls back to Document.
-      *Remaining:* full-frame +row/+column buttons and a horizontal scrollbar.
+      table → "Open in tab"; deleting the active table falls back to Document. The
+      full-frame view has its own +row/+column buttons and a grabbable horizontal
+      scrollbar (direct children — nothing stacks above it there), so a table tab is
+      a complete editor at full width. The dataset+full-frame split is the
+      foundation for a more spreadsheet-like table grid later.
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

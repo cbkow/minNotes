@@ -1191,7 +1191,7 @@ FocusScope {
         visible: root.activeTableRow >= 0
         anchors.fill: parent
         contentWidth: width
-        contentHeight: frameTable.implicitHeight + 40
+        contentHeight: frameTable.implicitHeight + 70   // room for the scrollbar + row button
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {
@@ -1243,6 +1243,51 @@ FocusScope {
                 var bc = frameTable.columnBorderAt(m.x)
                 if (bc >= 0) blockModel.tableSetColWidth(root.activeTableRow, bc, 0)
             }
+        }
+
+        // Full-frame affordances: +column (right), horizontal scrollbar + +row
+        // (bottom). Direct children — no mouse-layer conflict in this view.
+        Rectangle {   // + column
+            x: 20 + frameTable.width + 2; y: 20
+            width: 14; height: frameTable.height; radius: 3
+            color: fAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+            border.width: 1; border.color: Theme.colors.border
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            MouseArea { id: fAddColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: blockModel.tableInsertColumn(root.activeTableRow, blockModel.tableColumns(root.activeTableRow)) }
+        }
+        Rectangle {   // horizontal scrollbar (when overflowing)
+            visible: frameTable.overflowing
+            x: 20; y: 20 + frameTable.height + 2
+            width: frameTable.width; height: Theme.dim.scrollBarWidth; color: "transparent"
+            readonly property real maxScroll: Math.max(0, frameTable.contentW - frameTable.width)
+            readonly property real thumbW: Math.max(24, width * frameTable.width / Math.max(1, frameTable.contentW))
+            readonly property real maxThumbX: width - thumbW
+            Rectangle {
+                height: parent.height; radius: height / 2; width: parent.thumbW
+                x: parent.maxScroll > 0 ? (frameTable.scrollX / parent.maxScroll) * parent.maxThumbX : 0
+                color: Theme.colors.textSubtle
+                opacity: fHbarMA.pressed ? 0.85 : (fHbarMA.containsMouse ? 0.65 : 0.45)
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+            MouseArea {
+                id: fHbarMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                function setScroll(mx) {
+                    var tx = Math.max(0, Math.min(parent.maxThumbX, mx - parent.thumbW / 2))
+                    if (parent.maxThumbX > 0) frameTable.scrollX = (tx / parent.maxThumbX) * parent.maxScroll
+                }
+                onPressed: (m) => setScroll(m.x)
+                onPositionChanged: (m) => { if (pressed) setScroll(m.x) }
+            }
+        }
+        Rectangle {   // + row (below the scrollbar when present)
+            x: 20; y: 20 + frameTable.height + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 6 : 2)
+            width: frameTable.width; height: 14; radius: 3
+            color: fAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+            border.width: 1; border.color: Theme.colors.border
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            MouseArea { id: fAddRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: blockModel.tableInsertRow(root.activeTableRow, blockModel.tableRows(root.activeTableRow)) }
         }
     }
 
