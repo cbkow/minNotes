@@ -33,6 +33,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/FlatToolTip.qml
         qml/MinNotes/App/LeftRail.qml
         qml/MinNotes/App/BottomRail.qml
+        qml/MinNotes/App/BlockTable.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf

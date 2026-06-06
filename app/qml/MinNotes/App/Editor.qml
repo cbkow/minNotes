@@ -385,6 +385,7 @@ FocusScope {
     function addBlockBelow(row) { blockModel.insertBlock(row + 1); cursor.setCaret(row + 1, 0); cursor.sync() }
     function duplicateBlock(row) { blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync() }
     function makeCodeAt(row)    { blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
+    function insertTableAt(row) { blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); cursor.sync() }
     function deleteBlock(row) {
         if (blockModel.count > 1) {
             blockModel.removeBlock(row)
@@ -521,7 +522,10 @@ FocusScope {
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
                 // Code blocks get double vertical padding (24 vs 12) so the
                 // syntax-themed background has breathing room above/below.
-                height: (te.btype === 2 ? 24 : 12) + (isMedia ? cell.measure * 0.5 : (te.btype === 6 ? 18 : te.implicitHeight))
+                height: isMedia      ? 12 + cell.measure * 0.5
+                      : te.btype === 6 ? 12 + 18                       // divider
+                      : te.btype === 7 ? 12 + tableHost.implicitHeight // table
+                      : (te.btype === 2 ? 24 : 12) + te.implicitHeight
 
                 onHeightChanged: if (active) blockModel.setMeasuredHeight(logicalRow, height)
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
@@ -591,6 +595,19 @@ FocusScope {
                     Text { anchors.centerIn: parent; color: "white"; text: "▶ " + (cell.active ? blockModel.contentForRow(cell.logicalRow) : ""); font.pixelSize: 14 }
                 }
 
+                BlockTable {  // table block — passive grid (interaction lands in later phases)
+                    id: tableHost
+                    visible: cell.active && te.btype === 7
+                    logicalRow: cell.logicalRow
+                    active: cell.active && te.btype === 7
+                    x: cell.colLeft; y: 6
+                    // Use the room from the left edge to near the right viewport
+                    // edge, capped at the page bound; overflow scrolls inside.
+                    maxWidth: Math.min(root.pageWidth, flick.width - cell.colLeft - 20)
+                    width: implicitWidth
+                    height: implicitHeight   // a bare Item won't adopt implicitHeight itself
+                }
+
                 Rectangle {  // code background — matches the syntax theme's fill
                     visible: cell.active && !cell.isMedia && te.btype === 2
                     anchors.fill: te; anchors.margins: -8
@@ -603,7 +620,7 @@ FocusScope {
 
                 TextEdit {
                     id: te
-                    visible: !cell.isMedia && btype !== 6   // hidden for divider
+                    visible: !cell.isMedia && btype !== 6 && btype !== 7   // hidden for divider/table
                     readOnly: true
                     activeFocusOnPress: false
                     selectByMouse: false
@@ -673,7 +690,7 @@ FocusScope {
                 }
 
                 Rectangle {  // caret
-                    visible: cursor.active && cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6
+                    visible: cursor.active && cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 7
                     color: Theme.colors.accent
                     width: 2
                     property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))
@@ -898,6 +915,7 @@ FocusScope {
             MenuRow { text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
             MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
             MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
+            MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow {
                 text: blockMenu.isCode ? "Change language…" : "Make code block"

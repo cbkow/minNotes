@@ -202,9 +202,13 @@ DESIGN.md  SPIKE.md  STATUS.md
       `tableSetCell/Insert…/Delete…/PasteTSV` mutators, per-cell typing coalesced).
       **Layout groundwork**: a `measureForType` hook in `Editor.qml` — prose/code/
       media keep the comfortable 760 measure (centred, unchanged); only tables may
-      exceed it (P2 adds the wider footprint + horizontal scroll). No table UI yet
-      (renders in P2). Remaining: render (P2), keyboard (P3), mouse/selection (P4),
-      structure ops + entry points (P5), column widths (P6), clipboard tier (P7).
+      exceed it. **Render (P2)**: `BlockTable.qml` — passive grid of read-only cells
+      driven by the query seam, header-row styling, per-column alignment, the wider
+      footprint + horizontal scroll inside the block. Row height is computed into a
+      plain number per row (the `Row` positioner's implicitHeight would loop). A
+      temporary "Insert table below" block-menu item creates one. Remaining:
+      keyboard (P3), mouse/selection (P4), structure ops + entry points (P5),
+      column widths/single-hairline grid (P6), clipboard tier (P7).
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
