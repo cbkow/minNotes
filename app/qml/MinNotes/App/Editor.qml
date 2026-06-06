@@ -14,17 +14,13 @@ FocusScope {
     id: root
     focus: true
     Component.onCompleted: forceActiveFocus()
-    // One comfortable reading measure for ALL prose/code/media (760 reads fine —
-    // no reason to widen it). The column stays centred, exactly as before. TABLES
-    // are the sole exception: they may exceed it (capped + horizontal-scrolled in
-    // the table delegate); pageWidth is their outer bound.
-    property real pageWidth: Math.min(width - 40, Theme.dim.pageWidth)
-    property real textWidth: Math.min(width - 40, Theme.dim.columnWidth)
-    readonly property real leftEdge: (flick.width - textWidth) / 2
-    // Per-type horizontal measure: only Table(7) gets the wider page bound; every
-    // other block keeps the text measure. Drives cell width + drag-overlay width.
-    function measureForType(t) { return (t === 7) ? pageWidth : textWidth }
-    function measureForRow(row) { return measureForType(blockModel.typeForRow(row)) }
+    // Single 760 reading measure shared by ALL blocks (tables included for now),
+    // left-aligned at a common edge (the column is centred in the window). Tables
+    // scroll horizontally inside their delegate when content exceeds it.
+    property real pageWidth: Math.min(width - 40, Theme.dim.columnWidth)
+    readonly property real leftEdge: (flick.width - pageWidth) / 2
+    function measureForType(t) { return pageWidth }
+    function measureForRow(row) { return pageWidth }
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
     property bool caretOn: true
@@ -548,6 +544,59 @@ FocusScope {
     function tblDelCol()      { blockModel.tableDeleteColumn(menuRow, menuCellC) }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
+
+    // --- Clipboard (copy / cut / paste), table- and text-aware ---
+    function selectedText() {
+        if (!cursor.hasSel) return ""
+        if (cursor.loRow === cursor.hiRow) return blockModel.contentForRow(cursor.loRow).slice(cursor.loCol, cursor.hiCol)
+        var parts = [blockModel.contentForRow(cursor.loRow).slice(cursor.loCol)]
+        for (var r = cursor.loRow + 1; r < cursor.hiRow; ++r) parts.push(blockModel.contentForRow(r))
+        parts.push(blockModel.contentForRow(cursor.hiRow).slice(0, cursor.hiCol))
+        return parts.join("\n")
+    }
+    function doCopy() {
+        if (tcur.active) {
+            var fr = cursor.focusRow
+            if (tcur.rangeR0 >= 0) {
+                clipboard.writeTable(blockModel.tableRangeTSV(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1),
+                                     blockModel.tableRangeHtml(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1))
+            } else {
+                var t = blockModel.tableCell(fr, tcur.cr, tcur.cc)
+                clipboard.writeText(tcur.pos !== tcur.anchorPos
+                    ? t.slice(Math.min(tcur.pos, tcur.anchorPos), Math.max(tcur.pos, tcur.anchorPos)) : t)
+            }
+            return
+        }
+        clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
+    }
+    function doPaste() {
+        var txt = clipboard.readText()
+        if (txt.length === 0) return
+        if (tcur.active) {
+            if (txt.indexOf("\t") >= 0 || txt.indexOf("\n") >= 0)
+                blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, txt)   // multi-cell paste
+            else tcur.type(txt)                                                    // single value into the cell
+            return
+        }
+        if (cursor.hasSel) cursor.deleteSelection()
+        blockModel.insertText(cursor.focusRow, cursor.focusCol, txt, 0)
+        cursor.setCaret(cursor.focusRow, cursor.focusCol + txt.length)
+    }
+    function doCut() {
+        doCopy()
+        if (tcur.active) {
+            if (tcur.rangeR0 >= 0) { blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1); tcur.clearRange() }
+            else if (tcur.pos !== tcur.anchorPos) tcur.delSel()
+            else blockModel.tableSetCell(cursor.focusRow, tcur.cr, tcur.cc, "")
+            cursor.sync()
+        } else if (cursor.hasSel) cursor.deleteSelection()
+    }
+    function copyBlock(row) {
+        if (blockModel.typeForRow(row) === 7)
+            clipboard.writeTable(blockModel.tableRangeTSV(row, 0, 0, blockModel.tableRows(row) - 1, blockModel.tableColumns(row) - 1),
+                                 blockModel.tableRangeHtml(row, 0, 0, blockModel.tableRows(row) - 1, blockModel.tableColumns(row) - 1))
+        else clipboard.writeText(blockModel.contentForRow(row))
+    }
     function deleteBlock(row) {
         if (blockModel.count > 1) {
             blockModel.removeBlock(row)
@@ -611,6 +660,9 @@ FocusScope {
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
+        else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
+        else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
         // Table mode: route editing/navigation to the cell sub-cursor.
         else if (inTable) {
             if (tcur.rangeR0 >= 0) tcur.clearRange()   // any key collapses a cell-range selection
@@ -781,11 +833,11 @@ FocusScope {
                     visible: cell.active && te.btype === 7
                     logicalRow: cell.logicalRow
                     active: cell.active && te.btype === 7
-                    x: cell.colLeft; y: 6
-                    // Use the room from the left edge to near the right viewport
-                    // edge, capped at the page bound; overflow scrolls inside.
-                    maxWidth: Math.min(root.pageWidth, flick.width - cell.colLeft - 20)
+                    // Left-aligned at the shared left edge, up to the page measure;
+                    // wider content scrolls inside.
+                    maxWidth: root.pageWidth
                     width: implicitWidth
+                    x: cell.colLeft; y: 6
                     height: implicitHeight   // a bare Item won't adopt implicitHeight itself
                     // Focus / in-cell caret + selection (driven by the table sub-cursor).
                     focused: cell.isFocus && te.btype === 7
@@ -1155,9 +1207,43 @@ FocusScope {
         readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
+        readonly property real tableX: root.leftEdge   // table is left-aligned at the shared edge
+        readonly property bool overflow: tItem ? tItem.overflowing : false
+        readonly property real sbH: Theme.dim.scrollBarWidth
 
-        Rectangle {   // + row, bottom edge
-            x: root.leftEdge; y: tableAdd.topV + tableAdd.ch + 2
+        Rectangle {   // horizontal scrollbar — a root overlay (an inner ScrollBar
+                      // would sit under the document mouse layer) that drives the
+                      // table's scrollX; sits between the table and the +row button.
+            visible: tableAdd.overflow
+            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + 2
+            width: tableAdd.cw; height: tableAdd.sbH; z: 41; color: "transparent"
+            readonly property real contentTW: tableAdd.tItem ? tableAdd.tItem.contentW : 0
+            readonly property real maxScroll: Math.max(0, contentTW - tableAdd.cw)
+            readonly property real thumbW: Math.max(24, width * tableAdd.cw / Math.max(1, contentTW))
+            readonly property real maxThumbX: width - thumbW
+            Rectangle {
+                id: hthumb
+                height: parent.height; radius: height / 2; width: parent.thumbW
+                x: parent.maxScroll > 0 && tableAdd.tItem ? (tableAdd.tItem.scrollX / parent.maxScroll) * parent.maxThumbX : 0
+                color: Theme.colors.textSubtle
+                opacity: hbarMA.pressed ? 0.85 : (hbarMA.containsMouse ? 0.65 : 0.45)
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+            MouseArea {
+                id: hbarMA
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                function setScroll(mx) {
+                    var tx = Math.max(0, Math.min(parent.maxThumbX, mx - parent.thumbW / 2))
+                    if (parent.maxThumbX > 0 && tableAdd.tItem)
+                        tableAdd.tItem.scrollX = (tx / parent.maxThumbX) * parent.maxScroll
+                }
+                onPressed: (m) => setScroll(m.x)
+                onPositionChanged: (m) => { if (pressed) setScroll(m.x) }
+            }
+        }
+
+        Rectangle {   // + row, bottom edge (below the scrollbar when present)
+            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + (tableAdd.overflow ? tableAdd.sbH + 6 : 2)
             width: tableAdd.cw; height: 14; radius: 3; z: 40
             color: addRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
@@ -1168,7 +1254,7 @@ FocusScope {
             }
         }
         Rectangle {   // + column, right edge
-            x: root.leftEdge + tableAdd.cw + 2; y: tableAdd.topV
+            x: tableAdd.tableX + tableAdd.cw + 2; y: tableAdd.topV
             width: 14; height: tableAdd.ch; radius: 3; z: 40
             color: addColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
@@ -1219,6 +1305,7 @@ FocusScope {
             MenuRow { text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
             MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
             MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
+            MenuRow { text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }

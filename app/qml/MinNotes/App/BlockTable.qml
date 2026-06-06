@@ -98,6 +98,11 @@ Item {
     implicitWidth:  Math.min(contentW, maxWidth)
     implicitHeight: grid.implicitHeight + 1
 
+    // Scroll position, driven by the editor's root-overlay scrollbar (an inner
+    // ScrollBar would sit under the document mouse layer and never get drags).
+    property alias scrollX: hflick.contentX
+    readonly property bool overflowing: contentW > width
+
     // Hit-test a point (in this item's coords) → {r, c, pos}. Used by the editor's
     // central mouse handler to place the table caret (delegates can't own a
     // MouseArea — the document's mouse layer sits above them).
@@ -230,5 +235,15 @@ Item {
                 }
             }
         }
+    }
+
+    // Right-edge indicator when the grid is clipped by the column width (i.e. more
+    // table off to the right): gives the clip a clean edge and cues the scroll.
+    // Hidden once scrolled to the far end (the real grid border takes over there).
+    Rectangle {
+        visible: tv.overflowing && hflick.contentX < tv.contentW - tv.width - 0.5
+        anchors.right: parent.right
+        y: 0; width: 2; height: grid.implicitHeight
+        color: Theme.colors.border
     }
 }

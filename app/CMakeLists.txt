@@ -14,6 +14,8 @@ qt_add_executable(minnotesapp
     core/CodeHighlighter.cpp
     core/TableGrid.h
     core/TableGrid.cpp
+    core/Clipboard.h
+    core/Clipboard.cpp
 )
 
 # Mark Theme.qml as a QML singleton BEFORE qt_add_qml_module so the generated

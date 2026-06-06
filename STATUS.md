@@ -191,8 +191,8 @@ DESIGN.md  SPIKE.md  STATUS.md
       undoable. "Change language…" opens a language picker (typed `TextInput` +
       common quick-picks). `Del` now deletes **forward** (`forwardDelete`) instead of
       mirroring Backspace.
-- [~] **Tables — foundation (P0–P1)** — *in progress; see
-      `~/.claude/plans/virtual-tinkering-island.md`.* Tables are one block whose 2D
+- [x] **Tables (P0–P7)** — a self-contained table tier docked as one block.
+      Tables are one block whose 2D
       grid serializes to compact JSON in the block's `content` (so undo/redo +
       persistence reuse the existing chokepoint). **Data tier**: `core/TableGrid`
       — pure grid value-type (JSON round-trip, structure ops, TSV/CSV import +
@@ -200,13 +200,16 @@ DESIGN.md  SPIKE.md  STATUS.md
       threaded through the type/height plumbing; `BlockModel` table seam
       (`insertTable` + cached `tableRows/Columns/Cell/ColWidth/…` queries +
       `tableSetCell/Insert…/Delete…/PasteTSV` mutators, per-cell typing coalesced).
-      **Layout groundwork**: a `measureForType` hook in `Editor.qml` — prose/code/
-      media keep the comfortable 760 measure (centred, unchanged); only tables may
-      exceed it. **Render (P2)**: `BlockTable.qml` — passive grid of read-only cells
-      driven by the query seam, header-row styling, per-column alignment, the wider
-      footprint + horizontal scroll inside the block. Row height is computed into a
-      plain number per row (the `Row` positioner's implicitHeight would loop). A
-      temporary "Insert table below" block-menu item creates one. Remaining:
+      **Layout**: after exploring wider/centered/full-width options, the doc kept a
+      single **760** reading measure for ALL blocks (tables included), left-aligned
+      at a shared edge; a wide table **scrolls horizontally inside its block** with a
+      **right-edge border** cueing the clip (hidden once scrolled to the end). The
+      wide-table-ergonomics question is parked for a planned **bottom tab system**
+      (Document + one full-frame tab per table). **Render (P2)**: `BlockTable.qml` —
+      passive grid of read-only cells driven by the query seam, header-row styling,
+      per-column alignment, horizontal scroll via a **root-overlay scrollbar** (an
+      inner one sits under the document mouse layer). Row height is computed into a
+      plain number per row (the `Row` positioner's implicitHeight would loop).
       **Keyboard (P3)**: a `tcur` table sub-cursor (active while the caret is on a
       table) — type/backspace/delete in a cell, arrows move within/across cells,
       Up/Down past the edge exits the table, Tab/Shift-Tab move cells (Tab past the
@@ -226,9 +229,21 @@ DESIGN.md  SPIKE.md  STATUS.md
       >0 = pinned), so auto never pollutes undo; drag a column border to resize
       (live preview, one undo step), double-click a border resets to auto;
       single-hairline grid (cells draw right+bottom, frame draws top+left).
-      Remaining: clipboard tier (P7).
+      **Clipboard (P7)**: a new `core/Clipboard` service (`QClipboard`/`QMimeData`,
+      exposed like `blockModel`) — the app's first clipboard. Cmd-C/X/V in tables
+      copy a cell range as TSV + HTML `<table>` (round-trips into Excel/Sheets/Docs)
+      and paste a spreadsheet range from the TSV plain-text form, growing the grid;
+      Cmd-C/V/X + a "Copy" menu item also work for normal text/blocks. Image read
+      is shaped but unwired (future media paste).
 
 ## Next (rough order)
+- [ ] **Table tabs** — a bottom tab strip (above the BottomRail, shown only when a
+      table exists): **Document** tab + one tab per table in appearance order,
+      identified by block id (label/position derived live so reorders renumber but
+      the active tab follows its table). Selecting a table tab shows it **full-frame**
+      (full width + height, both scrollbars) — reusing the existing edit model by
+      pinning the cursor to that table and swapping the render + hit-test target.
+      Tables auto-named "Table N"; right-click a table → "Open in tab".
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
       (today only Cmd+B/I); active-format-at-caret (type after toggling with no
       selection); source-mode toggle (reveal raw markdown); markdown typing

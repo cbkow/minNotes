@@ -176,6 +176,11 @@ public:
     Q_INVOKABLE void tableSetHeaderRows(int row, int n);
     // Paste TSV (tab/newline) into the table at anchor (r,c), growing as needed.
     Q_INVOKABLE void tablePasteTSV(int row, int r, int c, const QString& tsv);
+    // Serialize an inclusive cell range for the clipboard (TSV + HTML <table>).
+    Q_INVOKABLE QString tableRangeTSV(int row, int r0, int c0, int r1, int c1) const;
+    Q_INVOKABLE QString tableRangeHtml(int row, int r0, int c0, int r1, int c1) const;
+    // Clear every cell in an inclusive range (one undo step).
+    Q_INVOKABLE void tableClearRange(int row, int r0, int c0, int r1, int c1);
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).

@@ -38,8 +38,7 @@ QtObject {
         readonly property int paddingLoose:   16
         readonly property int radius:         4
         readonly property int scrollBarWidth: 9
-        readonly property int columnWidth:    760    // prose reading-measure cap
-        readonly property int pageWidth:      1080   // wider page bound: tables/code/media
+        readonly property int columnWidth:    760    // prose reading measure (comfortable)
         readonly property int docTopPad:      28     // breathing room above block 0
         readonly property int toolStripHeight: 34    // flat-button row height / rail width
     }

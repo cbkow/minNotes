@@ -2,6 +2,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include "core/BlockModel.h"
+#include "core/Clipboard.h"
 
 int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
@@ -11,9 +12,11 @@ int main(int argc, char* argv[]) {
     // The document model. Phase 1 backs this with the SQLite store (DESIGN §3–4);
     // for now it serves the synthetic blocks the spike proved the editor against.
     BlockModel model;
+    Clipboard clipboard;
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("blockModel", &model);
+    engine.rootContext()->setContextProperty("clipboard", &clipboard);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, []{ QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule("MinNotes.App", "Main");

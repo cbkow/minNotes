@@ -695,6 +695,48 @@ void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
     });
 }
 
+QString BlockModel::tableRangeTSV(int row, int r0, int c0, int r1, int c1) const {
+    if (rows_[clampRow(row)].type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
+    const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
+    QString out;
+    for (int r = R0; r <= R1; ++r) {
+        for (int c = C0; c <= C1; ++c) {
+            if (c > C0) out += QLatin1Char('\t');
+            QString t = g.cellText(r, c);
+            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            out += t;
+        }
+        if (r < R1) out += QLatin1Char('\n');
+    }
+    return out;
+}
+
+QString BlockModel::tableRangeHtml(int row, int r0, int c0, int r1, int c1) const {
+    if (rows_[clampRow(row)].type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
+    const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
+    QString out = QStringLiteral("<table>");
+    for (int r = R0; r <= R1; ++r) {
+        out += QStringLiteral("<tr>");
+        for (int c = C0; c <= C1; ++c)
+            out += QStringLiteral("<td>") + g.cellText(r, c).toHtmlEscaped() + QStringLiteral("</td>");
+        out += QStringLiteral("</tr>");
+    }
+    return out + QStringLiteral("</table>");
+}
+
+void BlockModel::tableClearRange(int row, int r0, int c0, int r1, int c1) {
+    mutateTable(row, [&](TableGrid& g) {
+        const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
+        const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
+        for (int r = R0; r <= R1; ++r)
+            for (int c = C0; c <= C1; ++c) g.setCellText(r, c, QString());
+    });
+}
+
 void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
     nRows = std::max(1, nRows); nCols = std::max(1, nCols);
