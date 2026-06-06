@@ -90,7 +90,8 @@ FocusScope {
         // bold=1, italic=2, code=4. Applied to typed text; cleared on caret nav.
         property int activeMarks: 0
         function toggleMark(kind) {
-            var bit = kind === "bold" ? 1 : kind === "italic" ? 2 : kind === "code" ? 4 : 0
+            var bit = kind === "bold" ? 1 : kind === "italic" ? 2 : kind === "code" ? 4
+                    : kind === "strike" ? 8 : kind === "underline" ? 16 : 0
             if (bit) activeMarks ^= bit
         }
         function clearMarks() { activeMarks = 0 }
@@ -283,9 +284,11 @@ FocusScope {
     // UNIFORMLY across the whole selection (all-covered → remove, else add), as
     // one grouped undo step.
     // Armed-mark state, for the rail's lit toggle when nothing is selected.
-    readonly property bool boldArmed:   (cursor.activeMarks & 1) !== 0
-    readonly property bool italicArmed: (cursor.activeMarks & 2) !== 0
-    readonly property bool codeArmed:   (cursor.activeMarks & 4) !== 0
+    readonly property bool boldArmed:      (cursor.activeMarks & 1) !== 0
+    readonly property bool italicArmed:    (cursor.activeMarks & 2) !== 0
+    readonly property bool codeArmed:      (cursor.activeMarks & 4) !== 0
+    readonly property bool strikeArmed:    (cursor.activeMarks & 8) !== 0
+    readonly property bool underlineArmed: (cursor.activeMarks & 16) !== 0
 
     function applyFormat(kind) {
         // No selection → Word-style toggle: arm the attribute for the next typing.
@@ -314,6 +317,17 @@ FocusScope {
         blockModel.endGroup()
         cursor.sync()
     }
+    // Toggle the caret block(s) to/from a block type (4 quote, 5 list); click the
+    // active type again → paragraph. One grouped undo step.
+    function toggleBlock(type) {
+        var lo = cursor.loRow, hi = cursor.hiRow
+        var isOn = caretType === type
+        blockModel.beginGroup(lo, hi)
+        for (var r = lo; r <= hi; ++r) blockModel.setBlockType(r, isOn ? 0 : type)
+        blockModel.endGroup()
+        cursor.sync()
+    }
+    function addDivider() { blockModel.insertDivider(cursor.focusRow); cursor.sync() }
 
     // Clear ALL formatting → plain paragraph: reset heading/quote/list block
     // style AND strip inline spans. Acts on the caret's block (no selection
@@ -350,6 +364,8 @@ FocusScope {
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
         else if (cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
+        else if (cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
+        else if (cmd && shift && k === Qt.Key_X) { applyFormat("strike"); event.accepted = true }
         else if (cmd && k === Qt.Key_Backslash) { clearFormatting(); event.accepted = true }
         else if (k === Qt.Key_Right) { navRight(shift); event.accepted = true }
         else if (k === Qt.Key_Left) { navLeft(shift); event.accepted = true }

@@ -159,6 +159,14 @@ DESIGN.md  SPIKE.md  STATUS.md
       ghost + accent drop-line follow the cursor; on release → `moveBlock`. Verified
       headless: move/undo/redo correct.
 
+- [x] **Formatting surface rounded out** — **strikethrough** + **underline** added
+      as span kinds (`SpanStrike`/`SpanUnderline`, render via `setFontStrikeOut`/
+      `setFontUnderline`, compose with the rest); rail buttons + `⌘⇧X`/`⌘U`; they
+      inherit undo + armed-typing. Rail **block-type** buttons: **quote**/**bullet
+      list** (toggle the caret block via `setBlockType`) and **divider**
+      (`insertDivider`). Rail sections (**Headings**, **Blocks**) are now
+      **collapsible** behind a chevron header — proves the rail-grows-down design.
+
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
       (today only Cmd+B/I); active-format-at-caret (type after toggling with no

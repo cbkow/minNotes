@@ -511,6 +511,48 @@ void BlockModel::setHeading(int row, int level) {
     endTxn();
 }
 
+void BlockModel::setBlockType(int row, int type) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    Row& r = rows_[row];
+    if (r.type != Paragraph && r.type != Heading && r.type != Quote && r.type != ListItem) return;
+    const uint8_t t = static_cast<uint8_t>(type);
+    if (t != Paragraph && t != Quote && t != ListItem) return;   // headings go through setHeading
+    if (r.type == t) return;
+    beginTxn(row, row);
+    r.type = t;
+    r.level = 0;                 // leaving a heading clears its level
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {TypeRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+void BlockModel::insertDivider(int afterRow) {
+    afterRow = std::clamp(afterRow, -1, static_cast<int>(rows_.size()) - 1);
+    const int at = afterRow + 1;
+    beginTxn(at, at - 1);        // empty `before`; after = [at,at]
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(
+        (at > 0) ? ranks_[at - 1] : QString(),
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+    beginInsertRows({}, at, at);
+    Row r{}; r.type = Divider; r.param = 1;
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, QString());
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
+    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    endInsertRows();
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QStringLiteral("divider"), QString(), QString());
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
 void BlockModel::clearFormat(int row, int start, int end) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     const int len = content_[row].size();
@@ -610,17 +652,21 @@ QString BlockModel::contentForRow(int row) const {
 
 // --- Semantic format spans --------------------------------------------------
 uint8_t BlockModel::spanKindFromString(const QString& s) {
-    if (s == QLatin1String("bold"))   return SpanBold;
-    if (s == QLatin1String("italic")) return SpanItalic;
-    if (s == QLatin1String("code"))   return SpanCode;
+    if (s == QLatin1String("bold"))      return SpanBold;
+    if (s == QLatin1String("italic"))    return SpanItalic;
+    if (s == QLatin1String("code"))      return SpanCode;
+    if (s == QLatin1String("strike"))    return SpanStrike;
+    if (s == QLatin1String("underline")) return SpanUnderline;
     return 0;
 }
 const char* BlockModel::spanKindToString(uint8_t k) {
     switch (k) {
-    case SpanBold:   return "bold";
-    case SpanItalic: return "italic";
-    case SpanCode:   return "code";
-    default:         return "";
+    case SpanBold:      return "bold";
+    case SpanItalic:    return "italic";
+    case SpanCode:      return "code";
+    case SpanStrike:    return "strike";
+    case SpanUnderline: return "underline";
+    default:            return "";
     }
 }
 
@@ -935,9 +981,11 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks) {
         shiftSpansInsert(spans, col, text.size());
     if (marks) {                                     // armed typing attributes → span the new run
         const int e = col + text.size();
-        if (marks & 1) addSpan(spans, col, e, SpanBold);
-        if (marks & 2) addSpan(spans, col, e, SpanItalic);
-        if (marks & 4) addSpan(spans, col, e, SpanCode);
+        if (marks & 1)  addSpan(spans, col, e, SpanBold);
+        if (marks & 2)  addSpan(spans, col, e, SpanItalic);
+        if (marks & 4)  addSpan(spans, col, e, SpanCode);
+        if (marks & 8)  addSpan(spans, col, e, SpanStrike);
+        if (marks & 16) addSpan(spans, col, e, SpanUnderline);
     }
     if (!spans.empty()) persistMeta(row);
     emit dataChanged(index(row), index(row), {ContentRole});

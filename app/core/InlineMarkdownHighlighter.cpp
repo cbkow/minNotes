@@ -77,11 +77,12 @@ protected:
         // --- semantic spans (no markers) — accumulate per-char flags so
         // overlapping bold+italic combine, then emit runs. ---
         if (spans.empty() || n == 0) return;
-        std::vector<uint8_t> fl(n, 0);   // bit0 bold, bit1 italic, bit2 code
+        std::vector<uint8_t> fl(n, 0);   // bit0 bold 1 italic 2 code 3 strike 4 underline
         bool any = false;
         for (const SpanFmt& sp : spans) {
             const int ls = std::max(0, sp.s - pos), le = std::min(n, sp.e - pos);
-            const uint8_t bit = sp.k == 1 ? 1 : sp.k == 2 ? 2 : sp.k == 3 ? 4 : 0;
+            const uint8_t bit = sp.k == 1 ? 1 : sp.k == 2 ? 2 : sp.k == 3 ? 4
+                              : sp.k == 4 ? 8 : sp.k == 5 ? 16 : 0;
             for (int x = ls; x < le; ++x) { fl[x] |= bit; any = true; }
         }
         if (!any) return;
@@ -92,6 +93,8 @@ protected:
             QTextCharFormat f;
             if (fl[x] & 1) f.setFontWeight(QFont::Bold);
             if (fl[x] & 2) f.setFontItalic(true);
+            if (fl[x] & 8)  f.setFontStrikeOut(true);
+            if (fl[x] & 16) f.setFontUnderline(true);
             if (fl[x] & 4) {   // code: glyphs only; chip drawn as a QML overlay
                 f.setForeground(codeColor);
                 f.setFontFamilies(codeFamilies());

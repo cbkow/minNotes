@@ -130,6 +130,10 @@ public:
     Q_INVOKABLE void clearFormat(int row, int start, int end);
     // Set a block's heading level (1–6) or 0 = paragraph. Text blocks only.
     Q_INVOKABLE void setHeading(int row, int level);
+    // Set a text block's type to paragraph(0)/quote(4)/list_item(5). Undoable.
+    Q_INVOKABLE void setBlockType(int row, int type);
+    // Insert a divider block after `afterRow` (undoable).
+    Q_INVOKABLE void insertDivider(int afterRow);
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
@@ -150,7 +154,8 @@ signals:
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
 
 public:
-    enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3 };
+    enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
+                              SpanStrike = 4, SpanUnderline = 5 };
 
 private:
     struct Span { int s; int e; uint8_t kind; };   // [s,e) over the row's text
