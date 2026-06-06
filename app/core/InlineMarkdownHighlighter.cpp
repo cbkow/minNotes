@@ -3,6 +3,7 @@
 #include <QTextDocument>
 #include <QTextCharFormat>
 #include <QVariant>
+#include <QStringList>
 #include <vector>
 
 // The actual highlighter. Owns the colours/flags/spans and does the work; the
@@ -17,7 +18,13 @@ public:
     QColor markerColor         = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
     QColor selectedMarkerColor = QColor(0xff, 0xff, 0xff);   // Theme.colors.textBright
     QColor codeColor           = QColor(0x4a, 0xa8, 0xff);   // Theme.colors.inlineCodeText (blue)
+    QString codeFont;                                        // Theme.font.mono (JetBrains); empty = fallback
     int selStart = -1, selEnd = -1;
+
+    QStringList codeFamilies() const {
+        return codeFont.isEmpty() ? QStringList{QStringLiteral("Menlo"), QStringLiteral("monospace")}
+                                  : QStringList{codeFont, QStringLiteral("monospace")};
+    }
     std::vector<SpanFmt> spans;
 
 protected:
@@ -33,7 +40,7 @@ protected:
         // BELOW the selection (so selecting code highlights it). Glyphs only.
         QTextCharFormat code;
         code.setForeground(codeColor);
-        code.setFontFamilies({QStringLiteral("Menlo"), QStringLiteral("monospace")});
+        code.setFontFamilies(codeFamilies());
 
         // A marker token at local [start,start+len): accent, or white if it sits
         // inside the current selection (so it stays legible over the highlight).
@@ -87,7 +94,7 @@ protected:
             if (fl[x] & 2) f.setFontItalic(true);
             if (fl[x] & 4) {   // code: glyphs only; chip drawn as a QML overlay
                 f.setForeground(codeColor);
-                f.setFontFamilies({QStringLiteral("Menlo"), QStringLiteral("monospace")});
+                f.setFontFamilies(codeFamilies());
             }
             setFormat(x, y - x, f);
             x = y;
@@ -125,6 +132,11 @@ QColor InlineMarkdownHighlighter::codeColor() const { return hl_->codeColor; }
 void InlineMarkdownHighlighter::setCodeColor(const QColor& c) {
     if (hl_->codeColor == c) return;
     hl_->codeColor = c; emit codeColorChanged(); hl_->rehighlight();
+}
+QString InlineMarkdownHighlighter::codeFontFamily() const { return hl_->codeFont; }
+void InlineMarkdownHighlighter::setCodeFontFamily(const QString& f) {
+    if (hl_->codeFont == f) return;
+    hl_->codeFont = f; emit codeFontFamilyChanged(); hl_->rehighlight();
 }
 
 int InlineMarkdownHighlighter::selStart() const { return hl_->selStart; }

@@ -24,6 +24,19 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Main.qml
         qml/MinNotes/App/Editor.qml
         qml/MinNotes/App/Theme.qml
+        qml/MinNotes/App/Icon.qml
+        qml/MinNotes/App/FlatButton.qml
+        qml/MinNotes/App/LeftRail.qml
+    RESOURCES
+        qml/MinNotes/App/PhosphorIcons.js
+        qml/MinNotes/App/fonts/Phosphor.ttf
+        qml/MinNotes/App/fonts/Phosphor-Fill.ttf
+        qml/MinNotes/App/fonts/Phosphor-Duotone.ttf
+        qml/MinNotes/App/fonts/Phosphor-Thin.ttf
+        qml/MinNotes/App/fonts/Inter_18pt-Regular.ttf
+        qml/MinNotes/App/fonts/Inter_18pt-Bold.ttf
+        qml/MinNotes/App/fonts/Inter_18pt-Italic.ttf
+        qml/MinNotes/App/fonts/JetBrainsMono-Regular.ttf
 )
 
 # core/ is on the include path too so the generated QML type registration can

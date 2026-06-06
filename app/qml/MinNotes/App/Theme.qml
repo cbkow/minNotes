@@ -9,6 +9,7 @@ QtObject {
     readonly property QtObject colors: QtObject {
         readonly property color bg:          "#161616"   // window shell
         readonly property color surface:     "#1b1b1b"   // the document "page"
+        readonly property color surfaceHover: "#252525"  // flat-button hover fill
         readonly property color codeBg:      "#121212"   // code block fill
         readonly property color border:      "#2a2a2a"
         readonly property color divider:     "#333333"   // hr / separators
@@ -24,7 +25,10 @@ QtObject {
         readonly property color inlineCodeBg:   "#1d2733"   // blue-tinted dark chip
         readonly property color inlineCodeText: "#4aa8ff"   // accent-family blue
 
-        readonly property color accent:      "#0189f1"   // caret
+        readonly property color accent:      "#0189f1"   // caret / primary
+        readonly property color accentHover: "#1b95f1"   // primary button hover
+        readonly property color accentMuted: "#10395b"   // checked/active flat button fill
+        readonly property color error:       "#c04040"   // danger button
         readonly property color selectionBg: "#2a568c"   // text-selection fill (saturated cobalt)
         readonly property color quoteBar:    "#3a5e86"
     }
@@ -36,13 +40,34 @@ QtObject {
         readonly property int scrollBarWidth: 9
         readonly property int columnWidth:    760    // reading-measure cap
         readonly property int docTopPad:      28     // breathing room above block 0
+        readonly property int toolStripHeight: 34    // flat-button row height / rail width
+    }
+
+    // ── Fonts (bundled, loaded via FontLoader so the family resolves the same
+    // on every OS). Text = Inter, mono = JetBrains Mono, icons = Phosphor. ──
+    readonly property FontLoader interFont:       FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-Regular.ttf") }
+    readonly property FontLoader interBoldFont:   FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-Bold.ttf") }
+    readonly property FontLoader interItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-Italic.ttf") }
+    readonly property FontLoader monoFontLoader:  FontLoader { source: Qt.resolvedUrl("fonts/JetBrainsMono-Regular.ttf") }
+    readonly property FontLoader phosphorFont:         FontLoader { source: Qt.resolvedUrl("fonts/Phosphor.ttf") }
+    readonly property FontLoader phosphorFillFont:     FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Fill.ttf") }
+    readonly property FontLoader phosphorDuotoneFont:  FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Duotone.ttf") }
+    readonly property FontLoader phosphorThinFont:     FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Thin.ttf") }
+
+    readonly property QtObject icon: QtObject {
+        readonly property string family:        theme.phosphorFont.name
+        readonly property string familyFill:    theme.phosphorFillFont.name
+        readonly property string familyDuotone: theme.phosphorDuotoneFont.name
+        readonly property string familyThin:    theme.phosphorThinFont.name
+        readonly property int sizeSmall:   14
+        readonly property int sizeToolbar: 18
+        readonly property int sizeMedium:  20
+        readonly property int sizeLarge:   24
     }
 
     readonly property QtObject font: QtObject {
-        readonly property string family: Qt.platform.os === "osx" ? "Helvetica Neue"
-                                       : Qt.platform.os === "windows" ? "Segoe UI" : "sans-serif"
-        readonly property string mono: Qt.platform.os === "windows" ? "Consolas"
-                                     : Qt.platform.os === "osx" ? "Menlo" : "monospace"
+        readonly property string family: theme.interFont.name        // Inter (bundled)
+        readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
         readonly property int sizeBody: 15
         readonly property int sizeMono: 14
     }

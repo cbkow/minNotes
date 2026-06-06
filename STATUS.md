@@ -114,6 +114,17 @@ DESIGN.md  SPIKE.md  STATUS.md
       across a multi-block selection (all-covered → remove, else add), grouped as
       one undo step (`beginGroup`/`endGroup`, `hasFormat`/`setFormat`).
 
+- [x] **Chassis + left rail** — adopted the family flat-button chassis from `ufb`:
+      `FlatButton.qml` + `Icon.qml` (Phosphor icon font via `PhosphorIcons.js`),
+      Theme `FontLoader`s + icon/color tokens. Bundled fonts (`MinNotes/App/fonts/`):
+      **Inter** (text), **JetBrains Mono** (mono), **Phosphor** (4 weights). Editor
+      text → Inter, mono → JetBrains (incl. inline-code spans via the highlighter's
+      `codeFontFamily`). **`LeftRail.qml`** — vertical action rail (undo/redo +
+      bold/italic/code/clear), wired to the editor's actions; the model-owned
+      cursor means a rail click keeps the selection, focus returns to the editor.
+      Buttons enable off `canUndo`/`canRedo`/`hasSelection`. Section-ready for
+      collapsible groups later. `Main.qml` is now `Row { LeftRail; Editor }`.
+
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
       (today only Cmd+B/I); active-format-at-caret (type after toggling with no

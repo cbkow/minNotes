@@ -449,6 +449,7 @@ FocusScope {
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
                     codeColor: Theme.colors.inlineCodeText
+                    codeFontFamily: Theme.font.mono
                     // selection range within THIS block (source cols), -1 if none —
                     // lets markers in the selection flip to white.
                     selStart: cell.inSel ? (cell.logicalRow === cursor.loRow ? cursor.loCol : 0) : -1
