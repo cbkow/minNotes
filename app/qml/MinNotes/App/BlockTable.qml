@@ -45,9 +45,49 @@ Item {
     readonly property int colCount:   active ? (tv._rev, blockModel.tableColumns(logicalRow)) : 0
     readonly property int headerRows: active ? (tv._rev, blockModel.tableHeaderRows(logicalRow)) : 0
 
+    // Width auto-sizing: only MANUAL widths (stored >0 in the grid) are persisted;
+    // a 0 means auto, computed live from content here so it never pollutes undo.
+    // Capped at maxColW so a long pasted column wraps instead of scrolling forever.
+    readonly property int minColW: 48
+    readonly property int maxColW: 360
+    // A live resize preview (one column) while dragging a border (set by the editor).
+    property int resizeCol: -1
+    property int resizeW: 0
+
+    TextMetrics { id: metrics; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody }
+    // Per-column auto width = widest cell line (capped). Computed IMPERATIVELY (a
+    // binding would self-loop: it writes metrics.text and reads metrics.advanceWidth).
+    property var autoW: []
+    function recomputeAutoW() {
+        if (!active) return
+        var ws = []
+        for (var c = 0; c < colCount; ++c) {
+            var mw = 0
+            for (var r = 0; r < rowCount; ++r) {
+                var lines = blockModel.tableCell(logicalRow, r, c).split("\n")
+                for (var li = 0; li < lines.length; ++li) {
+                    metrics.text = lines[li]
+                    if (metrics.advanceWidth > mw) mw = metrics.advanceWidth
+                }
+            }
+            ws.push(Math.round(Math.max(minColW, Math.min(maxColW, mw + 2 * cellPadH + 6))))
+        }
+        autoW = ws
+    }
+    onActiveChanged: recomputeAutoW()
+    onColCountChanged: recomputeAutoW()
+    onRowCountChanged: recomputeAutoW()
+    Component.onCompleted: recomputeAutoW()
+    Connections {
+        target: blockModel
+        function onContentChangedSpike() { if (tv.active) tv.recomputeAutoW() }
+    }
+
     function colW(c) {
+        if (c === resizeCol) return resizeW                       // live drag preview
         var w = blockModel.tableColWidth(logicalRow, c)
-        return w > 0 ? w : defaultColWidth
+        if (w > 0) return w                                       // manual / pinned
+        return (autoW && c < autoW.length) ? autoW[c] : defaultColWidth
     }
     readonly property real contentW: {
         var s = 0
@@ -77,6 +117,17 @@ Item {
         return { r: Math.max(0, r), c: Math.max(0, c), pos: pos }
     }
 
+    // Column-resize geometry (px in this item's coords; accounts for scroll).
+    function columnLeftX(c) { var x = 0; for (var i = 0; i < c; ++i) x += tv.colW(i); return x }
+    function columnBorderAt(px) {     // → column index if px is near its right border, else −1
+        var cx = px + hflick.contentX, acc = 0
+        for (var c = 0; c < colCount; ++c) { acc += tv.colW(c); if (Math.abs(cx - acc) <= 5) return c }
+        return -1
+    }
+    function widthForDrag(c, px) {     // new width as the border is dragged to px
+        return Math.round(Math.max(minColW, Math.min(800, (px + hflick.contentX) - columnLeftX(c))))
+    }
+
     Flickable {
         id: hflick
         anchors.fill: parent
@@ -86,6 +137,10 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.HorizontalFlick
         interactive: tv.contentW > tv.width    // horizontal scroll only when overflowing
+
+        // outer frame top + left edges (cells supply right + bottom)
+        Rectangle { x: 0; y: 0; width: grid.width; height: 1; color: Theme.colors.border; z: 1 }
+        Rectangle { x: 0; y: 0; width: 1; height: grid.height; color: Theme.colors.border; z: 1 }
 
         Column {
             id: grid
@@ -127,7 +182,10 @@ Item {
                             Component.onCompleted: gridRow.recompute()
                             color: isSelected ? Theme.colors.selectionBg
                                  : isHeader   ? Theme.colors.surfaceHover : "transparent"
-                            border.width: 1; border.color: Theme.colors.border
+                            // Single-hairline grid: each cell draws only its right
+                            // + bottom edge; the table frame draws the top + left.
+                            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+                            Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
 
                             // in-cell selection highlight (behind glyphs); single
                             // visual line — fine for short cell text.

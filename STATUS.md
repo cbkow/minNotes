@@ -220,8 +220,13 @@ DESIGN.md  SPIKE.md  STATUS.md
       "Insert table below"; Notion-style **+row/+column** strips on the focused
       table (root overlays — a button inside the table can't receive clicks under
       the mouse layer); right-click a cell → insert/delete row & column, align
-      left/center/right, toggle header row. Remaining: column widths/single-
-      hairline grid (P6), clipboard tier (P7).
+      left/center/right, toggle header row.
+      **Column widths (P6)**: auto-size from content (live `TextMetrics`, capped
+      ~360px so long columns wrap not scroll) — only MANUAL widths persist (stored
+      >0 = pinned), so auto never pollutes undo; drag a column border to resize
+      (live preview, one undo step), double-click a border resets to auto;
+      single-hairline grid (cells draw right+bottom, frame draws top+left).
+      Remaining: clipboard tier (P7).
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

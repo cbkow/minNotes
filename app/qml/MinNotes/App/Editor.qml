@@ -61,6 +61,12 @@ FocusScope {
     property int  tableAnchorR: 0
     property int  tableAnchorC: 0
     property int  tableAnchorPos: 0
+    // Column-resize drag state.
+    property bool tableResizing: false
+    property int  resizeRow: -1
+    property int  resizeColIdx: -1
+    property int  resizeW: 0
+    property bool tableOverBorder: false   // hover near a column border → resize cursor
 
     // Is a content-x in the left grip gutter (just left of the text column)?
     function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
@@ -790,6 +796,9 @@ FocusScope {
                     selTo: Math.max(tcur.pos, tcur.anchorPos)
                     rangeR0: focused ? tcur.rangeR0 : -1
                     rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
+                    // live column-resize preview for this table
+                    resizeCol: (root.tableResizing && root.resizeRow === cell.logicalRow) ? root.resizeColIdx : -1
+                    resizeW: root.resizeW
                 }
 
                 Rectangle {  // code background — matches the syntax theme's fill
@@ -931,6 +940,7 @@ FocusScope {
             hoverEnabled: true
             property bool overGrip: false
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
+                       : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
                        : (overGrip ? Qt.OpenHandCursor : Qt.IBeamCursor)
 
             onPressed: (m) => {
@@ -960,6 +970,17 @@ FocusScope {
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
                 if (th) {
+                    // Near a column border → start a resize drag instead of editing.
+                    var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
+                    if (bt) {
+                        var lp = bt.mapFromItem(mouse, m.x, m.y)
+                        var bc = bt.columnBorderAt(lp.x)
+                        if (bc >= 0) {
+                            root.tableResizing = true; root.resizeRow = th.row; root.resizeColIdx = bc
+                            root.resizeW = bt.widthForDrag(bc, lp.x)
+                            return
+                        }
+                    }
                     if (th.row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
                     cursor.setCaret(th.row, 0)
                     tcur.place(th.r, th.c, th.pos)
@@ -983,6 +1004,11 @@ FocusScope {
                     root.dropGap = root.gapForY(m.y)
                     return
                 }
+                if (root.tableResizing) {
+                    var rdcell = root.cellForRow(root.resizeRow), rbt = rdcell ? rdcell.tableItem : null
+                    if (rbt) { var rlp = rbt.mapFromItem(mouse, m.x, m.y); root.resizeW = rbt.widthForDrag(root.resizeColIdx, rlp.x) }
+                    return
+                }
                 if (root.tableDragging) {
                     var th = root.tableHitAt(m.x, m.y)
                     if (th && th.row === cursor.focusRow) {
@@ -1003,21 +1029,45 @@ FocusScope {
                     cursor.move(h.row, h.col, true)
                     return
                 }
-                // hover (not pressed): light the row's grip; gutter → grab cursor.
+                // hover (not pressed): light the row's grip; gutter → grab cursor;
+                // near a table column border → resize cursor.
                 root.hoverRow = blockModel.rowForY(m.y)
                 mouse.overGrip = root.inGutter(m.x)
+                var overBorder = false
+                if (blockModel.typeForRow(root.hoverRow) === 7) {
+                    var hd = root.cellForRow(root.hoverRow), hbt = hd ? hd.tableItem : null
+                    if (hbt) { var hlp = hbt.mapFromItem(mouse, m.x, m.y); overBorder = hbt.columnBorderAt(hlp.x) >= 0 }
+                }
+                root.tableOverBorder = overBorder
             }
-            onExited: { root.hoverRow = -1; mouse.overGrip = false }
-            onReleased: { if (root.blockDragging) root.commitBlockDrag(); else { root.dragging = false; root.tableDragging = false } }
+            onExited: { root.hoverRow = -1; mouse.overGrip = false; root.tableOverBorder = false }
+            onReleased: {
+                if (root.blockDragging) root.commitBlockDrag()
+                else if (root.tableResizing) {
+                    blockModel.tableSetColWidth(root.resizeRow, root.resizeColIdx, root.resizeW)
+                    root.tableResizing = false; root.resizeColIdx = -1
+                } else { root.dragging = false; root.tableDragging = false }
+            }
             onCanceled: {
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
-                else { root.dragging = false; root.tableDragging = false }
+                else { root.dragging = false; root.tableDragging = false; root.tableResizing = false }
             }
             onDoubleClicked: (m) => {
                 // End the press-drag the 2nd press armed, so a tiny mouse jitter
                 // before release can't re-extend the selection back to the click
                 // point (which collapsed the word to word-start→cursor).
-                root.dragging = false
+                root.dragging = false; root.tableResizing = false
+                // Double-click a table column border → reset that column to auto.
+                var drow = blockModel.rowForY(m.y)
+                if (blockModel.typeForRow(drow) === 7) {
+                    var dd = root.cellForRow(drow), dbt = dd ? dd.tableItem : null
+                    if (dbt) {
+                        var dlp = dbt.mapFromItem(mouse, m.x, m.y)
+                        var dbc = dbt.columnBorderAt(dlp.x)
+                        if (dbc >= 0) { blockModel.tableSetColWidth(drow, dbc, 0); return }
+                    }
+                    return   // don't word-select inside a table
+                }
                 // select the word under the cursor
                 var h = root.hitTest(m.x, m.y)
                 var t = blockModel.contentForRow(h.row)
