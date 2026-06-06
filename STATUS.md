@@ -252,21 +252,44 @@ DESIGN.md  SPIKE.md  STATUS.md
       foundation for a more spreadsheet-like table grid later.
 
 ## Next (rough order)
-- [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
-      (today only Cmd+B/I); active-format-at-caret (type after toggling with no
-      selection); source-mode toggle (reveal raw markdown); markdown typing
-      (`**x**`) converts to a span + consumes markers; export reconstructs `**`.
-      Tighten span bookkeeping on cross-block merge (adjacent same-kind not yet
-      coalesced) and code spans (no `enabled`-gate interplay with code blocks).
-- [ ] **Code blocks** (` ``` ` fence) — multi-line fenced block type (no inline
-      formatting inside; markdown literal).
-- [ ] **Inline markdown polish** — underscore emphasis (`_x_`, deliberately off to
-      avoid `file_name_here`), `\*` escape, nesting (`***x***`), links.
-- [ ] **Images / video** — adopt ufb's media pipeline (`QQuickRhiItem`, async
-      providers, FFmpeg probe); intrinsic-dims-in-`attrs` for jump-free layout
-      (DESIGN §7). Deferred per discussion until after code/inline.
-- [ ] **Export to markdown** — the rule table *reverse* (copy-as-md / file
-      export); the "one rule table drives autoformat + export" payoff.
+
+> **Resuming (2026-06-06):** tables + code blocks shipped; **media is the next
+> major arc** and is a full feature in its own right. Before adding ANY new block
+> type, (re)read the reactivity rules below — the tables build burned a lot of time
+> on virtualization display-desync bugs that look like data corruption but aren't.
+
+- [ ] **Images / video — THE NEXT MAJOR ARC.** Block type `Media=3` already exists
+      (placeholder rect) and is already treated as **opaque** (atomic for cross-block
+      text ops). Adopt ufb's media pipeline: `QQuickRhiItem` video surface + FFmpeg,
+      async image providers + thumb cache; QCView-Player's header-only FFmpeg probe
+      for intrinsic dims; `file://` refs in `attrs` (never ingested), intrinsic
+      `{w,h}` in `attrs` for jump-free layout (DESIGN §7). Media height must feed the
+      Fenwick index (SPIKE conclusion 4). A media *gallery* could reuse the
+      table tab/full-frame pattern. **This will hit the same virtualization
+      reactivity rules — see below.**
+- [ ] **Editor reactivity rules (MUST respect for new block types).** (1) Every
+      per-row QML binding reading a `Q_INVOKABLE` (`typeForRow`/`contentForRow`/…)
+      must carry the right revision dep: `(blockModel.layoutRevision,
+      blockModel.contentRevision, …)`. (2) Any model mutation that changes the
+      row→content MAPPING (`insertBlock`/`removeBlock`/`moveBlock`) must bump
+      `contentRevision`, not just `layoutRevision` (else recycled delegates render
+      stale content — the table-JSON-as-text bug). (3) Opaque blocks (table/media/
+      divider) are atomic for cross-block text merges (see `cursor.opaque()` +
+      `deleteSelection` snapping). (4) The central `mouse` MouseArea stacks above
+      every delegate → interactive affordances must be root overlays or route via the
+      central handler. (5) Tab/full-frame view = swap render+hit-test, pin the cursor.
+- [ ] **Table follow-ups (small):** full-frame tab right-click menu; insertion-line
+      affordance for table "insert" items (currently highlights the anchor row/col);
+      BottomRail `R×C` + selection in a table tab.
+- [ ] **Spans — finish past MVP**: a toolbar to drive `toggleFormat`; active-format-
+      at-caret; source-mode toggle; markdown typing (`**x**`) → span + consume markers;
+      tighten span bookkeeping on cross-block merge.
+- [ ] **Inline markdown polish** — underscore emphasis (`_x_`, off to avoid
+      `file_name_here`), `\*` escape, nesting (`***x***`), links.
+- [ ] **Export to markdown** — the rule table *reverse* (copy-as-md / file export);
+      the "one rule table drives autoformat + export" payoff.
+- [ ] **Housekeeping:** ~24 commits on `main` unpushed (`git fetch` then push);
+      lazy windowed content fetch; per-document open/new-file flow; FTS5 search.
 - [ ] **Lazy windowed content fetch** — true two-tier read (loads all content
       eagerly today).
 - [ ] **Document management** — new / open file (one fixed `scratch.mndb` now).
