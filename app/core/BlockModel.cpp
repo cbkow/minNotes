@@ -154,6 +154,18 @@ void BlockModel::loadFromStore() {
             QString clean; std::vector<Span> spans;
             if (convertMarkdown(text, r.spans, clean, spans)) { text = clean; r.spans = spans; }
         }
+        // Defensive: drop/clamp spans that exceed the content (stale data must
+        // never push the highlighter / positionToRectangle out of range).
+        {
+            const int len = text.size();
+            std::vector<Span> ok;
+            for (Span sp : r.spans) {
+                sp.s = std::clamp(sp.s, 0, len);
+                sp.e = std::clamp(sp.e, 0, len);
+                if (sp.e > sp.s) ok.push_back(sp);
+            }
+            r.spans.swap(ok);
+        }
         rows_.push_back(r);
         ids_.push_back(m.id);
         ranks_.push_back(m.rank);

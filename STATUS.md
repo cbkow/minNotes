@@ -70,8 +70,9 @@ DESIGN.md  SPIKE.md  STATUS.md
       toward shorter lines; reset on any horizontal move / edit / click. Crossing
       a block boundary lands at goal-x on the adjacent line, not column 0.
 - [x] **Marker restyle + inline-code chip** — markdown markers render in the
-      accent blue, flipping to white when inside the selection (`selStart`/
-      `selEnd` → `selectedMarkerColor` on the highlighter). Inline code sits in a
+      accent blue. (White-on-selection was removed: binding selStart/selEnd to the
+      selection re-highlighted the block mid-frame and corrupted
+      positionToRectangle → broken selection rects. Markers stay accent.) Inline code sits in a
       lighter `inlineCodeBg` chip so it stands out from prose. The chip is an
       **overlay rect** (`codeRangesForRow` → per-visual-line rects, drawn below
       the selection and glyphs), NOT a char-format background — a char background
@@ -141,6 +142,12 @@ DESIGN.md  SPIKE.md  STATUS.md
       or move the caret. The armed marks are applied *inside* `insertText`
       (`marks` bitfield) so a run of armed typing still coalesces into one undo
       step. Cleared on arrow/click; the rail B/I/code buttons light while armed.
+- [x] **Fonts: full faces + serif quotes** — bundled **Inter Bold-Italic** so a
+      bold+italic run renders a real face (Qt won't synthesise the combo when
+      separate bold/italic faces exist). **Quote blocks** now use **Merriweather**
+      (serif, 24 pt optical), upright by default (the serif + bar + muted colour
+      mark them) with all four faces (regular/bold/italic/bold-italic) bundled so
+      bold/italic spans inside a quote render real faces. `Theme.font.serif`.
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

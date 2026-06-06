@@ -455,7 +455,9 @@ FocusScope {
                     x: cell.colLeft + deco
                     width: root.colWidth - deco
                     y: 6
-                    font.italic: btype === 4   // quote
+                    // Quotes are upright Merriweather (serif + bar + muted colour
+                    // mark them); italic/bold come from spans so all four faces
+                    // are reachable, rather than forcing the whole block italic.
                     text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
                     wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
@@ -469,7 +471,9 @@ FocusScope {
                          : btype === 2 ? Theme.colors.codeText
                          : btype === 4 ? Theme.colors.textMuted   // quote
                          : Theme.colors.text
-                    font.family: btype === 2 ? Theme.font.mono : Theme.font.family
+                    font.family: btype === 2 ? Theme.font.mono
+                               : btype === 4 ? Theme.font.serif   // quote → Merriweather
+                               : Theme.font.family
                     font.pixelSize: {
                         var _ = blockModel.layoutRevision + blockModel.contentRevision   // deps
                         if (btype === 2) return Theme.font.sizeMono
@@ -490,10 +494,12 @@ FocusScope {
                     selectedMarkerColor: Theme.colors.textBright
                     codeColor: Theme.colors.inlineCodeText
                     codeFontFamily: Theme.font.mono
-                    // selection range within THIS block (source cols), -1 if none —
-                    // lets markers in the selection flip to white.
-                    selStart: cell.inSel ? (cell.logicalRow === cursor.loRow ? cursor.loCol : 0) : -1
-                    selEnd: cell.inSel ? (cell.logicalRow === cursor.hiRow ? cursor.hiCol : te.length) : -1
+                    // NOTE: selection does NOT drive marker recolouring here.
+                    // Binding selStart/selEnd to the selection re-highlights the
+                    // block on every selection change, which re-lays-out it mid-
+                    // frame and corrupts positionToRectangle → the selection rect
+                    // renders only part of the word. Markers stay accent-blue when
+                    // selected (markers only appear while typing, rarely selected).
                     // semantic format spans (clean bold/italic/mono, no markers)
                     spans: (blockModel.contentRevision, blockModel.spansForRow(cell.logicalRow))
                 }
@@ -563,6 +569,10 @@ FocusScope {
             onReleased: root.dragging = false
             onCanceled: root.dragging = false
             onDoubleClicked: (m) => {
+                // End the press-drag the 2nd press armed, so a tiny mouse jitter
+                // before release can't re-extend the selection back to the click
+                // point (which collapsed the word to word-start→cursor).
+                root.dragging = false
                 // select the word under the cursor
                 var h = root.hitTest(m.x, m.y)
                 var t = blockModel.contentForRow(h.row)
