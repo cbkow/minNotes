@@ -43,6 +43,7 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
     const QString path = dir + QStringLiteral("/scratch.mndb");
+    docPath_ = path;
     if (!doc_.open(path)) {
         qWarning("BlockModel: store unavailable, falling back to in-memory synthetic doc");
         rebuild(10000, Uniform);

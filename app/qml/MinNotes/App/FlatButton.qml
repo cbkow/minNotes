@@ -31,6 +31,8 @@ Rectangle {
     property bool italicLabel: false
     /// Tooltip text. Empty = no tooltip.
     property string tooltip: ""
+    /// Where the tooltip sits relative to the button: "right" (left rail) | "top".
+    property string tooltipSide: "right"
     /// "default" | "primary" | "danger"
     property string variant: "default"
     /// Active/checked appearance — used by SegmentedControl + toggles.
@@ -127,7 +129,7 @@ Rectangle {
     FlatToolTip {
         text: root.tooltip
         visible: root.tooltip.length > 0 && ma.containsMouse
-        x: root.width + 6
-        y: (root.height - implicitHeight) / 2
+        x: root.tooltipSide === "top" ? (root.width - implicitWidth) / 2 : root.width + 6
+        y: root.tooltipSide === "top" ? -implicitHeight - 6 : (root.height - implicitHeight) / 2
     }
 }

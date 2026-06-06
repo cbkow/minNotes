@@ -25,7 +25,11 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(int contentRevision READ contentRevision NOTIFY contentChangedSpike)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
+    // Path of the open document (one fixed scratch doc for now). CONSTANT until
+    // the open/new-file flow lands.
+    Q_PROPERTY(QString documentPath READ documentPath CONSTANT)
 public:
+    QString documentPath() const { return docPath_; }
     enum Roles {
         TypeRole = Qt::UserRole + 1,
         ContentRole,
@@ -234,6 +238,7 @@ private:
     static QString rankBetween(const QString& a, const QString& b);
 
     Document doc_;
+    QString docPath_;
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
     std::vector<QString> ranks_;     // fractional rank per row, parallel to rows_

@@ -61,20 +61,7 @@ Rectangle {
             iconColor: Theme.colors.textSubtle
         }
 
-        // ── History ──
-        RailBtn {
-            iconName: "arrow-counter-clockwise"; tooltip: "Undo  (⌘Z)"
-            enabled_: blockModel.canUndo
-            onClicked: rail.act(function() { blockModel.undo() })
-        }
-        RailBtn {
-            iconName: "arrow-clockwise"; tooltip: "Redo  (⌘⇧Z)"
-            enabled_: blockModel.canRedo
-            onClicked: rail.act(function() { blockModel.redo() })
-        }
-
-        RailSep {}
-
+        // (Undo/redo moved to the bottom status rail.)
         // ── Format (act on the selection) ──
         // Bold/italic/code: with a selection they apply to it; with no selection
         // they're a Word-style toggle (lit = armed for the next typing).

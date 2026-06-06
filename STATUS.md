@@ -166,6 +166,11 @@ DESIGN.md  SPIKE.md  STATUS.md
       list** (toggle the caret block via `setBlockType`) and **divider**
       (`insertDivider`). Rail sections (**Headings**, **Blocks**) are now
       **collapsible** behind a chevron header — proves the rail-grows-down design.
+- [x] **Bottom status rail** — `BottomRail.qml`: document **file name + path** on the
+      left, **undo/redo** flush right (moved off the left rail to free room).
+      `BlockModel.documentPath` exposes the open doc; `Main.qml` is now
+      `Row { LeftRail; Column { Editor; BottomRail } }`. `FlatButton` gained a
+      `tooltipSide` ("right"|"top") so the bottom buttons' tooltips point up.
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`
