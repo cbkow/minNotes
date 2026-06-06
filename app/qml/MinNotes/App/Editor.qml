@@ -65,6 +65,10 @@ FocusScope {
     property real menuY: 0
     property int  menuCellR: 0     // right-clicked table cell (for table menu ops)
     property int  menuCellC: 0
+    // Context-menu target highlight: the scope of the hovered menu item ("" none,
+    // "block" whole block, "column"/"row" within a table) + danger (red) tint.
+    property string menuHiScope: ""
+    property bool   menuHiDanger: false
 
     // Table mouse-drag state: anchor cell/char captured on press, so drag extends
     // an in-cell text selection (same cell) or a rectangular cell range (across).
@@ -923,6 +927,11 @@ FocusScope {
                     // live column-resize preview for this table
                     resizeCol: (root.tableResizing && root.resizeRow === cell.logicalRow) ? root.resizeColIdx : -1
                     resizeW: root.resizeW
+                    // Context-menu column/row target highlight (this is the menu's table).
+                    hiScope: (cell.logicalRow === root.menuRow
+                              && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
+                    hiIndex: root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
+                    hiDanger: root.menuHiDanger
                 }
 
                 Rectangle {  // code background — matches the syntax theme's fill
@@ -1346,6 +1355,22 @@ FocusScope {
         }
     }
 
+    // Context-menu target highlight (whole block) — tints the block the hovered
+    // menu item will act on (red for destructive). Column/row scopes are drawn
+    // inside the table itself. Document view only (the menu opens there).
+    Rectangle {
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0
+        x: root.leftEdge
+        y: (blockModel.layoutRevision, blockModel.yForRow(root.menuRow)) - flick.contentY
+        width: root.measureForRow(root.menuRow)
+        height: (blockModel.layoutRevision, blockModel.heightForRow(root.menuRow))
+        z: 45
+        readonly property color _c: root.menuHiDanger ? Theme.colors.error : Theme.colors.accent
+        color: Qt.rgba(_c.r, _c.g, _c.b, 0.10)
+        border.width: 1; border.color: Qt.rgba(_c.r, _c.g, _c.b, 0.55)
+        radius: Theme.dim.radius
+    }
+
     // +row / +column affordances for the focused table. Root overlays (above the
     // document mouse layer) — a clickable strip inside the table couldn't receive
     // events, since that mouse layer stacks over every delegate.
@@ -1422,6 +1447,7 @@ FocusScope {
     component MenuRow: Rectangle {
         property alias text: menuRowLabel.text
         property bool danger: false
+        property string scope: "block"   // what this item targets: block | column | row
         signal activated()
         width: 184; height: 28; radius: 4
         color: menuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
@@ -1435,6 +1461,8 @@ FocusScope {
         MouseArea {
             id: menuRowMA
             anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            // Hovering an item highlights its target scope on the document/table.
+            onContainsMouseChanged: if (containsMouse) { root.menuHiScope = parent.scope; root.menuHiDanger = parent.danger }
             onClicked: { parent.activated(); blockMenu.close() }
         }
     }
@@ -1452,7 +1480,7 @@ FocusScope {
         x: Math.max(8, Math.min(root.menuX, root.width - width - 8))
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
-        onClosed: root.forceActiveFocus()
+        onClosed: { root.menuHiScope = ""; root.forceActiveFocus() }
         background: Rectangle { color: Theme.colors.surface; radius: 6
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
@@ -1465,18 +1493,18 @@ FocusScope {
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow { visible: blockMenu.isTable; text: "Open in tab"; onActivated: root.activeTableId = blockModel.idForRow(root.menuRow) }
-            MenuRow { visible: blockMenu.isTable; text: "Insert row above";  onActivated: root.tblInsRowAbove() }
-            MenuRow { visible: blockMenu.isTable; text: "Insert row below";  onActivated: root.tblInsRowBelow() }
-            MenuRow { visible: blockMenu.isTable; text: "Insert column left";  onActivated: root.tblInsColLeft() }
-            MenuRow { visible: blockMenu.isTable; text: "Insert column right"; onActivated: root.tblInsColRight() }
+            MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row above";  onActivated: root.tblInsRowAbove() }
+            MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row below";  onActivated: root.tblInsRowBelow() }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column left";  onActivated: root.tblInsColLeft() }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: blockMenu.isTable; text: "Align left";   onActivated: root.tblAlign(0) }
-            MenuRow { visible: blockMenu.isTable; text: "Align center"; onActivated: root.tblAlign(1) }
-            MenuRow { visible: blockMenu.isTable; text: "Align right";  onActivated: root.tblAlign(2) }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align right";  onActivated: root.tblAlign(2) }
             MenuRow { visible: blockMenu.isTable; text: blockModel.tableHeaderRows(root.menuRow) > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: blockMenu.isTable; text: "Delete row";    danger: true; onActivated: root.tblDelRow() }
-            MenuRow { visible: blockMenu.isTable; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
+            MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Delete row";    danger: true; onActivated: root.tblDelRow() }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
             // --- code (non-table) ---
             Rectangle { visible: !blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow {

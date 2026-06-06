@@ -54,6 +54,12 @@ Item {
     property int resizeCol: -1
     property int resizeW: 0
 
+    // Context-menu target highlight: "" none, "column" or "row" at hiIndex; danger
+    // tints it red. Driven by the editor when a table menu item is hovered.
+    property string hiScope: ""
+    property int    hiIndex: -1
+    property bool   hiDanger: false
+
     TextMetrics { id: metrics; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody }
     // Per-column auto width = widest cell line (capped). Computed IMPERATIVELY (a
     // binding would self-loop: it writes metrics.text and reads metrics.advanceWidth).
@@ -124,6 +130,8 @@ Item {
 
     // Column-resize geometry (px in this item's coords; accounts for scroll).
     function columnLeftX(c) { var x = 0; for (var i = 0; i < c; ++i) x += tv.colW(i); return x }
+    function rowTopY(r) { var y = 0; for (var j = 0; j < r; ++j) { var it = rowRep.itemAt(j); y += it ? it.rowHeight : 24 } return y }
+    function rowHeightAt(r) { var it = rowRep.itemAt(r); return it ? it.rowHeight : 24 }
     function columnBorderAt(px) {     // → column index if px is near its right border, else −1
         var cx = px + hflick.contentX, acc = 0
         for (var c = 0; c < colCount; ++c) { acc += tv.colW(c); if (Math.abs(cx - acc) <= 5) return c }
@@ -234,6 +242,24 @@ Item {
                     }
                 }
             }
+        }
+
+        // Context-menu target highlight (column / row); scrolls with the content.
+        Rectangle {
+            visible: tv.hiScope === "column" && tv.hiIndex >= 0 && tv.hiIndex < tv.colCount
+            x: tv.columnLeftX(tv.hiIndex); y: 0
+            width: tv.colW(tv.hiIndex); height: grid.implicitHeight; z: 5
+            readonly property color _c: tv.hiDanger ? Theme.colors.error : Theme.colors.accent
+            color: Qt.rgba(_c.r, _c.g, _c.b, 0.14)
+            border.width: 1; border.color: Qt.rgba(_c.r, _c.g, _c.b, 0.6)
+        }
+        Rectangle {
+            visible: tv.hiScope === "row" && tv.hiIndex >= 0 && tv.hiIndex < tv.rowCount
+            x: 0; y: tv.rowTopY(tv.hiIndex)
+            width: tv.contentW; height: tv.rowHeightAt(tv.hiIndex); z: 5
+            readonly property color _c: tv.hiDanger ? Theme.colors.error : Theme.colors.accent
+            color: Qt.rgba(_c.r, _c.g, _c.b, 0.14)
+            border.width: 1; border.color: Qt.rgba(_c.r, _c.g, _c.b, 0.6)
         }
     }
 
