@@ -4,6 +4,9 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QVariant>
+#include <QSet>
 #include <algorithm>
 
 namespace {
@@ -130,13 +133,26 @@ void BlockModel::loadFromStore() {
     heights.reserve(metas.size());
 
     for (const Document::BlockMeta& m : metas) {
-        const QString text = doc_.contentFor(m.id);   // Phase 1a: load eagerly
+        QString text = doc_.contentFor(m.id);   // Phase 1a: load eagerly
         Row r{};
         r.type = typeFromString(m.type);
         r.param = static_cast<uint16_t>(std::max<int>(1, text.count(QLatin1Char('\n')) + 1));
-        if (r.type == Heading) {
-            const QJsonObject o = QJsonDocument::fromJson(m.attrs.toUtf8()).object();
+        const QJsonObject o = QJsonDocument::fromJson(m.attrs.toUtf8()).object();
+        if (r.type == Heading)
             r.level = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("level")).toInt(1), 1, 6));
+        for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
+            const QJsonObject so = sv.toObject();
+            const uint8_t k = spanKindFromString(so.value(QStringLiteral("k")).toString());
+            const int s = so.value(QStringLiteral("s")).toInt(), e = so.value(QStringLiteral("e")).toInt();
+            if (k && e > s) r.spans.push_back({s, e, k});
+        }
+        // Markdown is an input method, not storage: consume any inline markers
+        // into spans on load so non-active blocks render clean (markers only ever
+        // appear while you're typing them). In-memory only; the DB migrates lazily
+        // as blocks are edited / committed.
+        if (r.type == Paragraph || r.type == Quote || r.type == ListItem) {
+            QString clean; std::vector<Span> spans;
+            if (convertMarkdown(text, r.spans, clean, spans)) { text = clean; r.spans = spans; }
         }
         rows_.push_back(r);
         ids_.push_back(m.id);
@@ -147,6 +163,7 @@ void BlockModel::loadFromStore() {
     fenwick_.reset(std::move(heights));
     endResetModel();
     ++layoutRevision_;
+    clearUndo();
     emit modelReset();
     emit layoutChangedSpike();
 }
@@ -192,6 +209,7 @@ void BlockModel::rebuild(int n, int distribution) {
     fenwick_.reset(std::move(heights));
     endResetModel();
     ++layoutRevision_;
+    clearUndo();
     emit modelReset();
     emit layoutChangedSpike();
 }
@@ -244,14 +262,216 @@ bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, in
     return false;
 }
 
+QString BlockModel::attrsJson(uint8_t type, uint8_t level, const std::vector<Span>& spans) const {
+    QJsonObject o;
+    if (type == Heading && level > 0) o.insert(QStringLiteral("level"), level);
+    if (!spans.empty()) {
+        QJsonArray arr;
+        for (const Span& sp : spans) {
+            QJsonObject so;
+            so.insert(QStringLiteral("s"), sp.s);
+            so.insert(QStringLiteral("e"), sp.e);
+            so.insert(QStringLiteral("k"), QString::fromLatin1(spanKindToString(sp.kind)));
+            arr.append(so);
+        }
+        o.insert(QStringLiteral("spans"), arr);
+    }
+    return o.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
 void BlockModel::persistMeta(int row) {
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
-    QString attrs;
-    if (rows_[row].type == Heading && rows_[row].level > 0) {
-        QJsonObject o; o.insert(QStringLiteral("level"), rows_[row].level);
-        attrs = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    const Row& r = rows_[row];
+    doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
+                    attrsJson(r.type, r.level, r.spans));
+}
+
+// === Undo / redo: region-snapshot transactions ===========================
+BlockModel::BlockSnap BlockModel::snapAt(int row) const {
+    BlockSnap s;
+    s.id = ids_[row]; s.rank = ranks_[row]; s.content = content_[row];
+    s.type = rows_[row].type; s.level = rows_[row].level; s.spans = rows_[row].spans;
+    return s;
+}
+
+std::vector<BlockModel::BlockSnap> BlockModel::snapshotRange(int lo, int hi) const {
+    std::vector<BlockSnap> out;
+    lo = std::max(0, lo);
+    hi = std::min(hi, static_cast<int>(rows_.size()) - 1);
+    for (int i = lo; i <= hi; ++i) out.push_back(snapAt(i));
+    return out;
+}
+
+void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap>& snaps) {
+    applying_ = true;
+    beginResetModel();
+    const int last = std::min(lo + oldCount, static_cast<int>(rows_.size()));
+    QSet<QString> newIds, oldIds;
+    for (const BlockSnap& s : snaps) newIds.insert(s.id);
+    for (int i = lo; i < last; ++i) {
+        oldIds.insert(ids_[i]);
+        if (doc_.isOpen() && !newIds.contains(ids_[i])) doc_.deleteBlock(ids_[i]);   // left the region
     }
-    doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(rows_[row].type)), attrs);
+    rows_.erase(rows_.begin() + lo, rows_.begin() + last);
+    content_.erase(content_.begin() + lo, content_.begin() + last);
+    ids_.erase(ids_.begin() + lo, ids_.begin() + last);
+    ranks_.erase(ranks_.begin() + lo, ranks_.begin() + last);
+    int at = lo;
+    for (const BlockSnap& s : snaps) {
+        Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans;
+        r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
+        rows_.insert(rows_.begin() + at, r);
+        content_.insert(content_.begin() + at, s.content);
+        ids_.insert(ids_.begin() + at, s.id);
+        ranks_.insert(ranks_.begin() + at, s.rank);
+        if (doc_.isOpen()) {
+            const QString attrs = attrsJson(s.type, s.level, s.spans);
+            const QString type = QString::fromLatin1(typeToString(s.type));
+            if (oldIds.contains(s.id)) { doc_.updateContent(s.id, s.content); doc_.updateMeta(s.id, type, attrs); }
+            else doc_.appendBlock(s.id, s.rank, 0, type, attrs, s.content);   // re-born (undo of a delete)
+        }
+        ++at;
+    }
+    std::vector<double> heights; heights.reserve(rows_.size());
+    for (const Row& r : rows_) heights.push_back(estimatedHeight(r));
+    fenwick_.reset(std::move(heights));
+    endResetModel();
+    ++layoutRevision_; ++contentRevision_;
+    emit modelReset(); emit layoutChangedSpike(); emit contentChangedSpike();
+    applying_ = false;
+}
+
+void BlockModel::beginTxn(int lo, int hi) {
+    if (applying_) return;                      // no recording during undo/redo apply
+    if (txnDepth_ == 0) {                        // outermost: capture `before`
+        txnLo_ = std::max(0, lo);
+        txnHi_ = hi;
+        txnSize_ = rows_.size();
+        txnBefore_ = snapshotRange(txnLo_, txnHi_);
+    }
+    ++txnDepth_;                                 // inner mutations just nest in
+}
+
+void BlockModel::endTxn(const QString& coalesce) {
+    if (applying_) return;
+    if (txnDepth_ == 0) return;
+    if (--txnDepth_ > 0) return;                 // wait for the outermost to commit
+    const int delta = static_cast<int>(rows_.size()) - static_cast<int>(txnSize_);
+    std::vector<BlockSnap> after = snapshotRange(txnLo_, txnHi_ + delta);
+
+    // Coalesce a run of typing into the previous entry (same key, same single
+    // block, contiguous caret) so undo removes the whole run at once.
+    if (!coalesce.isEmpty() && undoCur_ >= 0) {
+        UndoEntry& prev = undo_[undoCur_];
+        if (prev.coalesce == coalesce && prev.lo == txnLo_
+            && prev.after.size() == 1 && txnBefore_.size() == 1 && after.size() == 1
+            && prev.cRowA == cRow_ && prev.cColA == cCol_) {
+            prev.after = std::move(after);
+            awaitingAfter_ = true;     // next noteCaret stamps prev's caret-after
+            emit undoStackChanged();
+            return;
+        }
+    }
+    UndoEntry e;
+    e.lo = txnLo_;
+    e.before = std::move(txnBefore_);
+    e.after = std::move(after);
+    e.cRowB = cRow_; e.cColB = cCol_; e.aRowB = aRow_; e.aColB = aCol_;
+    e.cRowA = cRow_; e.cColA = cCol_; e.aRowA = aRow_; e.aColA = aCol_;   // until noteCaret stamps
+    e.parent = undoCur_;
+    e.coalesce = coalesce;
+    undo_.push_back(std::move(e));
+    undoCur_ = static_cast<int>(undo_.size()) - 1;
+    awaitingAfter_ = true;
+    emit undoStackChanged();
+}
+
+void BlockModel::clearUndo() {
+    undo_.clear(); undoCur_ = -1; txnDepth_ = 0; awaitingAfter_ = false;
+    emit undoStackChanged();
+}
+
+void BlockModel::beginGroup(int loRow, int hiRow) { beginTxn(loRow, hiRow); }
+void BlockModel::endGroup() { endTxn(); }
+
+bool BlockModel::hasFormat(int row, int start, int end, const QString& kind) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    const uint8_t k = spanKindFromString(kind);
+    if (!k) return false;
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end) return false;
+    return spansCover(rows_[row].spans, start, end, k);
+}
+
+void BlockModel::setFormat(int row, int start, int end, const QString& kind, bool on) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    const uint8_t k = spanKindFromString(kind);
+    if (!k) return;
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end) return;
+    beginTxn(row, row);
+    if (on) addSpan(rows_[row].spans, start, end, k);
+    else    removeSpan(rows_[row].spans, start, end, k);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {});
+    ++contentRevision_; emit contentChangedSpike();
+    endTxn();
+}
+
+bool BlockModel::canUndo() const { return undoCur_ >= 0; }
+bool BlockModel::canRedo() const {
+    for (int i = static_cast<int>(undo_.size()) - 1; i >= 0; --i)
+        if (undo_[i].parent == undoCur_) return true;
+    return false;
+}
+
+void BlockModel::undo() {
+    if (undoCur_ < 0) return;
+    awaitingAfter_ = false;
+    const UndoEntry e = undo_[undoCur_];          // copy (applySnapshot won't touch undo_, but be safe)
+    applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
+    undoCur_ = e.parent;
+    emit caretRestoreRequested(e.cRowB, e.cColB, e.aRowB, e.aColB);
+    emit undoStackChanged();
+}
+
+void BlockModel::redo() {
+    awaitingAfter_ = false;
+    int child = -1;                               // newest child of the current node
+    for (int i = static_cast<int>(undo_.size()) - 1; i >= 0; --i)
+        if (undo_[i].parent == undoCur_) { child = i; break; }
+    if (child < 0) return;
+    const UndoEntry e = undo_[child];
+    applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
+    undoCur_ = child;
+    emit caretRestoreRequested(e.cRowA, e.cColA, e.aRowA, e.aColA);
+    emit undoStackChanged();
+}
+
+void BlockModel::noteCaret(int row, int col, int anchorRow, int anchorCol) {
+    cRow_ = row; cCol_ = col; aRow_ = anchorRow; aCol_ = anchorCol;
+    if (awaitingAfter_ && undoCur_ >= 0) {
+        UndoEntry& e = undo_[undoCur_];
+        e.cRowA = row; e.cColA = col; e.aRowA = anchorRow; e.aColA = anchorCol;
+        awaitingAfter_ = false;
+    }
+}
+
+void BlockModel::clearFormat(int row, int start, int end) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end || rows_[row].spans.empty()) return;
+    beginTxn(row, row);
+    removeSpan(rows_[row].spans, start, end, SpanBold);
+    removeSpan(rows_[row].spans, start, end, SpanItalic);
+    removeSpan(rows_[row].spans, start, end, SpanCode);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {});
+    ++contentRevision_; emit contentChangedSpike();
+    endTxn();
 }
 
 int BlockModel::applyMarkdownTrigger(int row) {
@@ -260,6 +480,7 @@ int BlockModel::applyMarkdownTrigger(int row) {
     BlockType t = Paragraph; int level = 0, strip = 0;
     if (!matchMarkdownPrefix(content_[row], t, level, strip)) return 0;
 
+    beginTxn(row, row);
     rows_[row].type = static_cast<uint8_t>(t);
     rows_[row].level = static_cast<uint8_t>(level);
     content_[row] = content_[row].mid(strip);
@@ -269,6 +490,7 @@ int BlockModel::applyMarkdownTrigger(int row) {
     bumpLayout();                 // type change → height changes; delegate re-measures
     ++contentRevision_;
     emit contentChangedSpike();
+    endTxn();
     return strip;
 }
 
@@ -278,15 +500,18 @@ bool BlockModel::makeDividerIfMarker(int row) {
     const QString c = content_[row].trimmed();
     if (c != QLatin1String("---") && c != QLatin1String("***") && c != QLatin1String("___"))
         return false;
+    beginTxn(row, row);
     rows_[row].type = Divider;
     rows_[row].level = 0;
     content_[row].clear();
+    rows_[row].spans.clear();
     persistContent(row);
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
+    endTxn();
     return true;
 }
 
@@ -331,6 +556,212 @@ QString BlockModel::contentForRow(int row) const {
     return textAt(clampRow(row));
 }
 
+// --- Semantic format spans --------------------------------------------------
+uint8_t BlockModel::spanKindFromString(const QString& s) {
+    if (s == QLatin1String("bold"))   return SpanBold;
+    if (s == QLatin1String("italic")) return SpanItalic;
+    if (s == QLatin1String("code"))   return SpanCode;
+    return 0;
+}
+const char* BlockModel::spanKindToString(uint8_t k) {
+    switch (k) {
+    case SpanBold:   return "bold";
+    case SpanItalic: return "italic";
+    case SpanCode:   return "code";
+    default:         return "";
+    }
+}
+
+// Does the union of same-kind spans fully cover [start,end)?
+bool BlockModel::spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind) {
+    if (start >= end) return true;
+    std::vector<Span> k;
+    for (const Span& sp : v) if (sp.kind == kind) k.push_back(sp);
+    std::sort(k.begin(), k.end(), [](const Span& a, const Span& b){ return a.s < b.s; });
+    int cur = start;
+    for (const Span& sp : k) {
+        if (sp.s > cur) break;                 // gap before coverage reaches `cur`
+        cur = std::max(cur, sp.e);
+        if (cur >= end) return true;
+    }
+    return cur >= end;
+}
+
+// Add [start,end) of `kind`, then merge overlapping/adjacent same-kind spans.
+void BlockModel::addSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
+    if (start >= end) return;
+    std::vector<Span> k, others;
+    for (const Span& sp : v) (sp.kind == kind ? k : others).push_back(sp);
+    k.push_back({start, end, kind});
+    std::sort(k.begin(), k.end(), [](const Span& a, const Span& b){ return a.s < b.s; });
+    std::vector<Span> merged;
+    for (const Span& sp : k) {
+        if (!merged.empty() && sp.s <= merged.back().e)
+            merged.back().e = std::max(merged.back().e, sp.e);
+        else
+            merged.push_back(sp);
+    }
+    v = others;
+    v.insert(v.end(), merged.begin(), merged.end());
+}
+
+// Subtract [start,end) from same-kind spans (splitting where it lands inside).
+void BlockModel::removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
+    if (start >= end) return;
+    std::vector<Span> out;
+    for (const Span& sp : v) {
+        if (sp.kind != kind || sp.e <= start || sp.s >= end) { out.push_back(sp); continue; }
+        if (sp.s < start) out.push_back({sp.s, start, kind});   // left remainder
+        if (sp.e > end)   out.push_back({end, sp.e, kind});     // right remainder
+    }
+    v = out;
+}
+
+// Offset bookkeeping: text inserted at `at` (len chars), or [from,to) deleted.
+void BlockModel::shiftSpansInsert(std::vector<Span>& v, int at, int len) {
+    for (Span& sp : v) {
+        if (at <= sp.s)      { sp.s += len; sp.e += len; }   // wholly after the caret
+        else if (at < sp.e)  { sp.e += len; }                // typed inside → grow (not at exact end)
+    }
+}
+void BlockModel::shiftSpansDelete(std::vector<Span>& v, int from, int to) {
+    const int len = to - from;
+    if (len <= 0) return;
+    std::vector<Span> out;
+    for (const Span& sp : v) {
+        if (sp.e <= from) { out.push_back(sp); continue; }                       // before cut
+        if (sp.s >= to)   { out.push_back({sp.s - len, sp.e - len, sp.kind}); continue; }  // after cut
+        const int ns = std::min(sp.s, from);                 // surviving head + shifted tail collapse
+        const int ne = (sp.e > to) ? sp.e - len : from;
+        if (ne > ns) out.push_back({ns, ne, sp.kind});
+    }
+    v = out;
+}
+
+QVariantList BlockModel::spansForRow(int row) const {
+    QVariantList out;
+    if (rows_.empty()) return out;
+    for (const Span& sp : rows_[clampRow(row)].spans) {
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("k"), sp.kind);
+        out.append(m);
+    }
+    return out;
+}
+
+QVariantList BlockModel::codeRangesForRow(int row) const {
+    QVariantList out;
+    if (rows_.empty()) return out;
+    row = clampRow(row);
+    auto push = [&](int s, int e) {
+        if (e <= s) return;
+        QVariantMap m; m.insert(QStringLiteral("s"), s); m.insert(QStringLiteral("e"), e);
+        out.append(m);
+    };
+    const QString& s = content_[row];
+    for (int i = 0, n = s.size(); i < n; ) {                  // markdown `code` inner runs
+        if (s[i] == QLatin1Char('`')) {
+            const int j = s.indexOf(QLatin1Char('`'), i + 1);
+            if (j > i) { push(i + 1, j); i = j + 1; continue; }
+        }
+        ++i;
+    }
+    for (const Span& sp : rows_[row].spans)                   // semantic code spans
+        if (sp.kind == SpanCode) push(sp.s, sp.e);
+    return out;
+}
+
+bool BlockModel::convertMarkdown(const QString& src, const std::vector<Span>& existing,
+                                 QString& cleanText, std::vector<Span>& outSpans) {
+    const int n = src.size();
+    QString out; out.reserve(n);
+    std::vector<int> map(n + 1, 0);          // old col → clean col
+    std::vector<Span> found;
+    auto keep = [&](int p) { map[p] = out.size(); out.append(src[p]); };
+    auto drop = [&](int p) { map[p] = out.size(); };   // marker removed → maps to current clean pos
+
+    int i = 0;
+    while (i < n) {
+        const QChar c = src[i];
+        if (c == QLatin1Char('`')) {
+            const int j = src.indexOf(QLatin1Char('`'), i + 1);
+            if (j > i) {
+                drop(i); const int s = out.size();
+                for (int p = i + 1; p < j; ++p) keep(p);
+                found.push_back({s, static_cast<int>(out.size()), SpanCode});
+                drop(j); i = j + 1; continue;
+            }
+        } else if (c == QLatin1Char('*') && i + 1 < n && src[i + 1] == QLatin1Char('*')) {
+            const int j = src.indexOf(QStringLiteral("**"), i + 2);
+            if (j > i + 1) {
+                drop(i); drop(i + 1); const int s = out.size();
+                for (int p = i + 2; p < j; ++p) keep(p);
+                found.push_back({s, static_cast<int>(out.size()), SpanBold});
+                drop(j); drop(j + 1); i = j + 2; continue;
+            }
+        } else if (c == QLatin1Char('*')) {
+            const int j = src.indexOf(QLatin1Char('*'), i + 1);
+            if (j > i) {
+                drop(i); const int s = out.size();
+                for (int p = i + 1; p < j; ++p) keep(p);
+                found.push_back({s, static_cast<int>(out.size()), SpanItalic});
+                drop(j); i = j + 1; continue;
+            }
+        }
+        keep(i); ++i;
+    }
+    map[n] = out.size();
+    if (out == src) return false;            // no markers consumed
+
+    std::vector<Span> merged;
+    for (const Span& sp : existing)          // pre-existing spans → clean coords
+        addSpan(merged, map[std::clamp(sp.s, 0, n)], map[std::clamp(sp.e, 0, n)], sp.kind);
+    for (const Span& sp : found)
+        addSpan(merged, sp.s, sp.e, sp.kind);
+    cleanText = out;
+    outSpans = merged;
+    return true;
+}
+
+void BlockModel::commitMarkdown(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    const uint8_t t = rows_[row].type;
+    if (t != Paragraph && t != Quote && t != ListItem) return;   // where inline md renders
+    QString clean; std::vector<Span> spans;
+    if (!convertMarkdown(content_[row], rows_[row].spans, clean, spans)) return;
+    beginTxn(row, row);
+    content_[row] = clean;
+    rows_[row].spans = spans;
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();                            // markers gone → height may change
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();                                // distinct undo step (Cmd-Z restores the markdown)
+}
+
+void BlockModel::toggleFormat(int row, int start, int end, const QString& kind) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    const uint8_t k = spanKindFromString(kind);
+    if (!k) return;
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len);
+    end   = std::clamp(end, 0, len);
+    if (start >= end) return;
+    beginTxn(row, row);
+    std::vector<Span>& spans = rows_[row].spans;
+    if (spansCover(spans, start, end, k)) removeSpan(spans, start, end, k);
+    else                                  addSpan(spans, start, end, k);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
 QVariant BlockModel::data(const QModelIndex& index, int role) const {
     const int row = index.row();
     if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
@@ -370,12 +801,14 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
 
 void BlockModel::setContent(int row, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    beginTxn(row, row);
     content_[row] = text;
     persistContent(row);                          // write-through to SQLite
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
+    endTxn();
     // Height re-measure follows from the delegate's implicitHeight change.
 }
 
@@ -387,15 +820,32 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     if (rows_.empty()) return;
     loRow = clampRow(loRow);
     hiRow = clampRow(hiRow);
+    beginTxn(loRow, hiRow);
 
     // Merge surviving head of lo block with surviving tail of hi block.
     const QString loText = textAt(loRow);
     const QString hiText = textAt(hiRow);
-    const QString merged = loText.left(std::min<int>(loCol, loText.size()))
-                         + hiText.mid(std::min<int>(hiCol, hiText.size()));
+    const int loClip = std::min<int>(loCol, loText.size());
+    const int hiClip = std::min<int>(hiCol, hiText.size());
+    const QString merged = loText.left(loClip) + hiText.mid(hiClip);
     content_[loRow] = merged;
     persistContent(loRow);
     emit dataChanged(index(loRow), index(loRow), {ContentRole});
+
+    // Span bookkeeping (rows_[hiRow] still valid — the erase happens below).
+    if (hiRow == loRow) {
+        shiftSpansDelete(rows_[loRow].spans, loClip, hiClip);
+    } else {
+        std::vector<Span> kept;
+        for (const Span& sp : rows_[loRow].spans)            // lo keeps [0, loClip)
+            if (sp.s < loClip) kept.push_back({sp.s, std::min(sp.e, loClip), sp.kind});
+        for (const Span& sp : rows_[hiRow].spans) {          // hi tail [hiClip,*) → after loClip
+            const int s = std::max(sp.s, hiClip);
+            if (sp.e > s) kept.push_back({s - hiClip + loClip, sp.e - hiClip + loClip, sp.kind});
+        }
+        rows_[loRow].spans = kept;
+    }
+    persistMeta(loRow);
 
     if (hiRow > loRow) {
         const int first = loRow + 1, last = hiRow, cnt = last - first + 1;
@@ -417,21 +867,30 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     }
     ++contentRevision_;
     emit contentChangedSpike();
+    // Single-char same-block deletes (backspace/delete key) coalesce.
+    endTxn((hiRow == loRow && hiClip - loClip == 1) ? QStringLiteral("del") : QString());
 }
 
 void BlockModel::insertText(int row, int col, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    beginTxn(row, row);
     const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));
     content_[row] = s.left(col) + text + s.mid(col);
     persistContent(row);
+    if (!rows_[row].spans.empty()) {                 // keep span offsets aligned
+        shiftSpansInsert(rows_[row].spans, col, text.size());
+        persistMeta(row);
+    }
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
+    endTxn(text.size() == 1 ? QStringLiteral("type") : QString());   // coalesce typing
 }
 
 void BlockModel::splitBlock(int row, int col) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    beginTxn(row, row);                          // after grows to [row, row+1]
     const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));
     const QString left = s.left(col), right = s.mid(col);
@@ -440,11 +899,20 @@ void BlockModel::splitBlock(int row, int col) {
     const QString newRank = rankBetween(ranks_[row],
         (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
 
+    // Split spans at `col`: left part stays, right part moves to the new block.
+    std::vector<Span> leftS, rightS;
+    for (const Span& sp : rows_[row].spans) {
+        if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind});
+        if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind});
+    }
+    rows_[row].spans = leftS;
+
     content_[row] = left;
     persistContent(row);
+    persistMeta(row);
 
     beginInsertRows({}, at, at);
-    Row r{}; r.type = Paragraph; r.param = 1;
+    Row r{}; r.type = Paragraph; r.param = 1; r.spans = rightS;
     rows_.insert(rows_.begin() + at, r);
     content_.insert(content_.begin() + at, right);
     ids_.insert(ids_.begin() + at, newId);
@@ -454,14 +922,17 @@ void BlockModel::splitBlock(int row, int col) {
 
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), right);
+    if (!rightS.empty()) persistMeta(at);    // write the moved spans into attrs
 
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
+    endTxn();
 }
 
 void BlockModel::insertBlock(int row) {
     row = std::clamp(row, 0, static_cast<int>(rows_.size()));
+    beginTxn(row, row - 1);                      // empty `before`; after = [row,row]
     const QString newId = makeUlid();
     const QString newRank = rankBetween(
         (row > 0) ? ranks_[row - 1] : QString(),
@@ -480,10 +951,12 @@ void BlockModel::insertBlock(int row) {
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), QString());
 
     bumpLayout();
+    endTxn();
 }
 
 void BlockModel::removeBlock(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    beginTxn(row, row);                          // after = empty
     if (doc_.isOpen()) doc_.deleteBlock(ids_[row]);
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);
@@ -493,4 +966,5 @@ void BlockModel::removeBlock(int row) {
     fenwick_.erase(static_cast<size_t>(row));
     endRemoveRows();
     bumpLayout();
+    endTxn();
 }

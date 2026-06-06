@@ -8,6 +8,8 @@ qt_add_executable(minnotesapp
     core/BlockModel.cpp
     core/Document.h
     core/Document.cpp
+    core/InlineMarkdownHighlighter.h
+    core/InlineMarkdownHighlighter.cpp
 )
 
 # Mark Theme.qml as a QML singleton BEFORE qt_add_qml_module so the generated
@@ -24,7 +26,11 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Theme.qml
 )
 
-target_include_directories(minnotesapp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# core/ is on the include path too so the generated QML type registration can
+# resolve `#include <InlineMarkdownHighlighter.h>` (it emits the basename only).
+target_include_directories(minnotesapp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/core)
 
 target_link_libraries(minnotesapp PRIVATE
     Qt6::Core

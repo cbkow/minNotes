@@ -2,6 +2,7 @@
 #include <QAbstractListModel>
 #include <QHash>
 #include <QString>
+#include <QVariantList>
 #include <vector>
 #include <cstdint>
 #include "FenwickTree.h"
@@ -22,6 +23,8 @@ class BlockModel : public QAbstractListModel {
     // Bump on any CONTENT change (edit/delete). The Flickable arm's text
     // binding includes it to re-read contentForRow() without repositioning.
     Q_PROPERTY(int contentRevision READ contentRevision NOTIFY contentChangedSpike)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
 public:
     enum Roles {
         TypeRole = Qt::UserRole + 1,
@@ -59,6 +62,9 @@ public:
     Q_INVOKABLE int typeForRow(int row) const;
     Q_INVOKABLE int levelForRow(int row) const;       // heading level 1–6, else 0
     Q_INVOKABLE QString contentForRow(int row) const;
+    // Inline markdown (**bold**, *italic*, `code`) renders via the QML-side
+    // InlineMarkdownHighlighter applying char formats to each block's PlainText
+    // document — no HTML, identity caret positions, so nothing here changes.
 
     // type↔markdown autoformat: if content at `row` now starts with a recognised
     // prefix (e.g. "## "), consume it, set type/level, persist, and return the
@@ -87,19 +93,110 @@ public:
     Q_INVOKABLE void insertText(int row, int col, const QString& text);
     Q_INVOKABLE void splitBlock(int row, int col);
 
+    // --- Semantic format spans (DESIGN §5 endgame): bold/italic/code as a span
+    // [s,e) over the block's text, NOT `**` markers in the content. This is how
+    // the menu (and, later, markdown-as-input) applies formatting; the render
+    // shows clean styled text with no markers. Spans live in attrs and travel
+    // with the row; insertText/splitBlock/deleteRange keep their offsets aligned.
+    Q_INVOKABLE QVariantList spansForRow(int row) const;   // [{s,e,kind}] for the highlighter
+    // Toggle `kind` ("bold"|"italic"|"code") over [start,end): if already fully
+    // covered, clear it there; else add (merging overlapping same-kind spans).
+    Q_INVOKABLE void toggleFormat(int row, int start, int end, const QString& kind);
+    // Explicit add/remove + a coverage query, so the editor can apply a uniform
+    // decision across a multi-block selection.
+    Q_INVOKABLE bool hasFormat(int row, int start, int end, const QString& kind) const;
+    Q_INVOKABLE void setFormat(int row, int start, int end, const QString& kind, bool on);
+    // Group several mutations into ONE undo step (transactions nest by depth).
+    Q_INVOKABLE void beginGroup(int loRow, int hiRow);
+    Q_INVOKABLE void endGroup();
+    // Inline-code ranges [{s,e}] (markdown backtick inner runs + code spans), in
+    // source cols. The editor draws the code "chip" as an overlay rect from these
+    // — NOT a char-format background — so the selection can layer above it.
+    Q_INVOKABLE QVariantList codeRangesForRow(int row) const;
+
+    // Markdown-as-input: when the caret LEAVES a block, consume its inline
+    // markdown (`**`/`*`/`` ` ``) into semantic spans and strip the markers, so it
+    // renders as a clean "normal" block (no markers). One-way; no-op if the block
+    // has none. The editor calls this on block-to-block navigation.
+    Q_INVOKABLE void commitMarkdown(int row);
+
+    // Clear ALL formatting (bold/italic/code spans) over [start,end).
+    Q_INVOKABLE void clearFormat(int row, int start, int end);
+
+    // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
+    // tree-ready (each entry stores its parent; redo = newest child).
+    bool canUndo() const;
+    bool canRedo() const;
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+    // The editor mirrors its (QML-owned) caret here so transactions can snapshot
+    // it; undo/redo emit caretRestoreRequested to put it back.
+    Q_INVOKABLE void noteCaret(int row, int col, int anchorRow, int anchorCol);
+
 signals:
     void layoutChangedSpike();
     void contentChangedSpike();
     void modelReset();
     void heightSettled(int row, qreal delta);
+    void undoStackChanged();
+    void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
+
+public:
+    enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3 };
 
 private:
+    struct Span { int s; int e; uint8_t kind; };   // [s,e) over the row's text
     struct Row {
         uint8_t type;
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0
         uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
         bool measured = false;
+        std::vector<Span> spans;   // travels with the row on insert/erase
     };
+
+    // Full, restorable state of one block — the unit an undo transaction snaps.
+    struct BlockSnap {
+        QString id, rank, content;
+        uint8_t type = 0, level = 0;
+        std::vector<Span> spans;
+    };
+    // One undoable step: the touched row-region [lo, lo+before.size()) replaced
+    // before↔after, plus the caret on each side. `parent` makes it tree-ready
+    // (redo follows the newest child); `coalesce` merges runs of typing.
+    struct UndoEntry {
+        int lo = 0;
+        std::vector<BlockSnap> before, after;
+        int cRowB = 0, cColB = 0, aRowB = 0, aColB = 0;   // caret before
+        int cRowA = 0, cColA = 0, aRowA = 0, aColA = 0;   // caret after
+        int parent = -1;
+        QString coalesce;   // non-empty + equal + contiguous ⇒ merge into prev
+    };
+
+    static uint8_t spanKindFromString(const QString& s);
+    static const char* spanKindToString(uint8_t k);
+    // Interval ops on one row's spans (same-kind): union-cover test, add+merge,
+    // and subtract a range. Offsets shift via shiftSpans on edits.
+    static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind);
+    static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
+    static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
+    static void shiftSpansInsert(std::vector<Span>& v, int at, int len);
+    static void shiftSpansDelete(std::vector<Span>& v, int from, int to);
+    // Parse inline markdown in `src` into clean text + spans (markers removed),
+    // merging `existing` spans remapped to the clean coords. Returns false (and
+    // leaves outputs untouched) if there were no markers to consume.
+    static bool convertMarkdown(const QString& src, const std::vector<Span>& existing,
+                                QString& cleanText, std::vector<Span>& outSpans);
+
+    // --- Undo internals ---
+    QString attrsJson(uint8_t type, uint8_t level, const std::vector<Span>& spans) const;
+    BlockSnap snapAt(int row) const;
+    std::vector<BlockSnap> snapshotRange(int lo, int hi) const;
+    // Replace the current rows [lo, lo+oldCount) with `snaps` (in-memory + DB +
+    // fenwick), then reset the view. The generic undo/redo apply.
+    void applySnapshot(int lo, int oldCount, const std::vector<BlockSnap>& snaps);
+    void beginTxn(int lo, int hi);              // snapshot `before` for [lo,hi]
+    void endTxn(const QString& coalesce = {});  // snapshot `after`, push (or coalesce)
+    void clearUndo();
 
     // Rule table: does `content` start with a markdown trigger? Fills type/
     // level and the prefix length to strip. The single source of truth that
@@ -131,4 +228,17 @@ private:
     FenwickTree fenwick_;
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
+
+    // Undo/redo state.
+    std::vector<UndoEntry> undo_;
+    int undoCur_ = -1;            // index of the current state (-1 = initial)
+    bool applying_ = false;       // true while undo/redo applies (don't record)
+    // open transaction (depth-counted so mutations can nest into one group)
+    int txnDepth_ = 0;
+    int txnLo_ = 0, txnHi_ = 0;
+    size_t txnSize_ = 0;
+    std::vector<BlockSnap> txnBefore_;
+    // mirrored caret (the editor pushes it via noteCaret)
+    int cRow_ = 0, cCol_ = 0, aRow_ = 0, aCol_ = 0;
+    bool awaitingAfter_ = false;  // stamp the just-pushed entry's caret-after on next noteCaret
 };

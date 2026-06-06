@@ -18,6 +18,11 @@ QtObject {
         readonly property color textMuted:   "#8a8a8a"   // quotes, bullets
         readonly property color textSubtle:  "#5e5e5e"
         readonly property color codeText:    "#d4d4e8"
+        // Inline code chip — a touch LIGHTER than the page so it reads as raised
+        // (the code-block fill is darker); distinct from surrounding prose. Text
+        // in the family blue rather than the default lavender.
+        readonly property color inlineCodeBg:   "#1d2733"   // blue-tinted dark chip
+        readonly property color inlineCodeText: "#4aa8ff"   // accent-family blue
 
         readonly property color accent:      "#0189f1"   // caret
         readonly property color selectionBg: "#2a568c"   // text-selection fill (saturated cobalt)

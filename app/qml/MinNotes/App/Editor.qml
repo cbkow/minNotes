@@ -43,17 +43,33 @@ FocusScope {
         readonly property int hiCol: anchorFirst ? focusCol : anchorCol
         readonly property bool hasSel: loRow !== hiRow || loCol !== hiCol
 
-        function setCaret(r, col) { anchorRow = r; anchorCol = col; focusRow = r; focusCol = col }
+        // Sticky goal-x for vertical nav: the x the caret aims for across a RUN
+        // of up/down presses, so it doesn't drift toward shorter lines. te-local
+        // (distance from text start), so it's consistent across blocks. -1 = unset;
+        // any horizontal move / edit / click resets it (see resetGoalX callers).
+        property real goalX: -1
+        function resetGoalX() { goalX = -1 }
+
+        // Mirror the caret into the model so undo transactions can snapshot it
+        // (and stamp a just-pushed entry's caret-after). Called after any change.
+        function sync() { blockModel.noteCaret(focusRow, focusCol, anchorRow, anchorCol) }
+
+        function setCaret(r, col) { anchorRow = r; anchorCol = col; focusRow = r; focusCol = col; goalX = -1; sync() }
         function move(r, col, extend) {
+            // Leaving a block with a collapsed caret consumes its markdown → spans.
+            if (!extend && r !== focusRow && !root.dragging) blockModel.commitMarkdown(focusRow)
             focusRow = r; focusCol = col
             if (!extend) { anchorRow = r; anchorCol = col }
             root.ensureVisible(r)
+            sync()
         }
         function deleteSelection() {
             var lr = loRow, lc = loCol
             blockModel.deleteRange(anchorRow, anchorCol, focusRow, focusCol)
             anchorRow = lr; anchorCol = lc; focusRow = lr; focusCol = lc
+            goalX = -1
             root.ensureVisible(lr)
+            sync()
         }
         function backspace() {
             if (hasSel) { deleteSelection(); return }
@@ -90,6 +106,21 @@ FocusScope {
             blockModel.splitBlock(focusRow, focusCol)
             setCaret(focusRow + 1, 0)
             root.ensureVisible(focusRow + 1)
+        }
+    }
+
+    // Undo/redo restore the caret (and selection) the model snapshotted.
+    Connections {
+        target: blockModel
+        function onCaretRestoreRequested(r, c, ar, ac) {
+            var n = blockModel.count
+            r = Math.max(0, Math.min(r, n - 1))
+            ar = Math.max(0, Math.min(ar, n - 1))
+            cursor.anchorRow = ar; cursor.anchorCol = Math.max(0, Math.min(ac, blockModel.contentForRow(ar).length))
+            cursor.focusRow = r;   cursor.focusCol = Math.max(0, Math.min(c, blockModel.contentForRow(r).length))
+            cursor.goalX = -1
+            root.ensureVisible(r)
+            cursor.sync()
         }
     }
 
@@ -146,37 +177,91 @@ FocusScope {
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
     function navRight(shift) {
+        cursor.resetGoalX()
         var fb = root.focusBlockItem, n = blockModel.count
         if (fb && cursor.focusCol < fb.length) cursor.move(cursor.focusRow, cursor.focusCol + 1, shift)
         else if (cursor.focusRow < n - 1) cursor.move(cursor.focusRow + 1, 0, shift)
     }
     function navLeft(shift) {
+        cursor.resetGoalX()
         if (cursor.focusCol > 0) cursor.move(cursor.focusRow, cursor.focusCol - 1, shift)
         else if (cursor.focusRow > 0)
             cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
+    }
+    // Map the sticky goal-x onto a visual line of `row`'s block (te-local y),
+    // returning the column there. Falls back to col 0 if that block has no live
+    // delegate (off-screen) or is media. Used when up/down crosses a boundary.
+    function colAtGoalX(row, yLocal) {
+        var cell = cellForRow(row)
+        if (!cell || cell.isMedia) return 0
+        return cell.teItem.positionAt(cursor.goalX, yLocal)
     }
     function navDown(shift) {
         var fb = root.focusBlockItem, n = blockModel.count
         if (!fb) return
         var r = fb.positionToRectangle(Math.min(cursor.focusCol, fb.length))
         var lh = r.height > 0 ? r.height : 18
-        if (r.y < fb.contentHeight - lh * 1.5) cursor.move(cursor.focusRow, fb.positionAt(r.x, r.y + lh * 1.5), shift)
-        else if (cursor.focusRow < n - 1) cursor.move(cursor.focusRow + 1, 0, shift)
+        if (cursor.goalX < 0) cursor.goalX = r.x          // capture at the start of a vertical run
+        if (r.y < fb.contentHeight - lh * 1.5)            // another visual line below in this block
+            cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX, r.y + lh * 1.5), shift)
+        else if (cursor.focusRow < n - 1)                 // cross into the next block at goal-x
+            cursor.move(cursor.focusRow + 1, colAtGoalX(cursor.focusRow + 1, 2), shift)
     }
     function navUp(shift) {
         var fb = root.focusBlockItem
         if (!fb) return
         var r = fb.positionToRectangle(Math.min(cursor.focusCol, fb.length))
         var lh = r.height > 0 ? r.height : 18
-        if (r.y > lh * 0.5) cursor.move(cursor.focusRow, fb.positionAt(r.x, r.y - lh * 0.5), shift)
-        else if (cursor.focusRow > 0)
-            cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
+        if (cursor.goalX < 0) cursor.goalX = r.x
+        if (r.y > lh * 0.5)                               // another visual line above in this block
+            cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX, r.y - lh * 0.5), shift)
+        else if (cursor.focusRow > 0) {                   // cross into the previous block's last line
+            var prev = cellForRow(cursor.focusRow - 1)
+            var yLast = (prev && !prev.isMedia) ? prev.teItem.contentHeight - 2 : 0
+            cursor.move(cursor.focusRow - 1, colAtGoalX(cursor.focusRow - 1, yLast), shift)
+        }
+    }
+
+    // Per-row selected range [start,end) for row r within the current selection.
+    function rowSelStart(r) { return (r === cursor.loRow) ? cursor.loCol : 0 }
+    function rowSelEnd(r)   { return (r === cursor.hiRow) ? cursor.hiCol : blockModel.contentForRow(r).length }
+
+    // Apply a semantic format span over the current selection (menu/shortcut
+    // path — NOT markdown; renders clean with no markers). Decides add-vs-remove
+    // UNIFORMLY across the whole selection (all-covered → remove, else add), as
+    // one grouped undo step.
+    function applyFormat(kind) {
+        if (!cursor.hasSel) return
+        var allCovered = true
+        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
+            if (!blockModel.hasFormat(r, rowSelStart(r), rowSelEnd(r), kind)) { allCovered = false; break }
+        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+        for (r = cursor.loRow; r <= cursor.hiRow; ++r)
+            blockModel.setFormat(r, rowSelStart(r), rowSelEnd(r), kind, !allCovered)
+        blockModel.endGroup()
+        cursor.sync()
+    }
+    // Strip ALL formatting from the selection (one grouped undo step).
+    function clearFormatting() {
+        if (!cursor.hasSel) return
+        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
+            blockModel.clearFormat(r, rowSelStart(r), rowSelEnd(r))
+        blockModel.endGroup()
+        cursor.sync()
     }
 
     Keys.onPressed: (event) => {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
+        var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        if (k === Qt.Key_Right) { navRight(shift); event.accepted = true }
+        if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
+        else if (cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
+        else if (cmd && k === Qt.Key_Backslash) { clearFormatting(); event.accepted = true }
+        else if (k === Qt.Key_Right) { navRight(shift); event.accepted = true }
         else if (k === Qt.Key_Left) { navLeft(shift); event.accepted = true }
         else if (k === Qt.Key_Down) { navDown(shift); event.accepted = true }
         else if (k === Qt.Key_Up) { navUp(shift); event.accepted = true }
@@ -247,6 +332,36 @@ FocusScope {
                 Component.onCompleted: {
                     if (active) blockModel.setMeasuredHeight(logicalRow, height)
                     if (isFocus) root.focusBlockItem = te
+                }
+
+                // inline-code chips — overlay rects (one per visual line of each
+                // code range), drawn BELOW the selection so selecting code shows
+                // the highlight, and below the glyphs. NOT a char-format
+                // background (that paints inside the TextEdit, above selection).
+                property var codeRects: {
+                    var dep = blockModel.contentRevision + blockModel.layoutRevision
+                    if (!cell.active || cell.isMedia) return []
+                    var ranges = blockModel.codeRangesForRow(cell.logicalRow)
+                    var out = []
+                    for (var i = 0; i < ranges.length; ++i) {
+                        var rs = root.selectionRects(te, ranges[i].s, ranges[i].e)
+                        for (var j = 0; j < rs.length; ++j) out.push(rs[j])
+                    }
+                    return out
+                }
+                Repeater {
+                    model: cell.codeRects
+                    delegate: Rectangle {
+                        required property int index
+                        readonly property rect rr: cell.codeRects[index]
+                        color: Theme.colors.inlineCodeBg
+                        radius: 3
+                        z: 0
+                        x: te.x + rr.x - 2
+                        y: te.y + rr.y
+                        width: rr.width + 4
+                        height: rr.height
+                    }
                 }
 
                 // selection highlight (behind text), one rect per visual line.
@@ -324,6 +439,24 @@ FocusScope {
                     font.bold: btype === 1
                 }
 
+                // Inline markdown styling: applies bold/italic/mono char formats
+                // to te's PlainText document and dims the markers in place. No
+                // HTML, identity caret positions. Off for code (markdown is
+                // literal inside a fence) and non-text blocks.
+                InlineMarkdownHighlighter {
+                    document: te.textDocument
+                    enabled: cell.active && (te.btype === 0 || te.btype === 4 || te.btype === 5)
+                    markerColor: Theme.colors.accent
+                    selectedMarkerColor: Theme.colors.textBright
+                    codeColor: Theme.colors.inlineCodeText
+                    // selection range within THIS block (source cols), -1 if none —
+                    // lets markers in the selection flip to white.
+                    selStart: cell.inSel ? (cell.logicalRow === cursor.loRow ? cursor.loCol : 0) : -1
+                    selEnd: cell.inSel ? (cell.logicalRow === cursor.hiRow ? cursor.hiCol : te.length) : -1
+                    // semantic format spans (clean bold/italic/mono, no markers)
+                    spans: (blockModel.contentRevision, blockModel.spansForRow(cell.logicalRow))
+                }
+
                 Rectangle {  // caret
                     visible: cell.isFocus && root.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6
                     color: Theme.colors.accent
@@ -369,9 +502,14 @@ FocusScope {
 
             onPressed: (m) => {
                 root.forceActiveFocus()
+                cursor.resetGoalX()
                 var h = root.hitTest(m.x, m.y)
                 if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
-                else cursor.setCaret(h.row, h.col)
+                else {
+                    // Clicking into a different block leaves the old one → commit it.
+                    if (h.row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
+                    cursor.setCaret(h.row, h.col)
+                }
                 root.dragging = true
                 root.dragX = m.x; root.dragViewY = m.y - flick.contentY
             }
