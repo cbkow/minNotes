@@ -109,10 +109,13 @@ DESIGN.md  SPIKE.md  STATUS.md
       child (branching UI later). `Cmd+Z` / `Cmd+Shift+Z` / `Cmd+Y`. Verified
       headless: coalesced typing, split/merge structural, and format all undo/redo
       correctly with right caret + counts.
-- [x] **Remove styling** — `Cmd+\` clears ALL formatting over the selection
-      (`clearFormat`); `Cmd+B`/`Cmd+I` now decide add-vs-remove **uniformly**
-      across a multi-block selection (all-covered → remove, else add), grouped as
-      one undo step (`beginGroup`/`endGroup`, `hasFormat`/`setFormat`).
+- [x] **Remove styling** — `Cmd+\` = **full reset to plain paragraph**: strips
+      inline spans AND resets heading/quote/list → paragraph (`setHeading(0)` +
+      `clearFormat`), acting on the caret's block (no selection needed); code
+      blocks left as-is. `Cmd+B`/`Cmd+I` decide add-vs-remove **uniformly** across
+      a multi-block selection, grouped as one undo step (`beginGroup`/`endGroup`,
+      `hasFormat`/`setFormat`). A no-op group (e.g. clear on already-plain text)
+      pushes no undo entry (`endTxn` before==after guard).
 
 - [x] **Chassis + left rail** — adopted the family flat-button chassis from `ufb`:
       `FlatButton.qml` + `Icon.qml` (Phosphor icon font via `PhosphorIcons.js`),
@@ -124,6 +127,20 @@ DESIGN.md  SPIKE.md  STATUS.md
       cursor means a rail click keeps the selection, focus returns to the editor.
       Buttons enable off `canUndo`/`canRedo`/`hasSelection`. Section-ready for
       collapsible groups later. `Main.qml` is now `Row { LeftRail; Editor }`.
+- [x] **Family tooltip + headings** — `FlatToolTip.qml` (squared, opaque `#0e0e0e`,
+      hairline border, Inter small) adopted from QCView/MinRender, baked into
+      `FlatButton` and placed to the right (rail hugs the left edge). Rail now has
+      an **H1–H5** section: `BlockModel.setHeading(row, level)` (0 = paragraph,
+      undoable); editor `setHeading(level)` toggles the active level off and groups
+      a multi-block selection; buttons show **checked** when the caret's block is
+      that heading (`caretType`/`caretLevel`). No selection needed — acts on the
+      caret block.
+- [x] **Word-style active typing attributes** — Bold/Italic/Code with **no
+      selection** become a **toggle** (arm the attribute); the next characters you
+      type get the span, and it stays armed across the word until you toggle off
+      or move the caret. The armed marks are applied *inside* `insertText`
+      (`marks` bitfield) so a run of armed typing still coalesces into one undo
+      step. Cleared on arrow/click; the rail B/I/code buttons light while armed.
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

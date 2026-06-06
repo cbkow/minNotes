@@ -90,7 +90,10 @@ public:
 
     // Editing for the passive-surface arm: insert text at a caret, and split a
     // block at the caret (Enter). The model is the sole owner of content.
-    Q_INVOKABLE void insertText(int row, int col, const QString& text);
+    // `marks` = armed typing attributes applied to the inserted run (Word-style):
+    // bit 1 = bold, 2 = italic, 4 = code. Applied inside the insert transaction
+    // so a run of armed typing still coalesces into one undo step.
+    Q_INVOKABLE void insertText(int row, int col, const QString& text, int marks = 0);
     Q_INVOKABLE void splitBlock(int row, int col);
 
     // --- Semantic format spans (DESIGN §5 endgame): bold/italic/code as a span
@@ -122,6 +125,8 @@ public:
 
     // Clear ALL formatting (bold/italic/code spans) over [start,end).
     Q_INVOKABLE void clearFormat(int row, int start, int end);
+    // Set a block's heading level (1–6) or 0 = paragraph. Text blocks only.
+    Q_INVOKABLE void setHeading(int row, int level);
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).

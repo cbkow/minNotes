@@ -16,6 +16,10 @@ Rectangle {
     width: 46
     color: Theme.colors.surface
 
+    // Buttons inset 1px each side so they nestle between (not over) the edges /
+    // the right hairline.
+    readonly property int btnWidth: width - 2
+
     // right hairline against the document page
     Rectangle {
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
@@ -26,17 +30,21 @@ Rectangle {
     function act(fn) { fn(); if (editor) editor.forceActiveFocus() }
 
     Column {
-        anchors { top: parent.top; left: parent.left; right: parent.right; topMargin: 6 }
+        anchors {
+            top: parent.top; left: parent.left; right: parent.right
+            topMargin: 6; leftMargin: 1; rightMargin: 1
+        }
         spacing: 2
 
         component RailBtn: FlatButton {
-            width: rail.width
+            width: rail.btnWidth
             implicitHeight: Theme.dim.toolStripHeight
             iconSize: Theme.icon.sizeToolbar
+            radius: 0                              // squared, family flat style
         }
         component RailSep: Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
-            width: rail.width - 14; height: 1
+            width: rail.btnWidth - 12; height: 1
             color: Theme.colors.divider
         }
 
@@ -55,25 +63,49 @@ Rectangle {
         RailSep {}
 
         // ── Format (act on the selection) ──
+        // Bold/italic/code: with a selection they apply to it; with no selection
+        // they're a Word-style toggle (lit = armed for the next typing).
         RailBtn {
             text: "B"; boldLabel: true; tooltip: "Bold  (⌘B)"
-            enabled_: !!rail.editor && rail.editor.hasSelection
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.boldArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("bold") })
         }
         RailBtn {
             iconName: "text-italic"; tooltip: "Italic  (⌘I)"
-            enabled_: !!rail.editor && rail.editor.hasSelection
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.italicArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("italic") })
         }
         RailBtn {
             iconName: "code"; tooltip: "Code"
-            enabled_: !!rail.editor && rail.editor.hasSelection
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.codeArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("code") })
         }
         RailBtn {
             iconName: "text-t-slash"; tooltip: "Clear formatting  (⌘\\)"
-            enabled_: !!rail.editor && rail.editor.hasSelection
+            enabled_: !!rail.editor       // acts on the caret block; no selection needed
             onClicked: rail.act(function() { rail.editor.clearFormatting() })
+        }
+
+        RailSep {}
+
+        // ── Headings (act on the caret's block; click active level to toggle off) ──
+        Repeater {
+            model: 5
+            delegate: FlatButton {
+                required property int index
+                readonly property int level: index + 1
+                width: rail.btnWidth
+                implicitHeight: Theme.dim.toolStripHeight
+                iconSize: Theme.icon.sizeToolbar
+                radius: 0
+                iconName: ["text-h-one", "text-h-two", "text-h-three", "text-h-four", "text-h-five"][index]
+                tooltip: "Heading " + level
+                checked: !!rail.editor && rail.editor.caretType === 1 && rail.editor.caretLevel === level
+                onClicked: rail.act(function() { rail.editor.setHeading(level) })
+            }
         }
     }
 }

@@ -122,7 +122,12 @@ Rectangle {
         onExited:   { if (root.enabled_ && pressed) root.released() }
     }
 
-    ToolTip.text: tooltip
-    ToolTip.visible: tooltip.length > 0 && ma.containsMouse
-    ToolTip.delay: 500
+    // Family tooltip, placed to the RIGHT of the button (the rail hugs the
+    // left edge, so below/over would clip or cover the next button).
+    FlatToolTip {
+        text: root.tooltip
+        visible: root.tooltip.length > 0 && ma.containsMouse
+        x: root.width + 6
+        y: (root.height - implicitHeight) / 2
+    }
 }

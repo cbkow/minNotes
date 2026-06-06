@@ -359,6 +359,22 @@ void BlockModel::endTxn(const QString& coalesce) {
     const int delta = static_cast<int>(rows_.size()) - static_cast<int>(txnSize_);
     std::vector<BlockSnap> after = snapshotRange(txnLo_, txnHi_ + delta);
 
+    // No-op group (e.g. "clear" on an already-plain paragraph) → no undo entry.
+    auto sameSnaps = [](const std::vector<BlockSnap>& a, const std::vector<BlockSnap>& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            const BlockSnap& x = a[i]; const BlockSnap& y = b[i];
+            if (x.id != y.id || x.rank != y.rank || x.type != y.type
+                || x.level != y.level || x.content != y.content
+                || x.spans.size() != y.spans.size()) return false;
+            for (size_t j = 0; j < x.spans.size(); ++j)
+                if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
+                    || x.spans[j].kind != y.spans[j].kind) return false;
+        }
+        return true;
+    };
+    if (sameSnaps(txnBefore_, after)) return;
+
     // Coalesce a run of typing into the previous entry (same key, same single
     // block, contiguous caret) so undo removes the whole run at once.
     if (!coalesce.isEmpty() && undoCur_ >= 0) {
@@ -457,6 +473,25 @@ void BlockModel::noteCaret(int row, int col, int anchorRow, int anchorCol) {
         e.cRowA = row; e.cColA = col; e.aRowA = anchorRow; e.aColA = anchorCol;
         awaitingAfter_ = false;
     }
+}
+
+void BlockModel::setHeading(int row, int level) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    Row& r = rows_[row];
+    if (r.type != Paragraph && r.type != Heading && r.type != Quote && r.type != ListItem) return;
+    level = std::clamp(level, 0, 6);
+    const uint8_t newType  = level == 0 ? static_cast<uint8_t>(Paragraph) : static_cast<uint8_t>(Heading);
+    const uint8_t newLevel = level == 0 ? 0 : static_cast<uint8_t>(level);
+    if (r.type == newType && r.level == newLevel) return;            // no-op
+    beginTxn(row, row);
+    r.type = newType;
+    r.level = newLevel;
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {TypeRole});
+    bumpLayout();                                                    // heading height differs
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
 }
 
 void BlockModel::clearFormat(int row, int start, int end) {
@@ -871,17 +906,23 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     endTxn((hiRow == loRow && hiClip - loClip == 1) ? QStringLiteral("del") : QString());
 }
 
-void BlockModel::insertText(int row, int col, const QString& text) {
+void BlockModel::insertText(int row, int col, const QString& text, int marks) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);
     const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));
     content_[row] = s.left(col) + text + s.mid(col);
     persistContent(row);
-    if (!rows_[row].spans.empty()) {                 // keep span offsets aligned
-        shiftSpansInsert(rows_[row].spans, col, text.size());
-        persistMeta(row);
+    std::vector<Span>& spans = rows_[row].spans;
+    if (!spans.empty())                              // keep existing span offsets aligned
+        shiftSpansInsert(spans, col, text.size());
+    if (marks) {                                     // armed typing attributes → span the new run
+        const int e = col + text.size();
+        if (marks & 1) addSpan(spans, col, e, SpanBold);
+        if (marks & 2) addSpan(spans, col, e, SpanItalic);
+        if (marks & 4) addSpan(spans, col, e, SpanCode);
     }
+    if (!spans.empty()) persistMeta(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();

@@ -26,6 +26,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Theme.qml
         qml/MinNotes/App/Icon.qml
         qml/MinNotes/App/FlatButton.qml
+        qml/MinNotes/App/FlatToolTip.qml
         qml/MinNotes/App/LeftRail.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js

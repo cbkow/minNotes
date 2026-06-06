@@ -68,6 +68,7 @@ QtObject {
     readonly property QtObject font: QtObject {
         readonly property string family: theme.interFont.name        // Inter (bundled)
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
+        readonly property int sizeSmall: 12
         readonly property int sizeBody: 15
         readonly property int sizeMono: 14
     }

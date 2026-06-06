@@ -50,6 +50,15 @@ FocusScope {
         property real goalX: -1
         function resetGoalX() { goalX = -1 }
 
+        // Word-style armed typing attributes (active when nothing is selected):
+        // bold=1, italic=2, code=4. Applied to typed text; cleared on caret nav.
+        property int activeMarks: 0
+        function toggleMark(kind) {
+            var bit = kind === "bold" ? 1 : kind === "italic" ? 2 : kind === "code" ? 4 : 0
+            if (bit) activeMarks ^= bit
+        }
+        function clearMarks() { activeMarks = 0 }
+
         // Mirror the caret into the model so undo transactions can snapshot it
         // (and stamp a just-pushed entry's caret-after). Called after any change.
         function sync() { blockModel.noteCaret(focusRow, focusCol, anchorRow, anchorCol) }
@@ -85,7 +94,7 @@ FocusScope {
         }
         function insertChar(ch) {
             if (hasSel) deleteSelection()
-            blockModel.insertText(focusRow, focusCol, ch)
+            blockModel.insertText(focusRow, focusCol, ch, activeMarks)   // armed attrs → span the run
             setCaret(focusRow, focusCol + ch.length)
             // Markdown autoformat fires on the space that completes a prefix
             // (e.g. "## "): the prefix is consumed, so pull the caret back.
@@ -177,13 +186,13 @@ FocusScope {
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
     function navRight(shift) {
-        cursor.resetGoalX()
+        cursor.resetGoalX(); cursor.clearMarks()
         var fb = root.focusBlockItem, n = blockModel.count
         if (fb && cursor.focusCol < fb.length) cursor.move(cursor.focusRow, cursor.focusCol + 1, shift)
         else if (cursor.focusRow < n - 1) cursor.move(cursor.focusRow + 1, 0, shift)
     }
     function navLeft(shift) {
-        cursor.resetGoalX()
+        cursor.resetGoalX(); cursor.clearMarks()
         if (cursor.focusCol > 0) cursor.move(cursor.focusRow, cursor.focusCol - 1, shift)
         else if (cursor.focusRow > 0)
             cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
@@ -197,6 +206,7 @@ FocusScope {
         return cell.teItem.positionAt(cursor.goalX, yLocal)
     }
     function navDown(shift) {
+        cursor.clearMarks()
         var fb = root.focusBlockItem, n = blockModel.count
         if (!fb) return
         var r = fb.positionToRectangle(Math.min(cursor.focusCol, fb.length))
@@ -208,6 +218,7 @@ FocusScope {
             cursor.move(cursor.focusRow + 1, colAtGoalX(cursor.focusRow + 1, 2), shift)
     }
     function navUp(shift) {
+        cursor.clearMarks()
         var fb = root.focusBlockItem
         if (!fb) return
         var r = fb.positionToRectangle(Math.min(cursor.focusCol, fb.length))
@@ -230,8 +241,14 @@ FocusScope {
     // path — NOT markdown; renders clean with no markers). Decides add-vs-remove
     // UNIFORMLY across the whole selection (all-covered → remove, else add), as
     // one grouped undo step.
+    // Armed-mark state, for the rail's lit toggle when nothing is selected.
+    readonly property bool boldArmed:   (cursor.activeMarks & 1) !== 0
+    readonly property bool italicArmed: (cursor.activeMarks & 2) !== 0
+    readonly property bool codeArmed:   (cursor.activeMarks & 4) !== 0
+
     function applyFormat(kind) {
-        if (!cursor.hasSel) return
+        // No selection → Word-style toggle: arm the attribute for the next typing.
+        if (!cursor.hasSel) { cursor.toggleMark(kind); return }
         var allCovered = true
         for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
             if (!blockModel.hasFormat(r, rowSelStart(r), rowSelEnd(r), kind)) { allCovered = false; break }
@@ -241,12 +258,35 @@ FocusScope {
         blockModel.endGroup()
         cursor.sync()
     }
-    // Strip ALL formatting from the selection (one grouped undo step).
+    // Type/level of the block under the caret — for the rail's heading state.
+    readonly property int caretType:  (blockModel.contentRevision, blockModel.layoutRevision, blockModel.typeForRow(cursor.focusRow))
+    readonly property int caretLevel: (blockModel.contentRevision, blockModel.layoutRevision, blockModel.levelForRow(cursor.focusRow))
+
+    // Set heading `level` (1–5) on the caret's block(s); click the active level
+    // again to toggle back to a paragraph. One grouped undo step; no selection
+    // needed (acts on the caret block / each block in a selection).
+    function setHeading(level) {
+        var lo = cursor.loRow, hi = cursor.hiRow
+        var isOn = caretType === 1 && caretLevel === level   // 1 = Heading
+        blockModel.beginGroup(lo, hi)
+        for (var r = lo; r <= hi; ++r) blockModel.setHeading(r, isOn ? 0 : level)
+        blockModel.endGroup()
+        cursor.sync()
+    }
+
+    // Clear ALL formatting → plain paragraph: reset heading/quote/list block
+    // style AND strip inline spans. Acts on the caret's block (no selection
+    // needed); with a selection, clears spans over the selected range of each
+    // block. Code blocks are left as-is. One grouped undo step.
     function clearFormatting() {
-        if (!cursor.hasSel) return
-        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
-        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
-            blockModel.clearFormat(r, rowSelStart(r), rowSelEnd(r))
+        var lo = cursor.loRow, hi = cursor.hiRow
+        blockModel.beginGroup(lo, hi)
+        for (var r = lo; r <= hi; ++r) {
+            blockModel.setHeading(r, 0)                  // heading/quote/list → paragraph
+            var rs = cursor.hasSel ? rowSelStart(r) : 0
+            var re = cursor.hasSel ? rowSelEnd(r) : blockModel.contentForRow(r).length
+            blockModel.clearFormat(r, rs, re)            // strip inline spans
+        }
         blockModel.endGroup()
         cursor.sync()
     }
@@ -503,7 +543,7 @@ FocusScope {
 
             onPressed: (m) => {
                 root.forceActiveFocus()
-                cursor.resetGoalX()
+                cursor.resetGoalX(); cursor.clearMarks()
                 var h = root.hitTest(m.x, m.y)
                 if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
                 else {
