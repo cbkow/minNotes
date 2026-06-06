@@ -157,19 +157,37 @@ FocusScope {
             sync()
         }
         function deleteSelection() {
-            var lr = loRow, lc = loCol
-            blockModel.deleteRange(anchorRow, anchorCol, focusRow, focusCol)
-            anchorRow = lr; anchorCol = lc; focusRow = lr; focusCol = lc
+            var lR = loRow, lC = loCol, hR = hiRow, hC = hiCol
+            // Keep a table's JSON (and other opaque content) out of a text merge:
+            // a table at the HI end is included whole (deleteRange removes it); one
+            // at the LO end (or a lone opaque block) bails rather than spill.
+            if (lR !== hR) {
+                if (opaque(lR)) { setCaret(loRow, loCol); return }
+                if (opaque(hR)) hC = blockModel.contentForRow(hR).length
+            } else if (opaque(lR)) { setCaret(loRow, loCol); return }
+            blockModel.deleteRange(lR, lC, hR, hC)
+            anchorRow = lR; anchorCol = lC; focusRow = lR; focusCol = lC
             goalX = -1
-            root.ensureVisible(lr)
+            root.ensureVisible(lR)
             sync()
         }
+        // Opaque blocks (table/media/divider) hold non-prose content (a table's is
+        // JSON) — a cross-block text merge would spill it. Never merge across one.
+        function opaque(r) { var t = blockModel.typeForRow(r); return t === 7 || t === 3 || t === 6 }
         function backspace() {
             if (hasSel) { deleteSelection(); return }
             if (focusCol > 0) {
                 blockModel.deleteRange(focusRow, focusCol - 1, focusRow, focusCol)
                 setCaret(focusRow, focusCol - 1)
             } else if (focusRow > 0) {
+                if (opaque(focusRow - 1)) {               // don't merge into a table/media/divider
+                    if (blockModel.contentForRow(focusRow).length === 0 && blockModel.count > 1)
+                        blockModel.removeBlock(focusRow)  // drop the empty trailing block
+                    if (blockModel.typeForRow(focusRow - 1) === 7) root.enterTable(focusRow - 1, false)
+                    else setCaret(focusRow - 1, 0)
+                    root.ensureVisible(focusRow - 1)
+                    return
+                }
                 var pl = blockModel.contentForRow(focusRow - 1).length
                 blockModel.deleteRange(focusRow - 1, pl, focusRow, 0)
                 setCaret(focusRow - 1, pl)
@@ -182,6 +200,11 @@ FocusScope {
             if (focusCol < len) {
                 blockModel.deleteRange(focusRow, focusCol, focusRow, focusCol + 1)
             } else if (focusRow < blockModel.count - 1) {
+                if (opaque(focusRow + 1)) {               // don't pull a table/media/divider up as text
+                    if (blockModel.typeForRow(focusRow + 1) === 7) root.enterTable(focusRow + 1, true)
+                    else setCaret(focusRow + 1, 0)
+                    return
+                }
                 // At a block's end: pull the next block up onto this one (caret stays).
                 blockModel.deleteRange(focusRow, len, focusRow + 1, 0)
             }
@@ -662,15 +685,13 @@ FocusScope {
     // reused to anchor the language picker if "Change language…" is chosen.
     function openBlockMenu(vx, vy, row) {
         root.menuRow = row; root.menuX = vx; root.menuY = vy
-        blockMenu.x = vx; blockMenu.y = vy
-        blockMenu.open()
+        blockMenu.open()    // x/y are reactive bindings that clamp it on-screen
     }
     // Language picker for the code block at `row`, anchored where the menu was.
     function openLangPopupForRow(row) {
         langPopup.targetRow = row
-        langPopup.x = root.menuX; langPopup.y = root.menuY
         langField.text = blockModel.languageForRow(row)
-        langPopup.open()
+        langPopup.open()    // x/y are reactive bindings (root.menuX/menuY → clamped)
         langField.selectAll(); langField.forceActiveFocus()
     }
 
@@ -1426,6 +1447,10 @@ FocusScope {
         readonly property bool isTable: root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 7)
         padding: 4; z: 60
+        // Reactive on-screen clamp: re-evaluates as the menu's height settles after
+        // open (so a long menu is positioned right on the FIRST trigger, not the 2nd).
+        x: Math.max(8, Math.min(root.menuX, root.width - width - 8))
+        y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
         onClosed: root.forceActiveFocus()
         background: Rectangle { color: Theme.colors.surface; radius: 6
@@ -1474,6 +1499,8 @@ FocusScope {
         readonly property var quick: ["javascript", "typescript", "python", "bash", "json",
                                       "html", "css", "cpp", "c", "go", "rust", "sql", "yaml", "markdown"]
         width: 250; padding: 8; focus: true; z: 60
+        x: Math.max(8, Math.min(root.menuX, root.width - width - 8))
+        y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: { targetRow = -1; root.forceActiveFocus() }
         background: Rectangle { color: Theme.colors.surface; radius: 6

@@ -1292,6 +1292,8 @@ void BlockModel::insertBlock(int row) {
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), QString());
 
     bumpLayout();
+    ++contentRevision_;            // row→content mapping shifted: refresh content bindings
+    emit contentChangedSpike();
     endTxn();
 }
 
@@ -1336,6 +1338,8 @@ void BlockModel::removeBlock(int row) {
     fenwick_.erase(static_cast<size_t>(row));
     endRemoveRows();
     bumpLayout();
+    ++contentRevision_;            // row→content mapping shifted: refresh content bindings
+    emit contentChangedSpike();
     endTxn();
 }
 

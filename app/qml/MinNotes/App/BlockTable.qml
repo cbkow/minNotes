@@ -217,7 +217,7 @@ Item {
                                 font.pixelSize: Theme.font.sizeBody
                                 font.bold: cellRect.isHeader
                                 horizontalAlignment: {
-                                    var a = blockModel.tableColAlign(tv.logicalRow, cellRect.c)
+                                    var a = (tv._rev, blockModel.tableColAlign(tv.logicalRow, cellRect.c))
                                     return a === 1 ? TextEdit.AlignHCenter
                                          : a === 2 ? TextEdit.AlignRight : TextEdit.AlignLeft
                                 }
