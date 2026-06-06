@@ -5,8 +5,10 @@
 #include <QVariantList>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include "FenwickTree.h"
 #include "Document.h"
+#include "TableGrid.h"
 
 // The document model: a QAbstractListModel over the SQLite-canonical store
 // (DESIGN.md §3–4). Eager skinny-scan seeds the layout (type/rank) + Fenwick
@@ -38,7 +40,7 @@ public:
     };
     enum BlockType : uint8_t {
         Paragraph = 0, Heading = 1, Code = 2, Media = 3,
-        Quote = 4, ListItem = 5, Divider = 6
+        Quote = 4, ListItem = 5, Divider = 6, Table = 7
     };
     enum Distribution { Uniform = 0, Mixed = 1, Adversarial = 2 };
 
@@ -152,6 +154,29 @@ public:
     // turn it into an (empty) code block of that language. Returns true if it did.
     Q_INVOKABLE bool makeCodeBlockIfFence(int row);
 
+    // --- Tables ---
+    // The grid lives as compact JSON in the block's `content`; these read a cached
+    // parse and the mutators reserialize + persist through the txn chokepoint, so
+    // undo/redo work unchanged. Cell typing coalesces per cell ("tcell:r:c").
+    // Insert a fresh `nRows`x`nCols` table block after `afterRow` (undoable).
+    Q_INVOKABLE void insertTable(int afterRow, int nRows, int nCols);
+    Q_INVOKABLE int  tableRows(int row) const;
+    Q_INVOKABLE int  tableColumns(int row) const;
+    Q_INVOKABLE int  tableHeaderRows(int row) const;
+    Q_INVOKABLE QString tableCell(int row, int r, int c) const;
+    Q_INVOKABLE int  tableColWidth(int row, int c) const;     // 0 = auto-size
+    Q_INVOKABLE int  tableColAlign(int row, int c) const;     // 0 left,1 center,2 right
+    Q_INVOKABLE void tableSetCell(int row, int r, int c, const QString& text);
+    Q_INVOKABLE void tableInsertRow(int row, int at);
+    Q_INVOKABLE void tableInsertColumn(int row, int at);
+    Q_INVOKABLE void tableDeleteRow(int row, int at);
+    Q_INVOKABLE void tableDeleteColumn(int row, int at);
+    Q_INVOKABLE void tableSetColWidth(int row, int c, int w);
+    Q_INVOKABLE void tableSetColAlign(int row, int c, int a);
+    Q_INVOKABLE void tableSetHeaderRows(int row, int n);
+    // Paste TSV (tab/newline) into the table at anchor (r,c), growing as needed.
+    Q_INVOKABLE void tablePasteTSV(int row, int r, int c, const QString& tsv);
+
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
     bool canUndo() const;
@@ -260,6 +285,17 @@ private:
     FenwickTree fenwick_;
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
+
+    // Table grid cache: parse the focused table's content JSON once per
+    // (row, contentRevision) so the many per-cell QML queries don't re-parse.
+    const TableGrid& gridFor(int row) const;
+    mutable TableGrid tableCache_;
+    mutable int tableCacheRow_ = -1;
+    mutable int tableCacheRev_ = -1;
+    // Apply a mutation to the table at `row` via a lambda, then reserialize to
+    // content, persist, and snapshot (one txn; `coalesce` groups cell typing).
+    void mutateTable(int row, const std::function<void(TableGrid&)>& fn,
+                     const QString& coalesce = QString());
 
     // Undo/redo state.
     std::vector<UndoEntry> undo_;

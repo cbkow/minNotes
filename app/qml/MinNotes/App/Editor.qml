@@ -14,7 +14,17 @@ FocusScope {
     id: root
     focus: true
     Component.onCompleted: forceActiveFocus()
-    property real colWidth: Math.min(width - 40, Theme.dim.columnWidth)
+    // One comfortable reading measure for ALL prose/code/media (760 reads fine —
+    // no reason to widen it). The column stays centred, exactly as before. TABLES
+    // are the sole exception: they may exceed it (capped + horizontal-scrolled in
+    // the table delegate); pageWidth is their outer bound.
+    property real pageWidth: Math.min(width - 40, Theme.dim.pageWidth)
+    property real textWidth: Math.min(width - 40, Theme.dim.columnWidth)
+    readonly property real leftEdge: (flick.width - textWidth) / 2
+    // Per-type horizontal measure: only Table(7) gets the wider page bound; every
+    // other block keeps the text measure. Drives cell width + drag-overlay width.
+    function measureForType(t) { return (t === 7) ? pageWidth : textWidth }
+    function measureForRow(row) { return measureForType(blockModel.typeForRow(row)) }
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
     property bool caretOn: true
@@ -35,7 +45,7 @@ FocusScope {
     property real blockDragViewY: 0       // viewport y of the cursor
     property int  dropGap: -1            // insertion gap 0..count (line at its top)
     property int  hoverRow: -1           // row whose grip is lit
-    readonly property real gutterX: (flick.width - colWidth) / 2   // == cell.colLeft
+    readonly property real gutterX: leftEdge   // grip gutter sits just left of the common left edge
 
     // Block context-menu state: the right-clicked row and where the menu opened
     // (viewport coords; reused to anchor the language picker).
@@ -501,13 +511,17 @@ FocusScope {
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
+                // Horizontal measure for this block by type (page vs text bound).
+                // Keyed off te.btype (already reactive) — NOT the layout revision,
+                // which the measured height bumps and would form a binding loop.
+                readonly property real measure: root.measureForType(te.btype)
 
                 width: flick.width
                 visible: active
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
                 // Code blocks get double vertical padding (24 vs 12) so the
                 // syntax-themed background has breathing room above/below.
-                height: (te.btype === 2 ? 24 : 12) + (isMedia ? root.colWidth * 0.5 : (te.btype === 6 ? 18 : te.implicitHeight))
+                height: (te.btype === 2 ? 24 : 12) + (isMedia ? cell.measure * 0.5 : (te.btype === 6 ? 18 : te.implicitHeight))
 
                 onHeightChanged: if (active) blockModel.setMeasuredHeight(logicalRow, height)
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
@@ -585,7 +599,7 @@ FocusScope {
                     border.width: 1; border.color: Theme.colors.border
                 }
 
-                readonly property real colLeft: (width - root.colWidth) / 2
+                readonly property real colLeft: root.leftEdge   // shared left edge for all blocks
 
                 TextEdit {
                     id: te
@@ -596,7 +610,7 @@ FocusScope {
                     // quote/list get a left indent; the decoration sits in it.
                     readonly property real deco: (btype === 4 || btype === 5) ? 22 : 0
                     x: cell.colLeft + deco
-                    width: root.colWidth - deco
+                    width: cell.measure - deco
                     y: btype === 2 ? 12 : 6   // code: centered in the taller (doubled-margin) cell
                     // Quotes are upright Merriweather (serif + bar + muted colour
                     // mark them); italic/bold come from spans so all four faces
@@ -683,7 +697,7 @@ FocusScope {
                 Rectangle {  // divider: horizontal rule
                     visible: cell.active && te.btype === 6
                     x: cell.colLeft; y: cell.height / 2 - 1
-                    width: root.colWidth; height: 1
+                    width: cell.measure; height: 1
                     color: Theme.colors.divider
                 }
 
@@ -817,7 +831,7 @@ FocusScope {
     // Drop-indicator line at the insertion gap.
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0
-        x: root.gutterX; width: root.colWidth; height: 2; radius: 1
+        x: root.gutterX; width: root.measureForRow(root.blockDragRow); height: 2; radius: 1
         y: (blockModel.layoutRevision, root.gapY(root.dropGap)) - flick.contentY - 1
         color: Theme.colors.accent
         z: 50
@@ -826,7 +840,7 @@ FocusScope {
     // translucent fill (the document shows through), following the cursor.
     Rectangle {
         visible: root.blockDragging
-        x: root.gutterX; width: root.colWidth; height: 30
+        x: root.gutterX; width: root.measureForRow(root.blockDragRow); height: 30
         y: root.blockDragViewY - height / 2
         readonly property color _a: Theme.colors.accent
         color: Qt.rgba(_a.r, _a.g, _a.b, 0.06)

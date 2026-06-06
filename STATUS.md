@@ -191,6 +191,20 @@ DESIGN.md  SPIKE.md  STATUS.md
       undoable. "Change language…" opens a language picker (typed `TextInput` +
       common quick-picks). `Del` now deletes **forward** (`forwardDelete`) instead of
       mirroring Backspace.
+- [~] **Tables — foundation (P0–P1)** — *in progress; see
+      `~/.claude/plans/virtual-tinkering-island.md`.* Tables are one block whose 2D
+      grid serializes to compact JSON in the block's `content` (so undo/redo +
+      persistence reuse the existing chokepoint). **Data tier**: `core/TableGrid`
+      — pure grid value-type (JSON round-trip, structure ops, TSV/CSV import +
+      TSV/HTML export, the future paste seam). **Dock**: `BlockType::Table = 7`
+      threaded through the type/height plumbing; `BlockModel` table seam
+      (`insertTable` + cached `tableRows/Columns/Cell/ColWidth/…` queries +
+      `tableSetCell/Insert…/Delete…/PasteTSV` mutators, per-cell typing coalesced).
+      **Layout groundwork**: a `measureForType` hook in `Editor.qml` — prose/code/
+      media keep the comfortable 760 measure (centred, unchanged); only tables may
+      exceed it (P2 adds the wider footprint + horizontal scroll). No table UI yet
+      (renders in P2). Remaining: render (P2), keyboard (P3), mouse/selection (P4),
+      structure ops + entry points (P5), column widths (P6), clipboard tier (P7).
 
 ## Next (rough order)
 - [ ] **Spans — finish past MVP**: a menubar/toolbar to drive `toggleFormat`

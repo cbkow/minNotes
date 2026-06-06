@@ -61,6 +61,7 @@ BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
     if (s == QLatin1String("quote"))     return Quote;
     if (s == QLatin1String("list_item")) return ListItem;
     if (s == QLatin1String("divider"))   return Divider;
+    if (s == QLatin1String("table"))     return Table;
     return Paragraph;
 }
 
@@ -72,6 +73,7 @@ const char* BlockModel::typeToString(uint8_t t) {
     case Quote:    return "quote";
     case ListItem: return "list_item";
     case Divider:  return "divider";
+    case Table:    return "table";
     default:       return "paragraph";
     }
 }
@@ -143,6 +145,8 @@ void BlockModel::loadFromStore() {
             r.level = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("level")).toInt(1), 1, 6));
         if (r.type == Code)
             r.lang = o.value(QStringLiteral("lang")).toString();
+        if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
+            r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(text).rows()));
         for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
             const QJsonObject so = sv.toObject();
             const uint8_t k = spanKindFromString(so.value(QStringLiteral("k")).toString());
@@ -234,6 +238,7 @@ double BlockModel::estimatedHeight(const Row& r) const {
     case Heading: return kHeading + kPadV;
     case Media:   return kWidthEst * (r.param / 100.0) + kPadV;  // aspect = param/100
     case Divider: return 24.0;
+    case Table:   return r.param * 34.0 + 44.0;     // param = row count; +header/strip
     case Code:
     case Paragraph:
     default:      return r.param * kLine + kPadV;  // quote/list ≈ paragraph
@@ -611,6 +616,111 @@ bool BlockModel::makeCodeBlockIfFence(int row) {
     emit contentChangedSpike();
     endTxn();
     return true;
+}
+
+// === Tables ==============================================================
+// The grid lives as compact JSON in `content`; mutations reserialize and persist
+// through the existing txn chokepoint, so undo/redo/coalescing work unchanged.
+
+const TableGrid& BlockModel::gridFor(int row) const {
+    row = clampRow(row);
+    if (tableCacheRow_ == row && tableCacheRev_ == contentRevision_) return tableCache_;
+    tableCache_ = TableGrid::fromJson(content_[row]);
+    tableCacheRow_ = row;
+    tableCacheRev_ = contentRevision_;
+    return tableCache_;
+}
+
+void BlockModel::mutateTable(int row, const std::function<void(TableGrid&)>& fn,
+                             const QString& coalesce) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Table) return;
+    TableGrid g = TableGrid::fromJson(content_[row]);
+    fn(g);
+    beginTxn(row, row);
+    content_[row] = g.toJson();
+    rows_[row].param = static_cast<uint16_t>(std::clamp(g.rows(), 1, 65535));
+    persistContent(row);
+    tableCacheRow_ = -1;                                  // invalidate the parse cache
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn(coalesce);
+}
+
+int BlockModel::tableRows(int row) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).rows();
+}
+int BlockModel::tableColumns(int row) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).cols();
+}
+int BlockModel::tableHeaderRows(int row) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).headerRows();
+}
+QString BlockModel::tableCell(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return {};
+    return gridFor(row).cellText(r, c);
+}
+int BlockModel::tableColWidth(int row, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).colWidth(c);
+}
+int BlockModel::tableColAlign(int row, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).colAlign(c);
+}
+
+void BlockModel::tableSetCell(int row, int r, int c, const QString& text) {
+    mutateTable(row, [&](TableGrid& g){ g.setCellText(r, c, text); },
+                QStringLiteral("tcell:%1:%2").arg(r).arg(c));
+}
+void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
+void BlockModel::tableInsertColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.insertCol(at); }); }
+void BlockModel::tableDeleteRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.deleteRow(at); }); }
+void BlockModel::tableDeleteColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.deleteCol(at); }); }
+void BlockModel::tableSetColWidth(int row, int c, int w) { mutateTable(row, [&](TableGrid& g){ g.setColWidth(c, w); }); }
+void BlockModel::tableSetColAlign(int row, int c, int a) { mutateTable(row, [&](TableGrid& g){ g.setColAlign(c, a); }); }
+void BlockModel::tableSetHeaderRows(int row, int n)      { mutateTable(row, [&](TableGrid& g){ g.setHeaderRows(n); }); }
+
+void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
+    const TableGrid src = TableGrid::fromTSV(tsv);
+    mutateTable(row, [&](TableGrid& g){
+        while (g.rows() < r + src.rows()) g.insertRow(g.rows());   // grow to fit the paste
+        while (g.cols() < c + src.cols()) g.insertCol(g.cols());
+        for (int i = 0; i < src.rows(); ++i)
+            for (int j = 0; j < src.cols(); ++j)
+                g.setCellText(r + i, c + j, src.cellText(i, j));
+    });
+}
+
+void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
+    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+    nRows = std::max(1, nRows); nCols = std::max(1, nCols);
+    const QString json = TableGrid::makeEmpty(nRows, nCols).toJson();
+    beginTxn(at, at - 1);                        // empty `before`; after = [at,at]
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(
+        (at > 0) ? ranks_[at - 1] : QString(),
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+
+    beginInsertRows({}, at, at);
+    Row r{}; r.type = Table; r.param = static_cast<uint16_t>(nRows);
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, json);
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
+    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), json);
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
 }
 
 void BlockModel::clearFormat(int row, int start, int end) {
