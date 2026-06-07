@@ -176,6 +176,9 @@ FocusScope {
     function seekVideoEnd()   { videoDec.pause(); videoAudio.pause(); _vidScrubTo(videoDec.frameCount - 1) }
     function toggleVideoMute(){ if (videoAudio.hasAudio) videoAudio.setMuted(!videoAudio.muted) }
     function toggleVideoLoop(){ videoLoop = !videoLoop }
+    // Make `row` the active player if it isn't already (so a control on a
+    // not-yet-playing video's toolbar activates it before acting).
+    function ensureVideoActive(row) { if (videoPlayingRow !== row) playVideo(row) }
 
     // Accelerating fast-seek shuttle (held rewind/ff): a 33 ms timer advances a
     // position at 2x→32x (doubles/sec) and scrubs to it each tick.
@@ -192,12 +195,6 @@ FocusScope {
         videoFastSeekTimer.start()
     }
     function stopVideoFastSeek() { _vidFastSeekDir = 0; videoFastSeekTimer.stop() }
-
-    function _fmtClock(sec) {   // m:ss
-        if (!(sec > 0)) sec = 0
-        var s = Math.floor(sec)
-        return Math.floor(s / 60) + ":" + ((s % 60) < 10 ? "0" : "") + (s % 60)
-    }
 
     VideoDecoder { id: videoDec }
     AudioPlayer  { id: videoAudio }
@@ -942,6 +939,20 @@ FocusScope {
     readonly property int firstVisible: blockModel.rowForY(flick.contentY)
     readonly property int lastVisible: Math.min(blockModel.count - 1,
                                        blockModel.rowForY(flick.contentY + flick.height - 1))
+    // Visible video rows — feeds the per-video transport-toolbar overlays. Scan
+    // the visible window; carry revision deps (rule 6) so it refreshes on
+    // insert/delete/scroll. A tiny overscan keeps a toolbar from popping at the
+    // edges.
+    readonly property var visibleVideoRows: {
+        var dep = blockModel.contentRevision + blockModel.layoutRevision
+        var out = []
+        var lo = Math.max(0, firstVisible - 1)
+        var hi = Math.min(blockModel.count - 1, lastVisible + 1)
+        for (var r = lo; r <= hi; ++r)
+            if (blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "video")
+                out.push(r)
+        return out
+    }
     readonly property int firstRow: Math.max(0, firstVisible - overscan)
     readonly property int poolSize: Math.min(blockModel.count,
                                     Math.ceil(root.height / 38) + 2 * overscan + 4)
@@ -991,6 +1002,8 @@ FocusScope {
                 // (same trap the `measure` binding below documents).
                 readonly property bool isMedia: active
                     && (blockModel.contentRevision, blockModel.typeForRow(logicalRow)) === 3
+                readonly property bool isVideoMedia: isMedia
+                    && (blockModel.contentRevision, blockModel.mediaKind(logicalRow)) === "video"
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
@@ -1005,11 +1018,11 @@ FocusScope {
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
                 // Code blocks get double vertical padding (24 vs 12) so the
                 // syntax-themed background has breathing room above/below.
-                // A playing video reserves room for its transport toolbar below
-                // the frame (videoPlayingRow only changes on a user play/stop —
-                // no layout-settle dependency, so no binding loop).
+                // Every video block reserves room for its always-on transport
+                // toolbar below the frame (the toolbar is a root overlay; this
+                // keeps it in real layout space — no grow-on-play jump).
                 height: isMedia      ? 12 + mediaHost.implicitHeight     // image/video
-                                       + (logicalRow === root.videoPlayingRow ? root.videoTransportH : 0)
+                                       + (isVideoMedia ? root.videoTransportH : 0)
                       : te.btype === 6 ? 12 + 18                       // divider
                       : te.btype === 7 ? 12 + tableHost.implicitHeight // table
                       : (te.btype === 2 ? 24 : 12) + te.implicitHeight
@@ -1587,14 +1600,14 @@ FocusScope {
         }
     }
 
-    // --- Inline video player overlay — the single root-owned surface with a
-    // dedicated transport toolbar BELOW it (never covering the frame). Sits
-    // above the central mouse layer (z:56) so the toolbar can take clicks.
-    // Positioned over the playing block (content-y minus scroll; matches the
-    // MediaBlock y:6 inset). The block reserves videoTransportH below the frame
-    // so the toolbar lands in real layout space, not over following content. ---
+    // --- Inline video: ONE rendering surface over the ACTIVE player, plus a
+    // persistent transport toolbar under EVERY visible video (a player-card
+    // look — the toolbar is always up, even before first play). Both are root
+    // overlays above the central mouse layer (z:56) so the controls take
+    // clicks; every video block reserves videoTransportH so the toolbar sits in
+    // real layout space, not over following content. ---
     Item {
-        id: videoOverlay
+        id: videoSurfaceOverlay
         visible: root.videoVisible
         z: 56
         readonly property int r: root.videoPlayingRow
@@ -1606,31 +1619,47 @@ FocusScope {
                                                          : Math.round(dispW * 0.5)
         x: root.leftEdge
         y: (blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) - flick.contentY + 6
-        width: dispW
-        height: dispH + root.videoTransportH
-
-        readonly property real curSec:   videoDec.fps > 0 ? videoDec.currentFrame / videoDec.fps : 0
-        readonly property real totalSec: videoDec.fps > 0 ? Math.max(0, videoDec.frameCount - 1) / videoDec.fps : 0
+        width: dispW; height: dispH
 
         VideoSurfaceItem {
             id: videoSurface
-            x: 0; y: 0; width: parent.width; height: videoOverlay.dispH
+            anchors.fill: parent
             videoDecoder: videoDec
             fillColor: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
                                Theme.colors.surface.b, 1.0)
         }
         MouseArea {   // click the frame to toggle play/pause
-            x: 0; y: 0; width: parent.width; height: videoOverlay.dispH
+            anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: root.toggleVideo()
         }
+    }
 
-        // --- Transport toolbar (below the frame; ported 1:1 from ufb) ---
-        Rectangle {
-            id: transport
-            x: 0; y: videoOverlay.dispH
-            width: parent.width; height: root.videoTransportH
-            color: Theme.colors.surface
+    // Persistent transport toolbar under each visible video. `live` = this row
+    // is the active player (controls bound to the decoder); otherwise the bar
+    // shows the static state and any control activates the video first.
+    Repeater {
+        model: root.visibleVideoRows
+        delegate: Rectangle {
+            id: vbar
+            required property int modelData
+            readonly property int row: modelData
+            readonly property bool live: row === root.videoPlayingRow
+            readonly property real measure: root.measureForRow(row)
+            readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
+            readonly property int vh: blockModel.mediaH(row)
+            readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
+            readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
+                                                             : Math.round(dispW * 0.5)
+            readonly property int totalFrames: live ? videoDec.frameCount
+                                                    : (blockModel.contentRevision, blockModel.mediaFrames(row))
+
+            z: 56
+            x: root.leftEdge
+            y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
+            width: dispW
+            height: root.videoTransportH
+            color: "#212121"      // a hair lighter than the page (#1b1b1b)
             Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
 
             RowLayout {
@@ -1639,72 +1668,53 @@ FocusScope {
                 spacing: 0
 
                 FlatButton { iconName: "skip-back"; tooltip: qsTr("Jump to start"); tooltipSide: "top"
-                    onClicked: root.seekVideoStart() }
+                    onClicked: { root.ensureVideoActive(vbar.row); root.seekVideoStart() } }
                 FlatButton { iconName: "rewind"; tooltip: qsTr("Rewind — hold"); tooltipSide: "top"
-                    onPressed: root.startVideoFastSeek(-1); onReleased: root.stopVideoFastSeek() }
+                    onPressed: { root.ensureVideoActive(vbar.row); root.startVideoFastSeek(-1) }
+                    onReleased: root.stopVideoFastSeek() }
                 FlatButton { iconName: "caret-left"; tooltip: qsTr("Step back"); tooltipSide: "top"
-                    onClicked: root.stepVideoFrames(-1) }
-                FlatButton { iconName: videoDec.isPlaying ? "pause" : "play"
-                    tooltip: qsTr("Play / Pause"); tooltipSide: "top"; onClicked: root.toggleVideo() }
+                    onClicked: { root.ensureVideoActive(vbar.row); root.stepVideoFrames(-1) } }
+                FlatButton { iconName: (vbar.live && videoDec.isPlaying) ? "pause" : "play"
+                    tooltip: qsTr("Play / Pause"); tooltipSide: "top"; onClicked: root.playVideo(vbar.row) }
                 FlatButton { iconName: "caret-right"; tooltip: qsTr("Step forward"); tooltipSide: "top"
-                    onClicked: root.stepVideoFrames(1) }
+                    onClicked: { root.ensureVideoActive(vbar.row); root.stepVideoFrames(1) } }
                 FlatButton { iconName: "fast-forward"; tooltip: qsTr("Fast-forward — hold"); tooltipSide: "top"
-                    onPressed: root.startVideoFastSeek(1); onReleased: root.stopVideoFastSeek() }
+                    onPressed: { root.ensureVideoActive(vbar.row); root.startVideoFastSeek(1) }
+                    onReleased: root.stopVideoFastSeek() }
                 FlatButton { iconName: "skip-forward"; tooltip: qsTr("Jump to end"); tooltipSide: "top"
-                    onClicked: root.seekVideoEnd() }
+                    onClicked: { root.ensureVideoActive(vbar.row); root.seekVideoEnd() } }
 
-                // Scrub track — drag to seek (instant GOP-cached scrub frames).
-                Item {
-                    id: scrub
+                FlatSlider {
+                    id: vscrub
                     Layout.fillWidth: true
-                    Layout.preferredHeight: parent.height
                     Layout.leftMargin: 8; Layout.rightMargin: 8
-                    readonly property int fc: Math.max(1, videoDec.frameCount - 1)
-                    property bool dragging: false
+                    Layout.alignment: Qt.AlignVCenter
+                    from: 0; to: Math.max(1, vbar.totalFrames - 1)
+                    fillColor: Theme.colors.accent
                     property bool wasPlaying: false
-                    property real localFrac: 0
-                    readonly property real frac: dragging ? localFrac
-                        : (videoDec.frameCount > 0 ? videoDec.currentFrame / fc : 0)
-
-                    Rectangle {   // track + played fill
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width; height: 4; radius: 2
-                        color: Theme.colors.border
-                        Rectangle {
-                            width: Math.round(parent.width * scrub.frac); height: parent.height
-                            radius: 2; color: Theme.colors.accent
-                        }
-                    }
-                    Rectangle {   // handle
-                        width: 13; height: 13; radius: 6.5
-                        color: Theme.colors.accent
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: Math.round(parent.width * scrub.frac) - width / 2
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.topMargin: -6; anchors.bottomMargin: -6   // easier grab target
-                        cursorShape: Qt.PointingHandCursor
-                        function seekToX(px) {
-                            var f = Math.max(0, Math.min(1, px / scrub.width))
-                            scrub.localFrac = f
-                            root._vidScrubTo(Math.round(f * scrub.fc))
-                        }
-                        onPressed: (m) => {
-                            scrub.wasPlaying = videoDec.isPlaying
+                    // Pause while scrubbing so each seek lands; resume repositions
+                    // the streaming decoder to the scrubbed frame first.
+                    onPressedChanged: {
+                        if (pressed) {
+                            root.ensureVideoActive(vbar.row)
+                            wasPlaying = videoDec.isPlaying
                             videoDec.pause(); videoAudio.pause()
-                            scrub.dragging = true; seekToX(m.x)
+                        } else if (wasPlaying) {
+                            root._vidSyncForResume(); videoDec.play()
+                            if (videoAudio.hasAudio) videoAudio.play()
                         }
-                        onPositionChanged: (m) => { if (scrub.dragging) seekToX(m.x) }
-                        onReleased: {
-                            scrub.dragging = false
-                            if (scrub.wasPlaying) { root._vidSyncForResume(); videoDec.play(); if (videoAudio.hasAudio) videoAudio.play() }
+                    }
+                    onMoved: { root.ensureVideoActive(vbar.row); root._vidScrubTo(Math.round(value)) }
+                    Connections {
+                        target: videoDec
+                        function onCurrentFrameChanged() {
+                            if (vbar.live && !vscrub.pressed) vscrub.value = videoDec.currentFrame
                         }
                     }
                 }
 
                 Text {   // frame counter (mirrors ufb)
-                    text: videoDec.currentFrame + " / " + Math.max(0, videoDec.frameCount - 1)
+                    text: (vbar.live ? videoDec.currentFrame : 0) + " / " + Math.max(0, vbar.totalFrames - 1)
                     color: Theme.colors.textMuted
                     font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
                     Layout.rightMargin: 4
@@ -1713,38 +1723,18 @@ FocusScope {
                 FlatButton { iconName: "repeat"; tooltip: qsTr("Loop"); tooltipSide: "top"
                     checked: root.videoLoop; onClicked: root.toggleVideoLoop() }
                 FlatButton {
-                    visible: videoAudio.hasAudio
+                    visible: vbar.live && videoAudio.hasAudio
                     iconName: (videoAudio.muted || videoAudio.volume <= 0) ? "speaker-x" : "speaker-high"
-                    tooltip: qsTr("Mute"); tooltipSide: "top"
-                    onClicked: root.toggleVideoMute()
+                    tooltip: qsTr("Mute"); tooltipSide: "top"; onClicked: root.toggleVideoMute()
                 }
-                // Volume track
-                Item {
-                    visible: videoAudio.hasAudio
-                    Layout.preferredWidth: 64; Layout.preferredHeight: parent.height
-                    Layout.leftMargin: 4
-                    readonly property real vol: videoAudio.muted ? 0 : videoAudio.volume
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width; height: 4; radius: 2; color: Theme.colors.border
-                        Rectangle { width: Math.round(parent.width * parent.parent.vol); height: parent.height
-                            radius: 2; color: Theme.colors.textMuted }
-                    }
-                    Rectangle {
-                        width: 11; height: 11; radius: 5.5; color: Theme.colors.textMuted
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: Math.round((parent.width - width) * parent.vol)
-                    }
-                    MouseArea {
-                        anchors.fill: parent; anchors.topMargin: -6; anchors.bottomMargin: -6
-                        cursorShape: Qt.PointingHandCursor
-                        function setVol(px) {
-                            var v = Math.max(0, Math.min(1, px / parent.width))
-                            videoAudio.setVolume(v); if (v > 0) videoAudio.setMuted(false)
-                        }
-                        onPressed: (m) => setVol(m.x)
-                        onPositionChanged: (m) => { if (pressed) setVol(m.x) }
-                    }
+                FlatSlider {
+                    visible: vbar.live && videoAudio.hasAudio
+                    Layout.preferredWidth: 64; Layout.leftMargin: 2
+                    Layout.alignment: Qt.AlignVCenter
+                    from: 0; to: 1
+                    value: videoAudio.muted ? 0 : videoAudio.volume
+                    fillColor: Theme.colors.textMuted
+                    onMoved: { videoAudio.setVolume(value); if (value > 0) videoAudio.setMuted(false) }
                 }
             }
         }
