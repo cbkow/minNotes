@@ -821,6 +821,36 @@ void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     endTxn();
 }
 
+int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
+    const TableGrid g = TableGrid::fromTSV(tsv);
+    if (g.rows() < 1 || g.cols() < 1) return -1;
+    const QString json = g.toJson();
+    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+    beginTxn(at, at - 1);                         // empty `before`; after = [at,at]
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(
+        (at > 0) ? ranks_[at - 1] : QString(),
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+
+    beginInsertRows({}, at, at);
+    Row r{}; r.type = Table; r.param = static_cast<uint16_t>(g.rows());
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, json);
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
+    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), json);
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return at;
+}
+
 // === Media ===============================================================
 // The descriptor ({src,w,h}) lives as JSON in `content` (like tables), so undo +
 // persistence reuse the chokepoint. Bytes are never stored here (see MediaStore).

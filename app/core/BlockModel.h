@@ -179,6 +179,9 @@ public:
     // undo/redo work unchanged. Cell typing coalesces per cell ("tcell:r:c").
     // Insert a fresh `nRows`x`nCols` table block after `afterRow` (undoable).
     Q_INVOKABLE void insertTable(int afterRow, int nRows, int nCols);
+    // Build a table block from pasted TSV (tabs = columns, newlines = rows) and
+    // insert it after `afterRow`. Returns the new table's row index, or -1.
+    Q_INVOKABLE int  insertTableFromTSV(int afterRow, const QString& tsv);
     Q_INVOKABLE int  tableRows(int row) const;
     Q_INVOKABLE int  tableColumns(int row) const;
     Q_INVOKABLE int  tableHeaderRows(int row) const;

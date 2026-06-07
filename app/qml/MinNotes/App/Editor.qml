@@ -874,6 +874,11 @@ FocusScope {
             return
         }
         if (cursor.hasSel) cursor.deleteSelection()
+        // Rectangular TSV (Excel/Sheets) → a new table block.
+        if (root.looksTabular(txt)) {
+            var tr = blockModel.insertTableFromTSV(cursor.focusRow, txt)
+            if (tr >= 0) { cursor.setCaret(tr, 0); root.ensureVisible(tr); return }
+        }
         // Smart paste: split into blocks (blank lines separate), parse per-line
         // markdown prefixes + inline **bold**/*italic*/`code`/~~strike~~, all as
         // one undo step. Returns [caretRow, caretCol] to land the caret.
@@ -881,6 +886,24 @@ FocusScope {
         if (caret && caret.length === 2) {
             cursor.setCaret(caret[0], caret[1]); root.ensureVisible(caret[0])
         }
+    }
+    // Rectangular grid signal for paste→table: every non-empty line carries the
+    // SAME number of tabs (>=1), across >=2 rows. The strict equal-column check
+    // avoids misreading tab-indented prose/code as a table (HTML from Excel is the
+    // precise path, handled later); a single-row tabbed paste stays plain text.
+    function looksTabular(txt) {
+        if (txt.indexOf("\t") < 0) return false
+        var lines = txt.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")
+        while (lines.length && lines[lines.length - 1] === "") lines.pop()
+        if (lines.length < 2) return false
+        var cols = -1
+        for (var i = 0; i < lines.length; ++i) {
+            if (lines[i] === "") return false        // a blank interior line → not a grid
+            var t = lines[i].split("\t").length - 1
+            if (t < 1) return false
+            if (cols < 0) cols = t; else if (t !== cols) return false
+        }
+        return true
     }
     function doCut() {
         doCopy()
