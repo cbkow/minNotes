@@ -1647,6 +1647,11 @@ FocusScope {
                 // before release can't re-extend the selection back to the click
                 // point (which collapsed the word to word-start→cursor).
                 root.dragging = false; root.tableResizing = false
+                // Double-click a file-attachment chip → reveal it in Finder/Explorer.
+                var mrow = blockModel.rowForY(m.y)
+                if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
+                    blockModel.revealMedia(mrow); return
+                }
                 // Double-click a table column border → reset that column to auto.
                 var drow = blockModel.rowForY(m.y)
                 if (blockModel.typeForRow(drow) === 7) {
@@ -2225,6 +2230,8 @@ FocusScope {
             MenuRow { visible: blockMenu.isMedia
                       text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                       onActivated: blockModel.revealMedia(root.menuRow) }
+            MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
+                      onActivated: blockModel.openMediaInUfb(root.menuRow) }
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }

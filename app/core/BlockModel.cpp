@@ -34,6 +34,7 @@ constexpr double kPadV     = 16.0;   // vertical padding per block
 constexpr double kHeading  = 40.0;
 constexpr double kWidthEst = 760.0;  // assumed content width for media estimate
 constexpr double kVideoBar = 40.0;   // transport toolbar reserved under a video
+constexpr double kFileChip = 56.0;   // fixed height of an unsupported-file attachment chip
                                      // (keep in sync with Editor.qml videoTransportH)
 
 // Fractional-rank alphabet: 62 digits in ascending ASCII order, so plain
@@ -257,7 +258,9 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
     r.mediaH = static_cast<uint16_t>(std::clamp(mh, 0, 65535));
     if (mw > 0 && mh > 0)
         r.param = static_cast<uint16_t>(std::clamp(int(100.0 * mh / mw + 0.5), 1, 1000));
-    r.isVideo = mo.value(QStringLiteral("kind")).toString() == QLatin1String("video");
+    const QString kind = mo.value(QStringLiteral("kind")).toString();
+    r.isVideo = kind == QLatin1String("video");
+    r.isFile  = kind == QLatin1String("file");
 }
 
 // Displayed media frame height: dispW = min(contentWidth, w) (never upscaled),
@@ -265,6 +268,7 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 // width — recomputed when setContentWidth changes (resize). Falls back to the
 // aspect param if intrinsic dims are missing.
 double BlockModel::mediaFrameHeight(const Row& r) const {
+    if (r.isFile) return kFileChip;            // fixed-height attachment chip
     if (r.mediaW > 0 && r.mediaH > 0) {
         const double dispW = std::min<double>(contentWidth_, r.mediaW);
         return std::floor(dispW * r.mediaH / r.mediaW + 0.5);
@@ -908,6 +912,15 @@ static QString videoMediaJson(const MediaStore::VideoRef& ref) {
     o.insert(QStringLiteral("fps"), ref.fps);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
+static QString fileMediaJson(const QString& path) {
+    const QFileInfo fi(path);
+    QJsonObject o;
+    o.insert(QStringLiteral("src"),  fi.absoluteFilePath());
+    o.insert(QStringLiteral("kind"), QStringLiteral("file"));
+    o.insert(QStringLiteral("name"), fi.fileName());
+    o.insert(QStringLiteral("ext"),  fi.suffix().toLower());
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
 static uint16_t aspectParam(int w, int h) {
     if (w <= 0 || h <= 0) return 56;     // 16:9 fallback (no jump until real dims)
     return static_cast<uint16_t>(std::clamp(int(100.0 * h / w + 0.5), 1, 1000));
@@ -940,9 +953,20 @@ bool BlockModel::insertVideoFromUrl(int afterRow, const QString& fileUrl) {
     return true;
 }
 
+bool BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
+    const QString path = fileUrl.startsWith(QLatin1String("file:"))
+                       ? QUrl(fileUrl).toLocalFile() : fileUrl;
+    if (path.isEmpty()) return false;
+    insertMedia(afterRow, fileMediaJson(path), static_cast<uint16_t>(kFileChip));
+    return true;
+}
+
 bool BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
-    return MediaStore::isVideoPath(fileUrl) ? insertVideoFromUrl(afterRow, fileUrl)
-                                            : insertImageFromUrl(afterRow, fileUrl);
+    // Video (by extension + a successful probe), else a loadable image, else a
+    // generic file attachment chip — so any dropped/pasted file lands somewhere.
+    if (MediaStore::isVideoPath(fileUrl) && insertVideoFromUrl(afterRow, fileUrl)) return true;
+    if (insertImageFromUrl(afterRow, fileUrl)) return true;
+    return insertFileFromUrl(afterRow, fileUrl);
 }
 
 QString BlockModel::mediaUrl(int row) const {
@@ -966,6 +990,27 @@ void BlockModel::revealMedia(int row) const {
 #else
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
 #endif
+}
+QString BlockModel::mediaFileName(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QString name = QJsonDocument::fromJson(content_[row].toUtf8())
+                             .object().value(QStringLiteral("name")).toString();
+    return name.isEmpty() ? QFileInfo(mediaLocalPath(row)).fileName() : name;
+}
+// Open the media's file in the sibling ufb browser via its deep-link scheme:
+// ufb:///{os}/{percent-encoded path} (slashes kept literal, matching ufb's
+// build_path_uri). No-op if ufb isn't installed (no handler registered).
+void BlockModel::openMediaInUfb(int row) const {
+    const QString path = mediaLocalPath(row);
+    if (path.isEmpty()) return;
+#if defined(Q_OS_WIN)
+    const QString os = QStringLiteral("win");
+#else
+    const QString os = QStringLiteral("mac");
+#endif
+    const QString enc = QString::fromLatin1(QUrl::toPercentEncoding(path, "/"));
+    QDesktopServices::openUrl(QUrl(QStringLiteral("ufb:///") + os + QLatin1Char('/') + enc));
 }
 int BlockModel::mediaW(int row) const {
     row = clampRow(row);

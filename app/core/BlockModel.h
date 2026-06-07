@@ -231,13 +231,17 @@ public:
     Q_INVOKABLE bool insertImageFromUrl(int afterRow, const QString& fileUrl);
     Q_INVOKABLE bool insertImageFromClipboard(int afterRow);
     Q_INVOKABLE bool insertVideoFromUrl(int afterRow, const QString& fileUrl);
-    // Detect image vs video by extension and route to the right inserter.
+    // Unsupported file → a generic attachment chip (referenced in place, no copy).
+    Q_INVOKABLE bool insertFileFromUrl(int afterRow, const QString& fileUrl);
+    // Route a dropped/pasted file: video → image → file-attachment fallback.
     Q_INVOKABLE bool insertMediaFromUrl(int afterRow, const QString& fileUrl);
     Q_INVOKABLE QString mediaUrl(int row) const;   // resolved file:// URL ("" if none)
     Q_INVOKABLE QString mediaLocalPath(int row) const; // resolved absolute path (for the decoder)
     Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
     Q_INVOKABLE int mediaH(int row) const;          // intrinsic height
-    Q_INVOKABLE QString mediaKind(int row) const;   // "image" | "video" | ""
+    Q_INVOKABLE QString mediaKind(int row) const;   // "image" | "video" | "file"
+    Q_INVOKABLE QString mediaFileName(int row) const; // attachment display name
+    Q_INVOKABLE void    openMediaInUfb(int row) const; // open in the ufb browser (deep link)
     Q_INVOKABLE double  mediaFps(int row) const;     // video fps (0 if image/unknown)
     Q_INVOKABLE int     mediaFrames(int row) const;  // video frame count (0 if image)
     Q_INVOKABLE qreal   mediaDurationMs(int row) const; // video duration ms (0 if image)
@@ -275,6 +279,7 @@ private:
         uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
         bool measured = false;
         bool isVideo = false;   // media only: true → reserve the transport-toolbar height
+        bool isFile = false;    // media only: kind=="file" → an unsupported-file chip
         uint16_t mediaW = 0;    // media only: intrinsic width px  (exact no-upscale height estimate)
         uint16_t mediaH = 0;    // media only: intrinsic height px
         QString lang;       // code blocks: syntax-highlight language (else empty)

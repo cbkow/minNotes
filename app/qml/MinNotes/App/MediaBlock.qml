@@ -21,6 +21,9 @@ Item {
     readonly property int _rev: blockModel.contentRevision
     readonly property string kind: active ? (mb._rev, blockModel.mediaKind(logicalRow)) : ""
     readonly property bool   isVideo: kind === "video"
+    readonly property bool   isFile: kind === "file"
+    readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
+    readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
     readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     // Dims keyed on logicalRow (not active) so the displayed width is correct the
@@ -49,12 +52,45 @@ Item {
         return "image://videoframe/" + b + "@" + frame
     }
 
+    // --- File attachment chip (unsupported file: icon + name + path) ---
+    Rectangle {
+        visible: mb.isFile
+        width: Math.min(360, mb.maxWidth); height: parent.height
+        radius: Theme.dim.radius
+        color: Theme.colors.surfaceHover
+        border.width: 1; border.color: Theme.colors.border
+        Row {
+            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+            spacing: 10
+            Icon {
+                anchors.verticalCenter: parent.verticalCenter
+                name: "file"; size: 24; color: Theme.colors.textMuted
+            }
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 44; spacing: 2
+                Text {
+                    width: parent.width; elide: Text.ElideMiddle
+                    text: mb.fileName === "" ? "file" : mb.fileName
+                    color: Theme.colors.text
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                }
+                Text {
+                    width: parent.width; elide: Text.ElideMiddle
+                    text: mb.filePath
+                    color: Theme.colors.textSubtle
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                }
+            }
+        }
+    }
+
     // --- Image branch ---
     Image {
         id: img
         anchors.fill: parent
-        visible: !mb.isVideo
-        source: mb.isVideo ? "" : mb.url
+        visible: !mb.isVideo && !mb.isFile
+        source: (mb.isVideo || mb.isFile) ? "" : mb.url
         asynchronous: true; cache: false
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
@@ -62,7 +98,7 @@ Item {
     }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
-        visible: mb.active && !mb.isVideo && img.status !== Image.Ready
+        visible: mb.active && !mb.isVideo && !mb.isFile && img.status !== Image.Ready
         color: Theme.colors.surfaceHover; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         Text {
