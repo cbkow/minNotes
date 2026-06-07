@@ -73,10 +73,13 @@ Item {
     }
 
     // --- Video poster: a decoded frame thumbnail (no play overlay) ---
-    Rectangle {   // backdrop while the frame decodes / if it fails
+    Rectangle {   // backdrop while the frame decodes / if it fails. Page-colored so
+                  // an alpha (ProRes 4444) poster composites its transparent regions
+                  // over the page — exactly like the live video surface (whose
+                  // fillColor is also the page surface). Keeps poster ↔ video alpha consistent.
         anchors.fill: parent
         visible: mb.isVideo && !mb.isActivePlayer
-        color: "#0d0d0f"; radius: Theme.dim.radius
+        color: Theme.colors.surface; radius: Theme.dim.radius
         clip: true
 
         Image {
