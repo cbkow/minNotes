@@ -1128,6 +1128,13 @@ FocusScope {
                 // reportHeight (cache / skip).
                 Timer { id: measureTimer; interval: 0; repeat: false; onTriggered: cell.reportHeight() }
                 onHeightChanged: if (active && !isMedia) measureTimer.restart()
+                // Re-measure on RECYCLE too, not just on height change: blocks of a
+                // type now render at an identical height (the line-height fix), so a
+                // delegate recycling between two same-height blocks fires no
+                // onHeightChanged — the new row would never get measured and would
+                // keep its (taller) estimate in the Fenwick → a gap below it. Keying
+                // off logicalRow ensures every block the delegate shows is measured.
+                onLogicalRowChanged: if (active && !isMedia) measureTimer.restart()
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
                 Component.onCompleted: {
                     if (active && !isMedia) measureTimer.restart()
