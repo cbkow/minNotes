@@ -11,11 +11,24 @@
 class MediaStore {
 public:
     struct ImageRef { QString src; int w = 0; int h = 0; bool ok() const { return !src.isEmpty() && w > 0 && h > 0; } };
+    // Video descriptor: dims + transport metadata (duration/fps/frame-count) so
+    // the inline poster reserves correct height and the transport bar has its
+    // range without re-probing. Like images, the file is referenced in place —
+    // video is never copied into .minnotes (no byte bloat).
+    struct VideoRef { QString src; int w = 0; int h = 0; qint64 durationMs = 0;
+        int frames = 0; double fps = 0.0;
+        bool ok() const { return !src.isEmpty() && w > 0 && h > 0; } };
 
     explicit MediaStore(const QString& docPath);
 
+    // True if the path's extension is a recognized video container.
+    static bool isVideoPath(const QString& path);
+
     // Reference an existing file (a drag-drop). src = absolute path; probes dims.
     ImageRef importFile(const QString& fileUrlOrPath) const;
+    // Reference an existing video file. Probes dims + duration/fps/frames via
+    // libavformat (header-only: open + find_stream_info; no decode, no threads).
+    VideoRef importVideoFile(const QString& fileUrlOrPath) const;
     // Read the system clipboard image, save it to `.minnotes/<sha>.png`, return a
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;

@@ -191,14 +191,21 @@ public:
     // Block id at `row` (empty if out of range).
     Q_INVOKABLE QString idForRow(int row) const;
 
-    // --- Media (images; video later). The media descriptor lives as JSON in the
-    // block's content ({src,w,h}) so undo/persistence reuse the chokepoint; bytes
-    // are never in the DB (see MediaStore). ---
+    // --- Media (images + video). The media descriptor lives as JSON in the
+    // block's content ({src,w,h,kind,...}) so undo/persistence reuse the
+    // chokepoint; bytes are never in the DB (see MediaStore). ---
     Q_INVOKABLE bool insertImageFromUrl(int afterRow, const QString& fileUrl);
     Q_INVOKABLE bool insertImageFromClipboard(int afterRow);
+    Q_INVOKABLE bool insertVideoFromUrl(int afterRow, const QString& fileUrl);
+    // Detect image vs video by extension and route to the right inserter.
+    Q_INVOKABLE bool insertMediaFromUrl(int afterRow, const QString& fileUrl);
     Q_INVOKABLE QString mediaUrl(int row) const;   // resolved file:// URL ("" if none)
     Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
     Q_INVOKABLE int mediaH(int row) const;          // intrinsic height
+    Q_INVOKABLE QString mediaKind(int row) const;   // "image" | "video" | ""
+    Q_INVOKABLE double  mediaFps(int row) const;     // video fps (0 if image/unknown)
+    Q_INVOKABLE int     mediaFrames(int row) const;  // video frame count (0 if image)
+    Q_INVOKABLE qreal   mediaDurationMs(int row) const; // video duration ms (0 if image)
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).

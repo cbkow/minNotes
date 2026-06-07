@@ -825,8 +825,23 @@ static QString mediaJson(const MediaStore::ImageRef& ref) {
     o.insert(QStringLiteral("h"), ref.h);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
+static QString videoMediaJson(const MediaStore::VideoRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), ref.src);
+    o.insert(QStringLiteral("w"), ref.w);
+    o.insert(QStringLiteral("h"), ref.h);
+    o.insert(QStringLiteral("kind"), QStringLiteral("video"));
+    o.insert(QStringLiteral("durMs"), ref.durationMs);
+    o.insert(QStringLiteral("frames"), ref.frames);
+    o.insert(QStringLiteral("fps"), ref.fps);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+static uint16_t aspectParam(int w, int h) {
+    if (w <= 0 || h <= 0) return 56;     // 16:9 fallback (no jump until real dims)
+    return static_cast<uint16_t>(std::clamp(int(100.0 * h / w + 0.5), 1, 1000));
+}
 static uint16_t aspectParam(const MediaStore::ImageRef& ref) {
-    return static_cast<uint16_t>(std::clamp(int(100.0 * ref.h / ref.w + 0.5), 1, 1000));
+    return aspectParam(ref.w, ref.h);
 }
 
 bool BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl) {
@@ -845,6 +860,19 @@ bool BlockModel::insertImageFromClipboard(int afterRow) {
     return true;
 }
 
+bool BlockModel::insertVideoFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore_) return false;
+    const MediaStore::VideoRef ref = mediaStore_->importVideoFile(fileUrl);
+    if (!ref.ok()) return false;
+    insertMedia(afterRow, videoMediaJson(ref), aspectParam(ref.w, ref.h));
+    return true;
+}
+
+bool BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
+    return MediaStore::isVideoPath(fileUrl) ? insertVideoFromUrl(afterRow, fileUrl)
+                                            : insertImageFromUrl(afterRow, fileUrl);
+}
+
 QString BlockModel::mediaUrl(int row) const {
     row = clampRow(row);
     if (rows_[row].type != Media || !mediaStore_) return {};
@@ -860,6 +888,28 @@ int BlockModel::mediaH(int row) const {
     row = clampRow(row);
     if (rows_[row].type != Media) return 0;
     return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("h")).toInt();
+}
+QString BlockModel::mediaKind(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QString k = QJsonDocument::fromJson(content_[row].toUtf8())
+                          .object().value(QStringLiteral("kind")).toString();
+    return k.isEmpty() ? QStringLiteral("image") : k;   // legacy {src,w,h} = image
+}
+double BlockModel::mediaFps(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return 0.0;
+    return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("fps")).toDouble();
+}
+int BlockModel::mediaFrames(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return 0;
+    return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("frames")).toInt();
+}
+qreal BlockModel::mediaDurationMs(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return 0;
+    return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("durMs")).toDouble();
 }
 
 void BlockModel::clearFormat(int row, int start, int end) {

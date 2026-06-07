@@ -127,7 +127,7 @@ FocusScope {
             var afterRow = root.imageDropGap - 1      // insert AT the gap (= after gap-1)
             var any = false
             for (var i = 0; i < drop.urls.length; ++i)
-                if (blockModel.insertImageFromUrl(afterRow, drop.urls[i].toString())) { afterRow++; any = true }
+                if (blockModel.insertMediaFromUrl(afterRow, drop.urls[i].toString())) { afterRow++; any = true }
             root.imageDropGap = -1
             if (any) { cursor.setCaret(Math.max(0, afterRow), 0); root.ensureVisible(afterRow) }
             drop.accept()
@@ -858,10 +858,13 @@ FocusScope {
                 readonly property int logicalRow: root.firstRow
                     + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
                 readonly property bool active: logicalRow >= 0 && logicalRow < blockModel.count
-                // Include both revisions (like te.btype) so a row-shift can't leave
-                // this stale — otherwise a recycled delegate mis-renders the block.
+                // contentRevision covers row-shifts (insert/remove/move all bump it,
+                // reactivity rule 2) so a recycled delegate can't mis-render. NOT
+                // layoutRevision: isMedia drives this delegate's height, whose settle
+                // bumps layoutRevision — depending on it here forms a binding loop
+                // (same trap the `measure` binding below documents).
                 readonly property bool isMedia: active
-                    && (blockModel.layoutRevision, blockModel.contentRevision, blockModel.typeForRow(logicalRow)) === 3
+                    && (blockModel.contentRevision, blockModel.typeForRow(logicalRow)) === 3
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
