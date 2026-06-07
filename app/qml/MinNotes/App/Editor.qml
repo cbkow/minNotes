@@ -1189,6 +1189,20 @@ FocusScope {
                     isActivePlayer: cell.logicalRow === root.videoPlayingRow && root._videoSurfaceReady
                 }
 
+                // Media is opaque (no caret, no text selection rects), so its
+                // selected state needs its own affordance: a translucent accent
+                // tint over the frame when it's the focus (clicked) or inside a
+                // multi-block range. (During playback the live surface covers it.)
+                Rectangle {
+                    visible: cell.active && cell.isMedia && (cell.isFocus || cell.inSel)
+                    x: mediaHost.x; y: mediaHost.y
+                    width: mediaHost.width; height: mediaHost.height
+                    radius: Theme.dim.radius
+                    z: 2
+                    color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g,
+                                   Theme.colors.accent.b, 0.22)
+                }
+
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
                     id: tableHost
                     visible: cell.active && te.btype === 7
@@ -1953,6 +1967,8 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 2)
         readonly property bool isTable: root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 7)
+        readonly property bool isMedia: root.menuRow >= 0
+            && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
         padding: 4; z: 60
         // Reactive on-screen clamp: re-evaluates as the menu's height settles after
         // open (so a long menu is positioned right on the FIRST trigger, not the 2nd).
@@ -1968,6 +1984,9 @@ FocusScope {
             MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
             MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
             MenuRow { text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
+            MenuRow { visible: blockMenu.isMedia
+                      text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
+                      onActivated: blockModel.revealMedia(root.menuRow) }
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
@@ -1985,9 +2004,9 @@ FocusScope {
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Delete row";    danger: true; onActivated: root.tblDelRow() }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
             // --- code (non-table) ---
-            Rectangle { visible: !blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow {
-                visible: !blockMenu.isTable
+                visible: !blockMenu.isTable && !blockMenu.isMedia   // text-only op
                 text: blockMenu.isCode ? "Change language…" : "Make code block"
                 onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
                                               : root.makeCodeAt(root.menuRow)

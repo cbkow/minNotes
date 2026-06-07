@@ -8,6 +8,9 @@
 #include <QVariant>
 #include <QUrl>
 #include <QSet>
+#include <QFileInfo>
+#include <QProcess>
+#include <QDesktopServices>
 #include <algorithm>
 
 namespace {
@@ -912,6 +915,18 @@ QString BlockModel::mediaUrl(int row) const {
 QString BlockModel::mediaLocalPath(int row) const {
     const QString url = mediaUrl(row);
     return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
+}
+void BlockModel::revealMedia(int row) const {
+    const QString path = mediaLocalPath(row);
+    if (path.isEmpty() || !QFileInfo::exists(path)) return;
+#if defined(Q_OS_MACOS)
+    QProcess::startDetached(QStringLiteral("open"), { QStringLiteral("-R"), path });
+#elif defined(Q_OS_WIN)
+    QProcess::startDetached(QStringLiteral("explorer"),
+                            { QStringLiteral("/select,") + QDir::toNativeSeparators(path) });
+#else
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+#endif
 }
 int BlockModel::mediaW(int row) const {
     row = clampRow(row);

@@ -216,6 +216,7 @@ public:
     Q_INVOKABLE double  mediaFps(int row) const;     // video fps (0 if image/unknown)
     Q_INVOKABLE int     mediaFrames(int row) const;  // video frame count (0 if image)
     Q_INVOKABLE qreal   mediaDurationMs(int row) const; // video duration ms (0 if image)
+    Q_INVOKABLE void    revealMedia(int row) const;  // show the media file in Finder/Explorer
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
