@@ -16,3 +16,6 @@ compile_commands.json
 # KSyntaxHighlighting built from source (run external/build-ksyntax.sh)
 /external/kf6/
 /external/src/
+# Vendored prebuilt FFmpeg for the video engine (app/player/) — per-platform
+# binaries (macOS dylibs / Windows lib+dll), not built from this tree.
+/external/ffmpeg/
