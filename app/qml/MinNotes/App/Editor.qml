@@ -125,6 +125,21 @@ FocusScope {
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0) stopVideo()
 
+    // Per-video playhead memory (keyed by file path) so a torn-down video shows
+    // its last frame as the poster and resumes there. videoPlayheadRev makes the
+    // poster bindings re-evaluate when a playhead is recorded.
+    property var videoPlayheads: ({})
+    property int videoPlayheadRev: 0
+    function videoPlayheadFor(row) {
+        var key = blockModel.mediaLocalPath(row)
+        return (key !== "" && videoPlayheads[key] !== undefined) ? videoPlayheads[key] : 0
+    }
+    function _rememberVideoPlayhead() {   // store the active player's current frame
+        if (videoPlayingRow < 0) return
+        var key = blockModel.mediaLocalPath(videoPlayingRow)
+        if (key !== "") { videoPlayheads[key] = videoDec.currentFrame; videoPlayheadRev++ }
+    }
+
     // -1 = not scrubbing. Otherwise the frame scrubbed to but not yet resumed
     // from (the streaming decoder is repositioned lazily on resume).
     property int _vidScrubTarget: -1
@@ -144,12 +159,18 @@ FocusScope {
 
     function playVideo(row) {
         if (videoPlayingRow === row) { toggleVideo(); return }
+        _rememberVideoPlayhead()              // bank the outgoing video's frame
         videoDec.close(); videoAudio.close()
         _vidScrubTarget = -1
         var p = blockModel.mediaLocalPath(row)
         if (p !== "" && videoDec.open(p)) {
             videoPlayingRow = row
             videoAudio.open(p)
+            var resume = videoPlayheadFor(row)   // pick up where we left off
+            if (resume > 0) {
+                videoDec.seekToFrame(resume)
+                if (videoDec.fps > 0) videoAudio.seek(resume / videoDec.fps)
+            }
             videoDec.play()
             if (videoAudio.hasAudio) videoAudio.play()
         } else {
@@ -167,6 +188,7 @@ FocusScope {
         }
     }
     function stopVideo() {
+        _rememberVideoPlayhead()
         videoDec.close(); videoAudio.close()
         videoPlayingRow = -1; _vidScrubTarget = -1; _vidFastSeekDir = 0; videoFastSeekTimer.stop()
     }
@@ -1086,15 +1108,23 @@ FocusScope {
                     }
                 }
 
-                MediaBlock {  // image block (video later)
+                MediaBlock {  // image + video (poster = decoded frame thumbnail)
                     id: mediaHost
                     visible: cell.active && cell.isMedia
                     active: cell.active && cell.isMedia
                     logicalRow: cell.logicalRow
                     x: cell.colLeft; y: 6
-                    maxWidth: cell.measure
+                    // pageWidth directly (NOT cell.measure → te.btype → layoutRevision):
+                    // the cell height reads mediaHost.implicitHeight, and height bumps
+                    // layoutRevision, so a te.btype dependency here is a latent loop the
+                    // async poster decode wakes up. BlockTable sidesteps it the same way.
+                    maxWidth: root.pageWidth
                     width: implicitWidth
                     height: implicitHeight
+                    // Poster frame: the remembered playhead (0 until first play).
+                    posterFrame: cell.isVideoMedia
+                        ? (root.videoPlayheadRev, root.videoPlayheadFor(cell.logicalRow)) : 0
+                    isActivePlayer: cell.logicalRow === root.videoPlayingRow
                 }
 
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
@@ -1293,16 +1323,6 @@ FocusScope {
                     return
                 }
                 cursor.resetGoalX(); cursor.clearMarks()
-                // Click on a video block's poster → start playback. The poster has
-                // no MouseArea (it's beneath this central layer); once playing, the
-                // surface overlay sits ABOVE this layer and owns play/pause.
-                var prow = blockModel.rowForY(m.y)
-                if (blockModel.typeForRow(prow) === 3 && blockModel.mediaKind(prow) === "video"
-                        && prow !== root.videoPlayingRow) {
-                    cursor.setCaret(prow, 0)
-                    root.playVideo(prow)
-                    return
-                }
                 // Click into a table cell → place the table caret; arm drag for
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
@@ -1628,11 +1648,7 @@ FocusScope {
             fillColor: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
                                Theme.colors.surface.b, 1.0)
         }
-        MouseArea {   // click the frame to toggle play/pause
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.toggleVideo()
-        }
+        // No click-to-play on the frame — the toolbar is the sole transport.
     }
 
     // Persistent transport toolbar under each visible video. `live` = this row

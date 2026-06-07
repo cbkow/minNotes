@@ -3,6 +3,7 @@
 #include <QQmlContext>
 #include "core/BlockModel.h"
 #include "core/Clipboard.h"
+#include "core/VideoFrameProvider.h"
 
 int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
@@ -15,6 +16,7 @@ int main(int argc, char* argv[]) {
     Clipboard clipboard;
 
     QQmlApplicationEngine engine;
+    engine.addImageProvider("videoframe", new VideoFrameProvider);   // inline video posters
     engine.rootContext()->setContextProperty("blockModel", &model);
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,

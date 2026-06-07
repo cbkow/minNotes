@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include <QImage>
 
 // Media asset bookkeeping for one document. Media is NEVER ingested into the DB
 // (no byte bloat): file-referenced media is stored as an absolute path; pasted /
@@ -29,6 +30,13 @@ public:
     // Reference an existing video file. Probes dims + duration/fps/frames via
     // libavformat (header-only: open + find_stream_info; no decode, no threads).
     VideoRef importVideoFile(const QString& fileUrlOrPath) const;
+
+    // Decode a single frame (software) of a video to an RGBA image — used for
+    // the inline poster thumbnail (frame 0 at rest; the remembered playhead
+    // after playback). Seeks to the keyframe before `frameNo` and decodes
+    // forward to it. `maxW` caps the width (0 = source size). Static: no doc
+    // context needed (absolute path in). Returns a null QImage on failure.
+    static QImage extractFrame(const QString& path, int frameNo, int maxW = 0);
     // Read the system clipboard image, save it to `.minnotes/<sha>.png`, return a
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;

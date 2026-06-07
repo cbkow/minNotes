@@ -1,24 +1,28 @@
 import QtQuick
 
 // Inline render for a Media block. Images show a plain async Image; video shows
-// a dark poster plate with a play affordance (v1 extracts no real frame). The
+// a real frame thumbnail (the first frame at rest, or the remembered playhead
+// after playback) via the "videoframe" image provider — there is NO play
+// affordance on the frame; the per-video toolbar is the sole transport. The
 // intrinsic dims come from the model, so height is reserved BEFORE anything
-// loads (no layout jump; the value also feeds the Fenwick index). Small images
-// show at intrinsic width (never upscaled); larger ones cap at the measure.
+// loads (no layout jump; the value also feeds the Fenwick index).
 //
-// The video poster has NO MouseArea: it sits beneath the editor's central mouse
-// layer, which routes a click on a video block to Editor.playVideo(). Once
-// playing, the single root-owned VideoSurfaceItem overlays this rect exactly.
+// While a video is the active player its live surface (a root overlay) covers
+// this poster, so we drop the thumbnail then (isActivePlayer) to avoid a
+// pointless decode.
 Item {
     id: mb
     property int  logicalRow: -1
     property bool active: false
     property real maxWidth: 760
+    property int  posterFrame: 0       // frame the poster shows (0, or remembered playhead)
+    property bool isActivePlayer: false
 
     readonly property int _rev: blockModel.contentRevision
     readonly property string kind: active ? (mb._rev, blockModel.mediaKind(logicalRow)) : ""
     readonly property bool   isVideo: kind === "video"
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
+    readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property int iw: active ? (mb._rev, blockModel.mediaW(logicalRow)) : 0
     readonly property int ih: active ? (mb._rev, blockModel.mediaH(logicalRow)) : 0
     readonly property real durMs: (active && isVideo) ? (mb._rev, blockModel.mediaDurationMs(logicalRow)) : 0
@@ -32,6 +36,12 @@ Item {
         var s = Math.round(ms / 1000)
         var m = Math.floor(s / 60)
         return m + ":" + ((s % 60) < 10 ? "0" : "") + (s % 60)
+    }
+    // image://videoframe/<base64url(path)>@<frame>  (base64url so / and spaces survive)
+    function _vframeSrc(path, frame) {
+        if (path === "") return ""
+        var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        return "image://videoframe/" + b + "@" + frame
     }
 
     // --- Image branch ---
@@ -57,24 +67,23 @@ Item {
         }
     }
 
-    // --- Video poster ---
-    Rectangle {
+    // --- Video poster: a decoded frame thumbnail (no play overlay) ---
+    Rectangle {   // backdrop while the frame decodes / if it fails
         anchors.fill: parent
-        visible: mb.isVideo
+        visible: mb.isVideo && !mb.isActivePlayer
         color: "#0d0d0f"; radius: Theme.dim.radius
-        border.width: 1; border.color: Theme.colors.border
         clip: true
 
-        Rectangle {   // play button
-            anchors.centerIn: parent
-            width: 66; height: 66; radius: 33
-            color: Qt.rgba(0, 0, 0, 0.40)
-            border.width: 2; border.color: "#f2f2f2"
-            Icon {
-                anchors.centerIn: parent
-                anchors.horizontalCenterOffset: 2   // optical-center the triangle
-                name: "play"; weight: "fill"; size: 30; color: "#f2f2f2"
-            }
+        Image {
+            id: poster
+            anchors.fill: parent
+            // The source URL carries the frame number, so cache:true is correct
+            // (a new playhead = new URL) AND avoids re-decoding on scroll recycle.
+            source: (mb.isVideo && !mb.isActivePlayer) ? mb._vframeSrc(mb.localPath, mb.posterFrame) : ""
+            asynchronous: true; cache: true
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
+            smooth: true
         }
         Rectangle {   // duration badge
             visible: mb.durMs > 0

@@ -11,8 +11,11 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswscale/swscale.h>
 #include <libavutil/avutil.h>
 #include <libavutil/rational.h>
+#include <libavutil/imgutils.h>
 }
 
 MediaStore::MediaStore(const QString& docPath) : docDir_(QFileInfo(docPath).absolutePath()) {}
@@ -102,6 +105,75 @@ MediaStore::ImageRef MediaStore::importClipboardImage() const {
         if (f.open(QIODevice::WriteOnly)) { f.write(png); f.close(); }
     }
     return { rel, img.width(), img.height() };
+}
+
+static QImage frameToImage(const AVFrame* frame, int maxW) {
+    const int w = frame->width, h = frame->height;
+    if (w <= 0 || h <= 0) return {};
+    int dw = w, dh = h;
+    if (maxW > 0 && w > maxW) { dw = maxW; dh = int(double(h) * maxW / w + 0.5); }
+    dw &= ~1; dh &= ~1; if (dw < 2) dw = 2; if (dh < 2) dh = 2;   // keep even dims
+    SwsContext* sws = sws_getContext(w, h, static_cast<AVPixelFormat>(frame->format),
+                                     dw, dh, AV_PIX_FMT_RGBA, SWS_BILINEAR,
+                                     nullptr, nullptr, nullptr);
+    if (!sws) return {};
+    QImage img(dw, dh, QImage::Format_RGBA8888);
+    uint8_t* dst[4]   = { img.bits(), nullptr, nullptr, nullptr };
+    int      dstLn[4] = { int(img.bytesPerLine()), 0, 0, 0 };
+    sws_scale(sws, frame->data, frame->linesize, 0, h, dst, dstLn);
+    sws_freeContext(sws);
+    return img;
+}
+
+QImage MediaStore::extractFrame(const QString& path, int frameNo, int maxW) {
+    if (path.isEmpty()) return {};
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) != 0) return {};
+    QImage result;
+    if (avformat_find_stream_info(fmt, nullptr) >= 0) {
+        const int vs = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+        if (vs >= 0) {
+            AVStream* st = fmt->streams[vs];
+            const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
+            AVCodecContext* ctx = dec ? avcodec_alloc_context3(dec) : nullptr;
+            if (ctx && avcodec_parameters_to_context(ctx, st->codecpar) >= 0
+                    && avcodec_open2(ctx, dec, nullptr) >= 0) {
+                // Target timestamp for frameNo; seek to the keyframe before it,
+                // then decode forward until we reach (or pass) the target.
+                const AVRational fr = st->avg_frame_rate.num ? st->avg_frame_rate : st->r_frame_rate;
+                const double fps = fr.den ? double(fr.num) / fr.den : 0.0;
+                const int64_t startTs = (st->start_time != AV_NOPTS_VALUE) ? st->start_time : 0;
+                int64_t targetTs = startTs;
+                if (frameNo > 0 && fps > 0.0 && st->time_base.den) {
+                    targetTs += int64_t((frameNo / fps) / av_q2d(st->time_base));
+                    av_seek_frame(fmt, vs, targetTs, AVSEEK_FLAG_BACKWARD);
+                    avcodec_flush_buffers(ctx);
+                }
+                AVPacket* pkt = av_packet_alloc();
+                AVFrame*  frame = av_frame_alloc();
+                bool got = false;
+                while (!got && av_read_frame(fmt, pkt) >= 0) {
+                    if (pkt->stream_index == vs && avcodec_send_packet(ctx, pkt) >= 0) {
+                        while (avcodec_receive_frame(ctx, frame) >= 0) {
+                            const int64_t pts = frame->best_effort_timestamp;
+                            if (frameNo <= 0 || pts == AV_NOPTS_VALUE || pts >= targetTs) {
+                                result = frameToImage(frame, maxW); got = true; break;
+                            }
+                        }
+                    }
+                    av_packet_unref(pkt);
+                }
+                if (!got) {   // drain
+                    avcodec_send_packet(ctx, nullptr);
+                    if (avcodec_receive_frame(ctx, frame) >= 0) result = frameToImage(frame, maxW);
+                }
+                av_frame_free(&frame); av_packet_free(&pkt);
+            }
+            if (ctx) avcodec_free_context(&ctx);
+        }
+    }
+    avformat_close_input(&fmt);
+    return result;
 }
 
 QString MediaStore::resolvePath(const QString& src) const {
