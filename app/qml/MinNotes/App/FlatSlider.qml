@@ -36,7 +36,7 @@ Slider {
         x: root.leftPadding + root.visualPosition * (root.availableWidth - width)
         y: root.topPadding + root.availableHeight / 2 - height / 2
         width: 10; height: 10
-        radius: Theme.dim.radius   // squared "box" playhead (ufb), not a circle
+        radius: 0                  // hard-square playhead (no rounding)
         color: !root.enabled ? Theme.colors.textSubtle
                              : (root.pressed ? Theme.colors.text : Theme.colors.textBright)
     }

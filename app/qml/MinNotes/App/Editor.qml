@@ -179,6 +179,7 @@ FocusScope {
         var p = blockModel.mediaLocalPath(row)
         if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; return false }
         videoPlayingRow = row
+        videoAudio.initialize()   // idempotent; open() no-ops without it
         videoAudio.open(p)
         var resume = videoPlayheadFor(row)    // pick up where we left off
         if (resume > 0) {
@@ -1838,7 +1839,7 @@ FocusScope {
                     Layout.leftMargin: 8; Layout.rightMargin: 8
                     Layout.alignment: Qt.AlignVCenter
                     from: 0; to: Math.max(1, vbar.totalFrames - 1)
-                    fillColor: Theme.colors.accent
+                    fillColor: Theme.colors.textBright   // white progress fill
                     property bool wasPlaying: false
                     // Pause while scrubbing so each seek lands; resume repositions
                     // the streaming decoder to the scrubbed frame first.

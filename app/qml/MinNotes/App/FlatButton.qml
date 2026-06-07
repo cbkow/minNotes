@@ -84,7 +84,7 @@ Rectangle {
     implicitWidth: Math.max(
         Theme.dim.toolStripHeight,
         rowContent.implicitWidth + padding * 2)
-    radius: Theme.dim.radius
+    radius: 0   // perfectly square corners
     color: ma.containsMouse ? _bgHover : _bgIdle
 
     Row {
