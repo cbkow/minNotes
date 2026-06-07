@@ -1093,7 +1093,7 @@ FocusScope {
                                              blockModel.mediaDisplayHeight(logicalRow))
                                        + (isVideoMedia ? root.videoTransportH : 0)
                       : te.btype === 6 ? 12 + 18                       // divider
-                      : te.btype === 7 ? 12 + tableHost.implicitHeight // table
+                      : te.btype === 7 ? 26 + tableHost.implicitHeight // table: 6 top + 20 bottom (clears the +row button, which sits 2px below the table and is 14px tall)
                       : (te.btype === 2 ? 24 : 12) + te.height   // te.height = lineCount*lineH (even)
 
                 // Media is known-geometry: the MODEL derives its height from the
@@ -1127,7 +1127,14 @@ FocusScope {
                 // Timer is a delegate child, so (unlike Qt.callLater) it can't fire
                 // after the delegate is torn down. Tables/media still handled in
                 // reportHeight (cache / skip).
-                Timer { id: measureTimer; interval: 0; repeat: false; onTriggered: cell.reportHeight() }
+                // Tables settle their auto-column-widths + text wrapping a frame or
+                // two AFTER the first layout (and again when the custom fonts finish
+                // loading), so a 0-interval coalesce fires on a TALL transient and the
+                // measure-once cache locks it (→ a too-tall table that snaps shorter on
+                // first edit). Debounce tables: restart()-on-each-tick waits for the
+                // layout to go quiet, then caches the SETTLED height. Other blocks
+                // reflow synchronously, so they keep the instant 0-interval.
+                Timer { id: measureTimer; interval: te.btype === 7 ? 150 : 0; repeat: false; onTriggered: cell.reportHeight() }
                 onHeightChanged: if (active && !isMedia) measureTimer.restart()
                 // Re-measure on RECYCLE too, not just on height change: blocks of a
                 // type now render at an identical height (the line-height fix), so a

@@ -273,7 +273,7 @@ double BlockModel::estimatedHeight(const Row& r) const {
                   // back, so this IS the authoritative height (no scroll-in jump).
         return 12.0 + mediaFrameHeight(r) + (r.isVideo ? kVideoBar : 0.0);
     case Divider: return 24.0;
-    case Table:   return r.param * 34.0 + 44.0;     // param = row count; +header/strip
+    case Table:   return r.param * 34.0 + 58.0;     // param = row count; + 6 top/20 bottom pad (+row button) + header/strip
     case Code:
     case Paragraph:
     default:      return r.param * kLine + kPadV;  // quote/list ≈ paragraph
