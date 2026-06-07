@@ -17,6 +17,11 @@ bool Clipboard::hasImage() const {
     return m && m->hasImage();
 }
 
+bool Clipboard::hasHtml() const {
+    const QMimeData* m = clip_->mimeData();
+    return m && m->hasHtml();
+}
+
 void Clipboard::writeText(const QString& text) { clip_->setText(text); }
 
 void Clipboard::writeTable(const QString& tsv, const QString& html) {

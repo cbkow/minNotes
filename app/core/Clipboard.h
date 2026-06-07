@@ -18,6 +18,7 @@ public:
     Q_INVOKABLE QString readText() const;
     Q_INVOKABLE QString readHtml() const;
     Q_INVOKABLE bool    hasImage() const;          // shaped for future media paste
+    Q_INVOKABLE bool    hasHtml() const;           // rich paste (Word/Docs/Excel/web)
 
     Q_INVOKABLE void writeText(const QString& text);
     // Publish both representations at once so a copied cell range pastes as a

@@ -11,6 +11,13 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QDesktopServices>
+#include <QTextDocument>
+#include <QTextBlock>
+#include <QTextList>
+#include <QTextTable>
+#include <QTextFrame>
+#include <QTextCharFormat>
+#include <functional>
 #include <algorithm>
 
 namespace {
@@ -1660,6 +1667,183 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         persistMeta(row);
         emit dataChanged(index(row), index(row), {ContentRole});
         if (n >= 2) appendBlocksAfter(row, 1);         // remaining lines → new blocks
+    }
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return QVariantList{ caretRow, caretCol };
+}
+
+QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
+
+    QTextDocument doc;
+    doc.setHtml(html);
+
+    struct Spec { uint8_t type = Paragraph; uint8_t level = 0;
+                  QString text; std::vector<Span> spans; QString tableJson; };
+    std::vector<Spec> specs;
+
+    // A QTextBlock → text spec: heading (by level) / list item / paragraph, with
+    // inline runs mapped to bold/italic/underline/strike/code/link spans.
+    auto buildText = [&](const QTextBlock& b) {
+        Spec sp;
+        const int hl = b.blockFormat().headingLevel();
+        if (hl >= 1 && hl <= 6) { sp.type = Heading; sp.level = static_cast<uint8_t>(hl); }
+        else if (b.textList())  { sp.type = ListItem; }
+        QString text;
+        for (auto it = b.begin(); !it.atEnd(); ++it) {
+            const QTextFragment frag = it.fragment();
+            if (!frag.isValid()) continue;
+            QString t = frag.text();
+            t.replace(QChar(0xFFFC), QString());          // drop object-replacement (images)
+            if (t.isEmpty()) continue;
+            const int s = text.size();
+            text += t;
+            const int e = text.size();
+            const QTextCharFormat cf = frag.charFormat();
+            if (cf.isAnchor() && !cf.anchorHref().isEmpty()) {
+                sp.spans.push_back({s, e, SpanLink, cf.anchorHref()});
+            } else {
+                if (cf.fontWeight() >= QFont::Bold) sp.spans.push_back({s, e, SpanBold});
+                if (cf.fontItalic())                sp.spans.push_back({s, e, SpanItalic});
+                if (cf.fontUnderline())             sp.spans.push_back({s, e, SpanUnderline});
+                if (cf.fontFixedPitch())            sp.spans.push_back({s, e, SpanCode});
+            }
+            if (cf.fontStrikeOut())                 sp.spans.push_back({s, e, SpanStrike});
+        }
+        if (text.trimmed().isEmpty()) return;             // skip blank/spacer blocks
+        sp.text = text;
+        specs.push_back(std::move(sp));
+    };
+
+    // A QTextTable → Table block spec (cell text joined per cell).
+    auto buildTable = [&](QTextTable* t) {
+        const int nr = t->rows(), nc = t->columns();
+        if (nr < 1 || nc < 1) return;
+        TableGrid g = TableGrid::makeEmpty(nr, nc);
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c) {
+                QTextTableCell cell = t->cellAt(r, c);
+                if (!cell.isValid()) continue;
+                QString ct;
+                for (auto bit = cell.begin(); !bit.atEnd(); ++bit) {
+                    const QTextBlock cb = bit.currentBlock();
+                    if (!cb.isValid()) continue;
+                    QString bt = cb.text(); bt.replace(QChar(0xFFFC), QString());
+                    if (bt.isEmpty()) continue;
+                    if (!ct.isEmpty()) ct += QLatin1Char(' ');
+                    ct += bt;
+                }
+                g.setCellText(r, c, ct);
+            }
+        Spec sp; sp.type = Table; sp.tableJson = g.toJson();
+        specs.push_back(std::move(sp));
+    };
+
+    // Walk the frame tree so table cells aren't flattened into loose blocks.
+    std::function<void(QTextFrame*)> walk = [&](QTextFrame* frame) {
+        for (auto it = frame->begin(); !it.atEnd(); ++it) {
+            if (QTextFrame* child = it.currentFrame()) {
+                if (QTextTable* tbl = qobject_cast<QTextTable*>(child)) buildTable(tbl);
+                else walk(child);
+            } else {
+                const QTextBlock block = it.currentBlock();
+                if (block.isValid()) buildText(block);
+            }
+        }
+    };
+    walk(doc.rootFrame());
+    if (specs.empty()) return {};
+
+    // Turn a spec into (Row, content).
+    auto specRow = [&](const Spec& sp, Row& r, QString& content) {
+        r = Row{};
+        if (sp.type == Table) {
+            r.type = Table;
+            r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(sp.tableJson).rows()));
+            content = sp.tableJson;
+        } else {
+            r.type = sp.type; r.level = sp.level; r.param = 1; r.spans = sp.spans;
+            content = sp.text;
+        }
+    };
+
+    const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
+                         || rows_[row].type == Divider);
+
+    // A single plain paragraph → splice it INLINE at the caret (so pasting a few
+    // styled words from a browser stays in the sentence and keeps its formatting),
+    // unless the target block is opaque (then fall through to insert-after).
+    if (specs.size() == 1 && specs[0].type == Paragraph && !opaque) {
+        const Spec& sp = specs[0];
+        const QString s = content_[row];
+        col = std::clamp(col, 0, static_cast<int>(s.size()));
+        beginTxn(row, row);
+        shiftSpansInsert(rows_[row].spans, col, sp.text.size());
+        for (const Span& x : sp.spans) {
+            if (x.kind == SpanLink) rows_[row].spans.push_back({x.s + col, x.e + col, SpanLink, x.href});
+            else addSpan(rows_[row].spans, x.s + col, x.e + col, x.kind);
+        }
+        content_[row] = s.left(col) + sp.text + s.mid(col);
+        persistContent(row);
+        persistMeta(row);
+        emit dataChanged(index(row), index(row), {ContentRole});
+        bumpLayout();
+        ++contentRevision_;
+        emit contentChangedSpike();
+        endTxn();
+        return QVariantList{ row, col + static_cast<int>(sp.text.size()) };
+    }
+
+    const bool reuse = !opaque && content_[row].isEmpty()
+        && (rows_[row].type == Paragraph || rows_[row].type == Heading
+            || rows_[row].type == Quote || rows_[row].type == ListItem);
+
+    beginTxn(row, row);
+    int caretRow = row, caretCol = 0;
+    int startSpec = 0;
+
+    if (reuse) {                                          // fold the 1st block into the blank row
+        Row r; QString content; specRow(specs[0], r, content);
+        rows_[row] = r;
+        content_[row] = content;
+        persistContent(row);
+        persistMeta(row);
+        emit dataChanged(index(row), index(row), {ContentRole});
+        caretRow = row; caretCol = (specs[0].type == Table) ? 0 : content.size();
+        startSpec = 1;
+    }
+
+    const int cnt = static_cast<int>(specs.size()) - startSpec;
+    if (cnt > 0) {
+        const int first = row + 1, last = row + cnt;
+        QString prevRank = ranks_[row];
+        const QString nextRank = (first < static_cast<int>(ranks_.size())) ? ranks_[first] : QString();
+        struct NewBlk { QString id, rank, content; Row r; };
+        std::vector<NewBlk> made;
+        beginInsertRows({}, first, last);
+        for (int k = 0; k < cnt; ++k) {
+            const int at = first + k;
+            const Spec& sp = specs[startSpec + k];
+            Row r; QString content; specRow(sp, r, content);
+            const QString id = makeUlid();
+            const QString rk = rankBetween(prevRank, nextRank); prevRank = rk;
+            rows_.insert(rows_.begin() + at, r);
+            content_.insert(content_.begin() + at, content);
+            ids_.insert(ids_.begin() + at, id);
+            ranks_.insert(ranks_.begin() + at, rk);
+            fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+            made.push_back({id, rk, content, r});
+            caretRow = at; caretCol = (sp.type == Table) ? 0 : content.size();
+        }
+        endInsertRows();
+        if (doc_.isOpen())
+            for (const NewBlk& b : made)
+                doc_.appendBlock(b.id, b.rank, 0, QString::fromLatin1(typeToString(b.r.type)),
+                                 attrsJson(b.r.type, b.r.level, QString(), b.r.spans), b.content);
     }
 
     bumpLayout();

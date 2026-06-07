@@ -915,30 +915,45 @@ FocusScope {
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
     function doPaste() {
-        // An image on the clipboard (outside a table) → paste it as a media block.
-        if (!tcur.active && clipboard.hasImage()) {
+        // --- Into a table cell: TSV → cells, else plain text (rich paste lands
+        // in the document, not inside a cell). ---
+        if (tcur.active) {
+            var ct = clipboard.readText()
+            if (ct.length === 0) return
+            if (ct.indexOf("\t") >= 0 || ct.indexOf("\n") >= 0)
+                blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, ct)
+            else tcur.type(ct)
+            return
+        }
+        // --- Rich HTML (Word / Google Docs / Excel / web) → structured blocks:
+        // headings/lists/paragraphs + bold/italic/underline/strike/links, tables
+        // → Table blocks. Falls through if the HTML yields nothing usable (e.g. a
+        // bare image wrapper → handled as media below). ---
+        if (clipboard.hasHtml()) {
+            var html = clipboard.readHtml()
+            if (html && html.length > 0) {
+                if (cursor.hasSel) cursor.deleteSelection()
+                var hc = blockModel.pasteHtml(cursor.focusRow, cursor.focusCol, html)
+                if (hc && hc.length === 2) { cursor.setCaret(hc[0], hc[1]); root.ensureVisible(hc[0]); return }
+            }
+        }
+        // --- Image on the clipboard → media block. ---
+        if (clipboard.hasImage()) {
             if (blockModel.insertImageFromClipboard(cursor.focusRow)) {
                 cursor.setCaret(cursor.focusRow + 1, 0); root.ensureVisible(cursor.focusRow)
                 return
             }
         }
+        // --- Plain text. ---
         var txt = clipboard.readText()
         if (txt.length === 0) return
-        if (tcur.active) {
-            if (txt.indexOf("\t") >= 0 || txt.indexOf("\n") >= 0)
-                blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, txt)   // multi-cell paste
-            else tcur.type(txt)                                                    // single value into the cell
-            return
-        }
         if (cursor.hasSel) cursor.deleteSelection()
-        // Rectangular TSV (Excel/Sheets) → a new table block.
-        if (root.looksTabular(txt)) {
+        if (root.looksTabular(txt)) {                       // rectangular TSV → table block
             var tr = blockModel.insertTableFromTSV(cursor.focusRow, txt)
             if (tr >= 0) { cursor.setCaret(tr, 0); root.ensureVisible(tr); return }
         }
-        // Smart paste: split into blocks (blank lines separate), parse per-line
-        // markdown prefixes + inline **bold**/*italic*/`code`/~~strike~~, all as
-        // one undo step. Returns [caretRow, caretCol] to land the caret.
+        // Smart paste: blocks (blank lines separate) + per-line markdown prefixes +
+        // inline **bold**/*italic*/`code`/~~strike~~/[links], all as one undo step.
         var caret = blockModel.pasteText(cursor.focusRow, cursor.focusCol, txt)
         if (caret && caret.length === 2) {
             cursor.setCaret(caret[0], caret[1]); root.ensureVisible(caret[0])

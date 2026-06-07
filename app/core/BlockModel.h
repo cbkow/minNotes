@@ -127,6 +127,13 @@ public:
     // Fenced code blocks are not yet reconstructed (``` lines paste literally).
     Q_INVOKABLE QVariantList pasteText(int row, int col, const QString& text);
 
+    // Rich paste: parse clipboard HTML (Word/Google Docs/Excel/web) via QTextDocument
+    // and splice the resulting blocks — headings/lists/paragraphs + bold/italic/
+    // underline/strike/links, and tables → Table blocks — at the caret as ONE undo
+    // step. Returns [caretRow, caretCol] (or [] on no usable content). Images are
+    // dropped for now (a later milestone fetches them into the sidecar).
+    Q_INVOKABLE QVariantList pasteHtml(int row, int col, const QString& html);
+
     // --- Semantic format spans (DESIGN §5 endgame): bold/italic/code as a span
     // [s,e) over the block's text, NOT `**` markers in the content. This is how
     // the menu (and, later, markdown-as-input) applies formatting; the render
