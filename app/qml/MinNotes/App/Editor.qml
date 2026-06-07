@@ -134,10 +134,13 @@ FocusScope {
         var key = blockModel.mediaLocalPath(row)
         return (key !== "" && videoPlayheads[key] !== undefined) ? videoPlayheads[key] : 0
     }
-    function _rememberVideoPlayhead() {   // store the active player's current frame
+    function _rememberVideoPlayhead() {   // bank the last-accessed frame
         if (videoPlayingRow < 0) return
         var key = blockModel.mediaLocalPath(videoPlayingRow)
-        if (key !== "") { videoPlayheads[key] = videoDec.currentFrame; videoPlayheadRev++ }
+        // _vidIntendedFrame: the scrubbed-to frame if mid-scrub, else the live
+        // playhead — scrubToFrame leaves currentFrame at the old streaming spot,
+        // so reading currentFrame here would lose the scrub position.
+        if (key !== "") { videoPlayheads[key] = _vidIntendedFrame(); videoPlayheadRev++ }
     }
 
     // -1 = not scrubbing. Otherwise the frame scrubbed to but not yet resumed
@@ -157,24 +160,31 @@ FocusScope {
         _vidScrubTarget = -1
     }
 
-    function playVideo(row) {
-        if (videoPlayingRow === row) { toggleVideo(); return }
+    // Make `row` the active video, opened PAUSED at its remembered playhead.
+    // Does NOT start playback — so scrubbing/stepping a not-yet-playing video
+    // shows frames without triggering play (ufb behaviour). Returns success.
+    function _activateVideo(row) {
+        if (videoPlayingRow === row) return true
         _rememberVideoPlayhead()              // bank the outgoing video's frame
         videoDec.close(); videoAudio.close()
         _vidScrubTarget = -1
         var p = blockModel.mediaLocalPath(row)
-        if (p !== "" && videoDec.open(p)) {
-            videoPlayingRow = row
-            videoAudio.open(p)
-            var resume = videoPlayheadFor(row)   // pick up where we left off
-            if (resume > 0) {
-                videoDec.seekToFrame(resume)
-                if (videoDec.fps > 0) videoAudio.seek(resume / videoDec.fps)
-            }
+        if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; return false }
+        videoPlayingRow = row
+        videoAudio.open(p)
+        var resume = videoPlayheadFor(row)    // pick up where we left off
+        if (resume > 0) {
+            videoDec.seekToFrame(resume)      // streaming decoder parks here (not a scrub)
+            if (videoDec.fps > 0) videoAudio.seek(resume / videoDec.fps)
+        }
+        return true
+    }
+    function ensureVideoActive(row) { return _activateVideo(row) }
+    function playVideo(row) {
+        if (videoPlayingRow === row) { toggleVideo(); return }
+        if (_activateVideo(row)) {
             videoDec.play()
             if (videoAudio.hasAudio) videoAudio.play()
-        } else {
-            videoPlayingRow = -1
         }
     }
     function toggleVideo() {
@@ -198,9 +208,6 @@ FocusScope {
     function seekVideoEnd()   { videoDec.pause(); videoAudio.pause(); _vidScrubTo(videoDec.frameCount - 1) }
     function toggleVideoMute(){ if (videoAudio.hasAudio) videoAudio.setMuted(!videoAudio.muted) }
     function toggleVideoLoop(){ videoLoop = !videoLoop }
-    // Make `row` the active player if it isn't already (so a control on a
-    // not-yet-playing video's toolbar activates it before acting).
-    function ensureVideoActive(row) { if (videoPlayingRow !== row) playVideo(row) }
 
     // Accelerating fast-seek shuttle (held rewind/ff): a 33 ms timer advances a
     // position at 2x→32x (doubles/sec) and scrubs to it each tick.
@@ -1185,10 +1192,14 @@ FocusScope {
                     text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
                     wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
-                    // Revision deps: re-evaluate type/level when autoformat changes
-                    // a block in place (Q_INVOKABLE isn't reactive). contentRevision
-                    // propagates reliably (the text binding uses it), so include it.
-                    readonly property int btype: (blockModel.layoutRevision, blockModel.contentRevision,
+                    // Revision dep: re-evaluate type when autoformat changes a block
+                    // in place or a row-shift remaps this delegate — both bump
+                    // contentRevision (rule 2). NOT layoutRevision: btype feeds
+                    // font.pixelSize -> te.implicitHeight -> cell height, and height
+                    // bumps layoutRevision, so depending on it is a latent loop (dormant
+                    // until the async poster decode forces a relayout). Same trap the
+                    // isMedia/maxWidth bindings document.
+                    readonly property int btype: (blockModel.contentRevision,
                                                   cell.active ? blockModel.typeForRow(cell.logicalRow) : 0)
                     readonly property var headingSizes: [26, 30, 26, 22, 19, 17, 16]   // index by level (1–6)
                     color: btype === 1 ? Theme.colors.textBright
