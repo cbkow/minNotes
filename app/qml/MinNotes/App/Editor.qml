@@ -14,7 +14,7 @@ import QtQuick.Layouts
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: { forceActiveFocus(); _recomputeVisibleVideos() }
+    Component.onCompleted: { forceActiveFocus(); _recomputeVideoRows() }
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
@@ -120,6 +120,10 @@ FocusScope {
     // Transport logic is ported from ufb's VideoPreview. ---
     property int  videoPlayingRow: -1
     property bool videoLoop: false
+    // False from activation until the active video paints its first frame, so the
+    // single shared surface never flashes the PREVIOUS video's stale frame — the
+    // (correct) poster stays up until the new frame is ready.
+    property bool _videoSurfaceReady: false
     readonly property real videoTransportH: 40
     readonly property bool videoVisible: videoPlayingRow >= 0
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
@@ -166,6 +170,7 @@ FocusScope {
     function _activateVideo(row) {
         if (videoPlayingRow === row) return true
         _rememberVideoPlayhead()              // bank the outgoing video's frame
+        _videoSurfaceReady = false            // hide the surface until THIS video paints
         videoDec.close(); videoAudio.close()
         _vidScrubTarget = -1
         var p = blockModel.mediaLocalPath(row)
@@ -200,7 +205,8 @@ FocusScope {
     function stopVideo() {
         _rememberVideoPlayhead()
         videoDec.close(); videoAudio.close()
-        videoPlayingRow = -1; _vidScrubTarget = -1; _vidFastSeekDir = 0; videoFastSeekTimer.stop()
+        videoPlayingRow = -1; _videoSurfaceReady = false
+        _vidScrubTarget = -1; _vidFastSeekDir = 0; videoFastSeekTimer.stop()
     }
     // Frame-accurate step — implies review, so pause first.
     function stepVideoFrames(n) { videoDec.pause(); videoAudio.pause(); _vidScrubTo(_vidIntendedFrame() + n) }
@@ -260,6 +266,9 @@ FocusScope {
                 }
             }
         }
+        // First frame of the active video has been published → safe to reveal the
+        // surface (it now holds THIS video, not the previous one).
+        function onFrameAvailable() { if (!root._videoSurfaceReady) root._videoSurfaceReady = true }
     }
 
     // Drag-drop image files in → media blocks at the snapped insertion gap. Tracks
@@ -968,35 +977,33 @@ FocusScope {
     readonly property int firstVisible: blockModel.rowForY(flick.contentY)
     readonly property int lastVisible: Math.min(blockModel.count - 1,
                                        blockModel.rowForY(flick.contentY + flick.height - 1))
-    // Visible video rows — feeds the per-video transport-toolbar overlays. Held
-    // as a STABLE array (recomputed imperatively, reassigned only when the SET
-    // actually changes) so the Repeater doesn't destroy+recreate every toolbar
-    // on each scroll tick — which would reset the scrub slider to 0 (reads as
-    // "video jumped to frame 0", esp. while paused). Toolbar positions still
-    // follow the scroll via their own y bindings. Recomputed on the triggers
-    // below (scroll changes firstVisible/lastVisible; edits bump contentRevision).
-    property var visibleVideoRows: []
-    function _recomputeVisibleVideos() {
-        var lo = Math.max(0, firstVisible - 1)
-        var hi = Math.min(blockModel.count - 1, lastVisible + 1)
+    // EVERY video row in the document — the per-video transport toolbars are all
+    // built up front (on load), NOT lazily as rows scroll into view, so scrolling
+    // never creates/destroys a toolbar (zero flicker; the scrubber never resets).
+    // Each toolbar just repositions (its y binding) and toggles visibility as it
+    // enters/leaves the viewport. Held as a STABLE array recomputed only when the
+    // SET changes (a video inserted/deleted/retyped — contentChangedSpike), so
+    // ordinary text edits don't churn the Repeater.
+    property var allVideoRows: []
+    function _recomputeVideoRows() {
         var out = []
-        for (var r = lo; r <= hi; ++r)
+        var n = blockModel.count
+        for (var r = 0; r < n; ++r)
             if (blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "video")
                 out.push(r)
-        var cur = visibleVideoRows
+        var cur = allVideoRows
         if (cur.length === out.length) {
             var same = true
             for (var i = 0; i < out.length; ++i) if (cur[i] !== out[i]) { same = false; break }
             if (same) return            // unchanged set → keep the same array (no churn)
         }
-        visibleVideoRows = out
+        allVideoRows = out
     }
-    onFirstVisibleChanged: _recomputeVisibleVideos()
-    onLastVisibleChanged:  _recomputeVisibleVideos()
     Connections {
         target: blockModel
-        function onContentChangedSpike() { root._recomputeVisibleVideos() }   // insert/delete/type change
+        function onContentChangedSpike() { root._recomputeVideoRows() }   // insert/delete/type change
     }
+
     readonly property int firstRow: Math.max(0, firstVisible - overscan)
     readonly property int poolSize: Math.min(blockModel.count,
                                     Math.ceil(root.height / 38) + 2 * overscan + 4)
@@ -1146,7 +1153,9 @@ FocusScope {
                     // Poster frame: the remembered playhead (0 until first play).
                     posterFrame: cell.isVideoMedia
                         ? (root.videoPlayheadRev, root.videoPlayheadFor(cell.logicalRow)) : 0
-                    isActivePlayer: cell.logicalRow === root.videoPlayingRow
+                    // Stay the poster (correct frame) until the live surface is
+                    // ready — avoids a flash of the previous video's stale frame.
+                    isActivePlayer: cell.logicalRow === root.videoPlayingRow && root._videoSurfaceReady
                 }
 
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
@@ -1654,7 +1663,7 @@ FocusScope {
     // real layout space, not over following content. ---
     Item {
         id: videoSurfaceOverlay
-        visible: root.videoVisible
+        visible: root.videoVisible && root._videoSurfaceReady
         z: 56
         readonly property int r: root.videoPlayingRow
         readonly property real measure: r >= 0 ? root.measureForRow(r) : root.pageWidth
@@ -1677,16 +1686,19 @@ FocusScope {
         // No click-to-play on the frame — the toolbar is the sole transport.
     }
 
-    // Persistent transport toolbar under each visible video. `live` = this row
-    // is the active player (controls bound to the decoder); otherwise the bar
-    // shows the static state and any control activates the video first.
+    // Persistent transport toolbar for EVERY video (all built on load — see
+    // allVideoRows). `live` = this row is the active player (controls bound to
+    // the decoder); otherwise the bar shows the static state and any control
+    // activates the video first. Only viewport-near toolbars are shown; the rest
+    // stay instantiated (no scroll churn) but hidden.
     Repeater {
-        model: root.visibleVideoRows
+        model: root.allVideoRows
         delegate: Rectangle {
             id: vbar
             required property int modelData
             readonly property int row: modelData
             readonly property bool live: row === root.videoPlayingRow
+            visible: row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
