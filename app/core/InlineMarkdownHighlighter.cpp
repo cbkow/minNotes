@@ -18,6 +18,7 @@ public:
     QColor markerColor         = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
     QColor selectedMarkerColor = QColor(0xff, 0xff, 0xff);   // Theme.colors.textBright
     QColor codeColor           = QColor(0x4a, 0xa8, 0xff);   // Theme.colors.inlineCodeText (blue)
+    QColor linkColor           = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
     QString codeFont;                                        // Theme.font.mono (JetBrains); empty = fallback
     int selStart = -1, selEnd = -1;
 
@@ -81,12 +82,12 @@ protected:
         // --- semantic spans (no markers) — accumulate per-char flags so
         // overlapping bold+italic combine, then emit runs. ---
         if (spans.empty() || n == 0) return;
-        std::vector<uint8_t> fl(n, 0);   // bit0 bold 1 italic 2 code 3 strike 4 underline
+        std::vector<uint8_t> fl(n, 0);   // bits: 1 bold 2 italic 4 code 8 strike 16 underline 32 link
         bool any = false;
         for (const SpanFmt& sp : spans) {
             const int ls = std::max(0, sp.s - pos), le = std::min(n, sp.e - pos);
             const uint8_t bit = sp.k == 1 ? 1 : sp.k == 2 ? 2 : sp.k == 3 ? 4
-                              : sp.k == 4 ? 8 : sp.k == 5 ? 16 : 0;
+                              : sp.k == 4 ? 8 : sp.k == 5 ? 16 : sp.k == 6 ? 32 : 0;
             for (int x = ls; x < le; ++x) { fl[x] |= bit; any = true; }
         }
         if (!any) return;
@@ -102,6 +103,10 @@ protected:
             if (fl[x] & 4) {   // code: glyphs only; chip drawn as a QML overlay
                 f.setForeground(codeColor);
                 f.setFontFamilies(codeFamilies());
+            }
+            if (fl[x] & 32) {  // link: underline + accent (code colour wins if both)
+                f.setFontUnderline(true);
+                if (!(fl[x] & 4)) f.setForeground(linkColor);
             }
             setFormat(x, y - x, f);
             x = y;
@@ -139,6 +144,11 @@ QColor InlineMarkdownHighlighter::codeColor() const { return hl_->codeColor; }
 void InlineMarkdownHighlighter::setCodeColor(const QColor& c) {
     if (hl_->codeColor == c) return;
     hl_->codeColor = c; emit codeColorChanged(); hl_->rehighlight();
+}
+QColor InlineMarkdownHighlighter::linkColor() const { return hl_->linkColor; }
+void InlineMarkdownHighlighter::setLinkColor(const QColor& c) {
+    if (hl_->linkColor == c) return;
+    hl_->linkColor = c; emit linkColorChanged(); hl_->rehighlight();
 }
 QString InlineMarkdownHighlighter::codeFontFamily() const { return hl_->codeFont; }
 void InlineMarkdownHighlighter::setCodeFontFamily(const QString& f) {

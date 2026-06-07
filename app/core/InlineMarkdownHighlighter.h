@@ -32,6 +32,8 @@ class InlineMarkdownHighlighter : public QObject {
     // Markdown markers within the current selection render in this colour.
     Q_PROPERTY(QColor selectedMarkerColor READ selectedMarkerColor WRITE setSelectedMarkerColor NOTIFY selectedMarkerColorChanged)
     Q_PROPERTY(QColor codeColor READ codeColor WRITE setCodeColor NOTIFY codeColorChanged)
+    // Link spans render underlined in this colour (bind to Theme.colors.accent).
+    Q_PROPERTY(QColor linkColor READ linkColor WRITE setLinkColor NOTIFY linkColorChanged)
     Q_PROPERTY(QString codeFontFamily READ codeFontFamily WRITE setCodeFontFamily NOTIFY codeFontFamilyChanged)
     // Selection range (block-content cols) so markers in it can flip colour. -1 = none.
     Q_PROPERTY(int selStart READ selStart WRITE setSelStart NOTIFY selStartChanged)
@@ -54,6 +56,8 @@ public:
     void setSelectedMarkerColor(const QColor& c);
     QColor codeColor() const;
     void setCodeColor(const QColor& c);
+    QColor linkColor() const;
+    void setLinkColor(const QColor& c);
     QString codeFontFamily() const;
     void setCodeFontFamily(const QString& f);
 
@@ -75,6 +79,7 @@ signals:
     void selStartChanged();
     void selEndChanged();
     void spansChanged();
+    void linkColorChanged();
 
 private:
     class Impl;                       // the actual QSyntaxHighlighter (in the .cpp)

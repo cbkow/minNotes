@@ -1374,6 +1374,7 @@ FocusScope {
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
                     codeColor: Theme.colors.inlineCodeText
+                    linkColor: Theme.colors.accent
                     codeFontFamily: Theme.font.mono
                     // NOTE: selection does NOT drive marker recolouring here.
                     // Binding selStart/selEnd to the selection re-highlights the
@@ -1487,6 +1488,11 @@ FocusScope {
                     return
                 }
                 var h = root.hitTest(m.x, m.y)
+                // Cmd/Ctrl-click on a link span opens it (plain click still edits).
+                if (m.modifiers & Qt.ControlModifier) {
+                    var url = blockModel.linkAt(h.row, h.col)
+                    if (url && url.length > 0) { Qt.openUrlExternally(url); return }
+                }
                 if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
                 else {
                     // Clicking into a different block leaves the old one → commit it.

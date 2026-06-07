@@ -140,6 +140,11 @@ public:
     // decision across a multi-block selection.
     Q_INVOKABLE bool hasFormat(int row, int start, int end, const QString& kind) const;
     Q_INVOKABLE void setFormat(int row, int start, int end, const QString& kind, bool on);
+    // Links: a SpanLink carries a URL target. setLink over [start,end) replaces any
+    // link spans there; an empty url removes them. linkAt returns the URL of a link
+    // covering `col` (for Cmd/Ctrl-click open + hover), or "" if none.
+    Q_INVOKABLE void setLink(int row, int start, int end, const QString& url);
+    Q_INVOKABLE QString linkAt(int row, int col) const;
     // Group several mutations into ONE undo step (transactions nest by depth).
     Q_INVOKABLE void beginGroup(int loRow, int hiRow);
     Q_INVOKABLE void endGroup();
@@ -248,10 +253,12 @@ signals:
 
 public:
     enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
-                              SpanStrike = 4, SpanUnderline = 5 };
+                              SpanStrike = 4, SpanUnderline = 5, SpanLink = 6 };
 
 private:
-    struct Span { int s; int e; uint8_t kind; };   // [s,e) over the row's text
+    // [s,e) over the row's text. `href` is set only for SpanLink (the link target);
+    // empty for every other kind. Aggregate-init as {s,e,kind} leaves href empty.
+    struct Span { int s; int e; uint8_t kind; QString href; };
     struct Row {
         uint8_t type;
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0

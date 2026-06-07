@@ -159,7 +159,7 @@ void BlockModel::loadFromStore() {
             const QJsonObject so = sv.toObject();
             const uint8_t k = spanKindFromString(so.value(QStringLiteral("k")).toString());
             const int s = so.value(QStringLiteral("s")).toInt(), e = so.value(QStringLiteral("e")).toInt();
-            if (k && e > s) r.spans.push_back({s, e, k});
+            if (k && e > s) r.spans.push_back({s, e, k, so.value(QStringLiteral("u")).toString()});
         }
         // Markdown is an input method, not storage: consume any inline markers
         // into spans on load so non-active blocks render clean (markers only ever
@@ -329,6 +329,7 @@ QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
             so.insert(QStringLiteral("s"), sp.s);
             so.insert(QStringLiteral("e"), sp.e);
             so.insert(QStringLiteral("k"), QString::fromLatin1(spanKindToString(sp.kind)));
+            if (sp.kind == SpanLink && !sp.href.isEmpty()) so.insert(QStringLiteral("u"), sp.href);
             arr.append(so);
         }
         o.insert(QStringLiteral("spans"), arr);
@@ -1096,6 +1097,7 @@ uint8_t BlockModel::spanKindFromString(const QString& s) {
     if (s == QLatin1String("code"))      return SpanCode;
     if (s == QLatin1String("strike"))    return SpanStrike;
     if (s == QLatin1String("underline")) return SpanUnderline;
+    if (s == QLatin1String("link"))      return SpanLink;
     return 0;
 }
 const char* BlockModel::spanKindToString(uint8_t k) {
@@ -1105,6 +1107,7 @@ const char* BlockModel::spanKindToString(uint8_t k) {
     case SpanCode:      return "code";
     case SpanStrike:    return "strike";
     case SpanUnderline: return "underline";
+    case SpanLink:      return "link";
     default:            return "";
     }
 }
@@ -1167,10 +1170,10 @@ void BlockModel::shiftSpansDelete(std::vector<Span>& v, int from, int to) {
     std::vector<Span> out;
     for (const Span& sp : v) {
         if (sp.e <= from) { out.push_back(sp); continue; }                       // before cut
-        if (sp.s >= to)   { out.push_back({sp.s - len, sp.e - len, sp.kind}); continue; }  // after cut
+        if (sp.s >= to)   { out.push_back({sp.s - len, sp.e - len, sp.kind, sp.href}); continue; }  // after cut
         const int ns = std::min(sp.s, from);                 // surviving head + shifted tail collapse
         const int ne = (sp.e > to) ? sp.e - len : from;
-        if (ne > ns) out.push_back({ns, ne, sp.kind});
+        if (ne > ns) out.push_back({ns, ne, sp.kind, sp.href});
     }
     v = out;
 }
@@ -1183,9 +1186,38 @@ QVariantList BlockModel::spansForRow(int row) const {
         m.insert(QStringLiteral("s"), sp.s);
         m.insert(QStringLiteral("e"), sp.e);
         m.insert(QStringLiteral("k"), sp.kind);
+        if (sp.kind == SpanLink) m.insert(QStringLiteral("u"), sp.href);
         out.append(m);
     }
     return out;
+}
+
+void BlockModel::setLink(int row, int start, int end, const QString& url) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end) return;
+    beginTxn(row, row);
+    std::vector<Span>& v = rows_[row].spans;
+    // Drop any link spans overlapping [start,end) (links don't merge by URL), then
+    // add the new one if a target was given (empty url = "remove link").
+    std::vector<Span> kept;
+    for (const Span& sp : v)
+        if (!(sp.kind == SpanLink && sp.s < end && sp.e > start)) kept.push_back(sp);
+    if (!url.isEmpty()) kept.push_back({start, end, SpanLink, url});
+    v = std::move(kept);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+QString BlockModel::linkAt(int row, int col) const {
+    if (rows_.empty()) return {};
+    for (const Span& sp : rows_[clampRow(row)].spans)
+        if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return sp.href;
+    return {};
 }
 
 QVariantList BlockModel::codeRangesForRow(int row) const {
@@ -1257,6 +1289,20 @@ bool BlockModel::convertMarkdown(const QString& src, const std::vector<Span>& ex
                 found.push_back({s, static_cast<int>(out.size()), SpanStrike});
                 drop(j); drop(j + 1); i = j + 2; continue;
             }
+        } else if (c == QLatin1Char('[')) {              // [label](url) → link span
+            const int j = src.indexOf(QLatin1Char(']'), i + 1);
+            if (j > i && j + 1 < n && src[j + 1] == QLatin1Char('(')) {
+                const int k = src.indexOf(QLatin1Char(')'), j + 2);
+                if (k > j + 1) {
+                    drop(i); const int s = out.size();
+                    for (int p = i + 1; p < j; ++p) keep(p);          // the label
+                    const QString url = src.mid(j + 2, k - (j + 2));
+                    found.push_back({s, static_cast<int>(out.size()), SpanLink, url});
+                    drop(j);                                          // ]
+                    for (int p = j + 1; p <= k; ++p) drop(p);         // (url)
+                    i = k + 1; continue;
+                }
+            }
         }
         keep(i); ++i;
     }
@@ -1264,10 +1310,15 @@ bool BlockModel::convertMarkdown(const QString& src, const std::vector<Span>& ex
     if (out == src) return false;            // no markers consumed
 
     std::vector<Span> merged;
-    for (const Span& sp : existing)          // pre-existing spans → clean coords
-        addSpan(merged, map[std::clamp(sp.s, 0, n)], map[std::clamp(sp.e, 0, n)], sp.kind);
-    for (const Span& sp : found)
-        addSpan(merged, sp.s, sp.e, sp.kind);
+    for (const Span& sp : existing) {        // pre-existing spans → clean coords
+        const int s = map[std::clamp(sp.s, 0, n)], e = map[std::clamp(sp.e, 0, n)];
+        if (sp.kind == SpanLink) { if (e > s) merged.push_back({s, e, SpanLink, sp.href}); }
+        else addSpan(merged, s, e, sp.kind);
+    }
+    for (const Span& sp : found) {
+        if (sp.kind == SpanLink) merged.push_back(sp);   // keep href; links don't merge
+        else addSpan(merged, sp.s, sp.e, sp.kind);
+    }
     cleanText = out;
     outSpans = merged;
     return true;
@@ -1406,10 +1457,10 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     } else {
         std::vector<Span> kept;
         for (const Span& sp : rows_[loRow].spans)            // lo keeps [0, loClip)
-            if (sp.s < loClip) kept.push_back({sp.s, std::min(sp.e, loClip), sp.kind});
+            if (sp.s < loClip) kept.push_back({sp.s, std::min(sp.e, loClip), sp.kind, sp.href});
         for (const Span& sp : rows_[hiRow].spans) {          // hi tail [hiClip,*) → after loClip
             const int s = std::max(sp.s, hiClip);
-            if (sp.e > s) kept.push_back({s - hiClip + loClip, sp.e - hiClip + loClip, sp.kind});
+            if (sp.e > s) kept.push_back({s - hiClip + loClip, sp.e - hiClip + loClip, sp.kind, sp.href});
         }
         rows_[loRow].spans = kept;
     }
@@ -1515,8 +1566,8 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         // Split the current block's spans at the caret: left stays, right (rebased
         // to 0) moves to the tail of the LAST pasted block.
         for (const Span& sp : rows_[row].spans) {
-            if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind});
-            if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind});
+            if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind, sp.href});
+            if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind, sp.href});
         }
     }
 
@@ -1614,8 +1665,8 @@ void BlockModel::splitBlock(int row, int col) {
     // Split spans at `col`: left part stays, right part moves to the new block.
     std::vector<Span> leftS, rightS;
     for (const Span& sp : rows_[row].spans) {
-        if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind});
-        if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind});
+        if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind, sp.href});
+        if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind, sp.href});
     }
     rows_[row].spans = leftS;
 
