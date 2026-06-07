@@ -65,6 +65,9 @@ public:
     // --- Geometry, for the Flickable arm (and HUD) ---
     Q_INVOKABLE qreal yForRow(int row) const { return fenwick_.prefix(clampRow(row)); }
     Q_INVOKABLE qreal heightForRow(int row) const { return fenwick_.height(clampRow(row)); }
+    // True once a row has reported a real laid-out height (cached in the Fenwick).
+    // Tables use this to measure only once and reuse the cache on recycle.
+    Q_INVOKABLE bool rowMeasured(int row) const { return rows_[clampRow(row)].measured; }
     Q_INVOKABLE int rowForY(qreal y) const { return static_cast<int>(fenwick_.rowAtOffset(y < 0 ? 0 : y)); }
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---

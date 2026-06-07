@@ -1091,10 +1091,24 @@ FocusScope {
                 // implicitHeight lags logicalRow on recycle) would push a wrong
                 // height to the Fenwick → contentY/firstVisible churn and a
                 // scroll-in jump. Text/code/table still measure (reflow is unknown).
-                onHeightChanged: if (active && !isMedia) blockModel.setMeasuredHeight(logicalRow, height)
+                function reportHeight() {
+                    if (!active || isMedia) return
+                    // Tables: measure ONCE, then reuse the model's cache. A table
+                    // can't be estimated from data (cell wrapping), but its height
+                    // is stable once known — and on recycle the delegate briefly
+                    // reports a near-empty implicitHeight before its rows populate.
+                    // Measuring that (or re-measuring a settled table) collapses then
+                    // restores the Fenwick height, jumping the view (esp. scrolling
+                    // UP into the table). So skip the empty transient, and once the
+                    // row is cached don't re-measure it.
+                    if (te.btype === 7 && (tableHost.implicitHeight < 40 || blockModel.rowMeasured(logicalRow)))
+                        return
+                    blockModel.setMeasuredHeight(logicalRow, height)
+                }
+                onHeightChanged: if (active && !isMedia) reportHeight()
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
                 Component.onCompleted: {
-                    if (active && !isMedia) blockModel.setMeasuredHeight(logicalRow, height)
+                    if (active && !isMedia) reportHeight()
                     if (isFocus) root.focusBlockItem = te
                 }
 
