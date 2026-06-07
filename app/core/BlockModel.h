@@ -305,6 +305,11 @@ private:
     void persistMeta(int row);   // write type/attrs of content_[row]'s block
 
     int clampRow(int row) const;
+    // Derive a Media row's intrinsic dims / video flag / aspect param from its
+    // descriptor JSON. The SINGLE place media metadata comes from content — used
+    // by loadFromStore, insertMedia, AND undo/redo restore, so they can't diverge
+    // (divergence is what hid undo-restored media at ~0 height). No-op for non-media.
+    void fillMediaMeta(Row& r, const QString& content) const;
     double estimatedHeight(const Row& r) const;
     double mediaFrameHeight(const Row& r) const;   // displayed media frame px at contentWidth_
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)

@@ -154,14 +154,7 @@ void BlockModel::loadFromStore() {
             r.lang = o.value(QStringLiteral("lang")).toString();
         if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
             r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(text).rows()));
-        if (r.type == Media) { // content is the descriptor JSON; param = aspect*100 (h/w)
-            const QJsonObject mo = QJsonDocument::fromJson(text.toUtf8()).object();
-            const int mw = mo.value(QStringLiteral("w")).toInt(), mh = mo.value(QStringLiteral("h")).toInt();
-            if (mw > 0 && mh > 0) r.param = static_cast<uint16_t>(std::clamp(int(100.0 * mh / mw + 0.5), 1, 1000));
-            r.mediaW = static_cast<uint16_t>(std::clamp(mw, 0, 65535));
-            r.mediaH = static_cast<uint16_t>(std::clamp(mh, 0, 65535));
-            r.isVideo = mo.value(QStringLiteral("kind")).toString() == QLatin1String("video");
-        }
+        fillMediaMeta(r, text);   // media: dims/video/aspect-param from the descriptor JSON
         for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
             const QJsonObject so = sv.toObject();
             const uint8_t k = spanKindFromString(so.value(QStringLiteral("k")).toString());
@@ -246,6 +239,18 @@ void BlockModel::rebuild(int n, int distribution) {
     clearUndo();
     emit modelReset();
     emit layoutChangedSpike();
+}
+
+void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
+    if (r.type != Media) return;
+    const QJsonObject mo = QJsonDocument::fromJson(content.toUtf8()).object();
+    const int mw = mo.value(QStringLiteral("w")).toInt();
+    const int mh = mo.value(QStringLiteral("h")).toInt();
+    r.mediaW = static_cast<uint16_t>(std::clamp(mw, 0, 65535));
+    r.mediaH = static_cast<uint16_t>(std::clamp(mh, 0, 65535));
+    if (mw > 0 && mh > 0)
+        r.param = static_cast<uint16_t>(std::clamp(int(100.0 * mh / mw + 0.5), 1, 1000));
+    r.isVideo = mo.value(QStringLiteral("kind")).toString() == QLatin1String("video");
 }
 
 // Displayed media frame height: dispW = min(contentWidth, w) (never upscaled),
@@ -373,6 +378,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     for (const BlockSnap& s : snaps) {
         Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans; r.lang = s.lang;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
+        fillMediaMeta(r, s.content);   // media: dims/video/param from descriptor (else height ~= 0)
         rows_.insert(rows_.begin() + at, r);
         content_.insert(content_.begin() + at, s.content);
         ids_.insert(ids_.begin() + at, s.id);
@@ -829,12 +835,7 @@ void BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectP
 
     beginInsertRows({}, at, at);
     Row r{}; r.type = Media; r.param = aspectParam;
-    {
-        const QJsonObject mo = QJsonDocument::fromJson(json.toUtf8()).object();
-        r.mediaW = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("w")).toInt(), 0, 65535));
-        r.mediaH = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("h")).toInt(), 0, 65535));
-        r.isVideo = mo.value(QStringLiteral("kind")).toString() == QLatin1String("video");
-    }
+    fillMediaMeta(r, json);   // dims/video/aspect-param from the descriptor (single source)
     rows_.insert(rows_.begin() + at, r);
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
