@@ -1116,10 +1116,21 @@ FocusScope {
                         return
                     blockModel.setMeasuredHeight(logicalRow, height)
                 }
-                onHeightChanged: if (active && !isMedia) reportHeight()
+                // Measure-back is DEFERRED (coalesced) via a 0-interval timer: on
+                // recycle, te's font/btype/text settle across several onHeightChanged
+                // ticks within the frame (e.g. a heading briefly measures at the body
+                // font → ~28px, then settles → ~49px). Reporting each tick pushes the
+                // transient to the Fenwick → height jitter (inconsistent heights, and
+                // a moved block's preserved height gets clobbered by the transient).
+                // restart() collapses the ticks into ONE report of the SETTLED height.
+                // Timer is a delegate child, so (unlike Qt.callLater) it can't fire
+                // after the delegate is torn down. Tables/media still handled in
+                // reportHeight (cache / skip).
+                Timer { id: measureTimer; interval: 0; repeat: false; onTriggered: cell.reportHeight() }
+                onHeightChanged: if (active && !isMedia) measureTimer.restart()
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
                 Component.onCompleted: {
-                    if (active && !isMedia) reportHeight()
+                    if (active && !isMedia) measureTimer.restart()
                     if (isFocus) root.focusBlockItem = te
                 }
 
