@@ -14,7 +14,7 @@ import QtQuick.Layouts
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: forceActiveFocus()
+    Component.onCompleted: { forceActiveFocus(); _recomputeVisibleVideos() }
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
@@ -968,19 +968,34 @@ FocusScope {
     readonly property int firstVisible: blockModel.rowForY(flick.contentY)
     readonly property int lastVisible: Math.min(blockModel.count - 1,
                                        blockModel.rowForY(flick.contentY + flick.height - 1))
-    // Visible video rows — feeds the per-video transport-toolbar overlays. Scan
-    // the visible window; carry revision deps (rule 6) so it refreshes on
-    // insert/delete/scroll. A tiny overscan keeps a toolbar from popping at the
-    // edges.
-    readonly property var visibleVideoRows: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision
-        var out = []
+    // Visible video rows — feeds the per-video transport-toolbar overlays. Held
+    // as a STABLE array (recomputed imperatively, reassigned only when the SET
+    // actually changes) so the Repeater doesn't destroy+recreate every toolbar
+    // on each scroll tick — which would reset the scrub slider to 0 (reads as
+    // "video jumped to frame 0", esp. while paused). Toolbar positions still
+    // follow the scroll via their own y bindings. Recomputed on the triggers
+    // below (scroll changes firstVisible/lastVisible; edits bump contentRevision).
+    property var visibleVideoRows: []
+    function _recomputeVisibleVideos() {
         var lo = Math.max(0, firstVisible - 1)
         var hi = Math.min(blockModel.count - 1, lastVisible + 1)
+        var out = []
         for (var r = lo; r <= hi; ++r)
             if (blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "video")
                 out.push(r)
-        return out
+        var cur = visibleVideoRows
+        if (cur.length === out.length) {
+            var same = true
+            for (var i = 0; i < out.length; ++i) if (cur[i] !== out[i]) { same = false; break }
+            if (same) return            // unchanged set → keep the same array (no churn)
+        }
+        visibleVideoRows = out
+    }
+    onFirstVisibleChanged: _recomputeVisibleVideos()
+    onLastVisibleChanged:  _recomputeVisibleVideos()
+    Connections {
+        target: blockModel
+        function onContentChangedSpike() { root._recomputeVisibleVideos() }   // insert/delete/type change
     }
     readonly property int firstRow: Math.max(0, firstVisible - overscan)
     readonly property int poolSize: Math.min(blockModel.count,
@@ -1738,10 +1753,19 @@ FocusScope {
                             if (vbar.live && !vscrub.pressed) vscrub.value = videoDec.currentFrame
                         }
                     }
+                    // Not the live player → park the scrubber at the banked playhead
+                    // (not 0), so a torn-down video shows where it left off.
+                    Binding {
+                        target: vscrub; property: "value"
+                        value: (root.videoPlayheadRev, root.videoPlayheadFor(vbar.row))
+                        when: !vbar.live && !vscrub.pressed
+                    }
                 }
 
                 Text {   // frame counter (mirrors ufb)
-                    text: (vbar.live ? videoDec.currentFrame : 0) + " / " + Math.max(0, vbar.totalFrames - 1)
+                    text: (vbar.live ? videoDec.currentFrame
+                                     : (root.videoPlayheadRev, root.videoPlayheadFor(vbar.row)))
+                          + " / " + Math.max(0, vbar.totalFrames - 1)
                     color: Theme.colors.textMuted
                     font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
                     Layout.rightMargin: 4
