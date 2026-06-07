@@ -1,7 +1,8 @@
 // FlatSlider — slim flat slider, ported from ufb/QCView: a thin track in
-// border, a bright fill from the origin to the handle, and a small round
-// handle. Instant color swaps, no animation. The fill color is exposed so a
-// scrub bar can be accent-tinted while a volume bar stays muted.
+// border, a bright fill from the origin to the handle, and a small SQUARED
+// "box" playhead handle (ufb's look). Instant color swaps, no animation. The
+// fill color is exposed so a scrub bar can be accent-tinted while a volume bar
+// stays muted; the box stays bright so the playhead reads on any fill.
 //
 // Usage:
 //   FlatSlider { from: 0; to: 1; value: 0.5; onMoved: ... }
@@ -34,9 +35,10 @@ Slider {
     handle: Rectangle {
         x: root.leftPadding + root.visualPosition * (root.availableWidth - width)
         y: root.topPadding + root.availableHeight / 2 - height / 2
-        width: 13; height: 13; radius: 6.5
+        width: 10; height: 10
+        radius: Theme.dim.radius   // squared "box" playhead (ufb), not a circle
         color: !root.enabled ? Theme.colors.textSubtle
-                             : (root.pressed ? Theme.colors.textBright : root.fillColor)
+                             : (root.pressed ? Theme.colors.text : Theme.colors.textBright)
     }
     opacity: root.enabled ? 1.0 : 0.55
 }
