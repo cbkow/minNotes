@@ -874,8 +874,13 @@ FocusScope {
             return
         }
         if (cursor.hasSel) cursor.deleteSelection()
-        blockModel.insertText(cursor.focusRow, cursor.focusCol, txt, 0)
-        cursor.setCaret(cursor.focusRow, cursor.focusCol + txt.length)
+        // Smart paste: split into blocks (blank lines separate), parse per-line
+        // markdown prefixes + inline **bold**/*italic*/`code`/~~strike~~, all as
+        // one undo step. Returns [caretRow, caretCol] to land the caret.
+        var caret = blockModel.pasteText(cursor.focusRow, cursor.focusCol, txt)
+        if (caret && caret.length === 2) {
+            cursor.setCaret(caret[0], caret[1]); root.ensureVisible(caret[0])
+        }
     }
     function doCut() {
         doCopy()

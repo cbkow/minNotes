@@ -1219,6 +1219,14 @@ bool BlockModel::convertMarkdown(const QString& src, const std::vector<Span>& ex
                 found.push_back({s, static_cast<int>(out.size()), SpanItalic});
                 drop(j); i = j + 1; continue;
             }
+        } else if (c == QLatin1Char('~') && i + 1 < n && src[i + 1] == QLatin1Char('~')) {
+            const int j = src.indexOf(QStringLiteral("~~"), i + 2);
+            if (j > i + 1) {
+                drop(i); drop(i + 1); const int s = out.size();
+                for (int p = i + 2; p < j; ++p) keep(p);
+                found.push_back({s, static_cast<int>(out.size()), SpanStrike});
+                drop(j); drop(j + 1); i = j + 2; continue;
+            }
         }
         keep(i); ++i;
     }
@@ -1424,6 +1432,142 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn(text.size() == 1 ? QStringLiteral("type") : QString());   // coalesce typing
+}
+
+QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
+
+    // Normalize newlines, split into non-blank lines (blank lines are paragraph
+    // separators — collapsed). Each remaining line becomes one block.
+    QString t = text;
+    t.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    t.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    QStringList segs;
+    const QStringList lines = t.split(QLatin1Char('\n'));
+    for (const QString& ln : lines)
+        if (!ln.trimmed().isEmpty()) segs << ln;
+    if (segs.isEmpty()) return {};
+
+    // Parse one line → (type, level, clean text, spans): block-prefix then inline
+    // markdown. A "```" line renders literally (fenced code not yet reconstructed).
+    auto parseSeg = [&](const QString& seg, uint8_t& type, uint8_t& level,
+                        QString& outText, std::vector<Span>& outSpans, bool& hadPrefix) {
+        type = Paragraph; level = 0; outText = seg; outSpans.clear(); hadPrefix = false;
+        const bool fence = seg.startsWith(QLatin1String("```"));
+        QString body = seg;
+        if (!fence) {
+            BlockType bt; int lvl = 0, strip = 0;
+            if (matchMarkdownPrefix(seg, bt, lvl, strip)) {
+                hadPrefix = true;
+                type = static_cast<uint8_t>(bt);
+                level = (bt == Heading) ? static_cast<uint8_t>(lvl) : 0;
+                if (bt == Divider) { outText.clear(); return; }
+                body = seg.mid(strip);
+            }
+            QString clean; std::vector<Span> sp;
+            if (convertMarkdown(body, {}, clean, sp)) { outText = clean; outSpans = sp; return; }
+        }
+        outText = body;
+    };
+
+    const int n = segs.size();
+    // Opaque targets (media/table/divider) hold non-prose content — never write
+    // text into them; leave them intact and splice everything AFTER instead.
+    const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
+                         || rows_[row].type == Divider);
+
+    QString left, right;
+    std::vector<Span> leftS, rightS;
+    if (!opaque) {
+        const QString s = content_[row];
+        col = std::clamp(col, 0, static_cast<int>(s.size()));
+        left = s.left(col); right = s.mid(col);
+        // Split the current block's spans at the caret: left stays, right (rebased
+        // to 0) moves to the tail of the LAST pasted block.
+        for (const Span& sp : rows_[row].spans) {
+            if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind});
+            if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind});
+        }
+    }
+
+    beginTxn(row, row);
+    int caretRow = row, caretCol = 0;
+
+    // Splice segs[startSeg..] as fresh blocks after `afterRow`; the LAST one gets
+    // the trailing tail (right/rightS) and the caret lands at its boundary.
+    auto appendBlocksAfter = [&](int afterRow, int startSeg) {
+        const int cnt = n - startSeg;
+        if (cnt <= 0) return;
+        const int first = afterRow + 1, last = afterRow + cnt;
+        QString prevRank = ranks_[afterRow];
+        const QString nextRank = (first < static_cast<int>(ranks_.size())) ? ranks_[first] : QString();
+        struct NewBlk { QString id, rank, content; uint8_t type, level; std::vector<Span> spans; };
+        std::vector<NewBlk> made;
+        beginInsertRows({}, first, last);
+        for (int k = 0; k < cnt; ++k) {
+            const int at = first + k;
+            uint8_t tj, lj; QString textj; std::vector<Span> spj; bool pfxj;
+            parseSeg(segs[startSeg + k], tj, lj, textj, spj, pfxj);
+            QString contentj = textj;
+            std::vector<Span> spans = spj;
+            if (k == cnt - 1) {                        // last block carries the tail
+                caretRow = at; caretCol = textj.size();
+                for (const Span& sp : rightS)
+                    addSpan(spans, sp.s + contentj.size(), sp.e + contentj.size(), sp.kind);
+                contentj += right;
+            }
+            Row r{}; r.type = tj; r.level = lj; r.param = 1; r.spans = spans;
+            const QString newId = makeUlid();
+            const QString newRank = rankBetween(prevRank, nextRank);
+            prevRank = newRank;
+            rows_.insert(rows_.begin() + at, r);
+            content_.insert(content_.begin() + at, contentj);
+            ids_.insert(ids_.begin() + at, newId);
+            ranks_.insert(ranks_.begin() + at, newRank);
+            fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+            made.push_back({newId, newRank, contentj, tj, lj, spans});
+        }
+        endInsertRows();
+        if (doc_.isOpen())
+            for (const NewBlk& b : made)
+                doc_.appendBlock(b.id, b.rank, 0, QString::fromLatin1(typeToString(b.type)),
+                                 attrsJson(b.type, b.level, QString(), b.spans), b.content);
+    };
+
+    if (opaque) {
+        appendBlocksAfter(row, 0);                     // opaque block stays untouched
+    } else {
+        // ---- Block 0: merge seg[0] into the current block at the caret ----
+        uint8_t t0, l0; QString text0; std::vector<Span> sp0; bool pfx0;
+        parseSeg(segs[0], t0, l0, text0, sp0, pfx0);
+        // Adopt the parsed block type only at a clean start (nothing to the left)
+        // AND when the line carried a real prefix; else keep the block's type and
+        // treat seg[0] as inline-styled text.
+        if (left.isEmpty() && pfx0) { rows_[row].type = t0; rows_[row].level = l0; }
+        QString newContent = left + text0;
+        std::vector<Span> newSpans = leftS;
+        for (const Span& sp : sp0)
+            addSpan(newSpans, sp.s + left.size(), sp.e + left.size(), sp.kind);
+        if (n == 1) {                                  // single line: tail stays here
+            caretRow = row; caretCol = newContent.size();
+            for (const Span& sp : rightS)
+                addSpan(newSpans, sp.s + newContent.size(), sp.e + newContent.size(), sp.kind);
+            newContent += right;
+        }
+        content_[row] = newContent;
+        rows_[row].spans = newSpans;
+        rows_[row].param = 1;
+        persistContent(row);
+        persistMeta(row);
+        emit dataChanged(index(row), index(row), {ContentRole});
+        if (n >= 2) appendBlocksAfter(row, 1);         // remaining lines → new blocks
+    }
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return QVariantList{ caretRow, caretCol };
 }
 
 void BlockModel::splitBlock(int row, int col) {

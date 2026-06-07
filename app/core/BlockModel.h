@@ -120,6 +120,13 @@ public:
     Q_INVOKABLE void insertText(int row, int col, const QString& text, int marks = 0);
     Q_INVOKABLE void splitBlock(int row, int col);
 
+    // Smart multi-block paste: split `text` into blocks (blank lines separate;
+    // each line gets block-prefix + inline-markdown parsing), splice them at the
+    // caret, and record the whole thing as ONE undo step. Returns [caretRow,
+    // caretCol] for where the caret should land after the paste ([] on no-op).
+    // Fenced code blocks are not yet reconstructed (``` lines paste literally).
+    Q_INVOKABLE QVariantList pasteText(int row, int col, const QString& text);
+
     // --- Semantic format spans (DESIGN §5 endgame): bold/italic/code as a span
     // [s,e) over the block's text, NOT `**` markers in the content. This is how
     // the menu (and, later, markdown-as-input) applies formatting; the render
