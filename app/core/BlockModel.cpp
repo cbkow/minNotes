@@ -1002,6 +1002,9 @@ void BlockModel::clearFormat(int row, int start, int end) {
     removeSpan(rows_[row].spans, start, end, SpanBold);
     removeSpan(rows_[row].spans, start, end, SpanItalic);
     removeSpan(rows_[row].spans, start, end, SpanCode);
+    removeSpan(rows_[row].spans, start, end, SpanStrike);
+    removeSpan(rows_[row].spans, start, end, SpanUnderline);
+    removeSpan(rows_[row].spans, start, end, SpanLink);
     persistMeta(row);
     emit dataChanged(index(row), index(row), {});
     ++contentRevision_; emit contentChangedSpike();
@@ -1151,8 +1154,8 @@ void BlockModel::removeSpan(std::vector<Span>& v, int start, int end, uint8_t ki
     std::vector<Span> out;
     for (const Span& sp : v) {
         if (sp.kind != kind || sp.e <= start || sp.s >= end) { out.push_back(sp); continue; }
-        if (sp.s < start) out.push_back({sp.s, start, kind});   // left remainder
-        if (sp.e > end)   out.push_back({end, sp.e, kind});     // right remainder
+        if (sp.s < start) out.push_back({sp.s, start, kind, sp.href});   // left remainder
+        if (sp.e > end)   out.push_back({end, sp.e, kind, sp.href});     // right remainder
     }
     v = out;
 }
@@ -1217,6 +1220,13 @@ QString BlockModel::linkAt(int row, int col) const {
     if (rows_.empty()) return {};
     for (const Span& sp : rows_[clampRow(row)].spans)
         if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return sp.href;
+    return {};
+}
+
+QVariantList BlockModel::linkRangeAt(int row, int col) const {
+    if (rows_.empty()) return {};
+    for (const Span& sp : rows_[clampRow(row)].spans)
+        if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return QVariantList{ sp.s, sp.e };
     return {};
 }
 

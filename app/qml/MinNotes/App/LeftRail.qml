@@ -96,6 +96,14 @@ Rectangle {
             onClicked: rail.act(function() { rail.editor.applyFormat("underline") })
         }
         RailBtn {
+            iconName: "link"; tooltip: "Link  (⌘K)"
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.linkActive
+            // Direct (not rail.act): act() refocuses the editor, which would steal
+            // focus from the URL popup's input field the moment it opens.
+            onClicked: if (rail.editor) rail.editor.applyLink()
+        }
+        RailBtn {
             iconName: "text-t-slash"; tooltip: "Clear formatting  (⌘\\)"
             enabled_: !!rail.editor       // acts on the caret block; no selection needed
             onClicked: rail.act(function() { rail.editor.clearFormatting() })

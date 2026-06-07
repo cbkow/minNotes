@@ -774,6 +774,9 @@ FocusScope {
     readonly property bool codeArmed:      (cursor.activeMarks & 4) !== 0
     readonly property bool strikeArmed:    (cursor.activeMarks & 8) !== 0
     readonly property bool underlineArmed: (cursor.activeMarks & 16) !== 0
+    // Lit when the caret/selection sits inside a link (rail toggle + edit mode).
+    readonly property bool linkActive: (blockModel.contentRevision, cursor.active
+                                        && blockModel.linkAt(cursor.focusRow, cursor.focusCol) !== "")
 
     function applyFormat(kind) {
         // No selection → Word-style toggle: arm the attribute for the next typing.
@@ -784,6 +787,55 @@ FocusScope {
         blockModel.beginGroup(cursor.loRow, cursor.hiRow)
         for (r = cursor.loRow; r <= cursor.hiRow; ++r)
             blockModel.setFormat(r, rowSelStart(r), rowSelEnd(r), kind, !allCovered)
+        blockModel.endGroup()
+        cursor.sync()
+    }
+
+    // Link button / Cmd+K: open the URL editor over the right target. A single-row
+    // selection is wrapped; a caret inside an existing link edits that whole link;
+    // a bare caret inserts the typed URL as its own link. (Multi-row selections
+    // apply the URL per row.) The target range is SNAPSHOTTED here because opening
+    // the popup steals the editor's selection/focus.
+    function applyLink() {
+        if (!cursor.active) return
+        var row = cursor.focusRow
+        if (cursor.hasSel) {
+            linkPopup.insertMode = false
+            linkPopup.tRow0 = cursor.loRow; linkPopup.tCol0 = cursor.loCol
+            linkPopup.tRow1 = cursor.hiRow; linkPopup.tCol1 = cursor.hiCol
+            linkPopup.prefill = blockModel.linkAt(cursor.loRow, cursor.loCol)
+        } else {
+            var rng = blockModel.linkRangeAt(row, cursor.focusCol)
+            if (rng && rng.length === 2) {                 // caret inside a link → edit it
+                linkPopup.insertMode = false
+                linkPopup.tRow0 = row; linkPopup.tCol0 = rng[0]
+                linkPopup.tRow1 = row; linkPopup.tCol1 = rng[1]
+                linkPopup.prefill = blockModel.linkAt(row, cursor.focusCol)
+            } else {                                       // bare caret → insert URL as a link
+                linkPopup.insertMode = true
+                linkPopup.tRow0 = row; linkPopup.tCol0 = cursor.focusCol
+                linkPopup.tRow1 = row; linkPopup.tCol1 = cursor.focusCol
+                linkPopup.prefill = ""
+            }
+        }
+        linkPopup.openAtCaret()
+    }
+    function commitLink(url) {
+        url = (url || "").trim()
+        var r0 = linkPopup.tRow0, r1 = linkPopup.tRow1
+        blockModel.beginGroup(r0, r1)
+        if (linkPopup.insertMode) {
+            if (url.length > 0) {
+                blockModel.insertText(r0, linkPopup.tCol0, url, 0)
+                blockModel.setLink(r0, linkPopup.tCol0, linkPopup.tCol0 + url.length, url)
+            }
+        } else {
+            for (var r = r0; r <= r1; ++r) {
+                var s = (r === r0) ? linkPopup.tCol0 : 0
+                var e = (r === r1) ? linkPopup.tCol1 : blockModel.contentForRow(r).length
+                blockModel.setLink(r, s, e, url)           // empty url = remove the link
+            }
+        }
         blockModel.endGroup()
         cursor.sync()
     }
@@ -942,10 +994,11 @@ FocusScope {
         root.menuRow = row; root.menuX = vx; root.menuY = vy
         blockMenu.open()    // x/y are reactive bindings that clamp it on-screen
     }
-    // Shorten a URL for a menu label: drop the scheme, keep host + a little path.
+    // Shorten a URL for a menu label: drop the scheme/www, keep host + a little
+    // path (the menu also elides, so this is just for a tidy label).
     function truncUrl(u) {
-        var s = u.replace(/^https?:\/\//, "")
-        return s.length > 42 ? s.substring(0, 41) + "…" : s
+        var s = u.replace(/^https?:\/\//, "").replace(/^www\./, "")
+        return s.length > 30 ? s.substring(0, 29) + "…" : s
     }
     // Language picker for the code block at `row`, anchored where the menu was.
     function openLangPopupForRow(row) {
@@ -1014,6 +1067,7 @@ FocusScope {
         else if (cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
         else if (cmd && shift && k === Qt.Key_X) { applyFormat("strike"); event.accepted = true }
         else if (cmd && k === Qt.Key_Backslash) { clearFormatting(); event.accepted = true }
+        else if (cmd && k === Qt.Key_K) { applyLink(); event.accepted = true }
         else if (k === Qt.Key_Right) { navRight(shift); event.accepted = true }
         else if (k === Qt.Key_Left) { navLeft(shift); event.accepted = true }
         else if (k === Qt.Key_Down) { navDown(shift); event.accepted = true }
@@ -2111,6 +2165,8 @@ FocusScope {
             id: menuRowLabel
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 10
+            anchors.right: parent.right; anchors.rightMargin: 10
+            elide: Text.ElideRight                 // keep long labels (a URL) inside the menu
             color: parent.danger ? Theme.colors.error : Theme.colors.text
             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
         }
@@ -2246,6 +2302,66 @@ FocusScope {
                                     onClicked: langPopup.apply(modelData) }
                     }
                 }
+            }
+        }
+    }
+
+    // URL editor for the link button / Cmd+K. Anchored at the caret; commits the
+    // snapshotted target range via root.commitLink (blank URL removes the link).
+    Popup {
+        id: linkPopup
+        property int tRow0: 0; property int tCol0: 0
+        property int tRow1: 0; property int tCol1: 0
+        property bool insertMode: false
+        property string prefill: ""
+        property real px: 0; property real py: 0
+        width: 320; padding: 8; focus: true; z: 60
+        x: px; y: py
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: root.forceActiveFocus()
+        background: Rectangle { color: Theme.colors.surface; radius: 6
+                                border.width: 1; border.color: Theme.colors.border }
+        function openAtCaret() {
+            var ax = root.width / 2 - width / 2, ay = 80
+            var c = root.cellForRow(cursor.focusRow)
+            if (c && c.teItem) {
+                var rr = c.teItem.positionToRectangle(cursor.focusCol)
+                var p = c.teItem.mapToItem(root, rr.x, rr.y + rr.height + 4)
+                ax = p.x; ay = p.y
+            }
+            px = Math.max(8, Math.min(ax, root.width - width - 8))
+            py = Math.max(8, Math.min(ay, root.height - height - 8))
+            linkField.text = prefill
+            open()
+            linkField.selectAll(); linkField.forceActiveFocus()
+        }
+        contentItem: Column {
+            spacing: 6
+            Rectangle {
+                width: parent.width; height: 30; radius: 4
+                color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
+                TextInput {
+                    id: linkField
+                    anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true; selectByMouse: true
+                    color: Theme.colors.text; selectionColor: Theme.colors.selectionBg
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    onAccepted: { root.commitLink(text); linkPopup.close() }
+                    Keys.onEscapePressed: linkPopup.close()
+                    Text {
+                        anchors.fill: parent; verticalAlignment: Text.AlignVCenter
+                        visible: linkField.text.length === 0
+                        text: "https://…  (blank removes the link)"
+                        color: Theme.colors.textSubtle; font: linkField.font
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+            Text {
+                text: "↵ apply  ·  esc cancel"
+                color: Theme.colors.textSubtle
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
         }
     }

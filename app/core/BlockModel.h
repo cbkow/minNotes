@@ -145,6 +145,9 @@ public:
     // covering `col` (for Cmd/Ctrl-click open + hover), or "" if none.
     Q_INVOKABLE void setLink(int row, int start, int end, const QString& url);
     Q_INVOKABLE QString linkAt(int row, int col) const;
+    // The [s,e] range of a link span covering `col` (for "edit this link" with no
+    // selection), or an empty list if none.
+    Q_INVOKABLE QVariantList linkRangeAt(int row, int col) const;
     // Group several mutations into ONE undo step (transactions nest by depth).
     Q_INVOKABLE void beginGroup(int loRow, int hiRow);
     Q_INVOKABLE void endGroup();
