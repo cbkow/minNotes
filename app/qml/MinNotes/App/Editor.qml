@@ -1093,7 +1093,7 @@ FocusScope {
                                        + (isVideoMedia ? root.videoTransportH : 0)
                       : te.btype === 6 ? 12 + 18                       // divider
                       : te.btype === 7 ? 12 + tableHost.implicitHeight // table
-                      : (te.btype === 2 ? 24 : 12) + te.implicitHeight
+                      : (te.btype === 2 ? 24 : 12) + te.height   // te.height = lineCount*lineH (even)
 
                 // Media is known-geometry: the MODEL derives its height from the
                 // probed dims + the content width (setContentWidth). The delegate
@@ -1307,6 +1307,16 @@ FocusScope {
                         return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
                     }
                     font.bold: btype === 1
+                    // Deterministic line height: TextEdit's natural single-line
+                    // implicitHeight rounds to 19 OR 20px for the same body text (a Qt
+                    // text-layout quirk), so same-type blocks came out 1px uneven.
+                    // TextEdit has no lineHeight property, so pin the item height to
+                    // lineCount * a normalized per-font line height (>= natural, so no
+                    // clipping); the cell reserves from this, making every block of a
+                    // given type identical. (selection/caret still use the real text
+                    // layout, so they track the glyphs.)
+                    readonly property int lineH: Math.round(font.pixelSize * 1.35)
+                    height: Math.max(1, lineCount) * lineH
                 }
 
                 // Inline markdown styling: applies bold/italic/mono char formats
