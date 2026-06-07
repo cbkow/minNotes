@@ -110,6 +110,61 @@ FocusScope {
     Rectangle { anchors.fill: parent; color: Theme.colors.surface }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
+    // --- Inline video player. ONE decoder/surface, root-owned (a pooled
+    // MediaBlock can't host a live decoder — it recycles mid-scroll). The
+    // surface is overlaid on the playing block (see the overlay below). A
+    // single shared decoder gives "one video at a time" for free; scrolling the
+    // playing block out of view tears it down. The poster's click arrives via
+    // the central mouse layer (playVideo); the surface owns toggles when up. ---
+    property int videoPlayingRow: -1
+    readonly property bool videoVisible: videoPlayingRow >= 0
+        && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
+    onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0) stopVideo()
+
+    function playVideo(row) {
+        if (videoPlayingRow === row) { toggleVideo(); return }
+        videoDec.close(); videoAudio.close()
+        var p = blockModel.mediaLocalPath(row)
+        if (p !== "" && videoDec.open(p)) {
+            videoPlayingRow = row
+            videoAudio.open(p)
+            videoDec.play()
+            if (videoAudio.hasAudio) videoAudio.play()
+        } else {
+            videoPlayingRow = -1
+        }
+    }
+    function toggleVideo() {
+        if (videoPlayingRow < 0) return
+        if (videoDec.isPlaying) { videoDec.pause(); videoAudio.pause() }
+        else {
+            if (videoDec.state === VideoDecoder.EndOfStream) { videoDec.seekToFrame(0); videoAudio.seek(0) }
+            videoDec.play()
+            if (videoAudio.hasAudio) videoAudio.play()
+        }
+    }
+    function stopVideo() {
+        videoDec.close(); videoAudio.close()
+        videoPlayingRow = -1
+    }
+
+    VideoDecoder { id: videoDec }
+    AudioPlayer  { id: videoAudio }
+    // Keep audio aligned to the video playhead while playing (~30 Hz).
+    Timer {
+        interval: 33; repeat: true
+        running: videoDec.isPlaying && videoAudio.hasAudio
+        onTriggered: videoAudio.update(videoDec.fps > 0 ? videoDec.currentFrame / videoDec.fps : 0)
+    }
+    Connections {
+        target: videoDec
+        // Pause audio when the clip ends (no auto-loop inline). toggleVideo()
+        // rewinds on the next play press.
+        function onStateChanged() {
+            if (videoDec.state === VideoDecoder.EndOfStream) videoAudio.pause()
+        }
+    }
+
     // Drag-drop image files in → media blocks at the snapped insertion gap. Tracks
     // the drag so the overlay below can show exactly where it'll land. (Only handles
     // external drags; doesn't touch the normal mouse interaction.)
@@ -1150,6 +1205,16 @@ FocusScope {
                     return
                 }
                 cursor.resetGoalX(); cursor.clearMarks()
+                // Click on a video block's poster → start playback. The poster has
+                // no MouseArea (it's beneath this central layer); once playing, the
+                // surface overlay sits ABOVE this layer and owns play/pause.
+                var prow = blockModel.rowForY(m.y)
+                if (blockModel.typeForRow(prow) === 3 && blockModel.mediaKind(prow) === "video"
+                        && prow !== root.videoPlayingRow) {
+                    cursor.setCaret(prow, 0)
+                    root.playVideo(prow)
+                    return
+                }
                 // Click into a table cell → place the table caret; arm drag for
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
@@ -1444,6 +1509,40 @@ FocusScope {
                 running: root.imageDropActive; loops: Animation.Infinite
                 NumberAnimation { from: 0.8; to: 0.0; duration: 900; easing.type: Easing.OutQuad }
             }
+        }
+    }
+
+    // --- Inline video surface — the single root-owned player, overlaid exactly
+    // on the playing block's poster rect. Above the central mouse layer (z:56)
+    // so its own MouseArea can take play/pause clicks. Positioned in screen
+    // coords (content-y minus the scroll), matching MediaBlock's y:6 inset. ---
+    Item {
+        id: videoOverlay
+        visible: root.videoVisible
+        z: 56
+        readonly property int r: root.videoPlayingRow
+        readonly property real measure: r >= 0 ? root.measureForRow(r) : root.pageWidth
+        readonly property int vw: r >= 0 ? blockModel.mediaW(r) : 0
+        readonly property int vh: r >= 0 ? blockModel.mediaH(r) : 0
+        readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
+        readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
+                                                         : Math.round(dispW * 0.5)
+        x: root.leftEdge
+        y: (blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) - flick.contentY + 6
+        width: dispW
+        height: dispH
+
+        VideoSurfaceItem {
+            id: videoSurface
+            anchors.fill: parent
+            videoDecoder: videoDec
+            fillColor: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
+                               Theme.colors.surface.b, 1.0)
+        }
+        MouseArea {   // click the video to toggle play/pause (transport bar lands next)
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.toggleVideo()
         }
     }
 

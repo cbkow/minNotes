@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QVariant>
+#include <QUrl>
 #include <QSet>
 #include <algorithm>
 
@@ -878,6 +879,10 @@ QString BlockModel::mediaUrl(int row) const {
     if (rows_[row].type != Media || !mediaStore_) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     return mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString());
+}
+QString BlockModel::mediaLocalPath(int row) const {
+    const QString url = mediaUrl(row);
+    return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
 }
 int BlockModel::mediaW(int row) const {
     row = clampRow(row);

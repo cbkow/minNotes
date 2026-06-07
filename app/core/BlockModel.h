@@ -200,6 +200,7 @@ public:
     // Detect image vs video by extension and route to the right inserter.
     Q_INVOKABLE bool insertMediaFromUrl(int afterRow, const QString& fileUrl);
     Q_INVOKABLE QString mediaUrl(int row) const;   // resolved file:// URL ("" if none)
+    Q_INVOKABLE QString mediaLocalPath(int row) const; // resolved absolute path (for the decoder)
     Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
     Q_INVOKABLE int mediaH(int row) const;          // intrinsic height
     Q_INVOKABLE QString mediaKind(int row) const;   // "image" | "video" | ""
