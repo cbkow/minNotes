@@ -1574,6 +1574,14 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     beginTxn(row, row);
     int caretRow = row, caretCol = 0;
 
+    // Append a span, preserving the link target: addSpan() only carries a kind (it
+    // merges same-kind runs), which would drop a link's href — so push links whole.
+    auto appendSpan = [](std::vector<Span>& v, int s, int e, uint8_t kind, const QString& href) {
+        if (s >= e) return;
+        if (kind == SpanLink) v.push_back({s, e, kind, href});
+        else addSpan(v, s, e, kind);
+    };
+
     // Splice segs[startSeg..] as fresh blocks after `afterRow`; the LAST one gets
     // the trailing tail (right/rightS) and the caret lands at its boundary.
     auto appendBlocksAfter = [&](int afterRow, int startSeg) {
@@ -1594,7 +1602,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
             if (k == cnt - 1) {                        // last block carries the tail
                 caretRow = at; caretCol = textj.size();
                 for (const Span& sp : rightS)
-                    addSpan(spans, sp.s + contentj.size(), sp.e + contentj.size(), sp.kind);
+                    appendSpan(spans, sp.s + contentj.size(), sp.e + contentj.size(), sp.kind, sp.href);
                 contentj += right;
             }
             Row r{}; r.type = tj; r.level = lj; r.param = 1; r.spans = spans;
@@ -1628,11 +1636,11 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         QString newContent = left + text0;
         std::vector<Span> newSpans = leftS;
         for (const Span& sp : sp0)
-            addSpan(newSpans, sp.s + left.size(), sp.e + left.size(), sp.kind);
+            appendSpan(newSpans, sp.s + left.size(), sp.e + left.size(), sp.kind, sp.href);
         if (n == 1) {                                  // single line: tail stays here
             caretRow = row; caretCol = newContent.size();
             for (const Span& sp : rightS)
-                addSpan(newSpans, sp.s + newContent.size(), sp.e + newContent.size(), sp.kind);
+                appendSpan(newSpans, sp.s + newContent.size(), sp.e + newContent.size(), sp.kind, sp.href);
             newContent += right;
         }
         content_[row] = newContent;

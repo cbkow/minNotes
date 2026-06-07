@@ -69,6 +69,11 @@ FocusScope {
     property real menuY: 0
     property int  menuCellR: 0     // right-clicked table cell (for table menu ops)
     property int  menuCellC: 0
+    property string menuLinkUrl: ""  // link URL under the right-click (for "Open …")
+    // Link-hover tooltip: the URL under the pointer + where to anchor the pill.
+    property string hoverLinkUrl: ""
+    property real   hoverLinkX: 0
+    property real   hoverLinkViewY: 0
     // Context-menu target highlight: the scope of the hovered menu item ("" none,
     // "block" whole block, "column"/"row" within a table) + danger (red) tint.
     property string menuHiScope: ""
@@ -937,6 +942,11 @@ FocusScope {
         root.menuRow = row; root.menuX = vx; root.menuY = vy
         blockMenu.open()    // x/y are reactive bindings that clamp it on-screen
     }
+    // Shorten a URL for a menu label: drop the scheme, keep host + a little path.
+    function truncUrl(u) {
+        var s = u.replace(/^https?:\/\//, "")
+        return s.length > 42 ? s.substring(0, 41) + "…" : s
+    }
     // Language picker for the code block at `row`, anchored where the menu was.
     function openLangPopupForRow(row) {
         langPopup.targetRow = row
@@ -1462,9 +1472,13 @@ FocusScope {
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
                     var trow = blockModel.rowForY(m.y)
+                    root.menuLinkUrl = ""
                     if (blockModel.typeForRow(trow) === 7) {
                         var th = root.tableHitAt(m.x, m.y)
                         root.menuCellR = th ? th.r : 0; root.menuCellC = th ? th.c : 0
+                    } else {
+                        var rh = root.hitTest(m.x, m.y)              // link under the click?
+                        root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
                     }
                     root.openBlockMenu(m.x, m.y - flick.contentY, trow)
                     return
@@ -1488,11 +1502,9 @@ FocusScope {
                     return
                 }
                 var h = root.hitTest(m.x, m.y)
-                // Cmd/Ctrl-click on a link span opens it (plain click still edits).
-                if (m.modifiers & Qt.ControlModifier) {
-                    var url = blockModel.linkAt(h.row, h.col)
-                    if (url && url.length > 0) { Qt.openUrlExternally(url); return }
-                }
+                // Caret takes priority over links: a click always edits. Opening a
+                // link is via the hover tooltip / context menu (never steals the press).
+                root.hoverLinkUrl = ""; linkTipHide.stop()
                 if (m.modifiers & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
                 else {
                     // Clicking into a different block leaves the old one → commit it.
@@ -1530,8 +1542,28 @@ FocusScope {
                     if (hbt) { var hlp = hbt.mapFromItem(mouse, m.x, m.y); overBorder = hbt.columnBorderAt(hlp.x) >= 0 }
                 }
                 root.tableOverBorder = overBorder
+                // Link under the pointer → anchor the open-link tooltip there. A
+                // grace timer (not an immediate clear) lets the pointer travel up
+                // onto the pill to click it.
+                var lurl = ""
+                if (!overBorder && blockModel.typeForRow(root.hoverRow) !== 7) {
+                    var lh = root.hitTest(m.x, m.y)
+                    lurl = blockModel.linkAt(lh.row, lh.col)
+                }
+                if (lurl.length > 0) {
+                    // Anchor the pill ONCE on entering a link and freeze it — if it
+                    // tracked the mouse, moving up to click it would chase it away.
+                    if (lurl !== root.hoverLinkUrl) {
+                        root.hoverLinkUrl = lurl
+                        root.hoverLinkX = m.x; root.hoverLinkViewY = m.y - flick.contentY
+                    }
+                    linkTipHide.stop()
+                } else if (root.hoverLinkUrl.length > 0) {
+                    linkTipHide.restart()
+                }
             }
-            onExited: { root.hoverRow = -1; mouse.overGrip = false; root.tableOverBorder = false }
+            onExited: { root.hoverRow = -1; mouse.overGrip = false; root.tableOverBorder = false
+                        if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
                 if (root.blockDragging) root.commitBlockDrag()
                 else if (root.tableResizing || root.tableDragging) root.endTableInteraction()
@@ -2026,6 +2058,46 @@ FocusScope {
         }
     }
 
+    // Grace period so the pointer can travel from the link text up onto the pill.
+    Timer { id: linkTipHide; interval: 500; repeat: false; onTriggered: root.hoverLinkUrl = "" }
+
+    // Link-hover tooltip: a clickable pill (root overlay, above the central mouse
+    // layer so it gets the click) that opens the URL externally. Caret editing is
+    // never disturbed — this is the only click affordance for links.
+    Rectangle {
+        id: linkTip
+        visible: root.hoverLinkUrl.length > 0
+        z: 60
+        width: Math.min(380, tipRow.implicitWidth + 16)
+        height: 26
+        x: Math.max(6, Math.min(root.width - width - 6, root.hoverLinkX))
+        y: Math.max(6, root.hoverLinkViewY - height - 3)
+        color: Theme.colors.surfaceHover
+        border.width: 1; border.color: Theme.colors.border
+        Row {
+            id: tipRow
+            anchors.centerIn: parent; spacing: 6
+            Text { text: "↗"; color: Theme.colors.accent; anchors.verticalCenter: parent.verticalCenter
+                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
+            Text {
+                text: root.hoverLinkUrl
+                color: Theme.colors.text; elide: Text.ElideMiddle
+                width: Math.min(340, implicitWidth); anchors.verticalCenter: parent.verticalCenter
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+        }
+        MouseArea {
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            // Keep the pill alive on EVERY move over it, not just on enter: the
+            // central layer's onExited can re-arm the hide timer right after our
+            // onEntered, so a one-shot stop would still let it vanish under us.
+            onEntered: linkTipHide.stop()
+            onPositionChanged: linkTipHide.stop()
+            onExited: linkTipHide.restart()
+            onClicked: { Qt.openUrlExternally(root.hoverLinkUrl); root.hoverLinkUrl = ""; linkTipHide.stop() }
+        }
+    }
+
     // One row of a hand-rolled menu (matches the app's flat dark style rather
     // than the default Controls Menu chrome). `danger` tints destructive items.
     component MenuRow: Rectangle {
@@ -2071,6 +2143,10 @@ FocusScope {
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 1
+            MenuRow { visible: root.menuLinkUrl.length > 0
+                      text: "Open " + root.truncUrl(root.menuLinkUrl)
+                      onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
+            Rectangle { visible: root.menuLinkUrl.length > 0; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow { text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
             MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
             MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
