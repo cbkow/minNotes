@@ -23,8 +23,13 @@ Item {
     readonly property bool   isVideo: kind === "video"
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
     readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
-    readonly property int iw: active ? (mb._rev, blockModel.mediaW(logicalRow)) : 0
-    readonly property int ih: active ? (mb._rev, blockModel.mediaH(logicalRow)) : 0
+    // Dims keyed on logicalRow (not active) so the displayed width is correct the
+    // instant a delegate recycles onto a media row (no `active`-settle frame where
+    // it reads 0). The frame HEIGHT is the model's authoritative mediaDisplayHeight
+    // (set on the host from the cell), not implicitHeight — so this only governs
+    // width/sourceSize. mediaW/H clamp invalid rows to 0, so the bare read is safe.
+    readonly property int iw: logicalRow >= 0 ? (mb._rev, blockModel.mediaW(logicalRow)) : 0
+    readonly property int ih: logicalRow >= 0 ? (mb._rev, blockModel.mediaH(logicalRow)) : 0
     readonly property real durMs: (active && isVideo) ? (mb._rev, blockModel.mediaDurationMs(logicalRow)) : 0
     readonly property real dispW: iw > 0 ? Math.min(maxWidth, iw) : maxWidth
 

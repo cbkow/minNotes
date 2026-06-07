@@ -87,6 +87,12 @@ public:
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so
     // the Flickable arm can compensate contentY when an off-screen block settles.
     Q_INVOKABLE void setMeasuredHeight(int row, qreal h);
+    // Media is known-geometry: its height is a pure function of the probed dims
+    // and the page width the doc is laid out at, so the view never measures it
+    // back — it sets the width here (on load + resize) and the model re-derives
+    // every media row's height. mediaDisplayHeight returns a row's frame px.
+    Q_INVOKABLE void  setContentWidth(qreal w);
+    Q_INVOKABLE qreal mediaDisplayHeight(int row) const;
     Q_INVOKABLE void setContent(int row, const QString& text);
     Q_INVOKABLE void insertBlock(int row);
     Q_INVOKABLE void removeBlock(int row);
@@ -237,6 +243,9 @@ private:
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0
         uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
         bool measured = false;
+        bool isVideo = false;   // media only: true → reserve the transport-toolbar height
+        uint16_t mediaW = 0;    // media only: intrinsic width px  (exact no-upscale height estimate)
+        uint16_t mediaH = 0;    // media only: intrinsic height px
         QString lang;       // code blocks: syntax-highlight language (else empty)
         std::vector<Span> spans;   // travels with the row on insert/erase
     };
@@ -293,6 +302,8 @@ private:
 
     int clampRow(int row) const;
     double estimatedHeight(const Row& r) const;
+    double mediaFrameHeight(const Row& r) const;   // displayed media frame px at contentWidth_
+    double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)
     QString genBase(int row, const Row& r) const;   // synthesize a row's text (no edit overlay)
     QString textAt(int row) const;                  // edit override else loaded content
     void bumpLayout();

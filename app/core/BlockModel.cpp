@@ -23,6 +23,8 @@ constexpr double kLine     = 22.0;   // px per text line
 constexpr double kPadV     = 16.0;   // vertical padding per block
 constexpr double kHeading  = 40.0;
 constexpr double kWidthEst = 760.0;  // assumed content width for media estimate
+constexpr double kVideoBar = 40.0;   // transport toolbar reserved under a video
+                                     // (keep in sync with Editor.qml videoTransportH)
 
 // Fractional-rank alphabet: 62 digits in ascending ASCII order, so plain
 // string comparison == numeric order. Shared by encode62 + rankBetween.
@@ -153,6 +155,9 @@ void BlockModel::loadFromStore() {
             const QJsonObject mo = QJsonDocument::fromJson(text.toUtf8()).object();
             const int mw = mo.value(QStringLiteral("w")).toInt(), mh = mo.value(QStringLiteral("h")).toInt();
             if (mw > 0 && mh > 0) r.param = static_cast<uint16_t>(std::clamp(int(100.0 * mh / mw + 0.5), 1, 1000));
+            r.mediaW = static_cast<uint16_t>(std::clamp(mw, 0, 65535));
+            r.mediaH = static_cast<uint16_t>(std::clamp(mh, 0, 65535));
+            r.isVideo = mo.value(QStringLiteral("kind")).toString() == QLatin1String("video");
         }
         for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
             const QJsonObject so = sv.toObject();
@@ -240,10 +245,25 @@ void BlockModel::rebuild(int n, int distribution) {
     emit layoutChangedSpike();
 }
 
+// Displayed media frame height: dispW = min(contentWidth, w) (never upscaled),
+// height = round(dispW * h/w). Pure function of the probed dims + the layout
+// width — recomputed when setContentWidth changes (resize). Falls back to the
+// aspect param if intrinsic dims are missing.
+double BlockModel::mediaFrameHeight(const Row& r) const {
+    if (r.mediaW > 0 && r.mediaH > 0) {
+        const double dispW = std::min<double>(contentWidth_, r.mediaW);
+        return std::floor(dispW * r.mediaH / r.mediaW + 0.5);
+    }
+    return contentWidth_ * (r.param / 100.0);
+}
+
 double BlockModel::estimatedHeight(const Row& r) const {
     switch (r.type) {
     case Heading: return kHeading + kPadV;
-    case Media:   return kWidthEst * (r.param / 100.0) + kPadV;  // aspect = param/100
+    case Media:   // 12px vertical pad + the transport toolbar for video. Matches
+                  // the Editor cell delegate exactly, and media never measures
+                  // back, so this IS the authoritative height (no scroll-in jump).
+        return 12.0 + mediaFrameHeight(r) + (r.isVideo ? kVideoBar : 0.0);
     case Divider: return 24.0;
     case Table:   return r.param * 34.0 + 44.0;     // param = row count; +header/strip
     case Code:
@@ -803,6 +823,12 @@ void BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectP
 
     beginInsertRows({}, at, at);
     Row r{}; r.type = Media; r.param = aspectParam;
+    {
+        const QJsonObject mo = QJsonDocument::fromJson(json.toUtf8()).object();
+        r.mediaW = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("w")).toInt(), 0, 65535));
+        r.mediaH = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("h")).toInt(), 0, 65535));
+        r.isVideo = mo.value(QStringLiteral("kind")).toString() == QLatin1String("video");
+    }
     rows_.insert(rows_.begin() + at, r);
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
@@ -1265,6 +1291,23 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
         emit heightSettled(row, delta);
         bumpLayout();
     }
+}
+
+qreal BlockModel::mediaDisplayHeight(int row) const {
+    row = clampRow(row);
+    return (rows_[row].type == Media) ? mediaFrameHeight(rows_[row]) : 0.0;
+}
+
+void BlockModel::setContentWidth(qreal w) {
+    if (w <= 0.0 || std::abs(w - contentWidth_) < 0.5) return;
+    contentWidth_ = w;
+    // Media heights are derived from this width — re-derive them in the Fenwick.
+    // (Media never measures back, so the estimate is the authoritative height.)
+    bool any = false;
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (rows_[i].type == Media)
+            if (fenwick_.setHeight(i, estimatedHeight(rows_[i])) != 0.0) any = true;
+    if (any) bumpLayout();
 }
 
 void BlockModel::setContent(int row, const QString& text) {

@@ -14,11 +14,14 @@ import QtQuick.Layouts
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: { forceActiveFocus(); _recomputeVideoRows() }
+    Component.onCompleted: { forceActiveFocus(); _recomputeVideoRows(); blockModel.setContentWidth(pageWidth) }
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
     property real pageWidth: Math.min(width - 40, Theme.dim.columnWidth)
+    // Media is known-geometry: tell the model the width it derives media heights
+    // from, and re-tell it on resize so reserved height stays exact (no jump).
+    onPageWidthChanged: blockModel.setContentWidth(pageWidth)
     readonly property real leftEdge: (flick.width - pageWidth) / 2
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
@@ -1070,18 +1073,28 @@ FocusScope {
                 // Code blocks get double vertical padding (24 vs 12) so the
                 // syntax-themed background has breathing room above/below.
                 // Every video block reserves room for its always-on transport
-                // toolbar below the frame (the toolbar is a root overlay; this
-                // keeps it in real layout space — no grow-on-play jump).
-                height: isMedia      ? 12 + mediaHost.implicitHeight     // image/video
+                // toolbar below the frame. The media frame height is the MODEL's
+                // authoritative value (mediaDisplayHeight — dims + content width),
+                // so the delegate exactly matches the Fenwick reservation: no
+                // transient, no scroll-in jump. layoutRevision dep picks up resize.
+                height: isMedia      ? 12 + (blockModel.layoutRevision, blockModel.contentRevision,
+                                             blockModel.mediaDisplayHeight(logicalRow))
                                        + (isVideoMedia ? root.videoTransportH : 0)
                       : te.btype === 6 ? 12 + 18                       // divider
                       : te.btype === 7 ? 12 + tableHost.implicitHeight // table
                       : (te.btype === 2 ? 24 : 12) + te.implicitHeight
 
-                onHeightChanged: if (active) blockModel.setMeasuredHeight(logicalRow, height)
+                // Media is known-geometry: the MODEL derives its height from the
+                // probed dims + the content width (setContentWidth). The delegate
+                // renders to that authoritative value and never measures back —
+                // measuring the child's transient (a 0.5-ratio fallback while
+                // implicitHeight lags logicalRow on recycle) would push a wrong
+                // height to the Fenwick → contentY/firstVisible churn and a
+                // scroll-in jump. Text/code/table still measure (reflow is unknown).
+                onHeightChanged: if (active && !isMedia) blockModel.setMeasuredHeight(logicalRow, height)
                 onIsFocusChanged: if (isFocus) root.focusBlockItem = te
                 Component.onCompleted: {
-                    if (active) blockModel.setMeasuredHeight(logicalRow, height)
+                    if (active && !isMedia) blockModel.setMeasuredHeight(logicalRow, height)
                     if (isFocus) root.focusBlockItem = te
                 }
 
@@ -1149,7 +1162,11 @@ FocusScope {
                     // async poster decode wakes up. BlockTable sidesteps it the same way.
                     maxWidth: root.pageWidth
                     width: implicitWidth
-                    height: implicitHeight
+                    // Frame height = the model's authoritative value (same as the
+                    // cell reservation), so the rendered media never disagrees with
+                    // the reserved space.
+                    height: (blockModel.layoutRevision, blockModel.contentRevision,
+                             blockModel.mediaDisplayHeight(cell.logicalRow))
                     // Poster frame: the remembered playhead (0 until first play).
                     posterFrame: cell.isVideoMedia
                         ? (root.videoPlayheadRev, root.videoPlayheadFor(cell.logicalRow)) : 0
