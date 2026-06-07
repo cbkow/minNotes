@@ -16,6 +16,7 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/rational.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/pixfmt.h>   // AVCOL_SPC_* / AVCOL_RANGE_*
 }
 
 MediaStore::MediaStore(const QString& docPath) : docDir_(QFileInfo(docPath).absolutePath()) {}
@@ -117,6 +118,30 @@ static QImage frameToImage(const AVFrame* frame, int maxW) {
                                      dw, dh, AV_PIX_FMT_RGBA, SWS_BILINEAR,
                                      nullptr, nullptr, nullptr);
     if (!sws) return {};
+
+    // Convert with the SOURCE colorspace matrix, not swscale's BT.601 default —
+    // otherwise greens shift toward cyan and reds toward pink (very visible on
+    // HD/ProRes-4444). Pick by metadata, with the standard HD=709/SD=601
+    // fallback, and honor the source range. Mirrors ufb's decoder so the poster
+    // matches the played frame.
+    int srcCsp;
+    switch (frame->colorspace) {
+        case AVCOL_SPC_BT709:      srcCsp = SWS_CS_ITU709;    break;
+        case AVCOL_SPC_BT470BG:    srcCsp = SWS_CS_ITU601;    break;
+        case AVCOL_SPC_SMPTE170M:  srcCsp = SWS_CS_SMPTE170M; break;
+        case AVCOL_SPC_SMPTE240M:  srcCsp = SWS_CS_SMPTE240M; break;
+        case AVCOL_SPC_FCC:        srcCsp = SWS_CS_FCC;       break;
+        case AVCOL_SPC_BT2020_NCL:
+        case AVCOL_SPC_BT2020_CL:  srcCsp = SWS_CS_BT2020;    break;
+        default:                   srcCsp = (w >= 1280 || h >= 720) ? SWS_CS_ITU709
+                                                                    : SWS_CS_SMPTE170M; break;
+    }
+    const int srcFullRange = (frame->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
+    sws_setColorspaceDetails(sws,
+        sws_getCoefficients(srcCsp), srcFullRange,
+        sws_getCoefficients(SWS_CS_ITU709), /*dstFullRange=*/1,
+        /*brightness=*/0, /*contrast=*/1 << 16, /*saturation=*/1 << 16);
+
     QImage img(dw, dh, QImage::Format_RGBA8888);
     uint8_t* dst[4]   = { img.bits(), nullptr, nullptr, nullptr };
     int      dstLn[4] = { int(img.bytesPerLine()), 0, 0, 0 };
