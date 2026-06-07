@@ -611,8 +611,19 @@ FocusScope {
     function ensureVisible(rowIdx) {
         var y = blockModel.yForRow(rowIdx)
         var h = blockModel.heightForRow(rowIdx)
-        if (y < flick.contentY) flick.contentY = y
-        else if (y + h > flick.contentY + flick.height)
+        var top = flick.contentY, bot = flick.contentY + flick.height
+        if (h >= flick.height) {
+            // Block taller than the viewport (a big image/video): forcing its top
+            // OR bottom into view oscillates during a drag-select — each event flips
+            // between the two, which reads as the scroll getting stuck/stuttering.
+            // So only move if it's ENTIRELY off-screen; once any part shows, leave
+            // the scroll alone (wheel/trackpad still scrolls through it freely).
+            if (y + h <= top) flick.contentY = y + h - flick.height       // entirely above → its bottom
+            else if (y >= bot) flick.contentY = y                          // entirely below → its top
+            return
+        }
+        if (y < top) flick.contentY = y
+        else if (y + h > bot)
             flick.contentY = Math.min(flick.contentHeight - flick.height, y + h - flick.height)
     }
 
@@ -1743,13 +1754,14 @@ FocusScope {
             required property int modelData
             readonly property int row: modelData
             readonly property bool live: row === root.videoPlayingRow
-            // Fade the toolbar back while this block is selected (focused or in a
-            // range) so the selection tint reads clearly and the bright bar doesn't
-            // dominate above it — but stay full while it's the live player (you're
-            // using the controls).
-            readonly property bool blockSelected: cursor.hasSel
+            // Fade the toolbar back while this block is selected (focused, in a
+            // range, or the open context menu's target) so the selection/menu
+            // highlight reads clearly and the bright bar doesn't dominate above it
+            // — but stay full while it's the live player (you're using the controls).
+            readonly property bool blockSelected: (cursor.hasSel
                 ? (row >= cursor.loRow && row <= cursor.hiRow)
-                : (row === cursor.focusRow)
+                : (row === cursor.focusRow))
+                || (blockMenu.visible && row === root.menuRow)
             opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: row >= root.firstVisible - 2 && row <= root.lastVisible + 2
