@@ -666,6 +666,9 @@ void BlockModel::mutateTable(int row, const std::function<void(TableGrid&)>& fn,
     beginTxn(row, row);
     content_[row] = g.toJson();
     rows_[row].param = static_cast<uint16_t>(std::clamp(g.rows(), 1, 65535));
+    rows_[row].measured = false;                          // height may change (rows/cols/
+                                                          // wrap/col-width) → re-measure;
+                                                          // the cache (rowMeasured) is stale
     persistContent(row);
     tableCacheRow_ = -1;                                  // invalidate the parse cache
     emit dataChanged(index(row), index(row), {ContentRole});
