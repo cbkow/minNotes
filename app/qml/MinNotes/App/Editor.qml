@@ -1743,6 +1743,15 @@ FocusScope {
             required property int modelData
             readonly property int row: modelData
             readonly property bool live: row === root.videoPlayingRow
+            // Fade the toolbar back while this block is selected (focused or in a
+            // range) so the selection tint reads clearly and the bright bar doesn't
+            // dominate above it — but stay full while it's the live player (you're
+            // using the controls).
+            readonly property bool blockSelected: cursor.hasSel
+                ? (row >= cursor.loRow && row <= cursor.hiRow)
+                : (row === cursor.focusRow)
+            opacity: (blockSelected && !live) ? 0.35 : 1.0
+            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
