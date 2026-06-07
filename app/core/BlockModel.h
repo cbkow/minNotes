@@ -7,9 +7,11 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include "FenwickTree.h"
 #include "Document.h"
 #include "TableGrid.h"
+#include "MediaStore.h"
 
 // The document model: a QAbstractListModel over the SQLite-canonical store
 // (DESIGN.md §3–4). Eager skinny-scan seeds the layout (type/rank) + Fenwick
@@ -189,6 +191,15 @@ public:
     // Block id at `row` (empty if out of range).
     Q_INVOKABLE QString idForRow(int row) const;
 
+    // --- Media (images; video later). The media descriptor lives as JSON in the
+    // block's content ({src,w,h}) so undo/persistence reuse the chokepoint; bytes
+    // are never in the DB (see MediaStore). ---
+    Q_INVOKABLE bool insertImageFromUrl(int afterRow, const QString& fileUrl);
+    Q_INVOKABLE bool insertImageFromClipboard(int afterRow);
+    Q_INVOKABLE QString mediaUrl(int row) const;   // resolved file:// URL ("" if none)
+    Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
+    Q_INVOKABLE int mediaH(int row) const;          // intrinsic height
+
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
     bool canUndo() const;
@@ -304,6 +315,9 @@ private:
     mutable TableGrid tableCache_;
     mutable int tableCacheRow_ = -1;
     mutable int tableCacheRev_ = -1;
+    std::unique_ptr<MediaStore> mediaStore_;
+    // Insert a media block (content = descriptor JSON) after `afterRow`; undoable.
+    void insertMedia(int afterRow, const QString& json, uint16_t aspectParam);
     // Apply a mutation to the table at `row` via a lambda, then reserialize to
     // content, persist, and snapshot (one txn; `coalesce` groups cell typing).
     void mutateTable(int row, const std::function<void(TableGrid&)>& fn,

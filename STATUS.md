@@ -253,10 +253,18 @@ DESIGN.md  SPIKE.md  STATUS.md
 
 ## Next (rough order)
 
-> **Resuming (2026-06-06):** tables + code blocks shipped; **media is the next
-> major arc** and is a full feature in its own right. Before adding ANY new block
-> type, (re)read the reactivity rules below — the tables build burned a lot of time
-> on virtualization display-desync bugs that look like data corruption but aren't.
+> **Resuming (2026-06-07):** tables + code blocks shipped; **media is the next
+> major arc** — see the approved plan `~/.claude/plans/virtual-tinkering-island.md`
+> (M1 image foundation → M2 video → M3 annotation tier → M4 studio → M5 QCView
+> interop; deep-dived ufb's image/video pipeline + QCView's annotation engine).
+> **M1 DONE:** inline images (Qt-native formats) via `MediaBlock.qml` (async Image)
+> + `core/MediaStore` (`.minnotes/<sha>` content-hashed storage for pasted bytes,
+> `file://` refs for files — never bytes in the DB; intrinsic `{w,h}` in the media
+> block's `content` JSON, tables-shaped → undo-free, jump-free layout). Acquisition:
+> drag-drop (gap-snapped, animated insertion-line + ring indicator) + paste
+> (`Clipboard.hasImage`). Hardened the caret on opaque media/divider blocks (typing/
+> Enter/backspace/forward-delete no longer edit their JSON). **Next: M2** (port ufb's
+> full video engine + FFmpeg). Before any new block type, re-read the reactivity rules.
 
 - [ ] **Images / video — THE NEXT MAJOR ARC.** Block type `Media=3` already exists
       (placeholder rect) and is already treated as **opaque** (atomic for cross-block

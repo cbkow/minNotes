@@ -44,6 +44,7 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
     QDir().mkpath(dir);
     const QString path = dir + QStringLiteral("/scratch.mndb");
     docPath_ = path;
+    mediaStore_ = std::make_unique<MediaStore>(docPath_);
     if (!doc_.open(path)) {
         qWarning("BlockModel: store unavailable, falling back to in-memory synthetic doc");
         rebuild(10000, Uniform);
@@ -147,6 +148,11 @@ void BlockModel::loadFromStore() {
             r.lang = o.value(QStringLiteral("lang")).toString();
         if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
             r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(text).rows()));
+        if (r.type == Media) { // content is the descriptor JSON; param = aspect*100 (h/w)
+            const QJsonObject mo = QJsonDocument::fromJson(text.toUtf8()).object();
+            const int mw = mo.value(QStringLiteral("w")).toInt(), mh = mo.value(QStringLiteral("h")).toInt();
+            if (mw > 0 && mh > 0) r.param = static_cast<uint16_t>(std::clamp(int(100.0 * mh / mw + 0.5), 1, 1000));
+        }
         for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
             const QJsonObject so = sv.toObject();
             const uint8_t k = spanKindFromString(so.value(QStringLiteral("k")).toString());
@@ -780,6 +786,80 @@ void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+}
+
+// === Media ===============================================================
+// The descriptor ({src,w,h}) lives as JSON in `content` (like tables), so undo +
+// persistence reuse the chokepoint. Bytes are never stored here (see MediaStore).
+
+void BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectParam) {
+    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+    beginTxn(at, at - 1);
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(
+        (at > 0) ? ranks_[at - 1] : QString(),
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+
+    beginInsertRows({}, at, at);
+    Row r{}; r.type = Media; r.param = aspectParam;
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, json);
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
+    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), json);
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+static QString mediaJson(const MediaStore::ImageRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), ref.src);
+    o.insert(QStringLiteral("w"), ref.w);
+    o.insert(QStringLiteral("h"), ref.h);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+static uint16_t aspectParam(const MediaStore::ImageRef& ref) {
+    return static_cast<uint16_t>(std::clamp(int(100.0 * ref.h / ref.w + 0.5), 1, 1000));
+}
+
+bool BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore_) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);
+    if (!ref.ok()) return false;
+    insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
+    return true;
+}
+
+bool BlockModel::insertImageFromClipboard(int afterRow) {
+    if (!mediaStore_) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
+    if (!ref.ok()) return false;
+    insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
+    return true;
+}
+
+QString BlockModel::mediaUrl(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media || !mediaStore_) return {};
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString());
+}
+int BlockModel::mediaW(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return 0;
+    return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("w")).toInt();
+}
+int BlockModel::mediaH(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return 0;
+    return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("h")).toInt();
 }
 
 void BlockModel::clearFormat(int row, int start, int end) {

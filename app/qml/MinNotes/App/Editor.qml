@@ -110,6 +110,30 @@ FocusScope {
     Rectangle { anchors.fill: parent; color: Theme.colors.surface }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
+    // Drag-drop image files in → media blocks at the snapped insertion gap. Tracks
+    // the drag so the overlay below can show exactly where it'll land. (Only handles
+    // external drags; doesn't touch the normal mouse interaction.)
+    property bool imageDropActive: false
+    property int  imageDropGap: -1
+    DropArea {
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onEntered: (drag) => { root.imageDropActive = true; root.imageDropGap = root.gapForY(drag.y + flick.contentY) }
+        onPositionChanged: (drag) => { root.imageDropGap = root.gapForY(drag.y + flick.contentY) }
+        onExited: { root.imageDropActive = false; root.imageDropGap = -1 }
+        onDropped: (drop) => {
+            root.imageDropActive = false
+            if (!drop.hasUrls) { root.imageDropGap = -1; return }
+            var afterRow = root.imageDropGap - 1      // insert AT the gap (= after gap-1)
+            var any = false
+            for (var i = 0; i < drop.urls.length; ++i)
+                if (blockModel.insertImageFromUrl(afterRow, drop.urls[i].toString())) { afterRow++; any = true }
+            root.imageDropGap = -1
+            if (any) { cursor.setCaret(Math.max(0, afterRow), 0); root.ensureVisible(afterRow) }
+            drop.accept()
+        }
+    }
+
     // --- Logical cursor + editing ops. Sole owner of caret/selection/content.
     QtObject {
         id: cursor
@@ -178,19 +202,25 @@ FocusScope {
         // Opaque blocks (table/media/divider) hold non-prose content (a table's is
         // JSON) — a cross-block text merge would spill it. Never merge across one.
         function opaque(r) { var t = blockModel.typeForRow(r); return t === 7 || t === 3 || t === 6 }
+        // Is the CARET on a media/divider? (Tables route to tcur, never reach these
+        // text ops.) These blocks have no text caret, so text ops must not edit them.
+        function opaqueHere() { var t = blockModel.typeForRow(focusRow); return t === 3 || t === 6 }
         function backspace() {
             if (hasSel) { deleteSelection(); return }
+            if (opaqueHere()) { root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
             if (focusCol > 0) {
                 blockModel.deleteRange(focusRow, focusCol - 1, focusRow, focusCol)
                 setCaret(focusRow, focusCol - 1)
             } else if (focusRow > 0) {
-                if (opaque(focusRow - 1)) {               // don't merge into a table/media/divider
+                var pt = blockModel.typeForRow(focusRow - 1)
+                if (pt === 7) {                           // table before: step into its last cell
                     if (blockModel.contentForRow(focusRow).length === 0 && blockModel.count > 1)
                         blockModel.removeBlock(focusRow)  // drop the empty trailing block
-                    if (blockModel.typeForRow(focusRow - 1) === 7) root.enterTable(focusRow - 1, false)
-                    else setCaret(focusRow - 1, 0)
-                    root.ensureVisible(focusRow - 1)
-                    return
+                    root.enterTable(focusRow - 1, false); root.ensureVisible(focusRow - 1); return
+                }
+                if (pt === 3 || pt === 6) {               // media/divider before: backspace deletes it
+                    blockModel.removeBlock(focusRow - 1)
+                    setCaret(focusRow - 1, 0); root.ensureVisible(focusRow - 1); return
                 }
                 var pl = blockModel.contentForRow(focusRow - 1).length
                 blockModel.deleteRange(focusRow - 1, pl, focusRow, 0)
@@ -200,21 +230,23 @@ FocusScope {
         }
         function forwardDelete() {
             if (hasSel) { deleteSelection(); return }
+            if (opaqueHere()) { root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
             var len = blockModel.contentForRow(focusRow).length
             if (focusCol < len) {
                 blockModel.deleteRange(focusRow, focusCol, focusRow, focusCol + 1)
             } else if (focusRow < blockModel.count - 1) {
-                if (opaque(focusRow + 1)) {               // don't pull a table/media/divider up as text
-                    if (blockModel.typeForRow(focusRow + 1) === 7) root.enterTable(focusRow + 1, true)
-                    else setCaret(focusRow + 1, 0)
-                    return
-                }
+                var nt = blockModel.typeForRow(focusRow + 1)
+                if (nt === 7) { root.enterTable(focusRow + 1, true); return }   // step into the table
+                if (nt === 3 || nt === 6) { blockModel.removeBlock(focusRow + 1); setCaret(focusRow, focusCol); return }
                 // At a block's end: pull the next block up onto this one (caret stays).
                 blockModel.deleteRange(focusRow, len, focusRow + 1, 0)
             }
             setCaret(focusRow, focusCol)
         }
         function insertChar(ch) {
+            if (opaqueHere()) {                           // typing next to a media/divider → fresh paragraph after it
+                blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0)
+            }
             if (hasSel) deleteSelection()
             blockModel.insertText(focusRow, focusCol, ch, activeMarks)   // armed attrs → span the run
             setCaret(focusRow, focusCol + ch.length)
@@ -227,6 +259,9 @@ FocusScope {
         }
         function splitLine() {
             if (hasSel) deleteSelection()
+            if (opaqueHere()) {   // Enter on a media/divider → a fresh paragraph below it
+                blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0); root.ensureVisible(focusRow + 1); return
+            }
             // "```" / "```lang" + Enter → an (empty) code block; caret stays inside.
             if (blockModel.makeCodeBlockIfFence(focusRow)) { setCaret(focusRow, 0); return }
             // Inside a code block, Enter adds a newline; pressing it on an empty
@@ -647,6 +682,13 @@ FocusScope {
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
     function doPaste() {
+        // An image on the clipboard (outside a table) → paste it as a media block.
+        if (!tcur.active && clipboard.hasImage()) {
+            if (blockModel.insertImageFromClipboard(cursor.focusRow)) {
+                cursor.setCaret(cursor.focusRow + 1, 0); root.ensureVisible(cursor.focusRow)
+                return
+            }
+        }
         var txt = clipboard.readText()
         if (txt.length === 0) return
         if (tcur.active) {
@@ -834,7 +876,7 @@ FocusScope {
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
                 // Code blocks get double vertical padding (24 vs 12) so the
                 // syntax-themed background has breathing room above/below.
-                height: isMedia      ? 12 + cell.measure * 0.5
+                height: isMedia      ? 12 + mediaHost.implicitHeight   // image/video
                       : te.btype === 6 ? 12 + 18                       // divider
                       : te.btype === 7 ? 12 + tableHost.implicitHeight // table
                       : (te.btype === 2 ? 24 : 12) + te.implicitHeight
@@ -898,13 +940,15 @@ FocusScope {
                     }
                 }
 
-                Rectangle {  // media block
-                    visible: cell.isMedia
-                    anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 6 }
-                    height: visible ? width * 0.5 : 0
-                    radius: 4
-                    color: Qt.hsla((cell.logicalRow % 23) / 23, 0.45, 0.5, 1)
-                    Text { anchors.centerIn: parent; color: "white"; text: "▶ " + (cell.active ? blockModel.contentForRow(cell.logicalRow) : ""); font.pixelSize: 14 }
+                MediaBlock {  // image block (video later)
+                    id: mediaHost
+                    visible: cell.active && cell.isMedia
+                    active: cell.active && cell.isMedia
+                    logicalRow: cell.logicalRow
+                    x: cell.colLeft; y: 6
+                    maxWidth: cell.measure
+                    width: implicitWidth
+                    height: implicitHeight
                 }
 
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
@@ -1355,6 +1399,47 @@ FocusScope {
                 text: root.blockDragText; color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
                 elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    // Image-drop insertion indicator — a pulsing accent line at the snapped gap,
+    // with an expanding ring on a solid dot, so it's obvious where a dragged image
+    // will land. Follows the cursor between blocks as you drag.
+    Item {
+        visible: root.imageDropActive && root.imageDropGap >= 0
+        z: 55
+        readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.imageDropGap)) - flick.contentY
+
+        Rectangle {   // insertion line
+            x: root.leftEdge; width: root.textWidth; height: 3; radius: 2
+            y: parent.lineY - 1.5
+            Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
+            color: Theme.colors.accent
+            SequentialAnimation on opacity {
+                running: root.imageDropActive; loops: Animation.Infinite
+                NumberAnimation { from: 1.0; to: 0.45; duration: 550; easing.type: Easing.InOutQuad }
+                NumberAnimation { from: 0.45; to: 1.0; duration: 550; easing.type: Easing.InOutQuad }
+            }
+        }
+        Rectangle {   // solid dot at the left end
+            x: root.leftEdge - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
+            color: Theme.colors.accent
+            Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
+        }
+        Rectangle {   // expanding ring emanating from the dot
+            id: dropRing
+            x: root.leftEdge - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
+            Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
+            color: "transparent"; border.width: 2; border.color: Theme.colors.accent
+            transformOrigin: Item.Center
+            SequentialAnimation on scale {
+                running: root.imageDropActive; loops: Animation.Infinite
+                NumberAnimation { from: 0.7; to: 2.6; duration: 900; easing.type: Easing.OutQuad }
+            }
+            SequentialAnimation on opacity {
+                running: root.imageDropActive; loops: Animation.Infinite
+                NumberAnimation { from: 0.8; to: 0.0; duration: 900; easing.type: Easing.OutQuad }
             }
         }
     }

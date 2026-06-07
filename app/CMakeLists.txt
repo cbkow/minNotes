@@ -16,6 +16,8 @@ qt_add_executable(minnotesapp
     core/TableGrid.cpp
     core/Clipboard.h
     core/Clipboard.cpp
+    core/MediaStore.h
+    core/MediaStore.cpp
 )
 
 # Mark Theme.qml as a QML singleton BEFORE qt_add_qml_module so the generated
@@ -37,6 +39,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/BottomRail.qml
         qml/MinNotes/App/BlockTable.qml
         qml/MinNotes/App/TableTabs.qml
+        qml/MinNotes/App/MediaBlock.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf
