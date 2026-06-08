@@ -345,14 +345,23 @@ DESIGN.md  SPIKE.md  STATUS.md
       (annotation tools later) without obscuring the document; it stays open while you
       select text and apply (no click-away dismiss; a header **×** or the rail toggle
       closes it). The inspector is for *choosing* colours (Text/Highlight target
-      tabs, the HSV `ColorPickerInline`, revert); *applying* is split out to two
-      pure, button-sized **colour swatches flush at the bottom of the left rail**
-      (current text colour + highlight; click applies to the selection). The **left
-      rail** also gains a **palette** button that toggles the inspector, and its five
-      heading buttons collapse into a single **Headings** button → a **popout menu**
-      (H1–H5, closes on pick). (`RightRail.qml` removed.)
+      tabs, the HSV `ColorPickerInline`, revert); *applying* lives on the **left rail
+      top**: an **A** text-colour tool + a **highlighter** tool, each a flat button
+      with a colour underbar showing the current colour (click applies to the
+      selection), with the **palette** inspector-toggle directly below them. The five
+      heading buttons also collapse into a single **Headings** button → a **popout
+      menu** (H1–H5, closes on pick). (`RightRail.qml` removed.)
 
 ## Next (rough order)
+
+> **Full-document annotations (ratified design, not started):** see
+> `PLAN-document-annotations.md`. Two layers — living-doc **comments** (a `SpanComment`
+> span kind, reflows for free) + a **free-ink canvas** in page-center-origin content
+> space (decoupled from blocks; positional, drift handled by manual move in annotation
+> mode). Flexible+fade by default; assert the 760 frame only in annotation mode (pan,
+> don't resize; inspector floats). **Sequenced AFTER the media-annotation arc** (it
+> reuses the QCView stroke engine + ink-modeler ported there). v1 = DA-1→DA-2→DA-3
+> (ink), then DA-4 (comments).
 
 > **Resuming (2026-06-07):** tables + code blocks shipped; **media is the next
 > major arc** — see the approved plan `~/.claude/plans/virtual-tinkering-island.md`
