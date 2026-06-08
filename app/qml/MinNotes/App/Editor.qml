@@ -151,6 +151,7 @@ FocusScope {
     readonly property real videoTransportH: 40
     readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
+        && activeTableRow < 0 && activePdfRow < 0   // not in a full-frame tab
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0) stopVideo()
 
@@ -1876,12 +1877,45 @@ FocusScope {
         visible: root.activePdfRow >= 0
         anchors.fill: parent
         color: Theme.colors.bg
-        PdfMultiPageView {
-            id: pdfView
+        // A continuous-scroll page list (NOT PdfMultiPageView, whose internal
+        // TableView always overflows horizontally by the vertical-scrollbar width
+        // → a stray horizontal bar over the page). One PdfPageImage per page,
+        // fit-width with a scrollbar gutter; vertical scroll only.
+        PdfDocument {
+            id: pdfFrameDoc
+            source: root.activePdfRow >= 0 ? blockModel.mediaUrl(root.activePdfRow) : ""
+        }
+        ListView {
+            id: pdfList
             anchors.fill: parent
-            anchors.margins: 8
-            document: PdfDocument {
-                source: root.activePdfRow >= 0 ? blockModel.mediaUrl(root.activePdfRow) : ""
+            anchors.margins: 10
+            clip: true
+            model: pdfFrameDoc.pageCount
+            spacing: 10
+            cacheBuffer: Math.round(height * 1.5)
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: Item {
+                required property int index
+                readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
+                    ? pdfFrameDoc.pagePointSize(index) : Qt.size(8.5, 11)
+                readonly property real pageW: pdfList.width - Theme.dim.scrollBarWidth - 8   // gutter
+                width: pdfList.width
+                height: pts.width > 0 ? Math.round(pageW * pts.height / pts.width)
+                                      : Math.round(pageW * 1.294)
+                Rectangle {   // white page with a hairline edge on the dark backdrop
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: pageW; height: parent.height
+                    color: "white"; border.width: 1; border.color: Theme.colors.border
+                    PdfPageImage {
+                        anchors.fill: parent
+                        document: pdfFrameDoc
+                        currentFrame: index
+                        fillMode: Image.PreserveAspectFit
+                        asynchronous: true
+                        sourceSize.width: Math.round(parent.width * Screen.devicePixelRatio)
+                    }
+                }
             }
         }
     }
@@ -2014,7 +2048,8 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: row >= root.firstVisible - 2 && row <= root.lastVisible + 2
+            visible: root.activeTableRow < 0 && root.activePdfRow < 0
+                     && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
@@ -2134,7 +2169,8 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: blockSelected ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: row >= root.firstVisible - 2 && row <= root.lastVisible + 2
+            visible: root.activeTableRow < 0 && root.activePdfRow < 0
+                     && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
@@ -2173,7 +2209,7 @@ FocusScope {
     // menu item will act on (red for destructive). Column/row scopes are drawn
     // inside the table itself. Document view only (the menu opens there).
     Rectangle {
-        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0
         x: root.leftEdge
         y: (blockModel.layoutRevision, blockModel.yForRow(root.menuRow)) - flick.contentY
         width: root.measureForRow(root.menuRow)
@@ -2193,7 +2229,7 @@ FocusScope {
         readonly property Item dlg: (blockModel.layoutRevision, blockModel.contentRevision, flick.contentY,
             tcur.active ? root.cellForRow(cursor.focusRow) : null)
         readonly property Item tItem: dlg ? dlg.tableItem : null
-        visible: tItem !== null && root.activeTableRow < 0   // Document view only
+        visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0   // Document view only
         readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
