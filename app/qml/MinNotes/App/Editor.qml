@@ -1005,6 +1005,9 @@ FocusScope {
     function tblDelCol()      { blockModel.tableDeleteColumn(menuRow, menuCellC) }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
+    function tblRemoveImage() { blockModel.tableClearCellMedia(menuRow, menuCellR, menuCellC) }
+    readonly property bool menuCellHasImage: blockMenu.isTable
+        && blockModel.tableCellMedia(menuRow, menuCellR, menuCellC) !== ""
 
     // --- Clipboard (copy / cut / paste), table- and text-aware ---
     function selectedText() {
@@ -1031,9 +1034,18 @@ FocusScope {
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
     function doPaste() {
-        // --- Into a table cell: TSV → cells, else plain text (rich paste lands
-        // in the document, not inside a cell). ---
+        // --- Into a table cell: an image (copied file or raster) drops into the
+        // focused cell; TSV → cells; else plain text (rich paste lands in the
+        // document, not inside a cell). ---
         if (tcur.active) {
+            var cu = clipboard.readUrls()              // copied image file (Finder/Preview)
+            if (cu.length > 0 && blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, cu[0])) {
+                cursor.sync(); return
+            }
+            if (clipboard.hasImage() &&                // raster image (screenshot / Copy Image)
+                blockModel.tableSetCellImageFromClipboard(cursor.focusRow, tcur.cr, tcur.cc)) {
+                cursor.sync(); return
+            }
             var ct = clipboard.readText()
             if (ct.length === 0) return
             if (ct.indexOf("\t") >= 0 || ct.indexOf("\n") >= 0)
@@ -2615,6 +2627,7 @@ FocusScope {
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align right";  onActivated: root.tblAlign(2) }
             MenuRow { visible: blockMenu.isTable; text: blockModel.tableHeaderRows(root.menuRow) > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Delete row";    danger: true; onActivated: root.tblDelRow() }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
             // --- code (non-table) ---

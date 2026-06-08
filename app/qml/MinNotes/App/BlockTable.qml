@@ -187,7 +187,20 @@ Item {
                             readonly property bool isHeader: gridRow.r < tv.headerRows
                             readonly property bool isFocusedCell: tv.focused && gridRow.r === tv.focusR && c === tv.focusC
                             readonly property bool isSelected: tv.inRange(gridRow.r, c)
-                            readonly property real contentH: cellText.implicitHeight + 2 * tv.cellPadV
+                            // Optional inline image: descriptor + resolved URL + intrinsic
+                            // dims (known up front, so the row reserves height with no jump).
+                            readonly property string cmedia: (blockModel.contentRevision,
+                                                              blockModel.tableCellMedia(tv.logicalRow, gridRow.r, c))
+                            readonly property string cmediaUrl: cmedia !== ""
+                                ? (blockModel.contentRevision, blockModel.tableCellMediaUrl(tv.logicalRow, gridRow.r, c)) : ""
+                            readonly property int cmediaW: cmedia !== "" ? blockModel.tableCellMediaW(tv.logicalRow, gridRow.r, c) : 0
+                            readonly property int cmediaH: cmedia !== "" ? blockModel.tableCellMediaH(tv.logicalRow, gridRow.r, c) : 0
+                            readonly property real imgW: cmedia !== ""
+                                ? Math.min(width - 2 * tv.cellPadH, cmediaW > 0 ? cmediaW : width) : 0
+                            readonly property real imgH: (cmedia !== "" && cmediaW > 0 && cmediaH > 0)
+                                ? Math.round(imgW * cmediaH / cmediaW) : 0
+                            readonly property real contentH: cellText.implicitHeight
+                                + (imgH > 0 ? imgH + tv.cellPadV : 0) + 2 * tv.cellPadV
                             property alias teItem: cellText
                             // Effective cell colours (cell → row → column cascade), "" = none.
                             readonly property string cellBg: (blockModel.contentRevision,
@@ -221,9 +234,20 @@ Item {
                                 width: Math.max(2, b.x - a.x)
                                 height: a.height > 0 ? a.height : 18
                             }
+                            Image {   // inline cell image (above any text)
+                                visible: cellRect.cmedia !== "" && cellRect.cmediaUrl !== ""
+                                x: tv.cellPadH; y: tv.cellPadV
+                                width: cellRect.imgW; height: cellRect.imgH
+                                source: cellRect.cmediaUrl
+                                asynchronous: true; cache: false
+                                fillMode: Image.PreserveAspectFit
+                                sourceSize.width: Math.round(cellRect.imgW * Screen.devicePixelRatio)
+                                smooth: true
+                            }
                             TextEdit {
                                 id: cellText
-                                x: tv.cellPadH; y: tv.cellPadV
+                                x: tv.cellPadH
+                                y: tv.cellPadV + (cellRect.imgH > 0 ? cellRect.imgH + tv.cellPadV : 0)
                                 width: parent.width - 2 * tv.cellPadH
                                 readOnly: true; selectByMouse: false; activeFocusOnPress: false
                                 textFormat: TextEdit.PlainText

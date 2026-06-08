@@ -893,6 +893,62 @@ void BlockModel::tableCellDelete(int row, int r, int c, int from, int to) {
     }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
 }
 
+// --- images inside cells ---------------------------------------------------
+static QString mediaJson(const MediaStore::ImageRef& ref);   // defined below with the media-block helpers
+// Import via MediaStore (sidecar for clipboard bytes, in-place ref for files),
+// stash the {src,w,h} descriptor in cell.media, and widen a too-narrow column
+// to a sensible default so the image isn't squeezed. One undo step.
+bool BlockModel::tableSetCellImageFromClipboard(int row, int r, int c) {
+    if (!mediaStore_ || rows_[clampRow(row)].type != Table) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
+    if (!ref.ok()) return false;
+    const QString json = mediaJson(ref);
+    const int target = std::clamp(ref.w, 140, 360);
+    mutateTable(row, [&](TableGrid& g){
+        g.setCellMedia(r, c, json);
+        if (g.colWidth(c) < target) g.setColWidth(c, target);
+    });
+    return true;
+}
+bool BlockModel::tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl) {
+    if (!mediaStore_ || rows_[clampRow(row)].type != Table) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);
+    if (!ref.ok()) return false;
+    const QString json = mediaJson(ref);
+    const int target = std::clamp(ref.w, 140, 360);
+    mutateTable(row, [&](TableGrid& g){
+        g.setCellMedia(r, c, json);
+        if (g.colWidth(c) < target) g.setColWidth(c, target);
+    });
+    return true;
+}
+void BlockModel::tableClearCellMedia(int row, int r, int c) {
+    mutateTable(row, [&](TableGrid& g){ g.setCellMedia(r, c, QString()); });
+}
+QString BlockModel::tableCellMedia(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return {};
+    return gridFor(row).cellMedia(r, c);
+}
+QString BlockModel::tableCellMediaUrl(int row, int r, int c) const {
+    if (!mediaStore_ || rows_[clampRow(row)].type != Table) return {};
+    const QString m = gridFor(row).cellMedia(r, c);
+    if (m.isEmpty()) return {};
+    const QJsonObject o = QJsonDocument::fromJson(m.toUtf8()).object();
+    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString());
+}
+int BlockModel::tableCellMediaW(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    const QString m = gridFor(row).cellMedia(r, c);
+    if (m.isEmpty()) return 0;
+    return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("w")).toInt();
+}
+int BlockModel::tableCellMediaH(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    const QString m = gridFor(row).cellMedia(r, c);
+    if (m.isEmpty()) return 0;
+    return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("h")).toInt();
+}
+
 void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
 void BlockModel::tableInsertColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.insertCol(at); }); }
 void BlockModel::tableDeleteRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.deleteRow(at); }); }

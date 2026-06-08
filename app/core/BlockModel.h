@@ -232,6 +232,16 @@ public:
     Q_INVOKABLE void tableClearCellFormat(int row, int r, int c, int start, int end);
     Q_INVOKABLE void tableCellInsert(int row, int r, int c, int at, const QString& text);
     Q_INVOKABLE void tableCellDelete(int row, int r, int c, int from, int to);
+    // Image inside a cell — the descriptor JSON ({src,w,h}) lives in cell.media,
+    // imported through MediaStore exactly like a media block. Setting one widens a
+    // narrow column to a sensible default so the image is visible.
+    Q_INVOKABLE bool tableSetCellImageFromClipboard(int row, int r, int c);
+    Q_INVOKABLE bool tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl);
+    Q_INVOKABLE void tableClearCellMedia(int row, int r, int c);
+    Q_INVOKABLE QString tableCellMedia(int row, int r, int c) const;     // raw descriptor ("" = none)
+    Q_INVOKABLE QString tableCellMediaUrl(int row, int r, int c) const;  // resolved loadable URL
+    Q_INVOKABLE int tableCellMediaW(int row, int r, int c) const;        // intrinsic width
+    Q_INVOKABLE int tableCellMediaH(int row, int r, int c) const;        // intrinsic height
     Q_INVOKABLE void tableInsertRow(int row, int at);
     Q_INVOKABLE void tableInsertColumn(int row, int at);
     Q_INVOKABLE void tableDeleteRow(int row, int at);

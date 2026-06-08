@@ -302,8 +302,22 @@ DESIGN.md  SPIKE.md  STATUS.md
       key branch → `applyCellFormat` (toggles the span over the in-cell selection, or
       every cell whole for a multi-cell range, one undo step); Cmd-\ clears cell
       formatting. **Render**: a per-cell `InlineMarkdownHighlighter` that attaches ONLY
-      when the cell has spans (no idle highlighter on plain cells). **Next: TC-3**
-      images in cells. (Lists inside cells deferred — block-level construct.)
+      when the cell has spans (no idle highlighter on plain cells).
+      (Lists inside cells deferred — block-level construct.)
+
+- [x] **Tables — images in cells (TC-3)** — an image descriptor (`{src,w,h}`, the
+      same shape media blocks use) lives in `cell.media`, imported through
+      `MediaStore` (sidecar for clipboard bytes, in-place ref for files) and resolved
+      to a loadable URL via the existing resolver. `BlockModel` seam:
+      `tableSetCellImageFromClipboard` / `…FromUrl` (set the descriptor + widen a
+      too-narrow column to a sensible default, one undo step), `tableClearCellMedia`,
+      and `tableCellMedia`/`…Url`/`…W`/`…H` readers. **Paste**: `doPaste`'s table-cell
+      branch now routes a copied image file / clipboard raster into the focused cell.
+      **Render**: `BlockTable` cell draws an async `Image` above any text; intrinsic
+      dims (known from the descriptor) reserve the row height up front so there's no
+      load jump. **Remove image** in the cell context menu. (Video/PDF-in-cell and
+      drag-drop-onto-cell deferred — paste covers the workflow.) The full table
+      rich-content arc (colours → rich text → images) is now shipped.
 
 ## Next (rough order)
 
