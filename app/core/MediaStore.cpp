@@ -244,5 +244,7 @@ QString MediaStore::resolvePath(const QString& src) const {
 
 QString MediaStore::resolveUrl(const QString& src) const {
     if (src.isEmpty()) return {};
+    if (src.startsWith(QLatin1String("http://")) || src.startsWith(QLatin1String("https://")))
+        return src;                       // remote (pasted <img>) — load directly until localized
     return QUrl::fromLocalFile(resolvePath(src)).toString();
 }

@@ -13,6 +13,8 @@
 #include "TableGrid.h"
 #include "MediaStore.h"
 
+class QNetworkAccessManager;
+
 // The document model: a QAbstractListModel over the SQLite-canonical store
 // (DESIGN.md §3–4). Eager skinny-scan seeds the layout (type/rank) + Fenwick
 // height index; content is held per row (Phase 1a loads it all from the DB —
@@ -382,6 +384,11 @@ private:
     mutable int tableCacheRow_ = -1;
     mutable int tableCacheRev_ = -1;
     std::unique_ptr<MediaStore> mediaStore_;
+    // Remote <img> from pasted HTML: download in the background (block displays
+    // the remote URL meanwhile) and swap the descriptor to the sidecar copy.
+    QNetworkAccessManager* net_ = nullptr;
+    void fetchRemoteMediaIn(int loRow, int hiRow);                    // scan a range, fetch http src
+    void updateMediaDescriptor(const QString& blockId, const QString& json);  // localized → swap in
     // Insert a media block (content = descriptor JSON) after `afterRow`; undoable.
     void insertMedia(int afterRow, const QString& json, uint16_t aspectParam);
     // Apply a mutation to the table at `row` via a lambda, then reserialize to

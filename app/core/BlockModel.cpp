@@ -19,6 +19,9 @@
 #include <QTextCharFormat>
 #include <QImage>
 #include <QPixmap>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <functional>
 #include <algorithm>
 
@@ -926,6 +929,13 @@ static QString videoMediaJson(const MediaStore::VideoRef& ref) {
     o.insert(QStringLiteral("fps"), ref.fps);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
+static QString remoteImageJson(const QString& url) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), url);    // http(s) — loads remotely + gets localized
+    o.insert(QStringLiteral("w"), 480);      // placeholder dims until the download lands
+    o.insert(QStringLiteral("h"), 300);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
 static QString pdfMediaJson(const MediaStore::PdfRef& ref) {
     QJsonObject o;
     o.insert(QStringLiteral("src"),   ref.src);
@@ -1805,6 +1815,10 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
                     flushText();
                     Spec sp; sp.type = Media; sp.mediaJson = mediaJson(ref);
                     specs.push_back(std::move(sp));
+                } else if (src.startsWith(QLatin1String("http"))) {   // remote → fetched after insert
+                    flushText();
+                    Spec sp; sp.type = Media; sp.mediaJson = remoteImageJson(src);
+                    specs.push_back(std::move(sp));
                 }
                 continue;
             }
@@ -1962,7 +1976,59 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+    fetchRemoteMediaIn(row, caretRow);     // localize any remote <img> in the background
     return QVariantList{ caretRow, caretCol };
+}
+
+// Scan [lo,hi] for media blocks whose src is a remote http(s) URL and download
+// each into the sidecar; on completion swap the descriptor to the local copy
+// (keyed by block id, so it survives reorders). The block displays the remote
+// URL until then. Best-effort: a failed fetch just leaves the remote src.
+void BlockModel::fetchRemoteMediaIn(int loRow, int hiRow) {
+    if (!mediaStore_) return;
+    loRow = std::max(0, loRow);
+    hiRow = std::min(hiRow, static_cast<int>(rows_.size()) - 1);
+    for (int r = loRow; r <= hiRow; ++r) {
+        if (rows_[r].type != Media) continue;
+        const QString src = QJsonDocument::fromJson(content_[r].toUtf8())
+                                .object().value(QStringLiteral("src")).toString();
+        if (!src.startsWith(QLatin1String("http"))) continue;
+        if (!net_) net_ = new QNetworkAccessManager(this);
+        const QString id = ids_[r];
+        QNetworkRequest req((QUrl(src)));
+        req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("minNotes"));
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply* reply = net_->get(req);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, id]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) return;   // leave remote src
+            QImage img;
+            if (!img.loadFromData(reply->readAll()) || img.isNull()) return;
+            const MediaStore::ImageRef ref = mediaStore_->importImage(img);
+            if (ref.ok()) updateMediaDescriptor(id, QString::fromUtf8(
+                QJsonDocument(QJsonObject{{QStringLiteral("src"), ref.src},
+                                          {QStringLiteral("w"), ref.w},
+                                          {QStringLiteral("h"), ref.h}}).toJson(QJsonDocument::Compact)));
+        });
+    }
+}
+
+// Swap a media block's descriptor in place (a remote image finished localizing).
+// Not a txn — it's a background system update, not a user edit; undoing the paste
+// still removes the whole block.
+void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& json) {
+    const int row = rowForId(blockId);
+    if (row < 0 || rows_[row].type != Media) return;
+    content_[row] = json;
+    fillMediaMeta(rows_[row], json);
+    rows_[row].measured = false;
+    fenwick_.setHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
 }
 
 void BlockModel::splitBlock(int row, int col) {

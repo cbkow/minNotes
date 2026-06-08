@@ -31,7 +31,8 @@ endif()
 find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql
     ShaderTools       # qt_add_shaders -> .qsb (the video YUV->RGB shaders)
     GuiPrivate        # rhi/qrhi.h for the VideoSurfaceItem QQuickRhiItem
-    Pdf)              # QPdfDocument probe + QtQuick.Pdf inline/scroll viewers
+    Pdf               # QPdfDocument probe + QtQuick.Pdf inline/scroll viewers
+    Network)          # download remote <img> from pasted HTML into the sidecar
 qt_standard_project_setup(REQUIRES 6.11)
 
 # Code-block syntax highlighting: KSyntaxHighlighting (KDE) — a QSyntaxHighlighter

@@ -120,6 +120,7 @@ target_link_libraries(minnotesapp PRIVATE
     Qt6::QuickControls2
     Qt6::Sql
     Qt6::Pdf          # QPdfDocument (probe) + QtQuick.Pdf viewers
+    Qt6::Network      # remote <img> download (HTML paste)
     KF6::SyntaxHighlighting
     minnotes::ffmpeg
 )
