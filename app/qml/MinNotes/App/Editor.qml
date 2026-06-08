@@ -133,6 +133,7 @@ FocusScope {
     // (correct) poster stays up until the new frame is ready.
     property bool _videoSurfaceReady: false
     readonly property real videoTransportH: 40
+    readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0) stopVideo()
@@ -1177,6 +1178,8 @@ FocusScope {
                     && (blockModel.contentRevision, blockModel.typeForRow(logicalRow)) === 3
                 readonly property bool isVideoMedia: isMedia
                     && (blockModel.contentRevision, blockModel.mediaKind(logicalRow)) === "video"
+                readonly property bool isPdfMedia: isMedia
+                    && (blockModel.contentRevision, blockModel.mediaKind(logicalRow)) === "pdf"
                 readonly property bool isFocus: active && logicalRow === cursor.focusRow
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
@@ -1198,7 +1201,8 @@ FocusScope {
                 // transient, no scroll-in jump. layoutRevision dep picks up resize.
                 height: isMedia      ? 12 + (blockModel.layoutRevision, blockModel.contentRevision,
                                              blockModel.mediaDisplayHeight(logicalRow))
-                                       + (isVideoMedia ? root.videoTransportH : 0)
+                                       + (isVideoMedia ? root.videoTransportH
+                                                       : isPdfMedia ? root.pdfNavH : 0)
                       : te.btype === 6 ? 12 + 18                       // divider
                       : te.btype === 7 ? 26 + tableHost.implicitHeight // table: 6 top + 20 bottom (clears the +row button, which sits 2px below the table and is 14px tall)
                       : (te.btype === 2 ? 24 : 12) + te.height   // te.height = lineCount*lineH (even)

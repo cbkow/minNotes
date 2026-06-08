@@ -35,6 +35,7 @@ constexpr double kHeading  = 40.0;
 constexpr double kWidthEst = 760.0;  // assumed content width for media estimate
 constexpr double kVideoBar = 40.0;   // transport toolbar reserved under a video
 constexpr double kFileChip = 56.0;   // fixed height of an unsupported-file attachment chip
+constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline PDF page
                                      // (keep in sync with Editor.qml videoTransportH)
 
 // Fractional-rank alphabet: 62 digits in ascending ASCII order, so plain
@@ -261,6 +262,7 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
     const QString kind = mo.value(QStringLiteral("kind")).toString();
     r.isVideo = kind == QLatin1String("video");
     r.isFile  = kind == QLatin1String("file");
+    r.isPdf   = kind == QLatin1String("pdf");
 }
 
 // Displayed media frame height: dispW = min(contentWidth, w) (never upscaled),
@@ -269,6 +271,8 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 // aspect param if intrinsic dims are missing.
 double BlockModel::mediaFrameHeight(const Row& r) const {
     if (r.isFile) return kFileChip;            // fixed-height attachment chip
+    if (r.isPdf && r.mediaW > 0 && r.mediaH > 0)   // PDF is vector → fit width (upscale OK)
+        return std::floor(contentWidth_ * r.mediaH / r.mediaW + 0.5);
     if (r.mediaW > 0 && r.mediaH > 0) {
         const double dispW = std::min<double>(contentWidth_, r.mediaW);
         return std::floor(dispW * r.mediaH / r.mediaW + 0.5);
@@ -282,7 +286,8 @@ double BlockModel::estimatedHeight(const Row& r) const {
     case Media:   // 12px vertical pad + the transport toolbar for video. Matches
                   // the Editor cell delegate exactly, and media never measures
                   // back, so this IS the authoritative height (no scroll-in jump).
-        return 12.0 + mediaFrameHeight(r) + (r.isVideo ? kVideoBar : 0.0);
+        return 12.0 + mediaFrameHeight(r)
+             + (r.isVideo ? kVideoBar : r.isPdf ? kPdfNav : 0.0);
     case Divider: return 24.0;
     case Table:   return r.param * 34.0 + 58.0;     // param = row count; + 6 top/20 bottom pad (+row button) + header/strip
     case Code:
@@ -912,6 +917,15 @@ static QString videoMediaJson(const MediaStore::VideoRef& ref) {
     o.insert(QStringLiteral("fps"), ref.fps);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
+static QString pdfMediaJson(const MediaStore::PdfRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"),   ref.src);
+    o.insert(QStringLiteral("w"),     ref.w);
+    o.insert(QStringLiteral("h"),     ref.h);
+    o.insert(QStringLiteral("kind"),  QStringLiteral("pdf"));
+    o.insert(QStringLiteral("pages"), ref.pages);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
 static QString fileMediaJson(const QString& path) {
     const QFileInfo fi(path);
     QJsonObject o;
@@ -953,6 +967,14 @@ bool BlockModel::insertVideoFromUrl(int afterRow, const QString& fileUrl) {
     return true;
 }
 
+bool BlockModel::insertPdfFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore_) return false;
+    const MediaStore::PdfRef ref = mediaStore_->importPdfFile(fileUrl);
+    if (!ref.ok()) return false;
+    insertMedia(afterRow, pdfMediaJson(ref), aspectParam(ref.w, ref.h));
+    return true;
+}
+
 bool BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
     const QString path = fileUrl.startsWith(QLatin1String("file:"))
                        ? QUrl(fileUrl).toLocalFile() : fileUrl;
@@ -962,9 +984,10 @@ bool BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
 }
 
 bool BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
-    // Video (by extension + a successful probe), else a loadable image, else a
-    // generic file attachment chip — so any dropped/pasted file lands somewhere.
+    // Video / PDF (by extension + a successful probe), else a loadable image,
+    // else a generic file attachment chip — so any dropped/pasted file lands.
     if (MediaStore::isVideoPath(fileUrl) && insertVideoFromUrl(afterRow, fileUrl)) return true;
+    if (MediaStore::isPdfPath(fileUrl)   && insertPdfFromUrl(afterRow, fileUrl))   return true;
     if (insertImageFromUrl(afterRow, fileUrl)) return true;
     return insertFileFromUrl(afterRow, fileUrl);
 }
@@ -997,6 +1020,12 @@ QString BlockModel::mediaFileName(int row) const {
     const QString name = QJsonDocument::fromJson(content_[row].toUtf8())
                              .object().value(QStringLiteral("name")).toString();
     return name.isEmpty() ? QFileInfo(mediaLocalPath(row)).fileName() : name;
+}
+int BlockModel::mediaPdfPages(int row) const {
+    row = clampRow(row);
+    if (rows_[row].type != Media) return 0;
+    return QJsonDocument::fromJson(content_[row].toUtf8())
+               .object().value(QStringLiteral("pages")).toInt();
 }
 // Open the media's file in the sibling ufb browser via its deep-link scheme:
 // ufb:///{os}/{percent-encoded path} (slashes kept literal, matching ufb's

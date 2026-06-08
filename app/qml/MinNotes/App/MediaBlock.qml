@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Pdf
 
 // Inline render for a Media block. Images show a plain async Image; video shows
 // a real frame thumbnail (the first frame at rest, or the remembered playhead
@@ -22,6 +23,8 @@ Item {
     readonly property string kind: active ? (mb._rev, blockModel.mediaKind(logicalRow)) : ""
     readonly property bool   isVideo: kind === "video"
     readonly property bool   isFile: kind === "file"
+    readonly property bool   isPdf: kind === "pdf"
+    property int  pdfPage: 0          // current page (driven by the editor's nav)
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
     readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
@@ -34,7 +37,8 @@ Item {
     readonly property int iw: logicalRow >= 0 ? (mb._rev, blockModel.mediaW(logicalRow)) : 0
     readonly property int ih: logicalRow >= 0 ? (mb._rev, blockModel.mediaH(logicalRow)) : 0
     readonly property real durMs: (active && isVideo) ? (mb._rev, blockModel.mediaDurationMs(logicalRow)) : 0
-    readonly property real dispW: iw > 0 ? Math.min(maxWidth, iw) : maxWidth
+    // PDF is vector → fit the content width (upscale OK). Raster media never upscales.
+    readonly property real dispW: isPdf ? maxWidth : (iw > 0 ? Math.min(maxWidth, iw) : maxWidth)
 
     implicitWidth:  dispW
     implicitHeight: (iw > 0 && ih > 0) ? Math.round(dispW * ih / iw) : Math.round(dispW * 0.5)
@@ -85,12 +89,31 @@ Item {
         }
     }
 
+    // --- PDF branch: render the current page, fit to width (white-backed) ---
+    Rectangle {
+        visible: mb.isPdf
+        anchors.fill: parent
+        color: "white"
+        radius: Theme.dim.radius
+        border.width: 1; border.color: Theme.colors.border
+        clip: true
+        PdfDocument { id: pdfDoc; source: mb.isPdf ? mb.url : "" }
+        PdfPageImage {
+            anchors.fill: parent
+            document: pdfDoc
+            currentFrame: Math.max(0, mb.pdfPage)
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
+        }
+    }
+
     // --- Image branch ---
     Image {
         id: img
         anchors.fill: parent
-        visible: !mb.isVideo && !mb.isFile
-        source: (mb.isVideo || mb.isFile) ? "" : mb.url
+        visible: !mb.isVideo && !mb.isFile && !mb.isPdf
+        source: (mb.isVideo || mb.isFile || mb.isPdf) ? "" : mb.url
         asynchronous: true; cache: false
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
@@ -98,7 +121,7 @@ Item {
     }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
-        visible: mb.active && !mb.isVideo && !mb.isFile && img.status !== Image.Ready
+        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && img.status !== Image.Ready
         color: Theme.colors.surfaceHover; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         Text {

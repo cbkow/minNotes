@@ -8,6 +8,7 @@
 #include <QClipboard>
 #include <QCryptographicHash>
 #include <QBuffer>
+#include <QPdfDocument>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -32,6 +33,26 @@ bool MediaStore::isVideoPath(const QString& path) {
     QString p = path;
     if (p.startsWith(QLatin1String("file:"))) p = QUrl(p).toLocalFile();
     return exts.contains(QFileInfo(p).suffix().toLower());
+}
+
+bool MediaStore::isPdfPath(const QString& path) {
+    QString p = path;
+    if (p.startsWith(QLatin1String("file:"))) p = QUrl(p).toLocalFile();
+    return QFileInfo(p).suffix().toLower() == QLatin1String("pdf");
+}
+
+MediaStore::PdfRef MediaStore::importPdfFile(const QString& fileUrlOrPath) const {
+    QString path = fileUrlOrPath;
+    if (path.startsWith(QLatin1String("file:"))) path = QUrl(path).toLocalFile();
+    if (!QFileInfo(path).isFile()) return {};
+    QPdfDocument doc;
+    if (doc.load(path) != QPdfDocument::Error::None) return {};
+    const int pages = doc.pageCount();
+    if (pages < 1) return {};
+    const QSizeF pts = doc.pagePointSize(0);   // page-0 size in PDF points
+    if (pts.width() <= 0 || pts.height() <= 0) return {};
+    return { QFileInfo(path).absoluteFilePath(), pages,
+             int(pts.width() + 0.5), int(pts.height() + 0.5) };
 }
 
 MediaStore::VideoRef MediaStore::importVideoFile(const QString& fileUrlOrPath) const {

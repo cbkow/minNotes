@@ -19,11 +19,20 @@ public:
     struct VideoRef { QString src; int w = 0; int h = 0; qint64 durationMs = 0;
         int frames = 0; double fps = 0.0;
         bool ok() const { return !src.isEmpty() && w > 0 && h > 0; } };
+    // PDF descriptor: page count + page-0 point size (for the inline fit-width
+    // aspect). Referenced in place like images/video. w/h are PDF points.
+    struct PdfRef { QString src; int pages = 0; int w = 0; int h = 0;
+        bool ok() const { return !src.isEmpty() && pages > 0 && w > 0 && h > 0; } };
 
     explicit MediaStore(const QString& docPath);
 
     // True if the path's extension is a recognized video container.
     static bool isVideoPath(const QString& path);
+    // True if the path's extension is .pdf.
+    static bool isPdfPath(const QString& path);
+
+    // Reference an existing PDF: probe page count + page-0 size via QPdfDocument.
+    PdfRef importPdfFile(const QString& fileUrlOrPath) const;
 
     // Reference an existing file (a drag-drop). src = absolute path; probes dims.
     ImageRef importFile(const QString& fileUrlOrPath) const;

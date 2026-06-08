@@ -119,6 +119,7 @@ target_link_libraries(minnotesapp PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Sql
+    Qt6::Pdf          # QPdfDocument (probe) + QtQuick.Pdf viewers
     KF6::SyntaxHighlighting
     minnotes::ffmpeg
 )
