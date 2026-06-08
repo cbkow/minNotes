@@ -195,4 +195,50 @@ Rectangle {
             }
         }
     }
+
+    // ── Quick-apply colour swatches, flush to the bottom edge. Each is a pure,
+    // button-sized swatch of the inspector's current text / highlight colour;
+    // click applies it to the selection. (Change the colours in the inspector —
+    // the palette button above.) ──
+    component Swatch: Rectangle {
+        id: sw
+        property color swatchColor: "white"
+        property string tip: ""
+        signal activated()
+        width: rail.btnWidth
+        height: Theme.dim.toolStripHeight
+        color: swatchColor
+        // hairline so white / near-surface swatches still read as a tile; brightens on hover
+        Rectangle {
+            anchors.fill: parent; color: "transparent"
+            border.width: 1
+            border.color: sma.containsMouse ? Theme.colors.textBright : Qt.rgba(1, 1, 1, 0.18)
+        }
+        MouseArea {
+            id: sma; anchors.fill: parent; hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor; onClicked: sw.activated()
+        }
+        FlatToolTip {
+            text: sw.tip; visible: sw.tip.length > 0 && sma.containsMouse
+            x: sw.width + 6; y: (sw.height - implicitHeight) / 2
+        }
+    }
+
+    Column {
+        anchors {
+            bottom: parent.bottom; left: parent.left; right: parent.right
+            leftMargin: 1; rightMargin: 1
+        }
+        spacing: 1
+        Swatch {
+            swatchColor: rail.inspector ? rail.inspector.fgColor : Theme.colors.textBright
+            tip: "Apply text color"
+            onActivated: if (rail.editor) rail.act(function() { rail.editor.applyTextColor(rail.inspector.fgColor) })
+        }
+        Swatch {
+            swatchColor: rail.inspector ? rail.inspector.bgColor : "#7a6a36"
+            tip: "Apply highlight"
+            onActivated: if (rail.editor) rail.act(function() { rail.editor.applyHighlight(rail.inspector.bgColor) })
+        }
+    }
 }

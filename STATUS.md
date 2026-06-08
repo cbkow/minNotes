@@ -344,11 +344,13 @@ DESIGN.md  SPIKE.md  STATUS.md
       panel (not a floating popout) so it has room to grow into a full interface
       (annotation tools later) without obscuring the document; it stays open while you
       select text and apply (no click-away dismiss; a header **×** or the rail toggle
-      closes it). Holds the colour tools: Text/Highlight target tabs, the HSV
-      `ColorPickerInline`, an Apply-to-selection button, and revert. The **left rail**
-      gains a **palette** button that toggles the inspector, and its five heading
-      buttons collapse into a single **Headings** button → a **popout menu** (H1–H5,
-      closes on pick). (`RightRail.qml` removed.)
+      closes it). The inspector is for *choosing* colours (Text/Highlight target
+      tabs, the HSV `ColorPickerInline`, revert); *applying* is split out to two
+      pure, button-sized **colour swatches flush at the bottom of the left rail**
+      (current text colour + highlight; click applies to the selection). The **left
+      rail** also gains a **palette** button that toggles the inspector, and its five
+      heading buttons collapse into a single **Headings** button → a **popout menu**
+      (H1–H5, closes on pick). (`RightRail.qml` removed.)
 
 ## Next (rough order)
 

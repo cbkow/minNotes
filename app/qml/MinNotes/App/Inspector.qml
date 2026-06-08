@@ -32,12 +32,6 @@ Rectangle {
         else                 bgColor = "#7a6a36"
         picker.value = (target === "fg" ? fgColor : bgColor)
     }
-    // Apply the active target's colour to the selection (text colour or highlight).
-    function applyActive() {
-        if (!editor) return
-        if (target === "fg") editor.applyTextColor(fgColor)
-        else                 editor.applyHighlight(bgColor)
-    }
 
     // Left hairline against the document (only meaningful while open).
     Rectangle { width: 1; height: parent.height; color: Theme.colors.border }
@@ -100,22 +94,7 @@ Rectangle {
                 Component.onCompleted: value = panel.fgColor
             }
 
-            // Apply the active colour to the selection.
-            Rectangle {
-                width: 174; height: 30; radius: 0
-                color: applyMA.containsMouse ? Qt.lighter(Theme.colors.accent, 1.1) : Theme.colors.accent
-                Row {
-                    anchors.centerIn: parent; spacing: 6
-                    Rectangle { width: 12; height: 12; radius: 2; anchors.verticalCenter: parent.verticalCenter
-                                color: panel.target === "fg" ? panel.fgColor : panel.bgColor
-                                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.4) }
-                    Text { text: panel.target === "fg" ? "Apply text color" : "Apply highlight"
-                           color: Theme.colors.textBright; anchors.verticalCenter: parent.verticalCenter
-                           font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
-                }
-                MouseArea { id: applyMA; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor; onClicked: panel.applyActive() }
-            }
+            // (Apply lives on the left rail's bottom swatches — pick here, apply there.)
 
             // Revert: soft grey (brighter than the page, not loud).
             Rectangle {
