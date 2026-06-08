@@ -108,6 +108,20 @@ FocusScope {
     property int  resizeW: 0
     property bool tableOverBorder: false   // hover near a column border → resize cursor
 
+    // Image resize: the hovered image row shows corner affordances; dragging the
+    // bottom-right handle previews a target size (a ghost frame — the document does
+    // NOT reflow during the drag) and commits the new per-block width on release.
+    property int  imgHandleRow: -1         // image row whose hover handles are shown
+    property bool imageResizing: false
+    property int  imageResizeRow: -1
+    property real imageResizeW: 0          // live preview width (px)
+    property real imageResizeAspect: 1     // h/w, captured on press (for the ghost height)
+    property real _imgResizePressX: 0
+    property real _imgResizeStartW: 0
+    function _isImageRow(r) {
+        return r >= 0 && blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "image"
+    }
+
     // Is a content-x in the left grip gutter (just left of the text column)?
     function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
     // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
@@ -1678,6 +1692,11 @@ FocusScope {
                     if (hbt) { var hlp = hbt.mapFromItem(mouse, m.x, m.y); overBorder = hbt.columnBorderAt(hlp.x) >= 0 }
                 }
                 root.tableOverBorder = overBorder
+                // Hovering an image row → show its resize handles. Don't clear on a
+                // non-image *handle* hover (the central layer onExits then); only a
+                // different block hides them.
+                if (root._isImageRow(root.hoverRow)) root.imgHandleRow = root.hoverRow
+                else root.imgHandleRow = -1
                 // Link under the pointer → anchor the open-link tooltip there. A
                 // grace timer (not an immediate clear) lets the pointer travel up
                 // onto the pill to click it.
@@ -2212,6 +2231,107 @@ FocusScope {
                     color: Theme.colors.textMuted
                     font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
                 }
+            }
+        }
+    }
+
+    // Image resize affordances — root overlays (above the central mouse layer) at
+    // the hovered/resizing image's corners: top-right fit-to-width, bottom-right
+    // proportional drag. Images only (kind "image"); Document view only.
+    Item {
+        id: imgResize
+        // Show handles while resizing, while hovering the image, OR while the image
+        // is the selected block — so a click (which selects it) can't make them
+        // vanish, and missing the small handle just selects + keeps them up.
+        readonly property int row: root.imageResizing ? root.imageResizeRow
+            : (root.imgHandleRow >= 0 ? root.imgHandleRow
+               : (root._isImageRow(cursor.focusRow) ? cursor.focusRow : -1))
+        visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0
+        readonly property real imgX: root.leftEdge
+        readonly property real imgTopV: row >= 0
+            ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
+        readonly property real imgW: row >= 0
+            ? (blockModel.layoutRevision, blockModel.mediaDispWidth(row)) : 0
+        readonly property real imgH: row >= 0
+            ? (blockModel.layoutRevision, blockModel.mediaDisplayHeight(row)) : 0
+        z: 57
+
+        Rectangle {   // fit-to-width (top-right)
+            id: fitBtn
+            visible: !root.imageResizing
+            width: 24; height: 24; radius: 4
+            x: imgResize.imgX + imgResize.imgW - width - 6
+            y: imgResize.imgTopV + 6
+            color: fitMA.containsMouse ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
+            border.width: 1; border.color: Theme.colors.border
+            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 14; color: "#f2f2f2" }
+            MouseArea {
+                id: fitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: blockModel.setMediaWidth(imgResize.row, Math.round(root.pageWidth))
+            }
+        }
+
+        Rectangle {   // proportional drag handle (bottom-right)
+            id: dragHandle
+            width: 22; height: 22; radius: 4
+            x: imgResize.imgX + imgResize.imgW - width - 6
+            y: imgResize.imgTopV + imgResize.imgH - height - 6
+            color: (dragMA.containsMouse || root.imageResizing) ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
+            border.width: 1; border.color: Theme.colors.border
+            Icon { anchors.centerIn: parent; name: "resize"; size: 14; color: "#f2f2f2" }
+            MouseArea {
+                id: dragMA
+                anchors.fill: parent; hoverEnabled: true; preventStealing: true
+                cursorShape: Qt.SizeFDiagCursor
+                onPressed: (m) => {
+                    // Capture the target row + start geometry BEFORE flipping
+                    // imageResizing — imgResize.row depends on it, so setting it
+                    // first would re-evaluate row to the default (-1).
+                    root.imageResizeRow = imgResize.row
+                    root._imgResizePressX = m.x
+                    root._imgResizeStartW = imgResize.imgW
+                    root.imageResizeW = imgResize.imgW
+                    root.imageResizeAspect = imgResize.imgW > 0 ? imgResize.imgH / imgResize.imgW : 1
+                    root.imageResizing = true
+                }
+                onPositionChanged: (m) => {
+                    if (!root.imageResizing) return
+                    root.imageResizeW = Math.max(80, Math.min(root.pageWidth,
+                        root._imgResizeStartW + (m.x - root._imgResizePressX)))
+                }
+                onReleased: {
+                    if (root.imageResizing) {
+                        blockModel.setMediaWidth(root.imageResizeRow, Math.round(root.imageResizeW))
+                        root.imageResizing = false; root.imageResizeRow = -1
+                    }
+                }
+                onCanceled: { root.imageResizing = false; root.imageResizeRow = -1 }
+                onDoubleClicked: blockModel.setMediaWidth(imgResize.row, 0)   // reset to intrinsic
+            }
+        }
+    }
+
+    // Resize ghost: a target-size outline that follows the drag WITHOUT reflowing
+    // the document (committed on release) — so indecisive dragging never stutters.
+    Rectangle {
+        visible: root.imageResizing
+        z: 58
+        x: root.leftEdge
+        y: (blockModel.layoutRevision, root.imageResizeRow >= 0
+            ? blockModel.yForRow(root.imageResizeRow) : 0) + 6 - flick.contentY
+        width: root.imageResizeW
+        height: root.imageResizeW * root.imageResizeAspect
+        color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.08)
+        border.width: 2; border.color: Theme.colors.accent
+        radius: Theme.dim.radius
+        Rectangle {
+            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
+            width: dimLabel.width + 10; height: dimLabel.height + 6; radius: 3
+            color: Qt.rgba(0, 0, 0, 0.7)
+            Text {
+                id: dimLabel; anchors.centerIn: parent
+                text: Math.round(root.imageResizeW) + " × " + Math.round(root.imageResizeW * root.imageResizeAspect)
+                color: "#f2f2f2"; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             }
         }
     }

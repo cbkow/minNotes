@@ -268,6 +268,17 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
     r.isVideo = kind == QLatin1String("video");
     r.isFile  = kind == QLatin1String("file");
     r.isPdf   = kind == QLatin1String("pdf");
+    r.dispW   = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("dw")).toInt(), 0, 65535));
+}
+
+// Effective displayed width of a media block: the per-block override (clamped to
+// the page width) if set, else the default — PDFs fit the page, raster media is
+// intrinsic-capped (never upscaled by default).
+double BlockModel::mediaDisplayWidth(const Row& r) const {
+    if (r.dispW > 0) return std::min<double>(r.dispW, contentWidth_);
+    if (r.isPdf)     return contentWidth_;
+    if (r.mediaW > 0) return std::min<double>(contentWidth_, r.mediaW);
+    return contentWidth_;
 }
 
 // Displayed media frame height: dispW = min(contentWidth, w) (never upscaled),
@@ -276,12 +287,9 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 // aspect param if intrinsic dims are missing.
 double BlockModel::mediaFrameHeight(const Row& r) const {
     if (r.isFile) return kFileChip;            // fixed-height attachment chip
-    if (r.isPdf && r.mediaW > 0 && r.mediaH > 0)   // PDF is vector → fit width (upscale OK)
-        return std::floor(contentWidth_ * r.mediaH / r.mediaW + 0.5);
-    if (r.mediaW > 0 && r.mediaH > 0) {
-        const double dispW = std::min<double>(contentWidth_, r.mediaW);
-        return std::floor(dispW * r.mediaH / r.mediaW + 0.5);
-    }
+    const double w = mediaDisplayWidth(r);
+    if (r.mediaW > 0 && r.mediaH > 0)
+        return std::floor(w * r.mediaH / r.mediaW + 0.5);
     return contentWidth_ * (r.param / 100.0);
 }
 
@@ -1514,6 +1522,28 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
 qreal BlockModel::mediaDisplayHeight(int row) const {
     row = clampRow(row);
     return (rows_[row].type == Media) ? mediaFrameHeight(rows_[row]) : 0.0;
+}
+int BlockModel::mediaDispWidth(int row) const {
+    row = clampRow(row);
+    return (rows_[row].type == Media) ? int(mediaDisplayWidth(rows_[row]) + 0.5) : 0;
+}
+void BlockModel::setMediaWidth(int row, int w) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
+    QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    if (w <= 0) o.remove(QStringLiteral("dw"));                 // reset to intrinsic/default
+    else        o.insert(QStringLiteral("dw"), std::clamp(w, 80, int(contentWidth_)));
+    const QString json = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    beginTxn(row, row);
+    content_[row] = json;
+    fillMediaMeta(rows_[row], json);
+    rows_[row].measured = false;
+    fenwick_.setHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
 }
 
 void BlockModel::setContentWidth(qreal w) {

@@ -37,8 +37,11 @@ Item {
     readonly property int iw: logicalRow >= 0 ? (mb._rev, blockModel.mediaW(logicalRow)) : 0
     readonly property int ih: logicalRow >= 0 ? (mb._rev, blockModel.mediaH(logicalRow)) : 0
     readonly property real durMs: (active && isVideo) ? (mb._rev, blockModel.mediaDurationMs(logicalRow)) : 0
-    // PDF is vector → fit the content width (upscale OK). Raster media never upscales.
-    readonly property real dispW: isPdf ? maxWidth : (iw > 0 ? Math.min(maxWidth, iw) : maxWidth)
+    // Effective display width from the model (per-block override or default) so a
+    // resized image renders at its stored width; height comes from the cell.
+    readonly property real dispW: logicalRow >= 0
+        ? (blockModel.layoutRevision, mb._rev, blockModel.mediaDispWidth(logicalRow))
+        : maxWidth
 
     implicitWidth:  dispW
     implicitHeight: (iw > 0 && ih > 0) ? Math.round(dispW * ih / iw) : Math.round(dispW * 0.5)

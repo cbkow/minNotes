@@ -98,6 +98,11 @@ public:
     // every media row's height. mediaDisplayHeight returns a row's frame px.
     Q_INVOKABLE void  setContentWidth(qreal w);
     Q_INVOKABLE qreal mediaDisplayHeight(int row) const;
+    // Effective displayed media width (per-block override or default). Set a new
+    // per-block width (w<=0 resets to the default); clamped to [80, pageWidth].
+    // Persists in the descriptor, so undo/reload Just Work; one undo step.
+    Q_INVOKABLE int  mediaDispWidth(int row) const;
+    Q_INVOKABLE void setMediaWidth(int row, int w);
     Q_INVOKABLE void setContent(int row, const QString& text);
     Q_INVOKABLE void insertBlock(int row);
     Q_INVOKABLE void removeBlock(int row);
@@ -288,6 +293,7 @@ private:
         bool isVideo = false;   // media only: true → reserve the transport-toolbar height
         bool isFile = false;    // media only: kind=="file" → an unsupported-file chip
         bool isPdf = false;     // media only: kind=="pdf" → inline page view + nav
+        uint16_t dispW = 0;     // media only: per-block display width override (0 = default/fit)
         uint16_t mediaW = 0;    // media only: intrinsic width px  (exact no-upscale height estimate)
         uint16_t mediaH = 0;    // media only: intrinsic height px
         QString lang;       // code blocks: syntax-highlight language (else empty)
@@ -352,6 +358,7 @@ private:
     void fillMediaMeta(Row& r, const QString& content) const;
     double estimatedHeight(const Row& r) const;
     double mediaFrameHeight(const Row& r) const;   // displayed media frame px at contentWidth_
+    double mediaDisplayWidth(const Row& r) const;  // per-block override or default width
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)
     QString genBase(int row, const Row& r) const;   // synthesize a row's text (no edit overlay)
     QString textAt(int row) const;                  // edit override else loaded content
