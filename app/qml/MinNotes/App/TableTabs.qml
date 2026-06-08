@@ -1,21 +1,32 @@
 import QtQuick
 
-// Bottom tab strip — appears only when the document contains a table. The first
-// tab is always the whole Document; each table gets a tab in appearance order
-// ("Table N"). Tabs are keyed by block id (so the active tab follows its table
-// across reorders) while the label/position is derived live from current order.
+// Bottom tab strip — appears when the document contains a table or an inline PDF.
+// The first tab is always the whole Document; each table gets a "Table N" tab and
+// each PDF a tab labelled by its file name. Tabs are keyed by block id (so the
+// active tab follows its block across reorders) while the label/position is
+// derived live from current order.
 Rectangle {
     id: tabs
     property var editor: null
 
     readonly property var ids: (blockModel.layoutRevision, blockModel.contentRevision,
                                 blockModel.tableBlockIds())
-    visible: ids.length > 0
+    readonly property var pdfIds: (blockModel.layoutRevision, blockModel.contentRevision,
+                                   blockModel.pdfBlockIds())
+    readonly property string activeId: !!editor ? editor.activeFrameId : ""
+    visible: ids.length > 0 || pdfIds.length > 0
     height: visible ? 30 : 0
     color: Theme.colors.surface
 
     // A divider line along the top edge.
     Rectangle { width: parent.width; height: 1; color: Theme.colors.border }
+
+    function _pdfLabel(id) {
+        var r = blockModel.rowForId(id)
+        var n = r >= 0 ? blockModel.mediaFileName(r) : ""
+        if (n === "") return "PDF"
+        return n.length > 22 ? n.substring(0, 21) + "…" : n
+    }
 
     // One tab. `active` highlights it; clicking selects it.
     component TabBtn: Rectangle {
@@ -45,8 +56,8 @@ Rectangle {
         anchors.left: parent.left; anchors.top: parent.top; height: parent.height
         TabBtn {
             label: "Document"
-            active: !!tabs.editor && tabs.editor.activeTableId === ""
-            onClicked: if (tabs.editor) tabs.editor.activeTableId = ""
+            active: tabs.activeId === ""
+            onClicked: if (tabs.editor) tabs.editor.setActiveTab("")
         }
         Repeater {
             model: tabs.ids
@@ -54,8 +65,17 @@ Rectangle {
                 required property int index
                 required property string modelData
                 label: "Table " + (index + 1)
-                active: !!tabs.editor && tabs.editor.activeTableId === modelData
-                onClicked: if (tabs.editor) tabs.editor.activeTableId = modelData
+                active: tabs.activeId === modelData
+                onClicked: if (tabs.editor) tabs.editor.setActiveTab(modelData)
+            }
+        }
+        Repeater {
+            model: tabs.pdfIds
+            delegate: TabBtn {
+                required property string modelData
+                label: tabs._pdfLabel(modelData)
+                active: tabs.activeId === modelData
+                onClicked: if (tabs.editor) tabs.editor.setActiveTab(modelData)
             }
         }
     }

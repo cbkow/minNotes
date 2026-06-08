@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Pdf
 
 // Arm C — the "better surface" prototype. Blocks are PASSIVE (read-only) text;
 // they never take focus and never own a cursor or selection. A single central
@@ -39,6 +40,21 @@ FocusScope {
         if (activeTableId === "") return
         var r = blockModel.rowForId(activeTableId)
         if (r >= 0) { cursor.setCaret(r, 0); tcur.place(0, 0, 0) }
+    }
+    // Active PDF tab (full-page scroll view); "" = not in a PDF tab. Tables and
+    // PDFs are mutually exclusive full-frame modes — setActiveTab keeps one set.
+    property string activePdfId: ""
+    readonly property int activePdfRow: (blockModel.layoutRevision, blockModel.contentRevision,
+        activePdfId === "" ? -1 : blockModel.rowForId(activePdfId))
+    onActivePdfRowChanged: if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
+    // The block id shown full-frame ("" = Document view) — drives the tab strip's
+    // active state across both table and PDF tabs.
+    readonly property string activeFrameId: activeTableId !== "" ? activeTableId : activePdfId
+    function setActiveTab(id) {
+        if (id === "") { activeTableId = ""; activePdfId = ""; return }
+        var r = blockModel.rowForId(id)
+        if (blockModel.typeForRow(r) === 7) { activePdfId = ""; activeTableId = id }
+        else { activeTableId = ""; activePdfId = id }
     }
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
@@ -1181,7 +1197,7 @@ FocusScope {
 
     Flickable {
         id: flick
-        visible: root.activeTableRow < 0     // hidden while a table tab is open
+        visible: root.activeTableRow < 0 && root.activePdfRow < 0   // hidden in a table/PDF tab
         anchors.fill: parent
         contentWidth: width
         contentHeight: blockModel.totalHeight
@@ -1851,6 +1867,25 @@ FocusScope {
         }
     }
 
+    // --- Full-frame PDF view (the active PDF tab): every page, continuous scroll.
+    // A dedicated mode with no central mouse layer, so PdfMultiPageView owns its
+    // own scrolling/selection. The document is (re)created from the active row's
+    // file URL; "" while no PDF tab is open. ---
+    Rectangle {
+        id: pdfFrame
+        visible: root.activePdfRow >= 0
+        anchors.fill: parent
+        color: Theme.colors.bg
+        PdfMultiPageView {
+            id: pdfView
+            anchors.fill: parent
+            anchors.margins: 8
+            document: PdfDocument {
+                source: root.activePdfRow >= 0 ? blockModel.mediaUrl(root.activePdfRow) : ""
+            }
+        }
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
@@ -2297,6 +2332,8 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 7)
         readonly property bool isMedia: root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
+        readonly property bool isPdf: isMedia
+            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
         padding: 4; z: 60
         // Reactive on-screen clamp: re-evaluates as the menu's height settles after
         // open (so a long menu is positioned right on the FIRST trigger, not the 2nd).
@@ -2324,7 +2361,8 @@ FocusScope {
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: blockMenu.isTable; text: "Open in tab"; onActivated: root.activeTableId = blockModel.idForRow(root.menuRow) }
+            MenuRow { visible: blockMenu.isTable; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+            MenuRow { visible: blockMenu.isPdf; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row above";  onActivated: root.tblInsRowAbove() }
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row below";  onActivated: root.tblInsRowBelow() }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column left";  onActivated: root.tblInsColLeft() }
