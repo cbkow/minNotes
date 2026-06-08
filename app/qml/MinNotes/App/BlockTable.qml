@@ -60,6 +60,10 @@ Item {
     property int    hiIndex: -1
     property bool   hiDanger: false
 
+    // Drag-drop target cell (an image being dragged over it); −1 = none.
+    property int dropR: -1
+    property int dropC: -1
+
     TextMetrics { id: metrics; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody }
     // Per-column auto width = widest cell line (capped). Computed IMPERATIVELY (a
     // binding would self-loop: it writes metrics.text and reads metrics.advanceWidth).
@@ -222,6 +226,14 @@ Item {
                             // + bottom edge; the table frame draws the top + left.
                             Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
                             Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
+
+                            // Drag-drop target: an image being dragged onto this cell.
+                            Rectangle {
+                                visible: tv.dropR === gridRow.r && tv.dropC === cellRect.c
+                                anchors.fill: parent; z: 3
+                                color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.16)
+                                border.width: 2; border.color: Theme.colors.accent
+                            }
 
                             // in-cell selection highlight (behind glyphs); single
                             // visual line — fine for short cell text.

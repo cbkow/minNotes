@@ -315,8 +315,11 @@ DESIGN.md  SPIKE.md  STATUS.md
       branch now routes a copied image file / clipboard raster into the focused cell.
       **Render**: `BlockTable` cell draws an async `Image` above any text; intrinsic
       dims (known from the descriptor) reserve the row height up front so there's no
-      load jump. **Remove image** in the cell context menu. (Video/PDF-in-cell and
-      drag-drop-onto-cell deferred — paste covers the workflow.) The full table
+      load jump. **Remove image** in the cell context menu. **Drag-drop**: the
+      document `DropArea` now aims each drag (`aimDrop`) — a table cell under the
+      pointer wins (cell highlighted via `BlockTable.dropR/dropC`, block-gap line
+      suppressed) and the image lands in that cell via `tableHitAt`; otherwise the
+      normal block-insertion gap. (Video/PDF-in-cell deferred.) The full table
       rich-content arc (colours → rich text → images) is now shipped.
 
 ## Next (rough order)

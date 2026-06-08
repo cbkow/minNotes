@@ -333,20 +333,43 @@ FocusScope {
     // external drags; doesn't touch the normal mouse interaction.)
     property bool imageDropActive: false
     property int  imageDropGap: -1
+    // Drop-onto-a-cell target (an image dragged over a table cell); −1 = none. When
+    // set, the block-insertion gap line is suppressed and the cell is highlighted.
+    property int dropTableRow: -1
+    property int dropCellR: -1
+    property int dropCellC: -1
+    function clearDropState() { imageDropGap = -1; dropTableRow = -1; dropCellR = -1; dropCellC = -1 }
+    // Aim a drag at a content point: a table cell wins (→ image into cell), else a
+    // block-insertion gap. Mutually exclusive, so the affordances don't both show.
+    function aimDrop(cx, cy) {
+        var th = root.tableHitAt(cx, cy)
+        if (th) { dropTableRow = th.row; dropCellR = th.r; dropCellC = th.c; imageDropGap = -1 }
+        else    { dropTableRow = -1; dropCellR = -1; dropCellC = -1; imageDropGap = root.gapForY(cy) }
+    }
     DropArea {
         anchors.fill: parent
         keys: ["text/uri-list"]
-        onEntered: (drag) => { root.imageDropActive = true; root.imageDropGap = root.gapForY(drag.y + flick.contentY) }
-        onPositionChanged: (drag) => { root.imageDropGap = root.gapForY(drag.y + flick.contentY) }
-        onExited: { root.imageDropActive = false; root.imageDropGap = -1 }
+        onEntered: (drag) => { root.imageDropActive = true; root.aimDrop(drag.x, drag.y + flick.contentY) }
+        onPositionChanged: (drag) => { root.aimDrop(drag.x, drag.y + flick.contentY) }
+        onExited: { root.imageDropActive = false; root.clearDropState() }
         onDropped: (drop) => {
             root.imageDropActive = false
-            if (!drop.hasUrls) { root.imageDropGap = -1; return }
+            if (!drop.hasUrls) { root.clearDropState(); return }
+            // Over a table cell → drop the (first loadable) image into that cell.
+            if (root.dropTableRow >= 0) {
+                var tr = root.dropTableRow, cr = root.dropCellR, cc = root.dropCellC, ok = false
+                for (var j = 0; j < drop.urls.length && !ok; ++j)
+                    if (blockModel.tableSetCellImageFromUrl(tr, cr, cc, drop.urls[j].toString())) ok = true
+                root.clearDropState()
+                if (ok) { cursor.setCaret(tr, 0); tcur.place(cr, cc, 0); root.ensureVisible(tr) }
+                drop.accept()
+                return
+            }
             var afterRow = root.imageDropGap - 1      // insert AT the gap (= after gap-1)
             var any = false
             for (var i = 0; i < drop.urls.length; ++i)
                 if (blockModel.insertMediaFromUrl(afterRow, drop.urls[i].toString())) { afterRow++; any = true }
-            root.imageDropGap = -1
+            root.clearDropState()
             if (any) { cursor.setCaret(Math.max(0, afterRow), 0); root.ensureVisible(afterRow) }
             drop.accept()
         }
@@ -1538,6 +1561,9 @@ FocusScope {
                     // live column-resize preview for this table
                     resizeCol: (root.tableResizing && root.resizeRow === cell.logicalRow) ? root.resizeColIdx : -1
                     resizeW: root.resizeW
+                    // Drag-drop target cell (image dragged over this table).
+                    dropR: root.dropTableRow === cell.logicalRow ? root.dropCellR : -1
+                    dropC: root.dropTableRow === cell.logicalRow ? root.dropCellC : -1
                     // Context-menu column/row target highlight (this is the menu's table).
                     hiScope: (cell.logicalRow === root.menuRow
                               && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
