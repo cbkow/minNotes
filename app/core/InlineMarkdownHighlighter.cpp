@@ -12,7 +12,7 @@ class InlineMarkdownHighlighter::Impl : public QSyntaxHighlighter {
 public:
     explicit Impl(QObject* parent) : QSyntaxHighlighter(parent) {}
 
-    struct SpanFmt { int s; int e; int k; };   // [s,e) in block-content cols; k: 1 bold 2 italic 3 code
+    struct SpanFmt { int s; int e; int k; QColor color; };   // color set for k 7 (fg) / 8 (highlight)
 
     bool enabled = true;
     QColor markerColor         = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
@@ -83,9 +83,12 @@ protected:
         // overlapping bold+italic combine, then emit runs. ---
         if (spans.empty() || n == 0) return;
         std::vector<uint8_t> fl(n, 0);   // bits: 1 bold 2 italic 4 code 8 strike 16 underline 32 link
+        std::vector<QColor> fg(n), bg(n);  // per-char text colour / highlight (invalid = none)
         bool any = false;
         for (const SpanFmt& sp : spans) {
             const int ls = std::max(0, sp.s - pos), le = std::min(n, sp.e - pos);
+            if (sp.k == 7) { for (int x = ls; x < le; ++x) { fg[x] = sp.color; any = true; } continue; }
+            if (sp.k == 8) { for (int x = ls; x < le; ++x) { bg[x] = sp.color; any = true; } continue; }
             const uint8_t bit = sp.k == 1 ? 1 : sp.k == 2 ? 2 : sp.k == 3 ? 4
                               : sp.k == 4 ? 8 : sp.k == 5 ? 16 : sp.k == 6 ? 32 : 0;
             for (int x = ls; x < le; ++x) { fl[x] |= bit; any = true; }
@@ -93,8 +96,9 @@ protected:
         if (!any) return;
         int x = 0;
         while (x < n) {
-            if (!fl[x]) { ++x; continue; }
-            int y = x; while (y < n && fl[y] == fl[x]) ++y;
+            if (!fl[x] && !fg[x].isValid() && !bg[x].isValid()) { ++x; continue; }
+            int y = x;
+            while (y < n && fl[y] == fl[x] && fg[y] == fg[x] && bg[y] == bg[x]) ++y;
             QTextCharFormat f;
             if (fl[x] & 1) f.setFontWeight(QFont::Bold);
             if (fl[x] & 2) f.setFontItalic(true);
@@ -108,6 +112,8 @@ protected:
                 f.setFontUnderline(true);
                 if (!(fl[x] & 4)) f.setForeground(linkColor);
             }
+            if (bg[x].isValid()) f.setBackground(bg[x]);              // highlight (full opacity)
+            if (fg[x].isValid()) f.setForeground(fg[x]);              // text colour wins over code/link
             setFormat(x, y - x, f);
             x = y;
         }
@@ -174,9 +180,11 @@ void InlineMarkdownHighlighter::setSpans(const QVariantList& v) {
     hl_->spans.reserve(v.size());
     for (const QVariant& item : v) {
         const QVariantMap m = item.toMap();
+        const int k = m.value(QStringLiteral("k")).toInt();
+        QColor c;
+        if (k == 7 || k == 8) c = QColor(m.value(QStringLiteral("u")).toString());  // fg / highlight
         hl_->spans.push_back({m.value(QStringLiteral("s")).toInt(),
-                              m.value(QStringLiteral("e")).toInt(),
-                              m.value(QStringLiteral("k")).toInt()});
+                              m.value(QStringLiteral("e")).toInt(), k, c});
     }
     emit spansChanged();
     hl_->rehighlight();

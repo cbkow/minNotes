@@ -839,6 +839,27 @@ FocusScope {
         cursor.sync()
     }
 
+    // Right-rail colour tools: recolour / highlight the current selection (no-op
+    // without one for now). One grouped undo step.
+    function applyTextColor(color) {
+        if (!cursor.hasSel) return
+        var hex = "" + color
+        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
+            blockModel.setTextColor(r, rowSelStart(r), rowSelEnd(r), hex)
+        blockModel.endGroup()
+        cursor.sync()
+    }
+    function applyHighlight(color) {
+        if (!cursor.hasSel) return
+        var hex = "" + color
+        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
+            blockModel.setHighlight(r, rowSelStart(r), rowSelEnd(r), hex)
+        blockModel.endGroup()
+        cursor.sync()
+    }
+
     // Link button / Cmd+K: open the URL editor over the right target. A single-row
     // selection is wrapped; a caret inside an existing link edits that whole link;
     // a bare caret inserts the typed URL as its own link. (Multi-row selections
@@ -1529,8 +1550,8 @@ FocusScope {
                 InlineMarkdownHighlighter {
                     // Attach ONLY for text blocks; a document can have one
                     // highlighter, so code blocks detach this and use codeHl.
-                    document: (te.btype === 0 || te.btype === 4 || te.btype === 5) ? te.textDocument : null
-                    enabled: cell.active && (te.btype === 0 || te.btype === 4 || te.btype === 5)
+                    document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5) ? te.textDocument : null
+                    enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5)
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
                     codeColor: Theme.colors.inlineCodeText

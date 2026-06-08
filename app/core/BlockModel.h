@@ -159,6 +159,10 @@ public:
     // covering `col` (for Cmd/Ctrl-click open + hover), or "" if none.
     Q_INVOKABLE void setLink(int row, int start, int end, const QString& url);
     Q_INVOKABLE QString linkAt(int row, int col) const;
+    // Text color / highlight over [start,end): an empty color removes that kind.
+    // (Both ride the same payload-span path as links.)
+    Q_INVOKABLE void setTextColor(int row, int start, int end, const QString& color);
+    Q_INVOKABLE void setHighlight(int row, int start, int end, const QString& color);
     // The [s,e] range of a link span covering `col` (for "edit this link" with no
     // selection), or an empty list if none.
     Q_INVOKABLE QVariantList linkRangeAt(int row, int col) const;
@@ -279,7 +283,8 @@ signals:
 
 public:
     enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
-                              SpanStrike = 4, SpanUnderline = 5, SpanLink = 6 };
+                              SpanStrike = 4, SpanUnderline = 5, SpanLink = 6,
+                              SpanFgColor = 7, SpanHighlight = 8 };  // href holds the color hex
 
 private:
     // [s,e) over the row's text. `href` is set only for SpanLink (the link target);
@@ -323,6 +328,7 @@ private:
     // Interval ops on one row's spans (same-kind): union-cover test, add+merge,
     // and subtract a range. Offsets shift via shiftSpans on edits.
     static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind);
+    void setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload);
     static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     static void shiftSpansInsert(std::vector<Span>& v, int at, int len);

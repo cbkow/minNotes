@@ -41,6 +41,13 @@ constexpr double kWidthEst = 760.0;  // assumed content width for media estimate
 constexpr double kVideoBar = 40.0;   // transport toolbar reserved under a video
 constexpr double kFileChip = 56.0;   // fixed height of an unsupported-file attachment chip
 constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline PDF page
+
+// Span kinds whose `href` field carries a payload (URL for links, color hex for
+// color/highlight) — serialized as "u", and pushed whole (never merged by kind).
+static inline bool spanHasPayload(uint8_t k) {
+    return k == BlockModel::SpanLink || k == BlockModel::SpanFgColor
+        || k == BlockModel::SpanHighlight;
+}
                                      // (keep in sync with Editor.qml videoTransportH)
 
 // Fractional-rank alphabet: 62 digits in ascending ASCII order, so plain
@@ -358,7 +365,7 @@ QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
             so.insert(QStringLiteral("s"), sp.s);
             so.insert(QStringLiteral("e"), sp.e);
             so.insert(QStringLiteral("k"), QString::fromLatin1(spanKindToString(sp.kind)));
-            if (sp.kind == SpanLink && !sp.href.isEmpty()) so.insert(QStringLiteral("u"), sp.href);
+            if (spanHasPayload(sp.kind) && !sp.href.isEmpty()) so.insert(QStringLiteral("u"), sp.href);
             arr.append(so);
         }
         o.insert(QStringLiteral("spans"), arr);
@@ -1113,6 +1120,8 @@ void BlockModel::clearFormat(int row, int start, int end) {
     removeSpan(rows_[row].spans, start, end, SpanStrike);
     removeSpan(rows_[row].spans, start, end, SpanUnderline);
     removeSpan(rows_[row].spans, start, end, SpanLink);
+    removeSpan(rows_[row].spans, start, end, SpanFgColor);
+    removeSpan(rows_[row].spans, start, end, SpanHighlight);
     persistMeta(row);
     emit dataChanged(index(row), index(row), {});
     ++contentRevision_; emit contentChangedSpike();
@@ -1209,6 +1218,8 @@ uint8_t BlockModel::spanKindFromString(const QString& s) {
     if (s == QLatin1String("strike"))    return SpanStrike;
     if (s == QLatin1String("underline")) return SpanUnderline;
     if (s == QLatin1String("link"))      return SpanLink;
+    if (s == QLatin1String("color"))     return SpanFgColor;
+    if (s == QLatin1String("highlight")) return SpanHighlight;
     return 0;
 }
 const char* BlockModel::spanKindToString(uint8_t k) {
@@ -1219,6 +1230,8 @@ const char* BlockModel::spanKindToString(uint8_t k) {
     case SpanStrike:    return "strike";
     case SpanUnderline: return "underline";
     case SpanLink:      return "link";
+    case SpanFgColor:   return "color";
+    case SpanHighlight: return "highlight";
     default:            return "";
     }
 }
@@ -1297,31 +1310,41 @@ QVariantList BlockModel::spansForRow(int row) const {
         m.insert(QStringLiteral("s"), sp.s);
         m.insert(QStringLiteral("e"), sp.e);
         m.insert(QStringLiteral("k"), sp.kind);
-        if (sp.kind == SpanLink) m.insert(QStringLiteral("u"), sp.href);
+        if (spanHasPayload(sp.kind)) m.insert(QStringLiteral("u"), sp.href);
         out.append(m);
     }
     return out;
 }
 
-void BlockModel::setLink(int row, int start, int end, const QString& url) {
+// A payload span (link/color/highlight) over [start,end): drop any same-kind span
+// overlapping the range (they don't merge — each carries its own URL/color), then
+// add the new one if a payload was given (empty = remove that kind here).
+void BlockModel::setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     const int len = content_[row].size();
     start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
     if (start >= end) return;
     beginTxn(row, row);
     std::vector<Span>& v = rows_[row].spans;
-    // Drop any link spans overlapping [start,end) (links don't merge by URL), then
-    // add the new one if a target was given (empty url = "remove link").
     std::vector<Span> kept;
     for (const Span& sp : v)
-        if (!(sp.kind == SpanLink && sp.s < end && sp.e > start)) kept.push_back(sp);
-    if (!url.isEmpty()) kept.push_back({start, end, SpanLink, url});
+        if (!(sp.kind == kind && sp.s < end && sp.e > start)) kept.push_back(sp);
+    if (!payload.isEmpty()) kept.push_back({start, end, kind, payload});
     v = std::move(kept);
     persistMeta(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+}
+void BlockModel::setLink(int row, int start, int end, const QString& url) {
+    setPayloadSpan(row, start, end, SpanLink, url);
+}
+void BlockModel::setTextColor(int row, int start, int end, const QString& color) {
+    setPayloadSpan(row, start, end, SpanFgColor, color);
+}
+void BlockModel::setHighlight(int row, int start, int end, const QString& color) {
+    setPayloadSpan(row, start, end, SpanHighlight, color);
 }
 
 QString BlockModel::linkAt(int row, int col) const {
@@ -1430,11 +1453,11 @@ bool BlockModel::convertMarkdown(const QString& src, const std::vector<Span>& ex
     std::vector<Span> merged;
     for (const Span& sp : existing) {        // pre-existing spans → clean coords
         const int s = map[std::clamp(sp.s, 0, n)], e = map[std::clamp(sp.e, 0, n)];
-        if (sp.kind == SpanLink) { if (e > s) merged.push_back({s, e, SpanLink, sp.href}); }
+        if (spanHasPayload(sp.kind)) { if (e > s) merged.push_back({s, e, sp.kind, sp.href}); }
         else addSpan(merged, s, e, sp.kind);
     }
     for (const Span& sp : found) {
-        if (sp.kind == SpanLink) merged.push_back(sp);   // keep href; links don't merge
+        if (spanHasPayload(sp.kind)) merged.push_back(sp);   // keep payload; don't merge
         else addSpan(merged, sp.s, sp.e, sp.kind);
     }
     cleanText = out;
@@ -1718,7 +1741,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     // merges same-kind runs), which would drop a link's href — so push links whole.
     auto appendSpan = [](std::vector<Span>& v, int s, int e, uint8_t kind, const QString& href) {
         if (s >= e) return;
-        if (kind == SpanLink) v.push_back({s, e, kind, href});
+        if (spanHasPayload(kind)) v.push_back({s, e, kind, href});
         else addSpan(v, s, e, kind);
     };
 
@@ -1940,7 +1963,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
         beginTxn(row, row);
         shiftSpansInsert(rows_[row].spans, col, sp.text.size());
         for (const Span& x : sp.spans) {
-            if (x.kind == SpanLink) rows_[row].spans.push_back({x.s + col, x.e + col, SpanLink, x.href});
+            if (spanHasPayload(x.kind)) rows_[row].spans.push_back({x.s + col, x.e + col, x.kind, x.href});
             else addSpan(rows_[row].spans, x.s + col, x.e + col, x.kind);
         }
         content_[row] = s.left(col) + sp.text + s.mid(col);
