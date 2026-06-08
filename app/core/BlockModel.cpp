@@ -752,6 +752,38 @@ void BlockModel::tableSetCell(int row, int r, int c, const QString& text) {
     mutateTable(row, [&](TableGrid& g){ g.setCellText(r, c, text); },
                 QStringLiteral("tcell:%1:%2").arg(r).arg(c));
 }
+void BlockModel::tableSetCellColor(int row, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
+    if (r0 > r1) std::swap(r0, r1);
+    if (c0 > c1) std::swap(c0, c1);
+    mutateTable(row, [&](TableGrid& g){
+        for (int r = r0; r <= r1; ++r)
+            for (int c = c0; c <= c1; ++c)
+                fg ? g.setCellFg(r, c, color) : g.setCellBg(r, c, color);
+    });
+}
+void BlockModel::tableSetRowColor(int row, int r, bool fg, const QString& color) {
+    mutateTable(row, [&](TableGrid& g){ fg ? g.setRowFg(r, color) : g.setRowBg(r, color); });
+}
+void BlockModel::tableSetColColor(int row, int c, bool fg, const QString& color) {
+    mutateTable(row, [&](TableGrid& g){ fg ? g.setColFg(c, color) : g.setColBg(c, color); });
+}
+// Effective colour for rendering: cell wins, then row, then column, then none.
+QString BlockModel::tableCellBg(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    QString v = g.cellBg(r, c);
+    if (v.isEmpty()) v = g.rowBg(r);
+    if (v.isEmpty()) v = g.colBg(c);
+    return v;
+}
+QString BlockModel::tableCellFg(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    QString v = g.cellFg(r, c);
+    if (v.isEmpty()) v = g.rowFg(r);
+    if (v.isEmpty()) v = g.colFg(c);
+    return v;
+}
 void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
 void BlockModel::tableInsertColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.insertCol(at); }); }
 void BlockModel::tableDeleteRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.deleteRow(at); }); }

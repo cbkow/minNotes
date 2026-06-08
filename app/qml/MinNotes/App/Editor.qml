@@ -842,8 +842,9 @@ FocusScope {
     // Right-rail colour tools: recolour / highlight the current selection (no-op
     // without one for now). One grouped undo step.
     function applyTextColor(color) {
-        if (!cursor.hasSel) return
         var hex = "" + color
+        if (tcur.active) { applyTableColor(true, hex); return }   // table: text colour
+        if (!cursor.hasSel) return
         blockModel.beginGroup(cursor.loRow, cursor.hiRow)
         for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
             blockModel.setTextColor(r, rowSelStart(r), rowSelEnd(r), hex)
@@ -851,13 +852,23 @@ FocusScope {
         cursor.sync()
     }
     function applyHighlight(color) {
-        if (!cursor.hasSel) return
         var hex = "" + color
+        if (tcur.active) { applyTableColor(false, hex); return }  // table: cell background
+        if (!cursor.hasSel) return
         blockModel.beginGroup(cursor.loRow, cursor.hiRow)
         for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
             blockModel.setHighlight(r, rowSelStart(r), rowSelEnd(r), hex)
         blockModel.endGroup()
         cursor.sync()
+    }
+    // Right-rail colour applied to a table: fg = text colour, else cell background.
+    // A cell range is coloured if one is selected, otherwise just the focused cell.
+    function applyTableColor(isFg, hex) {
+        var fr = cursor.focusRow
+        if (tcur.rangeR0 >= 0)
+            blockModel.tableSetCellColor(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1, isFg, hex)
+        else
+            blockModel.tableSetCellColor(fr, tcur.cr, tcur.cc, tcur.cr, tcur.cc, isFg, hex)
     }
 
     // Link button / Cmd+K: open the URL editor over the right target. A single-row

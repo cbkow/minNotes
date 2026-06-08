@@ -215,6 +215,14 @@ public:
     Q_INVOKABLE int  tableColWidth(int row, int c) const;     // 0 = auto-size
     Q_INVOKABLE int  tableColAlign(int row, int c) const;     // 0 left,1 center,2 right
     Q_INVOKABLE void tableSetCell(int row, int r, int c, const QString& text);
+    // Cell / row / column colour. fg=true sets text colour, else background.
+    // empty color removes it. tableCellBg/Fg return the EFFECTIVE colour for
+    // rendering (cell → row → column → "" cascade).
+    Q_INVOKABLE void tableSetCellColor(int row, int r0, int c0, int r1, int c1, bool fg, const QString& color);
+    Q_INVOKABLE void tableSetRowColor(int row, int r, bool fg, const QString& color);
+    Q_INVOKABLE void tableSetColColor(int row, int c, bool fg, const QString& color);
+    Q_INVOKABLE QString tableCellBg(int row, int r, int c) const;
+    Q_INVOKABLE QString tableCellFg(int row, int r, int c) const;
     Q_INVOKABLE void tableInsertRow(int row, int at);
     Q_INVOKABLE void tableInsertColumn(int row, int at);
     Q_INVOKABLE void tableDeleteRow(int row, int at);

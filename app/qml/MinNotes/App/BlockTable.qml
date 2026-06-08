@@ -189,11 +189,17 @@ Item {
                             readonly property bool isSelected: tv.inRange(gridRow.r, c)
                             readonly property real contentH: cellText.implicitHeight + 2 * tv.cellPadV
                             property alias teItem: cellText
+                            // Effective cell colours (cell → row → column cascade), "" = none.
+                            readonly property string cellBg: (blockModel.contentRevision,
+                                                              blockModel.tableCellBg(tv.logicalRow, gridRow.r, c))
+                            readonly property string cellFg: (blockModel.contentRevision,
+                                                              blockModel.tableCellFg(tv.logicalRow, gridRow.r, c))
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
                             Component.onCompleted: gridRow.recompute()
                             color: isSelected ? Theme.colors.selectionBg
+                                 : cellBg !== "" ? cellBg
                                  : isHeader   ? Theme.colors.surfaceHover : "transparent"
                             // Single-hairline grid: each cell draws only its right
                             // + bottom edge; the table frame draws the top + left.
@@ -220,7 +226,7 @@ Item {
                                 wrapMode: TextEdit.Wrap
                                 text: (blockModel.contentRevision,
                                        blockModel.tableCell(tv.logicalRow, gridRow.r, cellRect.c))
-                                color: Theme.colors.text
+                                color: cellRect.cellFg !== "" ? cellRect.cellFg : Theme.colors.text
                                 font.family: Theme.font.family
                                 font.pixelSize: Theme.font.sizeBody
                                 font.bold: cellRect.isHeader

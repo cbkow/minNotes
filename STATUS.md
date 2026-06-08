@@ -251,6 +251,46 @@ DESIGN.md  SPIKE.md  STATUS.md
       a complete editor at full width. The dataset+full-frame split is the
       foundation for a more spreadsheet-like table grid later.
 
+- [x] **Smart paste IN (full pass)** — one `doPaste` router over the clipboard:
+      plain/markdown text → multi-block (`pasteText`), TSV/CSV → a new table block,
+      rich **HTML** (Word/Docs/Excel/web) walked via `QTextDocument`'s frame tree →
+      headings/lists/paragraphs **with inline spans**, tables, and images (data:/
+      local embeds imported to the `.minnotes` sidecar; remote `http(s)` downloaded
+      async via `QNetworkAccessManager` → sidecar swap by block id). Copied files
+      (Preview "Copy") routed through `Clipboard.readUrls` like a drop; unsupported
+      files become **attachment chips** (Media `kind:"file"` — icon + name + path,
+      "Open in ufb" / "Reveal in Finder"). **Links**: `SpanLink` (+payload `href`)
+      with a hover pill + context-menu "Open URL" + a LeftRail link button / Cmd-K
+      editor; payload spans (`link`/`fgcolor`/`highlight`) push whole, never merge.
+
+- [x] **PDF (Qt PDF)** — `Qt6::Pdf` probes page count / size; inline shows ONE page
+      with a nav strip (`image://pdfpage` cached provider survives delegate recycle),
+      plus a full-scroll **tab** (`PdfMultiPageView`-style `ListView` of `PdfPageImage`).
+      Qt PDF is an OPTIONAL Qt component (installed via Maintenance Tool).
+
+- [x] **Media polish** — **image resizing**: bottom-right drag handle (proportional,
+      ghost-preview during drag → commit on release so the doc doesn't reflow mid-drag)
+      + top-right fit-to-760; per-block display-width override (`dw`). Video audio
+      fixed (`AudioPlayer::initialize()` before `open()`). PDF/video toolbars hide when
+      a table/PDF tab is active.
+
+- [x] **Text colour + highlight (right rail)** — a new **`RightRail.qml`** inspector:
+      an "A" text-colour tool + a highlighter tool (each APPLIES its current colour to
+      the selection) + a palette toggle that expands an **HSV `ColorPickerInline`**
+      (ported from QCView) with Text/Highlight target tabs, Hex + R/G/B mono fields,
+      and a soft-grey "Revert to default". Spans `SpanFgColor=7` / `SpanHighlight=8`
+      carry a hex payload; `InlineMarkdownHighlighter` renders per-char fg/bg.
+
+- [x] **Tables — cell/row/column colours (TC-1)** — `TableGrid` `Cell` extended to
+      `{text, bg, fg, spans, media}` (+ per-row/col colour vectors), JSON bumped once
+      for the whole rich-content arc (cell = bare string when plain, else object;
+      `rbg/rfg/cbg/cfg` arrays). `BlockModel` seam: `tableSetCellColor` (range),
+      `tableSetRowColor`/`tableSetColColor`, and `tableCellBg/Fg` **cascade** readers
+      (cell → row → column). When a table tab is active the right rail's colour tools
+      route to the focused cell / selected cell-range instead of inline text;
+      `BlockTable.qml` renders the cascade (selection/header still win). **Next:
+      TC-2** rich text in cells (spans), then **TC-3** images in cells.
+
 ## Next (rough order)
 
 > **Resuming (2026-06-07):** tables + code blocks shipped; **media is the next
