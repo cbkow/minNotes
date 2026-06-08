@@ -14,7 +14,7 @@ import QtQuick.Layouts
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: { forceActiveFocus(); _recomputeVideoRows(); blockModel.setContentWidth(pageWidth) }
+    Component.onCompleted: { forceActiveFocus(); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth) }
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
@@ -155,6 +155,22 @@ FocusScope {
         // so reading currentFrame here would lose the scrub position.
         if (key !== "") { videoPlayheads[key] = _vidIntendedFrame(); videoPlayheadRev++ }
     }
+
+    // Per-PDF current page, keyed by file path (stable across row shifts). The
+    // pdfPageRev bump re-evaluates the page bindings when the nav changes it.
+    property var pdfPages: ({})
+    property int pdfPageRev: 0
+    function pdfPageFor(row) {
+        var key = blockModel.mediaLocalPath(row)
+        return (key !== "" && pdfPages[key] !== undefined) ? pdfPages[key] : 0
+    }
+    function setPdfPage(row, page) {
+        var n = blockModel.mediaPdfPages(row)
+        var p = Math.max(0, Math.min(page, n - 1))
+        var key = blockModel.mediaLocalPath(row)
+        if (key !== "") { pdfPages[key] = p; pdfPageRev++ }
+    }
+    function pdfStep(row, d) { setPdfPage(row, pdfPageFor(row) + d) }
 
     // -1 = not scrubbing. Otherwise the frame scrubbed to but not yet resumed
     // from (the streaming decoder is repositioned lazily on resume).
@@ -1122,9 +1138,26 @@ FocusScope {
         }
         allVideoRows = out
     }
+    property var allPdfRows: []
+    function _recomputePdfRows() {
+        var out = []
+        var n = blockModel.count
+        for (var r = 0; r < n; ++r)
+            if (blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "pdf")
+                out.push(r)
+        var cur = allPdfRows
+        if (cur.length === out.length) {
+            var same = true
+            for (var i = 0; i < out.length; ++i) if (cur[i] !== out[i]) { same = false; break }
+            if (same) return
+        }
+        allPdfRows = out
+    }
     Connections {
         target: blockModel
-        function onContentChangedSpike() { root._recomputeVideoRows() }   // insert/delete/type change
+        function onContentChangedSpike() {     // insert/delete/type change
+            root._recomputeVideoRows(); root._recomputePdfRows()
+        }
     }
 
     readonly property int firstRow: Math.max(0, firstVisible - overscan)
@@ -1332,6 +1365,8 @@ FocusScope {
                     // Poster frame: the remembered playhead (0 until first play).
                     posterFrame: cell.isVideoMedia
                         ? (root.videoPlayheadRev, root.videoPlayheadFor(cell.logicalRow)) : 0
+                    pdfPage: cell.isPdfMedia
+                        ? (root.pdfPageRev, root.pdfPageFor(cell.logicalRow)) : 0
                     // Stay the poster (correct frame) until the live surface is
                     // ready — avoids a flash of the previous video's stale frame.
                     isActivePlayer: cell.logicalRow === root.videoPlayingRow && root._videoSurfaceReady
@@ -2044,6 +2079,56 @@ FocusScope {
                     value: videoAudio.muted ? 0 : videoAudio.volume
                     fillColor: Theme.colors.textMuted
                     onMoved: { videoAudio.setVolume(value); if (value > 0) videoAudio.setMuted(false) }
+                }
+            }
+        }
+    }
+
+    // Page-nav strip for every inline PDF (built on load like the video bars,
+    // positioned in the reserved kPdfNav space just below the page). Prev/Next
+    // change this block's current page; the page indicator sits on the right.
+    Repeater {
+        model: root.allPdfRows
+        delegate: Rectangle {
+            id: pbar
+            required property int modelData
+            readonly property int row: modelData
+            readonly property bool blockSelected: (cursor.hasSel
+                ? (row >= cursor.loRow && row <= cursor.hiRow)
+                : (row === cursor.focusRow))
+                || (blockMenu.visible && row === root.menuRow)
+            opacity: blockSelected ? 0.35 : 1.0
+            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
+            visible: row >= root.firstVisible - 2 && row <= root.lastVisible + 2
+            readonly property real measure: root.measureForRow(row)
+            readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
+            readonly property int vh: blockModel.mediaH(row)
+            readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(measure * vh / vw)
+                                                             : Math.round(measure * 1.3)
+            readonly property int pages: (blockModel.contentRevision, blockModel.mediaPdfPages(row))
+            readonly property int page: (root.pdfPageRev, root.pdfPageFor(row))
+
+            z: 56
+            x: root.leftEdge
+            y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
+            width: measure
+            height: root.pdfNavH
+            color: "#212121"      // a hair lighter than the page
+            Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 6; anchors.rightMargin: 10
+                spacing: 0
+                FlatButton { iconName: "caret-left"; tooltip: qsTr("Previous page"); tooltipSide: "top"
+                    enabled_: pbar.page > 0; onClicked: root.pdfStep(pbar.row, -1) }
+                FlatButton { iconName: "caret-right"; tooltip: qsTr("Next page"); tooltipSide: "top"
+                    enabled_: pbar.page < pbar.pages - 1; onClicked: root.pdfStep(pbar.row, 1) }
+                Item { Layout.fillWidth: true }
+                Text {
+                    text: "Page " + (pbar.page + 1) + " of " + pbar.pages
+                    color: Theme.colors.textMuted
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
                 }
             }
         }
