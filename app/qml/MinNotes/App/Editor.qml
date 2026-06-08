@@ -121,6 +121,29 @@ FocusScope {
     function _isImageRow(r) {
         return r >= 0 && blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "image"
     }
+    // Cell-image resize (the same affordance scoped to a focused table cell that
+    // holds an image; Document view only — the full-frame tab keeps just the tint).
+    property bool cellImgResizing: false
+    property real cellResizeW: 0
+    property real cellResizeAspect: 1
+    property real _cellResizePressX: 0
+    property real _cellResizeStartW: 0
+    readonly property var _cellImgBt: (tcur.active && cellForRow(tcur.row)) ? cellForRow(tcur.row).tableItem : null
+    readonly property bool cellImgActive: tcur.active && activeTableRow < 0 && activePdfRow < 0
+        && _cellImgBt && (blockModel.contentRevision,
+                          blockModel.tableCellMedia(tcur.row, tcur.cr, tcur.cc) !== "")
+    // The focused cell image's rect in viewport coords (re-evaluated on scroll /
+    // table h-scroll / layout / cell change, then mapped from the BlockTable).
+    readonly property rect cellImgRect: {
+        var dep = flick.contentY + blockModel.layoutRevision + blockModel.contentRevision
+                + (_cellImgBt ? _cellImgBt.scrollX : 0) + tcur.cr + tcur.cc + tcur.pos
+        if (!cellImgActive || !_cellImgBt) return Qt.rect(0, 0, 0, 0)
+        var r = _cellImgBt.cellImageRect(tcur.cr, tcur.cc)
+        var tl = _cellImgBt.mapToItem(root, r.x, r.y)
+        return Qt.rect(tl.x, tl.y, r.width, r.height)
+    }
+    // Column inner width for the focused cell (the resize upper bound).
+    readonly property real cellImgMaxW: (cellImgActive && _cellImgBt) ? _cellImgBt.colW(tcur.cc) - 16 : 800
 
     // Is a content-x in the left grip gutter (just left of the text column)?
     function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
@@ -2450,6 +2473,90 @@ FocusScope {
             Text {
                 id: dimLabel; anchors.centerIn: parent
                 text: Math.round(root.imageResizeW) + " × " + Math.round(root.imageResizeW * root.imageResizeAspect)
+                color: "#f2f2f2"; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+            }
+        }
+    }
+
+    // Cell-image resize handles — root overlays over the focused table cell's image
+    // (fit-to-column top-right, proportional drag bottom-right), the same model as
+    // the document image but bounded by the column width.
+    Item {
+        id: cellImgResize
+        visible: root.cellImgActive && root.cellImgRect.width > 0
+        readonly property real rx: root.cellImgRect.x
+        readonly property real ry: root.cellImgRect.y
+        readonly property real rw: root.cellImgRect.width
+        readonly property real rh: root.cellImgRect.height
+        z: 57
+
+        Rectangle {   // fit-to-column (top-right)
+            visible: !root.cellImgResizing
+            width: 20; height: 20; radius: 4
+            x: cellImgResize.rx + cellImgResize.rw - width - 4
+            y: cellImgResize.ry + 4
+            color: cFitMA.containsMouse ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
+            border.width: 1; border.color: Theme.colors.border
+            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 12; color: "#f2f2f2" }
+            MouseArea {
+                id: cFitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, Math.round(root.cellImgMaxW))
+            }
+        }
+
+        Rectangle {   // proportional drag (bottom-right)
+            width: 18; height: 18; radius: 4
+            x: cellImgResize.rx + cellImgResize.rw - width - 4
+            y: cellImgResize.ry + cellImgResize.rh - height - 4
+            color: (cDragMA.containsMouse || root.cellImgResizing) ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
+            border.width: 1; border.color: Theme.colors.border
+            Icon { anchors.centerIn: parent; name: "resize"; size: 12; color: "#f2f2f2" }
+            MouseArea {
+                id: cDragMA
+                anchors.fill: parent; hoverEnabled: true; preventStealing: true
+                cursorShape: Qt.SizeFDiagCursor
+                onPressed: (m) => {
+                    root._cellResizePressX = m.x
+                    root._cellResizeStartW = cellImgResize.rw
+                    root.cellResizeW = cellImgResize.rw
+                    root.cellResizeAspect = cellImgResize.rw > 0 ? cellImgResize.rh / cellImgResize.rw : 1
+                    root.cellImgResizing = true
+                }
+                onPositionChanged: (m) => {
+                    if (!root.cellImgResizing) return
+                    root.cellResizeW = Math.max(40, Math.min(root.cellImgMaxW,
+                        root._cellResizeStartW + (m.x - root._cellResizePressX)))
+                }
+                onReleased: {
+                    if (root.cellImgResizing) {
+                        blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, Math.round(root.cellResizeW))
+                        root.cellImgResizing = false
+                    }
+                }
+                onCanceled: root.cellImgResizing = false
+                onDoubleClicked: blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, 0)   // reset
+            }
+        }
+    }
+
+    // Cell-image resize ghost — target-size outline during the drag (no reflow until
+    // release), anchored at the cell image's top-left.
+    Rectangle {
+        visible: root.cellImgResizing
+        z: 58
+        x: root.cellImgRect.x
+        y: root.cellImgRect.y
+        width: root.cellResizeW
+        height: root.cellResizeW * root.cellResizeAspect
+        color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.08)
+        border.width: 2; border.color: Theme.colors.accent
+        Rectangle {
+            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4
+            width: cDimLabel.width + 10; height: cDimLabel.height + 6; radius: 3
+            color: Qt.rgba(0, 0, 0, 0.7)
+            Text {
+                id: cDimLabel; anchors.centerIn: parent
+                text: Math.round(root.cellResizeW) + " × " + Math.round(root.cellResizeW * root.cellResizeAspect)
                 color: "#f2f2f2"; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             }
         }

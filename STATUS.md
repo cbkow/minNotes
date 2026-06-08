@@ -322,6 +322,20 @@ DESIGN.md  SPIKE.md  STATUS.md
       normal block-insertion gap. (Video/PDF-in-cell deferred.) The full table
       rich-content arc (colours → rich text → images) is now shipped.
 
+- [x] **Tables — cell-image selection + resize** — parity with document images.
+      **Tint**: a translucent accent overlay on a cell image when its cell is the
+      focus or in a selected range (it's opaque, like a media block, so it needs its
+      own selected-state affordance) — drawn in `BlockTable`, so it shows in the
+      full-frame tab too. **Resize handles**: root overlays (above the central mouse
+      layer, like the document image's) over the focused cell's image —
+      fit-to-column (top-right) + proportional drag (bottom-right), ghost preview
+      during the drag (no reflow until release), bounded by the column width. A
+      per-image width override (`dw`) is stored in the cell descriptor via
+      `tableSetCellImageWidth` (double-click a handle resets it). The handle overlay
+      is positioned by mapping `BlockTable.cellImageRect(r,c)` → viewport coords,
+      re-evaluated on document/table scroll + layout. Document view only; the
+      full-frame tab keeps just the tint.
+
 ## Next (rough order)
 
 > **Resuming (2026-06-07):** tables + code blocks shipped; **media is the next

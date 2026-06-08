@@ -132,6 +132,27 @@ Item {
         return { r: Math.max(0, r), c: Math.max(0, c), pos: pos }
     }
 
+    // Display width of a cell image (matches the cell delegate's imgW): an explicit
+    // override capped to the column, else the intrinsic width capped to the column.
+    function cellImageDispW(r, c) {
+        var colInner = tv.colW(c) - 2 * cellPadH
+        var iw = blockModel.tableCellMediaW(logicalRow, r, c)
+        var dw = blockModel.tableCellMediaDw(logicalRow, r, c)
+        return dw > 0 ? Math.min(dw, colInner) : Math.min(colInner, iw > 0 ? iw : colInner)
+    }
+    // The cell image's rect in THIS item's coords (accounts for h-scroll) — used by
+    // the editor to place the root-overlay resize handles. Empty if no image.
+    function cellImageRect(r, c) {
+        if (blockModel.tableCellMedia(logicalRow, r, c) === "") return Qt.rect(0, 0, 0, 0)
+        var iw = blockModel.tableCellMediaW(logicalRow, r, c)
+        var ih = blockModel.tableCellMediaH(logicalRow, r, c)
+        var w = cellImageDispW(r, c)
+        var h = (iw > 0 && ih > 0) ? Math.round(w * ih / iw) : 0
+        var x = columnLeftX(c) - hflick.contentX + cellPadH
+        var y = rowTopY(r) + cellPadV
+        return Qt.rect(x, y, w, h)
+    }
+
     // Column-resize geometry (px in this item's coords; accounts for scroll).
     function columnLeftX(c) { var x = 0; for (var i = 0; i < c; ++i) x += tv.colW(i); return x }
     function rowTopY(r) { var y = 0; for (var j = 0; j < r; ++j) { var it = rowRep.itemAt(j); y += it ? it.rowHeight : 24 } return y }
@@ -199,8 +220,13 @@ Item {
                                 ? (blockModel.contentRevision, blockModel.tableCellMediaUrl(tv.logicalRow, gridRow.r, c)) : ""
                             readonly property int cmediaW: cmedia !== "" ? blockModel.tableCellMediaW(tv.logicalRow, gridRow.r, c) : 0
                             readonly property int cmediaH: cmedia !== "" ? blockModel.tableCellMediaH(tv.logicalRow, gridRow.r, c) : 0
+                            readonly property int cmediaDw: cmedia !== "" ? (blockModel.contentRevision,
+                                                            blockModel.tableCellMediaDw(tv.logicalRow, gridRow.r, c)) : 0
+                            // Display width: an explicit per-image override (capped to the
+                            // column), else the intrinsic width capped to the column.
                             readonly property real imgW: cmedia !== ""
-                                ? Math.min(width - 2 * tv.cellPadH, cmediaW > 0 ? cmediaW : width) : 0
+                                ? (cmediaDw > 0 ? Math.min(cmediaDw, width - 2 * tv.cellPadH)
+                                                : Math.min(width - 2 * tv.cellPadH, cmediaW > 0 ? cmediaW : width)) : 0
                             readonly property real imgH: (cmedia !== "" && cmediaW > 0 && cmediaH > 0)
                                 ? Math.round(imgW * cmediaH / cmediaW) : 0
                             readonly property real contentH: cellText.implicitHeight
@@ -247,6 +273,7 @@ Item {
                                 height: a.height > 0 ? a.height : 18
                             }
                             Image {   // inline cell image (above any text)
+                                id: cellImg
                                 visible: cellRect.cmedia !== "" && cellRect.cmediaUrl !== ""
                                 x: tv.cellPadH; y: tv.cellPadV
                                 width: cellRect.imgW; height: cellRect.imgH
@@ -255,6 +282,14 @@ Item {
                                 fillMode: Image.PreserveAspectFit
                                 sourceSize.width: Math.round(cellRect.imgW * Screen.devicePixelRatio)
                                 smooth: true
+                            }
+                            // Selected-state tint over a cell image (it's opaque, like
+                            // a media block — its selection needs its own affordance).
+                            Rectangle {
+                                visible: cellRect.cmedia !== "" && (cellRect.isFocusedCell || cellRect.isSelected)
+                                x: cellImg.x; y: cellImg.y; width: cellImg.width; height: cellImg.height
+                                z: 2
+                                color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.22)
                             }
                             TextEdit {
                                 id: cellText

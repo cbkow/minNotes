@@ -242,6 +242,8 @@ public:
     Q_INVOKABLE QString tableCellMediaUrl(int row, int r, int c) const;  // resolved loadable URL
     Q_INVOKABLE int tableCellMediaW(int row, int r, int c) const;        // intrinsic width
     Q_INVOKABLE int tableCellMediaH(int row, int r, int c) const;        // intrinsic height
+    Q_INVOKABLE int tableCellMediaDw(int row, int r, int c) const;       // display-width override (0 = none)
+    Q_INVOKABLE void tableSetCellImageWidth(int row, int r, int c, int w);  // w<=0 clears the override
     Q_INVOKABLE void tableInsertRow(int row, int at);
     Q_INVOKABLE void tableInsertColumn(int row, int at);
     Q_INVOKABLE void tableDeleteRow(int row, int at);

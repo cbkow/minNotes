@@ -948,6 +948,22 @@ int BlockModel::tableCellMediaH(int row, int r, int c) const {
     if (m.isEmpty()) return 0;
     return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("h")).toInt();
 }
+int BlockModel::tableCellMediaDw(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    const QString m = gridFor(row).cellMedia(r, c);
+    if (m.isEmpty()) return 0;
+    return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("dw")).toInt();
+}
+void BlockModel::tableSetCellImageWidth(int row, int r, int c, int w) {
+    mutateTable(row, [&](TableGrid& g){
+        const QString m = g.cellMedia(r, c);
+        if (m.isEmpty()) return;
+        QJsonObject o = QJsonDocument::fromJson(m.toUtf8()).object();
+        if (w <= 0) o.remove(QStringLiteral("dw"));
+        else        o.insert(QStringLiteral("dw"), std::clamp(w, 40, 4000));
+        g.setCellMedia(r, c, QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    });
+}
 
 void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
 void BlockModel::tableInsertColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.insertCol(at); }); }
