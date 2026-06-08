@@ -12,6 +12,7 @@ import QtQuick.Controls
 Rectangle {
     id: rail
     required property var editor      // the Editor instance to act on
+    property var inspector: null      // the right inspector panel this rail toggles
 
     width: 46
     color: Theme.colors.surface
@@ -21,7 +22,6 @@ Rectangle {
     readonly property int btnWidth: width - 2
 
     // Collapsible-section state (proves the rail-grows-down direction).
-    property bool headingsOpen: true
     property bool blocksOpen: true
 
     // right hairline against the document page
@@ -108,32 +108,47 @@ Rectangle {
             enabled_: !!rail.editor       // acts on the caret block; no selection needed
             onClicked: rail.act(function() { rail.editor.clearFormatting() })
         }
+        // Colours / highlight → toggles the right inspector panel (slides in/out).
+        RailBtn {
+            iconName: "palette"; tooltip: "Colors"
+            enabled_: !!rail.editor
+            checked: !!rail.inspector && rail.inspector.open
+            onClicked: if (rail.inspector) rail.inspector.open = !rail.inspector.open
+        }
 
         RailSep {}
 
-        // ── Headings (collapsible). Act on the caret's block; click active level
-        // to toggle off. ──
-        RailChevron {
-            iconName: rail.headingsOpen ? "caret-down" : "caret-right"
-            tooltip: "Headings"
-            onClicked: rail.headingsOpen = !rail.headingsOpen
-        }
-        Column {
-            width: rail.btnWidth; spacing: 2
-            visible: rail.headingsOpen
-            Repeater {
-                model: 5
-                delegate: FlatButton {
-                    required property int index
-                    readonly property int level: index + 1
-                    width: rail.btnWidth
-                    implicitHeight: Theme.dim.toolStripHeight
-                    iconSize: Theme.icon.sizeToolbar
-                    radius: 0
-                    iconName: ["text-h-one", "text-h-two", "text-h-three", "text-h-four", "text-h-five"][index]
-                    tooltip: "Heading " + level
-                    checked: !!rail.editor && rail.editor.caretType === 1 && rail.editor.caretLevel === level
-                    onClicked: rail.act(function() { rail.editor.setHeading(level) })
+        // ── Headings → a popout menu (H1–H5). Acts on the caret's block; click the
+        // active level to toggle it off. ──
+        RailBtn {
+            id: headingsBtn
+            iconName: "text-h"; tooltip: "Headings"
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.caretType === 1
+            onClicked: headingMenu.visible ? headingMenu.close() : headingMenu.open()
+
+            Popup {
+                id: headingMenu
+                parent: headingsBtn
+                x: headingsBtn.width + 2
+                y: 0
+                padding: 4
+                background: Rectangle { color: Theme.colors.surface; border.width: 1; border.color: Theme.colors.border }
+                contentItem: Column {
+                    spacing: 2
+                    Repeater {
+                        model: 5
+                        delegate: FlatButton {
+                            required property int index
+                            readonly property int level: index + 1
+                            width: rail.btnWidth; implicitHeight: Theme.dim.toolStripHeight
+                            iconSize: Theme.icon.sizeToolbar; radius: 0
+                            iconName: ["text-h-one", "text-h-two", "text-h-three", "text-h-four", "text-h-five"][index]
+                            tooltip: "Heading " + level
+                            checked: !!rail.editor && rail.editor.caretType === 1 && rail.editor.caretLevel === level
+                            onClicked: { rail.act(function() { rail.editor.setHeading(level) }); headingMenu.close() }
+                        }
+                    }
                 }
             }
         }

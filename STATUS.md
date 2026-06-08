@@ -336,6 +336,20 @@ DESIGN.md  SPIKE.md  STATUS.md
       re-evaluated on document/table scroll + layout. Document view only; the
       full-frame tab keeps just the tint.
 
+- [x] **Rail declutter — one thin rail + a sliding inspector** — the permanent
+      right colour rail fought the "min" ethos, so: the right rail is gone, replaced
+      by **`Inspector.qml`** — a collapsible right panel that **slides in/out**
+      (animated width, default **hidden**, so the resting view is just the thin left
+      rail + document; the editor column reflows to make room). It's a real docked
+      panel (not a floating popout) so it has room to grow into a full interface
+      (annotation tools later) without obscuring the document; it stays open while you
+      select text and apply (no click-away dismiss; a header **×** or the rail toggle
+      closes it). Holds the colour tools: Text/Highlight target tabs, the HSV
+      `ColorPickerInline`, an Apply-to-selection button, and revert. The **left rail**
+      gains a **palette** button that toggles the inspector, and its five heading
+      buttons collapse into a single **Headings** button → a **popout menu** (H1–H5,
+      closes on pick). (`RightRail.qml` removed.)
+
 ## Next (rough order)
 
 > **Resuming (2026-06-07):** tables + code blocks shipped; **media is the next

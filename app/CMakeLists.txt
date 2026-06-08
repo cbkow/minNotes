@@ -73,7 +73,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/TableTabs.qml
         qml/MinNotes/App/MediaBlock.qml
         qml/MinNotes/App/FlatSlider.qml
-        qml/MinNotes/App/RightRail.qml
+        qml/MinNotes/App/Inspector.qml
         qml/MinNotes/App/ColorPickerInline.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
