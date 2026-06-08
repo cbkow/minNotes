@@ -584,11 +584,17 @@ FocusScope {
         function backspace() {
             if (pos !== anchorPos) { delSel(); cursor.sync(); return }
             if (pos > 0) { blockModel.tableCellDelete(row, cr, cc, pos - 1, pos); pos--; anchorPos = pos }
+            // At the cell start, Backspace removes the cell's image (it sits above
+            // the text), mirroring backspace-at-block-start.
+            else if (blockModel.tableCellMedia(row, cr, cc) !== "") blockModel.tableClearCellMedia(row, cr, cc)
             cursor.sync()
         }
         function forwardDelete() {
             if (pos !== anchorPos) { delSel(); cursor.sync(); return }
             if (pos < text().length) blockModel.tableCellDelete(row, cr, cc, pos, pos + 1)
+            // Forward-delete in an empty cell also clears its image.
+            else if (text().length === 0 && blockModel.tableCellMedia(row, cr, cc) !== "")
+                blockModel.tableClearCellMedia(row, cr, cc)
             cursor.sync()
         }
         function left(shift) {
