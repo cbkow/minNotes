@@ -2,6 +2,7 @@
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QMimeData>
+#include <QUrl>
 
 Clipboard::Clipboard(QObject* parent) : QObject(parent), clip_(QGuiApplication::clipboard()) {}
 
@@ -20,6 +21,15 @@ bool Clipboard::hasImage() const {
 bool Clipboard::hasHtml() const {
     const QMimeData* m = clip_->mimeData();
     return m && m->hasHtml();
+}
+
+QStringList Clipboard::readUrls() const {
+    QStringList out;
+    const QMimeData* m = clip_->mimeData();
+    if (m && m->hasUrls())
+        for (const QUrl& u : m->urls())
+            if (u.isLocalFile()) out << u.toString();   // copied FILES (Finder/Preview)
+    return out;
 }
 
 void Clipboard::writeText(const QString& text) { clip_->setText(text); }

@@ -971,7 +971,18 @@ FocusScope {
                 if (hc && hc.length === 2) { cursor.setCaret(hc[0], hc[1]); root.ensureVisible(hc[0]); return }
             }
         }
-        // --- Image on the clipboard → media block. ---
+        // --- Copied file(s) (Finder / Preview "Copy") → import as media, exactly
+        // like a drag-drop: image/video/pdf render, anything else → a file chip.
+        // (Preview copies an image as a file URL, not raster bytes — without this
+        // it would fall through to pasting the path as text.) ---
+        var urls = clipboard.readUrls()
+        if (urls.length > 0) {
+            var afterRow = cursor.focusRow, anyU = false
+            for (var i = 0; i < urls.length; ++i)
+                if (blockModel.insertMediaFromUrl(afterRow, urls[i])) { afterRow++; anyU = true }
+            if (anyU) { cursor.setCaret(afterRow, 0); root.ensureVisible(afterRow); return }
+        }
+        // --- Raster image on the clipboard (screenshot, "Copy Image") → media block. ---
         if (clipboard.hasImage()) {
             if (blockModel.insertImageFromClipboard(cursor.focusRow)) {
                 cursor.setCaret(cursor.focusRow + 1, 0); root.ensureVisible(cursor.focusRow)
