@@ -51,6 +51,10 @@ public:
     // recycle (a PdfPageImage tied to a churning PdfDocument blanks on recycle).
     // Static + self-contained (loads a local QPdfDocument on the caller thread).
     static QImage renderPdfPage(const QString& path, int page, int maxW = 0);
+    // Save a decoded image to `.minnotes/<sha>.png` (content-hashed; dedups),
+    // returning a doc-relative src + dims. Used by clipboard paste AND by HTML
+    // paste (a data:/embedded image already decoded by QTextDocument).
+    ImageRef importImage(const QImage& img) const;
     // Read the system clipboard image, save it to `.minnotes/<sha>.png`, return a
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;

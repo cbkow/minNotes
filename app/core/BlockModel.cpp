@@ -17,6 +17,8 @@
 #include <QTextTable>
 #include <QTextFrame>
 #include <QTextCharFormat>
+#include <QImage>
+#include <QPixmap>
 #include <functional>
 #include <algorithm>
 
@@ -1764,40 +1766,65 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     doc.setHtml(html);
 
     struct Spec { uint8_t type = Paragraph; uint8_t level = 0;
-                  QString text; std::vector<Span> spans; QString tableJson; };
+                  QString text; std::vector<Span> spans; QString tableJson; QString mediaJson; };
     std::vector<Spec> specs;
 
-    // A QTextBlock → text spec: heading (by level) / list item / paragraph, with
-    // inline runs mapped to bold/italic/underline/strike/code/link spans.
+    // A QTextBlock → spec(s): heading/list/paragraph text (with inline bold/italic/
+    // underline/strike/code/link spans), PLUS any embedded images as their own
+    // Media specs, interleaved in fragment order (so a figure's image and caption
+    // land as separate blocks in reading order). Image bytes come from the
+    // QTextDocument resource cache (data: URIs decode there); local file:// images
+    // are referenced in place. Remote http(s) images are left for a later pass.
     auto buildText = [&](const QTextBlock& b) {
-        Spec sp;
         const int hl = b.blockFormat().headingLevel();
-        if (hl >= 1 && hl <= 6) { sp.type = Heading; sp.level = static_cast<uint8_t>(hl); }
-        else if (b.textList())  { sp.type = ListItem; }
-        QString text;
+        uint8_t btype = Paragraph, blevel = 0;
+        if (hl >= 1 && hl <= 6) { btype = Heading; blevel = static_cast<uint8_t>(hl); }
+        else if (b.textList())  { btype = ListItem; }
+
+        QString text; std::vector<Span> spans;
+        auto flushText = [&]() {
+            if (!text.trimmed().isEmpty()) {
+                Spec sp; sp.type = btype; sp.level = blevel; sp.text = text; sp.spans = spans;
+                specs.push_back(std::move(sp));
+            }
+            text.clear(); spans.clear();
+        };
+
         for (auto it = b.begin(); !it.atEnd(); ++it) {
             const QTextFragment frag = it.fragment();
             if (!frag.isValid()) continue;
+            const QTextCharFormat cf = frag.charFormat();
+            if (cf.isImageFormat() && mediaStore_) {       // embedded image → Media spec
+                const QString src = cf.toImageFormat().name();
+                const QVariant res = doc.resource(QTextDocument::ImageResource, QUrl(src));
+                MediaStore::ImageRef ref;
+                if (res.canConvert<QImage>())       ref = mediaStore_->importImage(res.value<QImage>());
+                else if (res.canConvert<QPixmap>()) ref = mediaStore_->importImage(res.value<QPixmap>().toImage());
+                else if (!src.startsWith(QLatin1String("http"))) ref = mediaStore_->importFile(src);
+                if (ref.ok()) {
+                    flushText();
+                    Spec sp; sp.type = Media; sp.mediaJson = mediaJson(ref);
+                    specs.push_back(std::move(sp));
+                }
+                continue;
+            }
             QString t = frag.text();
-            t.replace(QChar(0xFFFC), QString());          // drop object-replacement (images)
+            t.replace(QChar(0xFFFC), QString());          // stray object-replacement
             if (t.isEmpty()) continue;
             const int s = text.size();
             text += t;
             const int e = text.size();
-            const QTextCharFormat cf = frag.charFormat();
             if (cf.isAnchor() && !cf.anchorHref().isEmpty()) {
-                sp.spans.push_back({s, e, SpanLink, cf.anchorHref()});
+                spans.push_back({s, e, SpanLink, cf.anchorHref()});
             } else {
-                if (cf.fontWeight() >= QFont::Bold) sp.spans.push_back({s, e, SpanBold});
-                if (cf.fontItalic())                sp.spans.push_back({s, e, SpanItalic});
-                if (cf.fontUnderline())             sp.spans.push_back({s, e, SpanUnderline});
-                if (cf.fontFixedPitch())            sp.spans.push_back({s, e, SpanCode});
+                if (cf.fontWeight() >= QFont::Bold) spans.push_back({s, e, SpanBold});
+                if (cf.fontItalic())                spans.push_back({s, e, SpanItalic});
+                if (cf.fontUnderline())             spans.push_back({s, e, SpanUnderline});
+                if (cf.fontFixedPitch())            spans.push_back({s, e, SpanCode});
             }
-            if (cf.fontStrikeOut())                 sp.spans.push_back({s, e, SpanStrike});
+            if (cf.fontStrikeOut())                 spans.push_back({s, e, SpanStrike});
         }
-        if (text.trimmed().isEmpty()) return;             // skip blank/spacer blocks
-        sp.text = text;
-        specs.push_back(std::move(sp));
+        flushText();
     };
 
     // A QTextTable → Table block spec (cell text joined per cell).
@@ -1842,7 +1869,11 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     // Turn a spec into (Row, content).
     auto specRow = [&](const Spec& sp, Row& r, QString& content) {
         r = Row{};
-        if (sp.type == Table) {
+        if (!sp.mediaJson.isEmpty()) {              // embedded image → Media block
+            r.type = Media;
+            content = sp.mediaJson;
+            fillMediaMeta(r, content);              // dims/aspect-param from the descriptor
+        } else if (sp.type == Table) {
             r.type = Table;
             r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(sp.tableJson).rows()));
             content = sp.tableJson;

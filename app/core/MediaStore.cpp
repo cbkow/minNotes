@@ -119,10 +119,8 @@ MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath) const 
     return { path, sz.width(), sz.height() };   // referenced in place (absolute)
 }
 
-MediaStore::ImageRef MediaStore::importClipboardImage() const {
-    const QImage img = QGuiApplication::clipboard() ? QGuiApplication::clipboard()->image() : QImage();
+MediaStore::ImageRef MediaStore::importImage(const QImage& img) const {
     if (img.isNull()) return {};
-
     // Encode to PNG once, hash the bytes → content-addressed filename (dedup).
     QByteArray png;
     QBuffer buf(&png);
@@ -138,6 +136,11 @@ MediaStore::ImageRef MediaStore::importClipboardImage() const {
         if (f.open(QIODevice::WriteOnly)) { f.write(png); f.close(); }
     }
     return { rel, img.width(), img.height() };
+}
+
+MediaStore::ImageRef MediaStore::importClipboardImage() const {
+    const QImage img = QGuiApplication::clipboard() ? QGuiApplication::clipboard()->image() : QImage();
+    return importImage(img);
 }
 
 static QImage frameToImage(const AVFrame* frame, int maxW) {
