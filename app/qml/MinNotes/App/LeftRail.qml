@@ -60,37 +60,32 @@ Rectangle {
             radius: 0
             iconColor: Theme.colors.textSubtle
         }
-        // A pure, button-sized colour swatch; click applies its colour to the
-        // selection. Colours are chosen in the inspector (the palette button below).
-        component Swatch: Rectangle {
-            id: sw
-            property color swatchColor: "white"
-            property string tip: ""
-            signal activated()
-            width: rail.btnWidth
-            height: Theme.dim.toolStripHeight
-            color: swatchColor
-            Rectangle {   // hairline so white / near-surface swatches read; brightens on hover
-                anchors.fill: parent; color: "transparent"; border.width: 1
-                border.color: sma.containsMouse ? Theme.colors.textBright : Qt.rgba(1, 1, 1, 0.18)
+        // A colour tool: the rail's flat-button chassis with a colour underbar
+        // showing the current text / highlight colour. Click applies it; the
+        // colours themselves are chosen in the inspector (the palette button below).
+        component ColorTool: RailBtn {
+            property color underColor: "transparent"
+            Rectangle {
+                anchors.bottom: parent.bottom; anchors.bottomMargin: 3
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 18; height: 3; radius: 1.5; color: parent.underColor
             }
-            MouseArea { id: sma; anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor; onClicked: sw.activated() }
-            FlatToolTip { text: sw.tip; visible: sw.tip.length > 0 && sma.containsMouse
-                          x: sw.width + 6; y: (sw.height - implicitHeight) / 2 }
         }
 
-        // ── Colours: quick-apply swatches (current text colour + highlight), with
-        // the inspector toggle below them. Pick colours in the inspector; apply here.
-        Swatch {
-            swatchColor: rail.inspector ? rail.inspector.fgColor : Theme.colors.textBright
-            tip: "Apply text color"
-            onActivated: if (rail.editor) rail.act(function() { rail.editor.applyTextColor(rail.inspector.fgColor) })
+        // ── Colours: apply text colour / highlight (current colour shown as an
+        // underbar), with the inspector toggle below them. Pick in the inspector;
+        // apply here.
+        ColorTool {
+            text: "A"; boldLabel: true; tooltip: "Apply text color"
+            enabled_: !!rail.editor
+            underColor: rail.inspector ? rail.inspector.fgColor : Theme.colors.textBright
+            onClicked: if (rail.editor) rail.act(function() { rail.editor.applyTextColor(rail.inspector.fgColor) })
         }
-        Swatch {
-            swatchColor: rail.inspector ? rail.inspector.bgColor : "#7a6a36"
-            tip: "Apply highlight"
-            onActivated: if (rail.editor) rail.act(function() { rail.editor.applyHighlight(rail.inspector.bgColor) })
+        ColorTool {
+            iconName: "highlighter"; tooltip: "Apply highlight"
+            enabled_: !!rail.editor
+            underColor: rail.inspector ? rail.inspector.bgColor : "#7a6a36"
+            onClicked: if (rail.editor) rail.act(function() { rail.editor.applyHighlight(rail.inspector.bgColor) })
         }
         RailBtn {
             iconName: "palette"; tooltip: "Colors"
