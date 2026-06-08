@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Pdf
 
 // Inline render for a Media block. Images show a plain async Image; video shows
 // a real frame thumbnail (the first frame at rest, or the remembered playhead
@@ -25,6 +24,7 @@ Item {
     readonly property bool   isFile: kind === "file"
     readonly property bool   isPdf: kind === "pdf"
     property int  pdfPage: 0          // current page (driven by the editor's nav)
+    readonly property string pdfPath: (active && isPdf) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
     readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
@@ -54,6 +54,12 @@ Item {
         if (path === "") return ""
         var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
         return "image://videoframe/" + b + "@" + frame
+    }
+    // image://pdfpage/<base64url(path)>@<page>  — same scheme, cached per page.
+    function _pdfSrc(path, page) {
+        if (path === "") return ""
+        var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        return "image://pdfpage/" + b + "@" + page
     }
 
     // --- File attachment chip (unsupported file: icon + name + path) ---
@@ -89,7 +95,10 @@ Item {
         }
     }
 
-    // --- PDF branch: render the current page, fit to width (white-backed) ---
+    // --- PDF branch: render the current page (fit width, white-backed) through
+    // the "pdfpage" image provider. The provider URL carries the page, so
+    // cache:true keeps the rendered page across delegate recycle (a PdfPageImage
+    // tied to a churning PdfDocument blanks to white on scroll-away-and-back). ---
     Rectangle {
         visible: mb.isPdf
         anchors.fill: parent
@@ -97,14 +106,13 @@ Item {
         radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         clip: true
-        PdfDocument { id: pdfDoc; source: mb.isPdf ? mb.url : "" }
-        PdfPageImage {
+        Image {
             anchors.fill: parent
-            document: pdfDoc
-            currentFrame: Math.max(0, mb.pdfPage)
+            source: (mb.isPdf && mb.pdfPath !== "") ? mb._pdfSrc(mb.pdfPath, mb.pdfPage) : ""
+            asynchronous: true; cache: true
             fillMode: Image.PreserveAspectFit
-            asynchronous: true
             sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
+            smooth: true
         }
     }
 

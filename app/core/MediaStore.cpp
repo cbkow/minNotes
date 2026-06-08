@@ -41,6 +41,17 @@ bool MediaStore::isPdfPath(const QString& path) {
     return QFileInfo(p).suffix().toLower() == QLatin1String("pdf");
 }
 
+QImage MediaStore::renderPdfPage(const QString& path, int page, int maxW) {
+    QPdfDocument doc;                          // local: load/render/destroy on this (worker) thread
+    if (doc.load(path) != QPdfDocument::Error::None) return {};
+    if (page < 0 || page >= doc.pageCount()) return {};
+    const QSizeF pts = doc.pagePointSize(page);
+    if (pts.width() <= 0 || pts.height() <= 0) return {};
+    const int w = (maxW > 0) ? maxW : int(pts.width() + 0.5);
+    const int h = int(w * pts.height() / pts.width() + 0.5);
+    return doc.render(page, QSize(w, h));
+}
+
 MediaStore::PdfRef MediaStore::importPdfFile(const QString& fileUrlOrPath) const {
     QString path = fileUrlOrPath;
     if (path.startsWith(QLatin1String("file:"))) path = QUrl(path).toLocalFile();

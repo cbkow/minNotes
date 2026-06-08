@@ -4,6 +4,7 @@
 #include "core/BlockModel.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
+#include "core/PdfPageProvider.h"
 
 int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
@@ -17,6 +18,7 @@ int main(int argc, char* argv[]) {
 
     QQmlApplicationEngine engine;
     engine.addImageProvider("videoframe", new VideoFrameProvider);   // inline video posters
+    engine.addImageProvider("pdfpage", new PdfPageProvider);          // inline PDF pages
     engine.rootContext()->setContextProperty("blockModel", &model);
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,

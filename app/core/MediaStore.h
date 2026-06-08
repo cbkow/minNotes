@@ -46,6 +46,11 @@ public:
     // forward to it. `maxW` caps the width (0 = source size). Static: no doc
     // context needed (absolute path in). Returns a null QImage on failure.
     static QImage extractFrame(const QString& path, int frameNo, int maxW = 0);
+    // Render one PDF page to an RGBA image (fit `maxW` wide), for the inline page
+    // poster — served through an image provider so it caches across delegate
+    // recycle (a PdfPageImage tied to a churning PdfDocument blanks on recycle).
+    // Static + self-contained (loads a local QPdfDocument on the caller thread).
+    static QImage renderPdfPage(const QString& path, int page, int maxW = 0);
     // Read the system clipboard image, save it to `.minnotes/<sha>.png`, return a
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;
