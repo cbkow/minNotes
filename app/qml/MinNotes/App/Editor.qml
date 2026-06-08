@@ -546,26 +546,26 @@ FocusScope {
             cursor.sync()
         }
 
+        // Text mutations go through the span-aware model ops so inline formatting
+        // stays glued to its characters (tableCellInsert/Delete shift the spans).
         function delSel() {
             var lo = Math.min(pos, anchorPos), hi = Math.max(pos, anchorPos)
-            var t = text()
-            blockModel.tableSetCell(row, cr, cc, t.slice(0, lo) + t.slice(hi))
+            blockModel.tableCellDelete(row, cr, cc, lo, hi)
             pos = lo; anchorPos = lo
         }
         function type(ch) {
             if (pos !== anchorPos) delSel()
-            var t = text()
-            blockModel.tableSetCell(row, cr, cc, t.slice(0, pos) + ch + t.slice(pos))
+            blockModel.tableCellInsert(row, cr, cc, pos, ch)
             pos += ch.length; anchorPos = pos; cursor.sync()
         }
         function backspace() {
             if (pos !== anchorPos) { delSel(); cursor.sync(); return }
-            if (pos > 0) { var t = text(); blockModel.tableSetCell(row, cr, cc, t.slice(0, pos - 1) + t.slice(pos)); pos--; anchorPos = pos }
+            if (pos > 0) { blockModel.tableCellDelete(row, cr, cc, pos - 1, pos); pos--; anchorPos = pos }
             cursor.sync()
         }
         function forwardDelete() {
             if (pos !== anchorPos) { delSel(); cursor.sync(); return }
-            var t = text(); if (pos < t.length) blockModel.tableSetCell(row, cr, cc, t.slice(0, pos) + t.slice(pos + 1))
+            if (pos < text().length) blockModel.tableCellDelete(row, cr, cc, pos, pos + 1)
             cursor.sync()
         }
         function left(shift) {
@@ -827,6 +827,7 @@ FocusScope {
                                         && blockModel.linkAt(cursor.focusRow, cursor.focusCol) !== "")
 
     function applyFormat(kind) {
+        if (tcur.active) { applyCellFormat(kind); return }   // table: format the cell selection
         // No selection → Word-style toggle: arm the attribute for the next typing.
         if (!cursor.hasSel) { cursor.toggleMark(kind); return }
         var allCovered = true
@@ -836,6 +837,41 @@ FocusScope {
         for (r = cursor.loRow; r <= cursor.hiRow; ++r)
             blockModel.setFormat(r, rowSelStart(r), rowSelEnd(r), kind, !allCovered)
         blockModel.endGroup()
+        cursor.sync()
+    }
+    // Bold/italic/underline/strike inside a table. A multi-cell range formats every
+    // cell whole (one undo step); otherwise toggle the span over the in-cell text
+    // selection (cells have no armed-toggle path, so a caret-only does nothing).
+    function applyCellFormat(kind) {
+        if (tcur.rangeR0 >= 0) {
+            var r0 = Math.min(tcur.rangeR0, tcur.rangeR1), r1 = Math.max(tcur.rangeR0, tcur.rangeR1)
+            var c0 = Math.min(tcur.rangeC0, tcur.rangeC1), c1 = Math.max(tcur.rangeC0, tcur.rangeC1)
+            var allOn = true, rr, cc, len
+            for (rr = r0; rr <= r1 && allOn; ++rr)
+                for (cc = c0; cc <= c1; ++cc) {
+                    len = blockModel.tableCell(tcur.row, rr, cc).length
+                    if (len > 0 && !blockModel.tableCellHasFormat(tcur.row, rr, cc, 0, len, kind)) { allOn = false; break }
+                }
+            blockModel.beginGroup(tcur.row, tcur.row)
+            for (rr = r0; rr <= r1; ++rr)
+                for (cc = c0; cc <= c1; ++cc) {
+                    len = blockModel.tableCell(tcur.row, rr, cc).length
+                    if (len > 0) blockModel.tableSetCellFormat(tcur.row, rr, cc, 0, len, kind, !allOn)
+                }
+            blockModel.endGroup()
+            cursor.sync()
+            return
+        }
+        var lo = Math.min(tcur.pos, tcur.anchorPos), hi = Math.max(tcur.pos, tcur.anchorPos)
+        if (lo === hi) return
+        var on = !blockModel.tableCellHasFormat(tcur.row, tcur.cr, tcur.cc, lo, hi, kind)
+        blockModel.tableSetCellFormat(tcur.row, tcur.cr, tcur.cc, lo, hi, kind, on)
+        cursor.sync()
+    }
+    function clearCellFormatting() {
+        var lo = Math.min(tcur.pos, tcur.anchorPos), hi = Math.max(tcur.pos, tcur.anchorPos)
+        if (lo === hi) { hi = blockModel.tableCell(tcur.row, tcur.cr, tcur.cc).length; lo = 0 }
+        blockModel.tableClearCellFormat(tcur.row, tcur.cr, tcur.cc, lo, hi)
         cursor.sync()
     }
 
@@ -1154,7 +1190,14 @@ FocusScope {
         else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
         // Table mode: route editing/navigation to the cell sub-cursor.
+        // Formatting shortcuts come first (else the generic branch swallows them).
+        else if (inTable && cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
+        else if (inTable && cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
+        else if (inTable && cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
+        else if (inTable && cmd && shift && k === Qt.Key_X) { applyFormat("strike"); event.accepted = true }
+        else if (inTable && cmd && k === Qt.Key_Backslash) { clearCellFormatting(); event.accepted = true }
         else if (inTable) {
+            if (cmd) { event.accepted = true; return }   // swallow other Cmd-combos (don't type the letter)
             if (tcur.rangeR0 >= 0) tcur.clearRange()   // any key collapses a cell-range selection
             if (k === Qt.Key_Right) tcur.right(shift)
             else if (k === Qt.Key_Left) tcur.left(shift)

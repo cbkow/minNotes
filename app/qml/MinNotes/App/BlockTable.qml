@@ -194,6 +194,10 @@ Item {
                                                               blockModel.tableCellBg(tv.logicalRow, gridRow.r, c))
                             readonly property string cellFg: (blockModel.contentRevision,
                                                               blockModel.tableCellFg(tv.logicalRow, gridRow.r, c))
+                            // Inline spans for this cell (rich text); drives the
+                            // per-cell highlighter, which attaches only when non-empty.
+                            readonly property var cspans: (blockModel.contentRevision,
+                                                           blockModel.tableCellSpans(tv.logicalRow, gridRow.r, c))
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
@@ -235,6 +239,20 @@ Item {
                                     return a === 1 ? TextEdit.AlignHCenter
                                          : a === 2 ? TextEdit.AlignRight : TextEdit.AlignLeft
                                 }
+                            }
+                            // Per-cell inline formatting (bold/italic/underline/strike/
+                            // code/link), rendered the same way blocks are. Attaches to
+                            // the cell document ONLY when there are spans, so plain cells
+                            // carry no idle highlighter.
+                            InlineMarkdownHighlighter {
+                                document: cellRect.cspans.length > 0 ? cellText.textDocument : null
+                                enabled: cellRect.cspans.length > 0
+                                markerColor: Theme.colors.accent
+                                selectedMarkerColor: Theme.colors.textBright
+                                codeColor: Theme.colors.inlineCodeText
+                                linkColor: Theme.colors.accent
+                                codeFontFamily: Theme.font.mono
+                                spans: cellRect.cspans
                             }
                             // in-cell caret (focused cell, no selection)
                             Rectangle {

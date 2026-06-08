@@ -223,6 +223,15 @@ public:
     Q_INVOKABLE void tableSetColColor(int row, int c, bool fg, const QString& color);
     Q_INVOKABLE QString tableCellBg(int row, int r, int c) const;
     Q_INVOKABLE QString tableCellFg(int row, int r, int c) const;
+    // Rich text inside a cell — inline spans, mirroring the block-level span API.
+    // tableCellSpans returns [{s,e,k,u?}] for the highlighter; the format ops add/
+    // remove a span over a char range; insert/delete keep spans aligned with text.
+    Q_INVOKABLE QVariantList tableCellSpans(int row, int r, int c) const;
+    Q_INVOKABLE bool tableCellHasFormat(int row, int r, int c, int start, int end, const QString& kind) const;
+    Q_INVOKABLE void tableSetCellFormat(int row, int r, int c, int start, int end, const QString& kind, bool on);
+    Q_INVOKABLE void tableClearCellFormat(int row, int r, int c, int start, int end);
+    Q_INVOKABLE void tableCellInsert(int row, int r, int c, int at, const QString& text);
+    Q_INVOKABLE void tableCellDelete(int row, int r, int c, int from, int to);
     Q_INVOKABLE void tableInsertRow(int row, int at);
     Q_INVOKABLE void tableInsertColumn(int row, int at);
     Q_INVOKABLE void tableDeleteRow(int row, int at);
@@ -341,6 +350,10 @@ private:
     static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     static void shiftSpansInsert(std::vector<Span>& v, int at, int len);
     static void shiftSpansDelete(std::vector<Span>& v, int from, int to);
+    // Table cells store spans as a JSON array ({s,e,k,u?}); convert to/from the
+    // Span vector so the static span helpers above can be reused for cell editing.
+    static std::vector<Span> cellSpansFromJson(const QJsonArray& a);
+    static QJsonArray cellSpansToJson(const std::vector<Span>& v);
     // Parse inline markdown in `src` into clean text + spans (markers removed),
     // merging `existing` spans remapped to the clean coords. Returns false (and
     // leaves outputs untouched) if there were no markers to consume.

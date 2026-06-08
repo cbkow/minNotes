@@ -784,6 +784,115 @@ QString BlockModel::tableCellFg(int row, int r, int c) const {
     if (v.isEmpty()) v = g.colFg(c);
     return v;
 }
+// --- cell inline spans (rich text inside table cells) ----------------------
+// Cells persist spans as a JSON array of {s,e,k,u?}; these converters bridge to
+// the Span vector so the block-level span helpers (addSpan/removeSpan/shift…)
+// drive cell editing too.
+std::vector<BlockModel::Span> BlockModel::cellSpansFromJson(const QJsonArray& a) {
+    std::vector<Span> v; v.reserve(a.size());
+    for (const QJsonValue& it : a) {
+        const QJsonObject o = it.toObject();
+        v.push_back({o.value(QStringLiteral("s")).toInt(), o.value(QStringLiteral("e")).toInt(),
+                     static_cast<uint8_t>(o.value(QStringLiteral("k")).toInt()),
+                     o.value(QStringLiteral("u")).toString()});
+    }
+    return v;
+}
+QJsonArray BlockModel::cellSpansToJson(const std::vector<Span>& v) {
+    QJsonArray a;
+    for (const Span& sp : v) {
+        QJsonObject o;
+        o.insert(QStringLiteral("s"), sp.s);
+        o.insert(QStringLiteral("e"), sp.e);
+        o.insert(QStringLiteral("k"), int(sp.kind));
+        if (spanHasPayload(sp.kind) && !sp.href.isEmpty()) o.insert(QStringLiteral("u"), sp.href);
+        a.append(o);
+    }
+    return a;
+}
+
+QVariantList BlockModel::tableCellSpans(int row, int r, int c) const {
+    QVariantList out;
+    if (rows_[clampRow(row)].type != Table) return out;
+    const QJsonArray a = gridFor(row).cellSpans(r, c);
+    for (const QJsonValue& it : a) {
+        const QJsonObject o = it.toObject();
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), o.value(QStringLiteral("s")).toInt());
+        m.insert(QStringLiteral("e"), o.value(QStringLiteral("e")).toInt());
+        m.insert(QStringLiteral("k"), o.value(QStringLiteral("k")).toInt());
+        if (o.contains(QStringLiteral("u"))) m.insert(QStringLiteral("u"), o.value(QStringLiteral("u")).toString());
+        out.append(m);
+    }
+    return out;
+}
+
+bool BlockModel::tableCellHasFormat(int row, int r, int c, int start, int end, const QString& kind) const {
+    if (rows_[clampRow(row)].type != Table) return false;
+    const uint8_t k = spanKindFromString(kind);
+    if (!k) return false;
+    const TableGrid& g = gridFor(row);
+    const int len = g.cellText(r, c).size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end) return false;
+    return spansCover(cellSpansFromJson(g.cellSpans(r, c)), start, end, k);
+}
+
+void BlockModel::tableSetCellFormat(int row, int r, int c, int start, int end, const QString& kind, bool on) {
+    const uint8_t k = spanKindFromString(kind);
+    if (!k) return;
+    mutateTable(row, [&](TableGrid& g){
+        const int len = g.cellText(r, c).size();
+        const int s = std::clamp(start, 0, len), e = std::clamp(end, 0, len);
+        if (s >= e) return;
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        if (on) addSpan(v, s, e, k); else removeSpan(v, s, e, k);
+        g.setCellSpans(r, c, cellSpansToJson(v));
+    });
+}
+
+void BlockModel::tableClearCellFormat(int row, int r, int c, int start, int end) {
+    mutateTable(row, [&](TableGrid& g){
+        const int len = g.cellText(r, c).size();
+        const int s = std::clamp(start, 0, len), e = std::clamp(end, 0, len);
+        if (s >= e) return;
+        std::vector<Span> kept;                       // drop any span overlapping [s,e)
+        for (const Span& sp : cellSpansFromJson(g.cellSpans(r, c))) {
+            if (sp.e <= s || sp.s >= e) { kept.push_back(sp); continue; }
+            if (sp.s < s) kept.push_back({sp.s, s, sp.kind, sp.href});
+            if (sp.e > e) kept.push_back({e, sp.e, sp.kind, sp.href});
+        }
+        g.setCellSpans(r, c, cellSpansToJson(kept));
+    });
+}
+
+// Span-aware cell text edits: insert/delete text AND shift the cell's spans, so
+// formatting stays glued to its characters as the user types (mirrors insertText/
+// deleteRange for blocks). Coalesced per cell like tableSetCell.
+void BlockModel::tableCellInsert(int row, int r, int c, int at, const QString& text) {
+    if (text.isEmpty()) return;
+    mutateTable(row, [&](TableGrid& g){
+        QString t = g.cellText(r, c);
+        const int p = std::clamp(at, 0, int(t.size()));
+        g.setCellText(r, c, t.left(p) + text + t.mid(p));
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        shiftSpansInsert(v, p, text.size());
+        g.setCellSpans(r, c, cellSpansToJson(v));
+    }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
+}
+
+void BlockModel::tableCellDelete(int row, int r, int c, int from, int to) {
+    mutateTable(row, [&](TableGrid& g){
+        QString t = g.cellText(r, c);
+        const int f = std::clamp(from, 0, int(t.size())), e = std::clamp(to, 0, int(t.size()));
+        if (f >= e) return;
+        g.setCellText(r, c, t.left(f) + t.mid(e));
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        shiftSpansDelete(v, f, e);
+        g.setCellSpans(r, c, cellSpansToJson(v));
+    }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
+}
+
 void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
 void BlockModel::tableInsertColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.insertCol(at); }); }
 void BlockModel::tableDeleteRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.deleteRow(at); }); }

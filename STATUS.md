@@ -288,8 +288,22 @@ DESIGN.md  SPIKE.md  STATUS.md
       `tableSetRowColor`/`tableSetColColor`, and `tableCellBg/Fg` **cascade** readers
       (cell → row → column). When a table tab is active the right rail's colour tools
       route to the focused cell / selected cell-range instead of inline text;
-      `BlockTable.qml` renders the cascade (selection/header still win). **Next:
-      TC-2** rich text in cells (spans), then **TC-3** images in cells.
+      `BlockTable.qml` renders the cascade (selection/header still win).
+
+- [x] **Tables — rich text in cells (TC-2)** — inline spans inside cells, mirroring
+      the block-level span API. `BlockModel` cell seam (all via `mutateTable`, so undo
+      is free): `tableCellSpans` (read `{s,e,k,u?}`), `tableCellHasFormat` /
+      `tableSetCellFormat` / `tableClearCellFormat`, and **span-aware**
+      `tableCellInsert` / `tableCellDelete` (text edits shift the cell's spans so
+      formatting stays glued to its characters) — reusing the static
+      `addSpan`/`removeSpan`/`shiftSpans*`/`spansCover` helpers via JSON↔Span
+      converters. `tcur`'s type/backspace/delete now route through the span-aware ops;
+      Cmd-B/I/U/Shift-X (and the LeftRail format buttons) are intercepted in the table
+      key branch → `applyCellFormat` (toggles the span over the in-cell selection, or
+      every cell whole for a multi-cell range, one undo step); Cmd-\ clears cell
+      formatting. **Render**: a per-cell `InlineMarkdownHighlighter` that attaches ONLY
+      when the cell has spans (no idle highlighter on plain cells). **Next: TC-3**
+      images in cells. (Lists inside cells deferred — block-level construct.)
 
 ## Next (rough order)
 
