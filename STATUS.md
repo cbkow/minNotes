@@ -354,6 +354,16 @@ DESIGN.md  SPIKE.md  STATUS.md
 
 ## Next (rough order)
 
+> **Bespoke data types — a minNotes markdown variant (next-session target):** see
+> `PLAN-data-types.md`. Core unification: **checkbox == dropdown == a self-contained
+> "choice value"** `{options, selected}` (checkbox = the 2-option case); three homes —
+> inline (a payload span, reusing `SpanLink`-style machinery), list item, table cell;
+> **column types are just the shared-options optimization.** Block **task lists**
+> (`- [ ]`) are the markdown-native gap (a `ListItem` + `checked` attr + autoformat —
+> flagged missing from DESIGN). Plus near-term-easy **row/column reorder handles**.
+> Coarse milestones DT-1 (task lists) → DT-2 (inline choice span) → DT-3 (table choice
+> columns) → DT-4 (reorder).
+
 > **Full-document annotations (ratified design, not started):** see
 > `PLAN-document-annotations.md`. Two layers — living-doc **comments** (a `SpanComment`
 > span kind, reflows for free) + a **free-ink canvas** in page-center-origin content
