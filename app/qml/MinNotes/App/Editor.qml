@@ -1969,6 +1969,11 @@ FocusScope {
             rangeR0: tcur.rangeR0; rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
             resizeCol: (root.tableResizing && root.resizeRow === root.activeTableRow) ? root.resizeColIdx : -1
             resizeW: root.resizeW
+            // Context-menu row/column target highlight (same as the doc view).
+            hiScope: (root.menuRow === root.activeTableRow
+                      && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
+            hiIndex: root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
+            hiDanger: root.menuHiDanger
         }
 
         // Full-frame mouse handling — this view is a dedicated mode (no document
@@ -1978,9 +1983,22 @@ FocusScope {
             id: frameMA
             anchors.fill: frameTable
             hoverEnabled: true; preventStealing: true
-            acceptedButtons: Qt.LeftButton
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor : Qt.IBeamCursor
-            onPressed: (m) => { root.forceActiveFocus(); root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y) }
+            onPressed: (m) => {
+                root.forceActiveFocus()
+                // Right-click → the same table context menu as the document view
+                // (capture the cell for the row/column ops; coords mapped to root).
+                if (m.button === Qt.RightButton) {
+                    var hit = frameTable.cellAtPoint(m.x, m.y)
+                    root.menuCellR = hit.r; root.menuCellC = hit.c
+                    root.menuLinkUrl = ""
+                    var p = frameMA.mapToItem(root, m.x, m.y)
+                    root.openBlockMenu(p.x, p.y, root.activeTableRow)
+                    return
+                }
+                root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y)
+            }
             onPositionChanged: (m) => {
                 if (root.tableResizing || root.tableDragging) { root.updateTableInteraction(frameTable, m.x, m.y); return }
                 root.tableOverBorder = frameTable.columnBorderAt(m.x) >= 0
@@ -2754,8 +2772,8 @@ FocusScope {
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: blockMenu.isTable; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-            MenuRow { visible: blockMenu.isPdf; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+            MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+            MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row above";  onActivated: root.tblInsRowAbove() }
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row below";  onActivated: root.tblInsRowBelow() }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column left";  onActivated: root.tblInsColLeft() }
