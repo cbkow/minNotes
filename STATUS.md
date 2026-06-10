@@ -2,7 +2,7 @@
 
 > Living tracker of what's built vs planned. Design rationale lives in
 > `DESIGN.md`; the virtualization/architecture validation in `SPIKE.md`.
-> Last updated: 2026-06-06.
+> Last updated: 2026-06-10.
 
 ## Stack (decided)
 - **Pure C++/Qt6** (Qt 6.11) + QML. **No Rust / cxx-qt** — the spike proved the
@@ -352,17 +352,45 @@ DESIGN.md  SPIKE.md  STATUS.md
       heading buttons also collapse into a single **Headings** button → a **popout
       menu** (H1–H5, closes on pick). (`RightRail.qml` removed.)
 
+- [x] **Task lists — tri-state `- [ ]` blocks (DT-1)** — `TaskListItem` (type 8):
+      todo/doing/done cycled by clicking the checkbox glyph; autoformat `- [ ] `/
+      `- [/] `/`- [x] ` (+ promotion from an already-fired `- ` list item); state in
+      attrs, rides the region-snapshot undo; done renders muted + struck through;
+      GFM task markers round-trip through HTML paste; rail Task-list toggle.
+- [x] **Tables — choice + checkmark columns (DT-3)** — typed columns: **choice**
+      (dropdown chip per body cell; shared ordered option set, stable ids, per-option
+      colours; `ChoicePicker` popup + `ChoiceColumnEditor` modal — draft commits as
+      ONE undo step preserving ids) and **checkmark** (tri-state task checkbox per
+      cell). Cells store only the selected option id; export flattens to the label.
+      Auto-width measures option chips; header rows stay text (the column name) in
+      every kind; pointing-hand cursor over chips/checkboxes; full-frame tab menu
+      hides block-structural ops (`inFrameTab`).
+- [x] **Tables — row/column reorder (DT-4)** — `TableGrid::moveRow/moveCol`
+      (post-removal-index splices, all per-row/col metadata rides along) via
+      `mutateTable` (undoable). Context menu Move row up/down / Move column
+      left/right (both views); full-frame tab **drag grips** (strips above columns /
+      left of body rows, hiScope source tint + accent insertion line).
+- [x] **Tables — sort, duplicate, fill** — one-shot column **sort** (asc/desc; body
+      rows only, stable; choice → option order, check → state, numeric text compares
+      numerically); **Duplicate row/column**; **⌘D/⌘R fill** the selected range from
+      its top row / left column (no range → copy the neighbour above/left).
+- [x] **Tables — kanban board view** — `BlockKanban.qml`, a second full-frame
+      projection of the same table block: lanes = a choice column's options (+ "No
+      status") or fixed To do/Doing/Done for a check column; cards = body rows
+      (title = first text column). Card drag across lanes sets the grouping cell;
+      dropping between cards also `moveRow`s the underlying row — one undo step
+      (`beginGroup`/`endGroup`). Entry: "View as board" on a typed column's menu or
+      the floating Table/Board toggle on the active tab; Esc → grid. View state only
+      (not persisted, not undoable); board mode swallows table typing.
+
 ## Next (rough order)
 
-> **Bespoke data types — a minNotes markdown variant (next-session target):** see
-> `PLAN-data-types.md`. Core unification: **checkbox == dropdown == a self-contained
-> "choice value"** `{options, selected}` (checkbox = the 2-option case); three homes —
-> inline (a payload span, reusing `SpanLink`-style machinery), list item, table cell;
-> **column types are just the shared-options optimization.** Block **task lists**
-> (`- [ ]`) are the markdown-native gap (a `ListItem` + `checked` attr + autoformat —
-> flagged missing from DESIGN). Plus near-term-easy **row/column reorder handles**.
-> Coarse milestones DT-1 (task lists) → DT-2 (inline choice span) → DT-3 (table choice
-> columns) → DT-4 (reorder).
+> **Bespoke data types — remaining piece:** see `PLAN-data-types.md`. DT-1 (task
+> lists), DT-3 (table choice/check columns), and DT-4 (reorder) shipped 2026-06-10
+> (+ sort/duplicate/fill ergonomics and the kanban board view). **Next: DT-2 — the
+> inline choice payload-span** (`{options, selected}` as a span kind reusing the
+> link/colour payload-span machinery; DT-1/DT-3 already share its data shape).
+> Before its popup, re-read the QML popup gotchas in the data-types design note.
 
 > **Full-document annotations (ratified design, not started):** see
 > `PLAN-document-annotations.md`. Two layers — living-doc **comments** (a `SpanComment`
@@ -416,8 +444,9 @@ DESIGN.md  SPIKE.md  STATUS.md
       `file_name_here`), `\*` escape, nesting (`***x***`), links.
 - [ ] **Export to markdown** — the rule table *reverse* (copy-as-md / file export);
       the "one rule table drives autoformat + export" payoff.
-- [ ] **Housekeeping:** ~24 commits on `main` unpushed (`git fetch` then push);
-      lazy windowed content fetch; per-document open/new-file flow; FTS5 search.
+- [ ] **Housekeeping:** the table/data-types arc (5 commits, 2026-06-10) is
+      unpushed — earlier history was confirmed pushed; lazy windowed content
+      fetch; per-document open/new-file flow; FTS5 search.
 - [ ] **Lazy windowed content fetch** — true two-tier read (loads all content
       eagerly today).
 - [ ] **Document management** — new / open file (one fixed `scratch.mndb` now).
