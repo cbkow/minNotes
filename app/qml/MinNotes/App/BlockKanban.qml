@@ -101,6 +101,7 @@ Item {
             }
             var ch = imgH + cardPad + titleH + fields.length * fieldH + cardPad
             lane.cards.push({r: r, h: ch, imgUrl: imgUrl, imgH: imgH, fields: fields,
+                             bar: blockModel.tableRowBg(row, r),   // row colour → card edge bar
                              title: title.length > 0 ? title.split("\n")[0]
                                                      : "Row " + (r - hdr + 1)})
         }
@@ -296,6 +297,12 @@ Item {
                                 sourceSize.width: Math.round(kb.laneW * Screen.devicePixelRatio)
                                 smooth: true
                             }
+                            Rectangle {   // row colour → a slim left edge bar
+                                visible: card.modelData.bar !== ""
+                                x: 0; y: 0; width: 3; height: parent.height
+                                color: card.modelData.bar !== "" ? card.modelData.bar : "transparent"
+                                z: 3
+                            }
                             Column {
                                 x: 10; y: card.modelData.imgH + kb.cardPad
                                 width: parent.width - 20
@@ -316,12 +323,25 @@ Item {
                                         id: fieldRow
                                         required property var modelData
                                         width: parent.width; height: kb.fieldH
-                                        Rectangle {   // choice: option colour dot
+                                        Rectangle {   // choice: a squared chip, like the grid's
                                             visible: fieldRow.modelData.kind === 1
-                                            width: 8; height: 8; radius: 4
+                                            height: 14
+                                            width: Math.min(parent.width, chipText.implicitWidth + 12)
                                             anchors.verticalCenter: parent.verticalCenter
-                                            color: fieldRow.modelData.color !== ""
-                                                   ? fieldRow.modelData.color : Theme.colors.textMuted
+                                            readonly property color _oc: fieldRow.modelData.color !== ""
+                                                ? Qt.color(fieldRow.modelData.color) : Theme.colors.textMuted
+                                            color: Qt.rgba(_oc.r, _oc.g, _oc.b, 0.28)
+                                            border.width: 1
+                                            border.color: Qt.rgba(_oc.r, _oc.g, _oc.b, 0.55)
+                                            Text {
+                                                id: chipText
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                x: 6; width: Math.min(implicitWidth, parent.width - 12)
+                                                elide: Text.ElideRight
+                                                text: fieldRow.modelData.text
+                                                color: Theme.colors.text
+                                                font.family: Theme.font.family; font.pixelSize: 11
+                                            }
                                         }
                                         Item {   // check: mini tri-state glyph
                                             visible: fieldRow.modelData.kind === 2
@@ -347,13 +367,13 @@ Item {
                                             }
                                         }
                                         Text {
+                                            visible: fieldRow.modelData.kind !== 1   // choice text lives in its chip
                                             x: fieldRow.modelData.kind !== 0 ? 14 : 0
                                             width: parent.width - x
                                             anchors.verticalCenter: parent.verticalCenter
                                             elide: Text.ElideRight
                                             text: fieldRow.modelData.text
-                                            color: fieldRow.modelData.kind === 1
-                                                   ? Theme.colors.text : Theme.colors.textMuted
+                                            color: Theme.colors.textMuted
                                             font.family: Theme.font.family; font.pixelSize: 12
                                         }
                                     }

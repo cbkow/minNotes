@@ -288,6 +288,7 @@ public:
     Q_INVOKABLE int  tableCellCheck(int row, int r, int c) const;            // check column: 0/1/2
     Q_INVOKABLE void tableCycleCellCheck(int row, int r, int c);             // cycle todo→doing→done
     Q_INVOKABLE void tableSetCellCheck(int row, int r, int c, int state);    // set 0/1/2 (kanban drop)
+    Q_INVOKABLE QString tableRowBg(int row, int r) const;                    // row-level colour ("" = none; kanban card bar)
     // Paste TSV (tab/newline) into the table at anchor (r,c), growing as needed.
     Q_INVOKABLE void tablePasteTSV(int row, int r, int c, const QString& tsv);
     // Serialize an inclusive cell range for the clipboard (TSV + HTML <table>).

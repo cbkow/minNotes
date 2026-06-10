@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Pdf
+import QtCore
 
 // Arm C — the "better surface" prototype. Blocks are PASSIVE (read-only) text;
 // they never take focus and never own a cursor or selection. A single central
@@ -51,20 +52,49 @@ FocusScope {
     // active state across both table and PDF tabs.
     readonly property string activeFrameId: activeTableId !== "" ? activeTableId : activePdfId
     function setActiveTab(id) {
-        boardMode = false; boardCol = -1     // a tab switch always lands on the grid
+        boardMode = false; boardCol = -1
         if (id === "") { activeTableId = ""; activePdfId = ""; return }
         var r = blockModel.rowForId(id)
-        if (blockModel.typeForRow(r) === 7) { activePdfId = ""; activeTableId = id }
+        if (blockModel.typeForRow(r) === 7) {
+            activePdfId = ""; activeTableId = id
+            var pc = boardPref(id)               // this table's remembered view
+            if (pc >= 0) { boardCol = pc; boardMode = true }
+        }
         else { activeTableId = ""; activePdfId = id }
+    }
+    // Per-table board-view memory (app-level Settings, keyed by block id —
+    // VIEW state, so it stays out of the document and out of undo).
+    Settings {
+        id: boardPrefs
+        category: "boards"
+        property string map: "{}"
+    }
+    function boardPref(id) {
+        try { var m = JSON.parse(boardPrefs.map); return m[id] === undefined ? -1 : m[id] } catch (e) { return -1 }
+    }
+    function saveBoardPref(id, col) {
+        if (id === "") return
+        var m = {}
+        try { m = JSON.parse(boardPrefs.map) } catch (e) {}
+        if (col >= 0) m[id] = col; else delete m[id]
+        boardPrefs.map = JSON.stringify(m)
+    }
+    // Explicitly leaving the board (toolbar / Esc / opening a card / the column
+    // reverting) remembers "grid" for this table; plain tab switches don't.
+    function showGridView() {
+        boardMode = false
+        saveBoardPref(activeTableId, -1)
     }
     // Kanban board: the active table tab rendered as a board grouped by a
     // choice/check column. View state only (not persisted, not undoable).
     property bool boardMode: false
     property int  boardCol: -1
     function openBoard(row, c) {
-        setActiveTab(blockModel.idForRow(row))
+        var id = blockModel.idForRow(row)
+        setActiveTab(id)
         boardCol = c
         boardMode = true
+        saveBoardPref(id, c)
     }
     // The first choice/check column of the active table (−1 none) — the default
     // grouping for the grid view's "Board view" toggle.
@@ -1358,7 +1388,7 @@ FocusScope {
             // cell selection, else step the caret out below the table.
             if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
-            else if (root.boardMode && root.activeTableRow >= 0) { root.boardMode = false }   // board → grid
+            else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
             else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
             else if (cursor.activeMarks !== 0) { cursor.clearMarks() }
@@ -2596,10 +2626,10 @@ FocusScope {
             active: boardFrame.visible
             logicalRow: root.activeTableRow
             groupCol: root.boardCol
-            onShowGrid: root.boardMode = false   // grouping column vanished → grid
+            onShowGrid: root.showGridView()      // grouping column vanished → grid
             onEditClosed: root.forceActiveFocus()
             onOpenCard: (r, c) => {              // double-click → grid, cell focused
-                root.boardMode = false
+                root.showGridView()
                 tcur.place(r, c, 0)
                 root.forceActiveFocus()
             }
@@ -2710,7 +2740,7 @@ FocusScope {
                 labelSize: 13
                 labelColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
                 iconColor: labelColor
-                onClicked: { root.boardMode = false; root.forceActiveFocus() }
+                onClicked: { root.showGridView(); root.forceActiveFocus() }
             }
             FlatButton {
                 iconName: "kanban"; text: "Board"

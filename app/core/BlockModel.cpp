@@ -1095,6 +1095,10 @@ void BlockModel::tableCycleCellCheck(int row, int r, int c) {
 void BlockModel::tableSetCellCheck(int row, int r, int c, int state) {
     mutateTable(row, [&](TableGrid& g){ g.setCellCheck(r, c, state); });
 }
+QString BlockModel::tableRowBg(int row, int r) const {
+    if (rows_[clampRow(row)].type != Table) return QString();
+    return gridFor(row).rowBg(r);
+}
 
 void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
     const TableGrid src = TableGrid::fromTSV(tsv);
