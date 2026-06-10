@@ -3,6 +3,7 @@
 #include <QClipboard>
 #include <QMimeData>
 #include <QUrl>
+#include <QImage>
 
 Clipboard::Clipboard(QObject* parent) : QObject(parent), clip_(QGuiApplication::clipboard()) {}
 
@@ -39,4 +40,14 @@ void Clipboard::writeTable(const QString& tsv, const QString& html) {
     m->setText(tsv);
     if (!html.isEmpty()) m->setHtml(html);
     clip_->setMimeData(m);
+}
+
+bool Clipboard::writeImageFromFile(const QString& fileUrl) {
+    QString path = fileUrl;
+    if (path.startsWith(QLatin1String("file:"))) path = QUrl(fileUrl).toLocalFile();
+    if (path.isEmpty()) return false;
+    QImage img(path);
+    if (img.isNull()) return false;
+    clip_->setImage(img);
+    return true;
 }

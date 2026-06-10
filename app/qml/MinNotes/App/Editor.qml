@@ -1174,9 +1174,21 @@ FocusScope {
                                      blockModel.tableRangeHtml(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1))
             } else {
                 var t = blockModel.tableCell(fr, tcur.cr, tcur.cc)
+                // No text to copy but the cell holds an image → copy the image.
+                if (tcur.pos === tcur.anchorPos && t.length === 0
+                    && blockModel.tableCellMedia(fr, tcur.cr, tcur.cc) !== "") {
+                    clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(fr, tcur.cr, tcur.cc))
+                    return
+                }
                 clipboard.writeText(tcur.pos !== tcur.anchorPos
                     ? t.slice(Math.min(tcur.pos, tcur.anchorPos), Math.max(tcur.pos, tcur.anchorPos)) : t)
             }
+            return
+        }
+        // Caret parked on an image block with nothing selected → copy the image.
+        if (!cursor.hasSel && blockModel.typeForRow(cursor.focusRow) === 3
+            && blockModel.mediaKind(cursor.focusRow) === "image") {
+            clipboard.writeImageFromFile(blockModel.mediaUrl(cursor.focusRow))
             return
         }
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
@@ -3334,6 +3346,10 @@ FocusScope {
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia
+                                   && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
+                          text: "Copy image"
+                          onActivated: clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow)) }
+                MenuRow { visible: blockMenu.isMedia
                           text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                           onActivated: blockModel.revealMedia(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
@@ -3348,6 +3364,8 @@ FocusScope {
                 MenuSub { visible: blockMenu.isTable; subId: "ctype";  scope: "column"; text: "Column type" }
                 MenuRow { visible: blockMenu.isTable; text: blockMenu.tHdr > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
                 Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: root.menuCellHasImage; text: "Copy image"
+                          onActivated: clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC)) }
                 MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
                 // --- code (non-table) ---
                 Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }

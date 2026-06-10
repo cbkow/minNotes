@@ -26,6 +26,11 @@ public:
     // Publish both representations at once so a copied cell range pastes as a
     // table into spreadsheets/docs and as TSV into plain-text targets.
     Q_INVOKABLE void writeTable(const QString& tsv, const QString& html);
+    // Copy an image (a media block's / cell's resolved file URL) as a raster.
+    // Pastes anywhere; an IN-APP paste re-imports through MediaStore's content
+    // hash, so sidecar-stored images dedupe back to the same file. Returns
+    // false if the file can't be loaded as an image.
+    Q_INVOKABLE bool writeImageFromFile(const QString& fileUrl);
 
 private:
     QClipboard* clip_ = nullptr;
