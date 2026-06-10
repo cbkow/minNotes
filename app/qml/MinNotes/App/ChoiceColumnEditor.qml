@@ -38,7 +38,7 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
     background: Rectangle {
-        color: Theme.colors.surface; radius: 6
+        color: Theme.colors.surface; radius: 0   // squared, family style
         border.width: 1; border.color: Theme.colors.border
     }
 

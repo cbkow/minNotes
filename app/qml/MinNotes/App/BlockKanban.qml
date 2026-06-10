@@ -143,7 +143,7 @@ Item {
 
                 Rectangle {   // lane backdrop (lit while a card is dragged over it)
                     anchors.fill: parent
-                    radius: 8
+                    radius: 0   // squared — family style has no rounded corners
                     color: (kb.dragRow >= 0 && kb.dropLane === laneItem.index)
                            ? Theme.colors.surfaceHover : "transparent"
                     border.width: 1
@@ -185,7 +185,7 @@ Item {
                             required property var modelData
                             width: parent.width
                             height: kb.cardH
-                            radius: 6
+                            radius: 0
                             color: Theme.colors.surfaceHover
                             border.width: 1; border.color: Theme.colors.border
                             opacity: kb.dragRow === card.modelData.r ? 0.35 : 1
@@ -226,7 +226,7 @@ Item {
                 }
                 Rectangle {   // insertion line at the drop gap
                     visible: kb.dragRow >= 0 && kb.dropLane === laneItem.index
-                    x: 8; width: parent.width - 16; height: 3; radius: 1
+                    x: 8; width: parent.width - 16; height: 3; radius: 0
                     y: kb.headerH + kb.dropIdx * (kb.cardH + kb.cardGap) - kb.cardGap / 2 - 1
                     color: Theme.colors.accent
                     z: 5
@@ -239,7 +239,7 @@ Item {
         visible: kb.dragRow >= 0
         x: kb.dragX + 10; y: kb.dragY + 8
         width: kb.laneW - 16; height: kb.cardH
-        radius: 6; z: 100
+        radius: 0; z: 100
         color: Theme.colors.surfaceHover
         border.width: 1; border.color: Theme.colors.accent
         opacity: 0.92

@@ -48,6 +48,12 @@ Rectangle {
     /// just the glyph (e.g. an accent-blue caret on a transparent
     /// "default" button).
     property color iconColor: "transparent"
+    /// Optional label overrides (size + color). 0 / transparent = the
+    /// defaults (sizeBody, the variant foreground). Used where a strip
+    /// matches another bar's type, e.g. the table-tab toolbar mirroring
+    /// the bottom tab strip's 13px muted/bright scheme.
+    property int labelSize: 0
+    property color labelColor: "transparent"
 
     signal clicked()
     /// Emitted on mouse-down / mouse-up. Use for press-and-hold actions
@@ -102,8 +108,8 @@ Rectangle {
         Label {
             visible: root.text.length > 0
             text: root.text
-            color: root._fg
-            font.pixelSize: Theme.font.sizeBody
+            color: root.labelColor.a > 0 ? root.labelColor : root._fg
+            font.pixelSize: root.labelSize > 0 ? root.labelSize : Theme.font.sizeBody
             font.family: Theme.font.family
             font.bold: root.boldLabel
             font.italic: root.italicLabel

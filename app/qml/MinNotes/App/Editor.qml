@@ -2283,7 +2283,7 @@ FocusScope {
                 x: Math.max(0, frameTable.columnLeftX(colGripMA.gcol) - frameTable.scrollX)
                 width: Math.max(0, Math.min(frameTable.colW(colGripMA.gcol),
                                             parent.width - x))
-                height: 8; y: 3; radius: 4
+                height: 8; y: 3; radius: 0
                 color: tableFrame.colDragging ? Theme.colors.accentMuted : Theme.colors.surfaceHover
                 border.width: 1; border.color: tableFrame.colDragging ? Theme.colors.accent : Theme.colors.border
             }
@@ -2315,7 +2315,7 @@ FocusScope {
                 y: frameTable.rowTopY(rowGripMA.gr)
                 height: Math.max(0, Math.min(frameTable.rowHeightAt(rowGripMA.gr),
                                              parent.height - y))
-                width: 8; x: 3; radius: 4
+                width: 8; x: 3; radius: 0
                 color: tableFrame.rowDragging ? Theme.colors.accentMuted : Theme.colors.surfaceHover
                 border.width: 1; border.color: tableFrame.rowDragging ? Theme.colors.accent : Theme.colors.border
             }
@@ -2345,13 +2345,13 @@ FocusScope {
             x: 20 + Math.max(0, Math.min(frameTable.width,
                    frameTable.columnLeftX(tableFrame.dropGap) - frameTable.scrollX)) - 1
             y: 20; width: 3; height: frameTable.height
-            radius: 1; color: Theme.colors.accent; z: 10
+            radius: 0; color: Theme.colors.accent; z: 10
         }
         Rectangle {   // row drop line
             visible: tableFrame.rowDragging && tableFrame.dropGap >= 0
             x: 20; y: 20 + frameTable.rowTopY(tableFrame.dropGap) - 1
             width: frameTable.width; height: 3
-            radius: 1; color: Theme.colors.accent; z: 10
+            radius: 0; color: Theme.colors.accent; z: 10
         }
     }
 
@@ -2388,13 +2388,18 @@ FocusScope {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
             height: 1; color: Theme.colors.border
         }
-        Row {   // Table / Board — a two-segment view toggle
+        Row {   // Table / Board — a two-segment view toggle. Type mirrors the
+                // bottom tab strip (13px, bright when active / muted otherwise)
+                // so the two bars read as one family.
             anchors.left: parent.left; anchors.leftMargin: 8
             height: parent.height - 1
             FlatButton {
                 iconName: "table"; text: "Table"
                 height: parent.height
                 checked: !root.boardMode
+                labelSize: 13
+                labelColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
+                iconColor: labelColor
                 onClicked: { root.boardMode = false; root.forceActiveFocus() }
             }
             FlatButton {
@@ -2402,6 +2407,10 @@ FocusScope {
                 height: parent.height
                 checked: root.boardMode
                 enabled_: root.boardCol >= 0 || root.firstGroupCol >= 0
+                labelSize: 13
+                labelColor: !enabled_ ? Theme.colors.textSubtle
+                          : checked ? Theme.colors.textBright : Theme.colors.textMuted
+                iconColor: labelColor
                 tooltip: enabled_ ? "" : "Needs a choice or checkmark column"
                 tooltipSide: "right"
                 onClicked: {
@@ -3223,8 +3232,8 @@ FocusScope {
                     onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
                                                   : root.makeCodeAt(root.menuRow)
                 }
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
+                Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
             }
             Rectangle {
                 id: subPanel
