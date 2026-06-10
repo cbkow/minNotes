@@ -51,12 +51,12 @@ QtObject {
     readonly property FontLoader interItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-Italic.ttf") }
     readonly property FontLoader interBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-BoldItalic.ttf") }  // so bold+italic has a real face
     readonly property FontLoader monoFontLoader:  FontLoader { source: Qt.resolvedUrl("fonts/JetBrainsMono-Regular.ttf") }
-    // Merriweather (serif) for quote blocks — all four faces so bold/italic/
+    // Lora (serif) for quote blocks — all four faces so bold/italic/
     // bold-italic inside a quote render with a real face, not a fallback.
-    readonly property FontLoader serifFont:           FontLoader { source: Qt.resolvedUrl("fonts/Merriweather_24pt-Regular.ttf") }
-    readonly property FontLoader serifBoldFont:       FontLoader { source: Qt.resolvedUrl("fonts/Merriweather_24pt-Bold.ttf") }
-    readonly property FontLoader serifItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Merriweather_24pt-Italic.ttf") }
-    readonly property FontLoader serifBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Merriweather_24pt-BoldItalic.ttf") }
+    readonly property FontLoader serifFont:           FontLoader { source: Qt.resolvedUrl("fonts/Lora-Regular.ttf") }
+    readonly property FontLoader serifBoldFont:       FontLoader { source: Qt.resolvedUrl("fonts/Lora-Bold.ttf") }
+    readonly property FontLoader serifItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Lora-Italic.ttf") }
+    readonly property FontLoader serifBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Lora-BoldItalic.ttf") }
     readonly property FontLoader phosphorFont:         FontLoader { source: Qt.resolvedUrl("fonts/Phosphor.ttf") }
     readonly property FontLoader phosphorFillFont:     FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Fill.ttf") }
     readonly property FontLoader phosphorDuotoneFont:  FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Duotone.ttf") }
@@ -76,7 +76,7 @@ QtObject {
     readonly property QtObject font: QtObject {
         readonly property string family: theme.interFont.name        // Inter (bundled)
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
-        readonly property string serif:  theme.serifFont.name        // Merriweather (quotes)
+        readonly property string serif:  theme.serifFont.name        // Lora (quotes)
         readonly property int sizeSmall: 12
         readonly property int sizeBody: 14   // a notch above the 13px kanban/tab tier
         readonly property int sizeMono: 13
