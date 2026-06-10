@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtCore
 
 // The right-side inspector — a collapsible panel that SLIDES in/out (default
 // hidden, so the resting view is just the thin left rail + document). The left
@@ -26,11 +27,48 @@ Rectangle {
     color: Theme.colors.surfaceRaised                  // a step lighter than the page, so the panel reads as its own layer
     clip: true                                         // so content clips cleanly while sliding
 
-    onTargetChanged: picker.value = (target === "fg" ? fgColor : bgColor)
+    // Switching target retargets the picker — deselect first, or the reassign
+    // would write the OTHER target's colour into the selected swatch.
+    onTargetChanged: { selPreset = -1; selUser = -1
+                       picker.value = (target === "fg" ? fgColor : bgColor) }
     function revertTarget() {                           // reset the active colour to its default
+        selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
         if (target === "fg") fgColor = Theme.colors.textBright
         else                 bgColor = "#7a6a36"
         picker.value = (target === "fg" ? fgColor : bgColor)
+    }
+
+    // --- Swatches: a pastel preset grid + a row of user slots. Clicking one
+    // selects it and loads its colour; while selected, picker edits WRITE BACK
+    // into the swatch (so a tweaked preset stays tweaked). Persisted app-wide
+    // via Settings (JSON arrays of hex). Empty user slots capture the current
+    // colour on first click.
+    readonly property var defaultPresets: [
+        "#e8aaaa", "#e8c5a0", "#e9dfa7", "#cfe3a6", "#aedfb2", "#a8dfc9", "#a9d4e8", "#a9bce8",
+        "#bcaae8", "#d6aae8", "#e8aad7", "#e8aabb", "#d8c9b4", "#c6cdd6", "#b7c8bb", "#e3d6c2"]
+    property var presets: []
+    property var userSlots: ["", "", "", "", "", "", "", ""]
+    property int selPreset: -1
+    property int selUser: -1
+    Settings {
+        id: swatchStore
+        category: "swatches"
+        property string presets: ""
+        property string user: ""
+    }
+    Component.onCompleted: {
+        try { var p = JSON.parse(swatchStore.presets); if (p && p.length === defaultPresets.length) presets = p } catch (e) {}
+        if (presets.length !== defaultPresets.length) presets = defaultPresets.slice()
+        try { var u = JSON.parse(swatchStore.user); if (u && u.length === userSlots.length) userSlots = u } catch (e) {}
+    }
+    function saveSwatches() {
+        swatchStore.presets = JSON.stringify(presets)
+        swatchStore.user = JSON.stringify(userSlots)
+    }
+    function noteEdit(c) {                              // picker moved → selected swatch follows
+        var hex = "" + c
+        if (selPreset >= 0)   { var p = presets.slice();   p[selPreset] = hex; presets = p;   saveSwatches() }
+        else if (selUser >= 0) { var u = userSlots.slice(); u[selUser] = hex;   userSlots = u; saveSwatches() }
     }
 
     // Left hairline against the document (only meaningful while open).
@@ -90,7 +128,10 @@ Rectangle {
 
             ColorPickerInline {
                 id: picker
-                onValueChanged: { if (panel.target === "fg") panel.fgColor = value; else panel.bgColor = value }
+                onValueChanged: {
+                    if (panel.target === "fg") panel.fgColor = value; else panel.bgColor = value
+                    panel.noteEdit(value)               // selected swatch tracks the edit
+                }
                 Component.onCompleted: value = panel.fgColor
             }
 
@@ -110,6 +151,61 @@ Rectangle {
                 }
                 MouseArea { id: revertMA; anchors.fill: parent; hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor; onClicked: panel.revertTarget() }
+            }
+
+            // --- Preset + user swatches (see the property block up top) ---
+            Text { text: "Presets"; color: Theme.colors.textMuted; topPadding: 6
+                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
+            Grid {
+                columns: 8; spacing: 4
+                Repeater {
+                    model: panel.presets.length
+                    delegate: Swatch { required property int index; idx: index }
+                }
+            }
+            Text { text: "Yours"; color: Theme.colors.textMuted; topPadding: 2
+                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
+            Row {
+                spacing: 4
+                Repeater {
+                    model: panel.userSlots.length
+                    delegate: Swatch { required property int index; idx: index; userSlot: true }
+                }
+            }
+        }
+    }
+
+    // One swatch. Selected = white border (the family selection language);
+    // empty user slots show a faint + and capture the current colour on click.
+    component Swatch: Rectangle {
+        property int idx: -1
+        property bool userSlot: false
+        readonly property string hex: userSlot ? panel.userSlots[idx] : panel.presets[idx]
+        readonly property bool selected: userSlot ? panel.selUser === idx : panel.selPreset === idx
+        width: 18; height: 18
+        color: hex !== "" ? hex : "transparent"
+        border.width: 1
+        border.color: selected ? Theme.colors.textBright : Theme.colors.border
+        Text {
+            visible: parent.hex === ""
+            anchors.centerIn: parent
+            text: "+"; color: Theme.colors.textSubtle
+            font.family: Theme.font.family; font.pixelSize: 11
+        }
+        MouseArea {
+            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                if (parent.userSlot) {
+                    panel.selPreset = -1; panel.selUser = parent.idx
+                    if (parent.hex === "") {            // empty slot captures the current colour
+                        var cur = "" + (panel.target === "fg" ? panel.fgColor : panel.bgColor)
+                        var u = panel.userSlots.slice(); u[parent.idx] = cur
+                        panel.userSlots = u; panel.saveSwatches()
+                    } else picker.value = parent.hex
+                } else {
+                    panel.selUser = -1; panel.selPreset = parent.idx
+                    picker.value = parent.hex
+                }
             }
         }
     }
