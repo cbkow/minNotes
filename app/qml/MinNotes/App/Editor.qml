@@ -2482,6 +2482,7 @@ FocusScope {
                 iconName: "table"; text: "Table"
                 height: parent.height
                 checked: !root.boardMode
+                checkedColor: Theme.colors.divider   // grey — keep accent for real highlights
                 labelSize: 13
                 labelColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
                 iconColor: labelColor
@@ -2492,6 +2493,7 @@ FocusScope {
                 height: parent.height
                 checked: root.boardMode
                 enabled_: root.boardCol >= 0 || root.firstGroupCol >= 0
+                checkedColor: Theme.colors.divider   // grey — keep accent for real highlights
                 labelSize: 13
                 labelColor: !enabled_ ? Theme.colors.textSubtle
                           : checked ? Theme.colors.textBright : Theme.colors.textMuted

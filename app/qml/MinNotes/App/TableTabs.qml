@@ -36,10 +36,10 @@ Rectangle {
         width: tabLabel.implicitWidth + 24
         height: tabs.height
         color: active ? Theme.colors.bg : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-        Rectangle {   // active underline (accent)
+        Rectangle {   // active underline (white — accent stays reserved for real highlights)
             visible: parent.active
             anchors.bottom: parent.bottom; width: parent.width; height: 2
-            color: Theme.colors.accent
+            color: Theme.colors.textBright
         }
         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
         Text {

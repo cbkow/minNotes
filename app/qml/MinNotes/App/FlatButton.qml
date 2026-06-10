@@ -54,6 +54,10 @@ Rectangle {
     /// the bottom tab strip's 13px muted/bright scheme.
     property int labelSize: 0
     property color labelColor: "transparent"
+    /// Optional checked-state fill override. Transparent = the default
+    /// accentMuted/accent pair. Set to a grey for toggles that shouldn't
+    /// spend accent (e.g. the table-tab Table/Board view switch).
+    property color checkedColor: "transparent"
 
     signal clicked()
     /// Emitted on mouse-down / mouse-up. Use for press-and-hold actions
@@ -72,13 +76,15 @@ Rectangle {
         if (!enabled_) return "transparent"
         if (variant === "primary") return Theme.colors.accent
         if (variant === "danger")  return Theme.colors.error
-        return checked ? Theme.colors.accentMuted : "transparent"
+        if (checked) return checkedColor.a > 0 ? checkedColor : Theme.colors.accentMuted
+        return "transparent"
     }
     readonly property color _bgHover: {
         if (!enabled_) return _bgIdle
         if (variant === "primary") return Theme.colors.accentHover
         if (variant === "danger")  return Qt.lighter(Theme.colors.error, 1.15)
-        return checked ? Theme.colors.accent : Theme.colors.surfaceHover
+        if (checked) return checkedColor.a > 0 ? Qt.lighter(checkedColor, 1.25) : Theme.colors.accent
+        return Theme.colors.surfaceHover
     }
     readonly property color _fg: {
         if (!enabled_) return Theme.colors.textSubtle
