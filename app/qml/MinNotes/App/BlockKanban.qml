@@ -16,6 +16,9 @@ Item {
     property int  groupCol: -1
     property bool active: false
     signal showGrid()                      // emitted when the board can't render
+    signal openCard(int r, int c)          // double-click → the grid, cell focused
+    signal laneMenuRequested(int li, real bx, real by)   // lane-header right-click (kb coords)
+    signal editClosed()                    // inline title edit done → refocus the editor
 
     readonly property int laneW: 260
     readonly property int laneGap: 14
@@ -31,6 +34,7 @@ Item {
     // Rebuilt whole (imperatively) on any content change — tables are small and
     // the board is a flat projection, so a full rebuild beats incremental state.
     property var lanes: []
+    property int titleCol: -1              // the card-title column (first text col)
     function recompute() {
         if (!active || groupCol < 0 || logicalRow < 0) { lanes = []; return }
         var row = logicalRow
@@ -47,6 +51,7 @@ Item {
         var tc = -1
         for (var c = 0; c < nc; ++c)
             if (c !== groupCol && blockModel.tableColumnKind(row, c) === 0) { tc = c; break }
+        kb.titleCol = tc
         var ls = []
         if (kind === 2) {
             ls = [{key: "0", label: "To do", color: "", cards: []},
@@ -184,6 +189,35 @@ Item {
         dragRow = -1; _armedRow = -1; dropLane = -1; dropIdx = -1
     }
 
+    // --- Add a card to a lane: insert the row right after the lane's last card
+    // (so the grid order matches the board), set its status, ONE undo step; then
+    // open the inline title editor on the new card.
+    property int editRow: -1
+    function addCard(li) {
+        if (li < 0 || li >= lanes.length) return
+        var lane = lanes[li]
+        var row = logicalRow
+        var at = lane.cards.length > 0 ? lane.cards[lane.cards.length - 1].r + 1
+                                       : blockModel.tableRows(row)
+        var kind = blockModel.tableColumnKind(row, groupCol)
+        blockModel.beginGroup(row, row)
+        blockModel.tableInsertRow(row, at)
+        if (kind === 2) blockModel.tableSetCellCheck(row, at, groupCol, parseInt(lane.key))
+        else if (lane.key !== "") blockModel.tableSetCellChoice(row, at, groupCol, lane.key)
+        blockModel.endGroup()
+        if (titleCol >= 0) editRow = at
+    }
+    function commitTitle(r, t) {
+        if (editRow < 0) return
+        editRow = -1
+        if (titleCol >= 0 && t.length > 0) blockModel.tableSetCell(logicalRow, r, titleCol, t)
+        kb.editClosed()
+    }
+    function cancelEdit() {
+        editRow = -1
+        kb.editClosed()
+    }
+
     Row {
         spacing: kb.laneGap
         Repeater {
@@ -228,7 +262,16 @@ Item {
                         font.family: Theme.font.family; font.pixelSize: 12
                     }
                 }
+                MouseArea {   // lane header: right-click → lane menu
+                    x: 0; y: 0; width: parent.width; height: kb.headerH
+                    acceptedButtons: Qt.RightButton
+                    onClicked: (m) => {
+                        var p = mapToItem(kb, m.x, m.y)
+                        kb.laneMenuRequested(laneItem.index, p.x, p.y)
+                    }
+                }
                 Column {
+                    id: cardsCol
                     x: 8; y: kb.headerH
                     width: parent.width - 16
                     spacing: kb.cardGap
@@ -261,6 +304,9 @@ Item {
                                     verticalAlignment: Text.AlignVCenter
                                     elide: Text.ElideRight
                                     text: card.modelData.title
+                                    // invisible (not collapsed) while the inline
+                                    // editor overlays it — Column must not reflow
+                                    opacity: kb.editRow === card.modelData.r ? 0 : 1
                                     color: Theme.colors.text
                                     font.family: Theme.font.family; font.pixelSize: 13
                                 }
@@ -313,10 +359,30 @@ Item {
                                     }
                                 }
                             }
+                            TextInput {   // inline title editor (fresh cards)
+                                visible: kb.editRow === card.modelData.r
+                                x: 10; width: parent.width - 20
+                                y: card.modelData.imgH + kb.cardPad
+                                height: kb.titleH
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: Theme.colors.text
+                                selectionColor: Theme.colors.selectionBg
+                                selectedTextColor: Theme.colors.textBright
+                                font.family: Theme.font.family; font.pixelSize: 13
+                                clip: true
+                                z: 6
+                                onVisibleChanged: if (visible) { text = ""; forceActiveFocus() }
+                                onAccepted: kb.commitTitle(card.modelData.r, text)
+                                onActiveFocusChanged: if (!activeFocus && visible) kb.commitTitle(card.modelData.r, text)
+                                Keys.onEscapePressed: kb.cancelEdit()
+                            }
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true; preventStealing: true
+                                enabled: kb.editRow !== card.modelData.r
                                 cursorShape: kb.dragRow >= 0 ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                                onDoubleClicked: kb.openCard(card.modelData.r,
+                                                             kb.titleCol >= 0 ? kb.titleCol : 0)
                                 onPressed: (m) => {
                                     kb._pressP = mapToItem(kb, m.x, m.y)
                                     kb._armedRow = card.modelData.r
@@ -338,6 +404,24 @@ Item {
                                 onCanceled: { kb.dragRow = -1; kb._armedRow = -1; kb.dropLane = -1 }
                             }
                         }
+                    }
+                }
+                Rectangle {   // + Add card (also the empty-lane affordance)
+                    x: 8; width: parent.width - 16; height: 26
+                    y: kb.headerH + cardsCol.height + (laneItem.modelData.cards.length > 0 ? kb.cardGap : 0)
+                    color: addCardMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+                    border.width: 1
+                    border.color: addCardMA.containsMouse ? Theme.colors.border : "transparent"
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter; x: 10
+                        text: "+ Add"
+                        color: addCardMA.containsMouse ? Theme.colors.text : Theme.colors.textSubtle
+                        font.family: Theme.font.family; font.pixelSize: 12
+                    }
+                    MouseArea {
+                        id: addCardMA
+                        anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: kb.addCard(laneItem.index)
                     }
                 }
                 Rectangle {   // insertion line at the drop gap

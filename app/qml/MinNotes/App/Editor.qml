@@ -2571,6 +2571,24 @@ FocusScope {
         contentHeight: Math.max(height, boardView.implicitHeight + 40)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar {
+            id: bvbar
+            policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
+            contentItem: Rectangle {
+                radius: 0; color: Theme.colors.textSubtle
+                opacity: bvbar.pressed ? 0.85 : (bvbar.hovered ? 0.65 : 0.40)
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+        }
+        ScrollBar.horizontal: ScrollBar {
+            id: bhbar
+            policy: ScrollBar.AsNeeded; height: Theme.dim.scrollBarWidth
+            contentItem: Rectangle {
+                radius: 0; color: Theme.colors.textSubtle
+                opacity: bhbar.pressed ? 0.85 : (bhbar.hovered ? 0.65 : 0.40)
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+        }
         BlockKanban {
             id: boardView
             x: 20; y: 20
@@ -2579,6 +2597,93 @@ FocusScope {
             logicalRow: root.activeTableRow
             groupCol: root.boardCol
             onShowGrid: root.boardMode = false   // grouping column vanished → grid
+            onEditClosed: root.forceActiveFocus()
+            onOpenCard: (r, c) => {              // double-click → grid, cell focused
+                root.boardMode = false
+                tcur.place(r, c, 0)
+                root.forceActiveFocus()
+            }
+            onLaneMenuRequested: (li, bx, by) => {
+                var p = boardView.mapToItem(root, bx, by)
+                laneMenu.li = li
+                laneMenu.x = Math.max(8, Math.min(p.x, root.width - laneMenu.width - 8))
+                laneMenu.y = Math.max(8, Math.min(p.y, root.height - laneMenu.height - 8))
+                laneMenu.open()
+            }
+        }
+        Timer {   // edge auto-scroll while a card is being dragged
+            interval: 16; repeat: true
+            running: boardView.dragRow >= 0
+            onTriggered: {
+                var margin = 44
+                var vx = 20 + boardView.dragX - boardFrame.contentX
+                var vy = 20 + boardView.dragY - boardFrame.contentY
+                var dx = 0, dy = 0
+                if (vx < margin) dx = -Math.max(6, margin - vx)
+                else if (vx > boardFrame.width - margin) dx = Math.max(6, vx - (boardFrame.width - margin))
+                if (vy < margin) dy = -Math.max(6, margin - vy)
+                else if (vy > boardFrame.height - margin) dy = Math.max(6, vy - (boardFrame.height - margin))
+                if (dx === 0 && dy === 0) return
+                boardFrame.contentX = Math.max(0, Math.min(boardFrame.contentWidth - boardFrame.width, boardFrame.contentX + dx))
+                boardFrame.contentY = Math.max(0, Math.min(boardFrame.contentHeight - boardFrame.height, boardFrame.contentY + dy))
+                // The pointer is stationary in the viewport while content slides
+                // under it — refresh the board-space drag point + drop target.
+                boardView.dragX = vx + boardFrame.contentX - 20
+                boardView.dragY = vy + boardFrame.contentY - 20
+                boardView.updateDrop(boardView.dragX, boardView.dragY)
+            }
+        }
+    }
+
+    // Lane-header right-click menu (board view). Self-contained rows — MenuRow
+    // is wired to blockMenu's close/sub-panel machinery, so it isn't reused here.
+    component LaneMenuRow: Rectangle {
+        property alias text: laneMenuRowLabel.text
+        signal activated()
+        width: 168; height: 28; radius: 0
+        color: laneMenuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+        Text {
+            id: laneMenuRowLabel
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left; anchors.leftMargin: 10
+            color: Theme.colors.text
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+        }
+        MouseArea {
+            id: laneMenuRowMA
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onClicked: { parent.activated(); laneMenu.close() }
+        }
+    }
+    Popup {
+        id: laneMenu
+        property int li: -1
+        readonly property var lane: (li >= 0 && li < boardView.lanes.length) ? boardView.lanes[li] : null
+        // Option ops only make sense on a real choice option (not check lanes,
+        // not the trailing "No status" lane).
+        readonly property bool optionLane: lane !== null && root.boardCol >= 0
+            && blockModel.tableColumnKind(root.activeTableRow, root.boardCol) === 1
+            && lane.key !== ""
+        padding: 4; z: 60
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: root.forceActiveFocus()
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 1
+            LaneMenuRow { text: "Add card"; onActivated: boardView.addCard(laneMenu.li) }
+            LaneMenuRow { visible: laneMenu.optionLane && laneMenu.li > 0
+                          text: "Move lane left"
+                          onActivated: blockModel.tableMoveOption(root.activeTableRow, root.boardCol,
+                                                                  laneMenu.lane.key, laneMenu.li - 1) }
+            LaneMenuRow { visible: laneMenu.optionLane && laneMenu.li < boardView.lanes.length - 2
+                          text: "Move lane right"
+                          onActivated: blockModel.tableMoveOption(root.activeTableRow, root.boardCol,
+                                                                  laneMenu.lane.key, laneMenu.li + 1) }
+            LaneMenuRow { visible: laneMenu.lane !== null && root.boardCol >= 0
+                                   && blockModel.tableColumnKind(root.activeTableRow, root.boardCol) === 1
+                          text: "Edit options…"
+                          onActivated: root.openChoiceEditor(root.activeTableRow, root.boardCol) }
         }
     }
     Rectangle {   // table-tab toolbar: the family flat-button strip above the frame
