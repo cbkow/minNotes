@@ -64,6 +64,10 @@ Item {
     property int dropR: -1
     property int dropC: -1
 
+    // While the editor surface is resizing, cell images drop their texture
+    // render (accent-border frame instead) — same scheme as MediaBlock.
+    property bool suspended: false
+
     // Header sort affordance: every first-header-row cell reserves a right-edge
     // slot with a sort glyph (the CLICK zone lives in the editor's mouse
     // handlers; this is display only). sortCol marks the last-sorted column of
@@ -315,9 +319,16 @@ Item {
                                 width: Math.max(2, b.x - a.x)
                                 height: a.height > 0 ? a.height : 18
                             }
+                            Rectangle {   // resize placeholder for the cell image
+                                visible: tv.suspended && cellRect.cmedia !== ""
+                                x: cellImg.x; y: cellImg.y
+                                width: cellImg.width; height: cellImg.height
+                                color: "transparent"
+                                border.width: 1; border.color: Theme.colors.accent
+                            }
                             Image {   // inline cell image (above any text)
                                 id: cellImg
-                                visible: cellRect.cmedia !== "" && cellRect.cmediaUrl !== ""
+                                visible: cellRect.cmedia !== "" && cellRect.cmediaUrl !== "" && !tv.suspended
                                 x: tv.cellPadH; y: tv.cellPadV
                                 width: cellRect.imgW; height: cellRect.imgH
                                 source: cellRect.cmediaUrl

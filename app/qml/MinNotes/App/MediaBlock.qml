@@ -17,6 +17,10 @@ Item {
     property real maxWidth: 760
     property int  posterFrame: 0       // frame the poster shows (0, or remembered playhead)
     property bool isActivePlayer: false
+    // While the editor surface is resizing, drop the texture render entirely
+    // (no scaling/reload glitches) — the accent-border frame below holds the
+    // reserved geometry until the size settles.
+    property bool suspended: false
 
     readonly property int _rev: blockModel.contentRevision
     readonly property string kind: active ? (mb._rev, blockModel.mediaKind(logicalRow)) : ""
@@ -45,6 +49,13 @@ Item {
 
     implicitWidth:  dispW
     implicitHeight: (iw > 0 && ih > 0) ? Math.round(dispW * ih / iw) : Math.round(dispW * 0.5)
+
+    Rectangle {   // resize placeholder: accent-bordered frame at the reserved size
+        visible: mb.suspended && mb.active && !mb.isFile
+        anchors.fill: parent
+        color: "transparent"
+        border.width: 1; border.color: Theme.colors.accent
+    }
 
     function _fmtDur(ms) {
         if (ms <= 0) return ""
@@ -103,7 +114,7 @@ Item {
     // cache:true keeps the rendered page across delegate recycle (a PdfPageImage
     // tied to a churning PdfDocument blanks to white on scroll-away-and-back). ---
     Rectangle {
-        visible: mb.isPdf
+        visible: mb.isPdf && !mb.suspended
         anchors.fill: parent
         color: "white"
         radius: Theme.dim.radius
@@ -123,7 +134,7 @@ Item {
     Image {
         id: img
         anchors.fill: parent
-        visible: !mb.isVideo && !mb.isFile && !mb.isPdf
+        visible: !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.suspended
         source: (mb.isVideo || mb.isFile || mb.isPdf) ? "" : mb.url
         asynchronous: true; cache: false
         fillMode: Image.PreserveAspectFit
@@ -132,7 +143,7 @@ Item {
     }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
-        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && img.status !== Image.Ready
+        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.suspended && img.status !== Image.Ready
         color: Theme.colors.surfaceHover; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         Text {
@@ -148,7 +159,7 @@ Item {
                   // over the page — exactly like the live video surface (whose
                   // fillColor is also the page surface). Keeps poster ↔ video alpha consistent.
         anchors.fill: parent
-        visible: mb.isVideo && !mb.isActivePlayer
+        visible: mb.isVideo && !mb.isActivePlayer && !mb.suspended
         color: Theme.colors.surface; radius: Theme.dim.radius
         clip: true
 

@@ -24,6 +24,15 @@ FocusScope {
     // Media is known-geometry: tell the model the width it derives media heights
     // from, and re-tell it on resize so reserved height stays exact (no jump).
     onPageWidthChanged: blockModel.setContentWidth(pageWidth)
+    // While the editor surface is actively resizing (window drag, inspector
+    // slide), media SUSPENDS its texture render entirely — an accent-bordered
+    // placeholder holds the reserved geometry instead. Sidesteps the live-resize
+    // rendering glitch without touching the (correct) live layout; the real
+    // render returns 200ms after the size stops moving.
+    property bool windowResizing: false
+    onWidthChanged: { windowResizing = true; resizeSettle.restart() }
+    onHeightChanged: { windowResizing = true; resizeSettle.restart() }
+    Timer { id: resizeSettle; interval: 200; onTriggered: root.windowResizing = false }
     readonly property real leftEdge: (flick.width - pageWidth) / 2
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
@@ -1745,6 +1754,7 @@ FocusScope {
                     id: mediaHost
                     visible: cell.active && cell.isMedia
                     active: cell.active && cell.isMedia
+                    suspended: root.windowResizing
                     logicalRow: cell.logicalRow
                     x: cell.colLeft; y: 6
                     // pageWidth directly (NOT cell.measure → te.btype → layoutRevision):
@@ -1784,6 +1794,7 @@ FocusScope {
 
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
                     id: tableHost
+                    suspended: root.windowResizing
                     visible: cell.active && te.btype === 7
                     logicalRow: cell.logicalRow
                     active: cell.active && te.btype === 7
@@ -2323,6 +2334,7 @@ FocusScope {
         }
         BlockTable {
             id: frameTable
+            suspended: root.windowResizing
             active: root.activeTableRow >= 0
             logicalRow: root.activeTableRow
             x: 20; y: 20
@@ -2621,6 +2633,7 @@ FocusScope {
         }
         BlockKanban {
             id: boardView
+            suspended: root.windowResizing
             x: 20; y: 20
             width: implicitWidth; height: implicitHeight
             active: boardFrame.visible

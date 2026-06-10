@@ -15,6 +15,7 @@ Item {
     property int  logicalRow: -1
     property int  groupCol: -1
     property bool active: false
+    property bool suspended: false         // resize in flight → covers drop their render
     signal showGrid()                      // emitted when the board can't render
     signal openCard(int r, int c)          // double-click → the grid, cell focused
     signal laneMenuRequested(int li, real bx, real by)   // lane-header right-click (kb coords)
@@ -288,8 +289,14 @@ Item {
                             border.width: 1; border.color: Theme.colors.border
                             opacity: kb.dragRow === card.modelData.r ? 0.35 : 1
                             clip: true
+                            Rectangle {   // resize placeholder for the cover
+                                visible: kb.suspended && card.modelData.imgUrl !== ""
+                                width: parent.width; height: card.modelData.imgH
+                                color: "transparent"
+                                border.width: 1; border.color: Theme.colors.accent
+                            }
                             Image {   // cover: the row's first cell image
-                                visible: card.modelData.imgUrl !== ""
+                                visible: card.modelData.imgUrl !== "" && !kb.suspended
                                 width: parent.width; height: card.modelData.imgH
                                 source: card.modelData.imgUrl
                                 asynchronous: true; cache: false
