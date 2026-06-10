@@ -71,6 +71,7 @@ public:
     void    setCellChoice(int r, int c, const QString& id);
     int     cellCheck(int r, int c) const;                        // check column: 0/1/2 (stored in `choice`)
     void    cycleCellCheck(int r, int c);                         // (n+1)%3
+    void    setCellCheck(int r, int c, int n);                    // set 0/1/2 directly
     QString optionLabel(int c, const QString& id) const;          // "" if not found (export/flatten)
     QString optionColor(int c, const QString& id) const;
 

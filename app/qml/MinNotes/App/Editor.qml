@@ -51,10 +51,31 @@ FocusScope {
     // active state across both table and PDF tabs.
     readonly property string activeFrameId: activeTableId !== "" ? activeTableId : activePdfId
     function setActiveTab(id) {
+        boardMode = false; boardCol = -1     // a tab switch always lands on the grid
         if (id === "") { activeTableId = ""; activePdfId = ""; return }
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) { activePdfId = ""; activeTableId = id }
         else { activeTableId = ""; activePdfId = id }
+    }
+    // Kanban board: the active table tab rendered as a board grouped by a
+    // choice/check column. View state only (not persisted, not undoable).
+    property bool boardMode: false
+    property int  boardCol: -1
+    function openBoard(row, c) {
+        setActiveTab(blockModel.idForRow(row))
+        boardCol = c
+        boardMode = true
+    }
+    // The first choice/check column of the active table (−1 none) — the default
+    // grouping for the grid view's "Board view" toggle.
+    readonly property int firstGroupCol: {
+        if (activeTableRow < 0) return -1
+        var rev = blockModel.contentRevision
+        for (var c = 0; c < blockModel.tableColumns(activeTableRow); ++c) {
+            var k = blockModel.tableColumnKind(activeTableRow, c)
+            if (k === 1 || k === 2) return c
+        }
+        return -1
     }
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
@@ -1287,6 +1308,7 @@ FocusScope {
             // cell selection, else step the caret out below the table.
             if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
+            else if (root.boardMode && root.activeTableRow >= 0) { root.boardMode = false }   // board → grid
             else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
             else if (cursor.activeMarks !== 0) { cursor.clearMarks() }
@@ -1298,6 +1320,9 @@ FocusScope {
         else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
         else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
+        // Board mode: cards are mouse-driven; swallow everything else so typing
+        // can't invisibly edit the grid underneath (tcur is still pinned to it).
+        else if (root.boardMode && root.activeTableRow >= 0) { event.accepted = true }
         // Table mode: route editing/navigation to the cell sub-cursor.
         // Formatting shortcuts come first (else the generic branch swallows them).
         else if (inTable && cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
@@ -2035,7 +2060,7 @@ FocusScope {
     // the same tcur edit model (the cursor is pinned to this table row). ---
     Flickable {
         id: tableFrame
-        visible: root.activeTableRow >= 0
+        visible: root.activeTableRow >= 0 && !root.boardMode
         anchors.fill: parent
         contentWidth: width
         contentHeight: frameTable.implicitHeight + 70   // room for the scrollbar + row button
@@ -2326,6 +2351,51 @@ FocusScope {
             x: 20; y: 20 + frameTable.rowTopY(tableFrame.dropGap) - 1
             width: frameTable.width; height: 3
             radius: 1; color: Theme.colors.accent; z: 10
+        }
+    }
+
+    // --- Full-frame kanban board (the active table tab in board mode). Scrolls
+    // both ways; the board view owns all card interaction directly (a dedicated
+    // mode like the table frame — no document mouse layer above it). ---
+    Flickable {
+        id: boardFrame
+        visible: root.activeTableRow >= 0 && root.boardMode
+        anchors.fill: parent
+        contentWidth: Math.max(width, boardView.implicitWidth + 40)
+        contentHeight: Math.max(height, boardView.implicitHeight + 40)
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        BlockKanban {
+            id: boardView
+            x: 20; y: 20
+            width: implicitWidth; height: implicitHeight
+            active: boardFrame.visible
+            logicalRow: root.activeTableRow
+            groupCol: root.boardCol
+            onShowGrid: root.boardMode = false   // grouping column vanished → grid
+        }
+    }
+    Rectangle {   // grid ↔ board toggle, floating top-right over the active tab
+        visible: (boardFrame.visible || (tableFrame.visible && root.firstGroupCol >= 0))
+        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 10
+        width: viewToggleText.implicitWidth + 22; height: 24; radius: 4
+        color: viewToggleMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+        border.width: 1; border.color: Theme.colors.border
+        z: 20
+        Text {
+            id: viewToggleText
+            anchors.centerIn: parent
+            text: root.boardMode ? "Table view" : "Board view"
+            color: Theme.colors.text
+            font.family: Theme.font.family; font.pixelSize: 12
+        }
+        MouseArea {
+            id: viewToggleMA
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                if (root.boardMode) root.boardMode = false
+                else root.openBoard(root.activeTableRow, root.firstGroupCol)
+            }
         }
     }
 
@@ -3104,6 +3174,8 @@ FocusScope {
             MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
             MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
             MenuRow { visible: blockMenu.isTable && root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
+            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 0 && !root.boardMode
+                      scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
             MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
             MenuRow { visible: blockMenu.isTable; text: blockModel.tableHeaderRows(root.menuRow) > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }

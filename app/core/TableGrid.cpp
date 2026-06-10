@@ -158,6 +158,11 @@ void TableGrid::cycleCellCheck(int r, int c) {
     const int n = (std::clamp(cells_[r][c].choice.toInt(), 0, 2) + 1) % 3;
     cells_[r][c].choice = (n == 0) ? QString() : QString::number(n);   // 0 stays "" (plain cell)
 }
+void TableGrid::setCellCheck(int r, int c, int n) {
+    if (!inCell(r,c,rows(),cols_)) return;
+    n = std::clamp(n, 0, 2);
+    cells_[r][c].choice = (n == 0) ? QString() : QString::number(n);
+}
 
 QString TableGrid::optionLabel(int c, const QString& id) const {
     if (c < 0 || c >= static_cast<int>(colTypes_.size())) return QString();
