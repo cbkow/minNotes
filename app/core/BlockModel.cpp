@@ -1009,6 +1009,11 @@ void BlockModel::tableSetColAlign(int row, int c, int a) { mutateTable(row, [&](
 void BlockModel::tableSetHeaderRows(int row, int n)      { mutateTable(row, [&](TableGrid& g){ g.setHeaderRows(n); }); }
 void BlockModel::tableMoveRow(int row, int from, int to)    { mutateTable(row, [&](TableGrid& g){ g.moveRow(from, to); }); }
 void BlockModel::tableMoveColumn(int row, int from, int to) { mutateTable(row, [&](TableGrid& g){ g.moveCol(from, to); }); }
+void BlockModel::tableDuplicateRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.duplicateRow(at); }); }
+void BlockModel::tableDuplicateColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.duplicateCol(at); }); }
+void BlockModel::tableSortByColumn(int row, int c, bool asc) { mutateTable(row, [&](TableGrid& g){ g.sortByColumn(c, asc); }); }
+void BlockModel::tableFillDown(int row, int r0, int c0, int r1, int c1)  { mutateTable(row, [&](TableGrid& g){ g.fillDown(r0, c0, r1, c1); }); }
+void BlockModel::tableFillRight(int row, int r0, int c0, int r1, int c1) { mutateTable(row, [&](TableGrid& g){ g.fillRight(r0, c0, r1, c1); }); }
 
 // ---- choice columns --------------------------------------------------------
 int BlockModel::tableColumnKind(int row, int c) const {

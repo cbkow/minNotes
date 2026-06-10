@@ -95,6 +95,15 @@ public:
     // per-row / per-column metadata (colours, widths, aligns, types) rides along.
     void moveRow(int from, int to);
     void moveCol(int from, int to);
+    void duplicateRow(int at);              // copy `at` → insert at `at`+1
+    void duplicateCol(int at);
+    // Sort body rows (below headerRows_) by column `c`: choice → option order
+    // (unset last), check → state, text → numeric when both sides parse, else
+    // case-insensitive text. Stable, so ties keep their document order.
+    void sortByColumn(int c, bool asc);
+    // Fill: copy the range's top row down / left column right (whole cells).
+    void fillDown(int r0, int c0, int r1, int c1);
+    void fillRight(int r0, int c0, int r1, int c1);
 
     // Serialization / interchange.
     QString toJson() const;

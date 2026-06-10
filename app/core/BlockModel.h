@@ -258,6 +258,13 @@ public:
     // Reorder a row / column (`to` is the post-removal index); one undo step.
     Q_INVOKABLE void tableMoveRow(int row, int from, int to);
     Q_INVOKABLE void tableMoveColumn(int row, int from, int to);
+    Q_INVOKABLE void tableDuplicateRow(int row, int at);     // copy → insert below
+    Q_INVOKABLE void tableDuplicateColumn(int row, int at);  // copy → insert right
+    // One-shot sort of the body rows by a column (header rows stay pinned).
+    Q_INVOKABLE void tableSortByColumn(int row, int c, bool asc);
+    // Fill the range from its top row / left column (whole cells; one undo step).
+    Q_INVOKABLE void tableFillDown(int row, int r0, int c0, int r1, int c1);
+    Q_INVOKABLE void tableFillRight(int row, int r0, int c0, int r1, int c1);
     // Choice columns (typed columns): a shared, ordered option set per column;
     // body cells reference an option by its stable id. All edits go through
     // mutateTable, so undo / persistence / refresh come for free.

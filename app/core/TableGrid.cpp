@@ -245,6 +245,101 @@ void TableGrid::moveCol(int from, int to) {
     spliceMove(colFg_, from, to);
 }
 
+namespace {
+// Insert a copy of v[at] right after it. The copy is taken FIRST — inserting a
+// reference into the same vector it reallocates is the classic self-insert trap.
+template <typename Vec>
+void spliceDup(Vec& v, int at) {
+    auto copy = v[at];
+    v.insert(v.begin() + at + 1, std::move(copy));
+}
+}
+
+void TableGrid::duplicateRow(int at) {
+    normalize();
+    if (at < 0 || at >= rows()) return;
+    spliceDup(cells_, at);
+    spliceDup(rowBg_, at);
+    spliceDup(rowFg_, at);
+}
+
+void TableGrid::duplicateCol(int at) {
+    normalize();
+    if (at < 0 || at >= cols_) return;
+    for (auto& row : cells_) spliceDup(row, at);
+    spliceDup(colWidths_, at);
+    spliceDup(colAligns_, at);
+    spliceDup(colTypes_, at);
+    spliceDup(colBg_, at);
+    spliceDup(colFg_, at);
+    ++cols_;
+}
+
+void TableGrid::sortByColumn(int c, bool asc) {
+    normalize();
+    if (c < 0 || c >= cols_) return;
+    const int lo = std::clamp(headerRows_, 0, rows());
+    if (rows() - lo < 2) return;
+    const int kind = colKind(c);
+    auto optIndex = [&](const QString& id) {
+        const auto& opts = colTypes_[c].options;
+        for (int i = 0; i < static_cast<int>(opts.size()); ++i) if (opts[i].id == id) return i;
+        return static_cast<int>(opts.size());          // unset / unknown sorts after every option
+    };
+    auto less = [&](int a, int b) {
+        const Cell& x = cells_[a][c];
+        const Cell& y = cells_[b][c];
+        if (kind == ColChoice) return optIndex(x.choice) < optIndex(y.choice);
+        if (kind == ColCheck)  return cellCheck(a, c) < cellCheck(b, c);
+        bool okx = false, oky = false;
+        const double nx = x.text.toDouble(&okx);
+        const double ny = y.text.toDouble(&oky);
+        if (okx && oky) return nx < ny;                // numeric when both sides parse
+        if (okx != oky) return okx;                    // numbers before text
+        return QString::compare(x.text, y.text, Qt::CaseInsensitive) < 0;
+    };
+    std::vector<int> idx;
+    idx.reserve(rows() - lo);
+    for (int r = lo; r < rows(); ++r) idx.push_back(r);
+    std::stable_sort(idx.begin(), idx.end(),
+                     [&](int a, int b) { return asc ? less(a, b) : less(b, a); });
+    std::vector<std::vector<Cell>> nc(cells_.begin(), cells_.begin() + lo);
+    std::vector<QString> nbg(rowBg_.begin(), rowBg_.begin() + lo);
+    std::vector<QString> nfg(rowFg_.begin(), rowFg_.begin() + lo);
+    for (int r : idx) {
+        nc.push_back(std::move(cells_[r]));
+        nbg.push_back(std::move(rowBg_[r]));
+        nfg.push_back(std::move(rowFg_[r]));
+    }
+    cells_ = std::move(nc); rowBg_ = std::move(nbg); rowFg_ = std::move(nfg);
+}
+
+void TableGrid::fillDown(int r0, int c0, int r1, int c1) {
+    normalize();
+    if (!isValid()) return;
+    r0 = std::clamp(r0, 0, rows() - 1); r1 = std::clamp(r1, 0, rows() - 1);
+    c0 = std::clamp(c0, 0, cols_ - 1);  c1 = std::clamp(c1, 0, cols_ - 1);
+    if (r0 > r1) std::swap(r0, r1);
+    if (c0 > c1) std::swap(c0, c1);
+    for (int c = c0; c <= c1; ++c) {
+        const Cell src = cells_[r0][c];
+        for (int r = r0 + 1; r <= r1; ++r) cells_[r][c] = src;
+    }
+}
+
+void TableGrid::fillRight(int r0, int c0, int r1, int c1) {
+    normalize();
+    if (!isValid()) return;
+    r0 = std::clamp(r0, 0, rows() - 1); r1 = std::clamp(r1, 0, rows() - 1);
+    c0 = std::clamp(c0, 0, cols_ - 1);  c1 = std::clamp(c1, 0, cols_ - 1);
+    if (r0 > r1) std::swap(r0, r1);
+    if (c0 > c1) std::swap(c0, c1);
+    for (int r = r0; r <= r1; ++r) {
+        const Cell src = cells_[r][c0];
+        for (int c = c0 + 1; c <= c1; ++c) cells_[r][c] = src;
+    }
+}
+
 // Flattened export text for a cell: header rows + text columns are literal text;
 // a choice body cell resolves to its selected option's label; a check body cell
 // to a glyph (done ✓ / in-progress ~ / todo blank).

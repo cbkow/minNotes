@@ -1075,6 +1075,27 @@ FocusScope {
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblMoveRow(d)    { blockModel.tableMoveRow(menuRow, menuCellR, menuCellR + d) }
     function tblMoveCol(d)    { blockModel.tableMoveColumn(menuRow, menuCellC, menuCellC + d) }
+    function tblDupRow()      { blockModel.tableDuplicateRow(menuRow, menuCellR) }
+    function tblDupCol()      { blockModel.tableDuplicateColumn(menuRow, menuCellC) }
+    function tblSort(asc)     { blockModel.tableSortByColumn(menuRow, menuCellC, asc) }
+    // ⌘D/⌘R: fill the selected cell-range from its top row / left column; with no
+    // range, fill the focused cell from the cell above / to its left.
+    function tblFill(right) {
+        if (!tcur.active) return
+        var r0, c0, r1, c1
+        if (tcur.rangeR0 >= 0) {
+            r0 = Math.min(tcur.rangeR0, tcur.rangeR1); r1 = Math.max(tcur.rangeR0, tcur.rangeR1)
+            c0 = Math.min(tcur.rangeC0, tcur.rangeC1); c1 = Math.max(tcur.rangeC0, tcur.rangeC1)
+        } else if (right) {
+            if (tcur.cc === 0) return
+            r0 = tcur.cr; r1 = tcur.cr; c0 = tcur.cc - 1; c1 = tcur.cc
+        } else {
+            if (tcur.cr === 0) return
+            r0 = tcur.cr - 1; r1 = tcur.cr; c0 = tcur.cc; c1 = tcur.cc
+        }
+        if (right) blockModel.tableFillRight(tcur.row, r0, c0, r1, c1)
+        else blockModel.tableFillDown(tcur.row, r0, c0, r1, c1)
+    }
     function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
     function tblColKind()      { return (blockModel.contentRevision, blockModel.tableColumnKind(menuRow, menuCellC)) }
     function tblMakeChoiceCol(){ blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
@@ -1284,6 +1305,8 @@ FocusScope {
         else if (inTable && cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
         else if (inTable && cmd && shift && k === Qt.Key_X) { applyFormat("strike"); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_Backslash) { clearCellFormatting(); event.accepted = true }
+        else if (inTable && cmd && k === Qt.Key_D) { tblFill(false); event.accepted = true }
+        else if (inTable && cmd && k === Qt.Key_R) { tblFill(true); event.accepted = true }
         else if (inTable) {
             if (cmd) { event.accepted = true; return }   // swallow other Cmd-combos (don't type the letter)
             if (tcur.rangeR0 >= 0) tcur.clearRange()   // any key collapses a cell-range selection
@@ -3064,6 +3087,16 @@ FocusScope {
                       scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
             MenuRow { visible: blockMenu.isTable && root.menuCellC < blockModel.tableColumns(root.menuRow) - 1
                       scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
+            MenuRow { visible: blockMenu.isTable && root.menuCellR >= blockModel.tableHeaderRows(root.menuRow)
+                      scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
+            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
+            // One-shot sort of the body rows by this column (header stays pinned).
+            MenuRow { visible: blockMenu.isTable
+                               && blockModel.tableRows(root.menuRow) - blockModel.tableHeaderRows(root.menuRow) > 1
+                      scope: "column"; text: "Sort ascending"; onActivated: root.tblSort(true) }
+            MenuRow { visible: blockMenu.isTable
+                               && blockModel.tableRows(root.menuRow) - blockModel.tableHeaderRows(root.menuRow) > 1
+                      scope: "column"; text: "Sort descending"; onActivated: root.tblSort(false) }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }
