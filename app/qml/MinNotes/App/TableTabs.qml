@@ -35,7 +35,8 @@ Rectangle {
         signal clicked()
         width: tabLabel.implicitWidth + 24
         height: tabs.height
-        color: active ? Theme.colors.bg : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+        // active fill matches the table toolbar's checked Table/Board segment
+        color: active ? Theme.colors.divider : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
         Rectangle {   // active underline (white — accent stays reserved for real highlights)
             visible: parent.active
             anchors.bottom: parent.bottom; width: parent.width; height: 2
