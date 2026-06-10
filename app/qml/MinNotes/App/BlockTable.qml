@@ -287,7 +287,17 @@ Item {
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
-                            Component.onCompleted: gridRow.recompute()
+                            Component.onCompleted: { gridRow.recompute(); decodeImgW = imgW }
+                            // Decode width follows imgW only once a resize settles —
+                            // a live column-resize tick must scale the texture, not
+                            // re-decode the file per tick (same fix as MediaBlock).
+                            property real decodeImgW: 0
+                            onImgWChanged: {
+                                if (decodeImgW <= 0) decodeImgW = imgW
+                                else cellDecodeDebounce.restart()
+                            }
+                            Timer { id: cellDecodeDebounce; interval: 150
+                                    onTriggered: cellRect.decodeImgW = cellRect.imgW }
                             color: isSelected ? Theme.colors.selectionBg
                                  : cellBg !== "" ? cellBg
                                  : isHeader   ? Theme.colors.surfaceHover : "transparent"
@@ -323,7 +333,7 @@ Item {
                                 source: cellRect.cmediaUrl
                                 asynchronous: true; cache: false
                                 fillMode: Image.PreserveAspectFit
-                                sourceSize.width: Math.round(cellRect.imgW * Screen.devicePixelRatio)
+                                sourceSize.width: Math.round(cellRect.decodeImgW * Screen.devicePixelRatio)
                                 smooth: true
                             }
                             // Selected-state tint over a cell image (it's opaque, like
