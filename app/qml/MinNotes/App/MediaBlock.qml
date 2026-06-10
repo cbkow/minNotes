@@ -114,12 +114,16 @@ Item {
     // cache:true keeps the rendered page across delegate recycle (a PdfPageImage
     // tied to a churning PdfDocument blanks to white on scroll-away-and-back). ---
     Rectangle {
+        id: pdfRect
         visible: mb.isPdf && !mb.suspended
         anchors.fill: parent
         color: "white"
         radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         clip: true
+        onVisibleChanged: if (visible) pdfFade.restart()
+        NumberAnimation { id: pdfFade; target: pdfRect; property: "opacity"
+                          from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
         Image {
             anchors.fill: parent
             source: (mb.isPdf && mb.pdfPath !== "") ? mb._pdfSrc(mb.pdfPath, mb.pdfPage) : ""
@@ -140,6 +144,10 @@ Item {
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
         smooth: true
+        // Reveal fades; hide stays INSTANT (visible:false — the glitch never shows).
+        onVisibleChanged: if (visible) imgFade.restart()
+        NumberAnimation { id: imgFade; target: img; property: "opacity"
+                          from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
     }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
@@ -158,10 +166,14 @@ Item {
                   // an alpha (ProRes 4444) poster composites its transparent regions
                   // over the page — exactly like the live video surface (whose
                   // fillColor is also the page surface). Keeps poster ↔ video alpha consistent.
+        id: posterRect
         anchors.fill: parent
         visible: mb.isVideo && !mb.isActivePlayer && !mb.suspended
         color: Theme.colors.surface; radius: Theme.dim.radius
         clip: true
+        onVisibleChanged: if (visible) posterFade.restart()
+        NumberAnimation { id: posterFade; target: posterRect; property: "opacity"
+                          from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
 
         Image {
             id: poster

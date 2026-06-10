@@ -336,6 +336,9 @@ Item {
                                 fillMode: Image.PreserveAspectFit
                                 sourceSize.width: Math.round(cellRect.imgW * Screen.devicePixelRatio)
                                 smooth: true
+                                onVisibleChanged: if (visible) cellImgFade.restart()
+                                NumberAnimation { id: cellImgFade; target: cellImg; property: "opacity"
+                                                  from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
                             }
                             // Selected-state tint over a cell image (it's opaque, like
                             // a media block — its selection needs its own affordance).

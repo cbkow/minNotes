@@ -296,6 +296,7 @@ Item {
                                 border.width: 1; border.color: Theme.colors.accent
                             }
                             Image {   // cover: the row's first cell image
+                                id: coverImg
                                 visible: card.modelData.imgUrl !== "" && !kb.suspended
                                 width: parent.width; height: card.modelData.imgH
                                 source: card.modelData.imgUrl
@@ -303,6 +304,9 @@ Item {
                                 fillMode: Image.PreserveAspectCrop
                                 sourceSize.width: Math.round(kb.laneW * Screen.devicePixelRatio)
                                 smooth: true
+                                onVisibleChanged: if (visible) coverFade.restart()
+                                NumberAnimation { id: coverFade; target: coverImg; property: "opacity"
+                                                  from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
                             }
                             Rectangle {   // row colour → a slim left edge bar
                                 visible: card.modelData.bar !== ""
