@@ -1376,7 +1376,17 @@ FocusScope {
         else if (inTable && cmd && k === Qt.Key_R) { tblFill(true); event.accepted = true }
         else if (inTable) {
             if (cmd) { event.accepted = true; return }   // swallow other Cmd-combos (don't type the letter)
-            if (tcur.rangeR0 >= 0) tcur.clearRange()   // any key collapses a cell-range selection
+            if (tcur.rangeR0 >= 0) {
+                // Backspace/Delete over a cell range clears its CONTENTS (one
+                // undo step); any other key just collapses the selection.
+                if (k === Qt.Key_Backspace || k === Qt.Key_Delete) {
+                    blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
+                    tcur.clearRange(); cursor.sync()
+                    event.accepted = true
+                    return
+                }
+                tcur.clearRange()                      // any other key collapses it
+            }
             if (k === Qt.Key_Right) tcur.right(shift)
             else if (k === Qt.Key_Left) tcur.left(shift)
             else if (k === Qt.Key_Down) tcur.down()
@@ -1770,7 +1780,7 @@ FocusScope {
                     x: cell.colLeft + deco
                     width: cell.measure - deco
                     y: btype === 2 ? 12 : 6   // code: centered in the taller (doubled-margin) cell
-                    // Quotes are upright Merriweather (serif + bar + muted colour
+                    // Quotes are upright Lora (serif + bar + muted colour
                     // mark them); italic/bold come from spans so all four faces
                     // are reachable, rather than forcing the whole block italic.
                     text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
@@ -2342,6 +2352,31 @@ FocusScope {
             onDoubleClicked: (m) => {
                 var bc = frameTable.columnBorderAt(m.x)
                 if (bc >= 0) blockModel.tableSetColWidth(root.activeTableRow, bc, 0)
+            }
+        }
+
+        DropArea {   // image file → the cell under the pointer. The document
+                     // view's DropArea doesn't cover this dedicated mode.
+            anchors.fill: parent
+            onPositionChanged: (drag) => {
+                var lp = frameTable.mapFromItem(tableFrame, drag.x, drag.y)
+                if (drag.hasUrls && lp.x >= 0 && lp.x <= frameTable.width
+                                 && lp.y >= 0 && lp.y <= frameTable.height) {
+                    var h = frameTable.cellAtPoint(lp.x, lp.y)
+                    frameTable.dropR = h.r; frameTable.dropC = h.c
+                } else { frameTable.dropR = -1; frameTable.dropC = -1 }
+            }
+            onExited: { frameTable.dropR = -1; frameTable.dropC = -1 }
+            onDropped: (drop) => {
+                var r = frameTable.dropR, c = frameTable.dropC
+                frameTable.dropR = -1; frameTable.dropC = -1
+                if (r < 0 || !drop.hasUrls) return
+                for (var i = 0; i < drop.urls.length; ++i)
+                    if (blockModel.tableSetCellImageFromUrl(root.activeTableRow, r, c, drop.urls[i].toString())) {
+                        tcur.place(r, c, 0)
+                        drop.accept()
+                        return
+                    }
             }
         }
 

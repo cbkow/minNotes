@@ -251,8 +251,13 @@ Item {
                                                 : Math.min(width - 2 * tv.cellPadH, cmediaW > 0 ? cmediaW : width)) : 0
                             readonly property real imgH: (cmedia !== "" && cmediaW > 0 && cmediaH > 0)
                                 ? Math.round(imgW * cmediaH / cmediaW) : 0
-                            readonly property real contentH: cellText.implicitHeight
-                                + (imgH > 0 ? imgH + tv.cellPadV : 0) + 2 * tv.cellPadV
+                            // Image-only cells don't reserve a ghost text line below
+                            // the image (it read as "a space with a blinking cursor");
+                            // the line (re)appears as soon as the cell has text.
+                            readonly property real contentH: (imgH > 0 ? imgH : 0)
+                                + ((imgH > 0 && cellText.length === 0) ? 0
+                                   : cellText.implicitHeight + (imgH > 0 ? tv.cellPadV : 0))
+                                + 2 * tv.cellPadV
                             property alias teItem: cellText
                             // Effective cell colours (cell → row → column cascade), "" = none.
                             readonly property string cellBg: (blockModel.contentRevision,
@@ -434,10 +439,12 @@ Item {
                                 size: 12
                                 color: cellRect.c === tv.sortCol ? Theme.colors.textBright : Theme.colors.textSubtle
                             }
-                            // in-cell caret (focused cell, no selection)
+                            // in-cell caret (focused cell, no selection). Hidden in an
+                            // image-only cell — the image's focus tint is the cue there.
                             Rectangle {
                                 visible: cellRect.isFocusedCell && tv.caretOn && tv.selFrom === tv.selTo
                                          && !cellRect.isChoice && !cellRect.isCheck
+                                         && !(cellRect.imgH > 0 && cellText.length === 0)
                                 z: 1; color: Theme.colors.accent; width: 2
                                 readonly property rect cr: cellText.positionToRectangle(Math.min(tv.caretPos, cellText.length))
                                 x: cellText.x + cr.x; y: cellText.y + cr.y
