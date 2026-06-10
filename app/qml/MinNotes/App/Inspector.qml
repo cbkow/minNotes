@@ -44,7 +44,7 @@ Rectangle {
         width: 87; height: 26
         color: panel.target === t ? Theme.colors.bg : (tma.containsMouse ? Theme.colors.surfaceHover : "transparent")
         border.width: 1
-        border.color: panel.target === t ? Theme.colors.accent : Theme.colors.border
+        border.color: panel.target === t ? Theme.colors.textBright : Theme.colors.border
         Row {
             anchors.centerIn: parent; spacing: 6
             Rectangle { width: 12; height: 12; radius: 2; anchors.verticalCenter: parent.verticalCenter
