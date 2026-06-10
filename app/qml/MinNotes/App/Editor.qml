@@ -2093,7 +2093,7 @@ FocusScope {
             policy: ScrollBar.AsNeeded
             width: Theme.dim.scrollBarWidth
             contentItem: Rectangle {
-                radius: width / 2
+                radius: 0
                 color: Theme.colors.textSubtle
                 opacity: vbar.pressed ? 0.85 : (vbar.hovered ? 0.65 : 0.40)
                 Behavior on opacity { NumberAnimation { duration: 120 } }
@@ -2192,7 +2192,7 @@ FocusScope {
             id: fvbar
             policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
             contentItem: Rectangle {
-                radius: width / 2; color: Theme.colors.textSubtle
+                radius: 0; color: Theme.colors.textSubtle
                 opacity: fvbar.pressed ? 0.85 : (fvbar.hovered ? 0.65 : 0.40)
                 Behavior on opacity { NumberAnimation { duration: 120 } }
             }
@@ -2298,7 +2298,7 @@ FocusScope {
         // (bottom). Direct children — no mouse-layer conflict in this view.
         Rectangle {   // + column
             x: 20 + frameTable.width + 2; y: 20
-            width: 14; height: frameTable.height; radius: 3
+            width: 14; height: frameTable.height; radius: 0
             color: fAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
@@ -2313,7 +2313,7 @@ FocusScope {
             readonly property real thumbW: Math.max(24, width * frameTable.width / Math.max(1, frameTable.contentW))
             readonly property real maxThumbX: width - thumbW
             Rectangle {
-                height: parent.height; radius: height / 2; width: parent.thumbW
+                height: parent.height; radius: 0; width: parent.thumbW
                 x: parent.maxScroll > 0 ? (frameTable.scrollX / parent.maxScroll) * parent.maxThumbX : 0
                 color: Theme.colors.textSubtle
                 opacity: fHbarMA.pressed ? 0.85 : (fHbarMA.containsMouse ? 0.65 : 0.45)
@@ -2331,7 +2331,7 @@ FocusScope {
         }
         Rectangle {   // + row (below the scrollbar when present)
             x: 20; y: 20 + frameTable.height + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 6 : 2)
-            width: frameTable.width; height: 14; radius: 3
+            width: frameTable.width; height: 14; radius: 0
             color: fAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
@@ -3074,7 +3074,7 @@ FocusScope {
             readonly property real maxThumbX: width - thumbW
             Rectangle {
                 id: hthumb
-                height: parent.height; radius: height / 2; width: parent.thumbW
+                height: parent.height; radius: 0; width: parent.thumbW
                 x: parent.maxScroll > 0 && tableAdd.tItem ? (tableAdd.tItem.scrollX / parent.maxScroll) * parent.maxThumbX : 0
                 color: Theme.colors.textSubtle
                 opacity: hbarMA.pressed ? 0.85 : (hbarMA.containsMouse ? 0.65 : 0.45)
@@ -3095,7 +3095,7 @@ FocusScope {
 
         Rectangle {   // + row, bottom edge (below the scrollbar when present)
             x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + (tableAdd.overflow ? tableAdd.sbH + 6 : 2)
-            width: tableAdd.cw; height: 14; radius: 3; z: 40
+            width: tableAdd.cw; height: 14; radius: 0; z: 40
             color: addRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
@@ -3106,7 +3106,7 @@ FocusScope {
         }
         Rectangle {   // + column, right edge
             x: tableAdd.tableX + tableAdd.cw + 2; y: tableAdd.topV
-            width: 14; height: tableAdd.ch; radius: 3; z: 40
+            width: 14; height: tableAdd.ch; radius: 0; z: 40
             color: addColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }

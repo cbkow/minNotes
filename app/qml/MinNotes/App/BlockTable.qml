@@ -429,10 +429,10 @@ Item {
                                 anchors.right: parent.right; anchors.rightMargin: tv.cellPadH - 2
                                 anchors.verticalCenter: parent.verticalCenter
                                 name: cellRect.c === tv.sortCol
-                                      ? (tv.sortAsc ? "sort-ascending" : "sort-descending")
-                                      : "arrows-down-up"
+                                      ? (tv.sortAsc ? "caret-up" : "caret-down")
+                                      : "caret-up-down"
                                 size: 12
-                                color: cellRect.c === tv.sortCol ? Theme.colors.accent : Theme.colors.textSubtle
+                                color: cellRect.c === tv.sortCol ? Theme.colors.textBright : Theme.colors.textSubtle
                             }
                             // in-cell caret (focused cell, no selection)
                             Rectangle {
