@@ -293,7 +293,7 @@ Item {
                                 visible: kb.suspended && card.modelData.imgUrl !== ""
                                 width: parent.width; height: card.modelData.imgH
                                 color: "transparent"
-                                border.width: 1; border.color: Theme.colors.accent
+                                border.width: 1; border.color: Theme.colors.divider   // quiet grey frame
                             }
                             Image {   // cover: the row's first cell image
                                 id: coverImg

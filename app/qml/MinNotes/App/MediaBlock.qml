@@ -54,7 +54,7 @@ Item {
         visible: mb.suspended && mb.active && !mb.isFile
         anchors.fill: parent
         color: "transparent"
-        border.width: 1; border.color: Theme.colors.accent
+        border.width: 1; border.color: Theme.colors.divider   // quiet grey frame
     }
 
     function _fmtDur(ms) {

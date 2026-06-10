@@ -324,7 +324,7 @@ Item {
                                 x: cellImg.x; y: cellImg.y
                                 width: cellImg.width; height: cellImg.height
                                 color: "transparent"
-                                border.width: 1; border.color: Theme.colors.accent
+                                border.width: 1; border.color: Theme.colors.divider   // quiet grey frame
                             }
                             Image {   // inline cell image (above any text)
                                 id: cellImg
