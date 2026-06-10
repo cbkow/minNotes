@@ -1117,6 +1117,37 @@ FocusScope {
         if (right) blockModel.tableFillRight(tcur.row, r0, c0, r1, c1)
         else blockModel.tableFillDown(tcur.row, r0, c0, r1, c1)
     }
+    // Whole-row / whole-column selection (the tcur rectangular range) — from the
+    // context menu, or a click (not a drag) on a full-frame reorder grip.
+    function selectTableRow(row, r) {
+        if (cursor.focusRow !== row) { blockModel.commitMarkdown(cursor.focusRow); cursor.setCaret(row, 0) }
+        tcur.place(r, 0, 0)
+        tcur.setRange(r, 0, r, blockModel.tableColumns(row) - 1)
+        cursor.sync()
+    }
+    function selectTableColumn(row, c) {
+        if (cursor.focusRow !== row) { blockModel.commitMarkdown(cursor.focusRow); cursor.setCaret(row, 0) }
+        tcur.place(0, c, 0)
+        tcur.setRange(0, c, blockModel.tableRows(row) - 1, c)
+        cursor.sync()
+    }
+    // Header sort: clicking the right edge of a header cell sorts by that column,
+    // toggling direction on repeat. Session-visual state only (the sort itself is
+    // a one-shot undoable mutation; nothing persists).
+    property int  lastSortRow: -1
+    property int  lastSortCol: -1
+    property bool lastSortAsc: true
+    function headerSortHit(bt, row, r, c, lx) {     // lx = bt-local x
+        if (r >= blockModel.tableHeaderRows(row)) return false
+        if (blockModel.tableRows(row) - blockModel.tableHeaderRows(row) < 2) return false
+        var right = bt.columnLeftX(c) + bt.colW(c) - bt.scrollX
+        return lx > right - 22 && lx <= right
+    }
+    function headerSort(row, c) {
+        var asc = !(lastSortRow === row && lastSortCol === c && lastSortAsc)
+        blockModel.tableSortByColumn(row, c, asc)
+        lastSortRow = row; lastSortCol = c; lastSortAsc = asc
+    }
     function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
     function tblColKind()      { return (blockModel.contentRevision, blockModel.tableColumnKind(menuRow, menuCellC)) }
     function tblMakeChoiceCol(){ blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
@@ -1899,7 +1930,12 @@ FocusScope {
                     if (tk === 1 && tbody) { root.openChoicePicker(th.row, th.r, th.c, m.x, m.y - flick.contentY); return }
                     if (tk === 2 && tbody) { blockModel.tableCycleCellCheck(th.row, th.r, th.c); return }
                     var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
-                    if (bt) { var lp = bt.mapFromItem(mouse, m.x, m.y); root.beginTableInteraction(bt, th.row, lp.x, lp.y) }
+                    if (bt) {
+                        var lp = bt.mapFromItem(mouse, m.x, m.y)
+                        // Header sort zone (a header cell's right edge) beats the caret.
+                        if (root.headerSortHit(bt, th.row, th.r, th.c, lp.x)) { root.headerSort(th.row, th.c); return }
+                        root.beginTableInteraction(bt, th.row, lp.x, lp.y)
+                    }
                     return
                 }
                 // Click a task-item checkbox → cycle its status (todo→doing→done).
@@ -1951,9 +1987,17 @@ FocusScope {
                 var clk = root.taskCheckboxAt(m.x, m.y) >= 0
                 if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) === 7) {
                     var ch = root.tableHitAt(m.x, m.y)
-                    if (ch && ch.r >= blockModel.tableHeaderRows(ch.row)) {
-                        var ck = blockModel.tableColumnKind(ch.row, ch.c)
-                        clk = (ck === 1 || ck === 2)
+                    if (ch) {
+                        if (ch.r >= blockModel.tableHeaderRows(ch.row)) {
+                            var ck = blockModel.tableColumnKind(ch.row, ch.c)
+                            clk = (ck === 1 || ck === 2)
+                        } else {   // header: pointer over the sort zone
+                            var chd = root.cellForRow(ch.row), cbt = chd ? chd.tableItem : null
+                            if (cbt) {
+                                var clp = cbt.mapFromItem(mouse, m.x, m.y)
+                                clk = root.headerSortHit(cbt, ch.row, ch.r, ch.c, clp.x)
+                            }
+                        }
                     }
                 }
                 mouse.overClickable = clk
@@ -2082,6 +2126,11 @@ FocusScope {
         property bool rowDragging: false
         property int  dragFrom: -1
         property int  dropGap: -1          // target insertion gap (cols: 0..n, rows: header..n)
+        property int  hoverHdrC: -1        // hovered header column (sort affordance)
+        // A grip press that never moves is a CLICK → select the whole row/column.
+        property real gripPressX: 0
+        property real gripPressY: 0
+        property bool gripMoved: false
         readonly property int frameCols: root.activeTableRow >= 0
             ? (blockModel.contentRevision, blockModel.tableColumns(root.activeTableRow)) : 0
         readonly property int frameRows: root.activeTableRow >= 0
@@ -2122,7 +2171,10 @@ FocusScope {
             return frameRows
         }
         function commitGripDrag() {
-            if (dropGap >= 0 && dragFrom >= 0) {
+            if (!gripMoved && dragFrom >= 0) {           // click, not drag → select
+                if (colDragging) root.selectTableColumn(root.activeTableRow, dragFrom)
+                else if (rowDragging) root.selectTableRow(root.activeTableRow, dragFrom)
+            } else if (dropGap >= 0 && dragFrom >= 0) {
                 var to = dropGap > dragFrom ? dropGap - 1 : dropGap
                 if (to !== dragFrom) {
                     if (colDragging) blockModel.tableMoveColumn(root.activeTableRow, dragFrom, to)
@@ -2198,6 +2250,10 @@ FocusScope {
                 // option picker; check → cycle the tri-state. Both go through the same
                 // mutateTable-backed invokables, so undo is identical here.
                 var fhit = frameTable.cellAtPoint(m.x, m.y)
+                // Header sort zone beats the caret (m is already frameTable-local).
+                if (root.headerSortHit(frameTable, root.activeTableRow, fhit.r, fhit.c, m.x)) {
+                    root.headerSort(root.activeTableRow, fhit.c); return
+                }
                 var ftk = blockModel.tableColumnKind(root.activeTableRow, fhit.c)
                 var fbody = fhit.r >= blockModel.tableHeaderRows(root.activeTableRow)
                 if (ftk === 1 && fbody) {
@@ -2212,18 +2268,24 @@ FocusScope {
                 if (root.tableResizing || root.tableDragging) { root.updateTableInteraction(frameTable, m.x, m.y); return }
                 var overBorder = frameTable.columnBorderAt(m.x) >= 0
                 root.tableOverBorder = overBorder
-                // Pointer cursor over a check / choice body cell.
+                // Pointer cursor over a check / choice body cell or a header's
+                // sort zone; remember the hovered header column for the glyph.
                 var clk = false
+                var hdrC = -1
                 if (!overBorder) {
                     var fh = frameTable.cellAtPoint(m.x, m.y)
                     if (fh && fh.r >= blockModel.tableHeaderRows(root.activeTableRow)) {
                         var fk = blockModel.tableColumnKind(root.activeTableRow, fh.c)
                         clk = (fk === 1 || fk === 2)
+                    } else if (fh) {
+                        hdrC = fh.c
+                        clk = root.headerSortHit(frameTable, root.activeTableRow, fh.r, fh.c, m.x)
                     }
                 }
                 frameMA.overClickable = clk
+                tableFrame.hoverHdrC = hdrC
             }
-            onExited: { root.tableOverBorder = false; frameMA.overClickable = false }
+            onExited: { root.tableOverBorder = false; frameMA.overClickable = false; tableFrame.hoverHdrC = -1 }
             onReleased: root.endTableInteraction()
             onCanceled: { root.tableResizing = false; root.tableDragging = false }
             onDoubleClicked: (m) => {
@@ -2297,12 +2359,18 @@ FocusScope {
                 cursorShape: tableFrame.colDragging ? Qt.ClosedHandCursor
                            : tableFrame.gripC >= 0 ? Qt.OpenHandCursor : Qt.ArrowCursor
                 onPositionChanged: (m) => {
-                    if (tableFrame.colDragging) { tableFrame.dropGap = tableFrame.colGapAt(m.x); return }
+                    if (tableFrame.colDragging) {
+                        if (Math.abs(m.x - tableFrame.gripPressX) + Math.abs(m.y - tableFrame.gripPressY) > 4)
+                            tableFrame.gripMoved = true
+                        tableFrame.dropGap = tableFrame.colGapAt(m.x); return
+                    }
                     tableFrame.gripC = tableFrame.colAt(m.x)
                 }
                 onPressed: (m) => {
                     var c = tableFrame.colAt(m.x)
                     if (c >= 0) { tableFrame.colDragging = true; tableFrame.dragFrom = c
+                                  tableFrame.gripPressX = m.x; tableFrame.gripPressY = m.y
+                                  tableFrame.gripMoved = false
                                   tableFrame.dropGap = tableFrame.colGapAt(m.x) }
                 }
                 onReleased: tableFrame.commitGripDrag()
@@ -2329,18 +2397,49 @@ FocusScope {
                 cursorShape: tableFrame.rowDragging ? Qt.ClosedHandCursor
                            : tableFrame.gripR >= 0 ? Qt.OpenHandCursor : Qt.ArrowCursor
                 onPositionChanged: (m) => {
-                    if (tableFrame.rowDragging) { tableFrame.dropGap = tableFrame.rowGapAt(m.y); return }
+                    if (tableFrame.rowDragging) {
+                        if (Math.abs(m.x - tableFrame.gripPressX) + Math.abs(m.y - tableFrame.gripPressY) > 4)
+                            tableFrame.gripMoved = true
+                        tableFrame.dropGap = tableFrame.rowGapAt(m.y); return
+                    }
                     tableFrame.gripR = tableFrame.rowAt(m.y)
                 }
                 onPressed: (m) => {
                     var r = tableFrame.rowAt(m.y)
                     if (r >= 0) { tableFrame.rowDragging = true; tableFrame.dragFrom = r
+                                  tableFrame.gripPressX = m.x; tableFrame.gripPressY = m.y
+                                  tableFrame.gripMoved = false
                                   tableFrame.dropGap = tableFrame.rowGapAt(m.y) }
                 }
                 onReleased: tableFrame.commitGripDrag()
                 onCanceled: tableFrame.cancelGripDrag()
                 onExited: if (!tableFrame.rowDragging) tableFrame.gripR = -1
             }
+        }
+        // Header sort affordances. Hovering a header cell shows a faint sort
+        // glyph at its right edge (the click zone); the last-sorted column of
+        // THIS table shows the direction in accent. Display-only — clicks are
+        // handled by frameMA's headerSortHit zone check.
+        Icon {
+            readonly property real gx: tableFrame.hoverHdrC >= 0
+                ? 20 + frameTable.columnLeftX(tableFrame.hoverHdrC)
+                     + frameTable.colW(tableFrame.hoverHdrC) - frameTable.scrollX - 18 : 0
+            visible: tableFrame.hoverHdrC >= 0 && !tableFrame.colDragging
+                     && tableFrame.hoverHdrC !== (root.lastSortRow === root.activeTableRow ? root.lastSortCol : -1)
+                     && gx >= 20 && gx <= 20 + frameTable.width - 12
+            x: gx; y: 27
+            name: "arrows-down-up"; size: 12; color: Theme.colors.textMuted
+        }
+        Icon {
+            readonly property real gx: root.lastSortCol >= 0 && root.lastSortCol < frameTable.colCount
+                ? 20 + frameTable.columnLeftX(root.lastSortCol)
+                     + frameTable.colW(root.lastSortCol) - frameTable.scrollX - 18 : 0
+            visible: root.lastSortRow === root.activeTableRow && root.lastSortCol >= 0
+                     && root.lastSortCol < frameTable.colCount
+                     && gx >= 20 && gx <= 20 + frameTable.width - 12
+            x: gx; y: 27
+            name: root.lastSortAsc ? "sort-ascending" : "sort-descending"
+            size: 12; color: Theme.colors.accent
         }
         Rectangle {   // column drop line (insertion gap during a grip drag)
             visible: tableFrame.colDragging && tableFrame.dropGap >= 0
@@ -3260,6 +3359,7 @@ FocusScope {
                     id: subCol
                     x: 4; y: 4; spacing: 1
                     // --- Row ▸ ---
+                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
                     MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
                     MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
                     // Reorder/duplicate: body rows only (a header row's place is structural).
@@ -3272,6 +3372,7 @@ FocusScope {
                     Rectangle { visible: blockMenu.activeSub === "row"; width: parent.width; height: 1; color: Theme.colors.divider }
                     MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
                     // --- Column ▸ ---
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
                     MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
                     MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
                     MenuRow { visible: blockMenu.activeSub === "column" && root.menuCellC > 0
