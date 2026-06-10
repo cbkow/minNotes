@@ -23,18 +23,7 @@ FocusScope {
     property real pageWidth: Math.min(width - 40, Theme.dim.columnWidth)
     // Media is known-geometry: tell the model the width it derives media heights
     // from, and re-tell it on resize so reserved height stays exact (no jump).
-    // DEBOUNCED: pushing every live-resize tick recomputed every media height
-    // per tick → cumulative heights shifted → firstVisible churned → the
-    // delegate ring remapped → media delegates recycled (source strips to "",
-    // images/posters reload) = the resize flicker loop. During the drag media
-    // keeps its current size (the texture scales with the column); the real
-    // width lands once, 150ms after the resize settles.
-    onPageWidthChanged: contentWidthDebounce.restart()
-    Timer {
-        id: contentWidthDebounce
-        interval: 150
-        onTriggered: blockModel.setContentWidth(root.pageWidth)
-    }
+    onPageWidthChanged: blockModel.setContentWidth(pageWidth)
     readonly property real leftEdge: (flick.width - pageWidth) / 2
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }

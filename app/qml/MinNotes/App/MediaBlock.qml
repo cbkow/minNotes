@@ -46,27 +46,6 @@ Item {
     implicitWidth:  dispW
     implicitHeight: (iw > 0 && ih > 0) ? Math.round(dispW * ih / iw) : Math.round(dispW * 0.5)
 
-    // DECODE width — follows dispW only once a resize settles. sourceSize bound
-    // straight to dispW re-decoded the file on EVERY live-resize tick (a
-    // sourceSize change is a fresh async load), strobing the placeholder — the
-    // window-resize flicker loop. While the width moves, the already-decoded
-    // texture just scales (smooth); one crisp re-decode fires 150ms after it
-    // stops. A delegate RECYCLE (new row) bypasses the debounce so scrolling
-    // never shows a stale-size decode.
-    property real decodeW: 0
-    property int  _decodeRow: -1
-    onDispWChanged: {
-        if (logicalRow !== _decodeRow || decodeW <= 0) {
-            _decodeRow = logicalRow; decodeW = dispW; decodeDebounce.stop()
-        } else decodeDebounce.restart()
-    }
-    Component.onCompleted: { _decodeRow = logicalRow; decodeW = dispW }
-    Timer { id: decodeDebounce; interval: 150; onTriggered: mb.decodeW = mb.dispW }
-    // The loading placeholder is for the FIRST paint only — a re-decode (resize)
-    // keeps showing the old texture instead of flashing "loading…".
-    property bool everPainted: false
-    onUrlChanged: everPainted = false
-
     function _fmtDur(ms) {
         if (ms <= 0) return ""
         var s = Math.round(ms / 1000)
@@ -135,7 +114,7 @@ Item {
             source: (mb.isPdf && mb.pdfPath !== "") ? mb._pdfSrc(mb.pdfPath, mb.pdfPage) : ""
             asynchronous: true; cache: true
             fillMode: Image.PreserveAspectFit
-            sourceSize.width: Math.round(mb.decodeW * Screen.devicePixelRatio)
+            sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
             smooth: true
         }
     }
@@ -146,16 +125,14 @@ Item {
         anchors.fill: parent
         visible: !mb.isVideo && !mb.isFile && !mb.isPdf
         source: (mb.isVideo || mb.isFile || mb.isPdf) ? "" : mb.url
-        asynchronous: true; cache: true   // recycle = cache hit (sidecar paths are content-hashed)
+        asynchronous: true; cache: false
         fillMode: Image.PreserveAspectFit
-        sourceSize.width: Math.round(mb.decodeW * Screen.devicePixelRatio)
+        sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
         smooth: true
-        onStatusChanged: if (status === Image.Ready) mb.everPainted = true
     }
-    Rectangle {   // image loading / missing placeholder (first load / error only)
+    Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
         visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && img.status !== Image.Ready
-                 && (!mb.everPainted || img.status === Image.Error)
         color: Theme.colors.surfaceHover; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         Text {
@@ -183,7 +160,7 @@ Item {
             source: (mb.isVideo && !mb.isActivePlayer) ? mb._vframeSrc(mb.localPath, mb.posterFrame) : ""
             asynchronous: true; cache: true
             fillMode: Image.PreserveAspectFit
-            sourceSize.width: Math.round(mb.decodeW * Screen.devicePixelRatio)
+            sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
             smooth: true
         }
         Rectangle {   // duration badge

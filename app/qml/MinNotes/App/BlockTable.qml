@@ -287,17 +287,7 @@ Item {
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
-                            Component.onCompleted: { gridRow.recompute(); decodeImgW = imgW }
-                            // Decode width follows imgW only once a resize settles —
-                            // a live column-resize tick must scale the texture, not
-                            // re-decode the file per tick (same fix as MediaBlock).
-                            property real decodeImgW: 0
-                            onImgWChanged: {
-                                if (decodeImgW <= 0) decodeImgW = imgW
-                                else cellDecodeDebounce.restart()
-                            }
-                            Timer { id: cellDecodeDebounce; interval: 150
-                                    onTriggered: cellRect.decodeImgW = cellRect.imgW }
+                            Component.onCompleted: gridRow.recompute()
                             color: isSelected ? Theme.colors.selectionBg
                                  : cellBg !== "" ? cellBg
                                  : isHeader   ? Theme.colors.surfaceHover : "transparent"
@@ -331,9 +321,9 @@ Item {
                                 x: tv.cellPadH; y: tv.cellPadV
                                 width: cellRect.imgW; height: cellRect.imgH
                                 source: cellRect.cmediaUrl
-                                asynchronous: true; cache: true   // recycle/rebuild = cache hit
+                                asynchronous: true; cache: false
                                 fillMode: Image.PreserveAspectFit
-                                sourceSize.width: Math.round(cellRect.decodeImgW * Screen.devicePixelRatio)
+                                sourceSize.width: Math.round(cellRect.imgW * Screen.devicePixelRatio)
                                 smooth: true
                             }
                             // Selected-state tint over a cell image (it's opaque, like
