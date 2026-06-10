@@ -3069,6 +3069,7 @@ FocusScope {
         property alias text: menuRowLabel.text
         property bool danger: false
         property string scope: "block"   // what this item targets: block | column | row
+        property bool inSub: false       // lives in the submenu panel (doesn't fold it)
         signal activated()
         width: 184; height: 28; radius: 4
         color: menuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
@@ -3085,8 +3086,45 @@ FocusScope {
             id: menuRowMA
             anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
             // Hovering an item highlights its target scope on the document/table.
-            onContainsMouseChanged: if (containsMouse) { root.menuHiScope = parent.scope; root.menuHiDanger = parent.danger }
+            onContainsMouseChanged: if (containsMouse) {
+                root.menuHiScope = parent.scope; root.menuHiDanger = parent.danger
+                if (!parent.inSub) blockMenu.activeSub = ""   // plain row folds the panel
+            }
             onClicked: { parent.activated(); blockMenu.close() }
+        }
+    }
+
+    // A menu row that opens a grouped side panel (hover or click). The panel is a
+    // second panel INSIDE the same Popup — a real child Popup would fight the
+    // parent's CloseOnPressOutside (a press inside the child reads as "outside"
+    // the parent and cascades a close before the click lands).
+    component MenuSub: Rectangle {
+        property alias text: menuSubLabel.text
+        property string subId: ""
+        property string scope: "block"
+        width: 184; height: 28; radius: 4
+        color: (menuSubMA.containsMouse || blockMenu.activeSub === subId)
+               ? Theme.colors.surfaceHover : "transparent"
+        Text {
+            id: menuSubLabel
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left; anchors.leftMargin: 10
+            color: Theme.colors.text
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+        }
+        Icon {
+            anchors.right: parent.right; anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            name: "caret-right"; size: 12; color: Theme.colors.textMuted
+        }
+        MouseArea {
+            id: menuSubMA
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) {
+                root.menuHiScope = parent.scope; root.menuHiDanger = false
+                blockMenu.activeSub = parent.subId
+                blockMenu.subY = parent.y
+            }
         }
     }
 
@@ -3129,84 +3167,126 @@ FocusScope {
         // In a full-frame tab (table/PDF) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
         readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0
+        // Submenu panel: which group is open ("" none) + the anchor row's y.
+        property string activeSub: ""
+        property real subY: 0
+        // Table facts the row visibilities share (revision-dep'd once here).
+        readonly property int tHdr: isTable ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.menuRow)) : 0
+        readonly property int tRows: isTable ? (blockModel.contentRevision, blockModel.tableRows(root.menuRow)) : 0
+        readonly property int tCols: isTable ? (blockModel.contentRevision, blockModel.tableColumns(root.menuRow)) : 0
+        readonly property bool bodyRow: isTable && root.menuCellR >= tHdr
         padding: 4; z: 60
         // Reactive on-screen clamp: re-evaluates as the menu's height settles after
         // open (so a long menu is positioned right on the FIRST trigger, not the 2nd).
         x: Math.max(8, Math.min(root.menuX, root.width - width - 8))
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
-        onClosed: { root.menuHiScope = ""; root.forceActiveFocus() }
+        onOpened: activeSub = ""
+        onClosed: { activeSub = ""; root.menuHiScope = ""; root.forceActiveFocus() }
         background: Rectangle { color: Theme.colors.surface; radius: 6
                                 border.width: 1; border.color: Theme.colors.border }
-        contentItem: Column {
-            spacing: 1
-            MenuRow { visible: root.menuLinkUrl.length > 0
-                      text: "Open " + root.truncUrl(root.menuLinkUrl)
-                      onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
-            Rectangle { visible: root.menuLinkUrl.length > 0; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
-            MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
-            MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
-            MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
-            MenuRow { visible: blockMenu.isMedia
-                      text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
-                      onActivated: blockModel.revealMedia(root.menuRow) }
-            MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
-                      onActivated: blockModel.openMediaInUfb(root.menuRow) }
-            MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
-            // --- table cell/row/column ops (table blocks only) ---
-            Rectangle { visible: blockMenu.isTable && !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-            MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-            MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row above";  onActivated: root.tblInsRowAbove() }
-            MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row below";  onActivated: root.tblInsRowBelow() }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column left";  onActivated: root.tblInsColLeft() }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
-            // Reorder (body rows only — a header row's place is structural).
-            MenuRow { visible: blockMenu.isTable && root.menuCellR > blockModel.tableHeaderRows(root.menuRow)
-                      scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
-            MenuRow { visible: blockMenu.isTable && root.menuCellR >= blockModel.tableHeaderRows(root.menuRow)
-                               && root.menuCellR < blockModel.tableRows(root.menuRow) - 1
-                      scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
-            MenuRow { visible: blockMenu.isTable && root.menuCellC > 0
-                      scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
-            MenuRow { visible: blockMenu.isTable && root.menuCellC < blockModel.tableColumns(root.menuRow) - 1
-                      scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
-            MenuRow { visible: blockMenu.isTable && root.menuCellR >= blockModel.tableHeaderRows(root.menuRow)
-                      scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
-            // One-shot sort of the body rows by this column (header stays pinned).
-            MenuRow { visible: blockMenu.isTable
-                               && blockModel.tableRows(root.menuRow) - blockModel.tableHeaderRows(root.menuRow) > 1
-                      scope: "column"; text: "Sort ascending"; onActivated: root.tblSort(true) }
-            MenuRow { visible: blockMenu.isTable
-                               && blockModel.tableRows(root.menuRow) - blockModel.tableHeaderRows(root.menuRow) > 1
-                      scope: "column"; text: "Sort descending"; onActivated: root.tblSort(false) }
-            Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align right";  onActivated: root.tblAlign(2) }
-            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
-            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
-            MenuRow { visible: blockMenu.isTable && root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
-            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 0 && !root.boardMode
-                      scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
-            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
-            MenuRow { visible: blockMenu.isTable; text: blockModel.tableHeaderRows(root.menuRow) > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
-            Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
-            MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Delete row";    danger: true; onActivated: root.tblDelRow() }
-            MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
-            // --- code (non-table) ---
-            Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow {
-                visible: !blockMenu.isTable && !blockMenu.isMedia   // text-only op
-                text: blockMenu.isCode ? "Change language…" : "Make code block"
-                onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
-                                              : root.makeCodeAt(root.menuRow)
+        contentItem: Item {
+            implicitWidth: menuCol.implicitWidth + (subPanel.visible ? subPanel.width + 8 : 0)
+            implicitHeight: Math.max(menuCol.implicitHeight, subPanel.visible ? subPanel.height : 0)
+            Column {
+                id: menuCol
+                spacing: 1
+                MenuRow { visible: root.menuLinkUrl.length > 0
+                          text: "Open " + root.truncUrl(root.menuLinkUrl)
+                          onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
+                Rectangle { visible: root.menuLinkUrl.length > 0; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
+                MenuRow { visible: blockMenu.isMedia
+                          text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
+                          onActivated: blockModel.revealMedia(root.menuRow) }
+                MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
+                          onActivated: blockModel.openMediaInUfb(root.menuRow) }
+                MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
+                // --- table ops: Row / Column / Column type fold into side panels ---
+                Rectangle { visible: blockMenu.isTable && !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuSub { visible: blockMenu.isTable; subId: "row";    scope: "row";    text: "Row" }
+                MenuSub { visible: blockMenu.isTable; subId: "column"; scope: "column"; text: "Column" }
+                MenuSub { visible: blockMenu.isTable; subId: "ctype";  scope: "column"; text: "Column type" }
+                MenuRow { visible: blockMenu.isTable; text: blockMenu.tHdr > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
+                Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
+                // --- code (non-table) ---
+                Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow {
+                    visible: !blockMenu.isTable && !blockMenu.isMedia   // text-only op
+                    text: blockMenu.isCode ? "Change language…" : "Make code block"
+                    onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
+                                                  : root.makeCodeAt(root.menuRow)
+                }
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
             }
-            Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
+            Rectangle {
+                id: subPanel
+                visible: blockMenu.activeSub !== ""
+                x: menuCol.implicitWidth + 8
+                y: Math.max(0, Math.min(blockMenu.subY, menuCol.implicitHeight - height))
+                width: subCol.implicitWidth + 8
+                height: subCol.implicitHeight + 8
+                radius: 6
+                color: Theme.colors.surface
+                border.width: 1; border.color: Theme.colors.border
+                Column {
+                    id: subCol
+                    x: 4; y: 4; spacing: 1
+                    // --- Row ▸ ---
+                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
+                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
+                    // Reorder/duplicate: body rows only (a header row's place is structural).
+                    MenuRow { visible: blockMenu.activeSub === "row" && root.menuCellR > blockMenu.tHdr
+                              inSub: true; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
+                    MenuRow { visible: blockMenu.activeSub === "row" && blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1
+                              inSub: true; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
+                    MenuRow { visible: blockMenu.activeSub === "row" && blockMenu.bodyRow
+                              inSub: true; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
+                    Rectangle { visible: blockMenu.activeSub === "row"; width: parent.width; height: 1; color: Theme.colors.divider }
+                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
+                    // --- Column ▸ ---
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
+                    MenuRow { visible: blockMenu.activeSub === "column" && root.menuCellC > 0
+                              inSub: true; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
+                    MenuRow { visible: blockMenu.activeSub === "column" && root.menuCellC < blockMenu.tCols - 1
+                              inSub: true; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
+                    Rectangle { visible: blockMenu.activeSub === "column"; width: parent.width; height: 1; color: Theme.colors.divider }
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Align right";  onActivated: root.tblAlign(2) }
+                    // One-shot sort of the body rows by this column (header stays pinned).
+                    Rectangle { visible: blockMenu.activeSub === "column" && blockMenu.tRows - blockMenu.tHdr > 1
+                                width: parent.width; height: 1; color: Theme.colors.divider }
+                    MenuRow { visible: blockMenu.activeSub === "column" && blockMenu.tRows - blockMenu.tHdr > 1
+                              inSub: true; scope: "column"; text: "Sort ascending"; onActivated: root.tblSort(true) }
+                    MenuRow { visible: blockMenu.activeSub === "column" && blockMenu.tRows - blockMenu.tHdr > 1
+                              inSub: true; scope: "column"; text: "Sort descending"; onActivated: root.tblSort(false) }
+                    Rectangle { visible: blockMenu.activeSub === "column"; width: parent.width; height: 1; color: Theme.colors.divider }
+                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
+                    // --- Column type ▸ ---
+                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 1
+                              inSub: true; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
+                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 2
+                              inSub: true; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
+                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() === 1
+                              inSub: true; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
+                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 0 && !root.boardMode
+                              inSub: true; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
+                    Rectangle { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 0
+                                width: parent.width; height: 1; color: Theme.colors.divider }
+                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 0
+                              inSub: true; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
+                }
+            }
         }
     }
 
