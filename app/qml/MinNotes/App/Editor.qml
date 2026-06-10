@@ -2240,7 +2240,7 @@ FocusScope {
             active: root.activeTableRow >= 0
             logicalRow: root.activeTableRow
             x: 20; y: 20
-            maxWidth: tableFrame.width - 57        // 20 left + gap + the +column strip + 20 right
+            maxWidth: tableFrame.width - 58        // 20 left + gap + the +column strip + 20 right
             width: implicitWidth
             height: implicitHeight
             focused: root.activeTableRow >= 0
@@ -2335,7 +2335,7 @@ FocusScope {
         // Full-frame affordances: +column (right), horizontal scrollbar + +row
         // (bottom). Direct children — no mouse-layer conflict in this view.
         Rectangle {   // + column
-            x: 20 + frameTable.width + 3; y: 20
+            x: 20 + frameTable.width + 4; y: 20
             width: 14; height: frameTable.height; radius: 0
             color: fAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
@@ -3145,7 +3145,7 @@ FocusScope {
             }
         }
         Rectangle {   // + column, right edge
-            x: tableAdd.tableX + tableAdd.cw + 3; y: tableAdd.topV
+            x: tableAdd.tableX + tableAdd.cw + 4; y: tableAdd.topV
             width: 14; height: tableAdd.ch; radius: 0; z: 40
             color: addColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
