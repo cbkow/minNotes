@@ -1750,6 +1750,24 @@ QVariantList BlockModel::codeRangesForRow(int row) const {
     return out;
 }
 
+// Highlight spans for a row: [{s,e,color}]. The view draws these as overlay
+// rects BELOW its selection layer (a char-format background would paint above
+// the selection — the same occlusion the code chips dodge).
+QVariantList BlockModel::highlightRangesForRow(int row) const {
+    QVariantList out;
+    if (rows_.empty()) return out;
+    row = clampRow(row);
+    for (const Span& sp : rows_[row].spans) {
+        if (sp.kind != SpanHighlight || sp.e <= sp.s) continue;
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("color"), sp.href);   // payload hex
+        out.append(m);
+    }
+    return out;
+}
+
 bool BlockModel::convertMarkdown(const QString& src, const std::vector<Span>& existing,
                                  QString& cleanText, std::vector<Span>& outSpans) {
     const int n = src.size();

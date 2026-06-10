@@ -177,6 +177,7 @@ public:
     // source cols. The editor draws the code "chip" as an overlay rect from these
     // — NOT a char-format background — so the selection can layer above it.
     Q_INVOKABLE QVariantList codeRangesForRow(int row) const;
+    Q_INVOKABLE QVariantList highlightRangesForRow(int row) const;   // [{s,e,color}] for overlay rects
 
     // Markdown-as-input: when the caret LEAVES a block, consume its inline
     // markdown (`**`/`*`/`` ` ``) into semantic spans and strip the markers, so it

@@ -41,6 +41,11 @@ class InlineMarkdownHighlighter : public QObject {
     // Semantic format spans for this block: [{s,e,k}] (k: 1 bold, 2 italic, 3 code).
     // Rendered as clean bold/italic/mono with NO markers (this is the spans path).
     Q_PROPERTY(QVariantList spans READ spans WRITE setSpans NOTIFY spansChanged)
+    // When true, highlight spans (kind 8) do NOT paint a char-format background —
+    // the view draws them as overlay rects BELOW its selection layer instead
+    // (a char background paints inside the TextEdit, above the selection, so
+    // selecting highlighted text showed no selection). Same trick as code chips.
+    Q_PROPERTY(bool highlightAsOverlay READ highlightAsOverlay WRITE setHighlightAsOverlay NOTIFY highlightAsOverlayChanged)
 public:
     explicit InlineMarkdownHighlighter(QObject* parent = nullptr);
 
@@ -69,6 +74,9 @@ public:
     QVariantList spans() const;
     void setSpans(const QVariantList& v);
 
+    bool highlightAsOverlay() const;
+    void setHighlightAsOverlay(bool on);
+
 signals:
     void documentChanged();
     void enabledChanged();
@@ -80,6 +88,7 @@ signals:
     void selEndChanged();
     void spansChanged();
     void linkColorChanged();
+    void highlightAsOverlayChanged();
 
 private:
     class Impl;                       // the actual QSyntaxHighlighter (in the .cpp)

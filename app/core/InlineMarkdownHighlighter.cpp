@@ -15,6 +15,7 @@ public:
     struct SpanFmt { int s; int e; int k; QColor color; };   // color set for k 7 (fg) / 8 (highlight)
 
     bool enabled = true;
+    bool hlOverlay = false;   // highlight spans drawn by the view, not as char bg
     QColor markerColor         = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
     QColor selectedMarkerColor = QColor(0xff, 0xff, 0xff);   // Theme.colors.textBright
     QColor codeColor           = QColor(0x4a, 0xa8, 0xff);   // Theme.colors.inlineCodeText (blue)
@@ -112,7 +113,7 @@ protected:
                 f.setFontUnderline(true);
                 if (!(fl[x] & 4)) f.setForeground(linkColor);
             }
-            if (bg[x].isValid()) f.setBackground(bg[x]);              // highlight (full opacity)
+            if (bg[x].isValid() && !hlOverlay) f.setBackground(bg[x]);   // highlight (else the view overlays it)
             if (fg[x].isValid()) f.setForeground(fg[x]);              // text colour wins over code/link
             setFormat(x, y - x, f);
             x = y;
@@ -155,6 +156,11 @@ QColor InlineMarkdownHighlighter::linkColor() const { return hl_->linkColor; }
 void InlineMarkdownHighlighter::setLinkColor(const QColor& c) {
     if (hl_->linkColor == c) return;
     hl_->linkColor = c; emit linkColorChanged(); hl_->rehighlight();
+}
+bool InlineMarkdownHighlighter::highlightAsOverlay() const { return hl_->hlOverlay; }
+void InlineMarkdownHighlighter::setHighlightAsOverlay(bool on) {
+    if (hl_->hlOverlay == on) return;
+    hl_->hlOverlay = on; emit highlightAsOverlayChanged(); hl_->rehighlight();
 }
 QString InlineMarkdownHighlighter::codeFontFamily() const { return hl_->codeFont; }
 void InlineMarkdownHighlighter::setCodeFontFamily(const QString& f) {

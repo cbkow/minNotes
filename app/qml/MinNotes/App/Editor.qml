@@ -1576,6 +1576,34 @@ FocusScope {
                     if (isFocus) root.focusBlockItem = te
                 }
 
+                // highlight spans — overlay rects below the selection (same trick
+                // as the code chips: a char-format background would paint above
+                // the selection, so selecting highlighted text showed nothing).
+                property var hlRects: {
+                    var dep = blockModel.contentRevision + blockModel.layoutRevision
+                    if (!cell.active || cell.isMedia) return []
+                    var ranges = blockModel.highlightRangesForRow(cell.logicalRow)
+                    var out = []
+                    for (var i = 0; i < ranges.length; ++i) {
+                        var rs = root.selectionRects(te, ranges[i].s, ranges[i].e)
+                        for (var j = 0; j < rs.length; ++j) out.push({rr: rs[j], col: ranges[i].color})
+                    }
+                    return out
+                }
+                Repeater {
+                    model: cell.hlRects
+                    delegate: Rectangle {
+                        required property int index
+                        readonly property var h: cell.hlRects[index]
+                        color: h.col
+                        z: 0
+                        x: te.x + h.rr.x
+                        y: te.y + h.rr.y
+                        width: h.rr.width
+                        height: h.rr.height
+                    }
+                }
+
                 // inline-code chips — overlay rects (one per visual line of each
                 // code range), drawn BELOW the selection so selecting code shows
                 // the highlight, and below the glyphs. NOT a char-format
@@ -1783,6 +1811,7 @@ FocusScope {
                     // highlighter, so code blocks detach this and use codeHl.
                     document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8) ? te.textDocument : null
                     enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8)
+                    highlightAsOverlay: true   // hlRects draws them below the selection
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
                     codeColor: Theme.colors.inlineCodeText
