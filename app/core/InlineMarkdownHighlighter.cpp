@@ -113,7 +113,18 @@ protected:
                 f.setFontUnderline(true);
                 if (!(fl[x] & 4)) f.setForeground(linkColor);
             }
-            if (bg[x].isValid() && !hlOverlay) f.setBackground(bg[x]);   // highlight (else the view overlays it)
+            if (bg[x].isValid()) {
+                if (!hlOverlay) f.setBackground(bg[x]);               // highlight (else the view overlays it)
+                // Auto-contrast: highlighted glyphs flip dark/light from the
+                // highlight's luma so a bright highlighter stays readable.
+                // Overrides code/link colours (readability wins; the underline
+                // keeps a link recognisable); an explicit fg span still wins below.
+                if (!fg[x].isValid()) {
+                    const int luma = (299 * bg[x].red() + 587 * bg[x].green() + 114 * bg[x].blue()) / 1000;
+                    f.setForeground(luma > 150 ? QColor(QStringLiteral("#1c1c1c"))
+                                               : QColor(QStringLiteral("#f0f0f0")));
+                }
+            }
             if (fg[x].isValid()) f.setForeground(fg[x]);              // text colour wins over code/link
             setFormat(x, y - x, f);
             x = y;

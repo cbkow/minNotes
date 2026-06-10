@@ -18,7 +18,7 @@ Rectangle {
 
     // Colour state (the I/O the editor's apply functions read).
     property color fgColor: Theme.colors.textBright   // text colour (white)
-    property color bgColor: "#656C57"                 // highlight colour (muted sage)
+    property color bgColor: "#FFEC59"                 // highlight colour (classic bright yellow)
     property string target: "fg"                       // which colour the picker edits
 
     readonly property int panelW: 198
@@ -34,7 +34,7 @@ Rectangle {
     function revertTarget() {                           // reset the active colour to its default
         selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
         if (target === "fg") fgColor = Theme.colors.textBright
-        else                 bgColor = "#656C57"
+        else                 bgColor = "#FFEC59"
         picker.value = (target === "fg" ? fgColor : bgColor)
     }
 
