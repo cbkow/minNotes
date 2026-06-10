@@ -146,7 +146,7 @@ Item {
         anchors.fill: parent
         visible: !mb.isVideo && !mb.isFile && !mb.isPdf
         source: (mb.isVideo || mb.isFile || mb.isPdf) ? "" : mb.url
-        asynchronous: true; cache: false
+        asynchronous: true; cache: true   // recycle = cache hit (sidecar paths are content-hashed)
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.decodeW * Screen.devicePixelRatio)
         smooth: true

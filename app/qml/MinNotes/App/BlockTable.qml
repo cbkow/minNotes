@@ -331,7 +331,7 @@ Item {
                                 x: tv.cellPadH; y: tv.cellPadV
                                 width: cellRect.imgW; height: cellRect.imgH
                                 source: cellRect.cmediaUrl
-                                asynchronous: true; cache: false
+                                asynchronous: true; cache: true   // recycle/rebuild = cache hit
                                 fillMode: Image.PreserveAspectFit
                                 sourceSize.width: Math.round(cellRect.decodeImgW * Screen.devicePixelRatio)
                                 smooth: true
