@@ -77,9 +77,7 @@ Item {
             for (var c2 = 0; c2 < nc; ++c2) {
                 if (imgUrl === "" && blockModel.tableCellMedia(row, r, c2) !== "") {
                     imgUrl = blockModel.tableCellMediaUrl(row, r, c2)
-                    var iw = blockModel.tableCellMediaW(row, r, c2)
-                    var ih = blockModel.tableCellMediaH(row, r, c2)
-                    imgH = (iw > 0 && ih > 0) ? Math.min(Math.round(cardW * ih / iw), 140) : 96
+                    imgH = Math.round(cardW * 9 / 16)   // 16:9 cover; crop fills the rest
                 }
                 if (c2 === groupCol || c2 === tc) continue
                 var k2 = blockModel.tableColumnKind(row, c2)
