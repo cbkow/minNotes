@@ -189,7 +189,17 @@ Rectangle {
         }
         MouseArea {
             anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-            onClicked: {
+            acceptedButtons: parent.userSlot ? (Qt.LeftButton | Qt.RightButton) : Qt.LeftButton
+            onClicked: (m) => {
+                if (parent.userSlot && m.button === Qt.RightButton) {
+                    if (parent.hex === "") return       // nothing to clear
+                    var p = mapToItem(panel, m.x, m.y)
+                    slotMenu.idx = parent.idx
+                    slotMenu.x = Math.max(8, Math.min(p.x, panel.width - slotMenu.width - 8))
+                    slotMenu.y = p.y + 4
+                    slotMenu.open()
+                    return
+                }
                 if (parent.userSlot) {
                     panel.selPreset = -1; panel.selUser = parent.idx
                     if (parent.hex === "") {            // empty slot captures the current colour
@@ -200,6 +210,35 @@ Rectangle {
                 } else {
                     panel.selUser = -1; panel.selPreset = parent.idx
                     picker.value = parent.hex
+                }
+            }
+        }
+    }
+
+    // Right-click menu for a user slot: clear it back to empty (+).
+    Popup {
+        id: slotMenu
+        property int idx: -1
+        padding: 4
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Rectangle {
+            implicitWidth: 104; implicitHeight: 26
+            color: clearMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+            Text {
+                anchors.verticalCenter: parent.verticalCenter; x: 8
+                text: "Clear slot"; color: Theme.colors.text
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            MouseArea {
+                id: clearMA
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    var u = panel.userSlots.slice(); u[slotMenu.idx] = ""
+                    panel.userSlots = u; panel.saveSwatches()
+                    if (panel.selUser === slotMenu.idx) panel.selUser = -1
+                    slotMenu.close()
                 }
             }
         }
