@@ -64,6 +64,13 @@ Item {
     property int dropR: -1
     property int dropC: -1
 
+    // Header sort affordance: every first-header-row cell reserves a right-edge
+    // slot with a sort glyph (the CLICK zone lives in the editor's mouse
+    // handlers; this is display only). sortCol marks the last-sorted column of
+    // this table (session state, passed in) with its direction in accent.
+    property int  sortCol: -1
+    property bool sortAsc: true
+
     TextMetrics { id: metrics; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody }
     // Per-column auto width = widest cell line (capped). Computed IMPERATIVELY (a
     // binding would self-loop: it writes metrics.text and reads metrics.advanceWidth).
@@ -76,12 +83,14 @@ Item {
             var mw = 0
             // Header rows stay text in every column kind; body cells only carry
             // measurable text in a text column (choice/check render a chip/glyph).
+            // The first header row also reserves the sort-glyph slot.
             var textRows = (kind === 0) ? rowCount : headerRows
             for (var r = 0; r < textRows; ++r) {
+                var pad = (r === 0 && headerRows > 0) ? 18 : 0
                 var lines = blockModel.tableCell(logicalRow, r, c).split("\n")
                 for (var li = 0; li < lines.length; ++li) {
                     metrics.text = lines[li]
-                    if (metrics.advanceWidth > mw) mw = metrics.advanceWidth
+                    if (metrics.advanceWidth + pad > mw) mw = metrics.advanceWidth + pad
                 }
             }
             if (kind === 1) {
@@ -260,6 +269,8 @@ Item {
                                                           blockModel.tableColumnKind(tv.logicalRow, c))
                             readonly property bool isChoice: ckind === 1 && !isHeader
                             readonly property bool isCheck: ckind === 2 && !isHeader
+                            // first header row carries the sort glyph slot
+                            readonly property bool sortSlot: isHeader && gridRow.r === 0
                             readonly property string csel: isChoice ? (blockModel.contentRevision,
                                                            blockModel.tableCellChoice(tv.logicalRow, gridRow.r, c)) : ""
                             readonly property string cselLabel: (isChoice && csel !== "")
@@ -323,7 +334,7 @@ Item {
                                 visible: !cellRect.isChoice && !cellRect.isCheck   // typed cells render their own glyph
                                 x: tv.cellPadH
                                 y: tv.cellPadV + (cellRect.imgH > 0 ? cellRect.imgH + tv.cellPadV : 0)
-                                width: parent.width - 2 * tv.cellPadH
+                                width: parent.width - 2 * tv.cellPadH - (cellRect.sortSlot ? 18 : 0)
                                 readOnly: true; selectByMouse: false; activeFocusOnPress: false
                                 textFormat: TextEdit.PlainText
                                 wrapMode: TextEdit.Wrap
@@ -412,6 +423,16 @@ Item {
                                     text: "✓"; color: Theme.colors.textBright
                                     font.pixelSize: 11; font.bold: true
                                 }
+                            }
+                            Icon {   // header sort slot (display only; clicks land in the editor)
+                                visible: cellRect.sortSlot
+                                anchors.right: parent.right; anchors.rightMargin: tv.cellPadH - 2
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: cellRect.c === tv.sortCol
+                                      ? (tv.sortAsc ? "sort-ascending" : "sort-descending")
+                                      : "arrows-down-up"
+                                size: 12
+                                color: cellRect.c === tv.sortCol ? Theme.colors.accent : Theme.colors.textSubtle
                             }
                             // in-cell caret (focused cell, no selection)
                             Rectangle {

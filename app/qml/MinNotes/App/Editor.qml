@@ -1138,8 +1138,7 @@ FocusScope {
     property int  lastSortCol: -1
     property bool lastSortAsc: true
     function headerSortHit(bt, row, r, c, lx) {     // lx = bt-local x
-        if (r >= blockModel.tableHeaderRows(row)) return false
-        if (blockModel.tableRows(row) - blockModel.tableHeaderRows(row) < 2) return false
+        if (r !== 0 || blockModel.tableHeaderRows(row) < 1) return false   // glyph lives on the first header row
         var right = bt.columnLeftX(c) + bt.colW(c) - bt.scrollX
         return lx > right - 22 && lx <= right
     }
@@ -1690,6 +1689,9 @@ FocusScope {
                     selTo: Math.max(tcur.pos, tcur.anchorPos)
                     rangeR0: focused ? tcur.rangeR0 : -1
                     rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
+                    // last-sorted column indicator (session state, per table block)
+                    sortCol: root.lastSortRow === cell.logicalRow ? root.lastSortCol : -1
+                    sortAsc: root.lastSortAsc
                     // live column-resize preview for this table
                     resizeCol: (root.tableResizing && root.resizeRow === cell.logicalRow) ? root.resizeColIdx : -1
                     resizeW: root.resizeW
@@ -2126,7 +2128,6 @@ FocusScope {
         property bool rowDragging: false
         property int  dragFrom: -1
         property int  dropGap: -1          // target insertion gap (cols: 0..n, rows: header..n)
-        property int  hoverHdrC: -1        // hovered header column (sort affordance)
         // A grip press that never moves is a CLICK → select the whole row/column.
         property real gripPressX: 0
         property real gripPressY: 0
@@ -2213,6 +2214,8 @@ FocusScope {
             rangeR0: tcur.rangeR0; rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
             resizeCol: (root.tableResizing && root.resizeRow === root.activeTableRow) ? root.resizeColIdx : -1
             resizeW: root.resizeW
+            sortCol: root.lastSortRow === root.activeTableRow ? root.lastSortCol : -1
+            sortAsc: root.lastSortAsc
             // Context-menu row/column target highlight (same as the doc view);
             // a grip drag reuses it to mark the dragged column/row.
             hiScope: tableFrame.colDragging ? "column" : tableFrame.rowDragging ? "row"
@@ -2269,23 +2272,20 @@ FocusScope {
                 var overBorder = frameTable.columnBorderAt(m.x) >= 0
                 root.tableOverBorder = overBorder
                 // Pointer cursor over a check / choice body cell or a header's
-                // sort zone; remember the hovered header column for the glyph.
+                // sort slot.
                 var clk = false
-                var hdrC = -1
                 if (!overBorder) {
                     var fh = frameTable.cellAtPoint(m.x, m.y)
                     if (fh && fh.r >= blockModel.tableHeaderRows(root.activeTableRow)) {
                         var fk = blockModel.tableColumnKind(root.activeTableRow, fh.c)
                         clk = (fk === 1 || fk === 2)
                     } else if (fh) {
-                        hdrC = fh.c
                         clk = root.headerSortHit(frameTable, root.activeTableRow, fh.r, fh.c, m.x)
                     }
                 }
                 frameMA.overClickable = clk
-                tableFrame.hoverHdrC = hdrC
             }
-            onExited: { root.tableOverBorder = false; frameMA.overClickable = false; tableFrame.hoverHdrC = -1 }
+            onExited: { root.tableOverBorder = false; frameMA.overClickable = false }
             onReleased: root.endTableInteraction()
             onCanceled: { root.tableResizing = false; root.tableDragging = false }
             onDoubleClicked: (m) => {
@@ -2415,31 +2415,6 @@ FocusScope {
                 onCanceled: tableFrame.cancelGripDrag()
                 onExited: if (!tableFrame.rowDragging) tableFrame.gripR = -1
             }
-        }
-        // Header sort affordances. Hovering a header cell shows a faint sort
-        // glyph at its right edge (the click zone); the last-sorted column of
-        // THIS table shows the direction in accent. Display-only — clicks are
-        // handled by frameMA's headerSortHit zone check.
-        Icon {
-            readonly property real gx: tableFrame.hoverHdrC >= 0
-                ? 20 + frameTable.columnLeftX(tableFrame.hoverHdrC)
-                     + frameTable.colW(tableFrame.hoverHdrC) - frameTable.scrollX - 18 : 0
-            visible: tableFrame.hoverHdrC >= 0 && !tableFrame.colDragging
-                     && tableFrame.hoverHdrC !== (root.lastSortRow === root.activeTableRow ? root.lastSortCol : -1)
-                     && gx >= 20 && gx <= 20 + frameTable.width - 12
-            x: gx; y: 27
-            name: "arrows-down-up"; size: 12; color: Theme.colors.textMuted
-        }
-        Icon {
-            readonly property real gx: root.lastSortCol >= 0 && root.lastSortCol < frameTable.colCount
-                ? 20 + frameTable.columnLeftX(root.lastSortCol)
-                     + frameTable.colW(root.lastSortCol) - frameTable.scrollX - 18 : 0
-            visible: root.lastSortRow === root.activeTableRow && root.lastSortCol >= 0
-                     && root.lastSortCol < frameTable.colCount
-                     && gx >= 20 && gx <= 20 + frameTable.width - 12
-            x: gx; y: 27
-            name: root.lastSortAsc ? "sort-ascending" : "sort-descending"
-            size: 12; color: Theme.colors.accent
         }
         Rectangle {   // column drop line (insertion gap during a grip drag)
             visible: tableFrame.colDragging && tableFrame.dropGap >= 0
