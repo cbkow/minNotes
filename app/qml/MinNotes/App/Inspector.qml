@@ -23,7 +23,7 @@ Rectangle {
     readonly property int panelW: 198
     width: open ? panelW : 0
     Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-    color: Theme.colors.surface
+    color: Theme.colors.surfaceRaised                  // a step lighter than the page, so the panel reads as its own layer
     clip: true                                         // so content clips cleanly while sliding
 
     onTargetChanged: picker.value = (target === "fg" ? fgColor : bgColor)

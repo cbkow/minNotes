@@ -10,6 +10,7 @@ QtObject {
         readonly property color bg:          "#161616"   // window shell
         readonly property color surface:     "#1b1b1b"   // the document "page"
         readonly property color surfaceHover: "#252525"  // flat-button hover fill
+        readonly property color surfaceRaised: "#202020" // raised panels (inspector) — a step above the page
         readonly property color codeBg:      "#121212"   // code block fill
         readonly property color border:      "#2a2a2a"
         readonly property color divider:     "#333333"   // hr / separators
