@@ -77,7 +77,7 @@ QtObject {
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
         readonly property string serif:  theme.serifFont.name        // Merriweather (quotes)
         readonly property int sizeSmall: 12
-        readonly property int sizeBody: 15
-        readonly property int sizeMono: 14
+        readonly property int sizeBody: 13   // matches the kanban-card / tab-strip type
+        readonly property int sizeMono: 13
     }
 }
