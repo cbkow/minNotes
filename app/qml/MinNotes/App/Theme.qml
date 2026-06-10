@@ -37,7 +37,7 @@ QtObject {
         readonly property int padding:        8
         readonly property int paddingLoose:   16
         readonly property int radius:         4
-        readonly property int scrollBarWidth: 9
+        readonly property int scrollBarWidth: 14   // macOS always-on scrollbar width
         readonly property int columnWidth:    760    // prose reading measure (comfortable)
         readonly property int docTopPad:      28     // breathing room above block 0
         readonly property int toolStripHeight: 34    // flat-button row height / rail width
