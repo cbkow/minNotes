@@ -45,8 +45,10 @@ public:
     };
     enum BlockType : uint8_t {
         Paragraph = 0, Heading = 1, Code = 2, Media = 3,
-        Quote = 4, ListItem = 5, Divider = 6, Table = 7
+        Quote = 4, ListItem = 5, Divider = 6, Table = 7,
+        TaskListItem = 8   // a list item carrying a tri-state status (todo/doing/done)
     };
+    enum TaskState : uint8_t { TaskTodo = 0, TaskDoing = 1, TaskDone = 2, TaskStateCount = 3 };
     enum Distribution { Uniform = 0, Mixed = 1, Adversarial = 2 };
 
     explicit BlockModel(QObject* parent = nullptr);
@@ -75,6 +77,8 @@ public:
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;
     Q_INVOKABLE int levelForRow(int row) const;       // heading level 1–6, else 0
+    Q_INVOKABLE int taskStateForRow(int row) const;   // task items: 0 todo / 1 doing / 2 done
+    Q_INVOKABLE void toggleTask(int row);             // cycle todo→doing→done→todo
     Q_INVOKABLE QString contentForRow(int row) const;
     // Inline markdown (**bold**, *italic*, `code`) renders via the QML-side
     // InlineMarkdownHighlighter applying char formats to each block's PlainText
@@ -344,6 +348,7 @@ private:
         uint8_t type;
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0
         uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
+        uint8_t taskState = 0;  // task items: 0 todo / 1 doing / 2 done (else 0)
         bool measured = false;
         bool isVideo = false;   // media only: true → reserve the transport-toolbar height
         bool isFile = false;    // media only: kind=="file" → an unsupported-file chip
@@ -358,7 +363,7 @@ private:
     // Full, restorable state of one block — the unit an undo transaction snaps.
     struct BlockSnap {
         QString id, rank, content, lang;
-        uint8_t type = 0, level = 0;
+        uint8_t type = 0, level = 0, taskState = 0;
         std::vector<Span> spans;
     };
     // One undoable step: the touched row-region [lo, lo+before.size()) replaced
@@ -394,7 +399,8 @@ private:
                                 QString& cleanText, std::vector<Span>& outSpans);
 
     // --- Undo internals ---
-    QString attrsJson(uint8_t type, uint8_t level, const QString& lang, const std::vector<Span>& spans) const;
+    QString attrsJson(uint8_t type, uint8_t level, const QString& lang, const std::vector<Span>& spans,
+                      uint8_t taskState = 0) const;
     BlockSnap snapAt(int row) const;
     std::vector<BlockSnap> snapshotRange(int lo, int hi) const;
     // Replace the current rows [lo, lo+oldCount) with `snaps` (in-memory + DB +

@@ -754,6 +754,21 @@ FocusScope {
         var col = te.positionAt(cx - te.x, cy - cell.y - te.y)
         return { row: row, col: col }
     }
+    // (cx, cy) in CONTENT coordinates → the row index if the click is over a task
+    // item's checkbox glyph (the left decoration column, first line), else -1. Its
+    // delegate can't own a MouseArea (the document mouse layer sits above it), so the
+    // central handler hit-tests the glyph zone here.
+    function taskCheckboxAt(cx, cy) {
+        var row = blockModel.rowForY(Math.max(0, cy))
+        if (blockModel.typeForRow(row) !== 8) return -1
+        var cell = cellForRow(row)
+        if (!cell) return -1
+        var te = cell.teItem
+        var lx = cx - cell.colLeft           // x within the cell's content column
+        var ly = cy - cell.y - te.y          // y relative to the text top
+        if (lx >= 0 && lx <= 20 && ly >= -2 && ly <= te.lineH) return row
+        return -1
+    }
     // (cx, cy) in CONTENT coordinates → {row, r, c, pos} if over a table, else
     // null. Delegates to the table's own BlockTable.cellAtPoint (its delegate
     // can't own a MouseArea — the document mouse layer sits above it).
@@ -1625,7 +1640,10 @@ FocusScope {
                     activeFocusOnPress: false
                     selectByMouse: false
                     // quote/list get a left indent; the decoration sits in it.
-                    readonly property real deco: (btype === 4 || btype === 5) ? 22 : 0
+                    readonly property real deco: (btype === 4 || btype === 5 || btype === 8) ? 22 : 0
+                    // task items (type 8): tri-state status 0 todo / 1 doing / 2 done
+                    readonly property int taskState: (blockModel.contentRevision,
+                                                      cell.active && btype === 8 ? blockModel.taskStateForRow(cell.logicalRow) : 0)
                     x: cell.colLeft + deco
                     width: cell.measure - deco
                     y: btype === 2 ? 12 : 6   // code: centered in the taller (doubled-margin) cell
@@ -1648,6 +1666,7 @@ FocusScope {
                     color: btype === 1 ? Theme.colors.textBright
                          : btype === 2 ? Theme.colors.codeText
                          : btype === 4 ? Theme.colors.textMuted   // quote
+                         : (btype === 8 && taskState === 2) ? Theme.colors.textMuted   // done task
                          : Theme.colors.text
                     font.family: btype === 2 ? Theme.font.mono
                                : btype === 4 ? Theme.font.serif   // quote → Merriweather
@@ -1659,6 +1678,7 @@ FocusScope {
                         return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
                     }
                     font.bold: btype === 1
+                    font.strikeout: btype === 8 && taskState === 2   // done task
                     // Deterministic line height: TextEdit's natural single-line
                     // implicitHeight rounds to 19 OR 20px for the same body text (a Qt
                     // text-layout quirk), so same-type blocks came out 1px uneven.
@@ -1678,8 +1698,8 @@ FocusScope {
                 InlineMarkdownHighlighter {
                     // Attach ONLY for text blocks; a document can have one
                     // highlighter, so code blocks detach this and use codeHl.
-                    document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5) ? te.textDocument : null
-                    enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5)
+                    document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8) ? te.textDocument : null
+                    enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8)
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
                     codeColor: Theme.colors.inlineCodeText
@@ -1726,6 +1746,31 @@ FocusScope {
                     x: cell.colLeft + 6; y: te.y
                     text: "•"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeBody
                 }
+                Item {  // task: tri-state checkbox (0 todo / 1 doing / 2 done)
+                    visible: cell.active && te.btype === 8
+                    x: cell.colLeft + 2; y: te.y + Math.round((te.lineH - 14) / 2)
+                    width: 14; height: 14
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 3
+                        color: te.taskState === 2 ? Theme.colors.accent : "transparent"
+                        border.width: te.taskState === 2 ? 0 : 1.5
+                        border.color: te.taskState === 1 ? Theme.colors.accent : Theme.colors.textMuted
+                    }
+                    Rectangle {  // in-progress: centred dash
+                        visible: te.taskState === 1
+                        anchors.centerIn: parent
+                        width: 7; height: 2; radius: 1
+                        color: Theme.colors.accent
+                    }
+                    Text {  // done: check mark
+                        visible: te.taskState === 2
+                        anchors.centerIn: parent
+                        text: "✓"
+                        color: Theme.colors.textBright
+                        font.pixelSize: 11; font.bold: true
+                    }
+                }
                 Rectangle {  // divider: horizontal rule
                     visible: cell.active && te.btype === 6
                     x: cell.colLeft; y: cell.height / 2 - 1
@@ -1761,8 +1806,10 @@ FocusScope {
             preventStealing: true
             hoverEnabled: true
             property bool overGrip: false
+            property bool overClickable: false   // over a task checkbox / table check or choice cell
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
+                       : overClickable ? Qt.PointingHandCursor
                        : (overGrip ? Qt.OpenHandCursor : Qt.IBeamCursor)
 
             onPressed: (m) => {
@@ -1805,6 +1852,9 @@ FocusScope {
                     if (bt) { var lp = bt.mapFromItem(mouse, m.x, m.y); root.beginTableInteraction(bt, th.row, lp.x, lp.y) }
                     return
                 }
+                // Click a task-item checkbox → cycle its status (todo→doing→done).
+                var tcb = root.taskCheckboxAt(m.x, m.y)
+                if (tcb >= 0) { blockModel.toggleTask(tcb); return }
                 var h = root.hitTest(m.x, m.y)
                 // Caret takes priority over links: a click always edits. Opening a
                 // link is via the hover tooltip / context menu (never steals the press).
@@ -1846,6 +1896,17 @@ FocusScope {
                     if (hbt) { var hlp = hbt.mapFromItem(mouse, m.x, m.y); overBorder = hbt.columnBorderAt(hlp.x) >= 0 }
                 }
                 root.tableOverBorder = overBorder
+                // Over an interactive widget (block task checkbox, or a table check /
+                // choice body cell) → a pointing-hand cursor instead of the I-beam.
+                var clk = root.taskCheckboxAt(m.x, m.y) >= 0
+                if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) === 7) {
+                    var ch = root.tableHitAt(m.x, m.y)
+                    if (ch && ch.r >= blockModel.tableHeaderRows(ch.row)) {
+                        var ck = blockModel.tableColumnKind(ch.row, ch.c)
+                        clk = (ck === 1 || ck === 2)
+                    }
+                }
+                mouse.overClickable = clk
                 // Hovering an image row → show its resize handles. Don't clear on a
                 // non-image *handle* hover (the central layer onExits then); only a
                 // different block hides them.

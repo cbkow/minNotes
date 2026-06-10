@@ -206,6 +206,12 @@ Rectangle {
                 onClicked: rail.act(function() { rail.editor.toggleBlock(5) })
             }
             RailBtn {
+                iconName: "check-square"; tooltip: "Task list"
+                enabled_: !!rail.editor
+                checked: !!rail.editor && rail.editor.caretType === 8
+                onClicked: rail.act(function() { rail.editor.toggleBlock(8) })
+            }
+            RailBtn {
                 iconName: "code-block"; tooltip: "Code block"
                 enabled_: !!rail.editor
                 checked: !!rail.editor && rail.editor.caretType === 2
