@@ -1890,18 +1890,27 @@ FocusScope {
                     color: Theme.colors.divider
                 }
 
-                // drag-reorder grip (left gutter). Lit on row hover or while this
-                // block is the one being dragged. Press starts the drag (handled
-                // by the persistent `mouse` area via the gutter zone).
-                Icon {
+                // drag-reorder grip (left gutter). Shown on row hover; when the
+                // pointer is actually IN the gutter (or this block is being
+                // dragged) it goes hot — backing fill + bright dots — so the
+                // grab zone is unmistakable. Press starts the drag (handled by
+                // the persistent `mouse` area via the gutter zone).
+                Rectangle {
                     visible: cell.active && !cell.isMedia
-                    name: "dots-six-vertical"
-                    size: Theme.icon.sizeToolbar
-                    x: cell.colLeft - 26; y: te.y
-                    color: Theme.colors.textMuted
-                    opacity: (root.blockDragRow === cell.logicalRow) ? 1.0
-                           : (root.hoverRow === cell.logicalRow ? 0.7 : 0.0)
+                    readonly property bool hot: root.blockDragRow === cell.logicalRow
+                                              || (root.hoverRow === cell.logicalRow && mouse.overGrip)
+                    x: cell.colLeft - 30; y: te.y - 2
+                    width: 22; height: 24
+                    color: hot ? Theme.colors.surfaceHover : "transparent"
+                    opacity: hot ? 1.0
+                           : (root.hoverRow === cell.logicalRow ? 0.85 : 0.0)
                     Behavior on opacity { NumberAnimation { duration: 90 } }
+                    Icon {
+                        anchors.centerIn: parent
+                        name: "dots-six-vertical"
+                        size: 20
+                        color: parent.hot ? Theme.colors.textBright : Theme.colors.text
+                    }
                 }
 
             }
