@@ -91,6 +91,10 @@ public:
     void insertCol(int at);
     void deleteRow(int at);
     void deleteCol(int at);
+    // Reorder: remove at `from`, re-insert at `to` (a post-removal index). All
+    // per-row / per-column metadata (colours, widths, aligns, types) rides along.
+    void moveRow(int from, int to);
+    void moveCol(int from, int to);
 
     // Serialization / interchange.
     QString toJson() const;

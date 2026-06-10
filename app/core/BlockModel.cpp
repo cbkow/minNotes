@@ -1007,6 +1007,8 @@ void BlockModel::tableDeleteColumn(int row, int at) { mutateTable(row, [&](Table
 void BlockModel::tableSetColWidth(int row, int c, int w) { mutateTable(row, [&](TableGrid& g){ g.setColWidth(c, w); }); }
 void BlockModel::tableSetColAlign(int row, int c, int a) { mutateTable(row, [&](TableGrid& g){ g.setColAlign(c, a); }); }
 void BlockModel::tableSetHeaderRows(int row, int n)      { mutateTable(row, [&](TableGrid& g){ g.setHeaderRows(n); }); }
+void BlockModel::tableMoveRow(int row, int from, int to)    { mutateTable(row, [&](TableGrid& g){ g.moveRow(from, to); }); }
+void BlockModel::tableMoveColumn(int row, int from, int to) { mutateTable(row, [&](TableGrid& g){ g.moveCol(from, to); }); }
 
 // ---- choice columns --------------------------------------------------------
 int BlockModel::tableColumnKind(int row, int c) const {

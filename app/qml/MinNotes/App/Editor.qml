@@ -1073,6 +1073,8 @@ FocusScope {
     function tblDelRow()      { blockModel.tableDeleteRow(menuRow, menuCellR) }
     function tblDelCol()      { blockModel.tableDeleteColumn(menuRow, menuCellC) }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
+    function tblMoveRow(d)    { blockModel.tableMoveRow(menuRow, menuCellR, menuCellR + d) }
+    function tblMoveCol(d)    { blockModel.tableMoveColumn(menuRow, menuCellC, menuCellC + d) }
     function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
     function tblColKind()      { return (blockModel.contentRevision, blockModel.tableColumnKind(menuRow, menuCellC)) }
     function tblMakeChoiceCol(){ blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
@@ -2016,6 +2018,72 @@ FocusScope {
         contentHeight: frameTable.implicitHeight + 70   // room for the scrollbar + row button
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+
+        // Row/column drag-reorder (full-frame only; the doc view reorders via the
+        // context menu). Grip strips sit above (columns) / left of (rows) the
+        // table; dragging a grip shows the existing hiScope highlight on the
+        // source and an accent insertion line at the target gap; release commits
+        // ONE undoable tableMoveRow/Column. Header rows are not draggable and
+        // body rows can't drop above the header boundary.
+        property int  gripC: -1            // hovered column (top strip)
+        property int  gripR: -1            // hovered body row (left strip)
+        property bool colDragging: false
+        property bool rowDragging: false
+        property int  dragFrom: -1
+        property int  dropGap: -1          // target insertion gap (cols: 0..n, rows: header..n)
+        readonly property int frameCols: root.activeTableRow >= 0
+            ? (blockModel.contentRevision, blockModel.tableColumns(root.activeTableRow)) : 0
+        readonly property int frameRows: root.activeTableRow >= 0
+            ? (blockModel.contentRevision, blockModel.tableRows(root.activeTableRow)) : 0
+        readonly property int frameHdr: root.activeTableRow >= 0
+            ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.activeTableRow)) : 0
+        function colAt(px) {               // strip x → column index (−1 outside)
+            var cx = px + frameTable.scrollX, acc = 0
+            for (var c = 0; c < frameCols; ++c) { acc += frameTable.colW(c); if (cx < acc) return c }
+            return -1
+        }
+        function colGapAt(px) {            // strip x → insertion gap 0..cols
+            var cx = px + frameTable.scrollX, acc = 0
+            for (var c = 0; c < frameCols; ++c) {
+                var w = frameTable.colW(c)
+                if (cx < acc + w / 2) return c
+                acc += w
+            }
+            return frameCols
+        }
+        function rowAt(py) {               // strip y → BODY row index (−1 header/outside)
+            var acc = 0
+            for (var r = 0; r < frameRows; ++r) {
+                var h = frameTable.rowHeightAt(r)
+                if (py < acc + h) return r >= frameHdr ? r : -1
+                acc += h
+            }
+            return -1
+        }
+        function rowGapAt(py) {            // strip y → insertion gap header..rows
+            var acc = frameTable.rowTopY(frameHdr)
+            if (py < acc) return frameHdr
+            for (var r = frameHdr; r < frameRows; ++r) {
+                var h = frameTable.rowHeightAt(r)
+                if (py < acc + h / 2) return r
+                acc += h
+            }
+            return frameRows
+        }
+        function commitGripDrag() {
+            if (dropGap >= 0 && dragFrom >= 0) {
+                var to = dropGap > dragFrom ? dropGap - 1 : dropGap
+                if (to !== dragFrom) {
+                    if (colDragging) blockModel.tableMoveColumn(root.activeTableRow, dragFrom, to)
+                    else if (rowDragging) blockModel.tableMoveRow(root.activeTableRow, dragFrom, to)
+                }
+            }
+            cancelGripDrag()
+        }
+        function cancelGripDrag() {
+            colDragging = false; rowDragging = false
+            dragFrom = -1; dropGap = -1; gripC = -1; gripR = -1
+        }
         ScrollBar.vertical: ScrollBar {
             id: fvbar
             policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
@@ -2042,11 +2110,14 @@ FocusScope {
             rangeR0: tcur.rangeR0; rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
             resizeCol: (root.tableResizing && root.resizeRow === root.activeTableRow) ? root.resizeColIdx : -1
             resizeW: root.resizeW
-            // Context-menu row/column target highlight (same as the doc view).
-            hiScope: (root.menuRow === root.activeTableRow
+            // Context-menu row/column target highlight (same as the doc view);
+            // a grip drag reuses it to mark the dragged column/row.
+            hiScope: tableFrame.colDragging ? "column" : tableFrame.rowDragging ? "row"
+                   : (root.menuRow === root.activeTableRow
                       && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
-            hiIndex: root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
-            hiDanger: root.menuHiDanger
+            hiIndex: (tableFrame.colDragging || tableFrame.rowDragging) ? tableFrame.dragFrom
+                   : root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
+            hiDanger: (tableFrame.colDragging || tableFrame.rowDragging) ? false : root.menuHiDanger
         }
 
         // Full-frame mouse handling — this view is a dedicated mode (no document
@@ -2153,6 +2224,85 @@ FocusScope {
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
             MouseArea { id: fAddRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: blockModel.tableInsertRow(root.activeTableRow, blockModel.tableRows(root.activeTableRow)) }
+        }
+
+        // --- Row/column reorder grips (see the property block above) ---
+        Item {   // column grips: a thin strip across the table's top edge
+            x: 20; y: 4; width: frameTable.width; height: 14
+            Rectangle {   // grip pill over the hovered / dragged column
+                visible: colGripMA.gcol >= 0
+                x: Math.max(0, frameTable.columnLeftX(colGripMA.gcol) - frameTable.scrollX)
+                width: Math.max(0, Math.min(frameTable.colW(colGripMA.gcol),
+                                            parent.width - x))
+                height: 8; y: 3; radius: 4
+                color: tableFrame.colDragging ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+                border.width: 1; border.color: tableFrame.colDragging ? Theme.colors.accent : Theme.colors.border
+            }
+            MouseArea {
+                id: colGripMA
+                anchors.fill: parent
+                hoverEnabled: true; preventStealing: true
+                readonly property int gcol: tableFrame.colDragging ? tableFrame.dragFrom : tableFrame.gripC
+                cursorShape: tableFrame.colDragging ? Qt.ClosedHandCursor
+                           : tableFrame.gripC >= 0 ? Qt.OpenHandCursor : Qt.ArrowCursor
+                onPositionChanged: (m) => {
+                    if (tableFrame.colDragging) { tableFrame.dropGap = tableFrame.colGapAt(m.x); return }
+                    tableFrame.gripC = tableFrame.colAt(m.x)
+                }
+                onPressed: (m) => {
+                    var c = tableFrame.colAt(m.x)
+                    if (c >= 0) { tableFrame.colDragging = true; tableFrame.dragFrom = c
+                                  tableFrame.dropGap = tableFrame.colGapAt(m.x) }
+                }
+                onReleased: tableFrame.commitGripDrag()
+                onCanceled: tableFrame.cancelGripDrag()
+                onExited: if (!tableFrame.colDragging) tableFrame.gripC = -1
+            }
+        }
+        Item {   // row grips: a thin strip down the table's left edge (body rows)
+            x: 4; y: 20; width: 14; height: frameTable.height
+            Rectangle {   // grip pill beside the hovered / dragged row
+                visible: rowGripMA.gr >= 0
+                y: frameTable.rowTopY(rowGripMA.gr)
+                height: Math.max(0, Math.min(frameTable.rowHeightAt(rowGripMA.gr),
+                                             parent.height - y))
+                width: 8; x: 3; radius: 4
+                color: tableFrame.rowDragging ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+                border.width: 1; border.color: tableFrame.rowDragging ? Theme.colors.accent : Theme.colors.border
+            }
+            MouseArea {
+                id: rowGripMA
+                anchors.fill: parent
+                hoverEnabled: true; preventStealing: true
+                readonly property int gr: tableFrame.rowDragging ? tableFrame.dragFrom : tableFrame.gripR
+                cursorShape: tableFrame.rowDragging ? Qt.ClosedHandCursor
+                           : tableFrame.gripR >= 0 ? Qt.OpenHandCursor : Qt.ArrowCursor
+                onPositionChanged: (m) => {
+                    if (tableFrame.rowDragging) { tableFrame.dropGap = tableFrame.rowGapAt(m.y); return }
+                    tableFrame.gripR = tableFrame.rowAt(m.y)
+                }
+                onPressed: (m) => {
+                    var r = tableFrame.rowAt(m.y)
+                    if (r >= 0) { tableFrame.rowDragging = true; tableFrame.dragFrom = r
+                                  tableFrame.dropGap = tableFrame.rowGapAt(m.y) }
+                }
+                onReleased: tableFrame.commitGripDrag()
+                onCanceled: tableFrame.cancelGripDrag()
+                onExited: if (!tableFrame.rowDragging) tableFrame.gripR = -1
+            }
+        }
+        Rectangle {   // column drop line (insertion gap during a grip drag)
+            visible: tableFrame.colDragging && tableFrame.dropGap >= 0
+            x: 20 + Math.max(0, Math.min(frameTable.width,
+                   frameTable.columnLeftX(tableFrame.dropGap) - frameTable.scrollX)) - 1
+            y: 20; width: 3; height: frameTable.height
+            radius: 1; color: Theme.colors.accent; z: 10
+        }
+        Rectangle {   // row drop line
+            visible: tableFrame.rowDragging && tableFrame.dropGap >= 0
+            x: 20; y: 20 + frameTable.rowTopY(tableFrame.dropGap) - 1
+            width: frameTable.width; height: 3
+            radius: 1; color: Theme.colors.accent; z: 10
         }
     }
 
@@ -2904,6 +3054,16 @@ FocusScope {
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row below";  onActivated: root.tblInsRowBelow() }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column left";  onActivated: root.tblInsColLeft() }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
+            // Reorder (body rows only — a header row's place is structural).
+            MenuRow { visible: blockMenu.isTable && root.menuCellR > blockModel.tableHeaderRows(root.menuRow)
+                      scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
+            MenuRow { visible: blockMenu.isTable && root.menuCellR >= blockModel.tableHeaderRows(root.menuRow)
+                               && root.menuCellR < blockModel.tableRows(root.menuRow) - 1
+                      scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
+            MenuRow { visible: blockMenu.isTable && root.menuCellC > 0
+                      scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
+            MenuRow { visible: blockMenu.isTable && root.menuCellC < blockModel.tableColumns(root.menuRow) - 1
+                      scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }

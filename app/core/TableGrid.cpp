@@ -213,6 +213,38 @@ void TableGrid::deleteCol(int at) {
     --cols_;
 }
 
+namespace {
+template <typename Vec>
+void spliceMove(Vec& v, int from, int to) {
+    auto moved = std::move(v[from]);
+    v.erase(v.begin() + from);
+    v.insert(v.begin() + to, std::move(moved));
+}
+}
+
+void TableGrid::moveRow(int from, int to) {
+    normalize();
+    if (from < 0 || from >= rows()) return;
+    to = std::clamp(to, 0, rows() - 1);
+    if (to == from) return;
+    spliceMove(cells_, from, to);
+    spliceMove(rowBg_, from, to);
+    spliceMove(rowFg_, from, to);
+}
+
+void TableGrid::moveCol(int from, int to) {
+    normalize();
+    if (from < 0 || from >= cols_) return;
+    to = std::clamp(to, 0, cols_ - 1);
+    if (to == from) return;
+    for (auto& row : cells_) spliceMove(row, from, to);
+    spliceMove(colWidths_, from, to);
+    spliceMove(colAligns_, from, to);
+    spliceMove(colTypes_, from, to);
+    spliceMove(colBg_, from, to);
+    spliceMove(colFg_, from, to);
+}
+
 // Flattened export text for a cell: header rows + text columns are literal text;
 // a choice body cell resolves to its selected option's label; a check body cell
 // to a glyph (done ✓ / in-progress ~ / todo blank).

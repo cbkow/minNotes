@@ -255,6 +255,9 @@ public:
     Q_INVOKABLE void tableSetColWidth(int row, int c, int w);
     Q_INVOKABLE void tableSetColAlign(int row, int c, int a);
     Q_INVOKABLE void tableSetHeaderRows(int row, int n);
+    // Reorder a row / column (`to` is the post-removal index); one undo step.
+    Q_INVOKABLE void tableMoveRow(int row, int from, int to);
+    Q_INVOKABLE void tableMoveColumn(int row, int from, int to);
     // Choice columns (typed columns): a shared, ordered option set per column;
     // body cells reference an option by its stable id. All edits go through
     // mutateTable, so undo / persistence / refresh come for free.
