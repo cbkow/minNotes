@@ -596,6 +596,14 @@ FocusScope {
         property int rangeC1: -1
         function clearRange() { rangeR0 = -1; rangeC0 = -1; rangeR1 = -1; rangeC1 = -1 }
         function setRange(r0, c0, r1, c1) { rangeR0 = r0; rangeC0 = c0; rangeR1 = r1; rangeC1 = c1 }
+        // Shift+arrow: grow/shrink the range by moving its head; the anchor
+        // stays at the focused cell (rendering normalises the corners).
+        function extendRange(dr, dc) {
+            if (rangeR0 < 0) { rangeR0 = cr; rangeC0 = cc; rangeR1 = cr; rangeC1 = cc }
+            rangeR1 = Math.max(0, Math.min(rows() - 1, rangeR1 + dr))
+            rangeC1 = Math.max(0, Math.min(cols() - 1, rangeC1 + dc))
+            cursor.sync()
+        }
         readonly property int row: cursor.focusRow
         readonly property bool active: (blockModel.layoutRevision, blockModel.contentRevision,
                                         blockModel.typeForRow(cursor.focusRow) === 7)
@@ -1374,8 +1382,33 @@ FocusScope {
         else if (inTable && cmd && k === Qt.Key_Backslash) { clearCellFormatting(); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_D) { tblFill(false); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_R) { tblFill(true); event.accepted = true }
+        else if (inTable && cmd && k === Qt.Key_A) {   // select every cell
+            tcur.setRange(0, 0, tcur.rows() - 1, tcur.cols() - 1)
+            cursor.sync(); event.accepted = true
+        }
         else if (inTable) {
             if (cmd) { event.accepted = true; return }   // swallow other Cmd-combos (don't type the letter)
+            // Shift+arrows: spreadsheet-style range extension. Left/Right first
+            // extend the in-cell TEXT selection; crossing the cell edge promotes
+            // to a cell range. Up/Down go straight to cells (there's no vertical
+            // text selection inside a cell). With a range live, arrows move its
+            // head; the anchor stays at the focused cell.
+            if (shift && (k === Qt.Key_Left || k === Qt.Key_Right || k === Qt.Key_Up || k === Qt.Key_Down)) {
+                if (tcur.rangeR0 >= 0)
+                    tcur.extendRange(k === Qt.Key_Down ? 1 : k === Qt.Key_Up ? -1 : 0,
+                                     k === Qt.Key_Right ? 1 : k === Qt.Key_Left ? -1 : 0)
+                else if (k === Qt.Key_Up)    tcur.extendRange(-1, 0)
+                else if (k === Qt.Key_Down)  tcur.extendRange(1, 0)
+                else if (k === Qt.Key_Right) {
+                    if (tcur.pos >= tcur.text().length) tcur.extendRange(0, 1)
+                    else tcur.right(true)
+                } else {                                       // Left
+                    if (tcur.pos <= 0) tcur.extendRange(0, -1)
+                    else tcur.left(true)
+                }
+                event.accepted = true
+                return
+            }
             if (tcur.rangeR0 >= 0) {
                 // Backspace/Delete over a cell range clears its CONTENTS (one
                 // undo step); any other key just collapses the selection.
