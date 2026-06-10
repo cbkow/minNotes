@@ -20,8 +20,11 @@ Item {
     readonly property int laneW: 260
     readonly property int laneGap: 14
     readonly property int headerH: 34
-    readonly property int cardH: 40
+    readonly property int cardH: 40        // minimum / ghost height
     readonly property int cardGap: 8
+    readonly property int cardPad: 8
+    readonly property int titleH: 18
+    readonly property int fieldH: 16
 
     // lanes: [{key, label, color, cards:[{r, title}]}]. key = option id for a
     // choice column, "0"/"1"/"2" for a check column, "" = the unset lane.
@@ -57,20 +60,56 @@ Item {
         }
         var byKey = {}
         for (var li = 0; li < ls.length; ++li) byKey[ls[li].key] = ls[li]
+        var cardW = laneW - 16
         for (var r = hdr; r < nr; ++r) {
             var key = kind === 2 ? String(blockModel.tableCellCheck(row, r, groupCol))
                                  : blockModel.tableCellChoice(row, r, groupCol)
             var lane = byKey[key] !== undefined ? byKey[key] : byKey[""]
             if (lane === undefined) continue
             var title = tc >= 0 ? blockModel.tableCell(row, r, tc) : ""
-            lane.cards.push({r: r, title: title.length > 0 ? title.split("\n")[0]
-                                                           : "Row " + (r - hdr + 1)})
+            // The card carries the WHOLE row: the row's first cell image as a
+            // cover (height precomputed from the intrinsic dims, so drag
+            // geometry never waits on an async load) + one field line per
+            // remaining column — text when non-empty, a selected choice as
+            // dot+label, a check as its glyph + the column's header name.
+            var imgUrl = "", imgH = 0
+            var fields = []
+            for (var c2 = 0; c2 < nc; ++c2) {
+                if (imgUrl === "" && blockModel.tableCellMedia(row, r, c2) !== "") {
+                    imgUrl = blockModel.tableCellMediaUrl(row, r, c2)
+                    var iw = blockModel.tableCellMediaW(row, r, c2)
+                    var ih = blockModel.tableCellMediaH(row, r, c2)
+                    imgH = (iw > 0 && ih > 0) ? Math.min(Math.round(cardW * ih / iw), 140) : 96
+                }
+                if (c2 === groupCol || c2 === tc) continue
+                var k2 = blockModel.tableColumnKind(row, c2)
+                if (k2 === 1) {
+                    if (blockModel.tableCellChoice(row, r, c2) !== "")
+                        fields.push({kind: 1, text: blockModel.tableCellChoiceLabel(row, r, c2),
+                                     color: blockModel.tableCellChoiceColor(row, r, c2), check: 0})
+                } else if (k2 === 2) {
+                    fields.push({kind: 2, text: hdr > 0 ? blockModel.tableCell(row, 0, c2) : "",
+                                 color: "", check: blockModel.tableCellCheck(row, r, c2)})
+                } else {
+                    var t2 = blockModel.tableCell(row, r, c2)
+                    if (t2.trim().length > 0)
+                        fields.push({kind: 0, text: t2.split("\n")[0], color: "", check: 0})
+                }
+            }
+            var ch = imgH + cardPad + titleH + fields.length * fieldH + cardPad
+            lane.cards.push({r: r, h: ch, imgUrl: imgUrl, imgH: imgH, fields: fields,
+                             title: title.length > 0 ? title.split("\n")[0]
+                                                     : "Row " + (r - hdr + 1)})
         }
         lanes = ls
-        var maxCards = 0
-        for (var mi = 0; mi < ls.length; ++mi) maxCards = Math.max(maxCards, ls[mi].cards.length)
+        var maxH = 0
+        for (var mi = 0; mi < ls.length; ++mi) {
+            var s = 0
+            for (var ci = 0; ci < ls[mi].cards.length; ++ci) s += ls[mi].cards[ci].h + cardGap
+            maxH = Math.max(maxH, s)
+        }
         kb.implicitWidth = ls.length * (laneW + laneGap) - laneGap
-        kb.implicitHeight = headerH + Math.max(1, maxCards) * (cardH + cardGap) + 60
+        kb.implicitHeight = headerH + Math.max(cardH + cardGap, maxH) + 60
     }
     onActiveChanged: recompute()
     onGroupColChanged: recompute()
@@ -92,12 +131,29 @@ Item {
     property int    _armedRow: -1
     property string _armedTitle: ""
 
+    // Cards are variable-height (cover image + field lines), so gap hit-tests
+    // and the insertion-line y walk the lane's precomputed card heights.
+    function gapInLane(li, by) {
+        var cards = lanes[li].cards
+        var y = headerH
+        for (var i = 0; i < cards.length; ++i) {
+            if (by < y + cards[i].h / 2) return i
+            y += cards[i].h + cardGap
+        }
+        return cards.length
+    }
+    function gapY(li, idx) {
+        if (li < 0 || li >= lanes.length) return headerH
+        var cards = lanes[li].cards
+        var y = headerH
+        for (var i = 0; i < idx && i < cards.length; ++i) y += cards[i].h + cardGap
+        return y - cardGap / 2
+    }
     function updateDrop(bx, by) {
         if (lanes.length === 0) { dropLane = -1; return }
         dropLane = Math.max(0, Math.min(lanes.length - 1,
                        Math.floor((bx + laneGap / 2) / (laneW + laneGap))))
-        dropIdx = Math.max(0, Math.min(lanes[dropLane].cards.length,
-                       Math.round((by - headerH) / (cardH + cardGap))))
+        dropIdx = gapInLane(dropLane, by)
     }
     function commitCardDrop() {
         if (dragRow >= 0 && dropLane >= 0 && dropLane < lanes.length) {
@@ -184,18 +240,80 @@ Item {
                             id: card
                             required property var modelData
                             width: parent.width
-                            height: kb.cardH
+                            height: card.modelData.h
                             radius: 0
                             color: Theme.colors.surfaceHover
                             border.width: 1; border.color: Theme.colors.border
                             opacity: kb.dragRow === card.modelData.r ? 0.35 : 1
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                x: 10; width: parent.width - 20
-                                elide: Text.ElideRight
-                                text: card.modelData.title
-                                color: Theme.colors.text
-                                font.family: Theme.font.family; font.pixelSize: 13
+                            clip: true
+                            Image {   // cover: the row's first cell image
+                                visible: card.modelData.imgUrl !== ""
+                                width: parent.width; height: card.modelData.imgH
+                                source: card.modelData.imgUrl
+                                asynchronous: true; cache: false
+                                fillMode: Image.PreserveAspectCrop
+                                sourceSize.width: Math.round(kb.laneW * Screen.devicePixelRatio)
+                                smooth: true
+                            }
+                            Column {
+                                x: 10; y: card.modelData.imgH + kb.cardPad
+                                width: parent.width - 20
+                                Text {
+                                    width: parent.width; height: kb.titleH
+                                    verticalAlignment: Text.AlignVCenter
+                                    elide: Text.ElideRight
+                                    text: card.modelData.title
+                                    color: Theme.colors.text
+                                    font.family: Theme.font.family; font.pixelSize: 13
+                                }
+                                Repeater {
+                                    model: card.modelData.fields
+                                    delegate: Item {
+                                        id: fieldRow
+                                        required property var modelData
+                                        width: parent.width; height: kb.fieldH
+                                        Rectangle {   // choice: option colour dot
+                                            visible: fieldRow.modelData.kind === 1
+                                            width: 8; height: 8; radius: 4
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: fieldRow.modelData.color !== ""
+                                                   ? fieldRow.modelData.color : Theme.colors.textMuted
+                                        }
+                                        Item {   // check: mini tri-state glyph
+                                            visible: fieldRow.modelData.kind === 2
+                                            width: 10; height: 10
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            Rectangle {
+                                                anchors.fill: parent; radius: 2
+                                                color: fieldRow.modelData.check === 2 ? Theme.colors.accent : "transparent"
+                                                border.width: fieldRow.modelData.check === 2 ? 0 : 1
+                                                border.color: fieldRow.modelData.check === 1
+                                                              ? Theme.colors.accent : Theme.colors.textMuted
+                                            }
+                                            Rectangle {   // in-progress dash
+                                                visible: fieldRow.modelData.check === 1
+                                                anchors.centerIn: parent; width: 5; height: 1.5
+                                                color: Theme.colors.accent
+                                            }
+                                            Text {   // done check
+                                                visible: fieldRow.modelData.check === 2
+                                                anchors.centerIn: parent
+                                                text: "✓"; color: Theme.colors.textBright
+                                                font.pixelSize: 8; font.bold: true
+                                            }
+                                        }
+                                        Text {
+                                            x: fieldRow.modelData.kind !== 0 ? 14 : 0
+                                            width: parent.width - x
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            elide: Text.ElideRight
+                                            text: fieldRow.modelData.text
+                                            color: fieldRow.modelData.kind === 1
+                                                   ? Theme.colors.text : Theme.colors.textMuted
+                                            font.family: Theme.font.family; font.pixelSize: 12
+                                        }
+                                    }
+                                }
                             }
                             MouseArea {
                                 anchors.fill: parent
@@ -227,7 +345,7 @@ Item {
                 Rectangle {   // insertion line at the drop gap
                     visible: kb.dragRow >= 0 && kb.dropLane === laneItem.index
                     x: 8; width: parent.width - 16; height: 3; radius: 0
-                    y: kb.headerH + kb.dropIdx * (kb.cardH + kb.cardGap) - kb.cardGap / 2 - 1
+                    y: kb.gapY(laneItem.index, kb.dropIdx) - 1
                     color: Theme.colors.accent
                     z: 5
                 }

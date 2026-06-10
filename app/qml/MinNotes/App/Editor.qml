@@ -2064,7 +2064,9 @@ FocusScope {
         anchors.fill: parent
         anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
         contentWidth: width
-        contentHeight: frameTable.implicitHeight + 70   // room for the scrollbar + row button
+        // Room below the table for the gap + (h-scrollbar) + the +row strip,
+        // then a bottom margin matching the 20 on the other sides.
+        contentHeight: frameTable.implicitHeight + (frameTable.overflowing ? 70 : 56)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
@@ -2147,7 +2149,7 @@ FocusScope {
             active: root.activeTableRow >= 0
             logicalRow: root.activeTableRow
             x: 20; y: 20
-            maxWidth: tableFrame.width - 40        // full editor width
+            maxWidth: tableFrame.width - 56        // 20 left + the +column strip + 20 right
             width: implicitWidth
             height: implicitHeight
             focused: root.activeTableRow >= 0
@@ -2353,6 +2355,15 @@ FocusScope {
             width: frameTable.width; height: 3
             radius: 0; color: Theme.colors.accent; z: 10
         }
+    }
+    Rectangle {   // bottom clip cue: more table below the viewport — mirrors the
+                  // table's right-edge cue; hidden once scrolled to the end.
+        visible: tableFrame.visible && tableFrame.contentHeight > tableFrame.height
+                 && tableFrame.contentY < tableFrame.contentHeight - tableFrame.height - 0.5
+        x: 20; width: frameTable.width; height: 2
+        anchors.bottom: tableFrame.bottom
+        color: Theme.colors.border
+        z: 15
     }
 
     // --- Full-frame kanban board (the active table tab in board mode). Scrolls
