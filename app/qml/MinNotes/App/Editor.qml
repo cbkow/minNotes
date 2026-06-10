@@ -2062,6 +2062,7 @@ FocusScope {
         id: tableFrame
         visible: root.activeTableRow >= 0 && !root.boardMode
         anchors.fill: parent
+        anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
         contentWidth: width
         contentHeight: frameTable.implicitHeight + 70   // room for the scrollbar + row button
         clip: true
@@ -2361,6 +2362,7 @@ FocusScope {
         id: boardFrame
         visible: root.activeTableRow >= 0 && root.boardMode
         anchors.fill: parent
+        anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
         contentWidth: Math.max(width, boardView.implicitWidth + 40)
         contentHeight: Math.max(height, boardView.implicitHeight + 40)
         clip: true
@@ -2375,26 +2377,39 @@ FocusScope {
             onShowGrid: root.boardMode = false   // grouping column vanished → grid
         }
     }
-    Rectangle {   // grid ↔ board toggle, floating top-right over the active tab
-        visible: (boardFrame.visible || (tableFrame.visible && root.firstGroupCol >= 0))
-        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 10
-        width: viewToggleText.implicitWidth + 22; height: 24; radius: 4
-        color: viewToggleMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-        border.width: 1; border.color: Theme.colors.border
+    Rectangle {   // table-tab toolbar: the family flat-button strip above the frame
+        id: tableTabBar
+        visible: root.activeTableRow >= 0
+        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+        height: Theme.dim.toolStripHeight
+        color: Theme.colors.surface
         z: 20
-        Text {
-            id: viewToggleText
-            anchors.centerIn: parent
-            text: root.boardMode ? "Table view" : "Board view"
-            color: Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: 12
+        Rectangle {   // bottom hairline against the frame (mirrors BottomRail's)
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: 1; color: Theme.colors.border
         }
-        MouseArea {
-            id: viewToggleMA
-            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (root.boardMode) root.boardMode = false
-                else root.openBoard(root.activeTableRow, root.firstGroupCol)
+        Row {   // Table / Board — a two-segment view toggle
+            anchors.left: parent.left; anchors.leftMargin: 8
+            height: parent.height - 1
+            FlatButton {
+                iconName: "table"; text: "Table"
+                height: parent.height
+                checked: !root.boardMode
+                onClicked: { root.boardMode = false; root.forceActiveFocus() }
+            }
+            FlatButton {
+                iconName: "kanban"; text: "Board"
+                height: parent.height
+                checked: root.boardMode
+                enabled_: root.boardCol >= 0 || root.firstGroupCol >= 0
+                tooltip: enabled_ ? "" : "Needs a choice or checkmark column"
+                tooltipSide: "right"
+                onClicked: {
+                    if (!root.boardMode)
+                        root.openBoard(root.activeTableRow,
+                                       root.boardCol >= 0 ? root.boardCol : root.firstGroupCol)
+                    root.forceActiveFocus()
+                }
             }
         }
     }
