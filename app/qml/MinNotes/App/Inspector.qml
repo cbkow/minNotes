@@ -38,37 +38,32 @@ Rectangle {
         picker.value = (target === "fg" ? fgColor : bgColor)
     }
 
-    // --- Swatches: a pastel preset grid + a row of user slots. Clicking one
-    // selects it and loads its colour; while selected, picker edits WRITE BACK
-    // into the swatch (so a tweaked preset stays tweaked). Persisted app-wide
-    // via Settings (JSON arrays of hex). Empty user slots capture the current
-    // colour on first click.
-    readonly property var defaultPresets: [
-        "#e8aaaa", "#e8c5a0", "#e9dfa7", "#cfe3a6", "#aedfb2", "#a8dfc9", "#a9d4e8", "#a9bce8",
-        "#bcaae8", "#d6aae8", "#e8aad7", "#e8aabb", "#d8c9b4", "#c6cdd6", "#b7c8bb", "#e3d6c2"]
-    property var presets: []
+    // --- Swatches: a FIXED bright preset grid + a row of user slots. Clicking
+    // one selects it and loads its colour. Only user slots are editable: while
+    // a user slot is selected, picker edits write back into it (persisted via
+    // Settings); presets are immutable — editing while one is selected just
+    // deselects it (the swatch no longer matches the picker). Empty user slots
+    // capture the current colour on first click.
+    readonly property var presets: [
+        "#FF5768", "#FF6F68", "#FC6238", "#FFA23A", "#FFBF65", "#FFD872", "#FFEC59", "#CFF800",
+        "#4DD091", "#00CDAC", "#8DD7BF", "#00B0BA", "#00A5E3", "#6C88C4", "#C05780", "#FF96C5"]
     property var userSlots: ["", "", "", "", "", "", "", ""]
     property int selPreset: -1
     property int selUser: -1
     Settings {
         id: swatchStore
         category: "swatches"
-        property string presets: ""
         property string user: ""
     }
     Component.onCompleted: {
-        try { var p = JSON.parse(swatchStore.presets); if (p && p.length === defaultPresets.length) presets = p } catch (e) {}
-        if (presets.length !== defaultPresets.length) presets = defaultPresets.slice()
         try { var u = JSON.parse(swatchStore.user); if (u && u.length === userSlots.length) userSlots = u } catch (e) {}
     }
-    function saveSwatches() {
-        swatchStore.presets = JSON.stringify(presets)
-        swatchStore.user = JSON.stringify(userSlots)
-    }
-    function noteEdit(c) {                              // picker moved → selected swatch follows
+    function saveSwatches() { swatchStore.user = JSON.stringify(userSlots) }
+    function noteEdit(c) {                              // picker moved
         var hex = "" + c
-        if (selPreset >= 0)   { var p = presets.slice();   p[selPreset] = hex; presets = p;   saveSwatches() }
-        else if (selUser >= 0) { var u = userSlots.slice(); u[selUser] = hex;   userSlots = u; saveSwatches() }
+        if (selUser >= 0) { var u = userSlots.slice(); u[selUser] = hex; userSlots = u; saveSwatches() }
+        else if (selPreset >= 0 && hex.toLowerCase() !== presets[selPreset].toLowerCase())
+            selPreset = -1                              // presets are fixed; a tweak detaches
     }
 
     // Left hairline against the document (only meaningful while open).
