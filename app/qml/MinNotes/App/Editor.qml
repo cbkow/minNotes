@@ -85,6 +85,8 @@ FocusScope {
     property real menuY: 0
     property int  menuCellR: 0     // right-clicked table cell (for table menu ops)
     property int  menuCellC: 0
+    property real choiceX: 0       // anchor for the choice-cell option picker
+    property real choiceY: 0
     property string menuLinkUrl: ""  // link URL under the right-click (for "Open …")
     // Link-hover tooltip: the URL under the pointer + where to anchor the pill.
     property string hoverLinkUrl: ""
@@ -1057,6 +1059,11 @@ FocusScope {
     function tblDelCol()      { blockModel.tableDeleteColumn(menuRow, menuCellC) }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
+    function tblColKind()      { return (blockModel.contentRevision, blockModel.tableColumnKind(menuRow, menuCellC)) }
+    function tblMakeChoiceCol(){ blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
+                                 Qt.callLater(root.openChoiceEditor, menuRow, menuCellC) }   // set options right away
+    function tblMakeCheckCol() { blockModel.tableSetColumnKind(menuRow, menuCellC, 2) }
+    function tblMakeTextCol()  { blockModel.tableSetColumnKind(menuRow, menuCellC, 0) }
     function tblRemoveImage() { blockModel.tableClearCellMedia(menuRow, menuCellR, menuCellC) }
     readonly property bool menuCellHasImage: blockMenu.isTable
         && blockModel.tableCellMedia(menuRow, menuCellR, menuCellC) !== ""
@@ -1789,6 +1796,11 @@ FocusScope {
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
                 if (th) {
+                    // Typed body cells: choice → option picker; check → cycle state.
+                    var tk = blockModel.tableColumnKind(th.row, th.c)
+                    var tbody = th.r >= blockModel.tableHeaderRows(th.row)
+                    if (tk === 1 && tbody) { root.openChoicePicker(th.row, th.r, th.c, m.x, m.y - flick.contentY); return }
+                    if (tk === 2 && tbody) { blockModel.tableCycleCellCheck(th.row, th.r, th.c); return }
                     var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
                     if (bt) { var lp = bt.mapFromItem(mouse, m.x, m.y); root.beginTableInteraction(bt, th.row, lp.x, lp.y) }
                     return
@@ -1984,7 +1996,9 @@ FocusScope {
             anchors.fill: frameTable
             hoverEnabled: true; preventStealing: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            cursorShape: (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor : Qt.IBeamCursor
+            property bool overClickable: false   // over a check / choice body cell
+            cursorShape: (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
+                       : overClickable ? Qt.PointingHandCursor : Qt.IBeamCursor
             onPressed: (m) => {
                 root.forceActiveFocus()
                 // Right-click → the same table context menu as the document view
@@ -1997,13 +2011,36 @@ FocusScope {
                     root.openBlockMenu(p.x, p.y, root.activeTableRow)
                     return
                 }
+                // Typed body cells behave the same as the inline view: choice → the
+                // option picker; check → cycle the tri-state. Both go through the same
+                // mutateTable-backed invokables, so undo is identical here.
+                var fhit = frameTable.cellAtPoint(m.x, m.y)
+                var ftk = blockModel.tableColumnKind(root.activeTableRow, fhit.c)
+                var fbody = fhit.r >= blockModel.tableHeaderRows(root.activeTableRow)
+                if (ftk === 1 && fbody) {
+                    var fp = frameMA.mapToItem(root, m.x, m.y)
+                    root.openChoicePicker(root.activeTableRow, fhit.r, fhit.c, fp.x, fp.y)
+                    return
+                }
+                if (ftk === 2 && fbody) { blockModel.tableCycleCellCheck(root.activeTableRow, fhit.r, fhit.c); return }
                 root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y)
             }
             onPositionChanged: (m) => {
                 if (root.tableResizing || root.tableDragging) { root.updateTableInteraction(frameTable, m.x, m.y); return }
-                root.tableOverBorder = frameTable.columnBorderAt(m.x) >= 0
+                var overBorder = frameTable.columnBorderAt(m.x) >= 0
+                root.tableOverBorder = overBorder
+                // Pointer cursor over a check / choice body cell.
+                var clk = false
+                if (!overBorder) {
+                    var fh = frameTable.cellAtPoint(m.x, m.y)
+                    if (fh && fh.r >= blockModel.tableHeaderRows(root.activeTableRow)) {
+                        var fk = blockModel.tableColumnKind(root.activeTableRow, fh.c)
+                        clk = (fk === 1 || fk === 2)
+                    }
+                }
+                frameMA.overClickable = clk
             }
-            onExited: root.tableOverBorder = false
+            onExited: { root.tableOverBorder = false; frameMA.overClickable = false }
             onReleased: root.endTableInteraction()
             onCanceled: { root.tableResizing = false; root.tableDragging = false }
             onDoubleClicked: (m) => {
@@ -2734,6 +2771,31 @@ FocusScope {
         }
     }
 
+    // --- Choice-cell option picker (root overlay above the mouse layer) ---
+    function openChoicePicker(trow, r, c, vx, vy) {
+        choicePicker.row = trow; choicePicker.r = r; choicePicker.c = c
+        root.choiceX = vx; root.choiceY = vy
+        choicePicker.open()
+    }
+    ChoicePicker {
+        id: choicePicker
+        z: 60
+        x: Math.max(8, Math.min(root.choiceX, root.width - width - 8))
+        y: Math.max(8, Math.min(root.choiceY, root.height - height - 8))
+        onClosed: root.forceActiveFocus()
+        onEditOptions: root.openChoiceEditor(choicePicker.row, choicePicker.c)
+    }
+    // Modal editor for a choice column's option set (opened from the column menu or
+    // the picker's "Edit options…"). Centres itself in the editor.
+    function openChoiceEditor(trow, col) { choiceEditor.open2(trow, col) }
+    ChoiceColumnEditor {
+        id: choiceEditor
+        z: 70
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        onClosed: root.forceActiveFocus()
+    }
+
     // --- Block context menu (right-click a block / its grip) ---
     Popup {
         id: blockMenu
@@ -2745,6 +2807,9 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
         readonly property bool isPdf: isMedia
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
+        // In a full-frame tab (table/PDF) the menu is a view INTO one block, so
+        // document-structural block ops (add/duplicate/copy block) don't belong.
+        readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0
         padding: 4; z: 60
         // Reactive on-screen clamp: re-evaluates as the menu's height settles after
         // open (so a long menu is positioned right on the FIRST trigger, not the 2nd).
@@ -2760,10 +2825,10 @@ FocusScope {
                       text: "Open " + root.truncUrl(root.menuLinkUrl)
                       onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
             Rectangle { visible: root.menuLinkUrl.length > 0; width: parent.width; height: 1; color: Theme.colors.divider }
-            MenuRow { text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
-            MenuRow { text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
-            MenuRow { text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
-            MenuRow { text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
+            MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
+            MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
+            MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
+            MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
             MenuRow { visible: blockMenu.isMedia
                       text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                       onActivated: blockModel.revealMedia(root.menuRow) }
@@ -2771,7 +2836,7 @@ FocusScope {
                       onActivated: blockModel.openMediaInUfb(root.menuRow) }
             MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
             // --- table cell/row/column ops (table blocks only) ---
-            Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
+            Rectangle { visible: blockMenu.isTable && !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
             MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
             MenuRow { visible: blockMenu.isTable; scope: "row";    text: "Insert row above";  onActivated: root.tblInsRowAbove() }
@@ -2782,6 +2847,10 @@ FocusScope {
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }
             MenuRow { visible: blockMenu.isTable; scope: "column"; text: "Align right";  onActivated: root.tblAlign(2) }
+            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
+            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
+            MenuRow { visible: blockMenu.isTable && root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
+            MenuRow { visible: blockMenu.isTable && root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
             MenuRow { visible: blockMenu.isTable; text: blockModel.tableHeaderRows(root.menuRow) > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
             Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
             MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }

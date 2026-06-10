@@ -973,6 +973,84 @@ void BlockModel::tableSetColWidth(int row, int c, int w) { mutateTable(row, [&](
 void BlockModel::tableSetColAlign(int row, int c, int a) { mutateTable(row, [&](TableGrid& g){ g.setColAlign(c, a); }); }
 void BlockModel::tableSetHeaderRows(int row, int n)      { mutateTable(row, [&](TableGrid& g){ g.setHeaderRows(n); }); }
 
+// ---- choice columns --------------------------------------------------------
+int BlockModel::tableColumnKind(int row, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).colKind(c);
+}
+void BlockModel::tableSetColumnKind(int row, int c, int kind) {
+    mutateTable(row, [&](TableGrid& g){ g.setColKind(c, kind); });
+}
+QVariantList BlockModel::tableColumnOptions(int row, int c) const {
+    QVariantList out;
+    if (rows_[clampRow(row)].type != Table) return out;
+    for (const TableGrid::Option& o : gridFor(row).colOptions(c)) {
+        QVariantMap m;
+        m.insert(QStringLiteral("id"), o.id);
+        m.insert(QStringLiteral("label"), o.label);
+        m.insert(QStringLiteral("color"), o.color);
+        out.append(m);
+    }
+    return out;
+}
+QString BlockModel::tableAddOption(int row, int c, const QString& label, const QString& color) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Table) return QString();
+    const QString id = makeUlid();
+    mutateTable(row, [&](TableGrid& g){ g.addOption(c, id, label, color); });
+    return id;
+}
+void BlockModel::tableSetColumnOptions(int row, int c, const QVariantList& opts) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Table) return;
+    std::vector<TableGrid::Option> v;
+    v.reserve(opts.size());
+    for (const QVariant& it : opts) {
+        const QVariantMap m = it.toMap();
+        TableGrid::Option o;
+        o.id = m.value(QStringLiteral("id")).toString();
+        if (o.id.isEmpty()) o.id = makeUlid();              // mint id for a newly-added option
+        o.label = m.value(QStringLiteral("label")).toString();
+        o.color = m.value(QStringLiteral("color")).toString();
+        v.push_back(std::move(o));
+    }
+    mutateTable(row, [&](TableGrid& g){ g.setColumnOptions(c, v); });
+}
+void BlockModel::tableRenameOption(int row, int c, const QString& id, const QString& label) {
+    mutateTable(row, [&](TableGrid& g){ g.renameOption(c, id, label); });
+}
+void BlockModel::tableRecolorOption(int row, int c, const QString& id, const QString& color) {
+    mutateTable(row, [&](TableGrid& g){ g.recolorOption(c, id, color); });
+}
+void BlockModel::tableRemoveOption(int row, int c, const QString& id) {
+    mutateTable(row, [&](TableGrid& g){ g.removeOption(c, id); });
+}
+void BlockModel::tableMoveOption(int row, int c, const QString& id, int toIndex) {
+    mutateTable(row, [&](TableGrid& g){ g.moveOption(c, id, toIndex); });
+}
+QString BlockModel::tableCellChoice(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return QString();
+    return gridFor(row).cellChoice(r, c);
+}
+void BlockModel::tableSetCellChoice(int row, int r, int c, const QString& id) {
+    mutateTable(row, [&](TableGrid& g){ g.setCellChoice(r, c, id); });
+}
+QString BlockModel::tableCellChoiceLabel(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return QString();
+    const TableGrid& g = gridFor(row);
+    return g.optionLabel(c, g.cellChoice(r, c));
+}
+QString BlockModel::tableCellChoiceColor(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return QString();
+    const TableGrid& g = gridFor(row);
+    return g.optionColor(c, g.cellChoice(r, c));
+}
+int BlockModel::tableCellCheck(int row, int r, int c) const {
+    if (rows_[clampRow(row)].type != Table) return 0;
+    return gridFor(row).cellCheck(r, c);
+}
+void BlockModel::tableCycleCellCheck(int row, int r, int c) {
+    mutateTable(row, [&](TableGrid& g){ g.cycleCellCheck(r, c); });
+}
+
 void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
     const TableGrid src = TableGrid::fromTSV(tsv);
     mutateTable(row, [&](TableGrid& g){

@@ -11,6 +11,7 @@ void TableGrid::normalize() {
     for (auto& row : cells_) row.resize(cols_);
     colWidths_.resize(cols_, 0);
     colAligns_.resize(cols_, 0);
+    colTypes_.resize(cols_);
     colBg_.resize(cols_); colFg_.resize(cols_);
     rowBg_.resize(rows()); rowFg_.resize(rows());
     headerRows_ = std::clamp(headerRows_, 0, rows());
@@ -61,6 +62,114 @@ void TableGrid::setColAlign(int c, int a) {
 }
 void TableGrid::setHeaderRows(int n) { headerRows_ = std::clamp(n, 0, rows()); }
 
+// ---- column types / choice options -----------------------------------------
+
+int TableGrid::colKind(int c) const {
+    return (c >= 0 && c < static_cast<int>(colTypes_.size())) ? colTypes_[c].kind : ColText;
+}
+
+void TableGrid::setColKind(int c, int kind) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
+    if (kind != ColChoice && kind != ColCheck) kind = ColText;
+    if (colTypes_[c].kind == kind) return;
+    // Any kind change resets the column's per-cell values so a stale option id,
+    // check state, or text never bleeds across kinds. Options belong to choice
+    // only; a typed kind (choice/check) "starts empty" (drops existing cell text).
+    // Header rows are exempt — they stay text (the column's name) in every kind,
+    // exactly as render + export treat them.
+    colTypes_[c].options.clear();
+    for (int r = 0; r < rows(); ++r) {
+        auto& row = cells_[r];
+        if (c >= static_cast<int>(row.size())) continue;
+        if (kind != ColText && r >= headerRows_) { row[c].text.clear(); row[c].spans = QJsonArray(); }
+        row[c].choice.clear();
+    }
+    colTypes_[c].kind = kind;
+}
+
+std::vector<TableGrid::Option> TableGrid::colOptions(int c) const {
+    return (c >= 0 && c < static_cast<int>(colTypes_.size())) ? colTypes_[c].options : std::vector<Option>{};
+}
+
+void TableGrid::setColumnOptions(int c, const std::vector<Option>& opts) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
+    colTypes_[c].kind = ColChoice;
+    colTypes_[c].options = opts;
+    // Sweep any cell whose selection is no longer a valid option (deleted in the edit).
+    for (auto& row : cells_) {
+        if (c >= static_cast<int>(row.size()) || row[c].choice.isEmpty()) continue;
+        bool found = false;
+        for (const Option& o : opts) if (o.id == row[c].choice) { found = true; break; }
+        if (!found) row[c].choice.clear();
+    }
+}
+
+void TableGrid::addOption(int c, const QString& id, const QString& label, const QString& color) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size()) || id.isEmpty()) return;
+    colTypes_[c].kind = ColChoice;
+    colTypes_[c].options.push_back({id, label, color});
+}
+
+void TableGrid::renameOption(int c, const QString& id, const QString& label) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
+    for (auto& o : colTypes_[c].options) if (o.id == id) { o.label = label; return; }
+}
+
+void TableGrid::recolorOption(int c, const QString& id, const QString& color) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
+    for (auto& o : colTypes_[c].options) if (o.id == id) { o.color = color; return; }
+}
+
+void TableGrid::removeOption(int c, const QString& id) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
+    auto& opts = colTypes_[c].options;
+    opts.erase(std::remove_if(opts.begin(), opts.end(),
+               [&](const Option& o){ return o.id == id; }), opts.end());
+    // sweep cells so none reference a now-deleted option.
+    for (auto& row : cells_) if (c < static_cast<int>(row.size()) && row[c].choice == id) row[c].choice.clear();
+}
+
+void TableGrid::moveOption(int c, const QString& id, int toIndex) {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
+    auto& opts = colTypes_[c].options;
+    int from = -1;
+    for (int i = 0; i < static_cast<int>(opts.size()); ++i) if (opts[i].id == id) { from = i; break; }
+    if (from < 0) return;
+    toIndex = std::clamp(toIndex, 0, static_cast<int>(opts.size()) - 1);
+    if (toIndex == from) return;
+    Option moved = opts[from];
+    opts.erase(opts.begin() + from);
+    opts.insert(opts.begin() + toIndex, moved);
+}
+
+QString TableGrid::cellChoice(int r, int c) const {
+    return inCell(r,c,rows(),cols_) ? cells_[r][c].choice : QString();
+}
+void TableGrid::setCellChoice(int r, int c, const QString& id) {
+    if (inCell(r,c,rows(),cols_)) cells_[r][c].choice = id;
+}
+
+int TableGrid::cellCheck(int r, int c) const {
+    if (!inCell(r,c,rows(),cols_)) return 0;
+    return std::clamp(cells_[r][c].choice.toInt(), 0, 2);
+}
+void TableGrid::cycleCellCheck(int r, int c) {
+    if (!inCell(r,c,rows(),cols_)) return;
+    const int n = (std::clamp(cells_[r][c].choice.toInt(), 0, 2) + 1) % 3;
+    cells_[r][c].choice = (n == 0) ? QString() : QString::number(n);   // 0 stays "" (plain cell)
+}
+
+QString TableGrid::optionLabel(int c, const QString& id) const {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return QString();
+    for (const auto& o : colTypes_[c].options) if (o.id == id) return o.label;
+    return QString();
+}
+QString TableGrid::optionColor(int c, const QString& id) const {
+    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return QString();
+    for (const auto& o : colTypes_[c].options) if (o.id == id) return o.color;
+    return QString();
+}
+
 // ---- structure ops ---------------------------------------------------------
 
 void TableGrid::insertRow(int at) {
@@ -77,6 +186,7 @@ void TableGrid::insertCol(int at) {
     for (auto& row : cells_) row.insert(row.begin() + at, Cell{});
     colWidths_.insert(colWidths_.begin() + at, 0);
     colAligns_.insert(colAligns_.begin() + at, 0);
+    colTypes_.insert(colTypes_.begin() + at, ColType{});
     colBg_.insert(colBg_.begin() + at, QString());
     colFg_.insert(colFg_.begin() + at, QString());
     ++cols_;
@@ -97,9 +207,23 @@ void TableGrid::deleteCol(int at) {
     for (auto& row : cells_) row.erase(row.begin() + at);
     colWidths_.erase(colWidths_.begin() + at);
     colAligns_.erase(colAligns_.begin() + at);
+    colTypes_.erase(colTypes_.begin() + at);
     colBg_.erase(colBg_.begin() + at);
     colFg_.erase(colFg_.begin() + at);
     --cols_;
+}
+
+// Flattened export text for a cell: header rows + text columns are literal text;
+// a choice body cell resolves to its selected option's label; a check body cell
+// to a glyph (done ✓ / in-progress ~ / todo blank).
+QString TableGrid::cellDisplay(int r, int c) const {
+    if (!inCell(r,c,rows(),cols_)) return QString();
+    const Cell& cell = cells_[r][c];
+    const int kind = (r < headerRows_ || c >= static_cast<int>(colTypes_.size())) ? ColText : colTypes_[c].kind;
+    if (kind == ColChoice) return optionLabel(c, cell.choice);
+    if (kind == ColCheck) { const int s = std::clamp(cell.choice.toInt(), 0, 2);
+                            return s == 2 ? QStringLiteral("✓") : s == 1 ? QStringLiteral("~") : QString(); }
+    return cell.text;
 }
 
 // ---- JSON ------------------------------------------------------------------
@@ -124,6 +248,28 @@ QString TableGrid::toJson() const {
     colorArr(rowBg_, "rbg", o); colorArr(rowFg_, "rfg", o);
     colorArr(colBg_, "cbg", o); colorArr(colFg_, "cfg", o);
 
+    // Column types — only typed (non-text) columns are written, keyed by column
+    // index. Value = {"k":kind, "o":[options]} (the option set only for choice).
+    QJsonObject ct;
+    for (int c = 0; c < static_cast<int>(colTypes_.size()); ++c) {
+        if (colTypes_[c].kind == ColText) continue;
+        QJsonObject ce;
+        ce.insert(QStringLiteral("k"), colTypes_[c].kind);
+        if (colTypes_[c].kind == ColChoice) {
+            QJsonArray opts;
+            for (const Option& op : colTypes_[c].options) {
+                QJsonObject oo;
+                oo.insert(QStringLiteral("id"), op.id);
+                oo.insert(QStringLiteral("l"), op.label);
+                if (!op.color.isEmpty()) oo.insert(QStringLiteral("c"), op.color);
+                opts.append(oo);
+            }
+            ce.insert(QStringLiteral("o"), opts);
+        }
+        ct.insert(QString::number(c), ce);
+    }
+    if (!ct.isEmpty()) o.insert(QStringLiteral("ct"), ct);
+
     QJsonArray rowsArr;
     for (const auto& row : cells_) {
         QJsonArray cellsArr;
@@ -135,6 +281,7 @@ QString TableGrid::toJson() const {
             if (!cell.fg.isEmpty())    co.insert(QStringLiteral("fg"), cell.fg);
             if (!cell.spans.isEmpty()) co.insert(QStringLiteral("s"), cell.spans);
             if (!cell.media.isEmpty()) co.insert(QStringLiteral("m"), cell.media);
+            if (!cell.choice.isEmpty()) co.insert(QStringLiteral("v"), cell.choice);
             cellsArr.append(co);
         }
         rowsArr.append(cellsArr);
@@ -161,6 +308,7 @@ TableGrid TableGrid::fromJson(const QString& json) {
                 cell.fg    = co.value(QStringLiteral("fg")).toString();
                 cell.spans = co.value(QStringLiteral("s")).toArray();
                 cell.media = co.value(QStringLiteral("m")).toString();
+                cell.choice = co.value(QStringLiteral("v")).toString();
             } else {                                     // plain string cell
                 cell.text = cv.toString();
             }
@@ -178,6 +326,32 @@ TableGrid TableGrid::fromJson(const QString& json) {
     for (const QJsonValue& v : o.value(QStringLiteral("cbg")).toArray()) g.colBg_.push_back(v.toString());
     for (const QJsonValue& v : o.value(QStringLiteral("cfg")).toArray()) g.colFg_.push_back(v.toString());
     g.headerRows_ = o.value(QStringLiteral("header")).toInt(1);
+
+    // Column types: the "ct" map is keyed by column index; each key ⇒ a choice
+    // column with the given option set. Size colTypes_ first so it survives normalize.
+    g.colTypes_.resize(g.cols_);
+    const QJsonObject ct = o.value(QStringLiteral("ct")).toObject();
+    for (auto it = ct.begin(); it != ct.end(); ++it) {
+        bool ok = false; const int c = it.key().toInt(&ok);
+        if (!ok || c < 0 || c >= g.cols_) continue;
+        // Value is {"k":kind,"o":[…]}; tolerate a bare options array as legacy choice.
+        QJsonArray opts;
+        if (it.value().isArray()) { g.colTypes_[c].kind = ColChoice; opts = it.value().toArray(); }
+        else {
+            const QJsonObject ce = it.value().toObject();
+            const int kind = ce.value(QStringLiteral("k")).toInt(ColChoice);
+            g.colTypes_[c].kind = (kind == ColCheck) ? ColCheck : ColChoice;
+            opts = ce.value(QStringLiteral("o")).toArray();
+        }
+        for (const QJsonValue& ov : opts) {
+            const QJsonObject oo = ov.toObject();
+            Option op;
+            op.id    = oo.value(QStringLiteral("id")).toString();
+            op.label = oo.value(QStringLiteral("l")).toString();
+            op.color = oo.value(QStringLiteral("c")).toString();
+            if (!op.id.isEmpty()) g.colTypes_[c].options.push_back(op);
+        }
+    }
 
     if (g.cells_.empty()) g = makeEmpty(1, g.cols_);
     g.normalize();
@@ -252,8 +426,9 @@ QString TableGrid::toTSV() const {
     for (int r = 0; r < rows(); ++r) {
         for (int c = 0; c < cols_; ++c) {
             if (c) out += QLatin1Char('\t');
-            // strip tabs/newlines so the TSV stays rectangular
-            QString t = cells_[r][c].text;
+            // strip tabs/newlines so the TSV stays rectangular; typed cells flatten
+            // to their display text (the "own variant" export trade).
+            QString t = cellDisplay(r, c);
             t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
             out += t;
         }
@@ -268,7 +443,7 @@ QString TableGrid::toHtml() const {
         out += QStringLiteral("<tr>");
         const bool header = r < headerRows_;
         for (int c = 0; c < cols_; ++c) {
-            QString t = cells_[r][c].text.toHtmlEscaped();
+            QString t = cellDisplay(r, c).toHtmlEscaped();
             out += header ? QStringLiteral("<th>") : QStringLiteral("<td>");
             out += t;
             out += header ? QStringLiteral("</th>") : QStringLiteral("</td>");

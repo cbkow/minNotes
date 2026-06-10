@@ -72,12 +72,25 @@ Item {
         if (!active) return
         var ws = []
         for (var c = 0; c < colCount; ++c) {
+            var kind = blockModel.tableColumnKind(logicalRow, c)
             var mw = 0
-            for (var r = 0; r < rowCount; ++r) {
+            // Header rows stay text in every column kind; body cells only carry
+            // measurable text in a text column (choice/check render a chip/glyph).
+            var textRows = (kind === 0) ? rowCount : headerRows
+            for (var r = 0; r < textRows; ++r) {
                 var lines = blockModel.tableCell(logicalRow, r, c).split("\n")
                 for (var li = 0; li < lines.length; ++li) {
                     metrics.text = lines[li]
                     if (metrics.advanceWidth > mw) mw = metrics.advanceWidth
+                }
+            }
+            if (kind === 1) {
+                // Choice column: fit the widest option's chip (label + chip pad 16,
+                // minus the 6 the shared formula re-adds) so chips never elide.
+                var opts = blockModel.tableColumnOptions(logicalRow, c)
+                for (var oi = 0; oi < opts.length; ++oi) {
+                    metrics.text = opts[oi].label
+                    if (metrics.advanceWidth + 10 > mw) mw = metrics.advanceWidth + 10
                 }
             }
             ws.push(Math.round(Math.max(minColW, Math.min(maxColW, mw + 2 * cellPadH + 6))))
@@ -241,6 +254,20 @@ Item {
                             // per-cell highlighter, which attaches only when non-empty.
                             readonly property var cspans: (blockModel.contentRevision,
                                                            blockModel.tableCellSpans(tv.logicalRow, gridRow.r, c))
+                            // Choice column: body cells render a dropdown chip instead
+                            // of editable text. csel = selected option id ("" = none).
+                            readonly property int ckind: (blockModel.contentRevision,
+                                                          blockModel.tableColumnKind(tv.logicalRow, c))
+                            readonly property bool isChoice: ckind === 1 && !isHeader
+                            readonly property bool isCheck: ckind === 2 && !isHeader
+                            readonly property string csel: isChoice ? (blockModel.contentRevision,
+                                                           blockModel.tableCellChoice(tv.logicalRow, gridRow.r, c)) : ""
+                            readonly property string cselLabel: (isChoice && csel !== "")
+                                ? blockModel.tableCellChoiceLabel(tv.logicalRow, gridRow.r, c) : ""
+                            readonly property string cselColor: (isChoice && csel !== "")
+                                ? blockModel.tableCellChoiceColor(tv.logicalRow, gridRow.r, c) : ""
+                            readonly property int ccheck: isCheck ? (blockModel.contentRevision,
+                                                          blockModel.tableCellCheck(tv.logicalRow, gridRow.r, c)) : 0
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
@@ -293,6 +320,7 @@ Item {
                             }
                             TextEdit {
                                 id: cellText
+                                visible: !cellRect.isChoice && !cellRect.isCheck   // typed cells render their own glyph
                                 x: tv.cellPadH
                                 y: tv.cellPadV + (cellRect.imgH > 0 ? cellRect.imgH + tv.cellPadV : 0)
                                 width: parent.width - 2 * tv.cellPadH
@@ -325,9 +353,70 @@ Item {
                                 codeFontFamily: Theme.font.mono
                                 spans: cellRect.cspans
                             }
+                            // Choice cell: a soft colored pill (dropdown chip) showing
+                            // the selected option, else a faint caret-down placeholder.
+                            // Clicks route through the editor's central handler.
+                            Rectangle {
+                                visible: cellRect.isChoice
+                                x: tv.cellPadH; y: tv.cellPadV
+                                height: Math.max(16, cellText.implicitHeight - 2)
+                                width: Math.min(parent.width - 2 * tv.cellPadH,
+                                                cellRect.csel !== "" ? chipLabel.implicitWidth + 16 : 22)
+                                radius: height / 2
+                                readonly property color _oc: cellRect.cselColor !== ""
+                                    ? Qt.color(cellRect.cselColor) : Theme.colors.textMuted
+                                color: cellRect.csel !== "" ? Qt.rgba(_oc.r, _oc.g, _oc.b, 0.28) : "transparent"
+                                border.width: 1
+                                border.color: cellRect.csel !== "" ? Qt.rgba(_oc.r, _oc.g, _oc.b, 0.55)
+                                                                   : Theme.colors.border
+                                Text {
+                                    id: chipLabel
+                                    visible: cellRect.csel !== ""
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: 8
+                                    width: Math.min(implicitWidth, parent.width - 14)
+                                    elide: Text.ElideRight
+                                    text: cellRect.cselLabel
+                                    color: Theme.colors.text
+                                    font.family: Theme.font.family
+                                    font.pixelSize: Theme.font.sizeBody
+                                }
+                                Icon {
+                                    visible: cellRect.csel === ""
+                                    anchors.centerIn: parent
+                                    name: "caret-down"; size: 12; color: Theme.colors.textMuted
+                                }
+                            }
+                            // Check column: tri-state task checkbox (0 todo / 1 doing
+                            // / 2 done) — the same glyph as a block task list. Clicks
+                            // cycle it via the editor's central handler.
+                            Item {
+                                visible: cellRect.isCheck
+                                x: tv.cellPadH
+                                y: tv.cellPadV + Math.max(0, (cellText.implicitHeight - 14) / 2)
+                                width: 14; height: 14
+                                Rectangle {
+                                    anchors.fill: parent; radius: 3
+                                    color: cellRect.ccheck === 2 ? Theme.colors.accent : "transparent"
+                                    border.width: cellRect.ccheck === 2 ? 0 : 1.5
+                                    border.color: cellRect.ccheck === 1 ? Theme.colors.accent : Theme.colors.textMuted
+                                }
+                                Rectangle {   // in-progress dash
+                                    visible: cellRect.ccheck === 1
+                                    anchors.centerIn: parent; width: 7; height: 2; radius: 1
+                                    color: Theme.colors.accent
+                                }
+                                Text {   // done check
+                                    visible: cellRect.ccheck === 2
+                                    anchors.centerIn: parent
+                                    text: "✓"; color: Theme.colors.textBright
+                                    font.pixelSize: 11; font.bold: true
+                                }
+                            }
                             // in-cell caret (focused cell, no selection)
                             Rectangle {
                                 visible: cellRect.isFocusedCell && tv.caretOn && tv.selFrom === tv.selTo
+                                         && !cellRect.isChoice && !cellRect.isCheck
                                 z: 1; color: Theme.colors.accent; width: 2
                                 readonly property rect cr: cellText.positionToRectangle(Math.min(tv.caretPos, cellText.length))
                                 x: cellText.x + cr.x; y: cellText.y + cr.y

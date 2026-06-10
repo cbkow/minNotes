@@ -251,6 +251,27 @@ public:
     Q_INVOKABLE void tableSetColWidth(int row, int c, int w);
     Q_INVOKABLE void tableSetColAlign(int row, int c, int a);
     Q_INVOKABLE void tableSetHeaderRows(int row, int n);
+    // Choice columns (typed columns): a shared, ordered option set per column;
+    // body cells reference an option by its stable id. All edits go through
+    // mutateTable, so undo / persistence / refresh come for free.
+    Q_INVOKABLE int  tableColumnKind(int row, int c) const;              // 0 text, 1 choice
+    Q_INVOKABLE void tableSetColumnKind(int row, int c, int kind);
+    Q_INVOKABLE QVariantList tableColumnOptions(int row, int c) const;   // [{id,label,color}]
+    Q_INVOKABLE QString tableAddOption(int row, int c, const QString& label, const QString& color);  // → new id
+    // Replace a choice column's whole option set in one step (the modal editor's
+    // Done): each entry is {id,label,color}; a missing/empty id is minted. Preserves
+    // ids so cell selections survive; drops cells whose option was deleted.
+    Q_INVOKABLE void tableSetColumnOptions(int row, int c, const QVariantList& opts);
+    Q_INVOKABLE void tableRenameOption(int row, int c, const QString& id, const QString& label);
+    Q_INVOKABLE void tableRecolorOption(int row, int c, const QString& id, const QString& color);
+    Q_INVOKABLE void tableRemoveOption(int row, int c, const QString& id);
+    Q_INVOKABLE void tableMoveOption(int row, int c, const QString& id, int toIndex);
+    Q_INVOKABLE QString tableCellChoice(int row, int r, int c) const;    // selected option id ("" = none)
+    Q_INVOKABLE void tableSetCellChoice(int row, int r, int c, const QString& id);
+    Q_INVOKABLE QString tableCellChoiceLabel(int row, int r, int c) const;   // selected option's label
+    Q_INVOKABLE QString tableCellChoiceColor(int row, int r, int c) const;   // selected option's colour hex
+    Q_INVOKABLE int  tableCellCheck(int row, int r, int c) const;            // check column: 0/1/2
+    Q_INVOKABLE void tableCycleCellCheck(int row, int r, int c);             // cycle todo→doing→done
     // Paste TSV (tab/newline) into the table at anchor (r,c), growing as needed.
     Q_INVOKABLE void tablePasteTSV(int row, int r, int c, const QString& tsv);
     // Serialize an inclusive cell range for the clipboard (TSV + HTML <table>).

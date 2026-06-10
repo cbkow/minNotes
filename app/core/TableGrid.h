@@ -20,14 +20,25 @@
 class TableGrid {
 public:
     // A cell is a bare string when it has only text; richer cells carry inline
-    // spans, a background/foreground colour, and/or a media descriptor.
+    // spans, a background/foreground colour, a media descriptor, and/or (in a
+    // choice column) the id of the selected option.
     struct Cell {
         QString text;
         QString bg, fg;        // cell background / text colour hex ("" = inherit)
         QJsonArray spans;      // inline spans [{s,e,k,u}] ("" = none)
         QString media;         // media descriptor JSON ("" = text cell)
-        bool plain() const { return bg.isEmpty() && fg.isEmpty() && spans.isEmpty() && media.isEmpty(); }
+        QString choice;        // selected option id in a choice column ("" = none)
+        bool plain() const { return bg.isEmpty() && fg.isEmpty() && spans.isEmpty()
+                                    && media.isEmpty() && choice.isEmpty(); }
     };
+
+    // Column type. Text is the default; Choice hoists a shared option set out of
+    // the cells (each cell then stores only the selected option's stable id); Check
+    // is a tri-state task checkbox per cell (0 todo / 1 doing / 2 done), the same
+    // primitive as a block task list. The enum is left open for later kinds.
+    enum ColKind { ColText = 0, ColChoice = 1, ColCheck = 2 };
+    struct Option { QString id, label, color; };   // color = "" inherits cell text colour
+    struct ColType { int kind = ColText; std::vector<Option> options; };
 
     int rows() const { return static_cast<int>(cells_.size()); }
     int cols() const { return cols_; }
@@ -42,6 +53,26 @@ public:
     void       setCellSpans(int r, int c, const QJsonArray& spans);
     QString cellMedia(int r, int c) const;
     void    setCellMedia(int r, int c, const QString& mediaJson);
+
+    // Choice columns: a shared, ordered option set per column; cells reference an
+    // option by its stable id. Switching kind cleans up (text→choice clears the
+    // column's existing cell text — "start empty"; choice→text drops options +
+    // every cell's selection). removeOption sweeps cells so none dangle.
+    int     colKind(int c) const;                                 // 0 text, 1 choice
+    void    setColKind(int c, int kind);
+    std::vector<Option> colOptions(int c) const;
+    void    setColumnOptions(int c, const std::vector<Option>& opts);  // replace set; sweeps dangling cells
+    void    addOption(int c, const QString& id, const QString& label, const QString& color);
+    void    renameOption(int c, const QString& id, const QString& label);
+    void    recolorOption(int c, const QString& id, const QString& color);
+    void    removeOption(int c, const QString& id);
+    void    moveOption(int c, const QString& id, int toIndex);
+    QString cellChoice(int r, int c) const;                       // selected option id ("" = none)
+    void    setCellChoice(int r, int c, const QString& id);
+    int     cellCheck(int r, int c) const;                        // check column: 0/1/2 (stored in `choice`)
+    void    cycleCellCheck(int r, int c);                         // (n+1)%3
+    QString optionLabel(int c, const QString& id) const;          // "" if not found (export/flatten)
+    QString optionColor(int c, const QString& id) const;
 
     QString rowBg(int r) const;  void setRowBg(int r, const QString& hex);
     QString rowFg(int r) const;  void setRowFg(int r, const QString& hex);
@@ -74,11 +105,13 @@ public:
 
 private:
     void normalize();                       // pad/trim every row to cols_, size meta vectors
+    QString cellDisplay(int r, int c) const;   // flattened text for export (resolves choice/check)
 
     std::vector<std::vector<Cell>> cells_;  // cells_[row][col]
     int cols_ = 0;
     std::vector<int> colWidths_;            // length cols_, 0 = auto
     std::vector<int> colAligns_;            // length cols_, 0 = left
+    std::vector<ColType> colTypes_;         // length cols_, default {ColText, {}}
     std::vector<QString> rowBg_, rowFg_;    // per-row colour (length rows())
     std::vector<QString> colBg_, colFg_;    // per-column colour (length cols_)
     int headerRows_ = 1;

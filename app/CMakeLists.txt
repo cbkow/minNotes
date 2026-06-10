@@ -75,6 +75,8 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/FlatSlider.qml
         qml/MinNotes/App/Inspector.qml
         qml/MinNotes/App/ColorPickerInline.qml
+        qml/MinNotes/App/ChoicePicker.qml
+        qml/MinNotes/App/ChoiceColumnEditor.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf
