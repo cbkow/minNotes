@@ -2160,9 +2160,10 @@ FocusScope {
         anchors.fill: parent
         anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
         contentWidth: width
-        // Room below the table for the gap + (h-scrollbar) + the +row strip,
-        // then a bottom margin matching the 20 on the other sides.
-        contentHeight: frameTable.implicitHeight + (frameTable.overflowing ? 70 : 56)
+        // Room below the table: 4px gap (matching the +column side) + the
+        // h-scrollbar when present (+4) + the +row strip + a 20px bottom margin.
+        contentHeight: frameTable.implicitHeight + 58
+                       + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 4 : 0)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
@@ -2357,7 +2358,7 @@ FocusScope {
         }
         Rectangle {   // horizontal scrollbar (when overflowing)
             visible: frameTable.overflowing
-            x: 20; y: 20 + frameTable.height + 2
+            x: 20; y: 20 + frameTable.height + 4
             width: frameTable.width; height: Theme.dim.scrollBarWidth; color: "transparent"
             readonly property real maxScroll: Math.max(0, frameTable.contentW - frameTable.width)
             readonly property real thumbW: Math.max(24, width * frameTable.width / Math.max(1, frameTable.contentW))
@@ -2380,7 +2381,7 @@ FocusScope {
             }
         }
         Rectangle {   // + row (below the scrollbar when present)
-            x: 20; y: 20 + frameTable.height + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 6 : 2)
+            x: 20; y: 20 + frameTable.height + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 8 : 4)
             width: frameTable.width; height: 14; radius: 0
             color: fAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
@@ -3118,7 +3119,7 @@ FocusScope {
                       // would sit under the document mouse layer) that drives the
                       // table's scrollX; sits between the table and the +row button.
             visible: tableAdd.overflow
-            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + 2
+            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + 4
             width: tableAdd.cw; height: tableAdd.sbH; z: 41; color: "transparent"
             readonly property real contentTW: tableAdd.tItem ? tableAdd.tItem.contentW : 0
             readonly property real maxScroll: Math.max(0, contentTW - tableAdd.cw)
@@ -3146,7 +3147,7 @@ FocusScope {
         }
 
         Rectangle {   // + row, bottom edge (below the scrollbar when present)
-            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + (tableAdd.overflow ? tableAdd.sbH + 6 : 2)
+            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + (tableAdd.overflow ? tableAdd.sbH + 8 : 4)
             width: tableAdd.cw; height: 14; radius: 0; z: 40
             color: addRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
