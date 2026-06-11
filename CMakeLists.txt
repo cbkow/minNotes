@@ -6,7 +6,9 @@ project(MinNotes
     LANGUAGES CXX
 )
 
-set(CMAKE_CXX_STANDARD 17)
+# C++20: ink-stroke-modeler (the studio's stroke smoothing) requires it,
+# and QCView builds the same way. Was 17 until 2026-06-11.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -40,6 +42,28 @@ qt_standard_project_setup(REQUIRES 6.11)
 # from source into external/kf6 (gitignored); see external/build-ksyntax.sh.
 list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/external/kf6")
 find_package(KF6SyntaxHighlighting 6.0 REQUIRED)
+
+# ---- ink-stroke-modeler (video-annotation stroke smoothing) --------
+# Google's real-time stroke smoothing — the studio's freehand strokes are
+# modeled at capture time so they render identically here and in QCView
+# (PLAN-video-annotations.md; modeled points are baked into the shared
+# sidecar JSON). Same pinned commit as QCView-Player (tip of main
+# 2026-03-10; the project doesn't tag releases). Pulls Abseil transitively.
+# First configure needs network; the checkout lands in build/_deps.
+include(FetchContent)
+FetchContent_Declare(
+    ink_stroke_modeler
+    GIT_REPOSITORY https://github.com/google/ink-stroke-modeler.git
+    GIT_TAG da42d439389c90ec7574f0381ec53e7f5be0c2eb
+    GIT_SHALLOW FALSE
+)
+set(INK_STROKE_MODELER_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+set(INK_STROKE_MODELER_FIND_DEPENDENCIES OFF CACHE BOOL "" FORCE)
+set(INK_STROKE_MODELER_ENABLE_INSTALL    OFF CACHE BOOL "" FORCE)
+set(ABSL_ENABLE_INSTALL                  OFF CACHE BOOL "" FORCE)
+set(INSTALL_GTEST                        OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(ink_stroke_modeler)
+message(STATUS "ink-stroke-modeler: pinned commit da42d439")
 
 # ---- ffmpeg (vendored prebuilt) ------------------------------------
 # The ported video engine (app/player/, from ufb) links FFmpeg for demux +

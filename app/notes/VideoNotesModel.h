@@ -71,6 +71,23 @@ public:
     // (QCView preserves them on its undo path; we mirror the user-click one).
     Q_INVOKABLE void removeNote(const QString &timecode);
 
+    // ---- Stroke seam (VideoAnnotator) ----
+    Q_INVOKABLE QString timecodeForFrame(int frame) const { return mintTimecode(frame); }
+    Q_INVOKABLE bool hasNote(const QString &timecode) const { return noteAt(timecode) != nullptr; }
+    Q_INVOKABLE QString annotationDataFor(const QString &timecode) const;
+    // Replace a note's stroke JSON (empty = no strokes; serializes as null,
+    // QCView's exact erased-to-zero shape). Recreates a missing note at
+    // `frame` when json is non-empty — that's redo after undoing the stroke
+    // that created the note.
+    void setAnnotationData(const QString &timecode, int frame, const QString &json);
+    // Annotation-undo delete: the note goes, its PNGs stay (a redo must be
+    // able to restore them) — QCView's deleteNote semantics.
+    void removeNoteKeepFiles(const QString &timecode);
+    // Recomposite images/note_<TC>_annotated.png from the clean PNG + the
+    // note's current strokes (worker thread; removes the file when no
+    // strokes remain). Callers debounce — one write per drawing burst.
+    void writeAnnotatedThumb(const QString &timecode);
+
 signals:
     void mediaPathChanged();
     void fpsChanged();

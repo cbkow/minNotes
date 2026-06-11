@@ -29,6 +29,18 @@ qt_add_executable(minnotesapp
     notes/annotation_io.cpp
     notes/VideoNotesModel.h
     notes/VideoNotesModel.cpp
+    # Stroke engine (QCView ports + the studio's QPainter overlay).
+    notes/active_stroke.h
+    notes/ink_stroke_modeler_wrapper.h
+    notes/ink_stroke_modeler_wrapper.cpp
+    notes/annotation_serializer.h
+    notes/annotation_serializer.cpp
+    notes/annotation_thumbnail.h
+    notes/annotation_thumbnail.cpp
+    notes/viewport_annotator.h
+    notes/viewport_annotator.cpp
+    notes/VideoAnnotator.h
+    notes/VideoAnnotator.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must
@@ -140,7 +152,14 @@ target_link_libraries(minnotesapp PRIVATE
     Qt6::Network      # remote <img> download (HTML paste)
     KF6::SyntaxHighlighting
     minnotes::ffmpeg
+    # Stroke smoothing (FetchContent, pinned in the root CMakeLists).
+    InkStrokeModeler::stroke_modeler
 )
+
+# ink-stroke-modeler doesn't propagate its include dir as a usage
+# requirement (same workaround as QCView).
+target_include_directories(minnotesapp PRIVATE
+    ${CMAKE_BINARY_DIR}/_deps/ink_stroke_modeler-src)
 
 # ---- platform video/audio backends --------------------------------
 if(APPLE)

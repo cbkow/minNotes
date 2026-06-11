@@ -72,7 +72,8 @@ ApplicationWindow {
             width: parent.width - rail.width - inspector.width; height: parent.height
             // The validated passive-surface editor (model owns the cursor; blocks
             // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
-            Editor { id: editor; width: parent.width; height: parent.height - tabs.height - bottom.height }
+            Editor { id: editor; width: parent.width; height: parent.height - tabs.height - bottom.height
+                     inspector: inspector }
             TableTabs { id: tabs; width: parent.width; editor: editor }
             BottomRail { id: bottom; width: parent.width; editor: editor }
         }

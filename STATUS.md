@@ -2,7 +2,7 @@
 
 > Living tracker of what's built vs planned. Design rationale lives in
 > `DESIGN.md`; the virtualization/architecture validation in `SPIKE.md`.
-> Last updated: 2026-06-10.
+> Last updated: 2026-06-11.
 
 ## Stack (decided)
 - **Pure C++/Qt6** (Qt 6.11) + QML. **No Rust / cxx-qt** — the spike proved the
@@ -382,6 +382,25 @@ DESIGN.md  SPIKE.md  STATUS.md
       (`beginGroup`/`endGroup`). Entry: "View as board" on a typed column's menu or
       the floating Table/Board toggle on the active tab; Esc → grid. View state only
       (not persisted, not undoable); board mode swallows table typing.
+
+- **Video studio + QCView-interop annotations (2026-06-11; PLAN-video-annotations.md
+  VA-1..VA-3).** Videos join tables/PDFs as full-frame tabs: a studio — the shared
+  decoder's surface on a centered stage, the family transport (extracted to
+  `VideoTransport.qml`, shared with the inline bars), and a notes filmstrip.
+  Notes live in QCView's `.qcview/<media>/` sidecar in its EXACT format — true
+  two-way interchange (QCView's timecode minting verbatim, stroke JSON v2.0,
+  clean + annotated PNGs), live-verified against QCView in both directions.
+  `app/notes/`: verbatim QCView ports (annotation_note/io/serializer/thumbnail/
+  viewport_annotator; ink-stroke-modeler via FetchContent at QCView's pinned
+  commit — project is C++20 now) + `VideoNotesModel` (sidecar watcher,
+  merge-on-save keyed by timecode, delete tombstones, idempotent clean thumbs)
+  + `VideoAnnotator` (QQuickPaintedItem stage overlay: modeled freehand, rect/
+  oval/arrow/line, QCView's bbox eraser, per-stroke ANNOTATION undo — ⌘Z routes
+  there in the studio; video notes never touch beginTxn). Drawing tools are the
+  Inspector's third target (Text | Highlight | Draw), QSettings-persisted.
+  En route: fixed the player's publish slot losing frames to recreated
+  QQuickRhiItem renderers (clone-on-fetch + per-consumer cursors — the
+  "dark stage until the next seek" bug).
 
 ## Next (rough order)
 

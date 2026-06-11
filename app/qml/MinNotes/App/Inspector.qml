@@ -21,21 +21,39 @@ Rectangle {
     property color bgColor: "#FFEC59"                 // highlight colour (classic bright yellow)
     property string target: "fg"                       // which colour the picker edits
 
+    // Drawing state (the video studio's annotator reads these; QSettings-
+    // backed like QCView's annotation/colorHex). drawTool "" = disarmed.
+    property color drawColor: "#FF0000"                // QCView's default stroke red
+    property string drawTool: ""                       // freehand|rect|oval|arrow|line|eraser
+    property real drawWidth: 6                         // source-pixel stroke width (1..24)
+    Settings {
+        id: drawStore
+        category: "drawing"
+        property string colorHex: ""
+        property real width: 0
+    }
+    onDrawColorChanged: drawStore.colorHex = "" + drawColor
+    onDrawWidthChanged: drawStore.width = drawWidth
+
     readonly property int panelW: 198
     width: open ? panelW : 0
     Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
     color: Theme.colors.surfaceRaised                  // a step lighter than the page, so the panel reads as its own layer
     clip: true                                         // so content clips cleanly while sliding
 
+    function targetColor() {
+        return target === "fg" ? fgColor : target === "bg" ? bgColor : drawColor
+    }
     // Switching target retargets the picker — deselect first, or the reassign
     // would write the OTHER target's colour into the selected swatch.
     onTargetChanged: { selPreset = -1; selUser = -1
-                       picker.value = (target === "fg" ? fgColor : bgColor) }
+                       picker.value = targetColor() }
     function revertTarget() {                           // reset the active colour to its default
         selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
-        if (target === "fg") fgColor = Theme.colors.textBright
-        else                 bgColor = "#FFEC59"
-        picker.value = (target === "fg" ? fgColor : bgColor)
+        if (target === "fg")      fgColor = Theme.colors.textBright
+        else if (target === "bg") bgColor = "#FFEC59"
+        else                      drawColor = "#FF0000"
+        picker.value = targetColor()
     }
 
     // --- Swatches: a FIXED bright preset grid + a row of user slots. Clicking
@@ -57,6 +75,8 @@ Rectangle {
     }
     Component.onCompleted: {
         try { var u = JSON.parse(swatchStore.user); if (u && u.length === userSlots.length) userSlots = u } catch (e) {}
+        if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
+        if (drawStore.width > 0) drawWidth = drawStore.width
     }
     function saveSwatches() { swatchStore.user = JSON.stringify(userSlots) }
     function noteEdit(c) {                              // picker moved
@@ -81,7 +101,8 @@ Rectangle {
         Row {
             anchors.centerIn: parent; spacing: 6
             Rectangle { width: 12; height: 12; radius: 2; anchors.verticalCenter: parent.verticalCenter
-                        color: parent.parent.t === "fg" ? panel.fgColor : panel.bgColor
+                        color: parent.parent.t === "fg" ? panel.fgColor
+                             : parent.parent.t === "bg" ? panel.bgColor : panel.drawColor
                         border.width: 1; border.color: Theme.colors.border }
             Text { text: parent.parent.label; anchors.verticalCenter: parent.verticalCenter
                    color: panel.target === parent.parent.t ? Theme.colors.textBright : Theme.colors.textMuted
@@ -117,17 +138,73 @@ Rectangle {
 
             Row {
                 spacing: 0
-                Tab { label: "Text"; t: "fg" }
-                Tab { label: "Highlight"; t: "bg" }
+                Tab { label: "Text"; t: "fg"; width: 50 }
+                Tab { label: "Highlight"; t: "bg"; width: 76 }
+                Tab { label: "Draw"; t: "draw"; width: 48 }
             }
 
             ColorPickerInline {
                 id: picker
                 onValueChanged: {
-                    if (panel.target === "fg") panel.fgColor = value; else panel.bgColor = value
+                    if (panel.target === "fg")      panel.fgColor = value
+                    else if (panel.target === "bg") panel.bgColor = value
+                    else                            panel.drawColor = value
                     panel.noteEdit(value)               // selected swatch tracks the edit
                 }
                 Component.onCompleted: value = panel.fgColor
+            }
+
+            // --- Drawing tools (video studio) — visible on the Draw target.
+            // Arming a tool turns the studio stage into a drawing surface;
+            // clicking the armed tool again (or Esc) disarms.
+            Grid {
+                visible: panel.target === "draw"
+                columns: 6; spacing: 2
+                Repeater {
+                    model: [
+                        { tool: "freehand", icon: "scribble",      tip: qsTr("Freehand") },
+                        { tool: "rect",     icon: "rectangle",     tip: qsTr("Rectangle") },
+                        { tool: "oval",     icon: "circle",        tip: qsTr("Oval") },
+                        { tool: "arrow",    icon: "arrow-up-right",tip: qsTr("Arrow") },
+                        { tool: "line",     icon: "line-segment",  tip: qsTr("Line") },
+                        { tool: "eraser",   icon: "eraser",        tip: qsTr("Eraser") }
+                    ]
+                    delegate: FlatButton {
+                        required property var modelData
+                        width: 27; height: 27
+                        iconName: modelData.icon
+                        checked: panel.drawTool === modelData.tool
+                        checkedColor: Theme.colors.divider   // grey — family selection language
+                        iconColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
+                        tooltip: modelData.tip; tooltipSide: "top"
+                        onClicked: panel.drawTool =
+                            (panel.drawTool === modelData.tool) ? "" : modelData.tool
+                    }
+                }
+            }
+            Row {
+                visible: panel.target === "draw"
+                spacing: 8
+                Text {
+                    text: "Width"
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.colors.textMuted
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                }
+                FlatSlider {
+                    width: 110
+                    anchors.verticalCenter: parent.verticalCenter
+                    from: 1; to: 24
+                    value: panel.drawWidth
+                    fillColor: Theme.colors.textMuted
+                    onMoved: panel.drawWidth = value
+                }
+                Text {
+                    text: Math.round(panel.drawWidth)
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.colors.textSubtle
+                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                }
             }
 
             // (Apply lives on the left rail's bottom swatches — pick here, apply there.)
@@ -203,7 +280,7 @@ Rectangle {
                 if (parent.userSlot) {
                     panel.selPreset = -1; panel.selUser = parent.idx
                     if (parent.hex === "") {            // empty slot captures the current colour
-                        var cur = "" + (panel.target === "fg" ? panel.fgColor : panel.bgColor)
+                        var cur = "" + panel.targetColor()
                         var u = panel.userSlots.slice(); u[parent.idx] = cur
                         panel.userSlots = u; panel.saveSwatches()
                     } else picker.value = parent.hex

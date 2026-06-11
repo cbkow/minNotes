@@ -37,6 +37,10 @@ FocusScope {
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
 
+    // The right Inspector panel (set from Main.qml) — the studio's drawing
+    // tool/color/width live there (its Draw target).
+    property var inspector: null
+
     // Active table-tab: "" = the Document view; otherwise a table block's id shown
     // full-frame (see Tabs B). Reactive row of that table, -1 if it's gone.
     property string activeTableId: ""
@@ -1421,12 +1425,22 @@ FocusScope {
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
-            if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
+            // Studio first: drop an in-flight stroke, then disarm the tool.
+            if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
+            else if (root.activeVideoRow >= 0 && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
+            else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
             else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
             else if (cursor.activeMarks !== 0) { cursor.clearMarks() }
+            event.accepted = true
+        }
+        // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
+        // outside the document DB, so doc undo must not fire while the
+        // hidden document is invisible.
+        else if (cmd && (k === Qt.Key_Z || k === Qt.Key_Y) && root.activeVideoRow >= 0) {
+            if (k === Qt.Key_Y || shift) studioAnnotator.redo(); else studioAnnotator.undo()
             event.accepted = true
         }
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
@@ -2927,6 +2941,33 @@ FocusScope {
                              && root._videoSurfaceReady
                     fillColor: Qt.rgba(Theme.colors.bg.r, Theme.colors.bg.g,
                                        Theme.colors.bg.b, 1.0)
+                }
+
+                // The stroke layer: renders the current frame's strokes
+                // (QCView's + ours) and captures drawing when a tool is
+                // armed in the Inspector's Draw target. Sized to the frame
+                // box exactly → its [0..1] space IS QCView's. Disarmed it
+                // refuses mouse events, so playback clicks pass through.
+                VideoAnnotator {
+                    id: studioAnnotator
+                    anchors.fill: parent
+                    // Only over a LIVE surface: strokes paint instantly but
+                    // the decoder publishes the sought frame later (first
+                    // seek especially) — ink over a blank/stale stage reads
+                    // as "annotations without the screenshot".
+                    visible: studioSurface.visible
+                    notes: vnotes
+                    sourceWidth: studioStage.vw
+                    // Load-bearing reads only (reactivity rule 1e).
+                    frame: root.videoPlayingRow === studioFrame.r
+                        ? videoDec.currentFrame
+                        : (root.videoPlayheadRev >= 0 ? root.videoPlayheadFor(studioFrame.r) : 0)
+                    tool: (root.activeVideoRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
+                    color: root.inspector ? root.inspector.drawColor : "#FF0000"
+                    strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+                    // Strokes pin to a frame — drawing on a moving target
+                    // would land on whatever frame the release hits.
+                    onStrokeStarted: { videoDec.pause(); videoAudio.pause() }
                 }
             }
         }

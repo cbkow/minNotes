@@ -1,6 +1,8 @@
 #include "VideoNotesModel.h"
 
 #include "annotation_io.h"
+#include "annotation_serializer.h"
+#include "annotation_thumbnail.h"
 #include "../core/MediaStore.h"
 #include "../player/timecode_formatter.h"
 
@@ -195,6 +197,70 @@ void VideoNotesModel::removeNote(const QString &timecode)
     if (!annAbs.isEmpty()) QFile::remove(annAbs);
     bump();
     scheduleSave();
+}
+
+QString VideoNotesModel::annotationDataFor(const QString &timecode) const
+{
+    const qcv::AnnotationNote *n = noteAt(timecode);
+    return n ? n->annotation_data : QString();
+}
+
+void VideoNotesModel::setAnnotationData(const QString &timecode, int frame,
+                                        const QString &json)
+{
+    qcv::AnnotationNote *n = noteAt(timecode);
+    if (!n) {
+        if (json.isEmpty()) return;          // nothing to restore onto nothing
+        addNoteAtFrame(frame);               // recreate (redo path); idempotent thumb
+        n = noteAt(timecode);
+        if (!n) return;
+    }
+    if (n->annotation_data == json) return;
+    n->annotation_data = json;
+    bump();
+    scheduleSave();
+}
+
+void VideoNotesModel::removeNoteKeepFiles(const QString &timecode)
+{
+    auto it = std::find_if(notes_.begin(), notes_.end(),
+        [&](const qcv::AnnotationNote &n) { return n.timecode == timecode; });
+    if (it == notes_.end()) return;
+    notes_.erase(it);
+    tombstones_.insert(timecode);
+    bump();
+    scheduleSave();
+}
+
+void VideoNotesModel::writeAnnotatedThumb(const QString &timecode)
+{
+    const qcv::AnnotationNote *n = noteAt(timecode);
+    if (!n || mediaPath_.isEmpty()) return;
+    // Snapshot on the GUI thread; the worker only touches files.
+    const QString cleanAbs = qcv::annotation_io::getImagesFolder(mediaPath_)
+        + QLatin1Char('/') + qcv::annotation_io::generateImageFilename(timecode);
+    const QString annAbs = annotatedSibling(cleanAbs);
+    const std::vector<qcv::ActiveStroke> strokes =
+        qcv::AnnotationSerializer::jsonStringToStrokes(n->annotation_data);
+    QPointer<VideoNotesModel> self(this);
+    const QString path = mediaPath_;
+    QThreadPool::globalInstance()->start([self, path, cleanAbs, annAbs, strokes] {
+        if (strokes.empty()) {
+            QFile::remove(annAbs);
+        } else {
+            const QImage clean(cleanAbs);
+            // PAR 1/1: minNotes doesn't track pixel aspect (storage dims only).
+            const QImage out = qcv::renderNoteThumbnail(clean, strokes, 1, 1);
+            if (out.isNull() || !out.save(annAbs, "PNG")) {
+                qWarning("VideoNotesModel: annotated thumb failed for %s",
+                         qPrintable(annAbs));
+                return;
+            }
+        }
+        QMetaObject::invokeMethod(self, [self, path] {
+            if (self && self->mediaPath_ == path) self->bump();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void VideoNotesModel::bump()
