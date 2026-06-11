@@ -148,6 +148,23 @@ FrameHandle FrameHandle::metal(void *cvPixelBuffer, int width, int height, int64
     return h;
 }
 
+FrameHandle FrameHandle::clone() const
+{
+    FrameHandle out;
+    out.m_kind      = m_kind;
+    out.m_pts       = m_pts;
+    out.m_width     = m_width;
+    out.m_height    = m_height;
+    out.m_cpuImage  = m_cpuImage;      // implicit share (COW)
+    out.m_keepAlive = m_keepAlive;     // shared keepalive
+    if (m_kind == Kind::Metal && m_metalPixbuf) {
+        CVPixelBufferRetain(static_cast<CVPixelBufferRef>(m_metalPixbuf));
+        out.m_metalPixbuf = m_metalPixbuf;
+    }
+    // Vulkan never occurs on Apple (see reset()).
+    return out;
+}
+
 void FrameHandle::reset()
 {
     if (m_kind == Kind::Metal && m_metalPixbuf) {

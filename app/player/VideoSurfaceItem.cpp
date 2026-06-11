@@ -14,6 +14,7 @@
 #endif
 
 #include <QFile>
+#include <QQuickWindow>
 #include <rhi/qrhi.h>
 #if defined(Q_OS_WIN)
 #  include <rhi/qrhi_platform.h>   // QRhiD3D11NativeHandles
@@ -48,8 +49,9 @@ public:
         auto *s = static_cast<VideoSurfaceItem *>(item);
         m_fill = s->fillColor();
         m_decoder = s->videoDecoder();
+        m_window = s->window();
         if (m_decoder)
-            m_decoder->fetchLatest(&m_frame);   // no-op if no newer frame
+            m_decoder->fetchLatest(&m_frame, &m_seenSeq);   // no-op if no newer frame
     }
 
     void render(QRhiCommandBuffer *cb) override
@@ -64,6 +66,19 @@ public:
 
         if (m_frame.isValid())
             prepareFrame(r, u, cb, &pipe, &srb, &frameSize);
+
+        // A held frame that produced no pipeline (e.g. the Metal bridge
+        // not ready on this renderer's FIRST pass) would otherwise stick
+        // as a dark surface until the NEXT publish — nothing re-renders a
+        // paused video. Retry a few passes; the held frame is still here.
+        if (m_frame.isValid() && !pipe && m_retries < 5) {
+            ++m_retries;
+            qWarning("VideoSurfaceRenderer: held frame (kind=%d) produced no "
+                     "pipeline — retry %d", int(m_frame.kind()), m_retries);
+            if (m_window) m_window->update();   // thread-safe re-render request
+        } else if (pipe) {
+            m_retries = 0;
+        }
 
         // Clear to the backdrop fill (letterbox bars + the surface behind
         // a frame). Alpha-bearing formats composite "over" this fill, so
@@ -338,6 +353,11 @@ private:
 
     QColor m_fill{ 0, 0, 0 };
     ufbplayer::VideoDecoder *m_decoder = nullptr;
+    QQuickWindow *m_window = nullptr;   // for the no-pipeline retry request
+    int m_retries = 0;
+    // This renderer's publish cursor. Fresh renderer (QQuickRhiItem
+    // recreates them) = 0 → always re-pulls the current frame.
+    uint64_t m_seenSeq = 0;
     FrameHandle m_frame;
 
     std::unique_ptr<QRhiBuffer> m_vbuf;
@@ -400,6 +420,17 @@ void VideoSurfaceItem::setVideoDecoder(ufbplayer::VideoDecoder *decoder)
     }
     emit videoDecoderChanged();
     update();
+}
+
+void VideoSurfaceItem::itemChange(ItemChange change, const ItemChangeData &data)
+{
+    // A frame published while the item was hidden called update() as a
+    // no-op; becoming visible would composite the never-rendered (empty)
+    // texture — a dark stage under the studio's stroke overlay until the
+    // NEXT publish. Repaint on show so the latest frame is pulled.
+    if (change == ItemVisibleHasChanged && data.boolValue)
+        update();
+    QQuickRhiItem::itemChange(change, data);
 }
 
 QQuickRhiItemRenderer *VideoSurfaceItem::createRenderer()

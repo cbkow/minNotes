@@ -116,6 +116,23 @@ FrameHandle FrameHandle::vulkan(AVFrame *avFrame, int width, int height,
     return h;
 }
 
+FrameHandle FrameHandle::clone() const
+{
+    FrameHandle out;
+    out.m_kind      = m_kind;
+    out.m_pts       = m_pts;
+    out.m_width     = m_width;
+    out.m_height    = m_height;
+    out.m_cpuImage  = m_cpuImage;      // implicit share (COW)
+    out.m_keepAlive = m_keepAlive;     // shared keepalive
+    if (m_kind == Kind::Vulkan && m_avFrame) {
+        out.m_avFrame = av_frame_clone(m_avFrame);   // ref-count bump
+        if (!out.m_avFrame) out.reset();             // OOM → empty handle
+    }
+    // Metal never occurs on non-Apple (see reset()).
+    return out;
+}
+
 void FrameHandle::reset()
 {
     // CVPixelBufferRelease isn't reachable on non-Apple — m_metalPixbuf

@@ -42,6 +42,10 @@ signals:
 
 protected:
     QQuickRhiItemRenderer *createRenderer() override;
+    // Repaint on becoming visible — update() from frameAvailable is a no-op
+    // while hidden, which left the studio surface compositing an empty
+    // texture until the next publish (dark stage on the first card-click).
+    void itemChange(ItemChange change, const ItemChangeData &data) override;
 
 private:
     QColor m_fillColor{ 0, 0, 0 };

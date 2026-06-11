@@ -183,11 +183,15 @@ public:
 
     const FrameIndex &frameIndex() const { return m_frameIndex; }
 
-    // Render-thread-safe. If a frame newer than the last one consumed
-    // is available, MOVES it into *out and returns true. The handle
-    // owns its underlying resource (CPU image or platform GPU buffer).
-    // Returns false if no new frame is available.
-    bool fetchLatest(FrameHandle *out);
+    // Render-thread-safe. If the published frame is newer than
+    // *consumerSeq, CLONES it into *out (the slot keeps the original),
+    // advances *consumerSeq and returns true. The cursor is PER CONSUMER
+    // (the renderer owns it): two surfaces can share one decoder, and a
+    // recreated QQuickRhiItem renderer (fresh cursor = 0) re-pulls the
+    // current frame instead of going dark until the next publish — the
+    // old single-cursor MOVE semantics lost the frame with the dead
+    // renderer (the studio's dark-stage-on-first-seek bug, 2026-06-11).
+    bool fetchLatest(FrameHandle *out, uint64_t *consumerSeq);
 
     // External publish entry — used by ScrubDecoder to inject a frame
     // into this decoder's slot without the streaming context having
@@ -305,12 +309,12 @@ private:
 
     // Latest-wins publish slot. Decoder writes a FrameHandle (either
     // a CPU QImage from the software path or a retained CVPixelBuffer
-    // from the zero-copy hwaccel path); render thread moves it out
-    // via fetchLatest. At most 1 handle in slot + 1 with the consumer.
+    // from the zero-copy hwaccel path); render thread pulls a CLONE via
+    // fetchLatest (per-consumer cursors — the slot keeps the original
+    // until the next publish or close()).
     mutable std::mutex     m_publishMutex;
     FrameHandle            m_publishedFrame;
     std::atomic<uint64_t>  m_publishedSeq{0};
-    uint64_t               m_lastFetchedSeq = 0;
 
     // FrameIndex — built at open() from stream metadata. Drives
     // PTS↔frame conversion for both the published-frame number

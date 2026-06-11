@@ -75,6 +75,14 @@ public:
     static FrameHandle vulkan(AVFrame *avFrame, int width, int height,
                               int64_t pts);
 
+    // Reference-duplicate for fan-out: Cpu shares the QImage (COW) + the
+    // keepAlive; Metal takes its own CVPixelBuffer retain; Vulkan clones
+    // the AVFrame ref. Lets the decoder's publish slot KEEP the frame so
+    // multiple consumers — and a freshly recreated QQuickRhiItem renderer
+    // whose predecessor died holding the moved-out frame — can all pull
+    // the current picture (the studio's dark-stage bug, 2026-06-11).
+    FrameHandle clone() const;
+
     Kind     kind() const { return m_kind; }
     bool     isValid() const { return m_kind != Kind::Empty; }
     int64_t  pts() const { return m_pts; }

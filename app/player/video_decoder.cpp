@@ -246,8 +246,9 @@ bool VideoDecoder::open(const QString &path)
     emit metadataChanged();
 
     m_stopRequested.store(false, std::memory_order_release);
-    m_publishedSeq.store(0, std::memory_order_release);
-    m_lastFetchedSeq = 0;
+    // m_publishedSeq is NOT reset: consumer cursors are per-renderer and
+    // survive open/close — a monotonic seq can never collide with a stale
+    // cursor (a reset-to-0 could re-issue numbers a cursor already holds).
     m_paceBaselineSet = false;
     m_loggedMetalFormat     = false;
     m_loggedCpuFormat       = false;
@@ -398,8 +399,9 @@ void VideoDecoder::close()
         std::lock_guard<std::mutex> lk(m_publishMutex);
         m_publishedFrame.reset();
     }
-    m_publishedSeq.store(0, std::memory_order_release);
-    m_lastFetchedSeq = 0;
+    // Bump (not reset) the seq so consumers re-fetch and observe the now-
+    // empty slot; see open() for why the seq stays monotonic.
+    m_publishedSeq.fetch_add(1, std::memory_order_release);
     m_pendingSeekTarget.store(-1, std::memory_order_release);
     m_currentFrame.store(-1, std::memory_order_release);
     m_frameIndex = FrameIndex();
@@ -451,24 +453,21 @@ void VideoDecoder::close()
     }
 }
 
-bool VideoDecoder::fetchLatest(FrameHandle *out)
+bool VideoDecoder::fetchLatest(FrameHandle *out, uint64_t *consumerSeq)
 {
     const uint64_t latest = m_publishedSeq.load(std::memory_order_acquire);
-    if (latest == m_lastFetchedSeq) {
+    if (consumerSeq && latest == *consumerSeq) {
         return false;
     }
 
     std::lock_guard<std::mutex> lk(m_publishMutex);
+    if (consumerSeq) *consumerSeq = latest;
     if (!m_publishedFrame.isValid()) {
-        m_lastFetchedSeq = latest;
         return false;
     }
     if (out) {
-        *out = std::move(m_publishedFrame);   // moves ownership to caller
-    } else {
-        m_publishedFrame.reset();
+        *out = m_publishedFrame.clone();   // slot keeps the original
     }
-    m_lastFetchedSeq = latest;
     return true;
 }
 
