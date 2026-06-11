@@ -276,9 +276,10 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
     if (mw > 0 && mh > 0)
         r.param = static_cast<uint16_t>(std::clamp(int(100.0 * mh / mw + 0.5), 1, 1000));
     const QString kind = mo.value(QStringLiteral("kind")).toString();
-    r.isVideo = kind == QLatin1String("video");
-    r.isFile  = kind == QLatin1String("file");
-    r.isPdf   = kind == QLatin1String("pdf");
+    r.isVideo  = kind == QLatin1String("video");
+    r.isFile   = kind == QLatin1String("file");
+    r.isPdf    = kind == QLatin1String("pdf");
+    r.isSketch = kind == QLatin1String("sketch");
     r.dispW   = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("dw")).toInt(), 0, 65535));
 }
 
@@ -287,7 +288,9 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 // intrinsic-capped (never upscaled by default).
 double BlockModel::mediaDisplayWidth(const Row& r) const {
     if (r.dispW > 0) return std::min<double>(r.dispW, contentWidth_);
-    if (r.isPdf)     return contentWidth_;
+    if (r.isPdf || r.isSketch) return contentWidth_;   // fit the page (sketches
+                                                       // upscale — strokes are
+                                                       // vector, no quality loss)
     if (r.mediaW > 0) return std::min<double>(contentWidth_, r.mediaW);
     return contentWidth_;
 }
@@ -1172,6 +1175,76 @@ QStringList BlockModel::videoBlockIds() const {
     for (size_t i = 0; i < rows_.size(); ++i)
         if (rows_[i].type == Media && rows_[i].isVideo) out.append(ids_[i]);
     return out;
+}
+
+QStringList BlockModel::sketchBlockIds() const {
+    QStringList out;
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (rows_[i].type == Media && rows_[i].isSketch) out.append(ids_[i]);
+    return out;
+}
+
+int BlockModel::insertSketch(int afterRow) {
+    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+    // Default canvas: square, 480 source px (ruling 2026-06-11). Strokes are
+    // normalized [0,1] of that square — QCView's exact stroke schema, so the
+    // one engine serializes/renders sketches and video notes alike.
+    QJsonObject root;
+    root.insert(QStringLiteral("kind"), QStringLiteral("sketch"));
+    root.insert(QStringLiteral("w"), 480);
+    root.insert(QStringLiteral("h"), 480);
+    root.insert(QStringLiteral("version"), QStringLiteral("2.0"));
+    root.insert(QStringLiteral("coordinate_system"), QStringLiteral("normalized"));
+    root.insert(QStringLiteral("shapes"), QJsonArray{});
+    const QString json = QString::fromUtf8(
+        QJsonDocument(root).toJson(QJsonDocument::Compact));
+
+    beginTxn(at, at - 1);                        // empty `before`; after = [at,at]
+    const QString newId = makeUlid();
+    const QString newRank = rankBetween(
+        (at > 0) ? ranks_[at - 1] : QString(),
+        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
+
+    beginInsertRows({}, at, at);
+    Row r{}; r.type = Media;
+    fillMediaMeta(r, json);                      // dims/kind from the descriptor
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, json);
+    ids_.insert(ids_.begin() + at, newId);
+    ranks_.insert(ranks_.begin() + at, newRank);
+    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    endInsertRows();
+
+    if (doc_.isOpen())
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), json);
+
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return at;
+}
+
+void BlockModel::sketchSetShapes(int row, const QString& strokesJson) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    // Merge: stroke fields come from the engine's JSON (which knows only the
+    // QCView schema); the canvas meta (kind/w/h/dw) is preserved verbatim.
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QJsonObject in = QJsonDocument::fromJson(strokesJson.toUtf8()).object();
+    root.insert(QStringLiteral("version"),
+                in.value(QStringLiteral("version")).toString(QStringLiteral("2.0")));
+    root.insert(QStringLiteral("coordinate_system"),
+                in.value(QStringLiteral("coordinate_system")).toString(QStringLiteral("normalized")));
+    root.insert(QStringLiteral("shapes"),
+                in.contains(QStringLiteral("shapes")) ? in.value(QStringLiteral("shapes"))
+                                                      : QJsonValue(QJsonArray{}));
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();   // no coalesce — one undo step per stroke (ruling 2026-06-11)
 }
 
 int BlockModel::rowForId(const QString& id) const {

@@ -401,6 +401,18 @@ DESIGN.md  SPIKE.md  STATUS.md
   En route: fixed the player's publish slot losing frames to recreated
   QQuickRhiItem renderers (clone-on-fetch + per-consumer cursors — the
   "dark stage until the next seek" bug).
+- **Sketch blocks (2026-06-11; PLAN-document-annotations.md tier 1).** An
+  in-document drawing canvas as a **Media kind** (`kind:"sketch"`; content =
+  canvas meta + the QCView stroke schema in one JSON) — the media machinery
+  (meta fill on every reconstruction, known-geometry heights, dw, opaque
+  atomicity, undo snapshots) came free. Transparent square 480×480 canvas,
+  page-width inline (strokes are vector — lossless upscale), passive inline
+  render via a disarmed `SketchCanvas`; editing in a full-frame "Sketch N"
+  tab with the Inspector's Draw target. Strokes commit through
+  `sketchSetShapes` → beginTxn: **one document-undo step per stroke**
+  (vs video notes' sidecar stack — same tools, two undo worlds, routed by
+  context). Insert via the LeftRail Sketch button or "Insert sketch below";
+  inserting opens the tab. Remaining tiers: block-pinned margin ink, comments.
 
 ## Next (rough order)
 

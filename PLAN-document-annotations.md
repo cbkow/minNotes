@@ -1,12 +1,22 @@
 # Plan: Full-document annotations (free ink + living comments)
 
-> Status: **design-ratified, REVISED 2026-06-10 — see "Revision: block-pinned ink +
+> Status: **TIER 1 (Sketch blocks) SHIPPED 2026-06-11.** The shared stroke
+> engine arrived a tier early — it was ported for the VIDEO annotation arc
+> (PLAN-video-annotations.md, also shipped 2026-06-11) and sketch reuses it
+> wholesale. Implementation rulings that landed: sketch is a **Media KIND**
+> (`kind:"sketch"` — the media machinery did the heavy lifting), transparent
+> square 480×480 canvas displayed page-width inline (vector upscale), one
+> document-undo step per stroke (no coalescing), full-frame-tab editing with
+> the Inspector's Draw target, insert via LeftRail + context menu (opens the
+> tab immediately). REMAINING: tier 2 (block-pinned margin ink) + tier 3
+> (comments), below.
+>
+> Earlier: design-ratified, REVISED 2026-06-10 — see "Revision: block-pinned ink +
 > sketch blocks" below, which SUPERSEDES the page-space canvas (Layer 2) with a
-> block-anchored model and adds a Sketch block type as the new v1.** Original
+> block-anchored model and adds a Sketch block type as the new v1. Original
 > design chat 2026-06-08. The QCView annotation port (shelved media plan M3
-> stroke engine + M5 import — `~/.claude/plans/virtual-tinkering-island.md`) is
-> NOT a separate system: it is the shared stroke engine underneath every tier
-> here; port it ONCE, as part of Sketch blocks.
+> stroke engine + M5 import) is NOT a separate system: it is the shared stroke
+> engine underneath every tier here (now living in `app/notes/`).
 
 ## Revision 2026-06-10: block-pinned ink + sketch blocks (supersedes Layer 2)
 

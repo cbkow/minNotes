@@ -302,6 +302,19 @@ public:
     Q_INVOKABLE QStringList pdfBlockIds() const;
     // Ordered block ids of every video (for the video-studio tab strip).
     Q_INVOKABLE QStringList videoBlockIds() const;
+    // --- Sketch: an in-document drawing canvas — a Media KIND (content =
+    // {kind:"sketch", w, h, [dw]} merged with the QCView stroke schema
+    // {version, coordinate_system, shapes}; PLAN-document-annotations.md
+    // tier 1). The media machinery (meta fill on every reconstruction,
+    // known-geometry height, dw resize, opaque atomicity) comes free;
+    // strokes mutate through the txn chokepoint → DOCUMENT undo (unlike
+    // video notes, which live in the QCView sidecar with their own stack).
+    Q_INVOKABLE int insertSketch(int afterRow);   // returns the new row
+    // Replace the stroke fields from the engine's JSON; the canvas meta
+    // (kind/w/h/dw) is preserved. One undo step per call — no coalescing
+    // (a stroke = an undo step, the video-note feel; ruling 2026-06-11).
+    Q_INVOKABLE void sketchSetShapes(int row, const QString& strokesJson);
+    Q_INVOKABLE QStringList sketchBlockIds() const;
     // Current row of a block id, or -1 if it no longer exists.
     Q_INVOKABLE int rowForId(const QString& id) const;
     // Block id at `row` (empty if out of range).
@@ -368,6 +381,7 @@ private:
         bool isVideo = false;   // media only: true → reserve the transport-toolbar height
         bool isFile = false;    // media only: kind=="file" → an unsupported-file chip
         bool isPdf = false;     // media only: kind=="pdf" → inline page view + nav
+        bool isSketch = false;  // media only: kind=="sketch" → in-doc drawing canvas
         uint16_t dispW = 0;     // media only: per-block display width override (0 = default/fit)
         uint16_t mediaW = 0;    // media only: intrinsic width px  (exact no-upscale height estimate)
         uint16_t mediaH = 0;    // media only: intrinsic height px

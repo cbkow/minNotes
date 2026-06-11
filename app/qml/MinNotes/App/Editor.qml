@@ -80,22 +80,37 @@ FocusScope {
         var r = blockModel.rowForId(activeVideoId)
         if (r >= 0) _activateVideo(r)
     }
+    // Active sketch tab (full-frame canvas editing); "" = not in a sketch tab.
+    property string activeSketchId: ""
+    readonly property int activeSketchRow: (blockModel.layoutRevision, blockModel.contentRevision,
+        activeSketchId === "" ? -1 : blockModel.rowForId(activeSketchId))
+    onActiveSketchRowChanged: if (activeSketchId !== "" && activeSketchRow < 0) activeSketchId = ""
+    onActiveSketchIdChanged: forceActiveFocus()
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
-    // active state across table, PDF and video tabs.
+    // active state across table, PDF, video and sketch tabs.
     readonly property string activeFrameId: activeTableId !== "" ? activeTableId
-                                          : activePdfId !== "" ? activePdfId : activeVideoId
+                                          : activePdfId !== "" ? activePdfId
+                                          : activeVideoId !== "" ? activeVideoId : activeSketchId
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
-        if (id === "") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; return }
+        if (id === "") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return }
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) {
-            activePdfId = ""; activeVideoId = ""; activeTableId = id
+            activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeTableId = id
             var pc = boardPref(id)               // this table's remembered view
             if (pc >= 0) { boardCol = pc; boardMode = true }
         }
-        else if (blockModel.mediaKind(r) === "video") { activeTableId = ""; activePdfId = ""; activeVideoId = id }
-        else { activeTableId = ""; activeVideoId = ""; activePdfId = id }
+        else if (blockModel.mediaKind(r) === "video") { activeTableId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id }
+        else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
+        else { activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
     }
+    function insertSketchAt(row) {
+        var r = blockModel.insertSketch(row)
+        // Open the new sketch's tab immediately — an empty inline canvas
+        // invites nothing; the tab is where drawing lives.
+        if (r >= 0) { cursor.setCaret(r, 0); setActiveTab(blockModel.idForRow(r)) }
+    }
+    function insertSketchAtCaret() { insertSketchAt(cursor.focusRow) }
     // Per-table board-view memory (app-level Settings, keyed by block id —
     // VIEW state, so it stays out of the document and out of undo).
     Settings {
@@ -216,7 +231,7 @@ FocusScope {
     property real _cellResizePressX: 0
     property real _cellResizeStartW: 0
     readonly property var _cellImgBt: (tcur.active && cellForRow(tcur.row)) ? cellForRow(tcur.row).tableItem : null
-    readonly property bool cellImgActive: tcur.active && activeTableRow < 0 && activePdfRow < 0 && activeVideoRow < 0
+    readonly property bool cellImgActive: tcur.active && activeTableRow < 0 && activePdfRow < 0 && activeVideoRow < 0 && activeSketchRow < 0
         && _cellImgBt && (blockModel.contentRevision,
                           blockModel.tableCellMedia(tcur.row, tcur.cr, tcur.cc) !== "")
     // The focused cell image's rect in viewport coords (re-evaluated on scroll /
@@ -276,7 +291,7 @@ FocusScope {
     readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
         && activeTableRow < 0 && activePdfRow < 0   // not in a full-frame tab
-        && activeVideoRow < 0                       // the studio has its own surface
+        && activeVideoRow < 0 && activeSketchRow < 0   // the studio has its own surface; sketch tab hides the doc
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     // Scrolled away / entered a table or PDF tab → tear the player down. NOT
     // when the studio owns the decoder (its surface replaces the inline one).
@@ -1427,7 +1442,9 @@ FocusScope {
             // cell selection, else step the caret out below the table.
             // Studio first: drop an in-flight stroke, then disarm the tool.
             if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
-            else if (root.activeVideoRow >= 0 && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
+            else if (root.activeSketchRow >= 0 && sketchEditCanvas.drawing) { sketchEditCanvas.cancelStroke() }
+            else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0)
+                     && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
@@ -1459,6 +1476,10 @@ FocusScope {
             else if (k === Qt.Key_End)   { root.ensureVideoActive(root.activeVideoRow); root.seekVideoEnd() }
             event.accepted = true
         }
+        // Sketch tab: the canvas is mouse-driven; swallow everything so typing
+        // can't invisibly edit the hidden document. (cmd+Z above = doc undo —
+        // sketch strokes are document content, unlike video notes.)
+        else if (root.activeSketchRow >= 0) { event.accepted = true }
         // Board mode: cards are mouse-driven; swallow everything else so typing
         // can't invisibly edit the grid underneath (tcur is still pinned to it).
         else if (root.boardMode && root.activeTableRow >= 0) { event.accepted = true }
@@ -1608,7 +1629,7 @@ FocusScope {
 
     Flickable {
         id: flick
-        visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0   // hidden in a full-frame tab
+        visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
         anchors.fill: parent
         contentWidth: width
         contentHeight: blockModel.totalHeight
@@ -3186,6 +3207,59 @@ FocusScope {
         }
     }
 
+    // --- Full-frame sketch tab: the canvas centered at fit size, editable
+    // with the Inspector's Draw tools (direct mouse — full-frame-tab
+    // pattern). Edits commit through sketchSetShapes → beginTxn, so ⌘Z here
+    // is plain DOCUMENT undo; the data binding feeds the result back. ---
+    Rectangle {
+        id: sketchFrame
+        visible: root.activeSketchRow >= 0
+        anchors.fill: parent
+        color: Theme.colors.bg
+        readonly property int r: root.activeSketchRow
+
+        // Clicking dead space reclaims focus (restores the key swallow).
+        MouseArea { anchors.fill: parent; z: -1; onClicked: root.forceActiveFocus() }
+
+        Item {
+            id: sketchStage
+            anchors { fill: parent; margins: 24 }
+            readonly property int vw: sketchFrame.r >= 0
+                ? (blockModel.contentRevision, blockModel.mediaW(sketchFrame.r)) : 0
+            readonly property int vh: sketchFrame.r >= 0 ? blockModel.mediaH(sketchFrame.r) : 0
+            readonly property real fitScale: (vw > 0 && vh > 0 && width > 0 && height > 0)
+                ? Math.min(width / vw, height / vh) : 0
+
+            Rectangle {   // the canvas: transparent fill, divider border = extent
+                anchors.centerIn: parent
+                width: Math.round(sketchStage.vw * sketchStage.fitScale)
+                height: Math.round(sketchStage.vh * sketchStage.fitScale)
+                color: "transparent"
+                border.width: 1; border.color: Theme.colors.divider
+
+                SketchCanvas {
+                    id: sketchEditCanvas
+                    anchors.fill: parent
+                    // Load-bearing revision dep (reactivity rule 1e).
+                    data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
+                        ? blockModel.contentForRow(sketchFrame.r) : ""
+                    sourceWidth: sketchStage.vw
+                    tool: (root.activeSketchRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
+                    color: root.inspector ? root.inspector.drawColor : "#FF0000"
+                    strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+                    onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
+                }
+                Text {   // arm hint on a fresh canvas
+                    visible: sketchEditCanvas.empty && !sketchEditCanvas.armed
+                    anchors.centerIn: parent
+                    text: "Pick a tool in the Draw panel to start"
+                    color: Theme.colors.textSubtle
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                }
+            }
+        }
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
@@ -3314,7 +3388,7 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
+            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
@@ -3352,7 +3426,7 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: blockSelected ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
+            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
@@ -3399,7 +3473,7 @@ FocusScope {
         readonly property int row: root.imageResizing ? root.imageResizeRow
             : (root.imgHandleRow >= 0 ? root.imgHandleRow
                : (root._isImageRow(cursor.focusRow) ? cursor.focusRow : -1))
-        visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
+        visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         readonly property real imgX: root.leftEdge
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
@@ -3577,7 +3651,7 @@ FocusScope {
     // menu item will act on (red for destructive). Column/row scopes are drawn
     // inside the table itself. Document view only (the menu opens there).
     Rectangle {
-        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         x: root.leftEdge
         y: (blockModel.layoutRevision, blockModel.yForRow(root.menuRow)) - flick.contentY
         width: root.measureForRow(root.menuRow)
@@ -3597,7 +3671,7 @@ FocusScope {
         readonly property Item dlg: (blockModel.layoutRevision, blockModel.contentRevision, flick.contentY,
             tcur.active ? root.cellForRow(cursor.focusRow) : null)
         readonly property Item tItem: dlg ? dlg.tableItem : null
-        visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0   // Document view only
+        visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // Document view only
         readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
@@ -3803,9 +3877,11 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
         readonly property bool isVideo: isMedia
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "video"
+        readonly property bool isSketch: isMedia
+            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "sketch"
         // In a full-frame tab (table/PDF/video) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
-        readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0 || root.activeVideoRow >= 0
+        readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
         // Submenu panel: which group is open ("" none) + the anchor row's y.
         property string activeSub: ""
         property real subY: 0
@@ -3853,6 +3929,8 @@ FocusScope {
                 MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(root.menuRow) }
                 MenuSub { visible: blockMenu.isTable; subId: "row";    scope: "row";    text: "Row" }
                 MenuSub { visible: blockMenu.isTable; subId: "column"; scope: "column"; text: "Column" }
                 MenuSub { visible: blockMenu.isTable; subId: "ctype";  scope: "column"; text: "Column type" }

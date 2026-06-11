@@ -15,8 +15,10 @@ Rectangle {
                                    blockModel.pdfBlockIds())
     readonly property var videoIds: (blockModel.layoutRevision, blockModel.contentRevision,
                                      blockModel.videoBlockIds())
+    readonly property var sketchIds: (blockModel.layoutRevision, blockModel.contentRevision,
+                                      blockModel.sketchBlockIds())
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
-    visible: ids.length > 0 || pdfIds.length > 0 || videoIds.length > 0
+    visible: ids.length > 0 || pdfIds.length > 0 || videoIds.length > 0 || sketchIds.length > 0
     height: visible ? 30 : 0
     color: Theme.colors.surface
 
@@ -89,6 +91,16 @@ Rectangle {
             delegate: TabBtn {
                 required property string modelData
                 label: tabs._mediaLabel(modelData, "Video")
+                active: tabs.activeId === modelData
+                onClicked: if (tabs.editor) tabs.editor.setActiveTab(modelData)
+            }
+        }
+        Repeater {
+            model: tabs.sketchIds
+            delegate: TabBtn {
+                required property int index
+                required property string modelData
+                label: "Sketch " + (index + 1)
                 active: tabs.activeId === modelData
                 onClicked: if (tabs.editor) tabs.editor.setActiveTab(modelData)
             }

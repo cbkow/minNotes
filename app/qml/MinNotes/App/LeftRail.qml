@@ -223,6 +223,11 @@ Rectangle {
                 onClicked: rail.act(function() { rail.editor.insertTableAtCaret() })
             }
             RailBtn {
+                iconName: "scribble"; tooltip: "Sketch"
+                enabled_: !!rail.editor
+                onClicked: rail.act(function() { rail.editor.insertSketchAtCaret() })
+            }
+            RailBtn {
                 iconName: "minus"; tooltip: "Divider"
                 enabled_: !!rail.editor
                 onClicked: rail.act(function() { rail.editor.addDivider() })

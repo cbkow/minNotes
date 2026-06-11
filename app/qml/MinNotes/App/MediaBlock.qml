@@ -27,6 +27,9 @@ Item {
     readonly property bool   isVideo: kind === "video"
     readonly property bool   isFile: kind === "file"
     readonly property bool   isPdf: kind === "pdf"
+    readonly property bool   isSketch: kind === "sketch"
+    readonly property string sketchJson: (active && isSketch)
+        ? (mb._rev, blockModel.contentForRow(logicalRow)) : ""
     property int  pdfPage: 0          // current page (driven by the editor's nav)
     readonly property string pdfPath: (active && isPdf) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
@@ -134,12 +137,35 @@ Item {
         }
     }
 
+    // --- Sketch branch: transparent canvas (ruling 2026-06-11), divider
+    // border marking the extent; strokes render passively (disarmed canvas).
+    // Editing lives in the full-frame sketch tab. ---
+    Rectangle {
+        visible: mb.isSketch && !mb.suspended
+        anchors.fill: parent
+        color: "transparent"
+        border.width: 1; border.color: Theme.colors.divider
+        SketchCanvas {
+            id: inlineSketch
+            anchors.fill: parent
+            data: mb.sketchJson
+            sourceWidth: mb.iw
+        }
+        Text {   // empty-canvas hint
+            visible: inlineSketch.empty
+            anchors.centerIn: parent
+            text: "Sketch — open in tab to draw"
+            color: Theme.colors.textSubtle
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+        }
+    }
+
     // --- Image branch ---
     Image {
         id: img
         anchors.fill: parent
-        visible: !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.suspended
-        source: (mb.isVideo || mb.isFile || mb.isPdf) ? "" : mb.url
+        visible: !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended
+        source: (mb.isVideo || mb.isFile || mb.isPdf || mb.isSketch) ? "" : mb.url
         asynchronous: true; cache: false
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
@@ -151,7 +177,7 @@ Item {
     }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
-        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.suspended && img.status !== Image.Ready
+        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended && img.status !== Image.Ready
         color: Theme.colors.surfaceHover; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
         Text {
