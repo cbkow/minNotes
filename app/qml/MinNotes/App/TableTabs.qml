@@ -13,19 +13,24 @@ Rectangle {
                                 blockModel.tableBlockIds())
     readonly property var pdfIds: (blockModel.layoutRevision, blockModel.contentRevision,
                                    blockModel.pdfBlockIds())
+    readonly property var videoIds: (blockModel.layoutRevision, blockModel.contentRevision,
+                                     blockModel.videoBlockIds())
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
-    visible: ids.length > 0 || pdfIds.length > 0
+    visible: ids.length > 0 || pdfIds.length > 0 || videoIds.length > 0
     height: visible ? 30 : 0
     color: Theme.colors.surface
 
     // A divider line along the top edge.
     Rectangle { width: parent.width; height: 1; color: Theme.colors.border }
 
-    function _pdfLabel(id) {
+    // Media tabs are labelled by file name (PDFs and videos alike). Truncate
+    // in the MIDDLE: production filenames share long prefixes and differ at
+    // the tail (_v001 / _v002), so end-truncation makes sibling tabs twins.
+    function _mediaLabel(id, fallback) {
         var r = blockModel.rowForId(id)
         var n = r >= 0 ? blockModel.mediaFileName(r) : ""
-        if (n === "") return "PDF"
-        return n.length > 22 ? n.substring(0, 21) + "…" : n
+        if (n === "") return fallback
+        return n.length > 22 ? n.substring(0, 9) + "…" + n.substring(n.length - 12) : n
     }
 
     // One tab. `active` highlights it; clicking selects it.
@@ -74,7 +79,16 @@ Rectangle {
             model: tabs.pdfIds
             delegate: TabBtn {
                 required property string modelData
-                label: tabs._pdfLabel(modelData)
+                label: tabs._mediaLabel(modelData, "PDF")
+                active: tabs.activeId === modelData
+                onClicked: if (tabs.editor) tabs.editor.setActiveTab(modelData)
+            }
+        }
+        Repeater {
+            model: tabs.videoIds
+            delegate: TabBtn {
+                required property string modelData
+                label: tabs._mediaLabel(modelData, "Video")
                 active: tabs.activeId === modelData
                 onClicked: if (tabs.editor) tabs.editor.setActiveTab(modelData)
             }

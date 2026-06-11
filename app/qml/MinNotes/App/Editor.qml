@@ -57,19 +57,40 @@ FocusScope {
     readonly property int activePdfRow: (blockModel.layoutRevision, blockModel.contentRevision,
         activePdfId === "" ? -1 : blockModel.rowForId(activePdfId))
     onActivePdfRowChanged: if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
+    // Active video tab (the studio: surface + transport + notes panel); "" = not
+    // in a video tab. Opening it activates the video PAUSED at its remembered
+    // playhead so the studio comes up showing a frame, not a void.
+    property string activeVideoId: ""
+    readonly property int activeVideoRow: (blockModel.layoutRevision, blockModel.contentRevision,
+        activeVideoId === "" ? -1 : blockModel.rowForId(activeVideoId))
+    onActiveVideoRowChanged: if (activeVideoId !== "" && activeVideoRow < 0) activeVideoId = ""
+    onActiveVideoIdChanged: {
+        forceActiveFocus()
+        if (activeVideoId === "") {
+            // Leaving the studio with the block off-viewport: videoVisible was
+            // false and STAYS false, so its change handler never runs — tear
+            // down here or the decoder (and audio) would run on invisibly.
+            if (!videoVisible && videoPlayingRow >= 0) stopVideo()
+            return
+        }
+        var r = blockModel.rowForId(activeVideoId)
+        if (r >= 0) _activateVideo(r)
+    }
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
-    // active state across both table and PDF tabs.
-    readonly property string activeFrameId: activeTableId !== "" ? activeTableId : activePdfId
+    // active state across table, PDF and video tabs.
+    readonly property string activeFrameId: activeTableId !== "" ? activeTableId
+                                          : activePdfId !== "" ? activePdfId : activeVideoId
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
-        if (id === "") { activeTableId = ""; activePdfId = ""; return }
+        if (id === "") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; return }
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) {
-            activePdfId = ""; activeTableId = id
+            activePdfId = ""; activeVideoId = ""; activeTableId = id
             var pc = boardPref(id)               // this table's remembered view
             if (pc >= 0) { boardCol = pc; boardMode = true }
         }
-        else { activeTableId = ""; activePdfId = id }
+        else if (blockModel.mediaKind(r) === "video") { activeTableId = ""; activePdfId = ""; activeVideoId = id }
+        else { activeTableId = ""; activeVideoId = ""; activePdfId = id }
     }
     // Per-table board-view memory (app-level Settings, keyed by block id —
     // VIEW state, so it stays out of the document and out of undo).
@@ -191,7 +212,7 @@ FocusScope {
     property real _cellResizePressX: 0
     property real _cellResizeStartW: 0
     readonly property var _cellImgBt: (tcur.active && cellForRow(tcur.row)) ? cellForRow(tcur.row).tableItem : null
-    readonly property bool cellImgActive: tcur.active && activeTableRow < 0 && activePdfRow < 0
+    readonly property bool cellImgActive: tcur.active && activeTableRow < 0 && activePdfRow < 0 && activeVideoRow < 0
         && _cellImgBt && (blockModel.contentRevision,
                           blockModel.tableCellMedia(tcur.row, tcur.cr, tcur.cc) !== "")
     // The focused cell image's rect in viewport coords (re-evaluated on scroll /
@@ -251,8 +272,11 @@ FocusScope {
     readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
         && activeTableRow < 0 && activePdfRow < 0   // not in a full-frame tab
+        && activeVideoRow < 0                       // the studio has its own surface
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
-    onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0) stopVideo()
+    // Scrolled away / entered a table or PDF tab → tear the player down. NOT
+    // when the studio owns the decoder (its surface replaces the inline one).
+    onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0 && activeVideoRow < 0) stopVideo()
 
     // Per-video playhead memory (keyed by file path) so a torn-down video shows
     // its last frame as the poster and resumes there. videoPlayheadRev makes the
@@ -354,6 +378,8 @@ FocusScope {
     function stepVideoFrames(n) { videoDec.pause(); videoAudio.pause(); _vidScrubTo(_vidIntendedFrame() + n) }
     function seekVideoStart() { videoDec.pause(); videoAudio.pause(); _vidScrubTo(0) }
     function seekVideoEnd()   { videoDec.pause(); videoAudio.pause(); _vidScrubTo(videoDec.frameCount - 1) }
+    // Note-card click: park exactly on the note's frame (review → pause first).
+    function seekVideoFrame(f) { videoDec.pause(); videoAudio.pause(); _vidScrubTo(f) }
     function toggleVideoMute(){ if (videoAudio.hasAudio) videoAudio.setMuted(!videoAudio.muted) }
     function toggleVideoLoop(){ videoLoop = !videoLoop }
 
@@ -1409,6 +1435,16 @@ FocusScope {
         else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
         else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
+        // Video studio: transport keys, then swallow everything else so typing
+        // can't invisibly edit the hidden document underneath.
+        else if (root.activeVideoRow >= 0) {
+            if (k === Qt.Key_Space) { root.ensureVideoActive(root.activeVideoRow); root.toggleVideo() }
+            else if (k === Qt.Key_Left)  { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(-1) }
+            else if (k === Qt.Key_Right) { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(1) }
+            else if (k === Qt.Key_Home)  { root.ensureVideoActive(root.activeVideoRow); root.seekVideoStart() }
+            else if (k === Qt.Key_End)   { root.ensureVideoActive(root.activeVideoRow); root.seekVideoEnd() }
+            event.accepted = true
+        }
         // Board mode: cards are mouse-driven; swallow everything else so typing
         // can't invisibly edit the grid underneath (tcur is still pinned to it).
         else if (root.boardMode && root.activeTableRow >= 0) { event.accepted = true }
@@ -1558,7 +1594,7 @@ FocusScope {
 
     Flickable {
         id: flick
-        visible: root.activeTableRow < 0 && root.activePdfRow < 0   // hidden in a table/PDF tab
+        visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0   // hidden in a full-frame tab
         anchors.fill: parent
         contentWidth: width
         contentHeight: blockModel.totalHeight
@@ -2829,6 +2865,286 @@ FocusScope {
         }
     }
 
+    // --- Full-frame video studio (the active video tab): the shared decoder's
+    // surface on a centered stage, the family transport bar, and the notes
+    // panel chassis at the bottom (the QCView-interop filmstrip lands with
+    // VA-2 — see PLAN-video-annotations.md). Entering the tab activates the
+    // video PAUSED at its remembered playhead (onActiveVideoIdChanged); the
+    // inline surface + per-row bars hide while the studio owns the decoder. ---
+    Rectangle {
+        id: studioFrame
+        visible: root.activeVideoRow >= 0
+        anchors.fill: parent
+        color: Theme.colors.bg
+        readonly property int r: root.activeVideoRow
+        readonly property real notesPanelH: 264
+
+        // image://videoframe poster URL (base64url path @ frame) — the stage
+        // shows the banked frame until the decoder paints its first one.
+        function _vframeSrc(path, frame) {
+            if (path === "") return ""
+            var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+            return "image://videoframe/" + b + "@" + frame
+        }
+
+        // The stage: the frame aspect-fitted + centered above the transport. An
+        // explicit fit box (not the surface's own letterboxing) so the poster
+        // aligns exactly and VA-3's stroke overlay knows the frame rect.
+        Item {
+            id: studioStage
+            anchors { top: parent.top; left: parent.left; right: parent.right
+                      bottom: studioBar.top; margins: 16; bottomMargin: 12 }
+            readonly property int vw: studioFrame.r >= 0 ? (blockModel.contentRevision, blockModel.mediaW(studioFrame.r)) : 0
+            readonly property int vh: studioFrame.r >= 0 ? blockModel.mediaH(studioFrame.r) : 0
+            readonly property real fitScale: (vw > 0 && vh > 0 && width > 0 && height > 0)
+                ? Math.min(width / vw, height / vh) : 0
+            readonly property real boxW: Math.round(vw * fitScale)
+            readonly property real boxH: Math.round(vh * fitScale)
+
+            Item {
+                id: studioBox
+                anchors.centerIn: parent
+                width: studioStage.boxW; height: studioStage.boxH
+
+                Image {   // poster: the banked playhead frame until the live one paints
+                    anchors.fill: parent
+                    visible: !studioSurface.visible
+                    source: studioFrame.r >= 0
+                        ? studioFrame._vframeSrc(blockModel.mediaLocalPath(studioFrame.r),
+                                                 (root.videoPlayheadRev, root.videoPlayheadFor(studioFrame.r)))
+                        : ""
+                    asynchronous: true; cache: true
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+                    smooth: true
+                }
+                VideoSurfaceItem {
+                    id: studioSurface
+                    anchors.fill: parent
+                    videoDecoder: videoDec
+                    visible: root.activeVideoRow >= 0
+                             && root.videoPlayingRow === root.activeVideoRow
+                             && root._videoSurfaceReady
+                    fillColor: Qt.rgba(Theme.colors.bg.r, Theme.colors.bg.g,
+                                       Theme.colors.bg.b, 1.0)
+                }
+            }
+        }
+
+        VideoTransport {
+            id: studioBar
+            anchors { left: parent.left; right: parent.right; bottom: studioNotes.top }
+            editor: root; dec: videoDec; audio: videoAudio
+            row: studioFrame.r
+            live: studioFrame.r >= 0 && root.videoPlayingRow === studioFrame.r
+        }
+
+        // Clicking studio dead space reclaims focus (commits a card's text
+        // edit and restores the transport keys). Sits UNDER the notes panel
+        // and transport, so their controls still take clicks first.
+        MouseArea { anchors.fill: parent; z: -1; onClicked: root.forceActiveFocus() }
+
+        // The note store: QCView's sidecar (.qcview/<media>/notes.json),
+        // loaded for whichever video the studio shows. Lives OUTSIDE the
+        // document + undo — it travels with the video, shared with QCView.
+        VideoNotesModel {
+            id: vnotes
+            mediaPath: studioFrame.r >= 0 ? blockModel.mediaLocalPath(studioFrame.r) : ""
+            fps: studioFrame.r >= 0 ? blockModel.mediaFps(studioFrame.r) : 0
+        }
+
+        // Notes panel — the QCView filmstrip in family dress: sticky add-note
+        // tile, then one card per note (thumbnail / timecode / text /
+        // addressed / delete). Cards key by timecode; card click seeks.
+        Rectangle {
+            id: studioNotes
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: studioFrame.notesPanelH
+            color: Theme.colors.surface
+            Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
+
+            Rectangle {   // add-note tile (sticky left)
+                id: addNoteTile
+                anchors { left: parent.left; top: parent.top; bottom: parent.bottom
+                          topMargin: 13; bottomMargin: 12; leftMargin: 12 }
+                width: 96
+                color: addNoteMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+                border.width: 1; border.color: Theme.colors.border
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 8
+                    Icon { name: "plus"; size: 22; color: Theme.colors.textMuted
+                           anchors.horizontalCenter: parent.horizontalCenter }
+                    Text {
+                        text: "Add note"
+                        color: Theme.colors.textMuted
+                        font.family: Theme.font.family; font.pixelSize: 13
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                }
+                MouseArea {
+                    id: addNoteMA
+                    anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        // The note pins to the frame on screen: the scrub
+                        // target mid-scrub, else the live playhead, else the
+                        // banked one (decoder failed to open).
+                        var f = root.videoPlayingRow === studioFrame.r
+                            ? root._vidIntendedFrame()
+                            : root.videoPlayheadFor(studioFrame.r)
+                        vnotes.addNoteAtFrame(f)
+                        root.forceActiveFocus()
+                    }
+                }
+            }
+
+            Text {   // empty state, in the filmstrip's space
+                visible: vnotes.count === 0 && !vnotes.loading
+                anchors.centerIn: parent
+                text: "No notes yet"
+                color: Theme.colors.textSubtle
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+            }
+
+            ListView {
+                id: noteStrip
+                anchors { left: addNoteTile.right; right: parent.right
+                          top: parent.top; bottom: parent.bottom
+                          topMargin: 13; bottomMargin: 4; leftMargin: 12; rightMargin: 12 }
+                orientation: ListView.Horizontal
+                spacing: 12
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                // The revision read must be LOAD-BEARING (ternary), not a
+                // comma-tuple: qmlcachegen elides a discarded left operand,
+                // killing the dependency capture — the strip then never
+                // refreshes (live-debugged twice, 2026-06-11).
+                model: vnotes.revision >= 0 ? vnotes.noteList() : []
+
+                delegate: Rectangle {
+                    id: noteCard
+                    required property var modelData
+                    readonly property string tc: modelData.timecode
+                    // 16:9 thumbnail — the overwhelmingly common delivery
+                    // aspect; other aspects letterbox inside it (fit).
+                    readonly property real thumbH: Math.round((width - 16) * 9 / 16)
+                    // The card under the playhead gets the family's selected
+                    // look (divider fill is too heavy here — border brightens).
+                    readonly property bool current: root.videoPlayingRow === studioFrame.r
+                        && videoDec.currentFrame === modelData.frame
+                    width: 220
+                    height: noteStrip.height - 12
+                    color: Theme.colors.surfaceRaised
+                    border.width: 1
+                    border.color: current ? Theme.colors.textBright : Theme.colors.border
+
+                    Column {
+                        anchors { fill: parent; margins: 8 }
+                        spacing: 6
+
+                        Rectangle {   // thumbnail (click = seek to this frame)
+                            width: parent.width; height: noteCard.thumbH
+                            color: Theme.colors.surface
+                            clip: true
+                            Image {
+                                anchors.fill: parent
+                                // Revision-keyed source: the PNG lands async
+                                // after the note is minted — each bump retries.
+                                source: modelData.image !== ""
+                                    ? "file://" + modelData.image + "?v=" + vnotes.revision : ""
+                                asynchronous: true; cache: false
+                                fillMode: Image.PreserveAspectFit
+                                sourceSize.width: Math.round(220 * Screen.devicePixelRatio)
+                                smooth: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.ensureVideoActive(studioFrame.r)
+                                    root.seekVideoFrame(noteCard.modelData.frame)
+                                    root.forceActiveFocus()
+                                }
+                            }
+                        }
+
+                        Item {   // timecode + frame number
+                            width: parent.width; height: 16
+                            Text {
+                                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                text: noteCard.tc
+                                color: Theme.colors.textBright
+                                font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeMono
+                            }
+                            Text {
+                                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                text: "f " + noteCard.modelData.frame
+                                color: Theme.colors.textSubtle
+                                font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                            }
+                        }
+
+                        Rectangle {   // note text (commit on focus-out, QCView style)
+                            width: parent.width
+                            height: parent.height - noteCard.thumbH - 16 - 26 - 18   // thumb + tc row + buttons + 3×spacing
+                            color: Theme.colors.surface
+                            border.width: 1
+                            border.color: noteText.activeFocus ? Theme.colors.divider : Theme.colors.border
+                            Flickable {
+                                anchors { fill: parent; margins: 6 }
+                                contentHeight: noteText.implicitHeight
+                                clip: true
+                                boundsBehavior: Flickable.StopAtBounds
+                                TextEdit {
+                                    id: noteText
+                                    width: parent.parent.width - 12
+                                    text: noteCard.modelData.text
+                                    wrapMode: TextEdit.Wrap
+                                    color: Theme.colors.text
+                                    selectionColor: Theme.colors.divider
+                                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                                    onActiveFocusChanged: if (!activeFocus) vnotes.setText(noteCard.tc, text)
+                                    Keys.onEscapePressed: root.forceActiveFocus()
+                                }
+                            }
+                            Text {   // placeholder
+                                visible: noteText.text === "" && !noteText.activeFocus
+                                anchors { left: parent.left; top: parent.top; margins: 6 }
+                                text: "Add a note…"
+                                color: Theme.colors.textSubtle
+                                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                            }
+                        }
+
+                        Item {   // addressed + delete
+                            width: parent.width; height: 26
+                            FlatButton {
+                                anchors.left: parent.left
+                                height: 26
+                                iconName: "check"
+                                checked: noteCard.modelData.addressed
+                                checkedColor: Theme.colors.divider
+                                iconColor: checked ? Theme.colors.textBright : Theme.colors.textSubtle
+                                tooltip: qsTr("Addressed"); tooltipSide: "top"
+                                onClicked: { vnotes.setAddressed(noteCard.tc, !noteCard.modelData.addressed)
+                                             root.forceActiveFocus() }
+                            }
+                            FlatButton {
+                                anchors.right: parent.right
+                                height: 26
+                                iconName: "x"
+                                tooltip: qsTr("Delete note"); tooltipSide: "top"
+                                onClicked: { vnotes.removeNote(noteCard.tc); root.forceActiveFocus() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
@@ -2942,7 +3258,7 @@ FocusScope {
     // stay instantiated (no scroll churn) but hidden.
     Repeater {
         model: root.allVideoRows
-        delegate: Rectangle {
+        delegate: Item {
             id: vbar
             required property int modelData
             readonly property int row: modelData
@@ -2957,7 +3273,7 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activeTableRow < 0 && root.activePdfRow < 0
+            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
                      && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
@@ -2965,100 +3281,17 @@ FocusScope {
             readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
             readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
                                                              : Math.round(dispW * 0.5)
-            readonly property int totalFrames: live ? videoDec.frameCount
-                                                    : (blockModel.contentRevision, blockModel.mediaFrames(row))
 
             z: 56
             x: root.leftEdge
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: dispW
             height: root.videoTransportH
-            color: "#212121"      // a hair lighter than the page (#1b1b1b)
-            Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
 
-            RowLayout {
+            VideoTransport {
                 anchors.fill: parent
-                anchors.leftMargin: 6; anchors.rightMargin: 8
-                spacing: 0
-
-                FlatButton { iconName: "skip-back"; tooltip: qsTr("Jump to start"); tooltipSide: "top"
-                    onClicked: { root.ensureVideoActive(vbar.row); root.seekVideoStart() } }
-                FlatButton { iconName: "rewind"; tooltip: qsTr("Rewind — hold"); tooltipSide: "top"
-                    onPressed: { root.ensureVideoActive(vbar.row); root.startVideoFastSeek(-1) }
-                    onReleased: root.stopVideoFastSeek() }
-                FlatButton { iconName: "caret-left"; tooltip: qsTr("Step back"); tooltipSide: "top"
-                    onClicked: { root.ensureVideoActive(vbar.row); root.stepVideoFrames(-1) } }
-                FlatButton { iconName: (vbar.live && videoDec.isPlaying) ? "pause" : "play"
-                    tooltip: qsTr("Play / Pause"); tooltipSide: "top"; onClicked: root.playVideo(vbar.row) }
-                FlatButton { iconName: "caret-right"; tooltip: qsTr("Step forward"); tooltipSide: "top"
-                    onClicked: { root.ensureVideoActive(vbar.row); root.stepVideoFrames(1) } }
-                FlatButton { iconName: "fast-forward"; tooltip: qsTr("Fast-forward — hold"); tooltipSide: "top"
-                    onPressed: { root.ensureVideoActive(vbar.row); root.startVideoFastSeek(1) }
-                    onReleased: root.stopVideoFastSeek() }
-                FlatButton { iconName: "skip-forward"; tooltip: qsTr("Jump to end"); tooltipSide: "top"
-                    onClicked: { root.ensureVideoActive(vbar.row); root.seekVideoEnd() } }
-
-                FlatSlider {
-                    id: vscrub
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 8; Layout.rightMargin: 8
-                    Layout.alignment: Qt.AlignVCenter
-                    from: 0; to: Math.max(1, vbar.totalFrames - 1)
-                    fillColor: Theme.colors.textBright   // white progress fill
-                    property bool wasPlaying: false
-                    // Pause while scrubbing so each seek lands; resume repositions
-                    // the streaming decoder to the scrubbed frame first.
-                    onPressedChanged: {
-                        if (pressed) {
-                            root.ensureVideoActive(vbar.row)
-                            wasPlaying = videoDec.isPlaying
-                            videoDec.pause(); videoAudio.pause()
-                        } else if (wasPlaying) {
-                            root._vidSyncForResume(); videoDec.play()
-                            if (videoAudio.hasAudio) videoAudio.play()
-                        }
-                    }
-                    onMoved: { root.ensureVideoActive(vbar.row); root._vidScrubTo(Math.round(value)) }
-                    Connections {
-                        target: videoDec
-                        function onCurrentFrameChanged() {
-                            if (vbar.live && !vscrub.pressed) vscrub.value = videoDec.currentFrame
-                        }
-                    }
-                    // Not the live player → park the scrubber at the banked playhead
-                    // (not 0), so a torn-down video shows where it left off.
-                    Binding {
-                        target: vscrub; property: "value"
-                        value: (root.videoPlayheadRev, root.videoPlayheadFor(vbar.row))
-                        when: !vbar.live && !vscrub.pressed
-                    }
-                }
-
-                Text {   // frame counter (mirrors ufb)
-                    text: (vbar.live ? videoDec.currentFrame
-                                     : (root.videoPlayheadRev, root.videoPlayheadFor(vbar.row)))
-                          + " / " + Math.max(0, vbar.totalFrames - 1)
-                    color: Theme.colors.textMuted
-                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-                    Layout.rightMargin: 4
-                }
-
-                FlatButton { iconName: "repeat"; tooltip: qsTr("Loop"); tooltipSide: "top"
-                    checked: root.videoLoop; onClicked: root.toggleVideoLoop() }
-                FlatButton {
-                    visible: vbar.live && videoAudio.hasAudio
-                    iconName: (videoAudio.muted || videoAudio.volume <= 0) ? "speaker-x" : "speaker-high"
-                    tooltip: qsTr("Mute"); tooltipSide: "top"; onClicked: root.toggleVideoMute()
-                }
-                FlatSlider {
-                    visible: vbar.live && videoAudio.hasAudio
-                    Layout.preferredWidth: 64; Layout.leftMargin: 2
-                    Layout.alignment: Qt.AlignVCenter
-                    from: 0; to: 1
-                    value: videoAudio.muted ? 0 : videoAudio.volume
-                    fillColor: Theme.colors.textMuted
-                    onMoved: { videoAudio.setVolume(value); if (value > 0) videoAudio.setMuted(false) }
-                }
+                editor: root; dec: videoDec; audio: videoAudio
+                row: vbar.row; live: vbar.live
             }
         }
     }
@@ -3078,7 +3311,7 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: blockSelected ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activeTableRow < 0 && root.activePdfRow < 0
+            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
                      && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
@@ -3125,7 +3358,7 @@ FocusScope {
         readonly property int row: root.imageResizing ? root.imageResizeRow
             : (root.imgHandleRow >= 0 ? root.imgHandleRow
                : (root._isImageRow(cursor.focusRow) ? cursor.focusRow : -1))
-        visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0
+        visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
         readonly property real imgX: root.leftEdge
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
@@ -3303,7 +3536,7 @@ FocusScope {
     // menu item will act on (red for destructive). Column/row scopes are drawn
     // inside the table itself. Document view only (the menu opens there).
     Rectangle {
-        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
         x: root.leftEdge
         y: (blockModel.layoutRevision, blockModel.yForRow(root.menuRow)) - flick.contentY
         width: root.measureForRow(root.menuRow)
@@ -3323,7 +3556,7 @@ FocusScope {
         readonly property Item dlg: (blockModel.layoutRevision, blockModel.contentRevision, flick.contentY,
             tcur.active ? root.cellForRow(cursor.focusRow) : null)
         readonly property Item tItem: dlg ? dlg.tableItem : null
-        visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0   // Document view only
+        visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0   // Document view only
         readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
@@ -3527,9 +3760,11 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
         readonly property bool isPdf: isMedia
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
-        // In a full-frame tab (table/PDF) the menu is a view INTO one block, so
+        readonly property bool isVideo: isMedia
+            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "video"
+        // In a full-frame tab (table/PDF/video) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
-        readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0
+        readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0 || root.activeVideoRow >= 0
         // Submenu panel: which group is open ("" none) + the anchor row's y.
         property string activeSub: ""
         property real subY: 0
@@ -3576,6 +3811,7 @@ FocusScope {
                 Rectangle { visible: blockMenu.isTable && !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuSub { visible: blockMenu.isTable; subId: "row";    scope: "row";    text: "Row" }
                 MenuSub { visible: blockMenu.isTable; subId: "column"; scope: "column"; text: "Column" }
                 MenuSub { visible: blockMenu.isTable; subId: "ctype";  scope: "column"; text: "Column type" }

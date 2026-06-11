@@ -300,6 +300,8 @@ public:
     Q_INVOKABLE QStringList tableBlockIds() const;
     // Ordered block ids of every inline PDF (for the PDF full-page tab strip).
     Q_INVOKABLE QStringList pdfBlockIds() const;
+    // Ordered block ids of every video (for the video-studio tab strip).
+    Q_INVOKABLE QStringList videoBlockIds() const;
     // Current row of a block id, or -1 if it no longer exists.
     Q_INVOKABLE int rowForId(const QString& id) const;
     // Block id at `row` (empty if out of range).

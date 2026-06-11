@@ -19,6 +19,16 @@ qt_add_executable(minnotesapp
     core/MediaStore.h
     core/MediaStore.cpp
     core/VideoFrameProvider.h
+    # Video-note sidecar (QCView interop — PLAN-video-annotations.md).
+    # annotation_note/annotation_io are VERBATIM QCView ports (the on-disk
+    # contract); VideoNotesModel is the QML_ELEMENT adapter, so it lives in
+    # the executable target for qmltyperegistrar.
+    notes/annotation_note.h
+    notes/annotation_note.cpp
+    notes/annotation_io.h
+    notes/annotation_io.cpp
+    notes/VideoNotesModel.h
+    notes/VideoNotesModel.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must
@@ -78,6 +88,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/ChoicePicker.qml
         qml/MinNotes/App/ChoiceColumnEditor.qml
         qml/MinNotes/App/BlockKanban.qml
+        qml/MinNotes/App/VideoTransport.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf
@@ -100,6 +111,7 @@ qt_add_qml_module(minnotesapp
 target_include_directories(minnotesapp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/notes
     ${CMAKE_CURRENT_SOURCE_DIR}/player
     ${CMAKE_CURRENT_SOURCE_DIR}/player/d3d11)
 

@@ -1167,6 +1167,13 @@ QStringList BlockModel::pdfBlockIds() const {
     return out;
 }
 
+QStringList BlockModel::videoBlockIds() const {
+    QStringList out;
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (rows_[i].type == Media && rows_[i].isVideo) out.append(ids_[i]);
+    return out;
+}
+
 int BlockModel::rowForId(const QString& id) const {
     for (size_t i = 0; i < ids_.size(); ++i)
         if (ids_[i] == id) return static_cast<int>(i);
