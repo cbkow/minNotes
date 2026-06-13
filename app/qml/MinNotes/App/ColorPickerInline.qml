@@ -54,7 +54,7 @@ Item {
             spacing: 8
             Rectangle {   // saturation × value square
                 id: sv
-                width: 150; height: 150
+                width: 188; height: 168
                 border.width: 1; border.color: Theme.colors.border
                 Rectangle {   // white → hue (horizontal)
                     anchors.fill: parent; anchors.margins: 1
@@ -90,7 +90,7 @@ Item {
             }
             Rectangle {   // hue strip
                 id: hue
-                width: 16; height: 150
+                width: 18; height: sv.height
                 border.width: 1; border.color: Theme.colors.border
                 Rectangle {
                     anchors.fill: parent; anchors.margins: 1
@@ -118,7 +118,7 @@ Item {
             }
         }
         Rectangle {   // hex field
-            width: 174; height: 28; radius: 4
+            width: 214; height: 28; radius: 4
             color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
             Text {
                 anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 8
@@ -143,7 +143,7 @@ Item {
             component Channel: Rectangle {
                 property string lab: ""
                 property alias field: chInput
-                width: 53; height: 26; radius: 4
+                width: 66; height: 26; radius: 4
                 color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
                 Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 6
                        text: parent.lab; color: Theme.colors.textMuted

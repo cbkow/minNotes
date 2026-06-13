@@ -19,3 +19,6 @@ compile_commands.json
 # Vendored prebuilt FFmpeg for the video engine (app/player/) — per-platform
 # binaries (macOS dylibs / Windows lib+dll), not built from this tree.
 /external/ffmpeg/
+
+# Aspekta font upstream package (only the used .ttf are vendored in app/.../fonts/)
+/external/aspekta/

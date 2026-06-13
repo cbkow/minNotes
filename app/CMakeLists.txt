@@ -114,6 +114,8 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/fonts/Inter_18pt-Italic.ttf
         qml/MinNotes/App/fonts/Inter_18pt-BoldItalic.ttf
         qml/MinNotes/App/fonts/JetBrainsMono-Regular.ttf
+        qml/MinNotes/App/fonts/Aspekta-400.ttf
+        qml/MinNotes/App/fonts/Aspekta-700.ttf
         qml/MinNotes/App/fonts/Lora-Regular.ttf
         qml/MinNotes/App/fonts/Lora-Bold.ttf
         qml/MinNotes/App/fonts/Lora-Italic.ttf

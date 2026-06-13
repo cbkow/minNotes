@@ -223,6 +223,13 @@ FocusScope {
     function _isImageRow(r) {
         return r >= 0 && blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "image"
     }
+    // Rows that take the inline resize affordance: images and sketches (both carry
+    // a display-width override; sketch strokes are normalized so they scale crisp).
+    function _isResizableMediaRow(r) {
+        if (r < 0 || blockModel.typeForRow(r) !== 3) return false
+        var k = blockModel.mediaKind(r)
+        return k === "image" || k === "sketch"
+    }
     // Cell-image resize (the same affordance scoped to a focused table cell that
     // holds an image; Document view only — the full-frame tab keeps just the tint).
     property bool cellImgResizing: false
@@ -1948,7 +1955,7 @@ FocusScope {
                          : Theme.colors.text
                     font.family: btype === 2 ? Theme.font.mono
                                : btype === 4 ? Theme.font.serif   // quote → Merriweather
-                               : Theme.font.family
+                               : Theme.font.body                  // document body → Aspekta
                     font.pixelSize: {
                         var _ = blockModel.layoutRevision + blockModel.contentRevision   // deps
                         if (btype === 2) return Theme.font.sizeMono
@@ -2132,13 +2139,18 @@ FocusScope {
                 var th = root.tableHitAt(m.x, m.y)
                 if (th) {
                     // Typed body cells: choice → option picker; check → cycle state.
+                    // Only fires when the click lands ON the chip/checkbox (not anywhere
+                    // in the cell) — otherwise the click just selects/edits the cell.
                     var tk = blockModel.tableColumnKind(th.row, th.c)
                     var tbody = th.r >= blockModel.tableHeaderRows(th.row)
-                    if (tk === 1 && tbody) { root.openChoicePicker(th.row, th.r, th.c, m.x, m.y - flick.contentY); return }
-                    if (tk === 2 && tbody) { blockModel.tableCycleCellCheck(th.row, th.r, th.c); return }
                     var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
+                    var lp = bt ? bt.mapFromItem(mouse, m.x, m.y) : null
+                    if (bt && (tk === 1 || tk === 2) && tbody && bt.widgetHit(lp.x, lp.y)) {
+                        if (tk === 1) root.openChoicePicker(th.row, th.r, th.c, m.x, m.y - flick.contentY)
+                        else          blockModel.tableCycleCellCheck(th.row, th.r, th.c)
+                        return
+                    }
                     if (bt) {
-                        var lp = bt.mapFromItem(mouse, m.x, m.y)
                         // Header sort zone (a header cell's right edge) beats the caret.
                         if (root.headerSortHit(bt, th.row, th.r, th.c, lp.x)) { root.headerSort(th.row, th.c); return }
                         root.beginTableInteraction(bt, th.row, lp.x, lp.y)
@@ -2197,7 +2209,11 @@ FocusScope {
                     if (ch) {
                         if (ch.r >= blockModel.tableHeaderRows(ch.row)) {
                             var ck = blockModel.tableColumnKind(ch.row, ch.c)
-                            clk = (ck === 1 || ck === 2)
+                            if (ck === 1 || ck === 2) {   // only over the chip/checkbox
+                                var hd2 = root.cellForRow(ch.row), hbt2 = hd2 ? hd2.tableItem : null
+                                var hlp2 = hbt2 ? hbt2.mapFromItem(mouse, m.x, m.y) : null
+                                clk = hbt2 ? hbt2.widgetHit(hlp2.x, hlp2.y) : false
+                            }
                         } else {   // header: pointer over the sort zone
                             var chd = root.cellForRow(ch.row), cbt = chd ? chd.tableItem : null
                             if (cbt) {
@@ -2211,7 +2227,7 @@ FocusScope {
                 // Hovering an image row → show its resize handles. Don't clear on a
                 // non-image *handle* hover (the central layer onExits then); only a
                 // different block hides them.
-                if (root._isImageRow(root.hoverRow)) root.imgHandleRow = root.hoverRow
+                if (root._isResizableMediaRow(root.hoverRow)) root.imgHandleRow = root.hoverRow
                 else root.imgHandleRow = -1
                 // Link under the pointer → anchor the open-link tooltip there. A
                 // grace timer (not an immediate clear) lets the pointer travel up
@@ -2466,12 +2482,16 @@ FocusScope {
                 }
                 var ftk = blockModel.tableColumnKind(root.activeTableRow, fhit.c)
                 var fbody = fhit.r >= blockModel.tableHeaderRows(root.activeTableRow)
-                if (ftk === 1 && fbody) {
-                    var fp = frameMA.mapToItem(root, m.x, m.y)
-                    root.openChoicePicker(root.activeTableRow, fhit.r, fhit.c, fp.x, fp.y)
+                // Trigger only when the click lands ON the chip/checkbox.
+                if ((ftk === 1 || ftk === 2) && fbody && frameTable.widgetHit(m.x, m.y)) {
+                    if (ftk === 1) {
+                        var fp = frameMA.mapToItem(root, m.x, m.y)
+                        root.openChoicePicker(root.activeTableRow, fhit.r, fhit.c, fp.x, fp.y)
+                    } else {
+                        blockModel.tableCycleCellCheck(root.activeTableRow, fhit.r, fhit.c)
+                    }
                     return
                 }
-                if (ftk === 2 && fbody) { blockModel.tableCycleCellCheck(root.activeTableRow, fhit.r, fhit.c); return }
                 root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y)
             }
             onPositionChanged: (m) => {
@@ -2485,7 +2505,7 @@ FocusScope {
                     var fh = frameTable.cellAtPoint(m.x, m.y)
                     if (fh && fh.r >= blockModel.tableHeaderRows(root.activeTableRow)) {
                         var fk = blockModel.tableColumnKind(root.activeTableRow, fh.c)
-                        clk = (fk === 1 || fk === 2)
+                        clk = (fk === 1 || fk === 2) && frameTable.widgetHit(m.x, m.y)
                     } else if (fh) {
                         clk = root.headerSortHit(frameTable, root.activeTableRow, fh.r, fh.c, m.x)
                     }
@@ -2754,14 +2774,14 @@ FocusScope {
     component LaneMenuRow: Rectangle {
         property alias text: laneMenuRowLabel.text
         signal activated()
-        width: 168; height: 28; radius: 0
+        width: 168; height: 24; radius: 0
         color: laneMenuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
         Text {
             id: laneMenuRowLabel
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 10
             color: Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
         }
         MouseArea {
             id: laneMenuRowMA
@@ -2781,7 +2801,7 @@ FocusScope {
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: root.forceActiveFocus()
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 1
@@ -3472,7 +3492,7 @@ FocusScope {
         // vanish, and missing the small handle just selects + keeps them up.
         readonly property int row: root.imageResizing ? root.imageResizeRow
             : (root.imgHandleRow >= 0 ? root.imgHandleRow
-               : (root._isImageRow(cursor.focusRow) ? cursor.focusRow : -1))
+               : (root._isResizableMediaRow(cursor.focusRow) ? cursor.focusRow : -1))
         visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         readonly property real imgX: root.leftEdge
         readonly property real imgTopV: row >= 0
@@ -3776,13 +3796,15 @@ FocusScope {
 
     // One row of a hand-rolled menu (matches the app's flat dark style rather
     // than the default Controls Menu chrome). `danger` tints destructive items.
+    // One context-menu row. `scope` (block|column|row) drives the live target
+    // highlight on hover; danger rows render in the error colour. Compact (small
+    // font, 24px) so the multi-column table menu stays tidy.
     component MenuRow: Rectangle {
         property alias text: menuRowLabel.text
         property bool danger: false
         property string scope: "block"   // what this item targets: block | column | row
-        property bool inSub: false       // lives in the submenu panel (doesn't fold it)
         signal activated()
-        width: 184; height: 28; radius: 4
+        width: 168; height: 24
         color: menuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
         Text {
             id: menuRowLabel
@@ -3791,7 +3813,7 @@ FocusScope {
             anchors.right: parent.right; anchors.rightMargin: 10
             elide: Text.ElideRight                 // keep long labels (a URL) inside the menu
             color: parent.danger ? Theme.colors.error : Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
         }
         MouseArea {
             id: menuRowMA
@@ -3799,43 +3821,50 @@ FocusScope {
             // Hovering an item highlights its target scope on the document/table.
             onContainsMouseChanged: if (containsMouse) {
                 root.menuHiScope = parent.scope; root.menuHiDanger = parent.danger
-                if (!parent.inSub) blockMenu.activeSub = ""   // plain row folds the panel
             }
             onClicked: { parent.activated(); blockMenu.close() }
         }
     }
 
-    // A menu row that opens a grouped side panel (hover or click). The panel is a
-    // second panel INSIDE the same Popup — a real child Popup would fight the
-    // parent's CloseOnPressOutside (a press inside the child reads as "outside"
-    // the parent and cascades a close before the click lands).
-    component MenuSub: Rectangle {
-        property alias text: menuSubLabel.text
-        property string subId: ""
-        property string scope: "block"
-        width: 184; height: 28; radius: 4
-        color: (menuSubMA.containsMouse || blockMenu.activeSub === subId)
-               ? Theme.colors.surfaceHover : "transparent"
+    // Column header (Block / Column / Row) for the multi-column table menu.
+    component MenuHeader: Text {
+        color: Theme.colors.textMuted
+        font.family: Theme.font.family; font.pixelSize: 11; font.bold: true
+        leftPadding: 10; topPadding: 6; bottomPadding: 4
+    }
+
+    // A labelled row of small icon buttons (used to compress Align L/C/R and
+    // Sort asc/desc into one row each instead of five separate rows).
+    component MenuIconBtn: Rectangle {
+        property string icon: ""
+        property bool on: false
+        signal activated()
+        width: 26; height: 22
+        color: on ? Theme.colors.divider : (mibMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+        Icon { anchors.centerIn: parent; name: parent.icon; size: 14
+               color: parent.on ? Theme.colors.textBright : Theme.colors.textMuted }
+        MouseArea {
+            id: mibMA
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) { root.menuHiScope = "column"; root.menuHiDanger = false }
+            onClicked: { parent.activated(); blockMenu.close() }
+        }
+    }
+    component MenuSegRow: Item {
+        property string label: ""
+        default property alias content: segRow.data
+        width: 168; height: 24
         Text {
-            id: menuSubLabel
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 10
-            color: Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+            text: parent.label; color: Theme.colors.textMuted
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
         }
-        Icon {
-            anchors.right: parent.right; anchors.rightMargin: 8
+        Row {
+            id: segRow
             anchors.verticalCenter: parent.verticalCenter
-            name: "caret-right"; size: 12; color: Theme.colors.textMuted
-        }
-        MouseArea {
-            id: menuSubMA
-            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) {
-                root.menuHiScope = parent.scope; root.menuHiDanger = false
-                blockMenu.activeSub = parent.subId
-                blockMenu.subY = parent.y
-            }
+            anchors.right: parent.right; anchors.rightMargin: 6
+            spacing: 2
         }
     }
 
@@ -3882,34 +3911,43 @@ FocusScope {
         // In a full-frame tab (table/PDF/video) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
         readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
-        // Submenu panel: which group is open ("" none) + the anchor row's y.
-        property string activeSub: ""
-        property real subY: 0
         // Table facts the row visibilities share (revision-dep'd once here).
         readonly property int tHdr: isTable ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.menuRow)) : 0
         readonly property int tRows: isTable ? (blockModel.contentRevision, blockModel.tableRows(root.menuRow)) : 0
         readonly property int tCols: isTable ? (blockModel.contentRevision, blockModel.tableColumns(root.menuRow)) : 0
         readonly property bool bodyRow: isTable && root.menuCellR >= tHdr
+        readonly property bool sortable: isTable && tRows - tHdr > 1
+        // Tallest of the visible columns — the inter-column dividers stretch to it.
+        readonly property real bodyH: isTable
+            ? Math.max(blockColMenu.implicitHeight, colColMenu.implicitHeight, rowColMenu.implicitHeight)
+            : blockColMenu.implicitHeight
         padding: 4; z: 60
         // Reactive on-screen clamp: re-evaluates as the menu's height settles after
         // open (so a long menu is positioned right on the FIRST trigger, not the 2nd).
         x: Math.max(8, Math.min(root.menuX, root.width - width - 8))
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
-        onOpened: activeSub = ""
-        onClosed: { activeSub = ""; root.menuHiScope = ""; root.forceActiveFocus() }
-        background: Rectangle { color: Theme.colors.surface; radius: 6
+        onClosed: { root.menuHiScope = ""; root.forceActiveFocus() }
+        background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0
                                 border.width: 1; border.color: Theme.colors.border }
-        contentItem: Item {
-            implicitWidth: menuCol.implicitWidth + (subPanel.visible ? subPanel.width + 8 : 0)
-            implicitHeight: Math.max(menuCol.implicitHeight, subPanel.visible ? subPanel.height : 0)
+        // Columns side by side: Block always; Column + Row appear for tables (no
+        // submenus). Inter-column dividers stretch to the tallest column (bodyH).
+        contentItem: Row {
+            spacing: 0
+
+            // --- Block column (the right-clicked block as a whole) ---
             Column {
-                id: menuCol
+                id: blockColMenu
                 spacing: 1
+                MenuHeader { visible: blockMenu.isTable; text: "Block" }
                 MenuRow { visible: root.menuLinkUrl.length > 0
                           text: "Open " + root.truncUrl(root.menuLinkUrl)
                           onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
                 Rectangle { visible: root.menuLinkUrl.length > 0; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
@@ -3924,94 +3962,83 @@ FocusScope {
                 MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
                 MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
-                // --- table ops: Row / Column / Column type fold into side panels ---
-                Rectangle { visible: blockMenu.isTable && !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(root.menuRow) }
-                MenuSub { visible: blockMenu.isTable; subId: "row";    scope: "row";    text: "Row" }
-                MenuSub { visible: blockMenu.isTable; subId: "column"; scope: "column"; text: "Column" }
-                MenuSub { visible: blockMenu.isTable; subId: "ctype";  scope: "column"; text: "Column type" }
                 MenuRow { visible: blockMenu.isTable; text: blockMenu.tHdr > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
-                Rectangle { visible: blockMenu.isTable; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: root.menuCellHasImage; text: "Copy image"
-                          onActivated: clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC)) }
-                MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
-                // --- code (non-table) ---
+                // text-only transform
                 Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow {
-                    visible: !blockMenu.isTable && !blockMenu.isMedia   // text-only op
+                    visible: !blockMenu.isTable && !blockMenu.isMedia
                     text: blockMenu.isCode ? "Change language…" : "Make code block"
                     onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
                                                   : root.makeCodeAt(root.menuRow)
                 }
+                // cell image (right-clicked table cell)
+                Rectangle { visible: root.menuCellHasImage; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: root.menuCellHasImage; text: "Copy image"
+                          onActivated: clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC)) }
+                MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
                 Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
             }
-            Rectangle {
-                id: subPanel
-                visible: blockMenu.activeSub !== ""
-                x: menuCol.implicitWidth + 8
-                y: Math.max(0, Math.min(blockMenu.subY, menuCol.implicitHeight - height))
-                width: subCol.implicitWidth + 8
-                height: subCol.implicitHeight + 8
-                radius: 6
-                color: Theme.colors.surface
-                border.width: 1; border.color: Theme.colors.border
-                Column {
-                    id: subCol
-                    x: 4; y: 4; spacing: 1
-                    // --- Row ▸ ---
-                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
-                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
-                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
-                    // Reorder/duplicate: body rows only (a header row's place is structural).
-                    MenuRow { visible: blockMenu.activeSub === "row" && root.menuCellR > blockMenu.tHdr
-                              inSub: true; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
-                    MenuRow { visible: blockMenu.activeSub === "row" && blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1
-                              inSub: true; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
-                    MenuRow { visible: blockMenu.activeSub === "row" && blockMenu.bodyRow
-                              inSub: true; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
-                    Rectangle { visible: blockMenu.activeSub === "row"; width: parent.width; height: 1; color: Theme.colors.divider }
-                    MenuRow { visible: blockMenu.activeSub === "row"; inSub: true; scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
-                    // --- Column ▸ ---
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
-                    MenuRow { visible: blockMenu.activeSub === "column" && root.menuCellC > 0
-                              inSub: true; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
-                    MenuRow { visible: blockMenu.activeSub === "column" && root.menuCellC < blockMenu.tCols - 1
-                              inSub: true; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
-                    Rectangle { visible: blockMenu.activeSub === "column"; width: parent.width; height: 1; color: Theme.colors.divider }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Align left";   onActivated: root.tblAlign(0) }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Align center"; onActivated: root.tblAlign(1) }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Align right";  onActivated: root.tblAlign(2) }
-                    // One-shot sort of the body rows by this column (header stays pinned).
-                    Rectangle { visible: blockMenu.activeSub === "column" && blockMenu.tRows - blockMenu.tHdr > 1
-                                width: parent.width; height: 1; color: Theme.colors.divider }
-                    MenuRow { visible: blockMenu.activeSub === "column" && blockMenu.tRows - blockMenu.tHdr > 1
-                              inSub: true; scope: "column"; text: "Sort ascending"; onActivated: root.tblSort(true) }
-                    MenuRow { visible: blockMenu.activeSub === "column" && blockMenu.tRows - blockMenu.tHdr > 1
-                              inSub: true; scope: "column"; text: "Sort descending"; onActivated: root.tblSort(false) }
-                    Rectangle { visible: blockMenu.activeSub === "column"; width: parent.width; height: 1; color: Theme.colors.divider }
-                    MenuRow { visible: blockMenu.activeSub === "column"; inSub: true; scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
-                    // --- Column type ▸ ---
-                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 1
-                              inSub: true; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
-                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 2
-                              inSub: true; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
-                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() === 1
-                              inSub: true; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
-                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 0 && !root.boardMode
-                              inSub: true; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
-                    Rectangle { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 0
-                                width: parent.width; height: 1; color: Theme.colors.divider }
-                    MenuRow { visible: blockMenu.activeSub === "ctype" && root.tblColKind() !== 0
-                              inSub: true; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
+
+            Rectangle { visible: blockMenu.isTable; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
+
+            // --- Column column (the right-clicked table column) ---
+            Column {
+                id: colColMenu
+                visible: blockMenu.isTable
+                spacing: 1
+                MenuHeader { text: "Column" }
+                MenuRow { scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
+                MenuRow { scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
+                MenuRow { scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
+                MenuRow { visible: root.menuCellC > 0; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
+                MenuRow { visible: root.menuCellC < blockMenu.tCols - 1; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
+                MenuRow { scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSegRow {
+                    label: "Align"
+                    readonly property int _a: blockMenu.isTable ? (blockModel.contentRevision, blockModel.tableColAlign(root.menuRow, root.menuCellC)) : 0
+                    MenuIconBtn { icon: "text-align-left";   on: parent._a === 0; onActivated: root.tblAlign(0) }
+                    MenuIconBtn { icon: "text-align-center"; on: parent._a === 1; onActivated: root.tblAlign(1) }
+                    MenuIconBtn { icon: "text-align-right";  on: parent._a === 2; onActivated: root.tblAlign(2) }
                 }
+                // One-shot sort of the body rows by this column (header stays pinned).
+                Rectangle { visible: blockMenu.sortable; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSegRow {
+                    visible: blockMenu.sortable
+                    label: "Sort"
+                    MenuIconBtn { icon: "sort-ascending";  onActivated: root.tblSort(true) }
+                    MenuIconBtn { icon: "sort-descending"; onActivated: root.tblSort(false) }
+                }
+                // Column type
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
+                MenuRow { visible: root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
+                MenuRow { visible: root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
+                MenuRow { visible: root.tblColKind() !== 0 && !root.boardMode; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
+                MenuRow { visible: root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
+            }
+
+            Rectangle { visible: blockMenu.isTable; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
+
+            // --- Row column (the right-clicked table row) ---
+            Column {
+                id: rowColMenu
+                visible: blockMenu.isTable
+                spacing: 1
+                MenuHeader { text: "Row" }
+                MenuRow { scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
+                MenuRow { scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
+                MenuRow { scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
+                // Reorder/duplicate: body rows only (a header row's place is structural).
+                MenuRow { visible: root.menuCellR > blockMenu.tHdr; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
+                MenuRow { visible: blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
+                MenuRow { visible: blockMenu.bodyRow; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
             }
         }
     }

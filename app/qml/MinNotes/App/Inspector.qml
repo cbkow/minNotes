@@ -14,7 +14,17 @@ import QtCore
 Rectangle {
     id: panel
     property var editor: null
-    property bool open: false
+    property bool open: true   // open/closed is persisted (see panelStore) and
+                               // restored on launch; this is just the pre-restore default
+    property bool _ready: false   // gates the slide animation off during restore
+
+    // Persist whether the panel is open, so it reopens in the user's last state.
+    Settings {
+        id: panelStore
+        category: "inspector"
+        property bool open: true
+    }
+    onOpenChanged: if (_ready) panelStore.open = open
 
     // Colour state (the I/O the editor's apply functions read).
     property color fgColor: Theme.colors.textBright   // text colour (white)
@@ -35,9 +45,10 @@ Rectangle {
     onDrawColorChanged: drawStore.colorHex = "" + drawColor
     onDrawWidthChanged: drawStore.width = drawWidth
 
-    readonly property int panelW: 198
+    readonly property int panelW: 248
+    readonly property int contentW: panelW - 24   // inside the x:12 margins
     width: open ? panelW : 0
-    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+    Behavior on width { enabled: panel._ready; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
     color: Theme.colors.surfaceRaised                  // a step lighter than the page, so the panel reads as its own layer
     clip: true                                         // so content clips cleanly while sliding
 
@@ -63,9 +74,9 @@ Rectangle {
     // deselects it (the swatch no longer matches the picker). Empty user slots
     // capture the current colour on first click.
     readonly property var presets: [
-        "#FF5768", "#FF6F68", "#FC6238", "#FFA23A", "#FFBF65", "#FFD872", "#FFEC59", "#CFF800",
-        "#4DD091", "#00CDAC", "#8DD7BF", "#00B0BA", "#00A5E3", "#6C88C4", "#C05780", "#FF96C5"]
-    property var userSlots: ["", "", "", "", "", "", "", ""]
+        "#FF5768", "#FF6F68", "#FC6238", "#FFA23A", "#FFBF65", "#FFD872", "#FFEC59", "#CFF800", "#86E36B", "#43E8D8",
+        "#4DD091", "#00CDAC", "#8DD7BF", "#00B0BA", "#00A5E3", "#6C88C4", "#C05780", "#FF96C5", "#9D8DF1", "#FF60A8"]
+    property var userSlots: ["", "", "", "", "", "", "", "", "", ""]
     property int selPreset: -1
     property int selUser: -1
     Settings {
@@ -74,9 +85,16 @@ Rectangle {
         property string user: ""
     }
     Component.onCompleted: {
-        try { var u = JSON.parse(swatchStore.user); if (u && u.length === userSlots.length) userSlots = u } catch (e) {}
+        // Pad/truncate the saved slots to the current count so growing the row
+        // doesn't discard a user's existing swatches (they just gain empties).
+        try { var u = JSON.parse(swatchStore.user)
+              if (u && u.length) { var n = userSlots.slice()
+                                   for (var i = 0; i < n.length && i < u.length; i++) n[i] = u[i]
+                                   userSlots = n } } catch (e) {}
         if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
         if (drawStore.width > 0) drawWidth = drawStore.width
+        open = panelStore.open      // restore last open/closed state (no slide)
+        _ready = true               // toggles from here on animate + persist
     }
     function saveSwatches() { swatchStore.user = JSON.stringify(userSlots) }
     function noteEdit(c) {                              // picker moved
@@ -89,23 +107,25 @@ Rectangle {
     // Left hairline against the document (only meaningful while open).
     Rectangle { width: 1; height: parent.height; color: Theme.colors.border }
 
-    // Target toggle tab (Text / Highlight) with a colour chip; selecting one points
-    // the picker AND the Apply button at that colour.
+    // Target toggle (Text / Highlight / Draw) — flat inline buttons (no box
+    // border) carrying a colour chip. Active uses the family selection language:
+    // divider-grey fill + bright text. Selecting one points the picker AND the
+    // Apply button at that colour.
     component Tab: Rectangle {
         property string label: ""
         property string t: ""
-        width: 87; height: 26
-        color: panel.target === t ? Theme.colors.bg : (tma.containsMouse ? Theme.colors.surfaceHover : "transparent")
-        border.width: 1
-        border.color: panel.target === t ? Theme.colors.textBright : Theme.colors.border
+        readonly property bool sel: panel.target === t
+        width: tabRow.implicitWidth + 20; height: 28
+        color: sel ? Theme.colors.divider : (tma.containsMouse ? Theme.colors.surfaceHover : "transparent")
         Row {
+            id: tabRow
             anchors.centerIn: parent; spacing: 6
             Rectangle { width: 12; height: 12; radius: 2; anchors.verticalCenter: parent.verticalCenter
                         color: parent.parent.t === "fg" ? panel.fgColor
                              : parent.parent.t === "bg" ? panel.bgColor : panel.drawColor
                         border.width: 1; border.color: Theme.colors.border }
             Text { text: parent.parent.label; anchors.verticalCenter: parent.verticalCenter
-                   color: panel.target === parent.parent.t ? Theme.colors.textBright : Theme.colors.textMuted
+                   color: parent.parent.sel ? Theme.colors.textBright : Theme.colors.textMuted
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
         }
         MouseArea { id: tma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -123,7 +143,7 @@ Rectangle {
             id: header
             x: 12; width: parent.width - 24; height: 30; y: 6
             Text { anchors.verticalCenter: parent.verticalCenter
-                   text: "Colors"; color: Theme.colors.textBright
+                   text: "Palette"; color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
             FlatButton {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
@@ -136,30 +156,12 @@ Rectangle {
             anchors.top: header.bottom; anchors.topMargin: 6
             x: 12; spacing: 8
 
-            Row {
-                spacing: 0
-                Tab { label: "Text"; t: "fg"; width: 50 }
-                Tab { label: "Highlight"; t: "bg"; width: 76 }
-                Tab { label: "Draw"; t: "draw"; width: 48 }
-            }
-
-            ColorPickerInline {
-                id: picker
-                onValueChanged: {
-                    if (panel.target === "fg")      panel.fgColor = value
-                    else if (panel.target === "bg") panel.bgColor = value
-                    else                            panel.drawColor = value
-                    panel.noteEdit(value)               // selected swatch tracks the edit
-                }
-                Component.onCompleted: value = panel.fgColor
-            }
-
-            // --- Drawing tools (video studio) — visible on the Draw target.
-            // Arming a tool turns the studio stage into a drawing surface;
-            // clicking the armed tool again (or Esc) disarms.
+            // === Tools (drawing) — above the colour interface ===
+            Text { text: "Tools"
+                   color: Theme.colors.textBright
+                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
             Grid {
-                visible: panel.target === "draw"
-                columns: 6; spacing: 2
+                columns: 6; spacing: 4
                 Repeater {
                     model: [
                         { tool: "freehand", icon: "scribble",      tip: qsTr("Freehand") },
@@ -171,8 +173,9 @@ Rectangle {
                     ]
                     delegate: FlatButton {
                         required property var modelData
-                        width: 27; height: 27
+                        width: (panel.contentW - 20) / 6; height: width
                         iconName: modelData.icon
+                        iconSize: 18
                         checked: panel.drawTool === modelData.tool
                         checkedColor: Theme.colors.divider   // grey — family selection language
                         iconColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
@@ -183,7 +186,6 @@ Rectangle {
                 }
             }
             Row {
-                visible: panel.target === "draw"
                 spacing: 8
                 Text {
                     text: "Width"
@@ -192,7 +194,7 @@ Rectangle {
                     font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
                 }
                 FlatSlider {
-                    width: 110
+                    width: panel.contentW - 80
                     anchors.verticalCenter: parent.verticalCenter
                     from: 1; to: 24
                     value: panel.drawWidth
@@ -207,11 +209,37 @@ Rectangle {
                 }
             }
 
+            // === Colors === (section divider with extra padding above the line)
+            Item { width: panel.contentW; height: 9
+                   Rectangle { width: parent.width; height: 1; anchors.bottom: parent.bottom
+                               color: Theme.colors.divider } }
+            Text { text: "Colors"
+                   color: Theme.colors.textBright
+                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
+
+            Row {
+                spacing: 4
+                Tab { label: "Text"; t: "fg" }
+                Tab { label: "Highlight"; t: "bg" }
+                Tab { label: "Draw"; t: "draw" }
+            }
+
+            ColorPickerInline {
+                id: picker
+                onValueChanged: {
+                    if (panel.target === "fg")      panel.fgColor = value
+                    else if (panel.target === "bg") panel.bgColor = value
+                    else                            panel.drawColor = value
+                    panel.noteEdit(value)               // selected swatch tracks the edit
+                }
+                Component.onCompleted: value = panel.fgColor
+            }
+
             // (Apply lives on the left rail's bottom swatches — pick here, apply there.)
 
             // Revert: soft grey (brighter than the page, not loud).
             Rectangle {
-                width: 174; height: 28
+                width: panel.contentW; height: 28
                 color: revertMA.containsMouse ? "#3a3a3a" : "#2e2e2e"
                 Row {
                     anchors.centerIn: parent; spacing: 6
@@ -229,7 +257,7 @@ Rectangle {
             Text { text: "Presets"; color: Theme.colors.textMuted; topPadding: 6
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
             Grid {
-                columns: 8; spacing: 4
+                columns: 10; spacing: 4
                 Repeater {
                     model: panel.presets.length
                     delegate: Swatch { required property int index; idx: index }

@@ -158,6 +158,21 @@ Item {
         return { r: Math.max(0, r), c: Math.max(0, c), pos: pos }
     }
 
+    // True if (px,py) (this item's coords) lands on a body cell's interactive
+    // widget — the choice chip or the check glyph — with a few px of slack. Used
+    // so a click only TOGGLES when aimed at the widget, not anywhere in the cell.
+    function widgetHit(px, py) {
+        var hit = cellAtPoint(px, py)
+        var rowItem = rowRep.itemAt(hit.r)
+        var cellItem = rowItem ? rowItem.cellItemAt(hit.c) : null
+        if (!cellItem || !cellItem.hitItem) return false
+        var w = cellItem.hitItem
+        var gp = w.mapToItem(tv, 0, 0)
+        var pad = 4
+        return px >= gp.x - pad && px <= gp.x + w.width + pad
+            && py >= gp.y - pad && py <= gp.y + w.height + pad
+    }
+
     // Display width of a cell image (matches the cell delegate's imgW): an explicit
     // override capped to the column, else the intrinsic width capped to the column.
     function cellImageDispW(r, c) {
@@ -216,6 +231,7 @@ Item {
                     required property int index
                     readonly property int r: index
                     function cellTe(c) { var it = cellRep.itemAt(c); return it ? it.teItem : null }
+                    function cellItemAt(c) { return cellRep.itemAt(c) }
                     // Row height = tallest cell's content, computed into a PLAIN
                     // number (not the positioner's implicitHeight, which derives
                     // from child heights — binding a cell's height to it loops).
@@ -288,6 +304,10 @@ Item {
                                 ? blockModel.tableCellChoiceColor(tv.logicalRow, gridRow.r, c) : ""
                             readonly property int ccheck: isCheck ? (blockModel.contentRevision,
                                                           blockModel.tableCellCheck(tv.logicalRow, gridRow.r, c)) : 0
+                            // The interactive widget (chip / checkbox) for hit-testing,
+                            // so only a click ON it triggers — not anywhere in the cell.
+                            readonly property var hitItem: isChoice ? choiceChip
+                                                         : isCheck ? checkGlyph : null
                             width: tv.colW(c)
                             height: gridRow.rowHeight
                             onContentHChanged: gridRow.recompute()
@@ -387,6 +407,7 @@ Item {
                             // the selected option, else a faint caret-down placeholder.
                             // Clicks route through the editor's central handler.
                             Rectangle {
+                                id: choiceChip
                                 visible: cellRect.isChoice
                                 x: tv.cellPadH; y: tv.cellPadV
                                 height: Math.max(16, cellText.implicitHeight - 2)
@@ -421,6 +442,7 @@ Item {
                             // / 2 done) — the same glyph as a block task list. Clicks
                             // cycle it via the editor's central handler.
                             Item {
+                                id: checkGlyph
                                 visible: cellRect.isCheck
                                 x: tv.cellPadH
                                 y: tv.cellPadV + Math.max(0, (cellText.implicitHeight - 14) / 2)

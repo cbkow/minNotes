@@ -7,15 +7,15 @@ QtObject {
     id: theme
 
     readonly property QtObject colors: QtObject {
-        readonly property color bg:          "#161616"   // window shell
-        readonly property color surface:     "#1b1b1b"   // the document "page"
+        readonly property color bg:          "#121211"   // window shell
+        readonly property color surface:     "#121211"   // the document "page"
         readonly property color surfaceHover: "#252525"  // flat-button hover fill
         readonly property color surfaceRaised: "#202020" // raised panels (inspector) — a step above the page
         readonly property color codeBg:      "#121212"   // code block fill
         readonly property color border:      "#2a2a2a"
         readonly property color divider:     "#333333"   // hr / separators
 
-        readonly property color text:        "#dcdcdc"   // body
+        readonly property color text:        "#e5e5e3"   // body
         readonly property color textBright:  "#f0f0f0"   // headings / selected chrome (sub-white: no glow on dark, matches the highlighter's light text)
         readonly property color textMuted:   "#8a8a8a"   // quotes, bullets
         readonly property color textSubtle:  "#5e5e5e"
@@ -51,6 +51,11 @@ QtObject {
     readonly property FontLoader interItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-Italic.ttf") }
     readonly property FontLoader interBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-BoldItalic.ttf") }  // so bold+italic has a real face
     readonly property FontLoader monoFontLoader:  FontLoader { source: Qt.resolvedUrl("fonts/JetBrainsMono-Regular.ttf") }
+    // Aspekta (document body). The static 400/700 faces share the legacy family
+    // "Aspekta 400" (Regular + Bold), so font.bold resolves the 700 face — needed
+    // for headings. No italic face: italic body text synthesizes (oblique).
+    readonly property FontLoader aspektaFont:     FontLoader { source: Qt.resolvedUrl("fonts/Aspekta-400.ttf") }
+    readonly property FontLoader aspektaBoldFont: FontLoader { source: Qt.resolvedUrl("fonts/Aspekta-700.ttf") }
     // Lora (serif) for quote blocks — all four faces so bold/italic/
     // bold-italic inside a quote render with a real face, not a fallback.
     readonly property FontLoader serifFont:           FontLoader { source: Qt.resolvedUrl("fonts/Lora-Regular.ttf") }
@@ -74,7 +79,8 @@ QtObject {
     }
 
     readonly property QtObject font: QtObject {
-        readonly property string family: theme.interFont.name        // Inter (bundled)
+        readonly property string family: theme.interFont.name        // Inter (chrome)
+        readonly property string body:   theme.aspektaFont.name      // Aspekta (document body)
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
         readonly property string serif:  theme.serifFont.name        // Lora (quotes)
         readonly property int sizeSmall: 12

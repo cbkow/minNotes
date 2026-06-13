@@ -88,7 +88,7 @@ Rectangle {
             onClicked: if (rail.editor) rail.act(function() { rail.editor.applyHighlight(rail.inspector.bgColor) })
         }
         RailBtn {
-            iconName: "palette"; tooltip: "Colors"
+            iconName: "palette"; tooltip: "Palette"
             enabled_: !!rail.editor
             checked: !!rail.inspector && rail.inspector.open
             onClicked: if (rail.inspector) rail.inspector.open = !rail.inspector.open
