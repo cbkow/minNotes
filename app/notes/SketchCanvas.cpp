@@ -4,9 +4,11 @@
 #include "annotation_thumbnail.h"
 
 #include <QCursor>
+#include <QHoverEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QUrl>
@@ -95,6 +97,7 @@ void SketchCanvas::setSelectable(bool s)
 {
     if (s == selectable_) return;
     selectable_ = s;
+    setAcceptHoverEvents(s);   // resize-cursor feedback — full-frame canvas only
     if (!s) clearSelection();
     applyAcceptedButtons();
     emit selectableChanged();
@@ -153,13 +156,11 @@ void SketchCanvas::paint(QPainter *p)
 
     // Selection affordance. An image gets a translucent accent wash + solid
     // border (a thin outline is lost against the picture); a stroke gets a
-    // dashed box just outside its bounds.
+    // dashed box just outside its bounds. Both get corner resize handles.
     if (selKind_ != SelNone) {
-        const QRectF b = selBoundsNorm();
-        if (b.isValid()) {
+        const QRectF r = selDisplayRect();
+        if (r.isValid()) {
             const QColor accent(0x01, 0x89, 0xf1);   // family accent
-            const QRectF r(b.x() * width(), b.y() * height(),
-                           b.width() * width(), b.height() * height());
             if (selKind_ == SelImage) {
                 p->fillRect(r, QColor(accent.red(), accent.green(), accent.blue(), 60));
                 QPen pen(accent, 2.0); pen.setCosmetic(true);
@@ -168,8 +169,14 @@ void SketchCanvas::paint(QPainter *p)
             } else {
                 QPen pen(accent, 1.5, Qt::DashLine); pen.setCosmetic(true);
                 p->setBrush(Qt::NoBrush); p->setPen(pen);
-                p->drawRect(r.adjusted(-3, -3, 3, 3));
+                p->drawRect(r);
             }
+            const double hs = 4.5;   // handle half-size
+            const QPointF cs[4] = { r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight() };
+            p->setBrush(accent);
+            p->setPen(QPen(QColor(255, 255, 255), 1.0));
+            for (const QPointF &c : cs)
+                p->drawRect(QRectF(c.x() - hs, c.y() - hs, hs * 2, hs * 2));
         }
     }
 }
@@ -318,6 +325,11 @@ int SketchCanvas::hitTest(QPointF norm, SelKind &kindOut) const
 void SketchCanvas::selectPress(QPointF pos)
 {
     if (width() <= 0 || height() <= 0) return;
+    // A press on the current selection's corner handle starts a resize.
+    if (selKind_ != SelNone) {
+        const int h = handleAtPx(pos);
+        if (h >= 0) { beginResize(h); return; }
+    }
     const QPointF norm(pos.x() / width(), pos.y() / height());
     SelKind k = SelNone;
     const int idx = hitTest(norm, k);
@@ -349,16 +361,18 @@ void SketchCanvas::translateSelection(QPointF dNorm)
 
 void SketchCanvas::selectMove(QPointF pos)
 {
-    if (!moving_ || width() <= 0 || height() <= 0) return;
+    if (width() <= 0 || height() <= 0) return;
     const QPointF norm(pos.x() / width(), pos.y() / height());
+    if (resizing_) { resizeTo(norm); return; }
+    if (!moving_) return;
     translateSelection(norm - lastNorm_);
     lastNorm_ = norm;
 }
 
 void SketchCanvas::selectRelease()
 {
-    if (!moving_) return;
-    moving_ = false;
+    if (!moving_ && !resizing_) return;
+    moving_ = false; resizing_ = false; grabCorner_ = -1;
     if (!moveDirty_) return;   // a click-to-select must not commit a no-op undo step
     moveDirty_ = false;
     if (selKind_ == SelStroke) {
@@ -382,4 +396,86 @@ void SketchCanvas::deleteSelection()
         clearSelection();
         emit imageRemoved(idx);
     }
+}
+
+QRectF SketchCanvas::selDisplayRect() const
+{
+    const QRectF b = selBoundsNorm();
+    if (!b.isValid() || width() <= 0 || height() <= 0) return {};
+    QRectF r(b.x() * width(), b.y() * height(), b.width() * width(), b.height() * height());
+    if (selKind_ == SelStroke) r = r.adjusted(-3, -3, 3, 3);   // breathing room around ink
+    return r;
+}
+
+int SketchCanvas::handleAtPx(QPointF px) const
+{
+    const QRectF r = selDisplayRect();
+    if (!r.isValid()) return -1;
+    const double tol = 9.0;
+    const QPointF cs[4] = { r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight() };
+    for (int i = 0; i < 4; ++i)
+        if (QLineF(px, cs[i]).length() <= tol) return i;
+    return -1;
+}
+
+void SketchCanvas::beginResize(int corner)
+{
+    grabCorner_ = corner;
+    origBounds_ = selBoundsNorm();
+    if (selKind_ == SelStroke && selIdx_ >= 0 && selIdx_ < int(strokes_.size()))
+        origPoints_ = strokes_[size_t(selIdx_)].points;   // absolute base (no drift)
+    resizing_ = true;
+    moving_ = false;
+    moveDirty_ = false;
+}
+
+void SketchCanvas::resizeTo(QPointF norm)
+{
+    if (!origBounds_.isValid()) return;
+    const double L = origBounds_.left(), R = origBounds_.right();
+    const double T = origBounds_.top(),  B = origBounds_.bottom();
+    // The grabbed corner moves; the opposite corner (pivot) stays fixed.
+    QPointF grab, pivot;
+    switch (grabCorner_) {
+        case 0: grab = {L, T}; pivot = {R, B}; break;   // TL
+        case 1: grab = {R, T}; pivot = {L, B}; break;   // TR
+        case 2: grab = {L, B}; pivot = {R, T}; break;   // BL
+        default: grab = {R, B}; pivot = {L, T}; break;  // BR
+    }
+    const double dxs = grab.x() - pivot.x();   // signed extents (orig)
+    const double dys = grab.y() - pivot.y();
+    const double origW = std::abs(dxs), origH = std::abs(dys);
+    if (origW <= 0 || origH <= 0) return;
+    const double newW = std::abs(norm.x() - pivot.x());
+    const double newH = std::abs(norm.y() - pivot.y());
+    double s = std::max(newW / origW, newH / origH);              // proportional
+    s = std::max(s, std::max(0.03 / origW, 0.03 / origH));        // min size
+    // Clamp so the moving (far) corner stays on the canvas.
+    const double sMaxX = dxs > 0 ? (1.0 - pivot.x()) / dxs : (dxs < 0 ? -pivot.x() / dxs : 1e9);
+    const double sMaxY = dys > 0 ? (1.0 - pivot.y()) / dys : (dys < 0 ? -pivot.y() / dys : 1e9);
+    s = std::min(s, std::min(sMaxX, sMaxY));
+    if (s <= 0) return;
+    moveDirty_ = true;
+    if (selKind_ == SelStroke && origPoints_.size() == strokes_[size_t(selIdx_)].points.size()) {
+        std::vector<QPointF> &pts = strokes_[size_t(selIdx_)].points;
+        for (size_t i = 0; i < pts.size(); ++i)
+            pts[i] = pivot + (origPoints_[i] - pivot) * s;
+    } else if (selKind_ == SelImage) {
+        const QPointF far = pivot + QPointF(dxs, dys) * s;
+        images_[size_t(selIdx_)].rect =
+            QRectF(QPointF(std::min(pivot.x(), far.x()), std::min(pivot.y(), far.y())),
+                   QPointF(std::max(pivot.x(), far.x()), std::max(pivot.y(), far.y())));
+    }
+    update();
+}
+
+void SketchCanvas::hoverMoveEvent(QHoverEvent *e)
+{
+    if (inSelectMode() && selKind_ != SelNone) {
+        const int h = handleAtPx(e->position());
+        if (h == 0 || h == 3)      setCursor(QCursor(Qt::SizeFDiagCursor));   // TL / BR
+        else if (h == 1 || h == 2) setCursor(QCursor(Qt::SizeBDiagCursor));   // TR / BL
+        else                       setCursor(QCursor(Qt::ArrowCursor));
+    }
+    QQuickPaintedItem::hoverMoveEvent(e);
 }

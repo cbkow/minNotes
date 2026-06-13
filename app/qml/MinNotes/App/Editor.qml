@@ -3980,10 +3980,10 @@ FocusScope {
                                    && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
                           text: "Copy image"
                           onActivated: clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow)) }
-                MenuRow { visible: blockMenu.isMedia
+                MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch   // sketch has no backing file
                           text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                           onActivated: blockModel.revealMedia(root.menuRow) }
-                MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
+                MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch; text: "Open in ufb"
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
                 MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(root.menuRow) }

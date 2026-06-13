@@ -99,6 +99,7 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
+    void hoverMoveEvent(QHoverEvent *e) override;   // resize-cursor feedback
     void geometryChange(const QRectF &newGeo, const QRectF &oldGeo) override;
 
 private:
@@ -121,7 +122,11 @@ private:
     int  hitTest(QPointF norm, SelKind &kindOut) const;   // topmost element, or SelNone
     QRectF strokeBoundsNorm(int idx) const;    // normalized bbox of a stroke
     QRectF selBoundsNorm() const;              // normalized bbox of the current selection
+    QRectF selDisplayRect() const;             // px rect for outline + handles
+    int  handleAtPx(QPointF px) const;         // corner under px (0=TL 1=TR 2=BL 3=BR), or -1
     void translateSelection(QPointF dNorm);    // move (clamped to canvas), live
+    void beginResize(int corner);              // grab a handle; pivot = opposite corner
+    void resizeTo(QPointF norm);               // proportional scale about the pivot, live
 
     // A raster image embedded in the sketch (rendered beneath strokes). rect is
     // normalized [0,1] of the canvas; src is a loadable URL/path (resolved by the
@@ -142,7 +147,11 @@ private:
 
     SelKind selKind_ = SelNone;                // current selection
     int     selIdx_ = -1;
-    bool    moving_ = false;                   // drag in progress
-    bool    moveDirty_ = false;                // the drag actually moved something
+    bool    moving_ = false;                   // move-drag in progress
+    bool    resizing_ = false;                 // handle-drag in progress
+    bool    moveDirty_ = false;                // the drag actually changed something
     QPointF lastNorm_;                         // last pointer pos (normalized)
+    int     grabCorner_ = -1;                  // handle being dragged
+    QRectF  origBounds_;                       // selection bounds at resize start (norm)
+    std::vector<QPointF> origPoints_;          // stroke points at resize start (absolute scale)
 };

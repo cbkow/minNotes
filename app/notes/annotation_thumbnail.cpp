@@ -121,9 +121,14 @@ void paintStroke(QPainter &p, const ActiveStroke &s, double w, double h,
         dirX /= length;
         dirY /= length;
 
-        // Mirror the tessellator's arrowhead geometry (25°, size grows
-        // with width); shaft stops short of the head by arrowSize*cos.
-        const double arrowSize = 12.0 * lineWidthScale + penW * 2.0;
+        // Arrowhead (25°); shaft stops short of the head by arrowSize*cos. The
+        // size leans on the width-proportional term with only a small floor, so a
+        // thin line gets a modest head (the old large fixed term made thin arrows
+        // top-heavy) while a thick line is unchanged: at strokeWidth 24 this still
+        // lands ~60px, matching the prior geometry. (Diverges slightly from
+        // QCView's tessellator head — render-time only; the stored stroke is
+        // identical, so interop is unaffected.)
+        const double arrowSize = 4.5 * lineWidthScale + penW * 2.3;
         const double cosA = std::cos(0.436332);   // 25°
         const double sinA = std::sin(0.436332);
         const double backDist = arrowSize * cosA;
