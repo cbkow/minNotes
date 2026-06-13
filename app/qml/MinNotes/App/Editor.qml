@@ -1293,6 +1293,20 @@ FocusScope {
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
     function doPaste() {
+        // --- Into an active sketch tab: images (copied from our app or outside)
+        // drop onto the canvas as an image element; nothing else has a target. ---
+        if (root.activeSketchRow >= 0) {
+            var su = clipboard.readUrls()              // copied image file(s)
+            if (su.length > 0) {
+                var anyS = false
+                for (var si = 0; si < su.length; ++si)
+                    if (blockModel.sketchAddImageFromUrl(root.activeSketchRow, su[si])) anyS = true
+                if (anyS) return
+            }
+            if (clipboard.hasImage())                  // raster (screenshot / Copy image)
+                blockModel.sketchAddImageFromClipboard(root.activeSketchRow)
+            return
+        }
         // --- Into a table cell: an image (copied file or raster) drops into the
         // focused cell; TSV → cells; else plain text (rich paste lands in the
         // document, not inside a cell). ---
@@ -3260,9 +3274,10 @@ FocusScope {
                 SketchCanvas {
                     id: sketchEditCanvas
                     anchors.fill: parent
-                    // Load-bearing revision dep (reactivity rule 1e).
+                    // Load-bearing revision dep (reactivity rule 1e). Resolved JSON
+                    // so embedded image srcs are loadable URLs.
                     data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
-                        ? blockModel.contentForRow(sketchFrame.r) : ""
+                        ? blockModel.sketchResolvedJson(sketchFrame.r) : ""
                     sourceWidth: sketchStage.vw
                     tool: (root.activeSketchRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
                     color: root.inspector ? root.inspector.drawColor : "#FF0000"

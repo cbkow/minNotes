@@ -314,6 +314,15 @@ public:
     // (kind/w/h/dw) is preserved. One undo step per call — no coalescing
     // (a stroke = an undo step, the video-note feel; ruling 2026-06-11).
     Q_INVOKABLE void sketchSetShapes(int row, const QString& strokesJson);
+    // Paste a raster image into a sketch: imported through the MediaStore and
+    // appended to the descriptor's `images` array (normalized rect, centered).
+    // One undo step; the canvas meta + strokes are preserved. Accepts clipboard
+    // bytes or a file URL (image only).
+    Q_INVOKABLE bool sketchAddImageFromClipboard(int row);
+    Q_INVOKABLE bool sketchAddImageFromUrl(int row, const QString& fileUrl);
+    // The descriptor with each image's `src` resolved to a loadable URL (the
+    // canvas binds THIS, not raw content — the stored src stays doc-relative).
+    Q_INVOKABLE QString sketchResolvedJson(int row) const;
     Q_INVOKABLE QStringList sketchBlockIds() const;
     // Current row of a block id, or -1 if it no longer exists.
     Q_INVOKABLE int rowForId(const QString& id) const;
@@ -463,6 +472,9 @@ private:
     void loadFromStore();             // skinny-scan → rows_/ids_/ranks_/content_/fenwick
     void seedSyntheticStore(int n);   // write N synthetic blocks if the DB is empty
     void persistContent(int row);     // write content_[row] back to the DB
+    // Append an image element to a sketch's descriptor (normalized centered rect)
+    // and commit as one undo step. (src/iw/ih come from a MediaStore import.)
+    bool sketchAppendImage(int row, const QString& src, int iw, int ih);
     static BlockType typeFromString(const QString& s);
     static const char* typeToString(uint8_t t);
     // Lexicographic fractional rank strictly between a and b (DESIGN §4).

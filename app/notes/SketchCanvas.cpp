@@ -4,8 +4,12 @@
 #include "annotation_thumbnail.h"
 
 #include <QCursor>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QUrl>
 
 SketchCanvas::SketchCanvas(QQuickItem *parent)
     : QQuickPaintedItem(parent)
@@ -25,8 +29,37 @@ void SketchCanvas::setData(const QString &data)
     if (data == data_) return;
     data_ = data;
     strokes_ = qcv::AnnotationSerializer::jsonStringToStrokes(data_);
+    parseImages(data_);
     emit dataChanged();
     update();
+}
+
+void SketchCanvas::parseImages(const QString &data)
+{
+    images_.clear();
+    if (data.isEmpty()) return;
+    const QJsonObject root = QJsonDocument::fromJson(data.toUtf8()).object();
+    const QJsonArray arr = root.value(QStringLiteral("images")).toArray();
+    for (const QJsonValue &v : arr) {
+        const QJsonObject o = v.toObject();
+        const QString src = o.value(QStringLiteral("src")).toString();
+        if (src.isEmpty()) continue;
+        SketchImage im;
+        im.src  = src;
+        im.rect = QRectF(o.value(QStringLiteral("x")).toDouble(),
+                         o.value(QStringLiteral("y")).toDouble(),
+                         o.value(QStringLiteral("w")).toDouble(),
+                         o.value(QStringLiteral("h")).toDouble());
+        images_.push_back(im);
+    }
+}
+
+const QImage &SketchCanvas::imageFor(const QString &src)
+{
+    auto it = imgCache_.constFind(src);
+    if (it != imgCache_.constEnd()) return it.value();
+    const QString path = src.startsWith(QLatin1String("file:")) ? QUrl(src).toLocalFile() : src;
+    return *imgCache_.insert(src, QImage(path));
 }
 
 void SketchCanvas::setTool(const QString &tool)
@@ -80,6 +113,15 @@ void SketchCanvas::paint(QPainter *p)
 {
     if (width() <= 0 || height() <= 0) return;
     p->setRenderHint(QPainter::Antialiasing, true);
+    p->setRenderHint(QPainter::SmoothPixmapTransform, true);
+    // Image layer (beneath the ink): normalized rect → display px.
+    for (const SketchImage &im : images_) {
+        const QImage &img = imageFor(im.src);
+        if (img.isNull()) continue;
+        const QRectF target(im.rect.x() * width(), im.rect.y() * height(),
+                            im.rect.width() * width(), im.rect.height() * height());
+        p->drawImage(target, img);
+    }
     const double scale = sourceWidth_ > 0 ? width() / double(sourceWidth_) : 1.0;
     for (const qcv::ActiveStroke &s : strokes_)
         qcv::paintStroke(*p, s, width(), height(), scale);

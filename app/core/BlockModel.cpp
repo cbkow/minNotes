@@ -1247,6 +1247,70 @@ void BlockModel::sketchSetShapes(int row, const QString& strokesJson) {
     endTxn();   // no coalesce — one undo step per stroke (ruling 2026-06-11)
 }
 
+bool BlockModel::sketchAppendImage(int row, const QString& src, int iw, int ih) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return false;
+    if (src.isEmpty() || iw <= 0 || ih <= 0) return false;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const double cw = root.value(QStringLiteral("w")).toInt(480);
+    const double ch = root.value(QStringLiteral("h")).toInt(480);
+    // Place centered, fit within 70% of the canvas (never upscale past intrinsic).
+    const double frac = 0.70;
+    const double s = std::min({ (cw * frac) / iw, (ch * frac) / ih, 1.0 });
+    const double wN = (iw * s) / cw, hN = (ih * s) / ch;
+    QJsonArray images = root.value(QStringLiteral("images")).toArray();
+    // Cascade each subsequent paste off-center so multiples don't stack exactly
+    // (until select/move lands). Clamp so the image stays on the canvas.
+    const double off = std::min(0.04 * images.size(), 0.30);
+    QJsonObject img;
+    img.insert(QStringLiteral("src"), src);
+    img.insert(QStringLiteral("x"), std::clamp((1.0 - wN) / 2.0 + off, 0.0, 1.0 - wN));
+    img.insert(QStringLiteral("y"), std::clamp((1.0 - hN) / 2.0 + off, 0.0, 1.0 - hN));
+    img.insert(QStringLiteral("w"), wN);
+    img.insert(QStringLiteral("h"), hN);
+    images.append(img);
+    root.insert(QStringLiteral("images"), images);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();   // one undo step per pasted image
+    return true;
+}
+
+bool BlockModel::sketchAddImageFromClipboard(int row) {
+    if (!mediaStore_) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
+    if (!ref.ok()) return false;
+    return sketchAppendImage(row, ref.src, ref.w, ref.h);
+}
+
+bool BlockModel::sketchAddImageFromUrl(int row, const QString& fileUrl) {
+    if (!mediaStore_) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);   // image only
+    if (!ref.ok()) return false;
+    return sketchAppendImage(row, ref.src, ref.w, ref.h);
+}
+
+QString BlockModel::sketchResolvedJson(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
+    if (!rows_[row].isSketch || !mediaStore_) return content_[row];
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QJsonArray images = root.value(QStringLiteral("images")).toArray();
+    if (images.isEmpty()) return content_[row];
+    QJsonArray out;
+    for (const QJsonValue& v : images) {
+        QJsonObject o = v.toObject();
+        o.insert(QStringLiteral("src"),
+                 mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString()));
+        out.append(o);
+    }
+    root.insert(QStringLiteral("images"), out);
+    return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
 int BlockModel::rowForId(const QString& id) const {
     for (size_t i = 0; i < ids_.size(); ++i)
         if (ids_[i] == id) return static_cast<int>(i);

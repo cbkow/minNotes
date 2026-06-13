@@ -29,7 +29,7 @@ Item {
     readonly property bool   isPdf: kind === "pdf"
     readonly property bool   isSketch: kind === "sketch"
     readonly property string sketchJson: (active && isSketch)
-        ? (mb._rev, blockModel.contentForRow(logicalRow)) : ""
+        ? (mb._rev, blockModel.sketchResolvedJson(logicalRow)) : ""
     property int  pdfPage: 0          // current page (driven by the editor's nav)
     readonly property string pdfPath: (active && isPdf) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""

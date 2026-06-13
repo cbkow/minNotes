@@ -19,7 +19,10 @@
 #include "viewport_annotator.h"
 
 #include <QColor>
+#include <QHash>
+#include <QImage>
 #include <QQuickPaintedItem>
+#include <QRectF>
 #include <QString>
 #include <QtQmlIntegration>
 
@@ -61,7 +64,7 @@ public:
     void setSourceWidth(int w);
     bool armed() const { return !toolName_.isEmpty(); }
     bool isDrawing() const { return drawing_; }
-    bool empty() const { return strokes_.empty(); }
+    bool empty() const { return strokes_.empty() && images_.empty(); }
 
     Q_INVOKABLE void cancelStroke();   // Esc mid-drag
 
@@ -87,6 +90,13 @@ private:
     void commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke);
     void eraseAt(QPointF norm);
     void setDrawing(bool d);
+    void parseImages(const QString &data);     // pull the `images` array from data_
+    const QImage &imageFor(const QString &src);   // cached load (src = resolved URL/path)
+
+    // A raster image embedded in the sketch (rendered beneath strokes). rect is
+    // normalized [0,1] of the canvas; src is a loadable URL/path (resolved by the
+    // model before binding).
+    struct SketchImage { QString src; QRectF rect; };
 
     QString data_;
     QString toolName_;
@@ -95,4 +105,6 @@ private:
 
     qcv::ViewportAnnotator annot_;
     std::vector<qcv::ActiveStroke> strokes_;   // parsed from data_
+    std::vector<SketchImage> images_;          // parsed from data_ (under the strokes)
+    QHash<QString, QImage> imgCache_;          // src → decoded image
 };
