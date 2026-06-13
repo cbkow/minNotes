@@ -44,6 +44,11 @@ class SketchCanvas : public QQuickPaintedItem
     Q_PROPERTY(bool armed READ armed NOTIFY toolChanged FINAL)
     Q_PROPERTY(bool drawing READ isDrawing NOTIFY drawingChanged FINAL)
     Q_PROPERTY(bool empty READ empty NOTIFY dataChanged FINAL)
+    // When true and no draw tool is armed, the canvas is in select/move mode
+    // (click an element to select, drag to move, Delete to remove). The inline
+    // embed leaves this false (passive); the full-frame tab sets it true.
+    Q_PROPERTY(bool selectable READ selectable WRITE setSelectable NOTIFY selectableChanged FINAL)
+    Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
     QML_ELEMENT
 
 public:
@@ -62,11 +67,16 @@ public:
     void setStrokeWidth(qreal w);
     int sourceWidth() const { return sourceWidth_; }
     void setSourceWidth(int w);
-    bool armed() const { return !toolName_.isEmpty(); }
+    bool armed() const { return drawToolActive_; }   // a real draw tool (not select)
     bool isDrawing() const { return drawing_; }
     bool empty() const { return strokes_.empty() && images_.empty(); }
+    bool selectable() const { return selectable_; }
+    void setSelectable(bool s);
+    bool hasSelection() const { return selKind_ != SelNone; }
 
-    Q_INVOKABLE void cancelStroke();   // Esc mid-drag
+    Q_INVOKABLE void cancelStroke();      // Esc mid-drag
+    Q_INVOKABLE void clearSelection();    // Esc / click empty
+    Q_INVOKABLE void deleteSelection();   // Delete / Backspace
 
 signals:
     void dataChanged();
@@ -75,9 +85,15 @@ signals:
     void strokeWidthChanged();
     void sourceWidthChanged();
     void drawingChanged();
-    // A finished mutation (stroke committed / stroke erased) — the stroke
-    // JSON in the engine's schema. QML commits it to the block model.
+    void selectableChanged();
+    void selectionChanged();
+    // A finished mutation (stroke committed / erased / moved / deleted) — the
+    // stroke JSON in the engine's schema. QML commits it to the block model.
     void edited(const QString &strokesJson);
+    // Image-element edits are index-based so the portable (doc-relative) src is
+    // never round-tripped through the canvas. QML commits via the block model.
+    void imageRectChanged(int index, qreal x, qreal y, qreal w, qreal h);
+    void imageRemoved(int index);
 
 protected:
     void mousePressEvent(QMouseEvent *e) override;
@@ -93,6 +109,20 @@ private:
     void parseImages(const QString &data);     // pull the `images` array from data_
     const QImage &imageFor(const QString &src);   // cached load (src = resolved URL/path)
 
+    // --- Selection / move (select mode = selectable_ && no tool armed) ---
+    enum SelKind { SelNone, SelStroke, SelImage };
+    // Select mode = selectable and not holding a real draw tool — so the explicit
+    // "select" tool AND a bare disarm ("") both land here.
+    bool inSelectMode() const { return selectable_ && !drawToolActive_; }
+    void applyAcceptedButtons();               // accept mouse iff drawing or selecting
+    void selectPress(QPointF pos);
+    void selectMove(QPointF pos);
+    void selectRelease();
+    int  hitTest(QPointF norm, SelKind &kindOut) const;   // topmost element, or SelNone
+    QRectF strokeBoundsNorm(int idx) const;    // normalized bbox of a stroke
+    QRectF selBoundsNorm() const;              // normalized bbox of the current selection
+    void translateSelection(QPointF dNorm);    // move (clamped to canvas), live
+
     // A raster image embedded in the sketch (rendered beneath strokes). rect is
     // normalized [0,1] of the canvas; src is a loadable URL/path (resolved by the
     // model before binding).
@@ -102,9 +132,17 @@ private:
     QString toolName_;
     int sourceWidth_ = 0;
     bool drawing_ = false;
+    bool selectable_ = false;
+    bool drawToolActive_ = false;              // a real draw tool is armed (not select)
 
     qcv::ViewportAnnotator annot_;
     std::vector<qcv::ActiveStroke> strokes_;   // parsed from data_
     std::vector<SketchImage> images_;          // parsed from data_ (under the strokes)
     QHash<QString, QImage> imgCache_;          // src → decoded image
+
+    SelKind selKind_ = SelNone;                // current selection
+    int     selIdx_ = -1;
+    bool    moving_ = false;                   // drag in progress
+    bool    moveDirty_ = false;                // the drag actually moved something
+    QPointF lastNorm_;                         // last pointer pos (normalized)
 };

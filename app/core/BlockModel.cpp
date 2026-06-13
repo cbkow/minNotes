@@ -1311,6 +1311,44 @@ QString BlockModel::sketchResolvedJson(int row) const {
     return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
 }
 
+void BlockModel::sketchSetImageRect(int row, int idx,
+                                    qreal x, qreal y, qreal w, qreal h) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    QJsonArray images = root.value(QStringLiteral("images")).toArray();
+    if (idx < 0 || idx >= images.size()) return;
+    QJsonObject o = images.at(idx).toObject();
+    o.insert(QStringLiteral("x"), x);  o.insert(QStringLiteral("y"), y);
+    o.insert(QStringLiteral("w"), w);  o.insert(QStringLiteral("h"), h);
+    images.replace(idx, o);
+    root.insert(QStringLiteral("images"), images);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+void BlockModel::sketchRemoveImage(int row, int idx) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    QJsonArray images = root.value(QStringLiteral("images")).toArray();
+    if (idx < 0 || idx >= images.size()) return;
+    images.removeAt(idx);
+    root.insert(QStringLiteral("images"), images);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
 int BlockModel::rowForId(const QString& id) const {
     for (size_t i = 0; i < ids_.size(); ++i)
         if (ids_[i] == id) return static_cast<int>(i);

@@ -320,6 +320,11 @@ public:
     // bytes or a file URL (image only).
     Q_INVOKABLE bool sketchAddImageFromClipboard(int row);
     Q_INVOKABLE bool sketchAddImageFromUrl(int row, const QString& fileUrl);
+    // Move/resize a sketch image element by index (normalized rect); one undo step.
+    Q_INVOKABLE void sketchSetImageRect(int row, int index,
+                                        qreal x, qreal y, qreal w, qreal h);
+    // Remove a sketch image element by index; one undo step.
+    Q_INVOKABLE void sketchRemoveImage(int row, int index);
     // The descriptor with each image's `src` resolved to a loadable URL (the
     // canvas binds THIS, not raw content — the stored src stays doc-relative).
     Q_INVOKABLE QString sketchResolvedJson(int row) const;

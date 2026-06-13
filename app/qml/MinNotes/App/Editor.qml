@@ -1466,6 +1466,7 @@ FocusScope {
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.drawing) { sketchEditCanvas.cancelStroke() }
             else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0)
                      && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
+            else if (root.activeSketchRow >= 0 && sketchEditCanvas.hasSelection) { sketchEditCanvas.clearSelection() }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
@@ -1499,8 +1500,13 @@ FocusScope {
         }
         // Sketch tab: the canvas is mouse-driven; swallow everything so typing
         // can't invisibly edit the hidden document. (cmd+Z above = doc undo —
-        // sketch strokes are document content, unlike video notes.)
-        else if (root.activeSketchRow >= 0) { event.accepted = true }
+        // sketch strokes are document content, unlike video notes.) Delete/
+        // Backspace removes the selected stroke/image when in select mode.
+        else if (root.activeSketchRow >= 0) {
+            if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && sketchEditCanvas.hasSelection)
+                sketchEditCanvas.deleteSelection()
+            event.accepted = true
+        }
         // Board mode: cards are mouse-driven; swallow everything else so typing
         // can't invisibly edit the grid underneath (tcur is still pinned to it).
         else if (root.boardMode && root.activeTableRow >= 0) { event.accepted = true }
@@ -3282,7 +3288,10 @@ FocusScope {
                     tool: (root.activeSketchRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
                     color: root.inspector ? root.inspector.drawColor : "#FF0000"
                     strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+                    selectable: true   // no tool armed → click-select / drag-move / Delete
                     onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
+                    onImageRectChanged: (i, x, y, w, h) => blockModel.sketchSetImageRect(sketchFrame.r, i, x, y, w, h)
+                    onImageRemoved: (i) => blockModel.sketchRemoveImage(sketchFrame.r, i)
                 }
                 Text {   // arm hint on a fresh canvas
                     visible: sketchEditCanvas.empty && !sketchEditCanvas.armed

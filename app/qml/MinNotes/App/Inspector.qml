@@ -160,6 +160,29 @@ Rectangle {
             Text { text: "Tools"
                    color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
+
+            // Select / move — only meaningful in a sketch tab (the studio has no
+            // stroke selection). Active whenever no draw tool is armed.
+            Rectangle {
+                visible: !!panel.editor && panel.editor.activeSketchRow >= 0
+                width: panel.contentW; height: 28
+                readonly property bool sel: panel.drawTool === "" || panel.drawTool === "select"
+                color: sel ? Theme.colors.divider
+                     : (selMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                Row {
+                    anchors.centerIn: parent; spacing: 6
+                    Icon { name: "cursor"; size: 15
+                           color: parent.parent.sel ? Theme.colors.textBright : Theme.colors.textMuted
+                           anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "Select / Move"
+                           color: parent.parent.sel ? Theme.colors.textBright : Theme.colors.textMuted
+                           font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                           anchors.verticalCenter: parent.verticalCenter }
+                }
+                MouseArea { id: selMA; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: panel.drawTool = "select" }
+            }
             Grid {
                 columns: 6; spacing: 4
                 Repeater {
