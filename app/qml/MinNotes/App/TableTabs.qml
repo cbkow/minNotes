@@ -50,9 +50,13 @@ Rectangle {
         return n === "" ? fallback : n
     }
 
-    // One tab. `active` highlights it; clicking selects it.
+    // One tab. `active` highlights it; clicking selects it. `tooltip` shows the
+    // full name on hover (media labels are truncated in the strip; defaults to
+    // the label for the numbered Table/Sketch/Document tabs).
     component TabBtn: Rectangle {
+        id: btn
         property string label: ""
+        property string tooltip: label
         property bool active: false
         signal clicked()
         width: tabLabel.implicitWidth + 36
@@ -73,6 +77,15 @@ Rectangle {
         }
         MouseArea { id: tabMA; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked() }
+        // Full name on hover — opens above the strip (it sits at the window's
+        // bottom edge). Left-aligned so long filenames extend rightward.
+        FlatToolTip {
+            parent: btn
+            x: 0
+            y: -implicitHeight - 6
+            visible: tabMA.containsMouse && btn.tooltip.length > 0
+            text: btn.tooltip
+        }
     }
 
     // Tab row — clips when it overflows the space left of the menu button.
@@ -105,6 +118,7 @@ Rectangle {
                 delegate: TabBtn {
                     required property string modelData
                     label: tabs._mediaLabel(modelData, "PDF")
+                    tooltip: tabs._fullName(modelData, "PDF")
                     active: tabs.activeId === modelData
                     onClicked: tabs._select(modelData)
                 }
@@ -114,6 +128,7 @@ Rectangle {
                 delegate: TabBtn {
                     required property string modelData
                     label: tabs._mediaLabel(modelData, "Video")
+                    tooltip: tabs._fullName(modelData, "Video")
                     active: tabs.activeId === modelData
                     onClicked: tabs._select(modelData)
                 }
@@ -193,7 +208,7 @@ Rectangle {
             contentWidth: width
             contentHeight: menuCol.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar { width: 14 }
+            ScrollBar.vertical: MnScrollBar {}
             Column {
                 id: menuCol
                 width: flick.width

@@ -92,6 +92,9 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Main.qml
         qml/MinNotes/App/Editor.qml
         qml/MinNotes/App/Theme.qml
+        qml/MinNotes/App/MnScrollBar.qml
+        qml/MinNotes/App/ThemedMenu.qml
+        qml/MinNotes/App/ThemedMenuSeparator.qml
         qml/MinNotes/App/Icon.qml
         qml/MinNotes/App/FlatButton.qml
         qml/MinNotes/App/FlatToolTip.qml
@@ -306,6 +309,22 @@ if(APPLE)
     else()
         message(STATUS "minNotes: external/Sparkle absent — auto-update disabled (no-op shim)")
     endif()
+endif()
+
+# ---- Windows: shipped binary name ---------------------------------
+# Name the output "minNotes.exe" (the product name) while the CMake target stays
+# "minnotesapp". The target itself can't be "minNotes" — a bare "minNotes" link
+# output collides with the "MinNotes" QML-module dir on case-insensitive
+# filesystems (same reason the APPLE block above uses OUTPUT_NAME, not a target
+# rename). OUTPUT_NAME only renames the binary, so minNotes.exe is safe (and the
+# .exe extension keeps it distinct from any MinNotes/ dir regardless).
+if(WIN32)
+    set_target_properties(minnotesapp PROPERTIES OUTPUT_NAME "minNotes")
+    # App icon: the MSVC linker embeds the ICON from the .rc (Explorer/taskbar/
+    # Alt-Tab + Qt's default window icon). minNotes.ico is generated from
+    # external/icons/minNotesWindows.svg by packaging/windows/build-icon.ps1.
+    target_sources(minnotesapp PRIVATE
+        "${CMAKE_SOURCE_DIR}/packaging/windows/minNotes.rc")
 endif()
 
 # ---- platform video/audio backends --------------------------------

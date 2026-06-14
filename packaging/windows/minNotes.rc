@@ -1,0 +1,5 @@
+// Windows application icon. The MSVC linker embeds the first ICON resource into
+// the .exe; Explorer, the taskbar, and Alt-Tab read it (and Qt uses it as the
+// default window/title-bar icon). minNotes.ico is built from
+// external/icons/minNotesWindows.svg by build-icon.ps1.
+IDI_ICON1 ICON "minNotes.ico"

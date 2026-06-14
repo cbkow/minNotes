@@ -1,5 +1,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQuickStyle>
+#include <QStyleHints>
 #include <QTimer>
 #include <QUrl>
 #include "MinNotesApplication.h"
@@ -30,6 +32,16 @@ int main(int argc, char *argv[])
     MinNotesApplication app(argc, argv);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
+
+    // Non-mac: use Fusion (the sister-app standard) so the in-window menu themes
+    // via `palette`, and force a dark color scheme so the window title bar
+    // matches the dark UI. Scrollbars are MnScrollBar (a T.ScrollBar component),
+    // so they're unaffected by the style. macOS keeps its native style + the
+    // Qt.labs.platform system menu bar.
+#ifndef Q_OS_MACOS
+    app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+    QQuickStyle::setStyle(QStringLiteral("Fusion"));
+#endif
 
     // The document model. Boots with no document (the welcome state); the File
     // menu / a passed file open or create one.

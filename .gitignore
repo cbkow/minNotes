@@ -13,6 +13,9 @@ compile_commands.json
 # Spike harness build dir (throwaway; sources kept for reference)
 /spike/build/
 
+# icontool helper build dir (the .ico/.png it renders ARE committed; build isn't)
+/packaging/windows/icontool/build/
+
 # KSyntaxHighlighting built from source (run external/build-ksyntax.sh)
 /external/kf6/
 /external/src/

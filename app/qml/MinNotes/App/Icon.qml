@@ -38,7 +38,25 @@ Item {
     width: size
     height: size
 
-    readonly property string _baseChar: PhosphorIcons.code[name] || ""
+    readonly property string _baseChar: _resolve(name)
+
+    // Resolve an icon name to its glyph. Most names are direct keys, but some
+    // entries in the (auto-generated) map are comma-joined aliases — e.g.
+    // "folder-open, folder-notch-open" — so a plain code[name] misses them.
+    // Fast-path the direct hit; on a miss, scan for the alias. (No cached map
+    // property: writing one inside this binding tripped a binding-loop warning.)
+    function _resolve(n) {
+        if (!n) return ""
+        var direct = PhosphorIcons.code[n]
+        if (direct !== undefined) return direct
+        for (var k in PhosphorIcons.code) {
+            if (k.indexOf(",") < 0) continue
+            var parts = k.split(",")
+            for (var i = 0; i < parts.length; ++i)
+                if (parts[i].trim() === n) return PhosphorIcons.code[k]
+        }
+        return ""
+    }
     readonly property string _fontFamily: weight === "fill"
         ? Theme.icon.familyFill
         : (weight === "duotone"

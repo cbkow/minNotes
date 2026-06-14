@@ -2480,17 +2480,7 @@ FocusScope {
             }
         }
 
-        ScrollBar.vertical: ScrollBar {
-            id: vbar
-            policy: ScrollBar.AsNeeded
-            width: Theme.dim.scrollBarWidth
-            contentItem: Rectangle {
-                radius: 0
-                color: Theme.colors.textSubtle
-                opacity: vbar.pressed ? 0.85 : (vbar.hovered ? 0.65 : 0.40)
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
-        }
+        ScrollBar.vertical: MnScrollBar {}
     }
 
     // --- Full-frame table view (the active table tab). Fills the editor; vertical
@@ -2581,15 +2571,7 @@ FocusScope {
             colDragging = false; rowDragging = false
             dragFrom = -1; dropGap = -1; gripC = -1; gripR = -1
         }
-        ScrollBar.vertical: ScrollBar {
-            id: fvbar
-            policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
-            contentItem: Rectangle {
-                radius: 0; color: Theme.colors.textSubtle
-                opacity: fvbar.pressed ? 0.85 : (fvbar.hovered ? 0.65 : 0.40)
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
-        }
+        ScrollBar.vertical: MnScrollBar {}
         BlockTable {
             id: frameTable
             suspended: root.windowResizing
@@ -2875,24 +2857,8 @@ FocusScope {
         contentHeight: Math.max(height, boardView.implicitHeight + 40)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar {
-            id: bvbar
-            policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
-            contentItem: Rectangle {
-                radius: 0; color: Theme.colors.textSubtle
-                opacity: bvbar.pressed ? 0.85 : (bvbar.hovered ? 0.65 : 0.40)
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
-        }
-        ScrollBar.horizontal: ScrollBar {
-            id: bhbar
-            policy: ScrollBar.AsNeeded; height: Theme.dim.scrollBarWidth
-            contentItem: Rectangle {
-                radius: 0; color: Theme.colors.textSubtle
-                opacity: bhbar.pressed ? 0.85 : (bhbar.hovered ? 0.65 : 0.40)
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
-        }
+        ScrollBar.vertical: MnScrollBar {}
+        ScrollBar.horizontal: MnScrollBar {}
         BlockKanban {
             id: boardView
             suspended: root.windowResizing
@@ -3065,15 +3031,7 @@ FocusScope {
             spacing: 10
             cacheBuffer: Math.round(height * 1.5)
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar {
-                id: pdfPagesBar
-                policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
-                contentItem: Rectangle {
-                    radius: 0; color: Theme.colors.textSubtle
-                    opacity: pdfPagesBar.pressed ? 0.85 : (pdfPagesBar.hovered ? 0.65 : 0.40)
-                    Behavior on opacity { NumberAnimation { duration: 120 } }
-                }
-            }
+            ScrollBar.vertical: MnScrollBar {}
             delegate: Item {
                 required property int index
                 readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
@@ -3114,6 +3072,10 @@ FocusScope {
         color: Theme.colors.bg
         readonly property int r: root.activeVideoRow
         readonly property real notesPanelH: 320   // taller filmstrip → more room for long notes (stage shrinks to fit)
+        // When true, the on-video annotation overlay is hidden so the clip can
+        // be watched clean. The filmstrip notes list is unaffected; toggled from
+        // the tile under "Add note".
+        property bool annotationsHidden: false
 
         // image://videoframe poster URL (base64url path @ frame) — the stage
         // shows the banked frame until the decoder paints its first one.
@@ -3177,7 +3139,8 @@ FocusScope {
                     // the decoder publishes the sought frame later (first
                     // seek especially) — ink over a blank/stale stage reads
                     // as "annotations without the screenshot".
-                    visible: studioSurface.visible
+                    // Also hidden when the user toggles a clean (notes-off) view.
+                    visible: studioSurface.visible && !studioFrame.annotationsHidden
                     notes: vnotes
                     sourceWidth: studioStage.vw
                     // Load-bearing reads only (reactivity rule 1e).
@@ -3228,8 +3191,8 @@ FocusScope {
 
             Rectangle {   // add-note tile (sticky left)
                 id: addNoteTile
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom
-                          topMargin: 13; bottomMargin: 12; leftMargin: 12 }
+                anchors { left: parent.left; top: parent.top; bottom: hideTile.top
+                          topMargin: 13; bottomMargin: 8; leftMargin: 12 }
                 width: 96
                 color: addNoteMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
                 border.width: 1; border.color: Theme.colors.border
@@ -3262,6 +3225,38 @@ FocusScope {
                 }
             }
 
+            Rectangle {   // hide/show the on-video annotation overlay (clean view)
+                id: hideTile
+                anchors { left: parent.left; bottom: parent.bottom
+                          leftMargin: 12; bottomMargin: 12 }
+                width: 96; height: 40
+                color: studioFrame.annotationsHidden ? Theme.colors.accentMuted
+                     : (hideMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                border.width: 1
+                border.color: studioFrame.annotationsHidden ? Theme.colors.accent : Theme.colors.border
+                Row {
+                    anchors.centerIn: parent; spacing: 6
+                    Icon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: studioFrame.annotationsHidden ? "eye" : "eye-slash"
+                        size: 16
+                        color: studioFrame.annotationsHidden ? Theme.colors.textBright : Theme.colors.textMuted
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: studioFrame.annotationsHidden ? "Show" : "Hide"
+                        color: studioFrame.annotationsHidden ? Theme.colors.textBright : Theme.colors.textMuted
+                        font.family: Theme.font.family; font.pixelSize: 12
+                    }
+                }
+                MouseArea {
+                    id: hideMA
+                    anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: studioFrame.annotationsHidden = !studioFrame.annotationsHidden
+                }
+            }
+
             Text {   // empty state, in the filmstrip's space
                 visible: vnotes.count === 0 && !vnotes.loading
                 anchors.centerIn: parent
@@ -3279,15 +3274,7 @@ FocusScope {
                 spacing: 12
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.horizontal: ScrollBar {
-                    id: vnotesBar
-                    policy: ScrollBar.AsNeeded; height: Theme.dim.scrollBarWidth
-                    contentItem: Rectangle {
-                        radius: 0; color: Theme.colors.textSubtle
-                        opacity: vnotesBar.pressed ? 0.85 : (vnotesBar.hovered ? 0.65 : 0.40)
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
-                    }
-                }
+                ScrollBar.horizontal: MnScrollBar {}
                 // The revision read must be LOAD-BEARING (ternary), not a
                 // comma-tuple: qmlcachegen elides a discarded left operand,
                 // killing the dependency capture — the strip then never
@@ -3326,8 +3313,13 @@ FocusScope {
                                 anchors.fill: parent
                                 // Revision-keyed source: the PNG lands async
                                 // after the note is minted — each bump retries.
+                                // A Windows drive path (C:/…) needs file:/// (the
+                                // bare "file://" + "C:/…" parses C: as a host and
+                                // drops the colon); a POSIX path (/…) needs file://.
                                 source: modelData.image !== ""
-                                    ? "file://" + modelData.image + "?v=" + vnotes.revision : ""
+                                    ? (modelData.image.charAt(0) === "/" ? "file://" : "file:///")
+                                      + modelData.image + "?v=" + vnotes.revision
+                                    : ""
                                 asynchronous: true; cache: false
                                 fillMode: Image.PreserveAspectFit
                                 sourceSize.width: Math.round(220 * Screen.devicePixelRatio)

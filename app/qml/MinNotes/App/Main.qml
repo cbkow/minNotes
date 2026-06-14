@@ -54,41 +54,107 @@ ApplicationWindow {
         }
     }
 
-    // --- Native macOS menu bar (Qt.labs.platform → system menu bar) ---
-    Platform.MenuBar {
-        Platform.Menu {
-            title: qsTr("File")
-            Platform.MenuItem { text: qsTr("New");   shortcut: StandardKey.New;  onTriggered: blockModel.newDocument() }
-            Platform.MenuItem { text: qsTr("Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
+    // --- Menu bar. macOS uses the native Qt.labs.platform system menu bar
+    // (a Component created on macOS only). Windows/Linux use an in-window Qt
+    // Quick Controls MenuBar themed via Fusion `palette` + the ThemedMenu
+    // wrapper — the sister-app pattern (Fusion honors palette, so plain
+    // Action/MenuItem need no custom delegates). Both are created in
+    // Component.onCompleted so the Windows menu's shortcut Actions exist only on
+    // that platform (no double-binding with the macOS native menu). ---
+    Component {
+        id: macMenuBarComp
+        Platform.MenuBar {
             Platform.Menu {
-                id: recentMenu
-                title: qsTr("Open Recent")
-                Instantiator {
-                    model: win.recents
-                    delegate: Platform.MenuItem {
-                        required property var modelData
-                        text: win.baseName(modelData)
-                        onTriggered: blockModel.openDocument(modelData)
+                title: qsTr("File")
+                Platform.MenuItem { text: qsTr("New");   shortcut: StandardKey.New;  onTriggered: blockModel.newDocument() }
+                Platform.MenuItem { text: qsTr("Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
+                Platform.Menu {
+                    id: recentMenu
+                    title: qsTr("Open Recent")
+                    Instantiator {
+                        model: win.recents
+                        delegate: Platform.MenuItem {
+                            required property var modelData
+                            text: win.baseName(modelData)
+                            onTriggered: blockModel.openDocument(modelData)
+                        }
+                        onObjectAdded: (i, obj) => recentMenu.insertItem(i, obj)
+                        onObjectRemoved: (i, obj) => recentMenu.removeItem(obj)
                     }
-                    onObjectAdded: (i, obj) => recentMenu.insertItem(i, obj)
-                    onObjectRemoved: (i, obj) => recentMenu.removeItem(obj)
+                    Platform.MenuSeparator {}
+                    Platform.MenuItem { text: qsTr("Clear Menu"); onTriggered: recentsStore.paths = "[]" }
                 }
                 Platform.MenuSeparator {}
-                Platform.MenuItem { text: qsTr("Clear Menu"); onTriggered: recentsStore.paths = "[]" }
+                Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
+                Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
+                Platform.MenuSeparator {}
+                Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: blockModel.closeDocument() }
+                Platform.MenuSeparator {}
+                // ApplicationSpecificRole keeps it in place rather than merging
+                // into a system role. No-op on builds without Sparkle vendored.
+                Platform.MenuItem {
+                    text: qsTr("Check for Updates…")
+                    role: Platform.MenuItem.ApplicationSpecificRole
+                    onTriggered: appUpdater.checkForUpdates()
+                }
             }
-            Platform.MenuSeparator {}
-            Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
-            Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
-            Platform.MenuSeparator {}
-            Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: blockModel.closeDocument() }
-            Platform.MenuSeparator {}
-            // Sparkle "Check for Updates…" (ApplicationSpecificRole keeps it in
-            // place rather than being merged into a system role). No-op on builds
-            // without Sparkle vendored.
-            Platform.MenuItem {
-                text: qsTr("Check for Updates…")
-                role: Platform.MenuItem.ApplicationSpecificRole
-                onTriggered: appUpdater.checkForUpdates()
+        }
+    }
+
+    Component {
+        id: winMenuBarComp
+        MenuBar {
+            // Match the palette/inspector panel: surfaceRaised fill + bottom
+            // hairline border; Fusion reads palette for the items + hover.
+            palette.window:          Theme.colors.surfaceRaised
+            palette.windowText:      Theme.colors.text
+            palette.button:          Theme.colors.surfaceRaised
+            palette.buttonText:      Theme.colors.text
+            palette.highlight:       Theme.colors.surfaceHover
+            palette.highlightedText: Theme.colors.textBright
+            background: Rectangle {
+                color: Theme.colors.surfaceRaised
+                Rectangle {
+                    anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                    height: 1
+                    color: Theme.colors.border
+                }
+            }
+            ThemedMenu {
+                title: qsTr("&File")
+                Action { text: qsTr("&New");   shortcut: StandardKey.New;  onTriggered: blockModel.newDocument() }
+                Action { text: qsTr("&Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
+                ThemedMenu {
+                    id: winRecentMenu
+                    title: qsTr("Open &Recent")
+                    width: 360
+                    // Repeater (vs Instantiator + insertItem): rebuilds cleanly
+                    // when the recents list bumps-to-front on open.
+                    Repeater {
+                        model: win.recents
+                        MenuItem {
+                            required property var modelData
+                            text: win.baseName(modelData)
+                            onTriggered: blockModel.openDocument(modelData)
+                        }
+                    }
+                    Repeater { model: win.recents.length > 0 ? 1 : 0; ThemedMenuSeparator {} }
+                    Repeater {
+                        model: win.recents.length === 0 ? 1 : 0
+                        MenuItem { text: qsTr("(none)"); enabled: false }
+                    }
+                    Repeater {
+                        model: win.recents.length > 0 ? 1 : 0
+                        MenuItem { text: qsTr("Clear Menu"); onTriggered: recentsStore.paths = "[]" }
+                    }
+                }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
+                Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: blockModel.closeDocument() }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("Check for &Updates…"); onTriggered: appUpdater.checkForUpdates() }
             }
         }
     }
@@ -127,6 +193,10 @@ ApplicationWindow {
         }
         if (winState.maximized) win.showMaximized()
         _geomRestored = true
+        // macOS: native system menu bar. Windows/Linux: in-window themed bar
+        // assigned as the window menuBar.
+        if (Qt.platform.os === "osx") macMenuBarComp.createObject(win)
+        else win.menuBar = winMenuBarComp.createObject(win)
     }
     function _captureGeometry() {
         if (!_geomRestored) return
@@ -153,25 +223,25 @@ ApplicationWindow {
         // editor is null while no document is open — the rail/inspector guard it,
         // and the welcome overlay covers everything.
         readonly property var editor: docContent.item ? docContent.item.editorItem : null
-        LeftRail { id: rail; height: parent.height; editor: parent.editor; inspector: inspector }
+        LeftRail { id: rail; height: parent.height; editor: parent.editor; inspector: inspectorPanel }
         // The editor surface only exists while a document is open, so no binding
         // ever queries the empty model (which would index empty vectors → crash).
         Loader {
             id: docContent
             active: blockModel.documentOpen
-            width: parent.width - rail.width - inspector.width; height: parent.height
+            width: parent.width - rail.width - inspectorPanel.width; height: parent.height
             sourceComponent: Column {
                 anchors.fill: parent
                 property alias editorItem: editorInner
                 // The validated passive-surface editor (model owns the cursor; blocks
                 // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
                 Editor { id: editorInner; width: parent.width; height: parent.height - innerTabs.height - innerBottom.height
-                         inspector: inspector }
+                         inspector: inspectorPanel }
                 TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
                 BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
             }
         }
-        Inspector { id: inspector; height: parent.height; editor: parent.editor }
+        Inspector { id: inspectorPanel; height: parent.height; editor: parent.editor }
     }
 
     // --- No-document welcome state: covers the (empty) editor until a document is
