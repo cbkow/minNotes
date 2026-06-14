@@ -8,8 +8,10 @@
 - **`entitlements.plist`** — hardened-runtime entitlements for Developer ID
   signing (library-validation off, network client, user-selected file access).
 - **`minNotesMacOS.png`** — the committed 1024² icon master. The CMake build
-  renders the legacy `.icns` (macOS 13–25) from it via `sips`/`iconutil`. This
-  is the only icon asset a fresh clone needs.
+  renders the legacy `.icns` (macOS 13–25) from it via `sips`/`iconutil`. The
+  source art + the layered `.icon` bundle are committed under `external/icons/`,
+  so both the legacy `.icns` and the macOS-26 `Assets.car` are reproducible from
+  a clean clone.
 
 ## Regenerating the icon master
 
@@ -26,7 +28,7 @@ magick /tmp/mn_art.png -background none -gravity center -extent 1024x1024 \
 
 ## macOS 26 layered icon
 
-`external/icons/minNotesMacOS.icon` (Icon Composer bundle, gitignored) is
+`external/icons/minNotesMacOS.icon` (Icon Composer bundle, committed) is
 compiled to `Assets.car` by `xcrun actool` when present (needs full Xcode).
 macOS 26+ then applies its own squircle + Liquid Glass via `CFBundleIconName`.
 The build skips it gracefully (legacy `.icns` only) when the `.icon` or actool

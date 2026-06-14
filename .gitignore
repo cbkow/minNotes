@@ -28,11 +28,6 @@ compile_commands.json
 # The CMake bundle block guards on its presence, so the build works without it.
 /external/Sparkle/
 
-# Icon Composer upstream drops (the layered .icon + source SVGs). The committed
-# render is packaging/macos/minNotesMacOS.png; the .icon is needed only to
-# regenerate Assets.car on macOS 26 builds.
-/external/icons/
-
 # Sparkle EdDSA PRIVATE key. `generate_keys -x` exports it to a plaintext file —
 # it must NEVER be committed (the private key signs every future auto-update).
 # It belongs in the login Keychain + an out-of-repo backup. The PUBLIC key is in

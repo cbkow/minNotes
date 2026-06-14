@@ -69,7 +69,7 @@ Two valid paths — **decide with the updater/packaging choice (§4/§6)**:
 
 ## 3. App icon  ❌ not started (source art ready)
 
-- Source: `external/icons/minNotesWindows.svg` already exists (gitignored). Unlike
+- Source: `external/icons/minNotesWindows.svg` already exists (committed). Unlike
   macOS, Windows has **no system squircle/mortise** — the `.ico` art should bake
   in its own background/rounding (QCView ships `qcview.png` with the squircle
   baked, separate from the transparent mac art). Confirm `minNotesWindows.svg`
