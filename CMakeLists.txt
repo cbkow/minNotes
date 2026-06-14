@@ -139,3 +139,11 @@ else()
 endif()
 
 add_subdirectory(app)
+
+# Opt-in headless regression harness for the BlockModel document-state fixes.
+# Off by default so normal/release builds stay lean; enable with
+# -DMINNOTES_BUILD_TESTS=ON, then build + run the mn_regression_test target.
+option(MINNOTES_BUILD_TESTS "Build the headless regression test" OFF)
+if(MINNOTES_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

@@ -142,7 +142,12 @@ void Document::appendBlock(const QString& id, const QString& rank, int depth,
     q.addBindValue(depth);
     q.addBindValue(type);
     q.addBindValue(attrs);
-    q.addBindValue(content);
+    // content is NOT NULL in the schema. A null QString (e.g. a freshly inserted
+    // empty paragraph/divider — insertBlock/insertDivider pass QString()) binds as
+    // SQL NULL and the INSERT fails the constraint, so the row is never created;
+    // a later updateContent (a plain UPDATE) then finds no row and the block's
+    // typed content is lost on reopen. Coalesce null → "" so empty blocks persist.
+    q.addBindValue(content.isNull() ? QString(QLatin1String("")) : content);
     q.addBindValue(now);
     q.addBindValue(now);
     if (!q.exec())
