@@ -23,6 +23,11 @@ compile_commands.json
 # binaries (macOS dylibs / Windows lib+dll), not built from this tree.
 /external/ffmpeg/
 
+# Vendored WinSparkle (Windows auto-update). Binary lib+dll copied from ufb's
+# external/winsparkle; not built here. The CMake WIN32 block guards on its
+# presence, so the build works without it (no-op updater shim).
+/external/winsparkle/
+
 # Aspekta font upstream package (only the used .ttf are vendored in app/.../fonts/)
 /external/aspekta/
 
@@ -41,3 +46,7 @@ sparkle_private_key*.txt
 # already ignored above — this is a safety net for stray copies before upload).
 /*.dmg
 /*.zip
+
+# Windows installer output (Inno Setup writes it next to the .iss). Built by
+# packaging/windows/build-release.ps1; uploaded to the release host, not committed.
+/packaging/windows/minNotes-*-x64.exe

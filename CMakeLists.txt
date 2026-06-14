@@ -10,10 +10,19 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 project(MinNotes
-    VERSION 0.1.1
+    VERSION 0.1.2
     DESCRIPTION "minNotes — block-based markdown notes editor"
     LANGUAGES CXX
 )
+
+# Auto-update signing: the Ed25519 PUBLIC key the updater verifies releases
+# against (Sparkle on macOS via Info.plist SUPublicEDKey; WinSparkle on Windows
+# via win_sparkle_set_eddsa_public_key — compiled into the Windows updater). The
+# matching PRIVATE key lives only in the macOS login Keychain (+ an out-of-repo
+# backup) and signs every release; it is NEVER committed. Same key as the sister
+# apps so one keychain key signs them all. Override with -D to rotate.
+set(MINNOTES_UPDATE_PUBLIC_KEY "+Xlrad3WswxIRTyzBTp8KaTEjyfPO5Ap4llmPdZf3RQ="
+    CACHE STRING "Ed25519 public key for auto-update signature verification")
 
 # C++20: ink-stroke-modeler (the studio's stroke smoothing) requires it,
 # and QCView builds the same way. Was 17 until 2026-06-11.

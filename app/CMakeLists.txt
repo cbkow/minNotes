@@ -320,11 +320,86 @@ endif()
 # .exe extension keeps it distinct from any MinNotes/ dir regardless).
 if(WIN32)
     set_target_properties(minnotesapp PROPERTIES OUTPUT_NAME "minNotes")
-    # App icon: the MSVC linker embeds the ICON from the .rc (Explorer/taskbar/
-    # Alt-Tab + Qt's default window icon). minNotes.ico is generated from
-    # external/icons/minNotesWindows.svg by packaging/windows/build-icon.ps1.
-    target_sources(minnotesapp PRIVATE
-        "${CMAKE_SOURCE_DIR}/packaging/windows/minNotes.rc")
+
+    # ---- App icon + version resource (.rc) ----------------------------
+    # The MSVC linker embeds the ICON (Explorer/taskbar/Alt-Tab + Qt's default
+    # window icon) AND a VS_VERSION_INFO block (Properties > Details). The .rc is
+    # generated from minNotes.rc.in with the project version substituted, so the
+    # exe self-reports its version. minNotes.ico comes from
+    # external/icons/minNotesWindows.svg via packaging/windows/build-icon.ps1.
+    set(MN_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/packaging/windows/minNotes.ico")
+    set(MN_VER_MAJOR ${PROJECT_VERSION_MAJOR})
+    set(MN_VER_MINOR ${PROJECT_VERSION_MINOR})
+    set(MN_VER_PATCH ${PROJECT_VERSION_PATCH})
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/packaging/windows/minNotes.rc.in"
+        "${CMAKE_BINARY_DIR}/minNotes.rc" @ONLY)
+    target_sources(minnotesapp PRIVATE "${CMAKE_BINARY_DIR}/minNotes.rc")
+
+    # ---- WinSparkle auto-update --------------------------------------
+    # Vendored under external/winsparkle (gitignored; copied from ufb). When
+    # present, compile the WinSparkle bridge, define MINNOTES_HAVE_WINSPARKLE +
+    # the app version (the updater's compare value) + the shared Ed25519 public
+    # key, link the import lib, and copy WinSparkle.dll next to the exe. When
+    # absent the bridge stays a no-op (header) and the build still succeeds.
+    set(_mn_winsparkle "${CMAKE_SOURCE_DIR}/external/winsparkle")
+    if(EXISTS "${_mn_winsparkle}/include/winsparkle.h")
+        target_sources(minnotesapp PRIVATE winsparkle_updater_windows.cpp)
+        target_compile_definitions(minnotesapp PRIVATE
+            MINNOTES_HAVE_WINSPARKLE
+            "MINNOTES_APP_VERSION=\"${PROJECT_VERSION}\""
+            "MINNOTES_UPDATE_PUBLIC_KEY=\"${MINNOTES_UPDATE_PUBLIC_KEY}\"")
+        target_include_directories(minnotesapp PRIVATE "${_mn_winsparkle}/include")
+        target_link_libraries(minnotesapp PRIVATE "${_mn_winsparkle}/lib/WinSparkle.lib")
+        add_custom_command(TARGET minnotesapp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_mn_winsparkle}/bin/WinSparkle.dll"
+                "$<TARGET_FILE_DIR:minnotesapp>/WinSparkle.dll"
+            COMMENT "Sync WinSparkle.dll next to minNotes.exe" VERBATIM)
+        message(STATUS "minNotes: WinSparkle vendored — auto-update enabled")
+    else()
+        message(STATUS "minNotes: external/winsparkle absent — auto-update disabled (no-op shim)")
+    endif()
+
+    # ---- windeployqt: Qt DLLs + plugins + QML modules next to the exe -
+    # --qmldir scans the QML imports so the right modules (incl. the Fusion
+    # Quick Controls style we select at runtime) get deployed. Flags mirror ufb.
+    get_target_property(_mn_qmake Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_mn_qt_bin "${_mn_qmake}" DIRECTORY)
+    set(_mn_windeployqt "${_mn_qt_bin}/windeployqt.exe")
+    if(EXISTS "${_mn_windeployqt}")
+        add_custom_command(TARGET minnotesapp POST_BUILD
+            COMMAND "${_mn_windeployqt}"
+                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                --no-translations
+                --no-system-d3d-compiler
+                --no-opengl-sw
+                --no-compiler-runtime
+                "$<TARGET_FILE:minnotesapp>"
+            COMMENT "Running windeployqt (Qt DLLs + plugins + QML modules)"
+            VERBATIM)
+    else()
+        message(WARNING "minNotes: windeployqt not found at ${_mn_windeployqt} "
+            "— the build tree won't be self-contained for packaging.")
+    endif()
+
+    # ---- Vendored runtime DLLs (FFmpeg + KSyntaxHighlighting) ---------
+    # windeployqt only handles Qt; these vendored libs must sit next to the exe
+    # for the packaged app to run on a clean machine. KF6SyntaxHighlighting.dll
+    # backs code-block highlighting; the FFmpeg DLLs back the video engine.
+    set(_mn_extra_dlls "")
+    file(GLOB _mn_ffmpeg_dlls "${MINNOTES_FFMPEG_ROOT}/bin/*.dll")
+    list(APPEND _mn_extra_dlls ${_mn_ffmpeg_dlls})
+    if(EXISTS "${CMAKE_SOURCE_DIR}/external/kf6/bin/KF6SyntaxHighlighting.dll")
+        list(APPEND _mn_extra_dlls "${CMAKE_SOURCE_DIR}/external/kf6/bin/KF6SyntaxHighlighting.dll")
+    endif()
+    foreach(_dll IN LISTS _mn_extra_dlls)
+        get_filename_component(_dn "${_dll}" NAME)
+        add_custom_command(TARGET minnotesapp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_dll}" "$<TARGET_FILE_DIR:minnotesapp>/${_dn}"
+            COMMENT "Sync ${_dn} next to minNotes.exe" VERBATIM)
+    endforeach()
 endif()
 
 # ---- platform video/audio backends --------------------------------
