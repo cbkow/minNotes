@@ -3,6 +3,10 @@
 # (ld: "Is a directory"). The app title and URI stay "minNotes".
 qt_add_executable(minnotesapp
     main.cpp
+    MinNotesApplication.h
+    MinNotesApplication.cpp
+    AppUpdater.h                 # Q_OBJECT — Sparkle "Check for Updates" bridge
+    sparkle_updater_macos.h
     core/FenwickTree.h
     core/BlockModel.h
     core/BlockModel.cpp
@@ -165,6 +169,145 @@ target_link_libraries(minnotesapp PRIVATE
 target_include_directories(minnotesapp PRIVATE
     ${CMAKE_BINARY_DIR}/_deps/ink_stroke_modeler-src)
 
+# ---- macOS .app bundle: Info.plist, icons, Sparkle ----------------
+# Turns minnotesapp into minnotesapp.app with a custom Info.plist (URI scheme
+# minnotes://, the .mndb document type + exported UTI, Sparkle SU* keys), a
+# proper Finder/dock icon (legacy .icns for macOS 13–25 + the Tahoe layered
+# .icon for 26+), and the vendored Sparkle.framework embedded in Frameworks/.
+if(APPLE)
+    set_target_properties(minnotesapp PROPERTIES
+        MACOSX_BUNDLE TRUE
+        # The .app + inner executable are named "minNotes" (the product name)
+        # while the CMake target stays "minnotesapp". The target can't be
+        # "minNotes" — on case-insensitive APFS that bare link output collides
+        # with the "MinNotes" QML-module dir in app/. But OUTPUT_NAME only names
+        # the bundle output (app/minNotes.app/Contents/MacOS/minNotes), which
+        # lives under the .app and never as a bare app/minNotes — so no clash.
+        OUTPUT_NAME "minNotes"
+        # rpath: Sparkle (+ any future bundled dylibs) resolve from the app's
+        # Frameworks/. BUILD_RPATH also keeps the FFmpeg lib dir so the dev .app
+        # launches from the build tree (the DMG step copies FFmpeg into
+        # Frameworks/ + restamps @rpath; INSTALL_RPATH is the shipped form).
+        INSTALL_RPATH "@executable_path/../Frameworks"
+        BUILD_RPATH   "@executable_path/../Frameworks;${MINNOTES_FFMPEG_ROOT}/lib")
+
+    # ---- Legacy raster icon (.icns, macOS 13–25) ----------------------
+    # iconutil + sips are part of the macOS toolchain (no extra deps). Source
+    # is the committed 1024² transparent master (foreground mark, no baked
+    # squircle — macOS 26 applies its own mortise to the layered .icon below).
+    # The master is regenerated from external/icons/minNotesMacOS.svg via
+    # rsvg-convert + magick (see packaging/macos/README).
+    set(MN_ICON_PNG    "${CMAKE_SOURCE_DIR}/packaging/macos/minNotesMacOS.png")
+    set(MN_ICONSET_DIR "${CMAKE_BINARY_DIR}/minnotes.iconset")
+    set(MN_ICNS_FILE   "${CMAKE_BINARY_DIR}/minnotes.icns")
+    add_custom_command(
+        OUTPUT  "${MN_ICNS_FILE}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${MN_ICONSET_DIR}"
+        COMMAND sips -z 16   16   "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_16x16.png"
+        COMMAND sips -z 32   32   "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_16x16@2x.png"
+        COMMAND sips -z 32   32   "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_32x32.png"
+        COMMAND sips -z 64   64   "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_32x32@2x.png"
+        COMMAND sips -z 128  128  "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_128x128.png"
+        COMMAND sips -z 256  256  "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_128x128@2x.png"
+        COMMAND sips -z 256  256  "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_256x256.png"
+        COMMAND sips -z 512  512  "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_256x256@2x.png"
+        COMMAND sips -z 512  512  "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_512x512.png"
+        COMMAND sips -z 1024 1024 "${MN_ICON_PNG}" --out "${MN_ICONSET_DIR}/icon_512x512@2x.png"
+        COMMAND iconutil -c icns "${MN_ICONSET_DIR}" -o "${MN_ICNS_FILE}"
+        DEPENDS "${MN_ICON_PNG}"
+        COMMENT "Generating minnotes.icns from ${MN_ICON_PNG}"
+        VERBATIM)
+    set_source_files_properties("${MN_ICNS_FILE}"
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+    target_sources(minnotesapp PRIVATE "${MN_ICNS_FILE}")
+
+    # ---- Tahoe layered app icon (.icon → Assets.car, macOS 26+) -------
+    # external/icons/minNotesMacOS.icon is the Icon Composer bundle (a
+    # gray-gradient fill layer + the foreground mark). actool compiles it to
+    # Assets.car; macOS 26 reads CFBundleIconName + Assets.car and applies the
+    # system squircle + Liquid Glass. The asset name MUST match --app-icon and
+    # CFBundleIconName. Guarded on the asset + actool (full Xcode) so the build
+    # stays green without them — older macOS keeps the .icns above.
+    set(MN_APPICON_ICON "${CMAKE_SOURCE_DIR}/external/icons/minNotesMacOS.icon")
+    set(MN_APPICON_NAME "minNotesMacOS")
+    set(MN_ICON_NAME_BLOCK "")
+    if(EXISTS "${MN_APPICON_ICON}")
+        set(MN_ASSETS_DIR "${CMAKE_BINARY_DIR}/AppIconAssets")
+        set(MN_ASSETS_CAR "${MN_ASSETS_DIR}/Assets.car")
+        add_custom_command(
+            OUTPUT  "${MN_ASSETS_CAR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MN_ASSETS_DIR}"
+            COMMAND xcrun actool "${MN_APPICON_ICON}"
+                    --compile "${MN_ASSETS_DIR}"
+                    --output-format human-readable-text
+                    --notices --warnings --errors
+                    --output-partial-info-plist "${MN_ASSETS_DIR}/partial.plist"
+                    --app-icon "${MN_APPICON_NAME}" --include-all-app-icons
+                    --enable-on-demand-resources NO
+                    --development-region en
+                    --target-device mac
+                    --minimum-deployment-target 26.0
+                    --platform macosx
+            DEPENDS "${MN_APPICON_ICON}"
+            COMMENT "Compiling ${MN_APPICON_NAME}.icon → Assets.car (actool)"
+            VERBATIM)
+        set_source_files_properties("${MN_ASSETS_CAR}"
+            PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        target_sources(minnotesapp PRIVATE "${MN_ASSETS_CAR}")
+        # Real newline inside the string so configure_file emits two plist lines.
+        set(MN_ICON_NAME_BLOCK
+"    <key>CFBundleIconName</key>
+    <string>${MN_APPICON_NAME}</string>")
+        message(STATUS "minNotes: Tahoe layered icon ${MN_APPICON_NAME}.icon → Assets.car")
+    else()
+        message(STATUS "minNotes: ${MN_APPICON_ICON} not found — legacy .icns only")
+    endif()
+
+    # ---- Info.plist (conditional CFBundleIconName) --------------------
+    # configure_file rather than CMake's MACOSX_BUNDLE_* auto-substitution, so
+    # CFBundleIconName is injected ONLY when Assets.car ships (else macOS 26
+    # would point at a missing asset → blank icon). The template references the
+    # bundle vars in ${...} form; @MN_ICON_NAME_BLOCK@ is the @VAR@ form.
+    set(MACOSX_BUNDLE_EXECUTABLE_NAME "minNotes")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist.in"
+        "${CMAKE_BINARY_DIR}/Info.plist")
+    set_target_properties(minnotesapp PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist")
+
+    # ---- Sparkle auto-update ------------------------------------------
+    # Vendored under external/Sparkle (gitignored; copied from QCView /
+    # fetched via the GitHub release). When present, compile the .mm bridge,
+    # define MINNOTES_HAVE_SPARKLE, link -framework Sparkle, and ditto the
+    # framework into Contents/Frameworks (ditto preserves the Versions symlink
+    # layout cmake -E copy_directory would flatten + break signing). When
+    # absent the bridge stays a no-op and the build still succeeds (dev builds
+    # without update support; the DMG release script ensures it's vendored).
+    set(MN_SPARKLE_DIR "${CMAKE_SOURCE_DIR}/external/Sparkle")
+    if(EXISTS "${MN_SPARKLE_DIR}/Sparkle.framework")
+        target_sources(minnotesapp PRIVATE sparkle_updater_macos.mm)
+        target_compile_definitions(minnotesapp PRIVATE MINNOTES_HAVE_SPARKLE)
+        # -F at compile time so `#import <Sparkle/Sparkle.h>` resolves, and at
+        # link time so `-framework Sparkle` finds it.
+        target_compile_options(minnotesapp PRIVATE "-F${MN_SPARKLE_DIR}")
+        target_link_options(minnotesapp PRIVATE "-F${MN_SPARKLE_DIR}")
+        target_link_libraries(minnotesapp PRIVATE "-framework Sparkle")
+        add_custom_command(TARGET minnotesapp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:minnotesapp>/../Frameworks"
+            COMMAND ditto
+                "${MN_SPARKLE_DIR}/Sparkle.framework"
+                "$<TARGET_FILE_DIR:minnotesapp>/../Frameworks/Sparkle.framework"
+            COMMENT "Embedding Sparkle.framework into minNotes.app/Contents/Frameworks"
+            VERBATIM)
+        message(STATUS "minNotes: Sparkle vendored — auto-update enabled")
+    else()
+        message(STATUS "minNotes: external/Sparkle absent — auto-update disabled (no-op shim)")
+    endif()
+endif()
+
 # ---- platform video/audio backends --------------------------------
 if(APPLE)
     # Metal zero-copy bridge + CoreVideo CVPixelBuffer handle (frame_handle.mm),
@@ -182,11 +325,10 @@ if(APPLE)
         "-framework AudioToolbox"
         "-framework CoreAudio"
         "-framework AudioUnit")
-    # The @rpath/lib*.dylib install_names of the vendored FFmpeg resolve via
-    # this build-tree rpath (dev runs the unbundled binary). A future .app
-    # bundle step would instead copy them to Contents/Frameworks + @executable_path.
-    set_target_properties(minnotesapp PROPERTIES
-        BUILD_RPATH "${MINNOTES_FFMPEG_ROOT}/lib")
+    # FFmpeg rpath is set in the .app bundle block above (BUILD_RPATH carries
+    # both @executable_path/../Frameworks for Sparkle and the FFmpeg lib dir so
+    # the dev .app resolves the @rpath/lib*.dylib install_names from the build
+    # tree; the DMG step copies them into Frameworks/).
 elseif(WIN32)
     # Windows hwaccel: FFmpeg decodes ProRes into Vulkan VkImages (shared
     # VkDevice), a Vulkan compute YUV->RGB pass composites into a D3D11-shared

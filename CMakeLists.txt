@@ -1,7 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
 
+# Deployment floor — minNotes targets macOS 13.0+ (same as QCView). MUST be set
+# BEFORE project() so the compiler/linker pick it up for every target. Test for
+# emptiness (not just DEFINED): CMake/Qt seed an empty cache entry, so a plain
+# `NOT DEFINED` guard would skip and the SDK default (host version) would win.
+# FORCE overwrites that empty entry.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
 project(MinNotes
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "minNotes — block-based markdown notes editor"
     LANGUAGES CXX
 )

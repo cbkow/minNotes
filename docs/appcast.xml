@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>minNotes</title>
+    <link>https://minnotes.app/appcast.xml</link>
+    <description>minNotes macOS updates</description>
+    <language>en</language>
+    <!-- @@APPCAST_INSERT@@ -->
+    <item>
+      <title>Version 0.1.1</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>0.1.1</sparkle:version>
+      <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+      <ul><li>See the release notes at https://github.com/cbkow/minNotes/releases/tag/v0.1.1</li></ul>
+      ]]></description>
+      <pubDate>Sat, 13 Jun 2026 23:25:01 -0400</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v0.1.1/minNotes-MacOS.dmg"
+        sparkle:edSignature="46Ly5ErU3pCxgkIwxRbjou4aAQnGop9UBnJWeBwOuUwf7usChD7itxjgLyN22UU7rWC2KhwKJV2A513WLQY3BQ=="
+        length="96676191"
+        type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>

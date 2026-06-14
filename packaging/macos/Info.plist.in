@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+    <key>CFBundleIdentifier</key>
+    <string>app.minnotes</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>minNotes</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+    <key>CFBundleVersion</key>
+    <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <!-- Legacy raster icon (macOS 13–25). On macOS 26+ the layered .icon
+         (CFBundleIconName → Assets.car) takes over; the CFBundleIconName
+         line below is injected by CMake ONLY when the .icon is present, so
+         we never point at a missing Assets.car entry. -->
+    <key>CFBundleIconFile</key>
+    <string>minnotes.icns</string>
+@MN_ICON_NAME_BLOCK@
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+
+    <!-- ================================================================ -->
+    <!-- Sparkle auto-update (macOS). Appcast on the minnotes.app Pages    -->
+    <!-- site; daily background checks; no anonymized system profiling.   -->
+    <!-- SUPublicEDKey MUST be replaced with the real Ed25519 public key   -->
+    <!-- printed by external/Sparkle/bin/generate_keys (private key lives  -->
+    <!-- in the login Keychain + a base64 backup in the maintainer vault). -->
+    <!-- ================================================================ -->
+    <key>SUFeedURL</key>
+    <string>https://minnotes.app/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>+Xlrad3WswxIRTyzBTp8KaTEjyfPO5Ap4llmPdZf3RQ=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUEnableSystemProfiling</key>
+    <false/>
+
+    <!-- ================================================================ -->
+    <!-- Document Types — minNotes documents (.mndb), owned by this app.   -->
+    <!-- ================================================================ -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>minNotes Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>app.minnotes.mndb</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- ================================================================ -->
+    <!-- Custom URI Scheme (minnotes:// deep links)                       -->
+    <!-- minnotes:///abs/path/doc.mndb opens that document. Handled via    -->
+    <!-- QFileOpenEvent in MinNotesApplication → resolveAndOpen in main.   -->
+    <!-- ================================================================ -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>minNotes Document URI</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>minnotes</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+    </array>
+
+    <!-- ================================================================ -->
+    <!-- Exported Type Declarations (the .mndb type owned by minNotes).    -->
+    <!-- An SQLite-backed document; conforms to public.database so Finder  -->
+    <!-- and Spotlight treat it as a single data file.                     -->
+    <!-- ================================================================ -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>app.minnotes.mndb</string>
+            <key>UTTypeDescription</key>
+            <string>minNotes Document</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.database</string>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>mndb</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

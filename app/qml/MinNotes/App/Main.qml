@@ -81,6 +81,15 @@ ApplicationWindow {
             Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
             Platform.MenuSeparator {}
             Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: blockModel.closeDocument() }
+            Platform.MenuSeparator {}
+            // Sparkle "Check for Updates…" (ApplicationSpecificRole keeps it in
+            // place rather than being merged into a system role). No-op on builds
+            // without Sparkle vendored.
+            Platform.MenuItem {
+                text: qsTr("Check for Updates…")
+                role: Platform.MenuItem.ApplicationSpecificRole
+                onTriggered: appUpdater.checkForUpdates()
+            }
         }
     }
 

@@ -10,9 +10,10 @@ release:
     cmake --preset=release
     cmake --build --preset=release --parallel
 
-# Run the dev binary.
+# Run the dev binary. MACOSX_BUNDLE makes the target a .app; run the inner
+# executable directly (not `open`) so stdout/stderr land in this terminal.
 run:
-    ./build/debug/app/minnotesapp
+    ./build/debug/app/minNotes.app/Contents/MacOS/minNotes
 
 # Remove build artifacts.
 clean:
