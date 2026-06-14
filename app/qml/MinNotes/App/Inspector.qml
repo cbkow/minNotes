@@ -55,16 +55,22 @@ Rectangle {
     function targetColor() {
         return target === "fg" ? fgColor : target === "bg" ? bgColor : drawColor
     }
+    // Picking a colour auto-applies it to the document selection (live). But a
+    // PROGRAMMATIC picker.value set (tab switch, init, revert) must NOT — so route
+    // those through setPickerValue, which suppresses the apply during the assign.
+    property bool _suppressApply: false
+    function setPickerValue(v) { _suppressApply = true; picker.value = v; _suppressApply = false }
+
     // Switching target retargets the picker — deselect first, or the reassign
     // would write the OTHER target's colour into the selected swatch.
     onTargetChanged: { selPreset = -1; selUser = -1
-                       picker.value = targetColor() }
+                       setPickerValue(targetColor()) }
     function revertTarget() {                           // reset the active colour to its default
         selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
         if (target === "fg")      fgColor = Theme.colors.textBright
         else if (target === "bg") bgColor = "#FFEC59"
         else                      drawColor = "#FF0000"
-        picker.value = targetColor()
+        setPickerValue(targetColor())
     }
 
     // --- Swatches: a FIXED bright preset grid + a row of user slots. Clicking
@@ -161,10 +167,11 @@ Rectangle {
                    color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
 
-            // Select / move — only meaningful in a sketch tab (the studio has no
-            // stroke selection). Active whenever no draw tool is armed.
+            // Select / move — in a sketch tab or the video studio. Active whenever
+            // no draw tool is armed.
             Rectangle {
-                visible: !!panel.editor && panel.editor.activeSketchRow >= 0
+                visible: !!panel.editor && (panel.editor.activeSketchRow >= 0
+                                            || panel.editor.activeVideoRow >= 0)
                 width: panel.contentW; height: 28
                 readonly property bool sel: panel.drawTool === "" || panel.drawTool === "select"
                 color: sel ? Theme.colors.divider
@@ -254,8 +261,15 @@ Rectangle {
                     else if (panel.target === "bg") panel.bgColor = value
                     else                            panel.drawColor = value
                     panel.noteEdit(value)               // selected swatch tracks the edit
+                    // Live auto-apply to the document selection (text / highlight),
+                    // unless this is a programmatic value set (tab switch / revert).
+                    // Text colour also arms the typing "pen" (pickTextColor).
+                    if (!panel._suppressApply && panel.editor) {
+                        if (panel.target === "fg")      panel.editor.pickTextColor("" + value)
+                        else if (panel.target === "bg") panel.editor.applyColorToSelection(false, "" + value, true)
+                    }
                 }
-                Component.onCompleted: value = panel.fgColor
+                Component.onCompleted: panel.setPickerValue(panel.fgColor)   // init: no apply/arm
             }
 
             // (Apply lives on the left rail's bottom swatches — pick here, apply there.)

@@ -287,15 +287,7 @@ void SketchCanvas::clearSelection()
 QRectF SketchCanvas::strokeBoundsNorm(int idx) const
 {
     if (idx < 0 || idx >= int(strokes_.size())) return {};
-    const qcv::ActiveStroke &s = strokes_[size_t(idx)];
-    if (s.points.empty()) return {};
-    double minX = s.points.front().x(), maxX = minX;
-    double minY = s.points.front().y(), maxY = minY;
-    for (const QPointF &pt : s.points) {
-        minX = std::min(minX, pt.x()); maxX = std::max(maxX, pt.x());
-        minY = std::min(minY, pt.y()); maxY = std::max(maxY, pt.y());
-    }
-    return QRectF(minX, minY, maxX - minX, maxY - minY);
+    return qcv::strokeBoundsNorm(strokes_[size_t(idx)]);   // oval-aware (shared)
 }
 
 QRectF SketchCanvas::selBoundsNorm() const
@@ -351,7 +343,13 @@ void SketchCanvas::translateSelection(QPointF dNorm)
     double dy = std::clamp(dNorm.y(), -b.top(),  1.0 - b.bottom());
     if (dx == 0.0 && dy == 0.0) return;
     if (selKind_ == SelStroke) {
-        for (QPointF &pt : strokes_[size_t(selIdx_)].points) pt += QPointF(dx, dy);
+        qcv::ActiveStroke &s = strokes_[size_t(selIdx_)];
+        // Oval stores {center, radii}: move the centre only (translating the
+        // radii vector would resize it).
+        if (s.tool == qcv::DrawingTool::Oval && !s.points.empty())
+            s.points[0] += QPointF(dx, dy);
+        else
+            for (QPointF &pt : s.points) pt += QPointF(dx, dy);
     } else {
         images_[size_t(selIdx_)].rect.translate(dx, dy);
     }
@@ -457,9 +455,15 @@ void SketchCanvas::resizeTo(QPointF norm)
     if (s <= 0) return;
     moveDirty_ = true;
     if (selKind_ == SelStroke && origPoints_.size() == strokes_[size_t(selIdx_)].points.size()) {
-        std::vector<QPointF> &pts = strokes_[size_t(selIdx_)].points;
-        for (size_t i = 0; i < pts.size(); ++i)
-            pts[i] = pivot + (origPoints_[i] - pivot) * s;
+        qcv::ActiveStroke &st = strokes_[size_t(selIdx_)];
+        std::vector<QPointF> &pts = st.points;
+        if (st.tool == qcv::DrawingTool::Oval && pts.size() >= 2) {
+            pts[0] = pivot + (origPoints_[0] - pivot) * s;   // centre scales about pivot
+            pts[1] = origPoints_[1] * s;                     // radii scale by s
+        } else {
+            for (size_t i = 0; i < pts.size(); ++i)
+                pts[i] = pivot + (origPoints_[i] - pivot) * s;
+        }
     } else if (selKind_ == SelImage) {
         const QPointF far = pivot + QPointF(dxs, dys) * s;
         images_[size_t(selIdx_)].rect =

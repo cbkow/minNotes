@@ -128,7 +128,9 @@ public:
     // `marks` = armed typing attributes applied to the inserted run (Word-style):
     // bit 1 = bold, 2 = italic, 4 = code. Applied inside the insert transaction
     // so a run of armed typing still coalesces into one undo step.
-    Q_INVOKABLE void insertText(int row, int col, const QString& text, int marks = 0);
+    Q_INVOKABLE void insertText(int row, int col, const QString& text, int marks = 0,
+                                const QString& fgColor = QString(),
+                                const QString& bgColor = QString());
     Q_INVOKABLE void splitBlock(int row, int col);
 
     // Smart multi-block paste: split `text` into blocks (blank lines separate;
@@ -157,6 +159,10 @@ public:
     // Explicit add/remove + a coverage query, so the editor can apply a uniform
     // decision across a multi-block selection.
     Q_INVOKABLE bool hasFormat(int row, int start, int end, const QString& kind) const;
+    // True if [start,end) is fully covered by spans of `kind` (7=fg, 8=highlight)
+    // whose payload == value. Drives the colour toggles' lit/remove state.
+    Q_INVOKABLE bool payloadSpanCovers(int row, int start, int end,
+                                       int kind, const QString& value) const;
     Q_INVOKABLE void setFormat(int row, int start, int end, const QString& kind, bool on);
     // Links: a SpanLink carries a URL target. setLink over [start,end) replaces any
     // link spans there; an empty url removes them. linkAt returns the URL of a link
@@ -165,8 +171,12 @@ public:
     Q_INVOKABLE QString linkAt(int row, int col) const;
     // Text color / highlight over [start,end): an empty color removes that kind.
     // (Both ride the same payload-span path as links.)
-    Q_INVOKABLE void setTextColor(int row, int start, int end, const QString& color);
-    Q_INVOKABLE void setHighlight(int row, int start, int end, const QString& color);
+    // `coalesce` (non-empty) merges a live run of recolouring (picker drag) into
+    // one undo step, the way typing coalesces.
+    Q_INVOKABLE void setTextColor(int row, int start, int end, const QString& color,
+                                  const QString& coalesce = QString());
+    Q_INVOKABLE void setHighlight(int row, int start, int end, const QString& color,
+                                  const QString& coalesce = QString());
     // The [s,e] range of a link span covering `col` (for "edit this link" with no
     // selection), or an empty list if none.
     Q_INVOKABLE QVariantList linkRangeAt(int row, int col) const;
@@ -426,9 +436,14 @@ private:
     // Interval ops on one row's spans (same-kind): union-cover test, add+merge,
     // and subtract a range. Offsets shift via shiftSpans on edits.
     static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind);
-    void setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload);
+    void setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload,
+                        const QString& coalesce = QString());
     static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
+    // Like addSpan but for a payload span (colour): clears same-kind coverage in
+    // [start,end), adds the run, and coalesces with same-payload neighbours.
+    static void applyPayloadRun(std::vector<Span>& v, int start, int end,
+                                uint8_t kind, const QString& payload);
     static void shiftSpansInsert(std::vector<Span>& v, int at, int len);
     static void shiftSpansDelete(std::vector<Span>& v, int from, int to);
     // Table cells store spans as a JSON array ({s,e,k,u?}); convert to/from the

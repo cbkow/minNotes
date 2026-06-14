@@ -537,12 +537,16 @@ FocusScope {
         // Word-style armed typing attributes (active when nothing is selected):
         // bold=1, italic=2, code=4. Applied to typed text; cleared on caret nav.
         property int activeMarks: 0
+        // Persistent "type colour" (the pen): set by picking a text colour in the
+        // palette; typed text gets it. "" = default. Cleared on caret nav (like the
+        // armed marks), so it survives a typed run but not navigating away.
+        property string armedFg: ""
         function toggleMark(kind) {
             var bit = kind === "bold" ? 1 : kind === "italic" ? 2 : kind === "code" ? 4
                     : kind === "strike" ? 8 : kind === "underline" ? 16 : 0
             if (bit) activeMarks ^= bit
         }
-        function clearMarks() { activeMarks = 0 }
+        function clearMarks() { activeMarks = 0; armedFg = "" }
 
         // The caret stays hidden until the user first interacts (click / key /
         // type), so the app opens with nothing active. sync() is the chokepoint
@@ -626,7 +630,7 @@ FocusScope {
                 blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0)
             }
             if (hasSel) deleteSelection()
-            blockModel.insertText(focusRow, focusCol, ch, activeMarks)   // armed attrs → span the run
+            blockModel.insertText(focusRow, focusCol, ch, activeMarks, armedFg)   // armed attrs + pen colour → span the run
             setCaret(focusRow, focusCol + ch.length)
             // Markdown autoformat fires on the space that completes a prefix
             // (e.g. "## "): the prefix is consumed, so pull the caret back.
@@ -1064,25 +1068,48 @@ FocusScope {
         cursor.sync()
     }
 
-    // Right-rail colour tools: recolour / highlight the current selection (no-op
-    // without one for now). One grouped undo step.
-    function applyTextColor(color) {
-        var hex = "" + color
-        if (tcur.active) { applyTableColor(true, hex); return }   // table: text colour
+    // Colour is palette-driven: picking a colour applies it LIVE to the current
+    // selection (text colour or highlight per the palette tab). No selection →
+    // nothing (the palette just holds the persistent colour). `coalesce` merges a
+    // picker drag into one undo step.
+    function applyTextColor(color) { applyColorToSelection(true,  "" + color, false) }
+    function applyHighlight(color)  { applyColorToSelection(false, "" + color, false) }
+    // Picking a TEXT colour in the palette: arm it as the pen (so the next typing
+    // is that colour), apply it to any active selection, and pull focus back to
+    // the document so typing continues immediately without re-clicking.
+    function pickTextColor(hex) {
+        cursor.armedFg = "" + hex
+        if (cursor.hasSel) applyColorToSelection(true, "" + hex, true)
+        forceActiveFocus()
+    }
+    function applyColorToSelection(isFg, hex, coalesce) {
+        if (tcur.active) { applyTableColor(isFg, hex); return }   // table: colour the cell(s)
         if (!cursor.hasSel) return
-        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
-        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
-            blockModel.setTextColor(r, rowSelStart(r), rowSelEnd(r), hex)
-        blockModel.endGroup()
+        var key = coalesce ? (isFg ? "fgcolor" : "bgcolor") : ""
+        if (cursor.loRow === cursor.hiRow) {
+            var s = rowSelStart(cursor.loRow), e = rowSelEnd(cursor.loRow)
+            if (isFg) blockModel.setTextColor(cursor.loRow, s, e, hex, key)
+            else      blockModel.setHighlight(cursor.loRow, s, e, hex, key)
+        } else {
+            blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+            for (var r = cursor.loRow; r <= cursor.hiRow; ++r) {
+                if (isFg) blockModel.setTextColor(r, rowSelStart(r), rowSelEnd(r), hex)
+                else      blockModel.setHighlight(r, rowSelStart(r), rowSelEnd(r), hex)
+            }
+            blockModel.endGroup()
+        }
         cursor.sync()
     }
-    function applyHighlight(color) {
-        var hex = "" + color
-        if (tcur.active) { applyTableColor(false, hex); return }  // table: cell background
-        if (!cursor.hasSel) return
-        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
-        for (var r = cursor.loRow; r <= cursor.hiRow; ++r)
-            blockModel.setHighlight(r, rowSelStart(r), rowSelEnd(r), hex)
+    // Paragraph button: reset the selected block(s) to a plain paragraph (clears
+    // heading / quote / list / task / code-block). Lit when already a paragraph —
+    // the "nothing else" state.
+    function setParagraph() {
+        var lo = cursor.loRow, hi = cursor.hiRow
+        blockModel.beginGroup(lo, hi)
+        for (var r = lo; r <= hi; ++r) {
+            var t = blockModel.typeForRow(r)
+            if (t === 1 || t === 2 || t === 4 || t === 5 || t === 8) blockModel.setBlockType(r, 0)
+        }
         blockModel.endGroup()
         cursor.sync()
     }
@@ -1467,12 +1494,13 @@ FocusScope {
             else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0)
                      && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.hasSelection) { sketchEditCanvas.clearSelection() }
+            else if (root.activeVideoRow >= 0 && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
             else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
-            else if (cursor.activeMarks !== 0) { cursor.clearMarks() }
+            else if (cursor.activeMarks !== 0 || cursor.armedFg !== "") { cursor.clearMarks() }
             event.accepted = true
         }
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
@@ -1491,7 +1519,9 @@ FocusScope {
         // Video studio: transport keys, then swallow everything else so typing
         // can't invisibly edit the hidden document underneath.
         else if (root.activeVideoRow >= 0) {
-            if (k === Qt.Key_Space) { root.ensureVideoActive(root.activeVideoRow); root.toggleVideo() }
+            if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && studioAnnotator.hasSelection)
+                studioAnnotator.deleteSelection()
+            else if (k === Qt.Key_Space) { root.ensureVideoActive(root.activeVideoRow); root.toggleVideo() }
             else if (k === Qt.Key_Left)  { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(-1) }
             else if (k === Qt.Key_Right) { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(1) }
             else if (k === Qt.Key_Home)  { root.ensureVideoActive(root.activeVideoRow); root.seekVideoStart() }
@@ -2914,12 +2944,22 @@ FocusScope {
             spacing: 10
             cacheBuffer: Math.round(height * 1.5)
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ScrollBar.vertical: ScrollBar {
+                id: pdfPagesBar
+                policy: ScrollBar.AsNeeded; width: Theme.dim.scrollBarWidth
+                contentItem: Rectangle {
+                    radius: 0; color: Theme.colors.textSubtle
+                    opacity: pdfPagesBar.pressed ? 0.85 : (pdfPagesBar.hovered ? 0.65 : 0.40)
+                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                }
+            }
             delegate: Item {
                 required property int index
                 readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
                     ? pdfFrameDoc.pagePointSize(index) : Qt.size(8.5, 11)
-                readonly property real pageW: pdfList.width - Theme.dim.scrollBarWidth - 8   // gutter
+                // Reserve a full scrollbar width on each side of the centered page
+                // so the (right-edge) vertical bar never overlaps it.
+                readonly property real pageW: pdfList.width - 2 * Theme.dim.scrollBarWidth - 8
                 width: pdfList.width
                 height: pts.width > 0 ? Math.round(pageW * pts.height / pts.width)
                                       : Math.round(pageW * 1.294)
@@ -2952,7 +2992,7 @@ FocusScope {
         anchors.fill: parent
         color: Theme.colors.bg
         readonly property int r: root.activeVideoRow
-        readonly property real notesPanelH: 264
+        readonly property real notesPanelH: 320   // taller filmstrip → more room for long notes (stage shrinks to fit)
 
         // image://videoframe poster URL (base64url path @ frame) — the stage
         // shows the banked frame until the decoder paints its first one.
@@ -3118,7 +3158,15 @@ FocusScope {
                 spacing: 12
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.horizontal: ScrollBar {
+                    id: vnotesBar
+                    policy: ScrollBar.AsNeeded; height: Theme.dim.scrollBarWidth
+                    contentItem: Rectangle {
+                        radius: 0; color: Theme.colors.textSubtle
+                        opacity: vnotesBar.pressed ? 0.85 : (vnotesBar.hovered ? 0.65 : 0.40)
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                    }
+                }
                 // The revision read must be LOAD-BEARING (ternary), not a
                 // comma-tuple: qmlcachegen elides a discarded left operand,
                 // killing the dependency capture — the strip then never
@@ -3137,7 +3185,10 @@ FocusScope {
                     readonly property bool current: root.videoPlayingRow === studioFrame.r
                         && videoDec.currentFrame === modelData.frame
                     width: 220
-                    height: noteStrip.height - 12
+                    // Shrink to clear the horizontal scrollbar when it's shown (card
+                    // width is fixed, so contentWidth doesn't depend on this — no loop).
+                    height: noteStrip.height
+                            - (noteStrip.contentWidth > noteStrip.width ? Theme.dim.scrollBarWidth + 6 : 12)
                     color: Theme.colors.surfaceRaised
                     border.width: 1
                     border.color: current ? Theme.colors.textBright : Theme.colors.border

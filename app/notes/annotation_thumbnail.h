@@ -24,12 +24,18 @@
 #include "active_stroke.h"
 
 #include <QImage>
+#include <QRectF>
 
 #include <vector>
 
 class QPainter;
 
 namespace qcv {
+
+// Normalized [0,1] bounding box of a stroke. Handles the shape encodings —
+// an Oval stores {center, radii}, not two corners — so callers (hit-testing,
+// selection) get the TRUE visual bounds, not the bbox of the raw points.
+QRectF strokeBoundsNorm(const ActiveStroke &s);
 
 // Draw one stroke (normalized [0,1] coords) onto a w×h pixel target.
 // strokeWidth is stored in SOURCE-pixel units; lineWidthScale maps it to

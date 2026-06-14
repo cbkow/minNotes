@@ -65,6 +65,8 @@ Rectangle {
     /// normal press+release for tap actions.
     signal pressed()
     signal released()
+    /// True while the cursor is over the button (for hover-driven flyouts).
+    readonly property bool hovered: ma.containsMouse
 
     // Resolved colors per variant + state.
     // No border at any state — checked-default uses an accentMuted

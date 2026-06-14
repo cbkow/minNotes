@@ -8,6 +8,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import QtCore
 
 Rectangle {
     id: rail
@@ -21,8 +22,14 @@ Rectangle {
     // the right hairline.
     readonly property int btnWidth: width - 2
 
-    // Collapsible-section state (proves the rail-grows-down direction).
-    property bool blocksOpen: true
+    // Per-section collapse state (persisted). Collapsed = a single icon whose
+    // hover reveals the options as a flyout menu; expanded = the options inline.
+    Settings {
+        id: railState
+        category: "rail"
+        property bool headingsCollapsed: true    // compact by default (avoids rail overflow); expands + persists
+        property bool blocksCollapsed: false
+    }
 
     // right hairline against the document page
     Rectangle {
@@ -72,21 +79,101 @@ Rectangle {
             }
         }
 
-        // ── Colours: apply text colour / highlight (current colour shown as an
-        // underbar), with the inspector toggle below them. Pick in the inspector;
-        // apply here.
-        ColorTool {
-            text: "A"; boldLabel: true; tooltip: "Apply text color"
+        // One option button — shared by the inline list AND the collapsed flyout.
+        // `item`: { icon, tip, isChecked?(caretType, caretLevel), act() }.
+        component RailOptionBtn: RailBtn {
+            property var item: ({})
+            signal picked()
+            iconName: item.icon || ""
+            tooltip: item.tip || ""
             enabled_: !!rail.editor
-            underColor: rail.inspector ? rail.inspector.fgColor : Theme.colors.textBright
-            onClicked: if (rail.editor) rail.act(function() { rail.editor.applyTextColor(rail.inspector.fgColor) })
+            checked: {
+                if (!rail.editor || !item.isChecked) return false
+                var t = rail.editor.caretType, lv = rail.editor.caretLevel   // reactive deps
+                return item.isChecked(t, lv)
+            }
+            onClicked: { rail.act(function() { item.act() }); picked() }
         }
-        ColorTool {
-            iconName: "highlighter"; tooltip: "Apply highlight"
-            enabled_: !!rail.editor
-            underColor: rail.inspector ? rail.inspector.bgColor : "#7a6a36"
-            onClicked: if (rail.editor) rail.act(function() { rail.editor.applyHighlight(rail.inspector.bgColor) })
+
+        // A rail group that's either EXPANDED (header + options inline) or
+        // COLLAPSED (just the header icon, whose HOVER reveals the options as a
+        // flyout menu). Collapsing folds options into the menu — never hides them.
+        component RailSection: Column {
+            id: section
+            property string repIcon: ""
+            property string repTooltip: ""
+            property bool repChecked: false
+            property var items: []
+            property bool collapsed: false
+            signal toggleCollapsed()
+            width: rail.btnWidth
+            spacing: 2
+
+            // Flyout open/close with a small grace so moving button→menu doesn't drop it.
+            readonly property bool hoverActive: repBtn.hovered || flyoutHover.hovered
+            property bool flyoutOpen: false
+            onHoverActiveChanged: { if (hoverActive && collapsed) { flyoutOpen = true; flyoutGuard.stop() }
+                                    else if (!hoverActive) flyoutGuard.restart() }
+            onCollapsedChanged: if (!collapsed) flyoutOpen = false
+            Timer { id: flyoutGuard; interval: 180; onTriggered: section.flyoutOpen = false }
+
+            // EXPANDED header: just the slim collapse caret (no full button).
+            RailChevron {
+                visible: !section.collapsed
+                iconName: "caret-down"
+                tooltip: section.repTooltip
+                onClicked: section.toggleCollapsed()
+            }
+            // COLLAPSED header: the full rep icon button + hover flyout of options.
+            RailBtn {
+                id: repBtn
+                visible: section.collapsed
+                iconName: section.repIcon
+                tooltip: ""                       // the flyout is the affordance
+                enabled_: !!rail.editor
+                checked: section.repChecked
+                onClicked: section.toggleCollapsed()
+                Icon {
+                    anchors.right: parent.right; anchors.rightMargin: 3
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "caret-right"; size: 9; color: Theme.colors.textSubtle
+                }
+                Popup {
+                    id: flyout
+                    parent: repBtn
+                    x: repBtn.width; y: 0
+                    padding: 4
+                    closePolicy: Popup.NoAutoClose
+                    visible: section.collapsed && section.flyoutOpen
+                    background: Rectangle { color: Theme.colors.surface; radius: 0
+                                            border.width: 1; border.color: Theme.colors.border }
+                    contentItem: Column {
+                        spacing: 2
+                        HoverHandler { id: flyoutHover }
+                        Repeater {
+                            model: section.items
+                            delegate: RailOptionBtn {
+                                required property var modelData
+                                item: modelData
+                                onPicked: section.flyoutOpen = false
+                            }
+                        }
+                    }
+                }
+            }
+            // EXPANDED: the options inline, under the caret.
+            Column {
+                width: parent.width; spacing: 2
+                visible: !section.collapsed
+                Repeater {
+                    model: section.items
+                    delegate: RailOptionBtn { required property var modelData; item: modelData }
+                }
+            }
         }
+
+        // ── Palette (top): opens the colour picker. Colours are applied LIVE to
+        // the selection by picking in the palette — no separate apply button. ──
         RailBtn {
             iconName: "palette"; tooltip: "Palette"
             enabled_: !!rail.editor
@@ -96,8 +183,15 @@ Rectangle {
 
         RailSep {}
 
-        // (Undo/redo moved to the bottom status rail.)
         // ── Format (act on the selection) ──
+        // Paragraph: reset the block to plain body text. Lit when the block is
+        // already a paragraph (the "nothing else" state). First, as the base style.
+        RailBtn {
+            iconName: "paragraph"; tooltip: "Paragraph"
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.caretType === 0
+            onClicked: rail.act(function() { rail.editor.setParagraph() })
+        }
         // Bold/italic/code: with a selection they apply to it; with no selection
         // they're a Word-style toggle (lit = armed for the next typing).
         RailBtn {
@@ -146,92 +240,42 @@ Rectangle {
 
         RailSep {}
 
-        // ── Headings → a popout menu (H1–H5). Acts on the caret's block; click the
-        // active level to toggle it off. ──
-        RailBtn {
-            id: headingsBtn
-            iconName: "text-h"; tooltip: "Headings"
-            enabled_: !!rail.editor
-            checked: !!rail.editor && rail.editor.caretType === 1
-            onClicked: headingMenu.visible ? headingMenu.close() : headingMenu.open()
-
-            Popup {
-                id: headingMenu
-                parent: headingsBtn
-                x: headingsBtn.width + 2
-                y: 0
-                padding: 4
-                background: Rectangle { color: Theme.colors.surface; border.width: 1; border.color: Theme.colors.border }
-                contentItem: Column {
-                    spacing: 2
-                    Repeater {
-                        model: 5
-                        delegate: FlatButton {
-                            required property int index
-                            readonly property int level: index + 1
-                            width: rail.btnWidth; implicitHeight: Theme.dim.toolStripHeight
-                            iconSize: Theme.icon.sizeToolbar; radius: 0
-                            iconName: ["text-h-one", "text-h-two", "text-h-three", "text-h-four", "text-h-five"][index]
-                            tooltip: "Heading " + level
-                            checked: !!rail.editor && rail.editor.caretType === 1 && rail.editor.caretLevel === level
-                            onClicked: { rail.act(function() { rail.editor.setHeading(level) }); headingMenu.close() }
-                        }
-                    }
-                }
-            }
+        // ── Headings (H1–H5). Inline by default; collapse → an "H" icon whose
+        // hover reveals the levels as a flyout. ──
+        RailSection {
+            repIcon: "text-h"; repTooltip: "Headings"
+            collapsed: railState.headingsCollapsed
+            repChecked: !!rail.editor && rail.editor.caretType === 1
+            onToggleCollapsed: railState.headingsCollapsed = !railState.headingsCollapsed
+            items: [
+                { icon: "text-h-one",   tip: "Heading 1", isChecked: function(t, lv){ return t === 1 && lv === 1 }, act: function(){ rail.editor.setHeading(1) } },
+                { icon: "text-h-two",   tip: "Heading 2", isChecked: function(t, lv){ return t === 1 && lv === 2 }, act: function(){ rail.editor.setHeading(2) } },
+                { icon: "text-h-three", tip: "Heading 3", isChecked: function(t, lv){ return t === 1 && lv === 3 }, act: function(){ rail.editor.setHeading(3) } },
+                { icon: "text-h-four",  tip: "Heading 4", isChecked: function(t, lv){ return t === 1 && lv === 4 }, act: function(){ rail.editor.setHeading(4) } },
+                { icon: "text-h-five",  tip: "Heading 5", isChecked: function(t, lv){ return t === 1 && lv === 5 }, act: function(){ rail.editor.setHeading(5) } }
+            ]
         }
 
         RailSep {}
 
-        // ── Blocks (collapsible). Quote/list toggle the caret block; divider
-        // inserts after it. ──
-        RailChevron {
-            iconName: rail.blocksOpen ? "caret-down" : "caret-right"
-            tooltip: "Blocks"
-            onClicked: rail.blocksOpen = !rail.blocksOpen
-        }
-        Column {
-            width: rail.btnWidth; spacing: 2
-            visible: rail.blocksOpen
-            RailBtn {
-                iconName: "quotes"; tooltip: "Quote"
-                enabled_: !!rail.editor
-                checked: !!rail.editor && rail.editor.caretType === 4
-                onClicked: rail.act(function() { rail.editor.toggleBlock(4) })
-            }
-            RailBtn {
-                iconName: "list-bullets"; tooltip: "Bullet list"
-                enabled_: !!rail.editor
-                checked: !!rail.editor && rail.editor.caretType === 5
-                onClicked: rail.act(function() { rail.editor.toggleBlock(5) })
-            }
-            RailBtn {
-                iconName: "check-square"; tooltip: "Task list"
-                enabled_: !!rail.editor
-                checked: !!rail.editor && rail.editor.caretType === 8
-                onClicked: rail.act(function() { rail.editor.toggleBlock(8) })
-            }
-            RailBtn {
-                iconName: "code-block"; tooltip: "Code block"
-                enabled_: !!rail.editor
-                checked: !!rail.editor && rail.editor.caretType === 2
-                onClicked: rail.act(function() { rail.editor.toggleCodeBlock() })
-            }
-            RailBtn {
-                iconName: "table"; tooltip: "Table"
-                enabled_: !!rail.editor
-                onClicked: rail.act(function() { rail.editor.insertTableAtCaret() })
-            }
-            RailBtn {
-                iconName: "scribble"; tooltip: "Sketch"
-                enabled_: !!rail.editor
-                onClicked: rail.act(function() { rail.editor.insertSketchAtCaret() })
-            }
-            RailBtn {
-                iconName: "minus"; tooltip: "Divider"
-                enabled_: !!rail.editor
-                onClicked: rail.act(function() { rail.editor.addDivider() })
-            }
+        // ── Blocks. Inline by default; collapse → a blocks icon whose hover
+        // reveals the options as a flyout. Quote/list/task/code toggle the caret
+        // block; table/sketch/divider insert. ──
+        RailSection {
+            repIcon: "squares-four"; repTooltip: "Blocks"
+            collapsed: railState.blocksCollapsed
+            repChecked: !!rail.editor && (rail.editor.caretType === 2 || rail.editor.caretType === 4
+                                          || rail.editor.caretType === 5 || rail.editor.caretType === 8)
+            onToggleCollapsed: railState.blocksCollapsed = !railState.blocksCollapsed
+            items: [
+                { icon: "quotes",        tip: "Quote",      isChecked: function(t){ return t === 4 }, act: function(){ rail.editor.toggleBlock(4) } },
+                { icon: "list-bullets",  tip: "Bullet list",isChecked: function(t){ return t === 5 }, act: function(){ rail.editor.toggleBlock(5) } },
+                { icon: "check-square",  tip: "Task list",  isChecked: function(t){ return t === 8 }, act: function(){ rail.editor.toggleBlock(8) } },
+                { icon: "code-block",    tip: "Code block", isChecked: function(t){ return t === 2 }, act: function(){ rail.editor.toggleCodeBlock() } },
+                { icon: "table",         tip: "Table",      act: function(){ rail.editor.insertTableAtCaret() } },
+                { icon: "scribble",      tip: "Sketch",     act: function(){ rail.editor.insertSketchAtCaret() } },
+                { icon: "minus",         tip: "Divider",    act: function(){ rail.editor.addDivider() } }
+            ]
         }
     }
 }

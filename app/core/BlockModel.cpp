@@ -556,6 +556,27 @@ bool BlockModel::hasFormat(int row, int start, int end, const QString& kind) con
     return spansCover(rows_[row].spans, start, end, k);
 }
 
+bool BlockModel::payloadSpanCovers(int row, int start, int end,
+                                   int kind, const QString& value) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end) return false;
+    std::vector<std::pair<int,int>> segs;
+    for (const Span& sp : rows_[row].spans)
+        if (sp.kind == static_cast<uint8_t>(kind) && sp.href == value
+            && sp.e > start && sp.s < end)
+            segs.emplace_back(sp.s, sp.e);
+    std::sort(segs.begin(), segs.end());
+    int cov = start;
+    for (const auto& seg : segs) {
+        if (seg.first > cov) break;          // gap before this segment
+        cov = std::max(cov, seg.second);
+        if (cov >= end) return true;
+    }
+    return cov >= end;
+}
+
 void BlockModel::setFormat(int row, int start, int end, const QString& kind, bool on) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     const uint8_t k = spanKindFromString(kind);
@@ -1819,6 +1840,28 @@ void BlockModel::addSpan(std::vector<Span>& v, int start, int end, uint8_t kind)
     v.insert(v.end(), merged.begin(), merged.end());
 }
 
+// Add a payload (colour) run: a span carrying a value, where same-kind spans of
+// a DIFFERENT value must not coexist over the same chars. Clear the kind's
+// coverage in [start,end), add the run, then coalesce adjacent same-value spans.
+void BlockModel::applyPayloadRun(std::vector<Span>& v, int start, int end,
+                                 uint8_t kind, const QString& payload) {
+    if (start >= end || payload.isEmpty()) return;
+    removeSpan(v, start, end, kind);                       // run owns this range
+    std::vector<Span> same, others;
+    for (const Span& sp : v) (sp.kind == kind ? same : others).push_back(sp);
+    same.push_back({start, end, kind, payload});
+    std::sort(same.begin(), same.end(), [](const Span& a, const Span& b){ return a.s < b.s; });
+    std::vector<Span> merged;
+    for (const Span& sp : same) {
+        if (!merged.empty() && sp.s <= merged.back().e && sp.href == merged.back().href)
+            merged.back().e = std::max(merged.back().e, sp.e);
+        else
+            merged.push_back(sp);
+    }
+    v = others;
+    v.insert(v.end(), merged.begin(), merged.end());
+}
+
 // Subtract [start,end) from same-kind spans (splitting where it lands inside).
 void BlockModel::removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
     if (start >= end) return;
@@ -1869,7 +1912,8 @@ QVariantList BlockModel::spansForRow(int row) const {
 // A payload span (link/color/highlight) over [start,end): drop any same-kind span
 // overlapping the range (they don't merge — each carries its own URL/color), then
 // add the new one if a payload was given (empty = remove that kind here).
-void BlockModel::setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload) {
+void BlockModel::setPayloadSpan(int row, int start, int end, uint8_t kind,
+                                const QString& payload, const QString& coalesce) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     const int len = content_[row].size();
     start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
@@ -1885,16 +1929,18 @@ void BlockModel::setPayloadSpan(int row, int start, int end, uint8_t kind, const
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
-    endTxn();
+    endTxn(coalesce);
 }
 void BlockModel::setLink(int row, int start, int end, const QString& url) {
     setPayloadSpan(row, start, end, SpanLink, url);
 }
-void BlockModel::setTextColor(int row, int start, int end, const QString& color) {
-    setPayloadSpan(row, start, end, SpanFgColor, color);
+void BlockModel::setTextColor(int row, int start, int end, const QString& color,
+                              const QString& coalesce) {
+    setPayloadSpan(row, start, end, SpanFgColor, color, coalesce);
 }
-void BlockModel::setHighlight(int row, int start, int end, const QString& color) {
-    setPayloadSpan(row, start, end, SpanHighlight, color);
+void BlockModel::setHighlight(int row, int start, int end, const QString& color,
+                              const QString& coalesce) {
+    setPayloadSpan(row, start, end, SpanHighlight, color, coalesce);
 }
 
 QString BlockModel::linkAt(int row, int col) const {
@@ -2221,7 +2267,8 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     endTxn((hiRow == loRow && hiClip - loClip == 1) ? QStringLiteral("del") : QString());
 }
 
-void BlockModel::insertText(int row, int col, const QString& text, int marks) {
+void BlockModel::insertText(int row, int col, const QString& text, int marks,
+                            const QString& fgColor, const QString& bgColor) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);
     const QString s = content_[row];
@@ -2231,14 +2278,16 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks) {
     std::vector<Span>& spans = rows_[row].spans;
     if (!spans.empty())                              // keep existing span offsets aligned
         shiftSpansInsert(spans, col, text.size());
+    const int e = col + text.size();
     if (marks) {                                     // armed typing attributes → span the new run
-        const int e = col + text.size();
         if (marks & 1)  addSpan(spans, col, e, SpanBold);
         if (marks & 2)  addSpan(spans, col, e, SpanItalic);
         if (marks & 4)  addSpan(spans, col, e, SpanCode);
         if (marks & 8)  addSpan(spans, col, e, SpanStrike);
         if (marks & 16) addSpan(spans, col, e, SpanUnderline);
     }
+    if (!fgColor.isEmpty()) applyPayloadRun(spans, col, e, SpanFgColor,   fgColor);
+    if (!bgColor.isEmpty()) applyPayloadRun(spans, col, e, SpanHighlight, bgColor);
     if (!spans.empty()) persistMeta(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
