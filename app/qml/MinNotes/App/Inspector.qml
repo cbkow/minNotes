@@ -27,7 +27,7 @@ Rectangle {
     onOpenChanged: if (_ready) panelStore.open = open
 
     // Colour state (the I/O the editor's apply functions read).
-    property color fgColor: Theme.colors.textBright   // text colour (white)
+    property color fgColor: Theme.colors.text         // default type colour (E4E3E2)
     property color bgColor: "#FFEC59"                 // highlight colour (classic bright yellow)
     property string target: "fg"                       // which colour the picker edits
 
@@ -65,12 +65,15 @@ Rectangle {
     // would write the OTHER target's colour into the selected swatch.
     onTargetChanged: { selPreset = -1; selUser = -1
                        setPickerValue(targetColor()) }
-    function revertTarget() {                           // reset the active colour to its default
+    // Reset the picker to defaults AND strip fg/bg colour from the current
+    // selection (table cells or text) — "revert to default" means uncoloured.
+    function revertTarget() {
         selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
-        if (target === "fg")      fgColor = Theme.colors.textBright
+        if (target === "fg")      fgColor = Theme.colors.text   // default type colour (E4E3E2)
         else if (target === "bg") bgColor = "#FFEC59"
         else                      drawColor = "#FF0000"
         setPickerValue(targetColor())
+        if (editor) editor.revertColors()               // strip fg+bg from the selection
     }
 
     // --- Swatches: a FIXED bright preset grid + a row of user slots. Clicking
@@ -163,6 +166,7 @@ Rectangle {
             x: 12; spacing: 8
 
             // === Tools (drawing) — above the colour interface ===
+            Rectangle { width: panel.contentW; height: 1; color: Theme.colors.divider }
             Text { text: "Tools"
                    color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
@@ -266,7 +270,7 @@ Rectangle {
                     // Text colour also arms the typing "pen" (pickTextColor).
                     if (!panel._suppressApply && panel.editor) {
                         if (panel.target === "fg")      panel.editor.pickTextColor("" + value)
-                        else if (panel.target === "bg") panel.editor.applyColorToSelection(false, "" + value, true)
+                        else if (panel.target === "bg") panel.editor.pickHighlight("" + value)
                     }
                 }
                 Component.onCompleted: panel.setPickerValue(panel.fgColor)   // init: no apply/arm

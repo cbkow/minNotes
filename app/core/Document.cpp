@@ -27,10 +27,26 @@ QString makeUlid() {
 }
 
 Document::~Document() {
-    if (open_) {
-        QSqlDatabase::database(conn_).close();
-        QSqlDatabase::removeDatabase(conn_);
-    }
+    close();
+}
+
+void Document::close() {
+    if (!open_) return;
+    QSqlDatabase::database(conn_).close();
+    QSqlDatabase::removeDatabase(conn_);
+    open_ = false;
+    conn_.clear();
+}
+
+bool Document::checkpoint() {
+    if (!open_) return false;
+    return exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)"));
+}
+
+bool Document::vacuumInto(const QString& path) const {
+    if (!open_) return false;
+    QString p = path; p.replace(QLatin1Char('\''), QStringLiteral("''"));   // SQL-escape
+    return exec(QStringLiteral("VACUUM INTO '%1'").arg(p));
 }
 
 bool Document::exec(const QString& sql) const {
@@ -43,6 +59,7 @@ bool Document::exec(const QString& sql) const {
 }
 
 bool Document::open(const QString& path) {
+    close();   // switching files: drop any current connection first
     conn_ = QStringLiteral("mn_doc_%1").arg(++g_conn_seq);
     QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", conn_);
     db.setDatabaseName(path);

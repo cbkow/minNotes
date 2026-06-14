@@ -32,11 +32,23 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(int contentRevision READ contentRevision NOTIFY contentChangedSpike)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
-    // Path of the open document (one fixed scratch doc for now). CONSTANT until
-    // the open/new-file flow lands.
-    Q_PROPERTY(QString documentPath READ documentPath CONSTANT)
+    // The open document. `documentPath` is the file; `documentName` is its display
+    // basename; `untitled` = a scratch doc with no chosen path yet (Save → Save As).
+    Q_PROPERTY(QString documentPath READ documentPath NOTIFY documentChanged)
+    Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
+    Q_PROPERTY(bool untitled READ untitled NOTIFY documentChanged)
+    Q_PROPERTY(bool documentOpen READ documentOpen NOTIFY documentChanged)
 public:
     QString documentPath() const { return docPath_; }
+    QString documentName() const;
+    bool untitled() const { return untitled_; }
+    bool documentOpen() const { return doc_.isOpen(); }
+    // Document lifecycle (the file IS the SQLite DB; edits persist live).
+    Q_INVOKABLE void newDocument();                       // fresh untitled scratch
+    Q_INVOKABLE bool openDocument(const QString& pathOrUrl);
+    Q_INVOKABLE void closeDocument();                     // back to the no-doc state
+    Q_INVOKABLE bool save();                              // WAL checkpoint; false if untitled
+    Q_INVOKABLE bool saveAs(const QString& pathOrUrl);    // VACUUM INTO + media-sidecar copy
     enum Roles {
         TypeRole = Qt::UserRole + 1,
         ContentRole,
@@ -386,6 +398,9 @@ signals:
     void heightSettled(int row, qreal delta);
     void undoStackChanged();
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
+    // The open document changed (new/open/save-as). QML resets per-doc UI state
+    // (active table/PDF/video/sketch tabs, the studio's notes path, the cursor).
+    void documentChanged();
 
 public:
     enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
@@ -475,6 +490,9 @@ private:
     void persistMeta(int row);   // write type/attrs of content_[row]'s block
 
     int clampRow(int row) const;
+    // Safe row access: a default (empty paragraph) Row when the model is empty
+    // (no document open), so query methods never index an empty vector.
+    const Row& rowAt(int row) const;
     // Derive a Media row's intrinsic dims / video flag / aspect param from its
     // descriptor JSON. The SINGLE place media metadata comes from content — used
     // by loadFromStore, insertMedia, AND undo/redo restore, so they can't diverge
@@ -491,6 +509,10 @@ private:
     // --- SQLite store (Phase 1a/1b) ---
     void loadFromStore();             // skinny-scan → rows_/ids_/ranks_/content_/fenwick
     void seedSyntheticStore(int n);   // write N synthetic blocks if the DB is empty
+    // Switch the model to `path`: open it, re-home the MediaStore, (seed if empty),
+    // reload, clear undo, and emit documentChanged. `untitled` flags a scratch doc.
+    bool loadDocument(const QString& path, bool untitled);
+    void seedEmptyDoc();              // one empty paragraph (a fresh document)
     void persistContent(int row);     // write content_[row] back to the DB
     // Append an image element to a sketch's descriptor (normalized centered rect)
     // and commit as one undo step. (src/iw/ih come from a MediaStore import.)
@@ -503,6 +525,7 @@ private:
 
     Document doc_;
     QString docPath_;
+    bool untitled_ = true;   // scratch doc with no chosen path yet
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
     std::vector<QString> ranks_;     // fractional rank per row, parallel to rows_

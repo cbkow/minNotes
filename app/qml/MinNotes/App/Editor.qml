@@ -16,7 +16,7 @@ import QtCore
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: { forceActiveFocus(); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth) }
+    Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth) }
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
@@ -104,6 +104,19 @@ FocusScope {
         else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
         else { activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
     }
+    // Switching documents (new/open/save-as) resets the model; drop all per-doc
+    // UI state so nothing points at the old doc's blocks (closes frame tabs /
+    // studio / board, parks the caret at the top).
+    Connections {
+        target: blockModel
+        function onDocumentChanged() {
+            root.setActiveTab("")
+            cursor.clearMarks()
+            cursor.setCaret(0, 0)
+            root.ensureVisible(0)
+        }
+    }
+
     function insertSketchAt(row) {
         var r = blockModel.insertSketch(row)
         // Open the new sketch's tab immediately — an empty inline canvas
@@ -537,16 +550,17 @@ FocusScope {
         // Word-style armed typing attributes (active when nothing is selected):
         // bold=1, italic=2, code=4. Applied to typed text; cleared on caret nav.
         property int activeMarks: 0
-        // Persistent "type colour" (the pen): set by picking a text colour in the
-        // palette; typed text gets it. "" = default. Cleared on caret nav (like the
-        // armed marks), so it survives a typed run but not navigating away.
+        // Persistent "type colour" / "highlight" pens: set by picking in the
+        // palette (or the highlight toggle); typed text gets them. "" = none.
+        // Cleared on caret nav (like the armed marks): survive a run, not nav.
         property string armedFg: ""
+        property string armedBg: ""
         function toggleMark(kind) {
             var bit = kind === "bold" ? 1 : kind === "italic" ? 2 : kind === "code" ? 4
                     : kind === "strike" ? 8 : kind === "underline" ? 16 : 0
             if (bit) activeMarks ^= bit
         }
-        function clearMarks() { activeMarks = 0; armedFg = "" }
+        function clearMarks() { activeMarks = 0; armedFg = ""; armedBg = "" }
 
         // The caret stays hidden until the user first interacts (click / key /
         // type), so the app opens with nothing active. sync() is the chokepoint
@@ -630,7 +644,7 @@ FocusScope {
                 blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0)
             }
             if (hasSel) deleteSelection()
-            blockModel.insertText(focusRow, focusCol, ch, activeMarks, armedFg)   // armed attrs + pen colour → span the run
+            blockModel.insertText(focusRow, focusCol, ch, activeMarks, armedFg, armedBg)   // armed attrs + pens → span the run
             setCaret(focusRow, focusCol + ch.length)
             // Markdown autoformat fires on the space that completes a prefix
             // (e.g. "## "): the prefix is consumed, so pull the caret back.
@@ -1001,6 +1015,49 @@ FocusScope {
         }
     }
 
+    // Nearest text-editable row to `row` (skipping opaque blocks — media 3,
+    // divider 6, table 7 — which the document caret can't sit in), scanning
+    // `dir` first, then the other way. Keeps a coarse jump from stranding the
+    // caret on a block it can't move off of.
+    function caretLandRow(row, dir) {
+        var n = blockModel.count
+        if (n === 0) return 0
+        function ok(r) { var t = blockModel.typeForRow(r); return t !== 3 && t !== 6 && t !== 7 }
+        var r = Math.max(0, Math.min(n - 1, row))
+        var s = r
+        while (s >= 0 && s < n) { if (ok(s)) return s; s += dir }
+        s = r - dir
+        while (s >= 0 && s < n) { if (ok(s)) return s; s -= dir }
+        return r
+    }
+    // Home / End: to the beginning / end of the WHOLE document.
+    function navHome(shift) {
+        cursor.resetGoalX(); cursor.clearMarks()
+        var r = caretLandRow(0, 1)
+        cursor.move(r, 0, shift); root.ensureVisible(r)
+    }
+    function navEnd(shift) {
+        cursor.resetGoalX(); cursor.clearMarks()
+        var r = caretLandRow(blockModel.count - 1, -1)
+        cursor.move(r, blockModel.contentForRow(r).length, shift); root.ensureVisible(r)
+    }
+    // Page Up / Down: move the caret one full viewport up/down (landing on a text
+    // block, never an opaque one) and scroll there.
+    function navPageDown(shift) {
+        cursor.clearMarks()
+        var t = blockModel.rowForY(blockModel.yForRow(cursor.focusRow) + flick.height)
+        if (t <= cursor.focusRow) t = cursor.focusRow + 1            // ensure progress past tall blocks
+        var row = caretLandRow(Math.min(blockModel.count - 1, t), 1)
+        cursor.move(row, 0, shift); root.ensureVisible(row)
+    }
+    function navPageUp(shift) {
+        cursor.clearMarks()
+        var t = blockModel.rowForY(Math.max(0, blockModel.yForRow(cursor.focusRow) - flick.height))
+        if (t >= cursor.focusRow) t = cursor.focusRow - 1
+        var row = caretLandRow(Math.max(0, t), -1)
+        cursor.move(row, 0, shift); root.ensureVisible(row)
+    }
+
     // Per-row selected range [start,end) for row r within the current selection.
     function rowSelStart(r) { return (r === cursor.loRow) ? cursor.loCol : 0 }
     function rowSelEnd(r)   { return (r === cursor.hiRow) ? cursor.hiCol : blockModel.contentForRow(r).length }
@@ -1062,9 +1119,42 @@ FocusScope {
         cursor.sync()
     }
     function clearCellFormatting() {
+        // A cell range → strip every selected cell's inline formatting (one undo).
+        if (tcur.rangeR0 >= 0) {
+            var r0 = Math.min(tcur.rangeR0, tcur.rangeR1), r1 = Math.max(tcur.rangeR0, tcur.rangeR1)
+            var c0 = Math.min(tcur.rangeC0, tcur.rangeC1), c1 = Math.max(tcur.rangeC0, tcur.rangeC1)
+            blockModel.beginGroup(tcur.row, tcur.row)
+            for (var rr = r0; rr <= r1; ++rr)
+                for (var cc = c0; cc <= c1; ++cc)
+                    blockModel.tableClearCellFormat(tcur.row, rr, cc, 0, blockModel.tableCell(tcur.row, rr, cc).length)
+            blockModel.endGroup()
+            cursor.sync()
+            return
+        }
         var lo = Math.min(tcur.pos, tcur.anchorPos), hi = Math.max(tcur.pos, tcur.anchorPos)
         if (lo === hi) { hi = blockModel.tableCell(tcur.row, tcur.cr, tcur.cc).length; lo = 0 }
         blockModel.tableClearCellFormat(tcur.row, tcur.cr, tcur.cc, lo, hi)
+        cursor.sync()
+    }
+    // Revert-to-default colour: strip fg + bg from the selection — table cell(s)
+    // (cell-level colours) or selected text (colour spans).
+    function revertColors() {
+        if (tcur.active) {
+            var r0, c0, r1, c1
+            if (tcur.rangeR0 >= 0) { r0 = tcur.rangeR0; c0 = tcur.rangeC0; r1 = tcur.rangeR1; c1 = tcur.rangeC1 }
+            else { r0 = tcur.cr; c0 = tcur.cc; r1 = tcur.cr; c1 = tcur.cc }
+            blockModel.tableSetCellColor(cursor.focusRow, r0, c0, r1, c1, true, "")    // clear fg
+            blockModel.tableSetCellColor(cursor.focusRow, r0, c0, r1, c1, false, "")   // clear bg
+            cursor.sync()
+            return
+        }
+        if (!cursor.hasSel) return
+        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+        for (var r = cursor.loRow; r <= cursor.hiRow; ++r) {
+            blockModel.setTextColor(r, rowSelStart(r), rowSelEnd(r), "")
+            blockModel.setHighlight(r, rowSelStart(r), rowSelEnd(r), "")
+        }
+        blockModel.endGroup()
         cursor.sync()
     }
 
@@ -1081,6 +1171,24 @@ FocusScope {
         cursor.armedFg = "" + hex
         if (cursor.hasSel) applyColorToSelection(true, "" + hex, true)
         forceActiveFocus()
+    }
+    // Highlight mirrors the text pen, plus a rail toggle. pickHighlight arms +
+    // applies (palette Highlight tab). toggleHighlight (the rail button) flips it:
+    // on → arm + highlight the selection; off → unarm + clear it from the selection.
+    readonly property bool highlightArmed: cursor.armedBg !== ""
+    function pickHighlight(hex) {
+        cursor.armedBg = "" + hex
+        if (cursor.hasSel) applyColorToSelection(false, "" + hex, true)
+        forceActiveFocus()
+    }
+    function toggleHighlight(hex) {
+        if (cursor.armedBg !== "") {                       // currently on → off
+            if (cursor.hasSel) applyColorToSelection(false, "", false)   // "" removes the span
+            cursor.armedBg = ""
+            forceActiveFocus()
+        } else {
+            pickHighlight("" + hex)
+        }
     }
     function applyColorToSelection(isFg, hex, coalesce) {
         if (tcur.active) { applyTableColor(isFg, hex); return }   // table: colour the cell(s)
@@ -1467,6 +1575,7 @@ FocusScope {
     // needed); with a selection, clears spans over the selected range of each
     // block. Code blocks are left as-is. One grouped undo step.
     function clearFormatting() {
+        if (tcur.active) { clearCellFormatting(); return }   // in a table → clear the cell(s)
         var lo = cursor.loRow, hi = cursor.hiRow
         blockModel.beginGroup(lo, hi)
         for (var r = lo; r <= hi; ++r) {
@@ -1500,7 +1609,7 @@ FocusScope {
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
             else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
-            else if (cursor.activeMarks !== 0 || cursor.armedFg !== "") { cursor.clearMarks() }
+            else if (cursor.activeMarks !== 0 || cursor.armedFg !== "" || cursor.armedBg !== "") { cursor.clearMarks() }
             event.accepted = true
         }
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
@@ -1553,6 +1662,12 @@ FocusScope {
             tcur.setRange(0, 0, tcur.rows() - 1, tcur.cols() - 1)
             cursor.sync(); event.accepted = true
         }
+        // Page/Home/End leave the table — they move the document caret off it
+        // (tcur deactivates as soon as focusRow is no longer a table row).
+        else if (inTable && k === Qt.Key_PageDown) { navPageDown(false); event.accepted = true }
+        else if (inTable && k === Qt.Key_PageUp)   { navPageUp(false);   event.accepted = true }
+        else if (inTable && k === Qt.Key_Home)     { navHome(false);     event.accepted = true }
+        else if (inTable && k === Qt.Key_End)      { navEnd(false);      event.accepted = true }
         else if (inTable) {
             if (cmd) { event.accepted = true; return }   // swallow other Cmd-combos (don't type the letter)
             // Shift+arrows: spreadsheet-style range extension. Left/Right first
@@ -1603,12 +1718,18 @@ FocusScope {
         else if (cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
         else if (cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
         else if (cmd && shift && k === Qt.Key_X) { applyFormat("strike"); event.accepted = true }
+        else if (cmd && k === Qt.Key_E) { applyFormat("code"); event.accepted = true }
+        else if (cmd && shift && k === Qt.Key_H) { if (root.inspector) root.toggleHighlight(root.inspector.bgColor); event.accepted = true }
         else if (cmd && k === Qt.Key_Backslash) { clearFormatting(); event.accepted = true }
         else if (cmd && k === Qt.Key_K) { applyLink(); event.accepted = true }
         else if (k === Qt.Key_Right) { navRight(shift); event.accepted = true }
         else if (k === Qt.Key_Left) { navLeft(shift); event.accepted = true }
         else if (k === Qt.Key_Down) { navDown(shift); event.accepted = true }
         else if (k === Qt.Key_Up) { navUp(shift); event.accepted = true }
+        else if (k === Qt.Key_Home) { navHome(shift); event.accepted = true }
+        else if (k === Qt.Key_End) { navEnd(shift); event.accepted = true }
+        else if (k === Qt.Key_PageDown) { navPageDown(shift); event.accepted = true }
+        else if (k === Qt.Key_PageUp) { navPageUp(shift); event.accepted = true }
         else if (k === Qt.Key_Backspace) { cursor.backspace(); event.accepted = true }
         else if (k === Qt.Key_Delete) { cursor.forwardDelete(); event.accepted = true }
         else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(); event.accepted = true }

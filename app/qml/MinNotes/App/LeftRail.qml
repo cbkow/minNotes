@@ -206,6 +206,15 @@ Rectangle {
             checked: !!rail.editor && rail.editor.italicArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("italic") })
         }
+        // Highlight toggle — applies/removes the palette's highlight colour on the
+        // selection (or arms it for typing); the underbar shows the colour.
+        ColorTool {
+            iconName: "highlighter"; tooltip: "Highlight"
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.highlightArmed
+            underColor: rail.inspector ? rail.inspector.bgColor : "#FFEC59"
+            onClicked: if (rail.editor && rail.inspector) rail.act(function() { rail.editor.toggleHighlight(rail.inspector.bgColor) })
+        }
         RailBtn {
             iconName: "code"; tooltip: "Code"
             enabled_: !!rail.editor

@@ -2,6 +2,7 @@
 #include <QStringBuilder>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -65,21 +66,115 @@ QString encode62(quint64 v, int width) {
 }
 
 BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
-    // Open the document database (one scratch doc for now; the open-file flow
-    // and per-document instances come with the menu/chassis work).
+    // No document at launch — the app opens to the welcome / no-doc state; the
+    // File menu (or a recent) opens or creates one. (The model stays empty and
+    // every mutation is doc-guarded until a document is loaded.)
+    untitled_ = false;
+}
+
+// --- Document lifecycle ----------------------------------------------------
+
+QString BlockModel::documentName() const {
+    if (!documentOpen()) return QString();
+    if (untitled_) return QStringLiteral("Untitled");
+    return QFileInfo(docPath_).completeBaseName();   // basename without .mndb
+}
+
+void BlockModel::closeDocument() {
+    doc_.close();
+    mediaStore_.reset();
+    docPath_.clear();
+    untitled_ = false;
+    beginResetModel();
+    rows_.clear(); ids_.clear(); ranks_.clear(); content_.clear();
+    fenwick_.reset(std::vector<double>{});
+    endResetModel();
+    clearUndo();
+    emit documentChanged();
+}
+
+// Recursively copy <src>/.minnotes → <dst>/.minnotes (pasted media). Referenced
+// files live at absolute paths and need no copy. No-op if src == dst.
+static void copyDirRecursive(const QString& src, const QString& dst) {
+    QDir sd(src);
+    if (!sd.exists()) return;
+    QDir().mkpath(dst);
+    for (const QFileInfo& fi : sd.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QString d = dst + QLatin1Char('/') + fi.fileName();
+        if (fi.isDir()) copyDirRecursive(fi.absoluteFilePath(), d);
+        else { QFile::remove(d); QFile::copy(fi.absoluteFilePath(), d); }
+    }
+}
+static void copyMediaSidecar(const QString& srcDocDir, const QString& dstDocDir) {
+    if (srcDocDir == dstDocDir) return;
+    copyDirRecursive(srcDocDir + QStringLiteral("/.minnotes"),
+                     dstDocDir + QStringLiteral("/.minnotes"));
+}
+
+bool BlockModel::loadDocument(const QString& path, bool untitled) {
+    if (!doc_.open(path)) {
+        qWarning() << "BlockModel: cannot open document" << path;
+        return false;
+    }
+    docPath_ = path;
+    untitled_ = untitled;
+    mediaStore_ = std::make_unique<MediaStore>(path);
+    clearUndo();
+    return true;
+}
+
+void BlockModel::seedEmptyDoc() {
+    doc_.begin();
+    // content is NOT NULL — bind a non-null empty string (a null QString would
+    // violate the constraint and silently drop the block, leaving an empty doc).
+    doc_.appendBlock(makeUlid(), rankBetween(QString(), QString()), 0,
+                     QStringLiteral("paragraph"), QString(), QStringLiteral(""));
+    doc_.commit();
+}
+
+void BlockModel::newDocument() {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
-    const QString path = dir + QStringLiteral("/scratch.mndb");
-    docPath_ = path;
-    mediaStore_ = std::make_unique<MediaStore>(docPath_);
-    if (!doc_.open(path)) {
-        qWarning("BlockModel: store unavailable, falling back to in-memory synthetic doc");
-        rebuild(10000, Uniform);
-        return;
-    }
-    if (doc_.count() == 0)
-        seedSyntheticStore(2000);
+    const QString path = dir + QStringLiteral("/untitled-") + makeUlid() + QStringLiteral(".mndb");
+    if (!loadDocument(path, /*untitled*/true)) return;
+    seedEmptyDoc();
     loadFromStore();
+    emit documentChanged();
+}
+
+bool BlockModel::openDocument(const QString& pathOrUrl) {
+    const QString path = pathOrUrl.startsWith(QLatin1String("file:"))
+                       ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
+    if (path.isEmpty() || !loadDocument(path, /*untitled*/false)) return false;
+    loadFromStore();
+    emit documentChanged();
+    return true;
+}
+
+bool BlockModel::save() {
+    if (untitled_) return false;     // no chosen path yet → caller invokes Save As
+    return doc_.checkpoint();
+}
+
+bool BlockModel::saveAs(const QString& pathOrUrl) {
+    QString path = pathOrUrl.startsWith(QLatin1String("file:"))
+                 ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
+    if (path.isEmpty()) return false;
+    if (!path.endsWith(QLatin1String(".mndb"), Qt::CaseInsensitive)) path += QStringLiteral(".mndb");
+    const QString srcDir = QFileInfo(docPath_).absolutePath();
+    // Flush the WAL so the live edits are in the main DB, then write a clean copy.
+    doc_.checkpoint();
+    QFile::remove(path);             // VACUUM INTO requires the target not to exist
+    if (!doc_.vacuumInto(path)) {
+        qWarning() << "BlockModel: VACUUM INTO failed" << path;
+        return false;
+    }
+    // Critical: bring the pasted-media sidecar along to the new location.
+    copyMediaSidecar(srcDir, QFileInfo(path).absolutePath());
+    if (!loadDocument(path, /*untitled*/false)) return false;
+    loadFromStore();
+    emit documentChanged();
+    return true;
 }
 
 BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
@@ -328,23 +423,29 @@ int BlockModel::clampRow(int row) const {
     return std::clamp(row, 0, static_cast<int>(rows_.size()) - 1);
 }
 
+const BlockModel::Row& BlockModel::rowAt(int row) const {
+    static const Row kEmpty{};   // type 0 = Paragraph, no spans — harmless defaults
+    if (rows_.empty()) return kEmpty;
+    return rows_[std::clamp(row, 0, static_cast<int>(rows_.size()) - 1)];
+}
+
 int BlockModel::rowCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : static_cast<int>(rows_.size());
 }
 
 int BlockModel::typeForRow(int row) const {
     if (rows_.empty()) return Paragraph;
-    return rows_[clampRow(row)].type;
+    return rowAt(row).type;
 }
 
 int BlockModel::levelForRow(int row) const {
     if (rows_.empty()) return 0;
-    return rows_[clampRow(row)].level;
+    return rowAt(row).level;
 }
 
 int BlockModel::taskStateForRow(int row) const {
     if (rows_.empty()) return 0;
-    const Row& r = rows_[clampRow(row)];
+    const Row& r = rowAt(row);
     return (r.type == TaskListItem) ? r.taskState : 0;
 }
 
@@ -700,7 +801,7 @@ void BlockModel::insertDivider(int afterRow) {
 
 QString BlockModel::languageForRow(int row) const {
     if (rows_.empty()) return {};
-    return rows_[clampRow(row)].lang;
+    return rowAt(row).lang;
 }
 
 void BlockModel::makeCodeBlock(int row, const QString& lang) {
@@ -783,27 +884,27 @@ void BlockModel::mutateTable(int row, const std::function<void(TableGrid&)>& fn,
 }
 
 int BlockModel::tableRows(int row) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).rows();
 }
 int BlockModel::tableColumns(int row) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).cols();
 }
 int BlockModel::tableHeaderRows(int row) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).headerRows();
 }
 QString BlockModel::tableCell(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return {};
+    if (rowAt(row).type != Table) return {};
     return gridFor(row).cellText(r, c);
 }
 int BlockModel::tableColWidth(int row, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).colWidth(c);
 }
 int BlockModel::tableColAlign(int row, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).colAlign(c);
 }
 
@@ -828,7 +929,7 @@ void BlockModel::tableSetColColor(int row, int c, bool fg, const QString& color)
 }
 // Effective colour for rendering: cell wins, then row, then column, then none.
 QString BlockModel::tableCellBg(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return {};
+    if (rowAt(row).type != Table) return {};
     const TableGrid& g = gridFor(row);
     QString v = g.cellBg(r, c);
     if (v.isEmpty()) v = g.rowBg(r);
@@ -836,7 +937,7 @@ QString BlockModel::tableCellBg(int row, int r, int c) const {
     return v;
 }
 QString BlockModel::tableCellFg(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return {};
+    if (rowAt(row).type != Table) return {};
     const TableGrid& g = gridFor(row);
     QString v = g.cellFg(r, c);
     if (v.isEmpty()) v = g.rowFg(r);
@@ -872,7 +973,7 @@ QJsonArray BlockModel::cellSpansToJson(const std::vector<Span>& v) {
 
 QVariantList BlockModel::tableCellSpans(int row, int r, int c) const {
     QVariantList out;
-    if (rows_[clampRow(row)].type != Table) return out;
+    if (rowAt(row).type != Table) return out;
     const QJsonArray a = gridFor(row).cellSpans(r, c);
     for (const QJsonValue& it : a) {
         const QJsonObject o = it.toObject();
@@ -887,7 +988,7 @@ QVariantList BlockModel::tableCellSpans(int row, int r, int c) const {
 }
 
 bool BlockModel::tableCellHasFormat(int row, int r, int c, int start, int end, const QString& kind) const {
-    if (rows_[clampRow(row)].type != Table) return false;
+    if (rowAt(row).type != Table) return false;
     const uint8_t k = spanKindFromString(kind);
     if (!k) return false;
     const TableGrid& g = gridFor(row);
@@ -958,7 +1059,7 @@ static QString mediaJson(const MediaStore::ImageRef& ref);   // defined below wi
 // stash the {src,w,h} descriptor in cell.media, and widen a too-narrow column
 // to a sensible default so the image isn't squeezed. One undo step.
 bool BlockModel::tableSetCellImageFromClipboard(int row, int r, int c) {
-    if (!mediaStore_ || rows_[clampRow(row)].type != Table) return false;
+    if (!mediaStore_ || rowAt(row).type != Table) return false;
     const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
     if (!ref.ok()) return false;
     const QString json = mediaJson(ref);
@@ -970,7 +1071,7 @@ bool BlockModel::tableSetCellImageFromClipboard(int row, int r, int c) {
     return true;
 }
 bool BlockModel::tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl) {
-    if (!mediaStore_ || rows_[clampRow(row)].type != Table) return false;
+    if (!mediaStore_ || rowAt(row).type != Table) return false;
     const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);
     if (!ref.ok()) return false;
     const QString json = mediaJson(ref);
@@ -985,30 +1086,30 @@ void BlockModel::tableClearCellMedia(int row, int r, int c) {
     mutateTable(row, [&](TableGrid& g){ g.setCellMedia(r, c, QString()); });
 }
 QString BlockModel::tableCellMedia(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return {};
+    if (rowAt(row).type != Table) return {};
     return gridFor(row).cellMedia(r, c);
 }
 QString BlockModel::tableCellMediaUrl(int row, int r, int c) const {
-    if (!mediaStore_ || rows_[clampRow(row)].type != Table) return {};
+    if (!mediaStore_ || rowAt(row).type != Table) return {};
     const QString m = gridFor(row).cellMedia(r, c);
     if (m.isEmpty()) return {};
     const QJsonObject o = QJsonDocument::fromJson(m.toUtf8()).object();
     return mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString());
 }
 int BlockModel::tableCellMediaW(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     const QString m = gridFor(row).cellMedia(r, c);
     if (m.isEmpty()) return 0;
     return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("w")).toInt();
 }
 int BlockModel::tableCellMediaH(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     const QString m = gridFor(row).cellMedia(r, c);
     if (m.isEmpty()) return 0;
     return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("h")).toInt();
 }
 int BlockModel::tableCellMediaDw(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     const QString m = gridFor(row).cellMedia(r, c);
     if (m.isEmpty()) return 0;
     return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("dw")).toInt();
@@ -1041,7 +1142,7 @@ void BlockModel::tableFillRight(int row, int r0, int c0, int r1, int c1) { mutat
 
 // ---- choice columns --------------------------------------------------------
 int BlockModel::tableColumnKind(int row, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).colKind(c);
 }
 void BlockModel::tableSetColumnKind(int row, int c, int kind) {
@@ -1049,7 +1150,7 @@ void BlockModel::tableSetColumnKind(int row, int c, int kind) {
 }
 QVariantList BlockModel::tableColumnOptions(int row, int c) const {
     QVariantList out;
-    if (rows_[clampRow(row)].type != Table) return out;
+    if (rowAt(row).type != Table) return out;
     for (const TableGrid::Option& o : gridFor(row).colOptions(c)) {
         QVariantMap m;
         m.insert(QStringLiteral("id"), o.id);
@@ -1093,24 +1194,24 @@ void BlockModel::tableMoveOption(int row, int c, const QString& id, int toIndex)
     mutateTable(row, [&](TableGrid& g){ g.moveOption(c, id, toIndex); });
 }
 QString BlockModel::tableCellChoice(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return QString();
+    if (rowAt(row).type != Table) return QString();
     return gridFor(row).cellChoice(r, c);
 }
 void BlockModel::tableSetCellChoice(int row, int r, int c, const QString& id) {
     mutateTable(row, [&](TableGrid& g){ g.setCellChoice(r, c, id); });
 }
 QString BlockModel::tableCellChoiceLabel(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return QString();
+    if (rowAt(row).type != Table) return QString();
     const TableGrid& g = gridFor(row);
     return g.optionLabel(c, g.cellChoice(r, c));
 }
 QString BlockModel::tableCellChoiceColor(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return QString();
+    if (rowAt(row).type != Table) return QString();
     const TableGrid& g = gridFor(row);
     return g.optionColor(c, g.cellChoice(r, c));
 }
 int BlockModel::tableCellCheck(int row, int r, int c) const {
-    if (rows_[clampRow(row)].type != Table) return 0;
+    if (rowAt(row).type != Table) return 0;
     return gridFor(row).cellCheck(r, c);
 }
 void BlockModel::tableCycleCellCheck(int row, int r, int c) {
@@ -1120,7 +1221,7 @@ void BlockModel::tableSetCellCheck(int row, int r, int c, int state) {
     mutateTable(row, [&](TableGrid& g){ g.setCellCheck(r, c, state); });
 }
 QString BlockModel::tableRowBg(int row, int r) const {
-    if (rows_[clampRow(row)].type != Table) return QString();
+    if (rowAt(row).type != Table) return QString();
     return gridFor(row).rowBg(r);
 }
 
@@ -1136,7 +1237,7 @@ void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
 }
 
 QString BlockModel::tableRangeTSV(int row, int r0, int c0, int r1, int c1) const {
-    if (rows_[clampRow(row)].type != Table) return {};
+    if (rowAt(row).type != Table) return {};
     const TableGrid& g = gridFor(row);
     const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
     const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
@@ -1154,7 +1255,7 @@ QString BlockModel::tableRangeTSV(int row, int r0, int c0, int r1, int c1) const
 }
 
 QString BlockModel::tableRangeHtml(int row, int r0, int c0, int r1, int c1) const {
-    if (rows_[clampRow(row)].type != Table) return {};
+    if (rowAt(row).type != Table) return {};
     const TableGrid& g = gridFor(row);
     const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
     const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
@@ -1593,14 +1694,14 @@ void BlockModel::revealMedia(int row) const {
 }
 QString BlockModel::mediaFileName(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return {};
+    if (rowAt(row).type != Media) return {};
     const QString name = QJsonDocument::fromJson(content_[row].toUtf8())
                              .object().value(QStringLiteral("name")).toString();
     return name.isEmpty() ? QFileInfo(mediaLocalPath(row)).fileName() : name;
 }
 int BlockModel::mediaPdfPages(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return 0;
+    if (rowAt(row).type != Media) return 0;
     return QJsonDocument::fromJson(content_[row].toUtf8())
                .object().value(QStringLiteral("pages")).toInt();
 }
@@ -1620,34 +1721,34 @@ void BlockModel::openMediaInUfb(int row) const {
 }
 int BlockModel::mediaW(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return 0;
+    if (rowAt(row).type != Media) return 0;
     return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("w")).toInt();
 }
 int BlockModel::mediaH(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return 0;
+    if (rowAt(row).type != Media) return 0;
     return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("h")).toInt();
 }
 QString BlockModel::mediaKind(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return {};
+    if (rowAt(row).type != Media) return {};
     const QString k = QJsonDocument::fromJson(content_[row].toUtf8())
                           .object().value(QStringLiteral("kind")).toString();
     return k.isEmpty() ? QStringLiteral("image") : k;   // legacy {src,w,h} = image
 }
 double BlockModel::mediaFps(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return 0.0;
+    if (rowAt(row).type != Media) return 0.0;
     return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("fps")).toDouble();
 }
 int BlockModel::mediaFrames(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return 0;
+    if (rowAt(row).type != Media) return 0;
     return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("frames")).toInt();
 }
 qreal BlockModel::mediaDurationMs(int row) const {
     row = clampRow(row);
-    if (rows_[row].type != Media) return 0;
+    if (rowAt(row).type != Media) return 0;
     return QJsonDocument::fromJson(content_[row].toUtf8()).object().value(QStringLiteral("durMs")).toDouble();
 }
 
@@ -1898,7 +1999,7 @@ void BlockModel::shiftSpansDelete(std::vector<Span>& v, int from, int to) {
 QVariantList BlockModel::spansForRow(int row) const {
     QVariantList out;
     if (rows_.empty()) return out;
-    for (const Span& sp : rows_[clampRow(row)].spans) {
+    for (const Span& sp : rowAt(row).spans) {
         QVariantMap m;
         m.insert(QStringLiteral("s"), sp.s);
         m.insert(QStringLiteral("e"), sp.e);
@@ -1945,14 +2046,14 @@ void BlockModel::setHighlight(int row, int start, int end, const QString& color,
 
 QString BlockModel::linkAt(int row, int col) const {
     if (rows_.empty()) return {};
-    for (const Span& sp : rows_[clampRow(row)].spans)
+    for (const Span& sp : rowAt(row).spans)
         if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return sp.href;
     return {};
 }
 
 QVariantList BlockModel::linkRangeAt(int row, int col) const {
     if (rows_.empty()) return {};
-    for (const Span& sp : rows_[clampRow(row)].spans)
+    for (const Span& sp : rowAt(row).spans)
         if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return QVariantList{ sp.s, sp.e };
     return {};
 }
@@ -2157,12 +2258,12 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
 }
 
 qreal BlockModel::mediaDisplayHeight(int row) const {
-    row = clampRow(row);
-    return (rows_[row].type == Media) ? mediaFrameHeight(rows_[row]) : 0.0;
+    const Row& r = rowAt(row);
+    return (r.type == Media) ? mediaFrameHeight(r) : 0.0;
 }
 int BlockModel::mediaDispWidth(int row) const {
-    row = clampRow(row);
-    return (rows_[row].type == Media) ? int(mediaDisplayWidth(rows_[row]) + 0.5) : 0;
+    const Row& r = rowAt(row);
+    return (r.type == Media) ? int(mediaDisplayWidth(r) + 0.5) : 0;
 }
 void BlockModel::setMediaWidth(int row, int w) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;

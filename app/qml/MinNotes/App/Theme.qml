@@ -15,7 +15,7 @@ QtObject {
         readonly property color border:      "#2a2a2a"
         readonly property color divider:     "#333333"   // hr / separators
 
-        readonly property color text:        "#e5e5e3"   // body
+        readonly property color text:        "#E4E3E2"   // body (default type colour)
         readonly property color textBright:  "#f0f0f0"   // headings / selected chrome (sub-white: no glow on dark, matches the highlighter's light text)
         readonly property color textMuted:   "#8a8a8a"   // quotes, bullets
         readonly property color textSubtle:  "#5e5e5e"

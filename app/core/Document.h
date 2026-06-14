@@ -21,9 +21,16 @@ public:
 
     ~Document();
 
-    // Open (creating if absent) at `path`; apply pragmas + ensure schema.
+    // Open (creating if absent) at `path`; apply pragmas + ensure schema. Closes
+    // any currently-open connection first (so one Document can switch files).
     bool open(const QString& path);
+    void close();
     bool isOpen() const { return open_; }
+    // Flush the WAL into the main file so the .mndb is self-contained (Save).
+    bool checkpoint();
+    // Write a clean, compacted copy of the DB to `path` (Save As). Does not
+    // switch — the caller re-opens the new path.
+    bool vacuumInto(const QString& path) const;
 
     int count() const;
 
