@@ -22,7 +22,11 @@ class QNetworkAccessManager;
 // index. The editor talks only to the Q_INVOKABLE seam below.
 class BlockModel : public QAbstractListModel {
     Q_OBJECT
-    Q_PROPERTY(int count READ rowCountQml NOTIFY modelReset)
+    // NB: NOTIFY countChanged (wired to rowsInserted/rowsRemoved/modelReset in the
+    // ctor), NOT the bare modelReset — incremental inserts/removes (Enter-split,
+    // delete) don't reset the model, so a modelReset-only notify left QML bindings
+    // on `count` (e.g. the delegate-pool size) stale until a scroll/reset.
+    Q_PROPERTY(int count READ rowCountQml NOTIFY countChanged)
     Q_PROPERTY(qreal totalHeight READ totalHeight NOTIFY layoutChangedSpike)
     // Bump on any height change; QML bindings include it to force re-eval of
     // yForRow()/rowForY() (which are Q_INVOKABLE, not properties).
@@ -395,6 +399,7 @@ signals:
     void layoutChangedSpike();
     void contentChangedSpike();
     void modelReset();
+    void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset
     void heightSettled(int row, qreal delta);
     void undoStackChanged();
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);

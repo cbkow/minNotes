@@ -118,6 +118,7 @@ FocusScope {
     }
 
     function insertSketchAt(row) {
+        blockModel.commitMarkdown(cursor.focusRow)   // leaving the edited block → consume its inline md
         var r = blockModel.insertSketch(row)
         // Open the new sketch's tab immediately — an empty inline canvas
         // invites nothing; the tab is where drawing lives.
@@ -505,6 +506,10 @@ FocusScope {
         onDropped: (drop) => {
             root.imageDropActive = false
             if (!drop.hasUrls) { root.clearDropState(); return }
+            // A drop lands the caret on the new media (or table cell) → leaving the
+            // edited text block, so consume its inline md first (commit doesn't move
+            // rows, so the drop-target indices below stay valid).
+            blockModel.commitMarkdown(cursor.focusRow)
             // Over a table cell → drop the (first loadable) image into that cell.
             if (root.dropTableRow >= 0) {
                 var tr = root.dropTableRow, cr = root.dropCellR, cc = root.dropCellC, ok = false
@@ -682,8 +687,14 @@ FocusScope {
                 root.ensureVisible(focusRow + 1)
                 return
             }
+            var leftRow = focusRow
             blockModel.splitBlock(focusRow, focusCol)
             setCaret(focusRow + 1, 0)
+            // Enter finishes the line being left → consume its inline markdown
+            // (*italic*, **bold**, `code`) into spans, same as moving the caret
+            // off a block does (see cursor.move). The caret is already on the new
+            // row, so converting the left row never shifts it.
+            blockModel.commitMarkdown(leftRow)
             root.ensureVisible(focusRow + 1)
         }
     }
@@ -1314,11 +1325,21 @@ FocusScope {
         cursor.sync()
     }
     // --- Block context-menu actions (operate on the right-clicked row) ---
-    function addBlockAbove(row) { blockModel.insertBlock(row);     cursor.setCaret(row, 0);     cursor.sync() }
-    function addBlockBelow(row) { blockModel.insertBlock(row + 1); cursor.setCaret(row + 1, 0); cursor.sync() }
-    function duplicateBlock(row) { blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync() }
-    function makeCodeAt(row)    { blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
-    function insertTableAt(row) { blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); tcur.place(0, 0, 0); root.ensureVisible(row + 1) }
+    // These move the caret off the block being edited, so each first consumes that
+    // block's pending inline markdown into spans — the same rule as cursor.move.
+    // (Right-click does NOT move the caret, so cursor.focusRow may differ from row;
+    // only the focused row can hold uncommitted markdown. commitMarkdown is a safe
+    // no-op when there's none / the block isn't a text block.)
+    // ensureVisible (stable `row` param, NOT focusRow which setCaret has mutated)
+    // keeps the caret on-screen — a new block created on the last visible row lands
+    // below the fold otherwise (same "block exists but unseen" family as the Enter bug).
+    function addBlockAbove(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.insertBlock(row);     cursor.setCaret(row, 0);     cursor.sync(); root.ensureVisible(row) }
+    function addBlockBelow(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.insertBlock(row + 1); cursor.setCaret(row + 1, 0); cursor.sync(); root.ensureVisible(row + 1) }
+    function duplicateBlock(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync(); root.ensureVisible(row + 1) }
+    // Make code: skip the commit when converting the focused row itself, so its
+    // markers stay LITERAL as code (don't strip *…* into a span code ignores).
+    function makeCodeAt(row)    { if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow); blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
+    function insertTableAt(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); tcur.place(0, 0, 0); root.ensureVisible(row + 1) }
     function insertTableAtCaret() { insertTableAt(cursor.focusRow) }
     // Table context-menu ops — act on the right-clicked block (menuRow) + cell.
     function tblInsRowAbove() { blockModel.tableInsertRow(menuRow, menuCellR) }
@@ -1479,6 +1500,10 @@ FocusScope {
         // it would fall through to pasting the path as text.) ---
         var urls = clipboard.readUrls()
         if (urls.length > 0) {
+            // Inserting media moves the caret onto it → leaving the text block, so
+            // consume its inline md first (in-place text/HTML paste above must NOT
+            // do this — it would shift focusCol; here the caret goes to a new block).
+            blockModel.commitMarkdown(cursor.focusRow)
             var afterRow = cursor.focusRow, anyU = false
             for (var i = 0; i < urls.length; ++i)
                 if (blockModel.insertMediaFromUrl(afterRow, urls[i])) { afterRow++; anyU = true }
@@ -1486,6 +1511,7 @@ FocusScope {
         }
         // --- Raster image on the clipboard (screenshot, "Copy Image") → media block. ---
         if (clipboard.hasImage()) {
+            blockModel.commitMarkdown(cursor.focusRow)   // caret moves to the new media → consume inline md
             if (blockModel.insertImageFromClipboard(cursor.focusRow)) {
                 cursor.setCaret(cursor.focusRow + 1, 0); root.ensureVisible(cursor.focusRow)
                 return
@@ -1496,6 +1522,7 @@ FocusScope {
         if (txt.length === 0) return
         if (cursor.hasSel) cursor.deleteSelection()
         if (root.looksTabular(txt)) {                       // rectangular TSV → table block
+            blockModel.commitMarkdown(cursor.focusRow)      // caret moves to the new table → consume inline md
             var tr = blockModel.insertTableFromTSV(cursor.focusRow, txt)
             if (tr >= 0) { cursor.setCaret(tr, 0); root.ensureVisible(tr); return }
         }
@@ -1540,6 +1567,11 @@ FocusScope {
         else clipboard.writeText(blockModel.contentForRow(row))
     }
     function deleteBlock(row) {
+        // Deleting a DIFFERENT block (right-click menu) moves the caret off the
+        // edited row → commit its inline md first. Skip when deleting the focused
+        // block itself: its content is about to vanish (no point in an undo step),
+        // and the backspace/forwardDelete callers always pass row == focusRow.
+        if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow)
         if (blockModel.count > 1) {
             blockModel.removeBlock(row)
             cursor.setCaret(Math.max(0, row - (row >= blockModel.count ? 1 : 0)), 0)
@@ -1739,9 +1771,21 @@ FocusScope {
     Timer { interval: 530; running: true; repeat: true; onTriggered: root.caretOn = !root.caretOn }
 
     // --- HUD telemetry (same surface as the other arms) ---
-    readonly property int firstVisible: blockModel.rowForY(flick.contentY)
-    readonly property int lastVisible: Math.min(blockModel.count - 1,
-                                       blockModel.rowForY(flick.contentY + flick.height - 1))
+    // Load-bearing revision read (reactivity rule 1e): rowForY() is a Q_INVOKABLE,
+    // so QML can't see that it depends on the Fenwick heights / row count. Without
+    // the contentRevision dep the visible-row WINDOW (firstVisible→firstRow) goes
+    // stale after any structural edit (insert/remove/split/undo/redo) until a
+    // scroll moves contentY — the delegate pool then renders the wrong rows
+    // (blocks disappear, undo/redo layout corruption). contentRevision (NOT
+    // layoutRevision) is used deliberately: rendering bumps only layoutRevision
+    // (height settle), so depending on it here would loop window→pool→measure→
+    // window; pure height settles are already handled by onHeightSettled's
+    // contentY nudge below.
+    readonly property int firstVisible: (blockModel.contentRevision,
+                                         blockModel.rowForY(flick.contentY))
+    readonly property int lastVisible: (blockModel.contentRevision,
+                                        Math.min(blockModel.count - 1,
+                                                 blockModel.rowForY(flick.contentY + flick.height - 1)))
     // EVERY video row in the document — the per-video transport toolbars are all
     // built up front (on load), NOT lazily as rows scroll into view, so scrolling
     // never creates/destroys a toolbar (zero flicker; the scrubber never resets).
@@ -3029,7 +3073,7 @@ FocusScope {
             clip: true
             model: pdfFrameDoc.pageCount
             spacing: 10
-            cacheBuffer: Math.round(height * 1.5)
+            cacheBuffer: Math.max(0, Math.round(height * 1.5))   // height is transiently <0 during layout
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: MnScrollBar {}
             delegate: Item {

@@ -70,6 +70,14 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
     // File menu (or a recent) opens or creates one. (The model stays empty and
     // every mutation is doc-guarded until a document is loaded.)
     untitled_ = false;
+
+    // The QML `count` property reads rowCountQml; its NOTIFY is countChanged.
+    // Wire countChanged to every structural change so bindings like poolSize
+    // (Math.min(blockModel.count, cap)) re-evaluate on incremental insert/remove
+    // and not only on full model resets (modelReset).
+    connect(this, &QAbstractItemModel::rowsInserted, this, &BlockModel::countChanged);
+    connect(this, &QAbstractItemModel::rowsRemoved,  this, &BlockModel::countChanged);
+    connect(this, &QAbstractItemModel::modelReset,   this, &BlockModel::countChanged);
 }
 
 // --- Document lifecycle ----------------------------------------------------
@@ -535,6 +543,17 @@ std::vector<BlockModel::BlockSnap> BlockModel::snapshotRange(int lo, int hi) con
 void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap>& snaps) {
     applying_ = true;
     beginResetModel();
+    // Preserve MEASURED heights across the reset. The Fenwick is rebuilt below, so
+    // first capture each currently-measured row's real height keyed by id. Rows
+    // OUTSIDE the replaced region [lo, lo+snaps) are untouched by this snapshot —
+    // restoring their measured height (instead of a fresh estimate) avoids BOTH
+    // the table-overlap corruption (reportHeight skips re-measuring a row whose
+    // `measured` flag is still set) AND the scroll jump from above-viewport rows
+    // snapping to estimates. Replaced rows re-measure (their flag is cleared below).
+    QHash<QString, double> measuredById;
+    measuredById.reserve(static_cast<int>(rows_.size()));
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
+        if (rows_[i].measured) measuredById.insert(ids_[i], fenwick_.height(i));
     const int last = std::min(lo + oldCount, static_cast<int>(rows_.size()));
     QSet<QString> newIds, oldIds;
     for (const BlockSnap& s : snaps) newIds.insert(s.id);
@@ -569,8 +588,18 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         }
         ++at;
     }
+    const int regionEnd = lo + static_cast<int>(snaps.size());   // [lo,regionEnd) = restored snaps
     std::vector<double> heights; heights.reserve(rows_.size());
-    for (const Row& r : rows_) heights.push_back(estimatedHeight(r));
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
+        const bool replaced = (i >= lo && i < regionEnd);        // a restored snap → re-measure
+        auto it = measuredById.constFind(ids_[i]);
+        if (!replaced && rows_[i].measured && it != measuredById.constEnd()) {
+            heights.push_back(it.value());                       // untouched → keep its real height
+        } else {
+            rows_[i].measured = false;                           // changed/new → estimate + re-measure
+            heights.push_back(estimatedHeight(rows_[i]));
+        }
+    }
     fenwick_.reset(std::move(heights));
     endResetModel();
     ++layoutRevision_; ++contentRevision_;
