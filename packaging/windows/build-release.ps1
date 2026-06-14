@@ -7,7 +7,7 @@
     1. Imports the MSVC x64 environment (vcvars64) + puts Qt's cmake/ninja/Qt bin
        on PATH.
     2. Configures build/ (Release) if not already configured.
-    3. Builds minNotes — the CMake POST_BUILD steps run windeployqt and stage the
+    3. Builds minNotes - the CMake POST_BUILD steps run windeployqt and stage the
        vendored DLLs (WinSparkle / FFmpeg / KF6) next to the exe, so build/ is a
        self-contained runtime tree.
     4. Runs Inno Setup (ISCC) on packaging\windows\minNotes.iss, passing the
@@ -87,7 +87,7 @@ $iscc = Get-ChildItem `
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe", `
     "C:\Program Files\Inno Setup 6\ISCC.exe" `
     -ErrorAction SilentlyContinue | Select-Object -First 1 -Expand FullName
-if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) not found — install it to build the installer." }
+if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) not found - install it to build the installer." }
 
 Write-Host "Building installer (ISCC)..."
 & $iscc "/DMyAppVersion=$Version" $IssFile
@@ -97,7 +97,7 @@ $out = Join-Path $PSScriptRoot "minNotes-$Version-x64.exe"
 if (Test-Path $out) {
     Write-Host ""
     Write-Host "==> Installer: $out" -ForegroundColor Green
-    Write-Host "    (UNSIGNED — Authenticode-sign + make WinSparkle appcast on macOS.)"
+    Write-Host "    (UNSIGNED - Authenticode-sign + make WinSparkle appcast on macOS.)"
 } else {
     throw "Installer not found at $out"
 }
