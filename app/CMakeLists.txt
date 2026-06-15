@@ -326,7 +326,14 @@ endif()
 # rename). OUTPUT_NAME only renames the binary, so minNotes.exe is safe (and the
 # .exe extension keeps it distinct from any MinNotes/ dir regardless).
 if(WIN32)
-    set_target_properties(minnotesapp PROPERTIES OUTPUT_NAME "minNotes")
+    # WIN32_EXECUTABLE → link the GUI subsystem (WinMain) instead of the console
+    # subsystem, so launching minNotes.exe does NOT pop a terminal window. Qt
+    # supplies the WinMain entry point via Qt6::EntryPointPrivate (pulled in by
+    # qt_add_executable). Trade-off: stdout/stderr go nowhere — use a file logger
+    # (see PORTING-NOTES §7) if console logs are needed.
+    set_target_properties(minnotesapp PROPERTIES
+        OUTPUT_NAME "minNotes"
+        WIN32_EXECUTABLE TRUE)
 
     # ---- App icon + version resource (.rc) ----------------------------
     # The MSVC linker embeds the ICON (Explorer/taskbar/Alt-Tab + Qt's default

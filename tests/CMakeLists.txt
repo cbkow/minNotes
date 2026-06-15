@@ -7,6 +7,9 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/Document.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
+    # PathMap.cpp defines mn::toRef / mn::resolveRef, referenced by BlockModel
+    # and MediaStore (cross-OS path mapping). Link it or the test fails LNK2019.
+    ${CMAKE_SOURCE_DIR}/app/core/PathMap.cpp
 )
 target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/core)
 target_link_libraries(mn_regression_test PRIVATE
