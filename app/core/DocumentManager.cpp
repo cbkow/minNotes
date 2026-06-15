@@ -42,6 +42,10 @@ int DocumentManager::indexOfPath(const QString& canonicalPath) const {
     return -1;
 }
 
+void DocumentManager::refreshMedia() {
+    for (const Tab& t : tabs_) t.model->refreshMedia();
+}
+
 void DocumentManager::newTab() {
     auto* m = new BlockModel(this);
     m->newDocument();

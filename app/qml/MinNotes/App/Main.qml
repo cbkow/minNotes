@@ -33,6 +33,10 @@ ApplicationWindow {
     }
     function _saveOrSaveAs() { if (!blockModel.save()) saveAsDialog.open() }
 
+    // Cross-OS path mappings editor (opened from the File menu). Edits a draft +
+    // commits through the `pathMap` bridge, which re-resolves open media.
+    PathMappingsDialog { id: pathMappingsDialog; anchors.centerIn: Overlay.overlay }
+
     // --- Recent documents (persisted JSON list, most-recent first, cap 10) ---
     Settings { id: recentsStore; category: "recents"; property string paths: "[]" }
     function recentPaths() { try { var a = JSON.parse(recentsStore.paths); return Array.isArray(a) ? a : [] } catch (e) { return [] } }
@@ -124,6 +128,9 @@ ApplicationWindow {
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.closeTabAt(docs.activeIndex) }
                 Platform.MenuSeparator {}
+                // NoRole keeps it in File (reliably visible); see the updater note below.
+                Platform.MenuItem { text: qsTr("Path Mappings…"); role: Platform.MenuItem.NoRole; onTriggered: pathMappingsDialog.open2() }
+                Platform.MenuSeparator {}
                 // Keep it in the File menu (NoRole), matching the Windows menu.
                 // NB: the default TextHeuristicRole — and ApplicationSpecificRole —
                 // RELOCATE immediate-menubar items into the macOS application menu
@@ -191,6 +198,8 @@ ApplicationWindow {
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.closeTabAt(docs.activeIndex) }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("Path &Mappings…"); onTriggered: pathMappingsDialog.open2() }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("Check for &Updates…"); onTriggered: appUpdater.checkForUpdates() }
             }

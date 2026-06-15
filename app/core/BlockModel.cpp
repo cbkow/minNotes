@@ -1,4 +1,5 @@
 #include "BlockModel.h"
+#include "PathMap.h"
 #include <QStringBuilder>
 #include <QStandardPaths>
 #include <QDir>
@@ -1123,7 +1124,7 @@ QString BlockModel::tableCellMediaUrl(int row, int r, int c) const {
     const QString m = gridFor(row).cellMedia(r, c);
     if (m.isEmpty()) return {};
     const QJsonObject o = QJsonDocument::fromJson(m.toUtf8()).object();
-    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString());
+    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
 }
 int BlockModel::tableCellMediaW(int row, int r, int c) const {
     if (rowAt(row).type != Table) return 0;
@@ -1413,7 +1414,7 @@ bool BlockModel::sketchAppendImage(int row, const QString& src, int iw, int ih) 
     // (until select/move lands). Clamp so the image stays on the canvas.
     const double off = std::min(0.04 * images.size(), 0.30);
     QJsonObject img;
-    img.insert(QStringLiteral("src"), src);
+    img.insert(QStringLiteral("src"), mn::toRef(src));
     img.insert(QStringLiteral("x"), std::clamp((1.0 - wN) / 2.0 + off, 0.0, 1.0 - wN));
     img.insert(QStringLiteral("y"), std::clamp((1.0 - hN) / 2.0 + off, 0.0, 1.0 - hN));
     img.insert(QStringLiteral("w"), wN);
@@ -1455,7 +1456,7 @@ QString BlockModel::sketchResolvedJson(int row) const {
     for (const QJsonValue& v : images) {
         QJsonObject o = v.toObject();
         o.insert(QStringLiteral("src"),
-                 mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString()));
+                 mediaStore_->resolveUrl(o.value(QStringLiteral("src"))));
         out.append(o);
     }
     root.insert(QStringLiteral("images"), out);
@@ -1599,16 +1600,20 @@ void BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectP
     endTxn();
 }
 
+// toRef converts an absolute referenced path to a portable {vol,rel} ref when it
+// falls under a configured volume; relative ".minnotes/…" (sidecar) and http(s)
+// srcs match no volume root and pass through unchanged, so it's safe to apply to
+// every descriptor builder uniformly.
 static QString mediaJson(const MediaStore::ImageRef& ref) {
     QJsonObject o;
-    o.insert(QStringLiteral("src"), ref.src);
+    o.insert(QStringLiteral("src"), mn::toRef(ref.src));
     o.insert(QStringLiteral("w"), ref.w);
     o.insert(QStringLiteral("h"), ref.h);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 static QString videoMediaJson(const MediaStore::VideoRef& ref) {
     QJsonObject o;
-    o.insert(QStringLiteral("src"), ref.src);
+    o.insert(QStringLiteral("src"), mn::toRef(ref.src));
     o.insert(QStringLiteral("w"), ref.w);
     o.insert(QStringLiteral("h"), ref.h);
     o.insert(QStringLiteral("kind"), QStringLiteral("video"));
@@ -1626,7 +1631,7 @@ static QString remoteImageJson(const QString& url) {
 }
 static QString pdfMediaJson(const MediaStore::PdfRef& ref) {
     QJsonObject o;
-    o.insert(QStringLiteral("src"),   ref.src);
+    o.insert(QStringLiteral("src"),   mn::toRef(ref.src));
     o.insert(QStringLiteral("w"),     ref.w);
     o.insert(QStringLiteral("h"),     ref.h);
     o.insert(QStringLiteral("kind"),  QStringLiteral("pdf"));
@@ -1636,7 +1641,7 @@ static QString pdfMediaJson(const MediaStore::PdfRef& ref) {
 static QString fileMediaJson(const QString& path) {
     const QFileInfo fi(path);
     QJsonObject o;
-    o.insert(QStringLiteral("src"),  fi.absoluteFilePath());
+    o.insert(QStringLiteral("src"),  mn::toRef(fi.absoluteFilePath()));
     o.insert(QStringLiteral("kind"), QStringLiteral("file"));
     o.insert(QStringLiteral("name"), fi.fileName());
     o.insert(QStringLiteral("ext"),  fi.suffix().toLower());
@@ -1703,11 +1708,15 @@ QString BlockModel::mediaUrl(int row) const {
     row = clampRow(row);
     if (rows_[row].type != Media || !mediaStore_) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")).toString());
+    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
 }
 QString BlockModel::mediaLocalPath(int row) const {
     const QString url = mediaUrl(row);
     return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
+}
+void BlockModel::refreshMedia() {
+    ++contentRevision_;
+    emit contentChangedSpike();
 }
 void BlockModel::revealMedia(int row) const {
     const QString path = mediaLocalPath(row);

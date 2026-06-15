@@ -12,6 +12,10 @@ qt_add_executable(minnotesapp
     core/BlockModel.cpp
     core/DocumentManager.h
     core/DocumentManager.cpp
+    core/PathMap.h
+    core/PathMap.cpp
+    core/PathMapController.h
+    core/PathMapController.cpp
     core/Document.h
     core/Document.cpp
     core/InlineMarkdownHighlighter.h
@@ -112,6 +116,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/ChoiceColumnEditor.qml
         qml/MinNotes/App/BlockKanban.qml
         qml/MinNotes/App/VideoTransport.qml
+        qml/MinNotes/App/PathMappingsDialog.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf

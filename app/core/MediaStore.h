@@ -1,6 +1,7 @@
 #pragma once
 #include <QString>
 #include <QImage>
+#include <QJsonValue>
 
 // Media asset bookkeeping for one document. Media is NEVER ingested into the DB
 // (no byte bloat): file-referenced media is stored as an absolute path; pasted /
@@ -61,6 +62,11 @@ public:
 
     // Stored src (absolute, or ".minnotes/…" relative) → a loadable file:// URL.
     QString resolveUrl(const QString& src) const;
+    // Descriptor `src` value, which may be a portable path-mapping ref object
+    // { "vol":<id>, "rel":[…] } or a plain string. Objects resolve via the
+    // active path mappings (mn::resolveRef); strings flow through the overload
+    // above (legacy absolute paths get a best-effort cross-OS translate first).
+    QString resolveUrl(const QJsonValue& src) const;
 
 private:
     QString assetsDir() const;            // <docDir>/.minnotes (created on demand)

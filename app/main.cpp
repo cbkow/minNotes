@@ -15,6 +15,7 @@
 #include "sparkle_updater_macos.h"
 #include "core/BlockModel.h"
 #include "core/DocumentManager.h"
+#include "core/PathMapController.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
 #include "core/PdfPageProvider.h"
@@ -93,6 +94,9 @@ int main(int argc, char *argv[])
     DocumentManager docs;
     Clipboard clipboard;
     AppUpdater appUpdater;   // "Check for Updates…" → Sparkle (no-op off-macOS)
+    // Cross-OS path mappings for referenced media. Loads from QSettings + feeds
+    // mn::activeMappings(), which the per-document MediaStore reads on resolve.
+    PathMapController pathMap;
 
     QQmlApplicationEngine engine;
     engine.addImageProvider("videoframe", new VideoFrameProvider);   // inline video posters
@@ -107,6 +111,10 @@ int main(int argc, char *argv[])
     });
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);
+    engine.rootContext()->setContextProperty("pathMap", &pathMap);
+    // A mapping edit must re-resolve media in every open tab.
+    QObject::connect(&pathMap, &PathMapController::mappingsChanged, &docs,
+                     [&docs] { docs.refreshMedia(); });
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule("MinNotes.App", "Main");

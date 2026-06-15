@@ -40,6 +40,9 @@ public:
     // or -1 if out of range. The per-tab view state is keyed by this id.
     Q_INVOKABLE int tabIdAt(int i) const;
 
+    // Re-resolve media in every open tab (path mappings changed).
+    Q_INVOKABLE void refreshMedia();
+
     Q_INVOKABLE void newTab();                            // fresh untitled scratch doc
     Q_INVOKABLE bool openTab(const QString& pathOrUrl);   // dedupe by canonical path
     Q_INVOKABLE void closeTab(int i);

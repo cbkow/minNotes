@@ -1,4 +1,5 @@
 #include "MediaStore.h"
+#include "PathMap.h"
 #include <QFileInfo>
 #include <QDir>
 #include <QUrl>
@@ -247,4 +248,16 @@ QString MediaStore::resolveUrl(const QString& src) const {
     if (src.startsWith(QLatin1String("http://")) || src.startsWith(QLatin1String("https://")))
         return src;                       // remote (pasted <img>) — load directly until localized
     return QUrl::fromLocalFile(resolvePath(src)).toString();
+}
+
+QString MediaStore::resolveUrl(const QJsonValue& src) const {
+    if (src.isObject()) {
+        // Portable {vol,rel} ref → this machine's absolute path ("" if the
+        // volume is unknown/disabled → empty URL → broken-media state).
+        const QString abs = mn::resolveRef(src);
+        return abs.isEmpty() ? QString() : QUrl::fromLocalFile(abs).toString();
+    }
+    // Plain string: best-effort cross-OS translate of a legacy absolute path,
+    // then the usual relative/http/absolute handling.
+    return resolveUrl(mn::resolveRef(src));
 }
