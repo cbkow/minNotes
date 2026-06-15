@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>minNotes</title>
+    <link>https://minnotes.app/appcast-win.xml</link>
+    <description>minNotes Windows updates</description>
+    <language>en</language>
+    <!-- @@APPCAST_INSERT@@ -->
+    <item>
+      <title>Version 0.1.2</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>0.1.2</sparkle:version>
+      <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+      <sparkle:os>windows</sparkle:os>
+      <description><![CDATA[
+      <ul><li>See the release notes at https://github.com/cbkow/minNotes/releases/tag/v0.1.2</li></ul>
+      ]]></description>
+      <pubDate>Sun, 14 Jun 2026 19:56:38 -0400</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v0.1.2/minNotes-0.1.2-x64.exe"
+        sparkle:edSignature="X11vbp37MxTEdmxBJMrnETiQ5xb4Mk+EAYOutVu52RUWwSnL6Ml0i7MDw61QAqVYM4BqzbprBYBYTS1Hu7oZAQ=="
+        length="96036113"
+        type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>
