@@ -117,6 +117,38 @@ FocusScope {
         }
     }
 
+    // --- Per-tab view state (multi-document tabs). One Editor is shared across
+    // all open documents; `blockModel` re-points to the active tab's model on
+    // switch. These snapshot / restore the QML-side view state (scroll, caret,
+    // active sub-tab + board) so each tab comes back exactly where you left it.
+    // The blob is held by the DocumentManager, keyed per tab; Main.qml drives
+    // capture-before / restore-after around docs.setActive.
+    function captureViewState() {
+        return {
+            scrollY:       flick.contentY,
+            focusRow:      cursor.focusRow,  focusCol:  cursor.focusCol,
+            anchorRow:     cursor.anchorRow, anchorCol: cursor.anchorCol,
+            activeFrameId: root.activeFrameId,
+            boardMode:     root.boardMode,   boardCol:  root.boardCol
+        }
+    }
+    function restoreViewState(m) {
+        // No saved state (a freshly-opened tab) → the standard fresh-doc reset.
+        if (!m || m.focusRow === undefined) {
+            root.setActiveTab("")
+            cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
+            return
+        }
+        cursor.clearMarks()
+        root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/sketch)
+        if (m.boardMode && m.boardCol >= 0) { root.boardMode = true; root.boardCol = m.boardCol }
+        // Restore the caret (and any selection), then the scroll offset.
+        cursor.anchorRow = m.anchorRow; cursor.anchorCol = m.anchorCol
+        cursor.focusRow  = m.focusRow;  cursor.focusCol  = m.focusCol
+        cursor.sync()
+        flick.contentY = m.scrollY
+    }
+
     function insertSketchAt(row) {
         blockModel.commitMarkdown(cursor.focusRow)   // leaving the edited block → consume its inline md
         var r = blockModel.insertSketch(row)

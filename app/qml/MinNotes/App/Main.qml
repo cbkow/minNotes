@@ -21,7 +21,7 @@ ApplicationWindow {
         id: openDialog
         title: "Open document"
         nameFilters: ["minNotes documents (*.mndb)"]
-        onAccepted: blockModel.openDocument("" + selectedFile)
+        onAccepted: docs.openTab("" + selectedFile)
     }
     FileDialog {
         id: saveAsDialog
@@ -50,8 +50,42 @@ ApplicationWindow {
     Connections {
         target: blockModel
         function onDocumentChanged() {
+            // Save As on the active model (untitled → named) lands here.
             if (blockModel.documentOpen && !blockModel.untitled) win.addRecent(blockModel.documentPath)
         }
+    }
+    // A tab opened or was switched to → record it (a newly-opened doc emits
+    // documentChanged on its own model BEFORE it becomes active, so the
+    // blockModel-targeted Connections above can't catch it — this does).
+    Connections {
+        target: docs
+        function onActiveChanged() {
+            if (blockModel.documentOpen && !blockModel.untitled) win.addRecent(blockModel.documentPath)
+        }
+    }
+
+    // --- Multi-document tabs: one shared Editor, `blockModel` re-points to the
+    // active tab's model (main.cpp, on docs.activeChanged). Switching saves the
+    // outgoing tab's QML view state (scroll/caret/active sub-tab) and restores
+    // the incoming one's; the blob is held per-tab by the DocumentManager. ---
+    function _editor() { return docContent.item ? docContent.item.editorItem : null }
+    function _restoreActiveView() {
+        var ed = win._editor()
+        if (ed && docs.activeIndex >= 0)
+            ed.restoreViewState(docs.viewState(docs.tabIdAt(docs.activeIndex)))
+    }
+    function switchToTab(i) {
+        if (i === docs.activeIndex) return
+        var ed = win._editor()
+        var curId = docs.tabIdAt(docs.activeIndex)
+        if (ed && curId >= 0) docs.setViewState(curId, ed.captureViewState())
+        docs.setActive(i)
+        Qt.callLater(win._restoreActiveView)   // after blockModel re-points + bindings settle
+    }
+    function closeTabAt(i) {
+        var wasActive = (i === docs.activeIndex)
+        docs.closeTab(i)
+        if (wasActive) Qt.callLater(win._restoreActiveView)
     }
 
     // --- Menu bar. macOS uses the native Qt.labs.platform system menu bar
@@ -66,7 +100,7 @@ ApplicationWindow {
         Platform.MenuBar {
             Platform.Menu {
                 title: qsTr("File")
-                Platform.MenuItem { text: qsTr("New");   shortcut: StandardKey.New;  onTriggered: blockModel.newDocument() }
+                Platform.MenuItem { text: qsTr("New");   shortcut: StandardKey.New;  onTriggered: docs.newTab() }
                 Platform.MenuItem { text: qsTr("Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
                 Platform.Menu {
                     id: recentMenu
@@ -76,7 +110,7 @@ ApplicationWindow {
                         delegate: Platform.MenuItem {
                             required property var modelData
                             text: win.baseName(modelData)
-                            onTriggered: blockModel.openDocument(modelData)
+                            onTriggered: docs.openTab(modelData)
                         }
                         onObjectAdded: (i, obj) => recentMenu.insertItem(i, obj)
                         onObjectRemoved: (i, obj) => recentMenu.removeItem(obj)
@@ -88,13 +122,17 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 Platform.MenuSeparator {}
-                Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: blockModel.closeDocument() }
+                Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.closeTabAt(docs.activeIndex) }
                 Platform.MenuSeparator {}
-                // ApplicationSpecificRole keeps it in place rather than merging
-                // into a system role. No-op on builds without Sparkle vendored.
+                // Keep it in the File menu (NoRole), matching the Windows menu.
+                // NB: the default TextHeuristicRole — and ApplicationSpecificRole —
+                // RELOCATE immediate-menubar items into the macOS application menu
+                // (Qt docs); when that relocation doesn't land it vanishes from
+                // both menus, which is why this previously didn't appear. NoRole
+                // pins it here reliably. No-op on builds without Sparkle vendored.
                 Platform.MenuItem {
                     text: qsTr("Check for Updates…")
-                    role: Platform.MenuItem.ApplicationSpecificRole
+                    role: Platform.MenuItem.NoRole
                     onTriggered: appUpdater.checkForUpdates()
                 }
             }
@@ -122,7 +160,7 @@ ApplicationWindow {
             }
             ThemedMenu {
                 title: qsTr("&File")
-                Action { text: qsTr("&New");   shortcut: StandardKey.New;  onTriggered: blockModel.newDocument() }
+                Action { text: qsTr("&New");   shortcut: StandardKey.New;  onTriggered: docs.newTab() }
                 Action { text: qsTr("&Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
                 ThemedMenu {
                     id: winRecentMenu
@@ -135,7 +173,7 @@ ApplicationWindow {
                         MenuItem {
                             required property var modelData
                             text: win.baseName(modelData)
-                            onTriggered: blockModel.openDocument(modelData)
+                            onTriggered: docs.openTab(modelData)
                         }
                     }
                     Repeater { model: win.recents.length > 0 ? 1 : 0; ThemedMenuSeparator {} }
@@ -152,7 +190,7 @@ ApplicationWindow {
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: blockModel.closeDocument() }
+                Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.closeTabAt(docs.activeIndex) }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("Check for &Updates…"); onTriggered: appUpdater.checkForUpdates() }
             }
@@ -215,33 +253,195 @@ ApplicationWindow {
     onVisibilityChanged: geomSave.restart()
     Timer { id: geomSave; interval: 500; onTriggered: win._captureGeometry() }
 
-    // Thin left action rail + (editor page over a bottom status strip) + a
-    // collapsible right inspector that slides in/out (default hidden → "min" by
-    // default). The left rail's palette button toggles the inspector.
-    Row {
+    // Document tab strip on top + (thin left action rail + editor page over a
+    // bottom status strip + a collapsible right inspector).
+    Column {
         anchors.fill: parent
-        // editor is null while no document is open — the rail/inspector guard it,
-        // and the welcome overlay covers everything.
-        readonly property var editor: docContent.item ? docContent.item.editorItem : null
-        LeftRail { id: rail; height: parent.height; editor: parent.editor; inspector: inspectorPanel }
-        // The editor surface only exists while a document is open, so no binding
-        // ever queries the empty model (which would index empty vectors → crash).
-        Loader {
-            id: docContent
-            active: blockModel.documentOpen
-            width: parent.width - rail.width - inspectorPanel.width; height: parent.height
-            sourceComponent: Column {
-                anchors.fill: parent
-                property alias editorItem: editorInner
-                // The validated passive-surface editor (model owns the cursor; blocks
-                // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
-                Editor { id: editorInner; width: parent.width; height: parent.height - innerTabs.height - innerBottom.height
-                         inspector: inspectorPanel }
-                TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
-                BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
+
+        // --- Multi-document tab strip. Browser-style top tabs, one per open
+        // document; the active tab = divider fill + a white underline (style
+        // rules: squared, accent reserved for real highlights). A trailing "+"
+        // opens a new tab; each tab has a hover/active close affordance, and a
+        // middle-click also closes. Hidden in the welcome state (no docs). ---
+        Rectangle {
+            id: docTabBar
+            width: parent.width
+            visible: docs.count > 0
+            height: visible ? 36 : 0
+            color: Theme.colors.surfaceRaised
+            Rectangle {   // bottom hairline
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: 1; color: Theme.colors.border
+            }
+
+            Row {
+                anchors.left: parent.left; anchors.top: parent.top
+                anchors.right: navBtn.left
+                height: parent.height
+                clip: true
+                Repeater {
+                    model: docs.models
+                    delegate: Rectangle {
+                        id: tab
+                        required property int index
+                        required property var modelData     // this tab's BlockModel
+                        readonly property bool active: index === docs.activeIndex
+                        width: Math.min(220, tabLabel.implicitWidth + 56)
+                        height: docTabBar.height
+                        color: active ? Theme.colors.divider
+                             : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                        Rectangle {   // active underline (white)
+                            visible: tab.active
+                            anchors.bottom: parent.bottom; width: parent.width; height: 2
+                            color: Theme.colors.textBright
+                        }
+                        Rectangle { anchors.right: parent.right; width: 1; height: parent.height
+                                    color: Theme.colors.border }
+                        Text {
+                            id: tabLabel
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left: parent.left; anchors.leftMargin: 12
+                            anchors.right: tabClose.left; anchors.rightMargin: 4
+                            elide: Text.ElideMiddle
+                            // "•" marks an untitled (never-saved) document, matching the title bar.
+                            text: (tab.modelData.untitled ? "• " : "") + tab.modelData.documentName
+                            color: tab.active ? Theme.colors.textBright : Theme.colors.textMuted
+                            font.family: Theme.font.family; font.pixelSize: 13
+                        }
+                        MouseArea {
+                            id: tabMA
+                            anchors.fill: parent; hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: (m) => { if (m.button === Qt.MiddleButton) win.closeTabAt(tab.index)
+                                                else win.switchToTab(tab.index) }
+                        }
+                        Rectangle {   // close affordance (declared after tabMA so its MouseArea wins)
+                            id: tabClose
+                            anchors.right: parent.right; anchors.rightMargin: 7
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 18; height: 18
+                            visible: tabMA.containsMouse || closeMA.containsMouse || tab.active
+                            color: closeMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+                            Icon { anchors.centerIn: parent; name: "x"; size: 12
+                                   color: closeMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+                            MouseArea { id: closeMA; anchors.fill: parent; hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: win.closeTabAt(tab.index) }
+                        }
+                    }
+                }
+            }
+
+            // Navigator: a list of every open document by FULL name — so the
+            // strip stays usable when many docs are open (the tabs clip; this
+            // is always one click away). Mirrors TableTabs' overflow menu, but
+            // opens DOWNWARD (the strip is at the window's top edge).
+            Rectangle {
+                id: navBtn
+                anchors.right: newTabBtn.left; anchors.top: parent.top
+                width: 34; height: docTabBar.height
+                color: navMenu.visible ? Theme.colors.divider
+                     : (navMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                Rectangle { anchors.left: parent.left; width: 1; height: parent.height
+                            color: Theme.colors.border }
+                Icon { anchors.centerIn: parent; name: "list"; size: 16
+                       color: navMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
+                MouseArea { id: navMA; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: navMenu.visible ? navMenu.close() : navMenu.open() }
+
+                Popup {
+                    id: navMenu
+                    padding: 1
+                    width: 320
+                    height: Math.min(360, navCol.implicitHeight + 2)
+                    x: navBtn.width - width        // right-aligned to the button
+                    y: navBtn.height + 1            // drop down below the strip
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    background: Rectangle { color: Theme.colors.surface; radius: 0
+                                            border.width: 1; border.color: Theme.colors.border }
+                    contentItem: Flickable {
+                        id: navFlick
+                        clip: true
+                        contentWidth: width
+                        contentHeight: navCol.implicitHeight
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: MnScrollBar {}
+                        Column {
+                            id: navCol
+                            width: navFlick.width
+                            Repeater {
+                                model: docs.models
+                                delegate: Rectangle {
+                                    required property int index
+                                    required property var modelData
+                                    readonly property bool active: index === docs.activeIndex
+                                    width: navCol.width; height: 28
+                                    color: navItemMA.containsMouse ? Theme.colors.surfaceHover
+                                         : (active ? Theme.colors.divider : "transparent")
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.left: parent.left; anchors.leftMargin: 12
+                                        anchors.right: parent.right; anchors.rightMargin: 10
+                                        text: (parent.modelData.untitled ? "• " : "") + parent.modelData.documentName
+                                        elide: Text.ElideMiddle   // keep the distinguishing tail
+                                        color: parent.active ? Theme.colors.textBright : Theme.colors.text
+                                        font.family: Theme.font.family; font.pixelSize: 13
+                                    }
+                                    MouseArea {
+                                        id: navItemMA
+                                        anchors.fill: parent; hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: { win.switchToTab(parent.index); navMenu.close() }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {   // new-tab button, pinned right
+                id: newTabBtn
+                anchors.right: parent.right; anchors.top: parent.top
+                width: 36; height: docTabBar.height
+                color: newMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+                Rectangle { anchors.left: parent.left; width: 1; height: parent.height
+                            color: Theme.colors.border }
+                Icon { anchors.centerIn: parent; name: "plus"; size: 16
+                       color: newMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+                MouseArea { id: newMA; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor; onClicked: docs.newTab() }
             }
         }
-        Inspector { id: inspectorPanel; height: parent.height; editor: parent.editor }
+
+        Row {
+            width: parent.width
+            height: parent.height - docTabBar.height
+            // editor is null while no document is open — the rail/inspector guard it,
+            // and the welcome overlay covers everything.
+            readonly property var editor: docContent.item ? docContent.item.editorItem : null
+            LeftRail { id: rail; height: parent.height; editor: parent.editor; inspector: inspectorPanel }
+            // The editor surface only exists while a document is open, so no binding
+            // ever queries the empty model (which would index empty vectors → crash).
+            Loader {
+                id: docContent
+                active: blockModel.documentOpen
+                width: parent.width - rail.width - inspectorPanel.width; height: parent.height
+                sourceComponent: Column {
+                    anchors.fill: parent
+                    property alias editorItem: editorInner
+                    // The validated passive-surface editor (model owns the cursor; blocks
+                    // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
+                    Editor { id: editorInner; width: parent.width; height: parent.height - innerTabs.height - innerBottom.height
+                             inspector: inspectorPanel }
+                    TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
+                    BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
+                }
+            }
+            Inspector { id: inspectorPanel; height: parent.height; editor: parent.editor }
+        }
     }
 
     // --- No-document welcome state: covers the (empty) editor until a document is
@@ -273,7 +473,7 @@ ApplicationWindow {
                 FlatButton {
                     text: "New document"; iconName: "file"; variant: "primary"
                     padding: 16; implicitHeight: 40
-                    onClicked: blockModel.newDocument()
+                    onClicked: docs.newTab()
                 }
                 FlatButton {
                     text: "Open…"; iconName: "folder-open"
@@ -314,7 +514,7 @@ ApplicationWindow {
                         MouseArea {
                             id: recentMA
                             anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: blockModel.openDocument(recentItem.modelData)
+                            onClicked: docs.openTab(recentItem.modelData)
                         }
                     }
                 }

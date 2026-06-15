@@ -10,6 +10,8 @@ qt_add_executable(minnotesapp
     core/FenwickTree.h
     core/BlockModel.h
     core/BlockModel.cpp
+    core/DocumentManager.h
+    core/DocumentManager.cpp
     core/Document.h
     core/Document.cpp
     core/InlineMarkdownHighlighter.h

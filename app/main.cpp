@@ -14,14 +14,16 @@
 #include "AppUpdater.h"
 #include "sparkle_updater_macos.h"
 #include "core/BlockModel.h"
+#include "core/DocumentManager.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
 #include "core/PdfPageProvider.h"
 
 // Resolve a file path / file:// URL / minnotes:// deep link to a document path
-// and open it. `minnotes:///abs/path/doc.mndb` opens that document, mirroring
-// QCView's project deep links.
-static void resolveAndOpen(BlockModel &model, const QString &s)
+// and open it in a tab. `minnotes:///abs/path/doc.mndb` opens that document,
+// mirroring QCView's project deep links. openTab dedupes: a path that's already
+// open just focuses its existing tab.
+static void resolveAndOpen(DocumentManager &docs, const QString &s)
 {
     QString path = s;
     if (s.startsWith(QStringLiteral("minnotes:"), Qt::CaseInsensitive)) {
@@ -30,7 +32,7 @@ static void resolveAndOpen(BlockModel &model, const QString &s)
         if (path.isEmpty()) path = u.path();   // minnotes:///Users/… → /Users/…
     }
     if (!path.isEmpty())
-        model.openDocument(path);              // handles file:// + plain paths
+        docs.openTab(path);                    // handles file:// + plain paths
 }
 
 int main(int argc, char *argv[])
@@ -85,16 +87,24 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
 #endif
 
-    // The document model. Boots with no document (the welcome state); the File
-    // menu / a passed file open or create one.
-    BlockModel model;
+    // Open documents, one BlockModel per tab. Boots with no tab (the welcome
+    // state, backed by the manager's empty fallback model); the File menu / a
+    // passed file open or create one.
+    DocumentManager docs;
     Clipboard clipboard;
     AppUpdater appUpdater;   // "Check for Updates…" → Sparkle (no-op off-macOS)
 
     QQmlApplicationEngine engine;
     engine.addImageProvider("videoframe", new VideoFrameProvider);   // inline video posters
     engine.addImageProvider("pdfpage", new PdfPageProvider);          // inline PDF pages
-    engine.rootContext()->setContextProperty("blockModel", &model);
+    engine.rootContext()->setContextProperty("docs", &docs);
+    // Keep `blockModel` pointed at the active tab's model so the existing ~530
+    // QML bindings keep working unchanged; re-point it whenever the active tab
+    // changes (activeModel() is never null — it falls back to the empty model).
+    engine.rootContext()->setContextProperty("blockModel", docs.activeModel());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &engine, [&engine, &docs] {
+        engine.rootContext()->setContextProperty("blockModel", docs.activeModel());
+    });
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
@@ -106,15 +116,15 @@ int main(int argc, char *argv[])
     // File / URI opening: Finder double-click and minnotes:// deep links arrive
     // as QFileOpenEvents (captured by MinNotesApplication); terminal/CLI args are
     // parsed here. Drain any cold-start events that fired before the engine loaded.
-    QObject::connect(&app, &MinNotesApplication::openRequested, &model,
-                     [&model](const QString &s) { resolveAndOpen(model, s); });
+    QObject::connect(&app, &MinNotesApplication::openRequested, &docs,
+                     [&docs](const QString &s) { resolveAndOpen(docs, s); });
     app.markReady();
     const QStringList pending = app.takePending();
-    for (const QString &s : pending) resolveAndOpen(model, s);
+    for (const QString &s : pending) resolveAndOpen(docs, s);
     const QStringList args = app.arguments();
     for (int i = 1; i < args.size(); ++i) {
         if (args[i].startsWith(QLatin1Char('-'))) continue;   // skip flags
-        resolveAndOpen(model, args[i]);
+        resolveAndOpen(docs, args[i]);
     }
 
 #ifdef Q_OS_WIN
@@ -140,7 +150,7 @@ int main(int argc, char *argv[])
                  "later launches won't reach this window",
                  qPrintable(singletonServer.errorString()));
     QObject::connect(&singletonServer, &QLocalServer::newConnection, &app,
-        [&singletonServer, &model, raiseMainWindow]() {
+        [&singletonServer, &docs, raiseMainWindow]() {
             QLocalSocket *sock = singletonServer.nextPendingConnection();
             if (!sock) return;
             sock->waitForReadyRead(500);
@@ -148,7 +158,7 @@ int main(int argc, char *argv[])
                 .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
             sock->disconnectFromServer();
             sock->deleteLater();
-            for (const QString &s : items) resolveAndOpen(model, s);
+            for (const QString &s : items) resolveAndOpen(docs, s);
             raiseMainWindow();   // also focuses on a bare re-launch (no args)
         });
 #endif

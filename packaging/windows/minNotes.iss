@@ -20,7 +20,7 @@
 ; Version: default matches the CMake project() version. Keep in sync (or pass
 ; /DMyAppVersion to ISCC from the build script, which reads it from CMake).
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.2"
+  #define MyAppVersion "0.1.3"
 #endif
 
 ; The self-contained runtime tree (exe + windeployqt output + vendored DLLs).

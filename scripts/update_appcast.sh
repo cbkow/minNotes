@@ -4,8 +4,8 @@
 # Everything except the EdDSA signature and the release notes is derived:
 #   version  → CMakeLists.txt project(VERSION)  (or arg 1)
 #   tag      → v<version>
-#   DMG      → build/release/minNotes-MacOS.dmg (or arg 2)
-#   URL      → github.com/<repo>/releases/download/v<version>/minNotes-MacOS.dmg
+#   DMG      → build/release/minNotes-<version>-macOS.dmg (or arg 2)
+#   URL      → github.com/<repo>/releases/download/v<version>/minNotes-<version>-macOS.dmg
 #   sig+len  → external/Sparkle/bin/sign_update <dmg>  (uses the Keychain key)
 #   date     → date -R
 #
@@ -24,7 +24,7 @@ SIGN_UPDATE="$REPO_ROOT/external/Sparkle/bin/sign_update"
 SENTINEL="<!-- @@APPCAST_INSERT@@ -->"
 
 VERSION="${1:-}"
-DMG="${2:-$REPO_ROOT/build/release/minNotes-MacOS.dmg}"
+DMG="${2:-}"
 NOTES_FILE="${3:-}"
 
 # --- Derive the version from CMakeLists if not given -----------------------
@@ -34,6 +34,8 @@ if [ -z "$VERSION" ]; then
 fi
 [ -n "$VERSION" ] || { echo "ERROR: could not determine version" >&2; exit 1; }
 TAG="v$VERSION"
+# Default DMG path depends on VERSION (versioned asset name).
+DMG="${DMG:-$REPO_ROOT/build/release/minNotes-$VERSION-macOS.dmg}"
 
 # --- Sanity checks ---------------------------------------------------------
 [ -f "$DMG" ]        || { echo "ERROR: DMG not found: $DMG" >&2; exit 1; }
@@ -54,7 +56,7 @@ LENGTH="$(printf '%s' "$SIG_LINE" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
     echo "ERROR: could not parse sign_update output: $SIG_LINE" >&2; exit 1; }
 
 PUBDATE="$(date -R)"
-URL="https://github.com/$REPO/releases/download/$TAG/minNotes-MacOS.dmg"
+URL="https://github.com/$REPO/releases/download/$TAG/minNotes-$VERSION-macOS.dmg"
 
 if [ -n "$NOTES_FILE" ] && [ -f "$NOTES_FILE" ]; then
     NOTES="$(cat "$NOTES_FILE")"

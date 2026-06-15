@@ -47,8 +47,12 @@ Paste the printed public key into `packaging/macos/Info.plist.in`, replacing
 
 ## The naming contract (must hold or URLs 404)
 
-- Git tag = **`vX.Y.Z`** (e.g. `v0.1.2`) = the CMake `project(VERSION)` with a `v`.
-- Release asset = **exactly `minNotes-MacOS.dmg`** (stable, non-versioned).
+- Git tag = **`vX.Y.Z`** (e.g. `v0.1.3`) = the CMake `project(VERSION)` with a `v`.
+- Release asset = **`minNotes-<version>-macOS.dmg`** (versioned, mirroring the
+  Windows `minNotes-<version>-x64.exe`). The name is derived from the bundle
+  version, so it tracks the bump automatically. (Was the stable
+  `minNotes-MacOS.dmg` through v0.1.2 — versioned from v0.1.3 on; any external
+  "latest download" link must now target the release page, not a fixed filename.)
 - Per release these must all match: CMake `VERSION` == tag-minus-`v` ==
   appcast `sparkle:version` == bundle `CFBundleShortVersionString`.
 - Sparkle does **no discovery** — the appcast `<enclosure url>` is the only
@@ -66,7 +70,7 @@ just release          # cmake --preset=release && build
 
 ```sh
 scripts/sign-and-notarize.sh            # defaults to build/release
-# → build/release/minNotes-MacOS.dmg  (signed, notarized, stapled)
+# → build/release/minNotes-<version>-macOS.dmg  (signed, notarized, stapled)
 ```
 
 Pipeline: scrub bundle → macdeployqt (Qt frameworks/plugins/QML, keeps
@@ -78,8 +82,8 @@ Gatekeeper assess.
 
 ## 3. GitHub release
 
-Create tag `v<version>` and upload `minNotes-MacOS.dmg` as the asset (exact
-name). The site Download button uses `/releases/latest/download/minNotes-MacOS.dmg`.
+Create tag `v<version>` and upload `minNotes-<version>-macOS.dmg` as the asset
+(exact name — it must match the appcast `<enclosure url>`).
 
 ## 4. Appcast (publishes the auto-update)
 

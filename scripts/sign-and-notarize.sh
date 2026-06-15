@@ -25,9 +25,10 @@ QML_SOURCE_DIR="app/qml"
 
 VERSION="$(plutil -extract CFBundleShortVersionString raw \
                   "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || echo "0.0.0")"
-# Stable filename so GitHub release "latest/download" links stay valid across
-# versions; the real version lives inside (CFBundleShortVersionString).
-DMG_NAME="minNotes-MacOS.dmg"
+# Versioned filename, mirroring the Windows asset (minNotes-<version>-x64.exe).
+# VERSION is read from the bundle's Info.plist (above). The enclosure URL is
+# immutable per release tag, so a versioned name is fine for Sparkle.
+DMG_NAME="minNotes-$VERSION-macOS.dmg"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 
 echo "=== minNotes macOS — sign + DMG + notarize + staple ==="
@@ -244,6 +245,6 @@ echo "(.app inside is also stapled — launches offline after drag-to-/Applicati
 echo ""
 echo "Next, to ship the auto-update:"
 echo "  1. Create GitHub release tag v$VERSION and upload $DMG_PATH as the"
-echo "     asset named minNotes-MacOS.dmg."
+echo "     asset named $DMG_NAME."
 echo "  2. scripts/update_appcast.sh   # signs the DMG + adds the appcast item"
 echo "  3. Commit + push docs/appcast.xml (publishes at minnotes.app/appcast.xml)."
