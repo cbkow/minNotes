@@ -24,8 +24,13 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QDateTime>
 #include <functional>
 #include <algorithm>
+#include <cstdio>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace {
 // Deterministic per-row hash (no RNG: must be stable across rebuilds and frames).
@@ -91,15 +96,19 @@ QString BlockModel::documentName() const {
 
 void BlockModel::closeDocument() {
     doc_.close();
+    cleanupScratch();            // working copy is ephemeral — discard it on close
     mediaStore_.reset();
     docPath_.clear();
     untitled_ = false;
+    dirty_ = false;
+    setSaveState(SaveClean);
     beginResetModel();
     rows_.clear(); ids_.clear(); ranks_.clear(); content_.clear();
     fenwick_.reset(std::vector<double>{});
     endResetModel();
     clearUndo();
     emit documentChanged();
+    emit dirtyChanged();
 }
 
 // Recursively copy <src>/.minnotes → <dst>/.minnotes (pasted media). Referenced
@@ -120,14 +129,107 @@ static void copyMediaSidecar(const QString& srcDocDir, const QString& dstDocDir)
                      dstDocDir + QStringLiteral("/.minnotes"));
 }
 
+// Replace `dst` with `src` atomically (same directory → same filesystem). POSIX
+// rename(2) is atomic and overwrites; Win32 MoveFileEx with REPLACE_EXISTING is
+// the closest equivalent. Used for the save write-back so an interrupted save
+// never leaves a half-written original.
+static bool atomicReplace(const QString& src, const QString& dst) {
+#ifdef Q_OS_WIN
+    return MoveFileExW(reinterpret_cast<const wchar_t*>(src.utf16()),
+                       reinterpret_cast<const wchar_t*>(dst.utf16()),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return std::rename(src.toUtf8().constData(), dst.toUtf8().constData()) == 0;
+#endif
+}
+
+static QString g_scratchRoot;   // set once by main() to this session's subdir
+
+void BlockModel::setScratchRoot(const QString& dir) { g_scratchRoot = dir; }
+
+QString BlockModel::scratchDir() {
+    if (!g_scratchRoot.isEmpty()) return g_scratchRoot;
+    // Fallback (e.g. unit tests that construct BlockModel without main()).
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+         + QStringLiteral("/scratch");
+}
+
+QString BlockModel::newScratchPath() {
+    const QString dir = scratchDir();
+    QDir().mkpath(dir);
+    return dir + QStringLiteral("/work-") + makeUlid() + QStringLiteral(".mndb");
+}
+
+void BlockModel::cleanupScratch() {
+    if (scratchPath_.isEmpty()) return;
+    QFile::remove(scratchPath_);
+    QFile::remove(scratchPath_ + QStringLiteral("-wal"));
+    QFile::remove(scratchPath_ + QStringLiteral("-shm"));
+    scratchPath_.clear();
+}
+
+void BlockModel::recordOriginalStat() {
+    QFileInfo fi(docPath_);
+    if (!untitled_ && fi.exists()) {
+        origMtime_ = fi.lastModified().toMSecsSinceEpoch();
+        origSize_  = fi.size();
+    } else { origMtime_ = -1; origSize_ = -1; }
+}
+
+bool BlockModel::externalChangeDetected() const {
+    if (untitled_ || origMtime_ < 0) return false;   // no baseline → nothing to conflict with
+    QFileInfo fi(docPath_);
+    if (!fi.exists()) return false;                  // original gone → recreate, nothing to clobber
+    return fi.lastModified().toMSecsSinceEpoch() != origMtime_ || fi.size() != origSize_;
+}
+
+void BlockModel::markDirty() {
+    if (dirty_) return;
+    dirty_ = true;
+    emit dirtyChanged();
+}
+
+void BlockModel::setSaveState(int s) {
+    if (saveState_ == s) return;
+    saveState_ = s;
+    emit saveStateChanged();
+}
+
 bool BlockModel::loadDocument(const QString& path, bool untitled) {
-    if (!doc_.open(path)) {
-        qWarning() << "BlockModel: cannot open document" << path;
+    // We never run SQLite on the document's real location (network filesystems
+    // can't back WAL/-shm or honour locking — see the plan). Stage a LOCAL working
+    // copy and open THAT; the original is only ever read (byte copy) and written
+    // (atomic replace on save). `path` stays the identity + media anchor.
+    doc_.close();
+    cleanupScratch();
+    scratchPath_ = newScratchPath();
+    if (!untitled && QFileInfo::exists(path)) {
+        QFile::remove(scratchPath_);
+        if (!QFile::copy(path, scratchPath_)) {
+            qWarning() << "BlockModel: cannot stage working copy of" << path;
+            scratchPath_.clear();
+            return false;
+        }
+        // The source may be read-only (read-only share); the working copy must be
+        // writable for WAL.
+        QFile::setPermissions(scratchPath_, QFile::ReadOwner | QFile::WriteOwner
+                                          | QFile::ReadUser  | QFile::WriteUser);
+        // Carry a sibling -wal so uncommitted data from an unclean prior writer is
+        // recovered into the working copy (normally absent — saves are checkpointed).
+        if (QFileInfo::exists(path + QStringLiteral("-wal")))
+            QFile::copy(path + QStringLiteral("-wal"), scratchPath_ + QStringLiteral("-wal"));
+    }
+    if (!doc_.open(scratchPath_)) {
+        qWarning() << "BlockModel: cannot open working copy" << scratchPath_;
+        cleanupScratch();
         return false;
     }
     docPath_ = path;
     untitled_ = untitled;
-    mediaStore_ = std::make_unique<MediaStore>(path);
+    mediaStore_ = std::make_unique<MediaStore>(path);   // media anchored to the ORIGINAL folder
+    recordOriginalStat();
+    dirty_ = false;
+    setSaveState(SaveClean);
     clearUndo();
     return true;
 }
@@ -142,13 +244,18 @@ void BlockModel::seedEmptyDoc() {
 }
 
 void BlockModel::newDocument() {
+    // Identity path for the untitled doc — the media anchor + Save-As source dir.
+    // The bytes live in the working copy (scratchPath_), not at this path.
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
     const QString path = dir + QStringLiteral("/untitled-") + makeUlid() + QStringLiteral(".mndb");
     if (!loadDocument(path, /*untitled*/true)) return;
     seedEmptyDoc();
     loadFromStore();
+    dirty_ = false;                  // a pristine empty doc isn't dirty (still untitled)
+    setSaveState(SaveClean);
     emit documentChanged();
+    emit dirtyChanged();
 }
 
 bool BlockModel::openDocument(const QString& pathOrUrl) {
@@ -160,9 +267,52 @@ bool BlockModel::openDocument(const QString& pathOrUrl) {
     return true;
 }
 
+// Write the working copy back to the original. checkpoint → VACUUM INTO a sibling
+// temp (a clean, compacted, rollback-stamped image — also normalises away any WAL
+// stamp) → atomic replace over the original. The working copy keeps the live data
+// if any step fails, so nothing is lost.
+bool BlockModel::writeBackToOriginal() {
+    setSaveState(SaveSaving);
+    doc_.checkpoint();
+    const QString dir = QFileInfo(docPath_).absolutePath();
+    QDir().mkpath(dir);
+    const QString tmp = dir + QStringLiteral("/.mn-save-") + makeUlid() + QStringLiteral(".tmp");
+    QFile::remove(tmp);
+    if (!doc_.vacuumInto(tmp)) {
+        qWarning() << "BlockModel: save VACUUM INTO failed" << tmp;
+        QFile::remove(tmp);
+        setSaveState(SaveFailed);
+        return false;
+    }
+    // A legacy WAL-stamped original could have an orphaned -wal/-shm that would
+    // shadow our fresh rollback file on the next open — drop them.
+    QFile::remove(docPath_ + QStringLiteral("-wal"));
+    QFile::remove(docPath_ + QStringLiteral("-shm"));
+    if (!atomicReplace(tmp, docPath_)) {
+        qWarning() << "BlockModel: save atomic replace failed" << docPath_;
+        QFile::remove(tmp);
+        setSaveState(SaveFailed);
+        return false;
+    }
+    recordOriginalStat();
+    dirty_ = false;
+    emit dirtyChanged();
+    setSaveState(SaveClean);
+    return true;
+}
+
 bool BlockModel::save() {
-    if (untitled_) return false;     // no chosen path yet → caller invokes Save As
-    return doc_.checkpoint();
+    if (untitled_) return false;                       // no chosen path → caller invokes Save As
+    if (externalChangeDetected()) {                    // changed on disk since we opened it
+        setSaveState(SaveConflict);
+        return false;                                  // caller resolves (Overwrite / Save As copy)
+    }
+    return writeBackToOriginal();
+}
+
+bool BlockModel::overwriteSave() {
+    if (untitled_) return false;
+    return writeBackToOriginal();                      // bypass the conflict check ("Overwrite")
 }
 
 bool BlockModel::saveAs(const QString& pathOrUrl) {
@@ -170,19 +320,40 @@ bool BlockModel::saveAs(const QString& pathOrUrl) {
                  ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
     if (path.isEmpty()) return false;
     if (!path.endsWith(QLatin1String(".mndb"), Qt::CaseInsensitive)) path += QStringLiteral(".mndb");
-    const QString srcDir = QFileInfo(docPath_).absolutePath();
-    // Flush the WAL so the live edits are in the main DB, then write a clean copy.
+    const QString srcMediaDir = QFileInfo(docPath_).absolutePath();
+    const QString dstDir = QFileInfo(path).absolutePath();
+    QDir().mkpath(dstDir);
+    setSaveState(SaveSaving);
+    // Flush the WAL, then write a clean copy to the chosen location (temp + atomic
+    // replace, matching the in-place save path).
     doc_.checkpoint();
-    QFile::remove(path);             // VACUUM INTO requires the target not to exist
-    if (!doc_.vacuumInto(path)) {
-        qWarning() << "BlockModel: VACUUM INTO failed" << path;
+    const QString tmp = dstDir + QStringLiteral("/.mn-save-") + makeUlid() + QStringLiteral(".tmp");
+    QFile::remove(tmp);
+    if (!doc_.vacuumInto(tmp)) {
+        qWarning() << "BlockModel: Save As VACUUM INTO failed" << tmp;
+        QFile::remove(tmp);
+        setSaveState(SaveFailed);
+        return false;
+    }
+    QFile::remove(path + QStringLiteral("-wal"));
+    QFile::remove(path + QStringLiteral("-shm"));
+    if (!atomicReplace(tmp, path)) {
+        QFile::remove(tmp);
+        setSaveState(SaveFailed);
         return false;
     }
     // Critical: bring the pasted-media sidecar along to the new location.
-    copyMediaSidecar(srcDir, QFileInfo(path).absolutePath());
-    if (!loadDocument(path, /*untitled*/false)) return false;
-    loadFromStore();
+    copyMediaSidecar(srcMediaDir, dstDir);
+    // Re-home identity + media anchor to the new file; keep editing the SAME
+    // working copy (no reload — it already holds the content).
+    docPath_ = path;
+    untitled_ = false;
+    mediaStore_ = std::make_unique<MediaStore>(path);
+    recordOriginalStat();
+    dirty_ = false;
+    setSaveState(SaveClean);
     emit documentChanged();
+    emit dirtyChanged();
     return true;
 }
 
@@ -641,6 +812,7 @@ void BlockModel::endTxn(const QString& coalesce) {
         return true;
     };
     if (sameSnaps(txnBefore_, after)) return;
+    markDirty();                                 // a real edit reached the chokepoint
 
     // Coalesce a run of typing into the previous entry (same key, same single
     // block, contiguous caret) so undo removes the whole run at once.
@@ -737,6 +909,7 @@ void BlockModel::undo() {
     const UndoEntry e = undo_[undoCur_];          // copy (applySnapshot won't touch undo_, but be safe)
     applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
     undoCur_ = e.parent;
+    markDirty();                                  // undo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowB, e.cColB, e.aRowB, e.aColB);
     emit undoStackChanged();
 }
@@ -750,6 +923,7 @@ void BlockModel::redo() {
     const UndoEntry e = undo_[child];
     applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
     undoCur_ = child;
+    markDirty();                                  // redo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowA, e.cColA, e.aRowA, e.aColA);
     emit undoStackChanged();
 }
@@ -1705,8 +1879,9 @@ bool BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
 }
 
 QString BlockModel::mediaUrl(int row) const {
+    if (rows_.empty() || !mediaStore_) return {};   // no doc / empty model → no media
     row = clampRow(row);
-    if (rows_[row].type != Media || !mediaStore_) return {};
+    if (rows_[row].type != Media) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     return mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
 }

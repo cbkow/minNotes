@@ -26,8 +26,10 @@ class DocumentManager : public QObject {
     Q_PROPERTY(int activeIndex READ activeIndex WRITE setActive NOTIFY activeChanged)
     Q_PROPERTY(BlockModel* activeModel READ activeModel NOTIFY activeChanged)
     // The open models in tab order — the tab strip's Repeater reads each one's
-    // documentName / untitled directly.
+    // documentName / untitled / dirty directly.
     Q_PROPERTY(QVariantList models READ models NOTIFY tabsChanged)
+    // Number of tabs with unsaved edits — drives the app-close guard.
+    Q_PROPERTY(int dirtyCount READ dirtyCount NOTIFY dirtyCountChanged)
 public:
     explicit DocumentManager(QObject* parent = nullptr);
 
@@ -35,6 +37,13 @@ public:
     int activeIndex() const { return active_; }
     BlockModel* activeModel() const;
     QVariantList models() const;
+
+    int dirtyCount() const;
+    // Index of the first tab with unsaved edits, or -1 if none (close guard focus).
+    Q_INVOKABLE int firstDirtyIndex() const;
+    // Save every titled dirty tab in place; returns true if no unsaved tab remains
+    // (untitled docs and save conflicts can't be resolved here → false).
+    Q_INVOKABLE bool saveAllTitled();
 
     // Stable tab id at index `i` (survives index shifts when other tabs close),
     // or -1 if out of range. The per-tab view state is keyed by this id.
@@ -56,6 +65,7 @@ public:
 signals:
     void tabsChanged();    // a tab opened/closed (the strip + count rebuild)
     void activeChanged();  // the active tab changed (main.cpp re-points blockModel)
+    void dirtyCountChanged();  // any tab's unsaved-edits flag flipped
 
 private:
     struct Tab { BlockModel* model = nullptr; int id = 0; QVariantMap view; };

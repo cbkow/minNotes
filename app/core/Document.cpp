@@ -90,6 +90,21 @@ bool Document::open(const QString& path) {
               title TEXT, schema_version INTEGER, app_version TEXT,
               created INTEGER, modified INTEGER, last_cursor TEXT
           ))");
+
+    // Sentinel: confirm the connection is actually usable. A WAL-stamped DB on a
+    // filesystem that can't back the -shm shared memory (smbfs/NFS) opens but then
+    // wedges — every pragma/DDL above returns SQLITE_CANTOPEN. Fail cleanly here so
+    // the caller shows "couldn't open" instead of an empty, broken document (which
+    // a media-row query would then null-deref). The editor never opens documents
+    // over such filesystems directly — it edits a local working copy — but a corrupt
+    // working copy must still fail gracefully.
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (!q.exec(QStringLiteral("SELECT count(*) FROM sqlite_master")) || !q.next()) {
+        qWarning() << "Document: connection unusable after open" << path
+                   << q.lastError().text();
+        close();
+        return false;
+    }
     return true;
 }
 

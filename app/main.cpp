@@ -9,6 +9,7 @@
 #include <QLockFile>         // the per-user gate that elects the primary
 #include <QStandardPaths>
 #include <QDir>
+#include <QFileInfo>
 #include <QWindow>           // raise the existing window on a secondary launch
 #include "MinNotesApplication.h"
 #include "AppUpdater.h"
@@ -41,6 +42,38 @@ int main(int argc, char *argv[])
     MinNotesApplication app(argc, argv);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
+
+    // ── Per-session working-copy dir (ephemeral SQLite scratch) ───────────
+    // Documents are edited via a LOCAL working copy (BlockModel) so SQLite never
+    // runs on smbfs/Dropbox/etc. Each instance gets its own lockfile-guarded
+    // scratch subdir: concurrent instances (macOS has no single-instance gate)
+    // never delete each other's live copies, and a crashed instance's copies are
+    // reclaimed on the next launch (its lock is free).
+    const QString scratchRoot =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/scratch");
+    const QString sessionDir = scratchRoot + QStringLiteral("/s-") + makeUlid();
+    QDir().mkpath(sessionDir);
+    BlockModel::setScratchRoot(sessionDir);
+    QLockFile sessionLock(sessionDir + QStringLiteral("/.lock"));
+    sessionLock.setStaleLockTime(0);
+    sessionLock.lock();   // held for the whole process lifetime (released on exit)
+    for (const QFileInfo &fi : QDir(scratchRoot).entryInfoList(
+             QStringList{QStringLiteral("s-*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (fi.absoluteFilePath() == sessionDir) continue;
+        QLockFile other(fi.absoluteFilePath() + QStringLiteral("/.lock"));
+        other.setStaleLockTime(0);
+        if (other.tryLock(0)) {            // no live owner → crashed session, reclaim it
+            other.unlock();
+            QDir(fi.absoluteFilePath()).removeRecursively();
+        }
+    }
+    // Drop this session's working copies on a clean quit. (POSIX removes even
+    // open files; any Windows-locked file is reclaimed by the next launch's sweep.)
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [sessionDir, &sessionLock] {
+        sessionLock.unlock();
+        QDir(sessionDir).removeRecursively();
+    });
 
 #ifdef Q_OS_WIN
     // ── Single-instance gate (Windows) ────────────────────────────────

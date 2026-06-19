@@ -25,6 +25,23 @@ int DocumentManager::tabIdAt(int i) const {
     return (i >= 0 && i < tabs_.size()) ? tabs_[i].id : -1;
 }
 
+int DocumentManager::dirtyCount() const {
+    int n = 0;
+    for (const Tab& t : tabs_) if (t.model->dirty()) ++n;
+    return n;
+}
+
+int DocumentManager::firstDirtyIndex() const {
+    for (int i = 0; i < tabs_.size(); ++i) if (tabs_[i].model->dirty()) return i;
+    return -1;
+}
+
+bool DocumentManager::saveAllTitled() {
+    for (const Tab& t : tabs_)
+        if (t.model->dirty() && !t.model->untitled()) t.model->save();
+    return dirtyCount() == 0;   // untitled docs + unresolved conflicts can't be saved here
+}
+
 QString DocumentManager::canonical(const QString& pathOrUrl) {
     QString path = pathOrUrl.startsWith(QLatin1String("file:"))
                  ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
@@ -48,9 +65,11 @@ void DocumentManager::refreshMedia() {
 
 void DocumentManager::newTab() {
     auto* m = new BlockModel(this);
+    connect(m, &BlockModel::dirtyChanged, this, &DocumentManager::dirtyCountChanged);
     m->newDocument();
     tabs_.append({ m, nextId_++, {} });
     emit tabsChanged();
+    emit dirtyCountChanged();
     setActive(static_cast<int>(tabs_.size()) - 1);
 }
 
@@ -60,12 +79,14 @@ bool DocumentManager::openTab(const QString& pathOrUrl) {
     if (existing >= 0) { setActive(existing); return true; }
 
     auto* m = new BlockModel(this);
+    connect(m, &BlockModel::dirtyChanged, this, &DocumentManager::dirtyCountChanged);
     if (!m->openDocument(pathOrUrl)) {
         delete m;
         return false;
     }
     tabs_.append({ m, nextId_++, {} });
     emit tabsChanged();
+    emit dirtyCountChanged();
     setActive(static_cast<int>(tabs_.size()) - 1);
     return true;
 }
@@ -83,6 +104,7 @@ void DocumentManager::closeTab(int i) {
     // (active_ < i is unaffected)
 
     emit tabsChanged();
+    emit dirtyCountChanged();
     emit activeChanged();
 }
 

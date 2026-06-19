@@ -42,17 +42,34 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
     Q_PROPERTY(bool untitled READ untitled NOTIFY documentChanged)
     Q_PROPERTY(bool documentOpen READ documentOpen NOTIFY documentChanged)
+    // Unsaved-edits flag (drives the tab dot + close/quit guards) and the explicit
+    // save lifecycle (drives the title-bar status + conflict/failure UI).
+    Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
+    Q_PROPERTY(int saveState READ saveState NOTIFY saveStateChanged)
 public:
+    // The explicit-save lifecycle for the active document's status indicator.
+    enum SaveState { SaveClean = 0, SaveSaving = 1, SaveFailed = 2, SaveConflict = 3 };
+    Q_ENUM(SaveState)
+
     QString documentPath() const { return docPath_; }
     QString documentName() const;
     bool untitled() const { return untitled_; }
     bool documentOpen() const { return doc_.isOpen(); }
-    // Document lifecycle (the file IS the SQLite DB; edits persist live).
+    bool dirty() const { return dirty_; }
+    int  saveState() const { return saveState_; }
+    // App-local working-copy directory for THIS session. main() points it at a
+    // per-session subdir (lockfile-guarded) so concurrent app instances — macOS
+    // has no single-instance gate — never delete each other's live working copies.
+    static QString scratchDir();
+    static void setScratchRoot(const QString& dir);
+    // Document lifecycle. The editor edits a LOCAL working copy of the file (so
+    // SQLite never runs on smbfs/Dropbox/etc); save() writes it back to the original.
     Q_INVOKABLE void newDocument();                       // fresh untitled scratch
     Q_INVOKABLE bool openDocument(const QString& pathOrUrl);
     Q_INVOKABLE void closeDocument();                     // back to the no-doc state
-    Q_INVOKABLE bool save();                              // WAL checkpoint; false if untitled
-    Q_INVOKABLE bool saveAs(const QString& pathOrUrl);    // VACUUM INTO + media-sidecar copy
+    Q_INVOKABLE bool save();                              // write working copy → original; false if untitled/conflict/failed
+    Q_INVOKABLE bool overwriteSave();                     // save ignoring an external-change conflict ("Overwrite")
+    Q_INVOKABLE bool saveAs(const QString& pathOrUrl);    // VACUUM INTO new path + media-sidecar copy
     enum Roles {
         TypeRole = Qt::UserRole + 1,
         ContentRole,
@@ -409,6 +426,8 @@ signals:
     // The open document changed (new/open/save-as). QML resets per-doc UI state
     // (active table/PDF/video/sketch tabs, the studio's notes path, the cursor).
     void documentChanged();
+    void dirtyChanged();       // unsaved-edits flag flipped
+    void saveStateChanged();   // save lifecycle state changed (Saving/Failed/Conflict/Clean)
 
 public:
     enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
@@ -532,8 +551,21 @@ private:
     static QString rankBetween(const QString& a, const QString& b);
 
     Document doc_;
-    QString docPath_;
+    QString docPath_;        // canonical original (or the untitled identity path); media anchor + Save-As source
+    QString scratchPath_;    // local working-copy DB the SQLite connection actually runs against
     bool untitled_ = true;   // scratch doc with no chosen path yet
+    bool dirty_ = false;     // unsaved edits since open / last save
+    int  saveState_ = SaveClean;
+    qint64 origMtime_ = -1;  // original file mtime/size recorded at load + each save (conflict baseline)
+    qint64 origSize_  = -1;
+
+    static QString newScratchPath();   // a fresh working-copy path under scratchDir()
+    void cleanupScratch();             // close-time delete of this doc's working-copy files
+    void recordOriginalStat();         // snapshot the original's mtime/size as the conflict baseline
+    bool externalChangeDetected() const;
+    bool writeBackToOriginal();        // checkpoint → VACUUM INTO temp → atomic replace over the original
+    void markDirty();                  // set dirty_ + notify (idempotent)
+    void setSaveState(int s);
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
     std::vector<QString> ranks_;     // fractional rank per row, parallel to rows_

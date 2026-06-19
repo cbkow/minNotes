@@ -10,9 +10,50 @@ ApplicationWindow {
     width: 960
     height: 760
     title: blockModel.documentOpen
-           ? (blockModel.documentName + (blockModel.untitled ? " (unsaved)" : "") + " — minNotes")
+           ? (blockModel.documentName
+              + (blockModel.untitled ? " (unsaved)" : (blockModel.dirty ? " — Edited" : ""))
+              + " — minNotes")
            : "minNotes"
     color: Theme.colors.bg
+
+    // --- App-close guard: prompt before discarding unsaved work in any tab. ---
+    property bool _forceClose: false
+    onClosing: (close) => {
+        if (win._forceClose || docs.dirtyCount === 0) return   // nothing unsaved → allow
+        close.accepted = false
+        quitConfirmDialog.open()
+    }
+    Dialog {
+        id: quitConfirmDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 460; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 420; wrapMode: Text.Wrap
+                   text: docs.dirtyCount === 1 ? "You have unsaved changes in 1 document."
+                                               : "You have unsaved changes in " + docs.dirtyCount + " documents."
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text { width: 420; wrapMode: Text.Wrap
+                   text: "Quitting will lose changes you haven’t saved."
+                   color: Theme.colors.textMuted; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: "Cancel"; padding: 12; onClicked: quitConfirmDialog.close() }
+                FlatButton { text: "Discard & Quit"; padding: 12
+                             onClicked: { quitConfirmDialog.close(); win._forceClose = true; win.close() } }
+                FlatButton { text: "Save All & Quit"; variant: "primary"; padding: 12
+                             onClicked: {
+                                 quitConfirmDialog.close()
+                                 if (docs.saveAllTitled()) { win._forceClose = true; win.close() }
+                                 else { var i = docs.firstDirtyIndex()   // untitled/conflict left — focus it
+                                        if (i >= 0) win.switchToTab(i) }
+                             } }
+            }
+        }
+    }
 
     // --- Document lifecycle (Phase 1: native dialogs + standard shortcuts; the
     // macOS menu bar lands in Phase 2). The file IS the SQLite DB; edits persist
@@ -31,7 +72,134 @@ ApplicationWindow {
         nameFilters: ["minNotes documents (*.mndb)"]
         onAccepted: blockModel.saveAs("" + selectedFile)
     }
-    function _saveOrSaveAs() { if (!blockModel.save()) saveAsDialog.open() }
+    // Mirrors BlockModel::SaveState (the enum isn't registered as a QML type — the
+    // model is a context-property instance — so compare the int saveState here).
+    readonly property int _saveClean: 0
+    readonly property int _saveSaving: 1
+    readonly property int _saveFailed: 2
+    readonly property int _saveConflict: 3
+
+    // Explicit save. Untitled → Save As; a save that's blocked by an external
+    // change opens the conflict dialog; a write failure opens the failed dialog.
+    function _saveOrSaveAs() {
+        if (!blockModel.documentOpen) return
+        if (blockModel.untitled) { saveAsDialog.open(); return }
+        if (blockModel.save()) return
+        if (blockModel.saveState === win._saveConflict) conflictDialog.open()
+        else if (blockModel.saveState === win._saveFailed) saveFailedDialog.open()
+    }
+
+    // The original on disk changed since we opened it — don't clobber silently.
+    Dialog {
+        id: conflictDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "“" + blockModel.documentName + "” changed on disk"
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "Another program changed this document since you opened it. "
+                       + "Overwriting replaces those changes with your version."
+                   color: Theme.colors.textMuted; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: "Cancel"; padding: 12; onClicked: conflictDialog.close() }
+                FlatButton { text: "Save As copy…"; padding: 12
+                             onClicked: { conflictDialog.close(); saveAsDialog.open() } }
+                FlatButton { text: "Overwrite"; variant: "primary"; padding: 12
+                             onClicked: { conflictDialog.close()
+                                          if (!blockModel.overwriteSave()) saveFailedDialog.open() } }
+            }
+        }
+    }
+
+    // The write-back to the original failed (network dropped, permission, disk).
+    Dialog {
+        id: saveFailedDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "Couldn’t save “" + blockModel.documentName + "”"
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "The document couldn’t be written to its location. Your edits are "
+                       + "safe in this window — retry, or save a copy somewhere else."
+                   color: Theme.colors.textMuted; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: "Cancel"; padding: 12; onClicked: saveFailedDialog.close() }
+                FlatButton { text: "Save As…"; padding: 12
+                             onClicked: { saveFailedDialog.close(); saveAsDialog.open() } }
+                FlatButton { text: "Retry"; variant: "primary"; padding: 12
+                             onClicked: { saveFailedDialog.close()
+                                          if (!blockModel.overwriteSave()) saveFailedDialog.open() } }
+            }
+        }
+    }
+
+    // --- Close / quit guards: unsaved edits prompt before discard. ---
+    property int _closePendingIndex: -1
+    function requestCloseTab(i) {
+        var m = docs.models[i]
+        if (m && m.dirty) { win._closePendingIndex = i; closeConfirmDialog.open() }
+        else win.closeTabAt(i)
+    }
+    Dialog {
+        id: closeConfirmDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        readonly property var pendingModel: win._closePendingIndex >= 0
+                                          ? docs.models[win._closePendingIndex] : null
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "Save changes to “"
+                       + (closeConfirmDialog.pendingModel ? closeConfirmDialog.pendingModel.documentName : "")
+                       + "”?"
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "Your changes will be lost if you don’t save them."
+                   color: Theme.colors.textMuted; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: "Cancel"; padding: 12
+                             onClicked: { win._closePendingIndex = -1; closeConfirmDialog.close() } }
+                FlatButton { text: "Don’t Save"; padding: 12
+                             onClicked: { var i = win._closePendingIndex
+                                          win._closePendingIndex = -1; closeConfirmDialog.close()
+                                          win.closeTabAt(i) } }
+                FlatButton { text: "Save"; variant: "primary"; padding: 12
+                             onClicked: win._saveThenClosePending() }
+            }
+        }
+    }
+    // "Save" from the close prompt: titled → save then close; untitled → switch to
+    // it and open Save As (closing is left to the user after they pick a path).
+    function _saveThenClosePending() {
+        var i = win._closePendingIndex
+        var m = docs.models[i]
+        closeConfirmDialog.close()
+        if (!m) { win._closePendingIndex = -1; return }
+        if (m.untitled) { win.switchToTab(i); saveAsDialog.open(); return }
+        if (m.save()) { win._closePendingIndex = -1; win.closeTabAt(i); return }
+        // Conflict / failure → focus the tab and surface the right dialog.
+        win.switchToTab(i)
+        if (m.saveState === win._saveConflict) conflictDialog.open()
+        else saveFailedDialog.open()
+    }
 
     // Cross-OS path mappings editor (opened from the File menu). Edits a draft +
     // commits through the `pathMap` bridge, which re-resolves open media.
@@ -126,7 +294,7 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 Platform.MenuSeparator {}
-                Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.closeTabAt(docs.activeIndex) }
+                Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 Platform.MenuSeparator {}
                 // NoRole keeps it in File (reliably visible); see the updater note below.
                 Platform.MenuItem { text: qsTr("Path Mappings…"); role: Platform.MenuItem.NoRole; onTriggered: pathMappingsDialog.open2() }
@@ -197,7 +365,7 @@ ApplicationWindow {
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.closeTabAt(docs.activeIndex) }
+                Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("Path &Mappings…"); onTriggered: pathMappingsDialog.open2() }
                 ThemedMenuSeparator {}
@@ -312,8 +480,9 @@ ApplicationWindow {
                             anchors.left: parent.left; anchors.leftMargin: 12
                             anchors.right: tabClose.left; anchors.rightMargin: 4
                             elide: Text.ElideMiddle
-                            // "•" marks an untitled (never-saved) document, matching the title bar.
-                            text: (tab.modelData.untitled ? "• " : "") + tab.modelData.documentName
+                            // "•" marks an untitled (never-saved) OR a modified (unsaved-edits) doc.
+                            text: ((tab.modelData.untitled || tab.modelData.dirty) ? "• " : "")
+                                  + tab.modelData.documentName
                             color: tab.active ? Theme.colors.textBright : Theme.colors.textMuted
                             font.family: Theme.font.family; font.pixelSize: 13
                         }
@@ -322,7 +491,7 @@ ApplicationWindow {
                             anchors.fill: parent; hoverEnabled: true
                             acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: (m) => { if (m.button === Qt.MiddleButton) win.closeTabAt(tab.index)
+                            onClicked: (m) => { if (m.button === Qt.MiddleButton) win.requestCloseTab(tab.index)
                                                 else win.switchToTab(tab.index) }
                         }
                         Rectangle {   // close affordance (declared after tabMA so its MouseArea wins)
@@ -336,7 +505,7 @@ ApplicationWindow {
                                    color: closeMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
                             MouseArea { id: closeMA; anchors.fill: parent; hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: win.closeTabAt(tab.index) }
+                                        onClicked: win.requestCloseTab(tab.index) }
                         }
                     }
                 }
