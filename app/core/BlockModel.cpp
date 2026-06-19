@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cstdio>
 #ifdef Q_OS_WIN
+#define NOMINMAX            // keep std::min/std::max usable (windows.h min/max macros)
 #include <windows.h>
 #endif
 
