@@ -335,6 +335,11 @@ FocusScope {
     // time" for free; scrolling the playing block out of view tears it down.
     // Transport logic is ported from ufb's VideoPreview. ---
     property int  videoPlayingRow: -1
+    // The active video's file path, captured at activation. Playhead banking keys
+    // off THIS, not blockModel.mediaLocalPath(videoPlayingRow), so teardown stays
+    // correct even when blockModel has already re-pointed to another note (a note
+    // switch re-points it before our onActiveChanged handler runs).
+    property string _videoPlayingPath: ""
     property bool videoLoop: false
     // False from activation until the active video paints its first frame, so the
     // single shared surface never flashes the PREVIOUS video's stale frame — the
@@ -361,7 +366,7 @@ FocusScope {
     }
     function _rememberVideoPlayhead() {   // bank the last-accessed frame
         if (videoPlayingRow < 0) return
-        var key = blockModel.mediaLocalPath(videoPlayingRow)
+        var key = _videoPlayingPath
         // _vidIntendedFrame: the scrubbed-to frame if mid-scrub, else the live
         // playhead — scrubToFrame leaves currentFrame at the old streaming spot,
         // so reading currentFrame here would lose the scrub position.
@@ -411,8 +416,9 @@ FocusScope {
         videoDec.close(); videoAudio.close()
         _vidScrubTarget = -1
         var p = blockModel.mediaLocalPath(row)
-        if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; return false }
+        if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; _videoPlayingPath = ""; return false }
         videoPlayingRow = row
+        _videoPlayingPath = p
         videoAudio.initialize()   // idempotent; open() no-ops without it
         videoAudio.open(p)
         var resume = videoPlayheadFor(row)    // pick up where we left off
@@ -443,7 +449,7 @@ FocusScope {
     function stopVideo() {
         _rememberVideoPlayhead()
         videoDec.close(); videoAudio.close()
-        videoPlayingRow = -1; _videoSurfaceReady = false
+        videoPlayingRow = -1; _videoPlayingPath = ""; _videoSurfaceReady = false
         _vidScrubTarget = -1; _vidFastSeekDir = 0; videoFastSeekTimer.stop()
     }
     // Frame-accurate step — implies review, so pause first.
@@ -1869,6 +1875,11 @@ FocusScope {
     Connections {
         target: docs
         function onActiveChanged() {
+            // Tear down the live inline player too: videoPlayingRow is imperative
+            // state (not a blockModel binding), so without this the previous note's
+            // video surface keeps painting over the same row index in the new note
+            // until a scroll/interaction pushes it out of the visible range.
+            root.stopVideo()
             Qt.callLater(function() {
                 root.allVideoRows = []; root.allPdfRows = []
                 root._recomputeVideoRows(); root._recomputePdfRows()
