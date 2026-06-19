@@ -3094,41 +3094,50 @@ FocusScope {
         // TableView always overflows horizontally by the vertical-scrollbar width
         // → a stray horizontal bar over the page). One PdfPageImage per page,
         // fit-width with a scrollbar gutter; vertical scroll only.
-        PdfDocument {
-            id: pdfFrameDoc
-            source: root.activePdfRow >= 0 ? blockModel.mediaUrl(root.activePdfRow) : ""
-        }
-        ListView {
-            id: pdfList
+        // Build the document + page list only while a PDF tab is open. Otherwise
+        // PdfDocument.source would bind to "" and QML's PdfDocument logs
+        // "Cannot open:" on every empty source — the Loader keeps it uninstantiated.
+        Loader {
             anchors.fill: parent
-            anchors.margins: 10
-            clip: true
-            model: pdfFrameDoc.pageCount
-            spacing: 10
-            cacheBuffer: Math.max(0, Math.round(height * 1.5))   // height is transiently <0 during layout
-            boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: MnScrollBar {}
-            delegate: Item {
-                required property int index
-                readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
-                    ? pdfFrameDoc.pagePointSize(index) : Qt.size(8.5, 11)
-                // Reserve a full scrollbar width on each side of the centered page
-                // so the (right-edge) vertical bar never overlaps it.
-                readonly property real pageW: pdfList.width - 2 * Theme.dim.scrollBarWidth - 8
-                width: pdfList.width
-                height: pts.width > 0 ? Math.round(pageW * pts.height / pts.width)
-                                      : Math.round(pageW * 1.294)
-                Rectangle {   // white page with a hairline edge on the dark backdrop
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: pageW; height: parent.height
-                    color: "white"; border.width: 1; border.color: Theme.colors.border
-                    PdfPageImage {
-                        anchors.fill: parent
-                        document: pdfFrameDoc
-                        currentFrame: index
-                        fillMode: Image.PreserveAspectFit
-                        asynchronous: true
-                        sourceSize.width: Math.round(parent.width * Screen.devicePixelRatio)
+            active: root.activePdfRow >= 0
+            sourceComponent: Item {
+                PdfDocument {
+                    id: pdfFrameDoc
+                    source: blockModel.mediaUrl(root.activePdfRow)
+                }
+                ListView {
+                    id: pdfList
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    clip: true
+                    model: pdfFrameDoc.pageCount
+                    spacing: 10
+                    cacheBuffer: Math.max(0, Math.round(height * 1.5))   // height is transiently <0 during layout
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: MnScrollBar {}
+                    delegate: Item {
+                        required property int index
+                        readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
+                            ? pdfFrameDoc.pagePointSize(index) : Qt.size(8.5, 11)
+                        // Reserve a full scrollbar width on each side of the centered page
+                        // so the (right-edge) vertical bar never overlaps it.
+                        readonly property real pageW: pdfList.width - 2 * Theme.dim.scrollBarWidth - 8
+                        width: pdfList.width
+                        height: pts.width > 0 ? Math.round(pageW * pts.height / pts.width)
+                                              : Math.round(pageW * 1.294)
+                        Rectangle {   // white page with a hairline edge on the dark backdrop
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: pageW; height: parent.height
+                            color: "white"; border.width: 1; border.color: Theme.colors.border
+                            PdfPageImage {
+                                anchors.fill: parent
+                                document: pdfFrameDoc
+                                currentFrame: index
+                                fillMode: Image.PreserveAspectFit
+                                asynchronous: true
+                                sourceSize.width: Math.round(parent.width * Screen.devicePixelRatio)
+                            }
+                        }
                     }
                 }
             }
