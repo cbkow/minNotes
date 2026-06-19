@@ -55,12 +55,12 @@ app/notes/   ink stroke engine (sketch + video annotations)
 app/qml/     QML UI tree (Main, Editor, MediaBlock, tables, dialogs, …)
 external/    vendored deps (ffmpeg, kf6, Sparkle, aspekta font) + build-ksyntax.sh
 packaging/   macOS bundle (Info.plist, entitlements, icon) + Windows installer
-scripts/     release runbook + sign/notarize/appcast tooling (see RELEASE.md)
+scripts/     sign / notarize / appcast tooling
 LICENSES/    third-party license texts (see below)
 ```
 
-The macOS release flow (build → sign → notarize → DMG → appcast) is documented in
-[`scripts/RELEASE.md`](scripts/RELEASE.md).
+The macOS release flow is build → sign → notarize → DMG → appcast, via the
+helpers in `scripts/` (`sign-and-notarize.sh`, `update_appcast*.sh`).
 
 ## License
 

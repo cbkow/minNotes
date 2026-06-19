@@ -4,7 +4,7 @@
   Declares the `app.minnotes` bundle id, the `.mndb` document type +
   `app.minnotes.mndb` exported UTI, the `minnotes://` URL scheme, and the
   Sparkle `SU*` keys. `SUPublicEDKey` is a placeholder until you generate the
-  EdDSA key (see `scripts/RELEASE.md`).
+  EdDSA key with Sparkle's `generate_keys` (`external/Sparkle/bin/`).
 - **`entitlements.plist`** — hardened-runtime entitlements for Developer ID
   signing (library-validation off, network client, user-selected file access).
 - **`minNotesMacOS.png`** — the committed 1024² icon master. The CMake build

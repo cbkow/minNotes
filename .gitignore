@@ -50,3 +50,12 @@ sparkle_private_key*.txt
 # Windows installer output (Inno Setup writes it next to the .iss). Built by
 # packaging/windows/build-release.ps1; uploaded to the release host, not committed.
 /packaging/windows/minNotes-*-x64.exe
+
+# Internal planning / spike / status / design docs — kept locally, not public.
+/DESIGN.md
+/SPIKE.md
+/STATUS.md
+/PLAN-*.md
+/spike/
+/packaging/windows/PORTING-NOTES.md
+/scripts/RELEASE.md
