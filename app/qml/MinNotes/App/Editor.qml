@@ -3154,10 +3154,18 @@ FocusScope {
         property bool annotationsHidden: false
 
         // image://videoframe poster URL (base64url path @ frame) — the stage
-        // shows the banked frame until the decoder paints its first one.
+        // shows the banked frame until the decoder paints its first one. The byte
+        // array (not a string) avoids Qt.btoa's deprecated UTF-16 string overload
+        // and matches the provider's QString::fromUtf8 decode.
         function _vframeSrc(path, frame) {
             if (path === "") return ""
-            var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+            var enc = encodeURIComponent(path), bytes = []
+            for (var i = 0; i < enc.length; ++i) {
+                if (enc[i] === '%') { bytes.push(parseInt(enc.substr(i + 1, 2), 16)); i += 2 }
+                else bytes.push(enc.charCodeAt(i))
+            }
+            // Qt.btoa's array overload returns a QByteArray (not a JS String) — coerce.
+            var b = ("" + Qt.btoa(bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
             return "image://videoframe/" + b + "@" + frame
         }
 

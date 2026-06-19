@@ -66,17 +66,29 @@ Item {
         var m = Math.floor(s / 60)
         return m + ":" + ((s % 60) < 10 ? "0" : "") + (s % 60)
     }
-    // image://videoframe/<base64url(path)>@<frame>  (base64url so / and spaces survive)
+    // base64url(UTF-8 bytes of path) — matches the providers' decode
+    // (QByteArray::fromBase64(.., Base64UrlEncoding) + QString::fromUtf8). Feeds
+    // Qt.btoa a byte array (the deprecated string overload UTF-16-mangles non-ASCII
+    // and warns); base64url keeps '/' and spaces URL-safe.
+    function _b64urlPath(s) {
+        var enc = encodeURIComponent(s), bytes = []
+        for (var i = 0; i < enc.length; ++i) {
+            if (enc[i] === '%') { bytes.push(parseInt(enc.substr(i + 1, 2), 16)); i += 2 }
+            else bytes.push(enc.charCodeAt(i))
+        }
+        // Qt.btoa's array overload returns a QByteArray (not a JS String) — coerce
+        // before the base64url char swaps.
+        return ("" + Qt.btoa(bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    }
+    // image://videoframe/<base64url(path)>@<frame>
     function _vframeSrc(path, frame) {
         if (path === "") return ""
-        var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-        return "image://videoframe/" + b + "@" + frame
+        return "image://videoframe/" + _b64urlPath(path) + "@" + frame
     }
     // image://pdfpage/<base64url(path)>@<page>  — same scheme, cached per page.
     function _pdfSrc(path, page) {
         if (path === "") return ""
-        var b = Qt.btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-        return "image://pdfpage/" + b + "@" + page
+        return "image://pdfpage/" + _b64urlPath(path) + "@" + page
     }
 
     // --- File attachment chip (unsupported file: icon + name + path) ---
