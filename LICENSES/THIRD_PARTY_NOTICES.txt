@@ -1,0 +1,118 @@
+THIRD PARTY NOTICES
+===================
+
+minNotes is licensed GPL-3.0-or-later (see /LICENSE).
+
+This software incorporates third-party material. Direct runtime dependencies are
+listed below with the applicable license terms; the full license text for each is
+in the corresponding file in this directory. Indirect / transitive dependencies
+(the permissively licensed support libraries bundled with Qt) are noted at the end.
+
+===============================================================================
+Direct runtime dependencies (shipped as binary alongside minNotes)
+===============================================================================
+
+1. Qt 6 (Core, Gui, Qml, Quick, Quick Controls 2, Sql, Pdf, Network, …)
+   Copyright (C) The Qt Company Ltd. and other contributors
+   License: LGPL-3.0
+   File:    Qt-LGPL-3.0.txt
+   https://www.qt.io
+   Linkage: dynamic. Users have the right under LGPL-3 to relink minNotes
+            against a modified Qt build of their own. The Qt 6 libraries ship
+            inside the app bundle (macOS) / next to minNotes.exe (Windows);
+            replacing them with binary-compatible builds preserves a working app.
+            Includes the Qt PDF module (inline PDF view) and the bundled QSQLITE
+            SQL driver.
+
+2. FFmpeg (avcodec, avformat, avutil, avfilter, swscale, swresample)
+   Copyright (c) 2000-2025 FFmpeg developers
+   License: LGPL-2.1-or-later (with optional GPL components)
+   File:    FFmpeg-LICENSE.txt
+   https://ffmpeg.org
+   Linkage: dynamic. FFmpeg libraries are vendored from a known-good prebuilt
+            (external/ffmpeg) and ship alongside minNotes. Used by the C++ media
+            backend for video decode, scrubbing, audio, and frame/poster
+            extraction (app/core/MediaStore.cpp + the video decoders).
+
+3. KSyntaxHighlighting (KDE Frameworks 6)
+   Copyright (C) 2016-2024 Volker Krause and the KSyntaxHighlighting authors (KDE)
+   License: MIT
+   File:    KSyntaxHighlighting-MIT.txt
+   https://invent.kde.org/frameworks/syntax-highlighting
+   Linkage: dynamic. Built from source into external/kf6 and shipped with the
+            app. Provides code-block syntax coloring.
+
+4. ink-stroke-modeler
+   Copyright (c) Google LLC
+   License: Apache-2.0
+   File:    InkStrokeModeler-Apache-2.0.txt
+   https://github.com/google/ink-stroke-modeler
+   Linkage: static (FetchContent, compiled into minNotes). Smooths ink input for
+            the sketch / video-annotation stroke engine (app/notes/).
+
+5. Sparkle
+   Copyright (c) 2006-2017 Andy Matuschak and the Sparkle contributors
+   License: MIT
+   File:    Sparkle-MIT.txt
+   https://github.com/sparkle-project/Sparkle
+   Distribution: Sparkle.framework embedded in the macOS app bundle. Provides
+                 in-place auto-update (EdDSA-verified appcast).
+
+6. WinSparkle
+   Copyright (C) 2009-2025 Vaclav Slavik and the WinSparkle authors
+   License: MIT
+   File:    WinSparkle-MIT.txt
+   https://github.com/vslavik/winsparkle
+   Distribution: WinSparkle.dll shipped with the Windows build. The Windows
+                 counterpart to Sparkle (verifies the same EdDSA key).
+
+7. Phosphor Icons
+   Copyright (c) 2020-2023 Phosphor Icons (Helena Zhang, Tobias Fried)
+   License: MIT
+   File:    Phosphor-LICENSE.txt
+   https://phosphoricons.com
+   Asset:   the icon set used throughout the UI (app/qml/MinNotes/App/PhosphorIcons.js).
+
+8. Aspekta (typeface)
+   Copyright (c) 2025 Ivo Dolenc, with Reserved Font Name "Aspekta"
+   License: SIL Open Font License, Version 1.1
+   File:    Aspekta-OFL-1.1.txt
+   https://github.com/ivodolenc/aspekta
+   Asset:   bundled UI font (external/aspekta).
+
+9. SQLite
+   Public Domain
+   File:    SQLite-LICENSE.txt
+   https://www.sqlite.org
+   Linkage: compiled into Qt's bundled QSQLITE SQL driver. minNotes documents
+            (.mndb) are SQLite databases.
+
+===============================================================================
+Indirect dependencies — Qt runtime libraries
+===============================================================================
+
+The Qt 6 distribution dynamically links against a set of permissively licensed
+support libraries that ship alongside minNotes. These are covered by their own
+upstream licenses (BSD / MIT / FTL / public domain / similar) and are
+redistributed verbatim from the Qt build. Notable libraries include:
+
+  * zlib (zlib license)
+  * libpng (libpng / zlib-style)
+  * libjpeg-turbo (BSD + IJG)
+  * libtiff (libtiff / MIT-style)
+  * libwebp + libsharpyuv (BSD)
+  * brotli (MIT)
+  * liblzma / xz (public domain / 0BSD)
+  * FreeType (FTL or GPL-2)
+  * HarfBuzz (MIT)
+  * ICU (Unicode license)
+  * PCRE2 (BSD)
+
+For the canonical license texts of these libraries refer to the Qt 6 source
+distribution at https://download.qt.io/official_releases/qt/. None of these
+libraries impose copyleft obligations on minNotes.
+
+===============================================================================
+
+For the GPL-3 text under which minNotes is itself distributed see /LICENSE in
+the source tree (or the copy installed alongside the application).
