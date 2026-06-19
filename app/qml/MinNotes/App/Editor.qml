@@ -1861,6 +1861,20 @@ FocusScope {
             root._recomputeVideoRows(); root._recomputePdfRows()
         }
     }
+    // Switching NOTES re-points blockModel but emits no contentChangedSpike, so the
+    // always-built video/pdf transport toolbars would keep the previous note's rows
+    // (lingering toolbars) until the new note is edited. Force a rebuild for the
+    // now-active document. Clear first so the rebuild runs even if the row indices
+    // coincide — the underlying blocks (and their media) are a different document.
+    Connections {
+        target: docs
+        function onActiveChanged() {
+            Qt.callLater(function() {
+                root.allVideoRows = []; root.allPdfRows = []
+                root._recomputeVideoRows(); root._recomputePdfRows()
+            })
+        }
+    }
 
     readonly property int firstRow: Math.max(0, firstVisible - overscan)
     readonly property int poolSize: Math.min(blockModel.count,
