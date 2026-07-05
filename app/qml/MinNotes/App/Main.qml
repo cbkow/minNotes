@@ -78,7 +78,7 @@ ApplicationWindow {
         id: openDialog
         title: "Open document"
         nameFilters: ["minNotes documents (*.mndb)"]
-        onAccepted: docs.openTab("" + selectedFile)
+        onAccepted: win.openDoc(selectedFile)
     }
     FileDialog {
         id: saveAsDialog
@@ -235,6 +235,44 @@ ApplicationWindow {
         recentsStore.paths = JSON.stringify(list)
     }
     function baseName(path) { var n = ("" + path).split("/").pop(); return n.replace(/\.mndb$/i, "") }
+    function removeRecent(path) {
+        recentsStore.paths = JSON.stringify(
+            recentPaths().filter(function (p) { return p !== path }))
+    }
+    // Open with failure feedback. A dead recents entry (the file was moved,
+    // renamed, or deleted) used to fail SILENTLY — indistinguishable from the
+    // app just not opening anything. Now it says so and prunes the entry.
+    property string openFailedPath: ""
+    function openDoc(path) {
+        path = "" + path
+        if (docs.openTab(path)) return
+        openFailedPath = path
+        removeRecent(path)
+        openFailedDialog.open()
+    }
+    Dialog {
+        id: openFailedDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "Couldn’t open “" + win.baseName(win.openFailedPath) + "”"
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: "The file may have been moved, renamed, or deleted:\n"
+                       + win.openFailedPath + "\n\nIt has been removed from Open Recent."
+                   color: Theme.colors.textMuted; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: "OK"; variant: "primary"; padding: 12
+                             onClicked: openFailedDialog.close() }
+            }
+        }
+    }
     Connections {
         target: blockModel
         function onDocumentChanged() {
@@ -298,7 +336,7 @@ ApplicationWindow {
                         delegate: Platform.MenuItem {
                             required property var modelData
                             text: win.baseName(modelData)
-                            onTriggered: docs.openTab(modelData)
+                            onTriggered: win.openDoc(modelData)
                         }
                         onObjectAdded: (i, obj) => recentMenu.insertItem(i, obj)
                         onObjectRemoved: (i, obj) => recentMenu.removeItem(obj)
@@ -364,7 +402,7 @@ ApplicationWindow {
                         MenuItem {
                             required property var modelData
                             text: win.baseName(modelData)
-                            onTriggered: docs.openTab(modelData)
+                            onTriggered: win.openDoc(modelData)
                         }
                     }
                     Repeater { model: win.recents.length > 0 ? 1 : 0; ThemedMenuSeparator {} }
@@ -725,7 +763,7 @@ ApplicationWindow {
                         MouseArea {
                             id: recentMA
                             anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: docs.openTab(recentItem.modelData)
+                            onClicked: win.openDoc(recentItem.modelData)
                         }
                     }
                 }
