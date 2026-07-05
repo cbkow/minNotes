@@ -2,6 +2,7 @@
 #include "annotation_thumbnail.h"   // qcv::paintStroke
 #include "../core/BlockModel.h"
 
+#include <QCursor>
 #include <QMouseEvent>
 #include <QPainter>
 #include <algorithm>
@@ -126,6 +127,11 @@ void DocInkCanvas::applyAcceptedButtons()
     // Armed (ink mode) → own left-button gestures; otherwise refuse mouse so
     // everything falls through to the editor's central mouse layer.
     setAcceptedMouseButtons(inkMode_ ? Qt::LeftButton : Qt::NoButton);
+    // Mode cursor: crosshair while a draw/erase tool is armed, the plain
+    // arrow in select mode, and no override at all outside ink mode.
+    if (inkMode_ && drawToolActive_) setCursor(Qt::CrossCursor);
+    else if (inkMode_)               setCursor(Qt::ArrowCursor);
+    else                             unsetCursor();
 }
 
 void DocInkCanvas::rebuildCache()

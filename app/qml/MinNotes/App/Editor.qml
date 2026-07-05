@@ -3870,6 +3870,11 @@ FocusScope {
     DocInkCanvas {
         id: inkCanvas
         anchors.fill: flick
+        // The scrollbar is a CHILD of the Flickable, so this sibling canvas
+        // would otherwise cover it — visually and (armed) for clicks. Leave
+        // its strip out of the canvas entirely: the bar stays on top and
+        // stays draggable, even mid-annotation.
+        anchors.rightMargin: Theme.dim.scrollBarWidth
         z: 45
         visible: flick.visible          // hidden in full-frame tabs, like the doc
         model: blockModel
