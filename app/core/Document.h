@@ -32,6 +32,20 @@ public:
     // switch — the caller re-opens the new path.
     bool vacuumInto(const QString& path) const;
 
+    // --- Format versioning (doc_meta, id=1) ---
+    // The .mndb format this build writes. Bump on any incompatible change to
+    // the blocks/attrs/content encoding; readers gate migrations on
+    // schemaVersion(). v1 = clean-text+spans content (markdown markers are
+    // consumed on load), string span kinds in attrs, media descriptors with
+    // portable src refs.
+    static constexpr int kSchemaVersion = 1;
+    // Upsert the doc_meta row: `created` is written once, then every stamp
+    // updates schema_version + app_version + modified. Called on the save
+    // paths so a saved file always records what wrote it.
+    void stampMeta();
+    // schema_version of the open doc; 0 = pre-versioning legacy (never stamped).
+    int schemaVersion() const;
+
     int count() const;
 
     // Eager skinny-scan: layout columns only, already in visible (rank) order.

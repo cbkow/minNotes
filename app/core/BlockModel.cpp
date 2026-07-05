@@ -274,6 +274,7 @@ bool BlockModel::openDocument(const QString& pathOrUrl) {
 // if any step fails, so nothing is lost.
 bool BlockModel::writeBackToOriginal() {
     setSaveState(SaveSaving);
+    doc_.stampMeta();     // saved files record schema_version/app_version/modified
     doc_.checkpoint();
     const QString dir = QFileInfo(docPath_).absolutePath();
     QDir().mkpath(dir);
@@ -327,6 +328,7 @@ bool BlockModel::saveAs(const QString& pathOrUrl) {
     setSaveState(SaveSaving);
     // Flush the WAL, then write a clean copy to the chosen location (temp + atomic
     // replace, matching the in-place save path).
+    doc_.stampMeta();     // saved files record schema_version/app_version/modified
     doc_.checkpoint();
     const QString tmp = dstDir + QStringLiteral("/.mn-save-") + makeUlid() + QStringLiteral(".tmp");
     QFile::remove(tmp);
@@ -440,6 +442,7 @@ void BlockModel::loadFromStore() {
     content_.reserve(metas.size());
     std::vector<double> heights;
     heights.reserve(metas.size());
+    std::vector<int> canonicalized;   // rows whose markdown markers were consumed
 
     for (const Document::BlockMeta& m : metas) {
         QString text = doc_.contentFor(m.id);   // Phase 1a: load eagerly
@@ -464,11 +467,18 @@ void BlockModel::loadFromStore() {
         }
         // Markdown is an input method, not storage: consume any inline markers
         // into spans on load so non-active blocks render clean (markers only ever
-        // appear while you're typing them). In-memory only; the DB migrates lazily
-        // as blocks are edited / committed.
+        // appear while you're typing them). Converted rows are persisted back to
+        // the working copy below, so clean-text+spans is the ONE on-disk text
+        // format — not "markers until the block happens to be edited", which
+        // left two formats per document and pinned every future reader (export,
+        // tooling) to this exact conversion pass. Heading/Code stay literal by
+        // design.
         if (r.type == Paragraph || r.type == Quote || r.type == ListItem || r.type == TaskListItem) {
             QString clean; std::vector<Span> spans;
-            if (convertMarkdown(text, r.spans, clean, spans)) { text = clean; r.spans = spans; }
+            if (convertMarkdown(text, r.spans, clean, spans)) {
+                text = clean; r.spans = spans;
+                canonicalized.push_back(static_cast<int>(rows_.size()));   // row index of the push below
+            }
         }
         // Defensive: drop/clamp spans that exceed the content (stale data must
         // never push the highlighter / positionToRectangle out of range).
@@ -487,6 +497,15 @@ void BlockModel::loadFromStore() {
         ranks_.push_back(m.rank);
         content_.push_back(text);
         heights.push_back(estimatedHeight(r));
+    }
+    // Persist the conversions into the WORKING COPY in one transaction (the
+    // original file updates on the next explicit save, as always). This is a
+    // normalization, not a user edit: no undo entries (the txn chokepoint is
+    // bypassed deliberately), no dirty flag.
+    if (!canonicalized.empty() && doc_.isOpen()) {
+        doc_.begin();
+        for (int row : canonicalized) { persistContent(row); persistMeta(row); }
+        doc_.commit();
     }
     fenwick_.reset(std::move(heights));
     endResetModel();

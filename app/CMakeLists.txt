@@ -86,6 +86,12 @@ qt_add_executable(minnotesapp
     player/i_audio_source.h
 )
 
+# Document.cpp stamps doc_meta.app_version with this on save. (The WinSparkle
+# block below defines the same value again for its own TU — identical dups are
+# harmless.)
+target_compile_definitions(minnotesapp PRIVATE
+    "MINNOTES_APP_VERSION=\"${PROJECT_VERSION}\"")
+
 # Mark Theme.qml as a QML singleton BEFORE qt_add_qml_module so the generated
 # qmldir registers it correctly (else `Theme.colors.x` fails to resolve).
 set_source_files_properties(qml/MinNotes/App/Theme.qml PROPERTIES

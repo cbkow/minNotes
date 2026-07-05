@@ -190,6 +190,62 @@ static void testUndoBranchCoalesce() {
           "redo follows the newest branch to '' (stale 'az' not resurrected)");
 }
 
+// --- Test 6: on-disk markdown canonicalization + doc_meta stamping ----------
+// v1 format rule: clean-text+spans is the ONE on-disk text form. A document
+// saved with raw inline markers (legacy) must come back canonicalized after an
+// open→save cycle — and the open itself must NOT mark the doc dirty (it's a
+// normalization, not a user edit). Saves stamp doc_meta.schema_version.
+static void testCanonicalizeAndStamp() {
+    qInfo("[6] markdown canonicalized on disk after open->save; doc_meta stamped");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_canon.mndb");
+    QFile::remove(path);
+
+    {   // Write a doc whose DB content still holds raw markers (setContent
+        // persists verbatim; conversion only happens on load/commit).
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        m.setContent(0, QStringLiteral("**bold** word"));
+        CHECK(m.saveAs(path), "saveAs() succeeded");
+        m.closeDocument();
+    }
+    {   // The save path stamped doc_meta.
+        Document d;
+        CHECK(d.open(path), "raw Document opens the saved file");
+        CHECK(d.schemaVersion() == Document::kSchemaVersion,
+              "saveAs stamped schema_version (%d == %d)",
+              d.schemaVersion(), Document::kSchemaVersion);
+        d.close();
+    }
+    {   // Open converts markers -> spans (in memory AND into the working copy)
+        // without dirtying; a save then canonicalizes the original on disk.
+        BlockModel m;
+        CHECK(m.openDocument(path), "openDocument() succeeded");
+        CHECK(m.contentForRow(0) == QStringLiteral("bold word"),
+              "markers consumed on load ('%s')", qPrintable(m.contentForRow(0)));
+        CHECK(!m.dirty(), "canonicalization does not mark the document dirty");
+        CHECK(m.save(), "save() succeeded");
+        m.closeDocument();
+    }
+    {   // Direct on-disk proof: the blocks table now holds clean text + spans.
+        Document d;
+        CHECK(d.open(path), "canonicalized file opens");
+        const auto metas = d.skinnyScan();
+        CHECK(!metas.empty(), "canonicalized file has blocks");
+        if (!metas.empty()) {
+            CHECK(d.contentFor(metas[0].id) == QStringLiteral("bold word"),
+                  "on-disk content is marker-free ('%s')",
+                  qPrintable(d.contentFor(metas[0].id)));
+            CHECK(metas[0].attrs.contains(QStringLiteral("\"k\": \"bold\""))
+                      || metas[0].attrs.contains(QStringLiteral("\"k\":\"bold\"")),
+                  "on-disk attrs carry the bold span (%s)", qPrintable(metas[0].attrs));
+        }
+        d.close();
+    }
+    QFile::remove(path);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -203,6 +259,7 @@ int main(int argc, char** argv) {
     testUndoRedoHeights();
     testSaveReopen();
     testUndoBranchCoalesce();
+    testCanonicalizeAndStamp();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

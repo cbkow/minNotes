@@ -7,6 +7,13 @@
 #include <QRandomGenerator>
 #include <QDebug>
 
+// Recorded in doc_meta.app_version on save. The app target defines it from
+// PROJECT_VERSION; targets that compile this file without the define (tests)
+// fall back.
+#ifndef MINNOTES_APP_VERSION
+#  define MINNOTES_APP_VERSION "0.0.0"
+#endif
+
 namespace {
 int g_conn_seq = 0;
 }
@@ -105,7 +112,39 @@ bool Document::open(const QString& path) {
         close();
         return false;
     }
+
+    // Soft format gate: a doc stamped by a NEWER format still opens, but say
+    // so — editing it with this build may drop fields the newer format added.
+    if (const int v = schemaVersion(); v > kSchemaVersion)
+        qWarning() << "Document:" << path << "uses format v" << v
+                   << "(this build writes v" << kSchemaVersion
+                   << ") — newer fields may be lost on save";
     return true;
+}
+
+void Document::stampMeta() {
+    if (!open_) return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare(QStringLiteral(
+        "INSERT INTO doc_meta (id, schema_version, app_version, created, modified) "
+        "VALUES (1, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET schema_version = excluded.schema_version, "
+        "app_version = excluded.app_version, modified = excluded.modified"));
+    q.addBindValue(kSchemaVersion);
+    q.addBindValue(QStringLiteral(MINNOTES_APP_VERSION));
+    q.addBindValue(now);
+    q.addBindValue(now);
+    if (!q.exec())
+        qWarning() << "Document: doc_meta stamp failed:" << q.lastError().text();
+}
+
+int Document::schemaVersion() const {
+    if (!open_) return 0;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (q.exec(QStringLiteral("SELECT schema_version FROM doc_meta WHERE id = 1")) && q.next())
+        return q.value(0).toInt();
+    return 0;
 }
 
 int Document::count() const {
