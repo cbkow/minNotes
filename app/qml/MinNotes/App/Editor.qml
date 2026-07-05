@@ -1742,6 +1742,14 @@ FocusScope {
                                  blockModel.tableRangeHtml(row, 0, 0, blockModel.tableRows(row) - 1, blockModel.tableColumns(row) - 1))
         else clipboard.writeText(blockModel.contentForRow(row))
     }
+    // Comment the current single-row text selection: mint the thread, then
+    // open its card in the Inspector's comments view.
+    function addCommentOnSelection() {
+        if (!cursor.hasSel || cursor.loRow !== cursor.hiRow) return
+        var tid = blockModel.addComment(cursor.loRow, cursor.loCol, cursor.hiCol)
+        if (tid !== "" && inspector) inspector.showComments(tid)
+    }
+
     function deleteBlock(row) {
         // Deleting a DIFFERENT block (right-click menu) moves the caret off the
         // edited row → commit its inline md first. Skip when deleting the focused
@@ -2256,6 +2264,35 @@ FocusScope {
                         y: te.y + h.rr.y
                         width: h.rr.width
                         height: h.rr.height
+                    }
+                }
+
+                // Comment-anchor tint: a low-alpha accent wash over commented
+                // ranges (the margin pin is the interactive affordance; plain
+                // clicks here keep editing text). One rect per visual line.
+                property var commentRects: {
+                    var dep = blockModel.contentRevision + blockModel.layoutRevision
+                            + blockModel.commentsRevision
+                    if (!cell.active || cell.isMedia) return []
+                    var ranges = blockModel.commentRangesForRow(cell.logicalRow)
+                    var out = []
+                    for (var i = 0; i < ranges.length; ++i) {
+                        var rs = root.selectionRects(te, ranges[i].s, ranges[i].e)
+                        for (var j = 0; j < rs.length; ++j) out.push(rs[j])
+                    }
+                    return out
+                }
+                Repeater {
+                    model: cell.commentRects
+                    delegate: Rectangle {
+                        required property int index
+                        readonly property var cr2: cell.commentRects[index]
+                        color: Qt.rgba(0.004, 0.537, 0.945, 0.14)   // accent, low alpha
+                        z: 0
+                        x: te.x + cr2.x
+                        y: te.y + cr2.y
+                        width: cr2.width
+                        height: cr2.height
                     }
                 }
 
@@ -3871,6 +3908,37 @@ FocusScope {
         }
     }
 
+    // --- Comment margin pins: one per row carrying comment spans, in the
+    // right margin. Root-level + model-driven (never per-delegate), gated to
+    // the visible window like the video toolbars — contentRevision dep, NOT
+    // layoutRevision (the 1946-1955 rule); y reads take the layout tuple.
+    Repeater {
+        model: (blockModel.contentRevision, blockModel.commentsRevision,
+                blockModel.commentPinRows())
+        delegate: Rectangle {
+            required property var modelData
+            readonly property int prow: modelData
+            visible: flick.visible && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+            z: 56
+            width: 22; height: 22
+            x: root.leftEdge + root.pageWidth + 10 - flick.contentX
+            y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY + 2
+            color: pinMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.surfaceRaised
+            border.width: 1; border.color: Theme.colors.border
+            Icon { anchors.centerIn: parent; name: "chat-circle-text"; size: 13
+                   color: pinMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+            MouseArea {
+                id: pinMA
+                anchors.fill: parent; hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    var rs = blockModel.commentRangesForRow(prow)
+                    if (rs.length > 0 && root.inspector) root.inspector.showComments(rs[0].id)
+                }
+            }
+        }
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
@@ -4555,6 +4623,12 @@ FocusScope {
                 MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(root.menuRow) }
                 MenuRow { visible: blockMenu.isTable; text: blockMenu.tHdr > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
+                // comment on the current (single-row) text selection
+                MenuRow {
+                    visible: !blockMenu.inFrameTab && cursor.hasSel && cursor.loRow === cursor.hiRow
+                    text: "Add comment"
+                    onActivated: root.addCommentOnSelection()
+                }
                 // text-only transform
                 Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow {

@@ -28,8 +28,21 @@ Rectangle {
         id: panelStore
         category: "inspector"
         property bool open: true
+        property string view: "palette"
     }
     onOpenChanged: if (_ready) panelStore.open = open
+
+    // Which interface the panel shows: the colour/drawing palette or the
+    // comment threads. Persisted like `open`.
+    property string view: "palette"
+    onViewChanged: if (_ready) panelStore.view = view
+    // The expanded thread in the comments view ("" = all collapsed).
+    property string openThread: ""
+    function showComments(threadId) {
+        open = true
+        view = "comments"
+        openThread = threadId
+    }
 
     // Colour state (the I/O the editor's apply functions read).
     property color fgColor: Theme.colors.text         // default type colour (E4E3E2)
@@ -108,6 +121,7 @@ Rectangle {
         if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
         if (drawStore.width > 0) drawWidth = drawStore.width
         open = panelStore.open      // restore last open/closed state (no slide)
+        if (panelStore.view === "comments") view = "comments"
         _ready = true               // toggles from here on animate + persist
     }
     function saveSwatches() { swatchStore.user = JSON.stringify(userSlots) }
@@ -152,13 +166,26 @@ Rectangle {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
 
-        // Header: title + close (so you can dismiss without reaching the left rail).
+        // Header: view toggle (Palette | Comments) + close.
         Item {
             id: header
             x: 12; width: parent.width - 24; height: 30; y: 6
-            Text { anchors.verticalCenter: parent.verticalCenter
-                   text: "Palette"; color: Theme.colors.textBright
-                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 14
+                Text { text: "Palette"
+                       color: panel.view === "palette" ? Theme.colors.textBright : Theme.colors.textMuted
+                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                       font.bold: panel.view === "palette"
+                       MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                   onClicked: panel.view = "palette" } }
+                Text { text: "Comments"
+                       color: panel.view === "comments" ? Theme.colors.textBright : Theme.colors.textMuted
+                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                       font.bold: panel.view === "comments"
+                       MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                   onClicked: panel.view = "comments" } }
+            }
             FlatButton {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                 width: 24; height: 24; radius: 0; iconName: "x"; iconSize: 13
@@ -166,7 +193,132 @@ Rectangle {
             }
         }
 
+        // --- Comments view: thread cards (anchored first, then Unanchored) ---
+        Flickable {
+            visible: panel.view === "comments"
+            anchors.top: header.bottom; anchors.topMargin: 6; anchors.bottom: parent.bottom
+            anchors.bottomMargin: 8
+            x: 12; width: panel.contentW
+            contentHeight: threadsCol.implicitHeight + 8
+            clip: true
+            Column {
+                id: threadsCol
+                width: parent.width; spacing: 8
+                Text {
+                    visible: threadRep.count === 0
+                    text: "No comments yet.\nSelect text and use\n“Add comment”."
+                    color: Theme.colors.textMuted
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                }
+                Repeater {
+                    id: threadRep
+                    model: (blockModel.commentsRevision, blockModel.contentRevision,
+                            blockModel.commentThreads())
+                    delegate: Rectangle {
+                        id: card
+                        required property var modelData
+                        readonly property bool expanded: panel.openThread === modelData.id
+                        width: threadsCol.width
+                        height: cardCol.implicitHeight + 16
+                        color: Theme.colors.surface
+                        border.width: 1
+                        border.color: card.expanded ? Theme.colors.textMuted : Theme.colors.border
+                        Column {
+                            id: cardCol
+                            x: 8; y: 8; width: parent.width - 16; spacing: 6
+                            // Header: excerpt (or Unanchored) + resolved dot.
+                            Item {
+                                width: parent.width; height: 16
+                                Rectangle {   // resolved indicator
+                                    width: 8; height: 8; radius: 4
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: modelData.resolved ? Theme.colors.accent : "transparent"
+                                    border.width: 1; border.color: Theme.colors.textMuted
+                                }
+                                Text {
+                                    x: 14; width: parent.width - 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    elide: Text.ElideRight
+                                    text: modelData.row >= 0
+                                          ? "“" + modelData.excerpt + "”"
+                                          : qsTr("(unanchored)")
+                                    color: modelData.row >= 0 ? Theme.colors.text : Theme.colors.textMuted
+                                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                                    font.italic: modelData.row < 0
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        panel.openThread = card.expanded ? "" : modelData.id
+                                        if (modelData.row >= 0 && panel.editor)
+                                            panel.editor.ensureVisible(modelData.row)
+                                    }
+                                }
+                            }
+                            // Messages + reply + actions, only when expanded.
+                            Column {
+                                visible: card.expanded
+                                width: parent.width; spacing: 6
+                                Repeater {
+                                    model: card.expanded
+                                           ? (blockModel.commentsRevision,
+                                              blockModel.commentMessages(modelData.id)) : []
+                                    delegate: Text {
+                                        required property var modelData
+                                        width: cardCol.width
+                                        wrapMode: Text.Wrap
+                                        text: modelData.body
+                                        color: Theme.colors.text
+                                        font.family: Theme.font.family
+                                        font.pixelSize: Theme.font.sizeSmall
+                                    }
+                                }
+                                Rectangle {
+                                    width: parent.width; height: 54
+                                    color: Theme.colors.bg
+                                    border.width: 1; border.color: Theme.colors.border
+                                    TextEdit {
+                                        id: replyEdit
+                                        anchors.fill: parent; anchors.margins: 6
+                                        wrapMode: TextEdit.Wrap
+                                        color: Theme.colors.text
+                                        font.family: Theme.font.family
+                                        font.pixelSize: Theme.font.sizeSmall
+                                        selectByMouse: true
+                                    }
+                                }
+                                Row {
+                                    spacing: 6
+                                    FlatButton {
+                                        text: qsTr("Reply"); padding: 8
+                                        onClicked: {
+                                            var b = replyEdit.text.trim()
+                                            if (b.length > 0) {
+                                                blockModel.addCommentMessage(modelData.id, b)
+                                                replyEdit.text = ""
+                                            }
+                                        }
+                                    }
+                                    FlatButton {
+                                        text: modelData.resolved ? qsTr("Reopen") : qsTr("Resolve")
+                                        padding: 8
+                                        onClicked: blockModel.setThreadResolved(modelData.id, !modelData.resolved)
+                                    }
+                                    FlatButton {
+                                        text: qsTr("Delete"); padding: 8
+                                        onClicked: blockModel.deleteThread(modelData.id)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Column {
+            visible: panel.view === "palette"
             anchors.top: header.bottom; anchors.topMargin: 6
             x: 12; spacing: 8
 

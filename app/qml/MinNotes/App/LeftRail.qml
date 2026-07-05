@@ -189,6 +189,13 @@ Rectangle {
             checked: !!rail.editor && rail.editor.inkMode
             onClicked: rail.editor.setInkMode(!rail.editor.inkMode)
         }
+        // Comment the current text selection (single row); opens the thread
+        // in the Inspector's Comments view.
+        RailBtn {
+            iconName: "chat-circle-text"; tooltip: "Add comment"
+            enabled_: !!rail.editor && rail.editor.hasSelection
+            onClicked: rail.editor.addCommentOnSelection()
+        }
 
         RailSep {}
 
