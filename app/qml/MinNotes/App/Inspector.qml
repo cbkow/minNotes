@@ -220,7 +220,13 @@ Rectangle {
                         readonly property bool expanded: panel.openThread === modelData.id
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
-                        color: Theme.colors.surface   // flat recess against the panel; no border
+                        // Flat recess against the panel; RESOLVED threads fade
+                        // to a hair off the panel colour — settled business
+                        // recedes, open threads keep the darker card.
+                        color: modelData.resolved
+                               ? Qt.tint(Theme.colors.surfaceRaised, Qt.rgba(0, 0, 0, 0.05))
+                               : Theme.colors.surface
+                        Behavior on color { ColorAnimation { duration: 160 } }
                         Column {
                             id: cardCol
                             x: 8; y: 8; width: parent.width - 16; spacing: 6
