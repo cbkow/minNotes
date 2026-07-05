@@ -3759,6 +3759,25 @@ FocusScope {
         }
     }
 
+    // --- Margin-ink layer (tier 2 annotations). ONE viewport-sized canvas
+    // over the whole document: renders every visible anchor's strokes always;
+    // accepts mouse only in ink mode (disarmed it refuses events, so the
+    // central mouse layer sees everything — the VideoAnnotator pattern).
+    // z:45 = above document content, below the drag/media/popup overlays.
+    DocInkCanvas {
+        id: inkCanvas
+        anchors.fill: flick
+        z: 45
+        visible: flick.visible          // hidden in full-frame tabs, like the doc
+        model: blockModel
+        contentX: flick.contentX
+        contentY: flick.contentY
+        leftEdgeContent: root.leftEdge
+        pageWidth: root.pageWidth
+        inkMode: false                  // armed by annotation mode (M3)
+        tool: ""
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
