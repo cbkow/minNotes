@@ -145,6 +145,10 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);
     engine.rootContext()->setContextProperty("pathMap", &pathMap);
+    // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
+    // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
+    // unsaved-changes guard and calls minApp.forceQuit() when it's safe.
+    engine.rootContext()->setContextProperty("minApp", &app);
     // A mapping edit must re-resolve media in every open tab.
     QObject::connect(&pathMap, &PathMapController::mappingsChanged, &docs,
                      [&docs] { docs.refreshMedia(); });

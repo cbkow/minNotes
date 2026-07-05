@@ -27,7 +27,20 @@ bool MinNotesApplication::event(QEvent *e)
         }
         return true;
     }
+    if (e->type() == QEvent::Quit && !quitAllowed_) {
+        // Veto termination (ignore() → NSTerminateCancel on macOS) and hand the
+        // decision to QML — it prompts for unsaved work and calls forceQuit().
+        e->ignore();
+        emit quitRequested();
+        return true;
+    }
     return QGuiApplication::event(e);
+}
+
+void MinNotesApplication::forceQuit()
+{
+    quitAllowed_ = true;
+    quit();
 }
 
 void MinNotesApplication::markReady() { ready_ = true; }

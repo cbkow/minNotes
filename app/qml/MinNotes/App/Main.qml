@@ -16,12 +16,24 @@ ApplicationWindow {
            : "minNotes"
     color: Theme.colors.bg
 
-    // --- App-close guard: prompt before discarding unsaved work in any tab. ---
+    // --- App-close guard: prompt before discarding unsaved work in any tab.
+    // Two entry points share the dialog: the window close button arrives via
+    // onClosing; ⌘Q / logout / last-window-closed arrive as QEvent::Quit, which
+    // MinNotesApplication vetoes and re-emits as quitRequested (the raw quit
+    // path skips onClosing, and aboutToQuit deletes the scratch working
+    // copies — so it must never run before this guard clears). ---
     property bool _forceClose: false
     onClosing: (close) => {
         if (win._forceClose || docs.dirtyCount === 0) return   // nothing unsaved → allow
         close.accepted = false
         quitConfirmDialog.open()
+    }
+    Connections {
+        target: minApp
+        function onQuitRequested() {
+            if (docs.dirtyCount === 0) { win._forceClose = true; minApp.forceQuit() }
+            else quitConfirmDialog.open()
+        }
     }
     Dialog {
         id: quitConfirmDialog
@@ -42,12 +54,16 @@ ApplicationWindow {
             Row {
                 spacing: 8; anchors.right: parent.right
                 FlatButton { text: "Cancel"; padding: 12; onClicked: quitConfirmDialog.close() }
+                // Both quit buttons go through minApp.forceQuit() — NOT
+                // win.close(): a bare close with dirty docs would trip the
+                // QEvent::Quit veto again after the window is gone (zombie
+                // process, no window to host this dialog).
                 FlatButton { text: "Discard & Quit"; padding: 12
-                             onClicked: { quitConfirmDialog.close(); win._forceClose = true; win.close() } }
+                             onClicked: { quitConfirmDialog.close(); win._forceClose = true; minApp.forceQuit() } }
                 FlatButton { text: "Save All & Quit"; variant: "primary"; padding: 12
                              onClicked: {
                                  quitConfirmDialog.close()
-                                 if (docs.saveAllTitled()) { win._forceClose = true; win.close() }
+                                 if (docs.saveAllTitled()) { win._forceClose = true; minApp.forceQuit() }
                                  else { var i = docs.firstDirtyIndex()   // untitled/conflict left — focus it
                                         if (i >= 0) win.switchToTab(i) }
                              } }
