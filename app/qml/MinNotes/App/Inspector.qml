@@ -220,14 +220,18 @@ Rectangle {
                         readonly property bool expanded: panel.openThread === modelData.id
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
-                        // Flat recess against the panel; RESOLVED threads fade
-                        // halfway toward the panel colour (still readable as a
-                        // card, clearly settled) and dim their content.
+                        // Flat recess against the panel. EXPANDED threads
+                        // brighten a touch so the reply field's dark recess
+                        // stands out inside them; RESOLVED threads fade
+                        // halfway toward the panel colour (still readable as
+                        // a card, clearly settled) and dim their content.
                         color: modelData.resolved
                                ? Qt.tint(Theme.colors.surfaceRaised,
                                          Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
                                                  Theme.colors.surface.b, 0.5))
-                               : Theme.colors.surface
+                               : card.expanded
+                                 ? Qt.tint(Theme.colors.surface, Qt.rgba(1, 1, 1, 0.05))
+                                 : Theme.colors.surface
                         Behavior on color { ColorAnimation { duration: 160 } }
                         Column {
                             id: cardCol
@@ -382,7 +386,10 @@ Rectangle {
                                         }
                                     }
                                 }
+                                // Resolved threads take no new replies — the
+                                // field disappears until the thread reopens.
                                 Rectangle {
+                                    visible: !modelData.resolved
                                     width: parent.width; height: 54
                                     color: Theme.colors.bg   // flat recess, no border
                                     TextEdit {
@@ -398,6 +405,7 @@ Rectangle {
                                 Row {
                                     spacing: 6
                                     FlatButton {
+                                        visible: !modelData.resolved
                                         text: qsTr("Reply"); padding: 8
                                         onClicked: {
                                             var b = replyEdit.text.trim()
