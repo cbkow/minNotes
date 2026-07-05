@@ -221,15 +221,19 @@ Rectangle {
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
                         // Flat recess against the panel; RESOLVED threads fade
-                        // to a hair off the panel colour — settled business
-                        // recedes, open threads keep the darker card.
+                        // halfway toward the panel colour (still readable as a
+                        // card, clearly settled) and dim their content.
                         color: modelData.resolved
-                               ? Qt.tint(Theme.colors.surfaceRaised, Qt.rgba(0, 0, 0, 0.05))
+                               ? Qt.tint(Theme.colors.surfaceRaised,
+                                         Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
+                                                 Theme.colors.surface.b, 0.5))
                                : Theme.colors.surface
                         Behavior on color { ColorAnimation { duration: 160 } }
                         Column {
                             id: cardCol
                             x: 8; y: 8; width: parent.width - 16; spacing: 6
+                            opacity: card.modelData.resolved ? 0.55 : 1   // text fades with the card
+                            Behavior on opacity { NumberAnimation { duration: 160 } }
                             // Header: excerpt (or Unanchored) + resolved dot.
                             Item {
                                 width: parent.width; height: 16
