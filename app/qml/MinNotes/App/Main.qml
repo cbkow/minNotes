@@ -611,6 +611,7 @@ ApplicationWindow {
         }
 
         Row {
+            id: contentRow
             width: parent.width
             height: parent.height - docTabBar.height
             // editor is null while no document is open — the rail/inspector guard it,
@@ -619,10 +620,14 @@ ApplicationWindow {
             LeftRail { id: rail; height: parent.height; editor: parent.editor; inspector: inspectorPanel }
             // The editor surface only exists while a document is open, so no binding
             // ever queries the empty model (which would index empty vectors → crash).
+            // The Inspector is anchored OUTSIDE this Row (below) so it can float
+            // in annotation mode; when it isn't floating, subtracting its width
+            // here reproduces the classic push layout exactly.
             Loader {
                 id: docContent
                 active: blockModel.documentOpen
-                width: parent.width - rail.width - inspectorPanel.width; height: parent.height
+                width: parent.width - rail.width - (inspectorPanel.floating ? 0 : inspectorPanel.width)
+                height: parent.height
                 sourceComponent: Column {
                     anchors.fill: parent
                     property alias editorItem: editorInner
@@ -634,8 +639,20 @@ ApplicationWindow {
                     BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
                 }
             }
-            Inspector { id: inspectorPanel; height: parent.height; editor: parent.editor }
         }
+    }
+
+    // The right Inspector. Lives OUTSIDE the layout Row so annotation mode can
+    // FLOAT it over the editor (opening the palette then can't push the locked
+    // 760 column); when not floating, the Row's width subtraction above makes
+    // it behave exactly like the old push layout.
+    Inspector {
+        id: inspectorPanel
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: parent.height - (docTabBar.visible ? docTabBar.height : 0)
+        z: 5   // above the editor content; the welcome overlay (z:100) still covers
+        editor: contentRow.editor
     }
 
     // --- No-document welcome state: covers the (empty) editor until a document is

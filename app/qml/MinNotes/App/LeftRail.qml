@@ -180,6 +180,15 @@ Rectangle {
             checked: !!rail.inspector && rail.inspector.open
             onClicked: if (rail.inspector) rail.inspector.open = !rail.inspector.open
         }
+        // Annotation mode: draw block-pinned margin ink over the document.
+        // Locks the page to 760 (pan reaches the margins) and floats the
+        // Inspector; Esc exits. Toggling on opens the Inspector's Draw tools.
+        RailBtn {
+            iconName: "pen-nib"; tooltip: "Annotate"
+            enabled_: !!rail.editor
+            checked: !!rail.editor && rail.editor.inkMode
+            onClicked: rail.editor.setInkMode(!rail.editor.inkMode)
+        }
 
         RailSep {}
 

@@ -24,7 +24,11 @@ FocusScope {
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
-    property real pageWidth: Math.min(width - 40, Theme.dim.columnWidth)
+    // ANNOTATION MODE locks the page at the full 760 regardless of window width
+    // (the frame ink was drawn against must be stable) — the window pans
+    // horizontally instead of squeezing the column.
+    property real pageWidth: inkMode ? Theme.dim.columnWidth
+                                     : Math.min(width - 40, Theme.dim.columnWidth)
     // Media is known-geometry: tell the model the width it derives media heights
     // from, and re-tell it on resize so reserved height stays exact (no jump).
     onPageWidthChanged: blockModel.setContentWidth(pageWidth)
@@ -37,13 +41,43 @@ FocusScope {
     onWidthChanged: { windowResizing = true; resizeSettle.restart() }
     onHeightChanged: { windowResizing = true; resizeSettle.restart() }
     Timer { id: resizeSettle; interval: 200; onTriggered: root.windowResizing = false }
-    readonly property real leftEdge: (flick.width - pageWidth) / 2
+    // Horizontal reach past the page for margin ink (each side, ink mode only).
+    readonly property real inkGutter: 120
+    // The document's CONTENT width: normally the viewport (no horizontal
+    // scroll); in ink mode wide enough for the locked page + margins, so the
+    // Flickable pans natively (the kanban board's 2D-pan pattern).
+    readonly property real contentSpan: inkMode
+        ? Math.max(flick.width, pageWidth + 2 * inkGutter) : flick.width
+    readonly property real leftEdge: (contentSpan - pageWidth) / 2
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
 
     // The right Inspector panel (set from Main.qml) — the studio's drawing
     // tool/color/width live there (its Draw target).
     property var inspector: null
+
+    // --- Annotation (ink) mode: draw block-pinned margin ink over the whole
+    // document. Page locks to 760 + horizontal pan (see pageWidth/contentSpan
+    // above); the Inspector FLOATS instead of pushing the column (Main.qml);
+    // the ink canvas takes the mouse. Mutually exclusive with full-frame tabs.
+    property bool inkMode: false
+    function setInkMode(on) {
+        if (inkMode === !!on) return
+        if (on) {
+            if (activeTableId !== "" || activePdfId !== "" || activeVideoId !== ""
+                || activeSketchId !== "") setActiveTab("")   // back to the Document view
+            inkMode = true
+            if (inspector) {
+                inspector.open = true
+                inspector.target = "draw"
+                if (inspector.drawTool === "") inspector.drawTool = "freehand"
+            }
+        } else {
+            inkMode = false
+            if (inspector && inspector.drawTool !== "") inspector.drawTool = ""
+            flick.contentX = 0
+        }
+    }
 
     // Active table-tab: "" = the Document view; otherwise a table block's id shown
     // full-frame (see Tabs B). Reactive row of that table, -1 if it's gone.
@@ -97,6 +131,7 @@ FocusScope {
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
+        if (id !== "" && inkMode) setInkMode(false)   // full-frame tabs and ink mode are exclusive
         if (id === "") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return }
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) {
@@ -1781,7 +1816,12 @@ FocusScope {
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
             // Studio first: drop an in-flight stroke, then disarm the tool.
-            if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
+            // Ink mode mirrors the sketch chain: cancel → disarm → deselect → exit.
+            if (root.inkMode && inkCanvas.drawing) { inkCanvas.cancelStroke() }
+            else if (root.inkMode && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
+            else if (root.inkMode && inkCanvas.hasSelection) { inkCanvas.clearSelection() }
+            else if (root.inkMode) { root.setInkMode(false) }
+            else if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.drawing) { sketchEditCanvas.cancelStroke() }
             else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0)
                      && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
@@ -1808,11 +1848,12 @@ FocusScope {
         // swallow branches below (sketch deliberately keeps doc ⌘Z — strokes are
         // document content).
         else if (root.activePdfRow >= 0) { event.accepted = true }
-        // Video/sketch tabs: clipboard ops target the hidden document — gate
-        // ⌘V/⌘X (silent document edits); ⌘C copies an invisible selection,
-        // swallow it too rather than surprise the user.
+        // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
+        // annotation-covered) document — gate ⌘V/⌘X (silent document edits);
+        // ⌘C copies an invisible selection, swallow it too.
         else if (cmd && (k === Qt.Key_C || k === Qt.Key_V || k === Qt.Key_X)
-                 && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0)) { event.accepted = true }
+                 && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0
+                     || root.inkMode)) { event.accepted = true }
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
@@ -1840,6 +1881,15 @@ FocusScope {
         else if (root.activeSketchRow >= 0) {
             if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && sketchEditCanvas.hasSelection)
                 sketchEditCanvas.deleteSelection()
+            event.accepted = true
+        }
+        // Ink mode: the canvas is mouse-driven; swallow everything so typing
+        // can't edit the document mid-annotation. (⌘Z above stays DOC undo —
+        // ink is document content, the sketch precedent.) Delete/Backspace
+        // removes the selected stroke.
+        else if (root.inkMode) {
+            if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && inkCanvas.hasSelection)
+                inkCanvas.deleteSelection()
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -2064,10 +2114,17 @@ FocusScope {
         id: flick
         visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
         anchors.fill: parent
-        contentWidth: width
+        // In ink mode the content is wider than the viewport (locked page +
+        // margins) and pans natively; contentSpan == width otherwise, so this
+        // is a no-op outside the mode.
+        contentWidth: root.contentSpan
         contentHeight: blockModel.totalHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        // A resize (or leaving ink mode) can strand contentX past the new
+        // clamp range — snap back (the kanban board does the same).
+        onWidthChanged: returnToBounds()
+        onContentWidthChanged: returnToBounds()
 
         Connections {
             target: blockModel
@@ -2103,7 +2160,7 @@ FocusScope {
                 // which the measured height bumps and would form a binding loop.
                 readonly property real measure: root.measureForType(te.btype)
 
-                width: flick.width
+                width: flick.contentWidth   // == flick.width outside ink mode
                 visible: active
                 y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
                 // Code blocks get double vertical padding (24 vs 12) so the
@@ -2566,7 +2623,7 @@ FocusScope {
                         var rh = root.hitTest(m.x, m.y)              // link under the click?
                         root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
                     }
-                    root.openBlockMenu(m.x, m.y - flick.contentY, trow)
+                    root.openBlockMenu(m.x - flick.contentX, m.y - flick.contentY, trow)
                     return
                 }
                 // Press in the grip gutter → start a block drag-reorder.
@@ -2591,7 +2648,7 @@ FocusScope {
                     var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
                     var lp = bt ? bt.mapFromItem(mouse, m.x, m.y) : null
                     if (bt && (tk === 1 || tk === 2) && tbody && bt.widgetHit(lp.x, lp.y)) {
-                        if (tk === 1) root.openChoicePicker(th.row, th.r, th.c, m.x, m.y - flick.contentY)
+                        if (tk === 1) root.openChoicePicker(th.row, th.r, th.c, m.x - flick.contentX, m.y - flick.contentY)
                         else          blockModel.tableCycleCellCheck(th.row, th.r, th.c)
                         return
                     }
@@ -2687,7 +2744,7 @@ FocusScope {
                     // tracked the mouse, moving up to click it would chase it away.
                     if (lurl !== root.hoverLinkUrl) {
                         root.hoverLinkUrl = lurl
-                        root.hoverLinkX = m.x; root.hoverLinkViewY = m.y - flick.contentY
+                        root.hoverLinkX = m.x - flick.contentX; root.hoverLinkViewY = m.y - flick.contentY
                     }
                     linkTipHide.stop()
                 } else if (root.hoverLinkUrl.length > 0) {
@@ -3774,15 +3831,18 @@ FocusScope {
         contentY: flick.contentY
         leftEdgeContent: root.leftEdge
         pageWidth: root.pageWidth
-        inkMode: false                  // armed by annotation mode (M3)
-        tool: ""
+        inkMode: root.inkMode
+        // The Inspector Draw trio — the exact studio/sketch binding shape.
+        tool: root.inkMode && root.inspector ? root.inspector.drawTool : ""
+        color: root.inspector ? root.inspector.drawColor : "#FF0000"
+        strokeWidth: root.inspector ? root.inspector.drawWidth : 6
     }
 
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
     // Drop-indicator line at the insertion gap.
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0
-        x: root.gutterX; width: root.measureForRow(root.blockDragRow); height: 2; radius: 1
+        x: root.gutterX - flick.contentX; width: root.measureForRow(root.blockDragRow); height: 2; radius: 1
         y: (blockModel.layoutRevision, root.gapY(root.dropGap)) - flick.contentY - 1
         color: Theme.colors.accent
         z: 50
@@ -3791,7 +3851,7 @@ FocusScope {
     // translucent fill (the document shows through), following the cursor.
     Rectangle {
         visible: root.blockDragging
-        x: root.gutterX; width: root.measureForRow(root.blockDragRow); height: 30
+        x: root.gutterX - flick.contentX; width: root.measureForRow(root.blockDragRow); height: 30
         y: root.blockDragViewY - height / 2
         readonly property color _a: Theme.colors.accent
         color: Qt.rgba(_a.r, _a.g, _a.b, 0.06)
@@ -3821,7 +3881,7 @@ FocusScope {
         readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.imageDropGap)) - flick.contentY
 
         Rectangle {   // insertion line
-            x: root.leftEdge; width: root.textWidth; height: 3; radius: 2
+            x: root.leftEdge - flick.contentX; width: root.textWidth; height: 3; radius: 2
             y: parent.lineY - 1.5
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: Theme.colors.accent
@@ -3832,13 +3892,13 @@ FocusScope {
             }
         }
         Rectangle {   // solid dot at the left end
-            x: root.leftEdge - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
+            x: root.leftEdge - flick.contentX - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
             color: Theme.colors.accent
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
         }
         Rectangle {   // expanding ring emanating from the dot
             id: dropRing
-            x: root.leftEdge - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
+            x: root.leftEdge - flick.contentX - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: "transparent"; border.width: 2; border.color: Theme.colors.accent
             transformOrigin: Item.Center
@@ -3870,7 +3930,7 @@ FocusScope {
         readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
         readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
                                                          : Math.round(dispW * 0.5)
-        x: root.leftEdge
+        x: root.leftEdge - flick.contentX
         y: (blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) - flick.contentY + 6
         width: dispW; height: dispH
 
@@ -3916,7 +3976,7 @@ FocusScope {
                                                              : Math.round(dispW * 0.5)
 
             z: 56
-            x: root.leftEdge
+            x: root.leftEdge - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: dispW
             height: root.videoTransportH
@@ -3955,7 +4015,7 @@ FocusScope {
             readonly property int page: (root.pdfPageRev, root.pdfPageFor(row))
 
             z: 56
-            x: root.leftEdge
+            x: root.leftEdge - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: measure
             height: root.pdfNavH
@@ -3992,7 +4052,7 @@ FocusScope {
             : (root.imgHandleRow >= 0 ? root.imgHandleRow
                : (root._isResizableMediaRow(cursor.focusRow) ? cursor.focusRow : -1))
         visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-        readonly property real imgX: root.leftEdge
+        readonly property real imgX: root.leftEdge - flick.contentX
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
         readonly property real imgW: row >= 0
@@ -4061,7 +4121,7 @@ FocusScope {
     Rectangle {
         visible: root.imageResizing
         z: 58
-        x: root.leftEdge
+        x: root.leftEdge - flick.contentX
         y: (blockModel.layoutRevision, root.imageResizeRow >= 0
             ? blockModel.yForRow(root.imageResizeRow) : 0) + 6 - flick.contentY
         width: root.imageResizeW
@@ -4170,7 +4230,7 @@ FocusScope {
     // inside the table itself. Document view only (the menu opens there).
     Rectangle {
         visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-        x: root.leftEdge
+        x: root.leftEdge - flick.contentX
         y: (blockModel.layoutRevision, blockModel.yForRow(root.menuRow)) - flick.contentY
         width: root.measureForRow(root.menuRow)
         height: (blockModel.layoutRevision, blockModel.heightForRow(root.menuRow))

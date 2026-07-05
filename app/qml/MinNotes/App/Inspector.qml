@@ -14,6 +14,11 @@ import QtCore
 Rectangle {
     id: panel
     property var editor: null
+    // Annotation mode FLOATS the panel (an overlay — the editor column keeps
+    // its full width, so opening the palette can't push the locked 760 page).
+    // Outside the mode it participates in the push layout via Main.qml's
+    // width subtraction.
+    readonly property bool floating: !!editor && editor.inkMode === true
     property bool open: true   // open/closed is persisted (see panelStore) and
                                // restored on launch; this is just the pre-restore default
     property bool _ready: false   // gates the slide animation off during restore
@@ -175,7 +180,8 @@ Rectangle {
             // no draw tool is armed.
             Rectangle {
                 visible: !!panel.editor && (panel.editor.activeSketchRow >= 0
-                                            || panel.editor.activeVideoRow >= 0)
+                                            || panel.editor.activeVideoRow >= 0
+                                            || panel.editor.inkMode)
                 width: panel.contentW; height: 28
                 readonly property bool sel: panel.drawTool === "" || panel.drawTool === "select"
                 color: sel ? Theme.colors.divider
