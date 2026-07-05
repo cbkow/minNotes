@@ -172,16 +172,9 @@ Rectangle {
             }
         }
 
-        // ── Palette (top): opens the colour picker. Colours are applied LIVE to
-        // the selection by picking in the palette — no separate apply button. ──
-        RailBtn {
-            iconName: "palette"; tooltip: "Palette"
-            enabled_: !!rail.editor
-            checked: !!rail.inspector && rail.inspector.open
-            onClicked: if (rail.inspector) rail.inspector.open = !rail.inspector.open
-        }
-        // (Annotate + show/hide live in the editor's top-right floater — the
-        // rail is block-tool territory and was getting cramped.)
+        // (The palette/Inspector toggle + Annotate + show/hide all live on the
+        // document TAB STRIP's right edge now — the rail is block-tool
+        // territory and was getting cramped.)
         // Comment the current text selection (single row); opens the thread
         // in the Inspector's Comments view.
         RailBtn {

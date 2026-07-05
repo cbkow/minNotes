@@ -660,7 +660,7 @@ ApplicationWindow {
                     visible: !!annotCluster.ed
                     width: 36; height: docTabBar.height
                     readonly property bool on: !!annotCluster.ed && annotCluster.ed.inkMode
-                    color: on ? Theme.colors.divider
+                    color: on ? Theme.colors.accent
                               : (annMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
                     Rectangle { anchors.left: parent.left; width: 1; height: parent.height
                                 color: Theme.colors.border }
@@ -675,7 +675,7 @@ ApplicationWindow {
                     visible: !!annotCluster.ed && annotCluster.ed.inkStrokeCount > 0
                     width: 36; height: docTabBar.height
                     readonly property bool hidden: !!annotCluster.ed && !annotCluster.ed.inkLayerVisible
-                    color: hidden ? Theme.colors.divider
+                    color: hidden ? Theme.colors.accent
                                   : (eyeMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
                     Rectangle { anchors.left: parent.left; width: 1; height: parent.height
                                 color: Theme.colors.border }
@@ -687,6 +687,24 @@ ApplicationWindow {
                                 cursorShape: Qt.PointingHandCursor
                                 enabled: !!annotCluster.ed && !annotCluster.ed.inkMode
                                 onClicked: annotCluster.ed.inkLayerVisible = !annotCluster.ed.inkLayerVisible }
+                }
+                // Inspector (right sidebar) toggle — moved off the LeftRail.
+                // The arrow points where the panel will GO: left (slide out
+                // over the document) when closed, right (dismiss) when open.
+                Rectangle {
+                    visible: !!annotCluster.ed
+                    width: 36; height: docTabBar.height
+                    color: inspectorPanel.open ? Theme.colors.accent
+                                               : (sideMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                    Rectangle { anchors.left: parent.left; width: 1; height: parent.height
+                                color: Theme.colors.border }
+                    Icon { anchors.centerIn: parent
+                           name: inspectorPanel.open ? "arrow-line-right" : "arrow-line-left"; size: 15
+                           color: inspectorPanel.open || sideMA.containsMouse ? Theme.colors.textBright
+                                                                              : Theme.colors.textMuted }
+                    MouseArea { id: sideMA; anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: inspectorPanel.open = !inspectorPanel.open }
                 }
             }
         }
