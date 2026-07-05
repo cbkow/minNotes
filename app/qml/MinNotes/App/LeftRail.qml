@@ -180,27 +180,8 @@ Rectangle {
             checked: !!rail.inspector && rail.inspector.open
             onClicked: if (rail.inspector) rail.inspector.open = !rail.inspector.open
         }
-        // Annotation mode: draw block-pinned margin ink over the document.
-        // Locks the page to 760 (pan reaches the margins) and floats the
-        // Inspector; Esc exits. Toggling on opens the Inspector's Draw tools.
-        RailBtn {
-            iconName: "pen-nib"; tooltip: "Annotate"
-            enabled_: !!rail.editor
-            checked: !!rail.editor && rail.editor.inkMode
-            onClicked: rail.editor.setInkMode(!rail.editor.inkMode)
-        }
-        // Show/hide the ink layer (reading-mode switch; data untouched).
-        // Only offered when the document actually has annotations, and not
-        // while annotation mode is drawing on them.
-        RailBtn {
-            visible: !!rail.editor && rail.editor.inkStrokeCount > 0
-            iconName: !!rail.editor && rail.editor.inkLayerVisible ? "eye" : "eye-slash"
-            tooltip: !!rail.editor && rail.editor.inkLayerVisible
-                     ? "Hide annotations" : "Show annotations"
-            enabled_: !!rail.editor && !rail.editor.inkMode
-            checked: !!rail.editor && !rail.editor.inkLayerVisible
-            onClicked: rail.editor.inkLayerVisible = !rail.editor.inkLayerVisible
-        }
+        // (Annotate + show/hide live in the editor's top-right floater — the
+        // rail is block-tool territory and was getting cramped.)
         // Comment the current text selection (single row); opens the thread
         // in the Inspector's Comments view.
         RailBtn {

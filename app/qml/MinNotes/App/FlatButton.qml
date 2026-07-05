@@ -138,12 +138,19 @@ Rectangle {
         onExited:   { if (root.enabled_ && pressed) root.released() }
     }
 
-    // Family tooltip, placed to the RIGHT of the button (the rail hugs the
-    // left edge, so below/over would clip or cover the next button).
+    // Family tooltip. Default RIGHT (the rail hugs the left edge, so below/
+    // over would clip or cover the next button); "top" for bottom-row bars,
+    // "bottom"/"left" for chrome hugging the top/right edges (the annotation
+    // floater).
     FlatToolTip {
         text: root.tooltip
         visible: root.tooltip.length > 0 && ma.containsMouse
-        x: root.tooltipSide === "top" ? (root.width - implicitWidth) / 2 : root.width + 6
-        y: root.tooltipSide === "top" ? -implicitHeight - 6 : (root.height - implicitHeight) / 2
+        x: root.tooltipSide === "top" || root.tooltipSide === "bottom"
+               ? (root.width - implicitWidth) / 2
+           : root.tooltipSide === "left" ? -implicitWidth - 6
+           : root.width + 6
+        y: root.tooltipSide === "top" ? -implicitHeight - 6
+         : root.tooltipSide === "bottom" ? root.height + 6
+         : (root.height - implicitHeight) / 2
     }
 }
