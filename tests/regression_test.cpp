@@ -144,6 +144,52 @@ static void testSaveReopen() {
     QFile::remove(path);
 }
 
+// --- Test 5: coalesce must not absorb into a non-leaf undo node -------------
+// The "delete block corrupts the snapshot" bug: after an undo, the current undo
+// node still has a child (the just-undone entry). A subsequent coalescible edit
+// (single-char del/type run) must BRANCH — a new entry parented to the node —
+// not overwrite the node's `after` in place. Overwriting orphans the child's
+// `before`, and a later redo replays the child onto a state it never followed,
+// resurrecting stale content.
+static void testUndoBranchCoalesce() {
+    qInfo("[5] coalesce onto a non-leaf undo node must branch (undo-branch corruption)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    // Mirror the QML cursor protocol: every caret move syncs into the model,
+    // and undo/redo restore the caret through caretRestoreRequested.
+    QObject::connect(&m, &BlockModel::caretRestoreRequested, &m,
+                     [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
+
+    m.noteCaret(0, 0, 0, 0);
+    m.insertText(0, 0, QStringLiteral("a"), 0, {}, {}); m.noteCaret(0, 1, 0, 1);
+    m.insertText(0, 1, QStringLiteral("b"), 0, {}, {}); m.noteCaret(0, 2, 0, 2);
+    // E1: backspace "ab" -> "a" (coalesce key "del").
+    m.deleteRange(0, 1, 0, 2); m.noteCaret(0, 1, 0, 1);
+    // E2: type "z" -> "az" (child of E1).
+    m.insertText(0, 1, QStringLiteral("z"), 0, {}, {}); m.noteCaret(0, 2, 0, 2);
+    // Undo E2 -> "a". The current node is now E1 — a NON-leaf (E2 is its child).
+    m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("a"), "undo returned to 'a'");
+    // Backspace again ("del", same key as E1). Pre-fix this coalesced INTO E1.
+    m.deleteRange(0, 0, 0, 1); m.noteCaret(0, 0, 0, 0);
+    CHECK(m.contentForRow(0).isEmpty(), "second backspace deleted to ''");
+    // Undo must return to 'a' — the state this run actually started from.
+    // (Pre-fix it jumped to 'ab': E1's before, the coalesced-over entry.)
+    m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("a"),
+          "undo returns to 'a', not 'ab' (no coalesce across the branch)");
+    m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("ab"), "second undo returns to 'ab'");
+    // Redo follows the NEWEST branch: 'ab' -> 'a' -> '' (stale 'az' must not return).
+    m.redo();
+    CHECK(m.contentForRow(0) == QStringLiteral("a"), "redo replays the del run to 'a'");
+    m.redo();
+    CHECK(m.contentForRow(0).isEmpty(),
+          "redo follows the newest branch to '' (stale 'az' not resurrected)");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -156,6 +202,7 @@ int main(int argc, char** argv) {
     testCommitMarkdown();
     testUndoRedoHeights();
     testSaveReopen();
+    testUndoBranchCoalesce();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

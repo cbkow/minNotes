@@ -817,10 +817,17 @@ void BlockModel::endTxn(const QString& coalesce) {
 
     // Coalesce a run of typing into the previous entry (same key, same single
     // block, contiguous caret) so undo removes the whole run at once.
-    if (!coalesce.isEmpty() && undoCur_ >= 0) {
+    // Only a LEAF may absorb an edit (!canRedo() ⇔ undoCur_ has no children):
+    // after an undo, undoCur_ is the just-undone entry's PARENT — overwriting
+    // its `after` in place would orphan that child's `before`, and a later redo
+    // would replay the child onto a state it never followed (resurrecting the
+    // pre-undo content). Same-id guards the single block actually matching,
+    // not just the row index.
+    if (!coalesce.isEmpty() && undoCur_ >= 0 && !canRedo()) {
         UndoEntry& prev = undo_[undoCur_];
         if (prev.coalesce == coalesce && prev.lo == txnLo_
             && prev.after.size() == 1 && txnBefore_.size() == 1 && after.size() == 1
+            && prev.after[0].id == txnBefore_[0].id
             && prev.cRowA == cRow_ && prev.cColA == cCol_) {
             prev.after = std::move(after);
             awaitingAfter_ = true;     // next noteCaret stamps prev's caret-after
