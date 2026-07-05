@@ -220,9 +220,7 @@ Rectangle {
                         readonly property bool expanded: panel.openThread === modelData.id
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
-                        color: Theme.colors.surface
-                        border.width: 1
-                        border.color: card.expanded ? Theme.colors.textMuted : Theme.colors.border
+                        color: Theme.colors.surface   // flat recess against the panel; no border
                         Column {
                             id: cardCol
                             x: 8; y: 8; width: parent.width - 16; spacing: 6
@@ -273,22 +271,62 @@ Rectangle {
                                         required property var modelData
                                         width: cardCol.width
                                         spacing: 2
+                                        property bool editing: false
                                         Rectangle {
                                             visible: msg.index > 0
                                             width: parent.width; height: 1
                                             color: Theme.colors.divider
                                         }
-                                        Text {
-                                            topPadding: msg.index > 0 ? 4 : 0
-                                            text: (msg.index === 0 ? qsTr("Comment") : qsTr("Reply %1").arg(msg.index))
-                                                  + " · "
-                                                  + new Date(msg.modelData.created)
-                                                        .toLocaleString(Qt.locale(), "MMM d, h:mm ap")
-                                            color: Theme.colors.textSubtle
-                                            font.family: Theme.font.family
-                                            font.pixelSize: Theme.font.sizeSmall - 1
+                                        // Header: label · timestamp, with hover
+                                        // edit/delete controls on the right.
+                                        Item {
+                                            width: parent.width; height: 16
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: (msg.index === 0 ? qsTr("Comment") : qsTr("Reply %1").arg(msg.index))
+                                                      + " · "
+                                                      + new Date(msg.modelData.created)
+                                                            .toLocaleString(Qt.locale(), "MMM d, h:mm ap")
+                                                color: Theme.colors.textSubtle
+                                                font.family: Theme.font.family
+                                                font.pixelSize: Theme.font.sizeSmall - 1
+                                            }
+                                            MouseArea {   // hover scope for the controls
+                                                id: msgHover
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                acceptedButtons: Qt.NoButton
+                                            }
+                                            Row {
+                                                anchors.right: parent.right
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                spacing: 0
+                                                visible: msgHover.containsMouse || editMA.containsMouse
+                                                         || delMA.containsMouse || msg.editing
+                                                Item {
+                                                    width: 18; height: 16
+                                                    Icon { anchors.centerIn: parent; name: "pencil-simple"; size: 12
+                                                           color: editMA.containsMouse ? Theme.colors.textBright
+                                                                                       : Theme.colors.textMuted }
+                                                    MouseArea { id: editMA; anchors.fill: parent; hoverEnabled: true
+                                                                cursorShape: Qt.PointingHandCursor
+                                                                onClicked: { msgEdit.text = msg.modelData.body
+                                                                             msg.editing = true
+                                                                             msgEdit.forceActiveFocus() } }
+                                                }
+                                                Item {
+                                                    width: 18; height: 16
+                                                    Icon { anchors.centerIn: parent; name: "trash"; size: 12
+                                                           color: delMA.containsMouse ? Theme.colors.textBright
+                                                                                      : Theme.colors.textMuted }
+                                                    MouseArea { id: delMA; anchors.fill: parent; hoverEnabled: true
+                                                                cursorShape: Qt.PointingHandCursor
+                                                                onClicked: blockModel.removeCommentMessage(msg.modelData.id) }
+                                                }
+                                            }
                                         }
                                         Text {
+                                            visible: !msg.editing
                                             width: msg.width
                                             wrapMode: Text.Wrap
                                             text: msg.modelData.body
@@ -296,12 +334,47 @@ Rectangle {
                                             font.family: Theme.font.family
                                             font.pixelSize: Theme.font.sizeSmall
                                         }
+                                        // Inline editor — Save commits, Cancel (or Esc) reverts.
+                                        Column {
+                                            visible: msg.editing
+                                            width: parent.width; spacing: 4
+                                            Rectangle {
+                                                width: parent.width
+                                                height: Math.max(40, msgEdit.implicitHeight + 12)
+                                                color: Theme.colors.bg
+                                                TextEdit {
+                                                    id: msgEdit
+                                                    anchors.fill: parent; anchors.margins: 6
+                                                    wrapMode: TextEdit.Wrap
+                                                    color: Theme.colors.text
+                                                    font.family: Theme.font.family
+                                                    font.pixelSize: Theme.font.sizeSmall
+                                                    selectByMouse: true
+                                                    Keys.onEscapePressed: msg.editing = false
+                                                }
+                                            }
+                                            Row {
+                                                spacing: 6
+                                                FlatButton {
+                                                    text: qsTr("Save"); variant: "primary"; padding: 6
+                                                    onClicked: {
+                                                        var b = msgEdit.text.trim()
+                                                        if (b.length > 0)
+                                                            blockModel.updateCommentMessage(msg.modelData.id, b)
+                                                        msg.editing = false
+                                                    }
+                                                }
+                                                FlatButton {
+                                                    text: qsTr("Cancel"); padding: 6
+                                                    onClicked: msg.editing = false
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 Rectangle {
                                     width: parent.width; height: 54
-                                    color: Theme.colors.bg
-                                    border.width: 1; border.color: Theme.colors.border
+                                    color: Theme.colors.bg   // flat recess, no border
                                     TextEdit {
                                         id: replyEdit
                                         anchors.fill: parent; anchors.margins: 6
