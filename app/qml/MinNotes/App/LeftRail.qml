@@ -274,11 +274,13 @@ Rectangle {
             repIcon: "squares-four"; repTooltip: "Blocks"
             collapsed: railState.blocksCollapsed
             repChecked: !!rail.editor && (rail.editor.caretType === 2 || rail.editor.caretType === 4
-                                          || rail.editor.caretType === 5 || rail.editor.caretType === 8)
+                                          || rail.editor.caretType === 5 || rail.editor.caretType === 8
+                                          || rail.editor.caretType === 9)
             onToggleCollapsed: railState.blocksCollapsed = !railState.blocksCollapsed
             items: [
                 { icon: "quotes",        tip: "Quote",      isChecked: function(t){ return t === 4 }, act: function(){ rail.editor.toggleBlock(4) } },
                 { icon: "list-bullets",  tip: "Bullet list",isChecked: function(t){ return t === 5 }, act: function(){ rail.editor.toggleBlock(5) } },
+                { icon: "list-numbers",  tip: "Numbered list", isChecked: function(t){ return t === 9 }, act: function(){ rail.editor.toggleBlock(9) } },
                 { icon: "check-square",  tip: "Task list",  isChecked: function(t){ return t === 8 }, act: function(){ rail.editor.toggleBlock(8) } },
                 { icon: "code-block",    tip: "Code block", isChecked: function(t){ return t === 2 }, act: function(){ rail.editor.toggleCodeBlock() } },
                 { icon: "table",         tip: "Table",      act: function(){ rail.editor.insertTableAtCaret() } },

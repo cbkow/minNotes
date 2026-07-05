@@ -815,6 +815,19 @@ FocusScope {
                 root.ensureVisible(focusRow + 1)
                 return
             }
+            // Enter on an EMPTY list item exits the list instead of continuing
+            // it: outdent one level first if nested, else back to a paragraph.
+            // (splitBlock continues non-empty items at the same type/depth.)
+            var lt = blockModel.typeForRow(focusRow)
+            if ((lt === 5 || lt === 8 || lt === 9)
+                && blockModel.contentForRow(focusRow).length === 0) {
+                if (blockModel.depthForRow(focusRow) > 0)
+                    blockModel.indentBlocks(focusRow, focusRow, -1)
+                else
+                    blockModel.setBlockType(focusRow, 0)
+                setCaret(focusRow, 0)
+                return
+            }
             var leftRow = focusRow
             blockModel.splitBlock(focusRow, focusCol)
             setCaret(focusRow + 1, 0)
@@ -1355,7 +1368,7 @@ FocusScope {
         blockModel.beginGroup(lo, hi)
         for (var r = lo; r <= hi; ++r) {
             var t = blockModel.typeForRow(r)
-            if (t === 1 || t === 2 || t === 4 || t === 5 || t === 8) blockModel.setBlockType(r, 0)
+            if (t === 1 || t === 2 || t === 4 || t === 5 || t === 8 || t === 9) blockModel.setBlockType(r, 0)
         }
         blockModel.endGroup()
         cursor.sync()
@@ -1915,6 +1928,14 @@ FocusScope {
         else if (k === Qt.Key_PageUp) { navPageUp(shift); event.accepted = true }
         else if (k === Qt.Key_Backspace) { cursor.backspace(); event.accepted = true }
         else if (k === Qt.Key_Delete) { cursor.forwardDelete(); event.accepted = true }
+        else if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
+            // Lists: Tab indents / Shift+Tab outdents the focused item (or every
+            // list item in the selection). Swallowed regardless — Tab never types.
+            blockModel.indentBlocks(cursor.hasSel ? cursor.loRow : cursor.focusRow,
+                                    cursor.hasSel ? cursor.hiRow : cursor.focusRow,
+                                    k === Qt.Key_Backtab ? -1 : 1)
+            event.accepted = true
+        }
         else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(); event.accepted = true }
         else if (event.text.length === 1 && event.text >= " ") { cursor.insertChar(event.text); event.accepted = true }
     }
@@ -2330,7 +2351,14 @@ FocusScope {
                     activeFocusOnPress: false
                     selectByMouse: false
                     // quote/list get a left indent; the decoration sits in it.
-                    readonly property real deco: (btype === 4 || btype === 5 || btype === 8) ? 22 : 0
+                    // Ordered items reserve a hair more for two-digit numbers;
+                    // list nesting adds 24px per depth level.
+                    readonly property int bdepth: (blockModel.contentRevision,
+                                                   cell.active && (btype === 5 || btype === 8 || btype === 9)
+                                                       ? blockModel.depthForRow(cell.logicalRow) : 0)
+                    readonly property real deco: btype === 9 ? 26 + bdepth * 24
+                                               : (btype === 5 || btype === 8) ? 22 + bdepth * 24
+                                               : btype === 4 ? 22 : 0
                     // task items (type 8): tri-state status 0 todo / 1 doing / 2 done
                     readonly property int taskState: (blockModel.contentRevision,
                                                       cell.active && btype === 8 ? blockModel.taskStateForRow(cell.logicalRow) : 0)
@@ -2388,8 +2416,8 @@ FocusScope {
                 InlineMarkdownHighlighter {
                     // Attach ONLY for text blocks; a document can have one
                     // highlighter, so code blocks detach this and use codeHl.
-                    document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8) ? te.textDocument : null
-                    enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8)
+                    document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8 || te.btype === 9) ? te.textDocument : null
+                    enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8 || te.btype === 9)
                     highlightAsOverlay: true   // hlRects draws them below the selection
                     markerColor: Theme.colors.accent
                     selectedMarkerColor: Theme.colors.textBright
@@ -2432,14 +2460,26 @@ FocusScope {
                     width: 3; height: te.implicitHeight
                     radius: 1; color: Theme.colors.quoteBar
                 }
-                Text {  // list: bullet
+                Text {  // list: bullet (hollow at odd depths — cheap level cue)
                     visible: cell.active && te.btype === 5
-                    x: cell.colLeft + 6; y: te.y
-                    text: "•"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeBody
+                    x: cell.colLeft + 6 + te.bdepth * 24; y: te.y
+                    text: te.bdepth % 2 ? "◦" : "•"
+                    color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeBody
+                }
+                Text {  // ordered list: computed number, right-aligned before the text
+                    visible: cell.active && te.btype === 9
+                    x: cell.colLeft + te.bdepth * 24; width: 20
+                    y: te.y
+                    horizontalAlignment: Text.AlignRight
+                    text: (blockModel.contentRevision,
+                           cell.active && te.btype === 9
+                               ? blockModel.orderedNumberForRow(cell.logicalRow) + "." : "")
+                    color: Theme.colors.textMuted
+                    font.family: Theme.font.body; font.pixelSize: Theme.font.sizeBody
                 }
                 Item {  // task: tri-state checkbox (0 todo / 1 doing / 2 done)
                     visible: cell.active && te.btype === 8
-                    x: cell.colLeft + 2; y: te.y + Math.round((te.lineH - 14) / 2)
+                    x: cell.colLeft + 2 + te.bdepth * 24; y: te.y + Math.round((te.lineH - 14) / 2)
                     width: 14; height: 14
                     Rectangle {
                         anchors.fill: parent

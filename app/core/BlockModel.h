@@ -79,8 +79,16 @@ public:
     enum BlockType : uint8_t {
         Paragraph = 0, Heading = 1, Code = 2, Media = 3,
         Quote = 4, ListItem = 5, Divider = 6, Table = 7,
-        TaskListItem = 8   // a list item carrying a tri-state status (todo/doing/done)
+        TaskListItem = 8,   // a list item carrying a tri-state status (todo/doing/done)
+        OrderedListItem = 9 // numbered item; the number is COMPUTED at render time
     };
+    // List-shaped blocks: the only types that carry a nesting `depth` and
+    // respond to Tab/Shift+Tab. Appended enum values keep the QML type-number
+    // checks (=== 5/8/…) stable.
+    static bool isListType(uint8_t t) {
+        return t == ListItem || t == TaskListItem || t == OrderedListItem;
+    }
+    static constexpr int kMaxListDepth = 8;
     enum TaskState : uint8_t { TaskTodo = 0, TaskDoing = 1, TaskDone = 2, TaskStateCount = 3 };
     enum Distribution { Uniform = 0, Mixed = 1, Adversarial = 2 };
 
@@ -112,6 +120,15 @@ public:
     Q_INVOKABLE int levelForRow(int row) const;       // heading level 1–6, else 0
     Q_INVOKABLE int taskStateForRow(int row) const;   // task items: 0 todo / 1 doing / 2 done
     Q_INVOKABLE void toggleTask(int row);             // cycle todo→doing→done→todo
+    Q_INVOKABLE int depthForRow(int row) const;       // list nesting level, else 0
+    // Tab/Shift+Tab: shift every list item in [loRow,hiRow] by delta (±1),
+    // clamped to [0, kMaxListDepth]. Non-list rows in the range are skipped;
+    // a range with no list rows is a no-op. One undo step.
+    Q_INVOKABLE void indentBlocks(int loRow, int hiRow, int delta);
+    // Ordered items: 1-based number, COMPUTED from the run of ordered items
+    // at the same depth above this row (deeper list items are children and
+    // don't break the run; anything else does). 0 for non-ordered rows.
+    Q_INVOKABLE int orderedNumberForRow(int row) const;
     Q_INVOKABLE QString contentForRow(int row) const;
     // Inline markdown (**bold**, *italic*, `code`) renders via the QML-side
     // InlineMarkdownHighlighter applying char formats to each block's PlainText
@@ -443,6 +460,7 @@ private:
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0
         uint8_t level = 0;  // heading level 1–6 (0 = not a heading)
         uint8_t taskState = 0;  // task items: 0 todo / 1 doing / 2 done (else 0)
+        uint8_t depth = 0;  // list items: nesting level 0–kMaxListDepth (else 0)
         bool measured = false;
         bool isVideo = false;   // media only: true → reserve the transport-toolbar height
         bool isFile = false;    // media only: kind=="file" → an unsupported-file chip
@@ -458,7 +476,7 @@ private:
     // Full, restorable state of one block — the unit an undo transaction snaps.
     struct BlockSnap {
         QString id, rank, content, lang;
-        uint8_t type = 0, level = 0, taskState = 0;
+        uint8_t type = 0, level = 0, taskState = 0, depth = 0;
         std::vector<Span> spans;
     };
     // One undoable step: the touched row-region [lo, lo+before.size()) replaced

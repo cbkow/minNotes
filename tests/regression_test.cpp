@@ -246,6 +246,60 @@ static void testCanonicalizeAndStamp() {
     QFile::remove(path);
 }
 
+// --- Test 7: ordered lists + nesting depth -----------------------------------
+// v1 list semantics: "N. " triggers an ordered item (number COMPUTED at render
+// time), Enter continues a list at the same type/depth, Tab/Shift+Tab shift
+// depth (one undo step), deeper children don't break a numbering run, and
+// depth survives save/reopen and undo.
+static void testListsAndDepth() {
+    qInfo("[7] ordered lists: trigger, continuation, numbering, depth round-trip, undo");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.noteCaret(0, 0, 0, 0);
+
+    m.setContent(0, QStringLiteral("1. first"));
+    m.applyMarkdownTrigger(0);
+    CHECK(m.typeForRow(0) == BlockModel::OrderedListItem, "\"1. \" trigger -> ordered item");
+    CHECK(m.contentForRow(0) == QStringLiteral("first"), "trigger stripped the prefix");
+
+    m.splitBlock(0, m.contentForRow(0).length());          // Enter at end of item
+    CHECK(m.typeForRow(1) == BlockModel::OrderedListItem, "Enter continues the ordered list");
+    m.setContent(1, QStringLiteral("second"));
+    CHECK(m.orderedNumberForRow(0) == 1 && m.orderedNumberForRow(1) == 2,
+          "run numbers 1, 2 (got %d, %d)", m.orderedNumberForRow(0), m.orderedNumberForRow(1));
+
+    m.indentBlocks(1, 1, 1);                                // Tab
+    CHECK(m.depthForRow(1) == 1, "Tab indents to depth 1");
+    CHECK(m.orderedNumberForRow(1) == 1, "nested item restarts numbering at 1");
+
+    m.splitBlock(1, m.contentForRow(1).length());           // continues at depth 1
+    CHECK(m.depthForRow(2) == 1, "continuation inherits depth");
+    m.indentBlocks(2, 2, -1);                               // Shift+Tab back to top level
+    m.setContent(2, QStringLiteral("third"));
+    CHECK(m.depthForRow(2) == 0, "Shift+Tab outdents");
+    CHECK(m.orderedNumberForRow(2) == 2,
+          "deeper child doesn't break the top-level run (got %d)", m.orderedNumberForRow(2));
+
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_lists.mndb");
+    QFile::remove(path);
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    CHECK(m2.typeForRow(1) == BlockModel::OrderedListItem && m2.depthForRow(1) == 1,
+          "ordered type + depth round-trip (type %d, depth %d)",
+          m2.typeForRow(1), m2.depthForRow(1));
+    m2.noteCaret(2, 0, 2, 0);
+    m2.indentBlocks(2, 2, 1);
+    CHECK(m2.depthForRow(2) == 1, "indent after reopen");
+    m2.undo();
+    CHECK(m2.depthForRow(2) == 0, "undo restores depth");
+    QFile::remove(path);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -260,6 +314,7 @@ int main(int argc, char** argv) {
     testSaveReopen();
     testUndoBranchCoalesce();
     testCanonicalizeAndStamp();
+    testListsAndDepth();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

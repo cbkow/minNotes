@@ -60,7 +60,7 @@ public:
     void appendBlock(const QString& id, const QString& rank, int depth,
                      const QString& type, const QString& attrs, const QString& content);
     void updateContent(const QString& id, const QString& content);
-    void updateMeta(const QString& id, const QString& type, const QString& attrs);
+    void updateMeta(const QString& id, const QString& type, const QString& attrs, int depth = 0);
     void updateRank(const QString& id, const QString& rank);   // reorder
     void deleteBlock(const QString& id);
 

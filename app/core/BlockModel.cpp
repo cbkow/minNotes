@@ -367,6 +367,7 @@ BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
     if (s == QLatin1String("quote"))     return Quote;
     if (s == QLatin1String("list_item")) return ListItem;
     if (s == QLatin1String("task_item")) return TaskListItem;
+    if (s == QLatin1String("ordered_item")) return OrderedListItem;
     if (s == QLatin1String("divider"))   return Divider;
     if (s == QLatin1String("table"))     return Table;
     return Paragraph;
@@ -380,6 +381,7 @@ const char* BlockModel::typeToString(uint8_t t) {
     case Quote:    return "quote";
     case ListItem: return "list_item";
     case TaskListItem: return "task_item";
+    case OrderedListItem: return "ordered_item";
     case Divider:  return "divider";
     case Table:    return "table";
     default:       return "paragraph";
@@ -454,6 +456,8 @@ void BlockModel::loadFromStore() {
             r.level = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("level")).toInt(1), 1, 6));
         if (r.type == TaskListItem)
             r.taskState = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("state")).toInt(0), 0, int(TaskStateCount) - 1));
+        if (isListType(r.type))
+            r.depth = static_cast<uint8_t>(std::clamp(m.depth, 0, kMaxListDepth));
         if (r.type == Code)
             r.lang = o.value(QStringLiteral("lang")).toString();
         if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
@@ -661,6 +665,52 @@ void BlockModel::toggleTask(int row) {
     endTxn();
 }
 
+int BlockModel::depthForRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return 0;
+    return rows_[row].depth;
+}
+
+void BlockModel::indentBlocks(int loRow, int hiRow, int delta) {
+    if (rows_.empty() || delta == 0) return;
+    int lo = std::clamp(loRow, 0, static_cast<int>(rows_.size()) - 1);
+    int hi = std::clamp(hiRow, 0, static_cast<int>(rows_.size()) - 1);
+    if (lo > hi) std::swap(lo, hi);
+    bool any = false;              // a range with no movable list rows is a no-op
+    for (int i = lo; i <= hi; ++i) {
+        if (!isListType(rows_[i].type)) continue;
+        const int d = std::clamp(rows_[i].depth + delta, 0, kMaxListDepth);
+        if (d != rows_[i].depth) { any = true; break; }
+    }
+    if (!any) return;
+    beginTxn(lo, hi);
+    for (int i = lo; i <= hi; ++i) {
+        if (!isListType(rows_[i].type)) continue;
+        const uint8_t d = static_cast<uint8_t>(std::clamp(rows_[i].depth + delta, 0, kMaxListDepth));
+        if (d == rows_[i].depth) continue;
+        rows_[i].depth = d;
+        persistMeta(i);
+    }
+    emit dataChanged(index(lo), index(hi), {TypeRole});
+    bumpLayout();                  // indent narrows the text column → re-wrap/re-measure
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+int BlockModel::orderedNumberForRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return 0;
+    if (rows_[row].type != OrderedListItem) return 0;
+    const uint8_t d = rows_[row].depth;
+    int n = 1;
+    for (int i = row - 1; i >= 0; --i) {
+        const Row& x = rows_[i];
+        if (isListType(x.type) && x.depth > d) continue;    // children don't break the run
+        if (x.type == OrderedListItem && x.depth == d) { ++n; continue; }
+        break;                                              // anything else ends the run
+    }
+    return n;
+}
+
 bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, int& level, int& strip) {
     level = 0;
     // Headings: 1–6 leading '#' then a space → heading of that level.
@@ -681,6 +731,16 @@ bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, in
     // Unordered list: "- ", "* ", or "+ "
     if (content.startsWith(QLatin1String("- ")) || content.startsWith(QLatin1String("* "))
         || content.startsWith(QLatin1String("+ "))) { type = ListItem; strip = 2; return true; }
+    // Ordered list: 1–3 digits + ". " (markdown numbering; the stored item
+    // carries no number — it's computed at render time).
+    {
+        int d = 0;
+        while (d < content.size() && d < 3 && content[d].isDigit()) ++d;
+        if (d > 0 && d + 1 < content.size()
+            && content[d] == QLatin1Char('.') && content[d + 1] == QLatin1Char(' ')) {
+            type = OrderedListItem; strip = d + 2; return true;
+        }
+    }
     // Divider: "--- " (markers + content consumed entirely)
     if (content.startsWith(QLatin1String("--- "))) { type = Divider; strip = 4; return true; }
     return false;
@@ -711,7 +771,7 @@ void BlockModel::persistMeta(int row) {
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
-                    attrsJson(r.type, r.level, r.lang, r.spans, r.taskState));
+                    attrsJson(r.type, r.level, r.lang, r.spans, r.taskState), r.depth);
 }
 
 // === Undo / redo: region-snapshot transactions ===========================
@@ -720,6 +780,7 @@ BlockModel::BlockSnap BlockModel::snapAt(int row) const {
     s.id = ids_[row]; s.rank = ranks_[row]; s.content = content_[row];
     s.type = rows_[row].type; s.level = rows_[row].level; s.spans = rows_[row].spans;
     s.taskState = rows_[row].taskState;
+    s.depth = rows_[row].depth;
     s.lang = rows_[row].lang;
     return s;
 }
@@ -761,6 +822,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     for (const BlockSnap& s : snaps) {
         Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans; r.lang = s.lang;
         r.taskState = s.taskState;
+        r.depth = s.depth;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
         fillMediaMeta(r, s.content);   // media: dims/video/param from descriptor (else height ~= 0)
         rows_.insert(rows_.begin() + at, r);
@@ -772,10 +834,10 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
             const QString type = QString::fromLatin1(typeToString(s.type));
             if (oldIds.contains(s.id)) {   // survived: content/meta/rank may all have changed (incl. reorder)
                 doc_.updateContent(s.id, s.content);
-                doc_.updateMeta(s.id, type, attrs);
+                doc_.updateMeta(s.id, type, attrs, s.depth);
                 doc_.updateRank(s.id, s.rank);
             } else {
-                doc_.appendBlock(s.id, s.rank, 0, type, attrs, s.content);   // re-born (undo of a delete)
+                doc_.appendBlock(s.id, s.rank, s.depth, type, attrs, s.content);   // re-born (undo of a delete)
             }
         }
         ++at;
@@ -823,7 +885,8 @@ void BlockModel::endTxn(const QString& coalesce) {
         for (size_t i = 0; i < a.size(); ++i) {
             const BlockSnap& x = a[i]; const BlockSnap& y = b[i];
             if (x.id != y.id || x.rank != y.rank || x.type != y.type
-                || x.level != y.level || x.taskState != y.taskState || x.content != y.content
+                || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
+                || x.content != y.content
                 || x.spans.size() != y.spans.size()) return false;
             for (size_t j = 0; j < x.spans.size(); ++j)
                 if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
@@ -989,15 +1052,19 @@ void BlockModel::setBlockType(int row, int type) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     Row& r = rows_[row];
     if (r.type != Paragraph && r.type != Heading && r.type != Quote
-        && r.type != ListItem && r.type != TaskListItem && r.type != Code) return;
+        && r.type != ListItem && r.type != TaskListItem && r.type != OrderedListItem
+        && r.type != Code) return;
     const uint8_t t = static_cast<uint8_t>(type);
-    if (t != Paragraph && t != Quote && t != ListItem && t != TaskListItem) return;   // headings/code have their own paths
+    if (t != Paragraph && t != Quote && t != ListItem && t != TaskListItem
+        && t != OrderedListItem) return;   // headings/code have their own paths
     if (r.type == t) return;
     beginTxn(row, row);
     r.type = t;
     r.level = 0;                 // leaving a heading clears its level
     r.taskState = 0;             // task status resets (todo when entering, cleared when leaving)
     r.lang.clear();              // leaving a code block clears its language
+    if (!isListType(t)) r.depth = 0;   // leaving the list family drops nesting
+                                       // (list↔task↔ordered keeps it)
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole});
     bumpLayout();
@@ -3075,6 +3142,14 @@ void BlockModel::splitBlock(int row, int col) {
 
     beginInsertRows({}, at, at);
     Row r{}; r.type = Paragraph; r.param = 1; r.spans = rightS;
+    // List continuation: Enter inside a list item makes the next item of the
+    // SAME kind at the SAME depth (a new task starts todo, not a copy of the
+    // finished state). The QML splitLine handles the exit gesture (Enter on
+    // an EMPTY item demotes it to a paragraph instead of splitting).
+    if (isListType(rows_[row].type)) {
+        r.type = rows_[row].type;
+        r.depth = rows_[row].depth;
+    }
     rows_.insert(rows_.begin() + at, r);
     content_.insert(content_.begin() + at, right);
     ids_.insert(ids_.begin() + at, newId);
@@ -3083,8 +3158,8 @@ void BlockModel::splitBlock(int row, int col) {
     endInsertRows();
 
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), right);
-    if (!rightS.empty()) persistMeta(at);    // write the moved spans into attrs
+        doc_.appendBlock(newId, newRank, r.depth, QString::fromLatin1(typeToString(r.type)), QString(), right);
+    if (!rightS.empty() || r.type != Paragraph) persistMeta(at);   // spans / list meta into attrs+depth
 
     bumpLayout();
     ++contentRevision_;
