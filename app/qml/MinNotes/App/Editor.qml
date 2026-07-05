@@ -77,6 +77,7 @@ FocusScope {
             inkLayerVisible = true
             if (inspector) {
                 inspector.open = true
+                inspector.view = "palette"   // the Draw tools live here, not in Comments
                 inspector.target = "draw"
                 if (inspector.drawTool === "") inspector.drawTool = "freehand"
             }
@@ -3891,55 +3892,18 @@ FocusScope {
     // The frame doesn't fit → annotations are hidden, never silently: a pill
     // says how many, and clicking it enters annotation mode (which locks the
     // 760 frame + pans — exactly the state that shows them again).
-    // --- Annotation floater: document-level chrome in the top-right corner
-    // (the LeftRail is block-tool territory and was getting cramped). Draw
-    // toggles annotation mode (which also opens the Inspector's Draw tools);
-    // the eye shows/hides the ink layer and only appears when the document
-    // actually has ink.
-    Rectangle {
-        id: inkFloater
-        visible: flick.visible
-        z: 47
-        anchors.top: parent.top; anchors.right: parent.right
-        anchors.margins: 10
-        width: floaterRow.implicitWidth + 8; height: 34
-        color: Theme.colors.surfaceRaised
-        border.width: 1; border.color: Theme.colors.border
-        Row {
-            id: floaterRow
-            anchors.centerIn: parent
-            spacing: 2
-            FlatButton {
-                iconName: "pen-nib"; iconSize: 15
-                width: 28; height: 28
-                tooltip: root.inkMode ? qsTr("Exit annotate (Esc)") : qsTr("Annotate")
-                tooltipSide: "bottom"
-                checked: root.inkMode
-                onClicked: root.setInkMode(!root.inkMode)
-            }
-            FlatButton {
-                visible: inkCanvas.strokeCount > 0
-                iconName: root.inkLayerVisible ? "eye" : "eye-slash"; iconSize: 15
-                width: 28; height: 28
-                tooltip: root.inkLayerVisible ? qsTr("Hide annotations") : qsTr("Show annotations")
-                tooltipSide: "bottom"
-                enabled: !root.inkMode
-                checked: !root.inkLayerVisible
-                onClicked: root.inkLayerVisible = !root.inkLayerVisible
-            }
-        }
-    }
-
+    // (The Annotate/eye controls live at the right edge of the document TAB
+    // STRIP — Main.qml's annotCluster — where they can't fight the editor's
+    // overlay z-stack.)
     readonly property bool inkSqueezed: !inkMode && width - 40 < Theme.dim.columnWidth
     Rectangle {
         // Quiet while the user has deliberately hidden the layer — the pill
-        // explains the SQUEEZED case, not the chosen one. Sits under the
-        // annotation floater.
+        // explains the SQUEEZED case, not the chosen one.
         visible: root.inkSqueezed && root.inkLayerVisible
                  && inkCanvas.strokeCount > 0 && flick.visible
         z: 46
-        anchors.top: inkFloater.bottom; anchors.right: parent.right
-        anchors.topMargin: 6; anchors.rightMargin: 10
+        anchors.top: parent.top; anchors.right: parent.right
+        anchors.margins: 10
         width: pillText.implicitWidth + 24; height: 26
         color: Theme.colors.surfaceRaised
         border.width: 1; border.color: Theme.colors.border

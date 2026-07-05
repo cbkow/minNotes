@@ -260,18 +260,42 @@ Rectangle {
                             Column {
                                 visible: card.expanded
                                 width: parent.width; spacing: 6
+                                // Each message = a timestamp header + body, with a
+                                // hairline between entries — so a thread reads as a
+                                // CONVERSATION (comment, then replies), not one blob.
                                 Repeater {
                                     model: card.expanded
                                            ? (blockModel.commentsRevision,
                                               blockModel.commentMessages(modelData.id)) : []
-                                    delegate: Text {
+                                    delegate: Column {
+                                        id: msg
+                                        required property int index
                                         required property var modelData
                                         width: cardCol.width
-                                        wrapMode: Text.Wrap
-                                        text: modelData.body
-                                        color: Theme.colors.text
-                                        font.family: Theme.font.family
-                                        font.pixelSize: Theme.font.sizeSmall
+                                        spacing: 2
+                                        Rectangle {
+                                            visible: msg.index > 0
+                                            width: parent.width; height: 1
+                                            color: Theme.colors.divider
+                                        }
+                                        Text {
+                                            topPadding: msg.index > 0 ? 4 : 0
+                                            text: (msg.index === 0 ? qsTr("Comment") : qsTr("Reply %1").arg(msg.index))
+                                                  + " · "
+                                                  + new Date(msg.modelData.created)
+                                                        .toLocaleString(Qt.locale(), "MMM d, h:mm ap")
+                                            color: Theme.colors.textSubtle
+                                            font.family: Theme.font.family
+                                            font.pixelSize: Theme.font.sizeSmall - 1
+                                        }
+                                        Text {
+                                            width: msg.width
+                                            wrapMode: Text.Wrap
+                                            text: msg.modelData.body
+                                            color: Theme.colors.text
+                                            font.family: Theme.font.family
+                                            font.pixelSize: Theme.font.sizeSmall
+                                        }
                                     }
                                 }
                                 Rectangle {

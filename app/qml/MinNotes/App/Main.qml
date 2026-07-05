@@ -636,7 +636,7 @@ ApplicationWindow {
 
             Rectangle {   // new-tab button, pinned right
                 id: newTabBtn
-                anchors.right: parent.right; anchors.top: parent.top
+                anchors.right: annotCluster.left; anchors.top: parent.top
                 width: 36; height: docTabBar.height
                 color: newMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
@@ -645,6 +645,49 @@ ApplicationWindow {
                        color: newMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
                 MouseArea { id: newMA; anchors.fill: parent; hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor; onClicked: docs.newTab() }
+            }
+
+            // Annotation controls at the strip's right edge (right of "+"):
+            // document-level chrome lives on the tab row — no z-order fights
+            // with the editor's overlays. Draw toggles annotation mode (and
+            // opens the Inspector on its Palette view); the eye shows/hides
+            // the ink layer and only appears when the document has ink.
+            Row {
+                id: annotCluster
+                anchors.right: parent.right; anchors.top: parent.top
+                readonly property var ed: contentRow.editor
+                Rectangle {
+                    visible: !!annotCluster.ed
+                    width: 36; height: docTabBar.height
+                    readonly property bool on: !!annotCluster.ed && annotCluster.ed.inkMode
+                    color: on ? Theme.colors.divider
+                              : (annMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                    Rectangle { anchors.left: parent.left; width: 1; height: parent.height
+                                color: Theme.colors.border }
+                    Icon { anchors.centerIn: parent; name: "pen-nib"; size: 15
+                           color: parent.on || annMA.containsMouse ? Theme.colors.textBright
+                                                                   : Theme.colors.textMuted }
+                    MouseArea { id: annMA; anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: annotCluster.ed.setInkMode(!annotCluster.ed.inkMode) }
+                }
+                Rectangle {
+                    visible: !!annotCluster.ed && annotCluster.ed.inkStrokeCount > 0
+                    width: 36; height: docTabBar.height
+                    readonly property bool hidden: !!annotCluster.ed && !annotCluster.ed.inkLayerVisible
+                    color: hidden ? Theme.colors.divider
+                                  : (eyeMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                    Rectangle { anchors.left: parent.left; width: 1; height: parent.height
+                                color: Theme.colors.border }
+                    Icon { anchors.centerIn: parent
+                           name: parent.hidden ? "eye-slash" : "eye"; size: 15
+                           color: parent.hidden || eyeMA.containsMouse ? Theme.colors.textBright
+                                                                       : Theme.colors.textMuted }
+                    MouseArea { id: eyeMA; anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                enabled: !!annotCluster.ed && !annotCluster.ed.inkMode
+                                onClicked: annotCluster.ed.inkLayerVisible = !annotCluster.ed.inkLayerVisible }
+                }
             }
         }
 
