@@ -108,6 +108,7 @@ void BlockModel::closeDocument() {
     fenwick_.reset(std::vector<double>{});
     endResetModel();
     clearUndo();
+    if (!inkByBlock_.isEmpty()) { inkByBlock_.clear(); ++inkRevision_; emit inkChanged(); }
     emit documentChanged();
     emit dirtyChanged();
 }
@@ -511,6 +512,19 @@ void BlockModel::loadFromStore() {
         for (int row : canonicalized) { persistContent(row); persistMeta(row); }
         doc_.commit();
     }
+    // Margin ink: one SELECT for the whole doc. Guard against orphans (an ink
+    // row whose block is gone — shouldn't happen with the FK cascade, but a
+    // doc edited by a build predating v2 could in principle leave one).
+    inkByBlock_ = doc_.isOpen() ? doc_.allInk() : QHash<QString, QString>{};
+    if (!inkByBlock_.isEmpty()) {
+        const QSet<QString> live(ids_.begin(), ids_.end());
+        for (auto it = inkByBlock_.begin(); it != inkByBlock_.end();) {
+            if (!live.contains(it.key())) { doc_.deleteInk(it.key()); it = inkByBlock_.erase(it); }
+            else ++it;
+        }
+    }
+    ++inkRevision_;
+    emit inkChanged();
     fenwick_.reset(std::move(heights));
     endResetModel();
     ++layoutRevision_;
@@ -697,6 +711,42 @@ void BlockModel::indentBlocks(int loRow, int hiRow, int delta) {
     endTxn();
 }
 
+// --- Block-pinned margin ink (tier 2 annotations) -----------------------
+QString BlockModel::inkForBlock(const QString& blockId) const {
+    return inkByBlock_.value(blockId);
+}
+
+QString BlockModel::inkForRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(ids_.size())) return {};
+    return inkByBlock_.value(ids_[row]);
+}
+
+QStringList BlockModel::inkBlockIds() const {
+    return QStringList(inkByBlock_.keyBegin(), inkByBlock_.keyEnd());
+}
+
+void BlockModel::setBlockInk(int row, const QString& inkJson) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (!doc_.isOpen()) return;
+    const QString& id = ids_[row];
+    if (inkByBlock_.value(id) == inkJson) return;   // no-op (also skips undo entry)
+    beginTxn(row, row);   // one undo step per stroke; gestures group callers
+    if (inkJson.isEmpty()) {
+        inkByBlock_.remove(id);
+        doc_.deleteInk(id);
+    } else {
+        inkByBlock_.insert(id, inkJson);
+        doc_.upsertInk(id, inkJson);
+    }
+    ++inkRevision_;
+    emit inkChanged();
+    endTxn();
+}
+
+void BlockModel::dropBlockInk(const QString& blockId) {
+    if (inkByBlock_.remove(blockId) > 0) { ++inkRevision_; emit inkChanged(); }
+}
+
 int BlockModel::orderedNumberForRow(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return 0;
     if (rows_[row].type != OrderedListItem) return 0;
@@ -782,6 +832,7 @@ BlockModel::BlockSnap BlockModel::snapAt(int row) const {
     s.taskState = rows_[row].taskState;
     s.depth = rows_[row].depth;
     s.lang = rows_[row].lang;
+    s.ink = inkByBlock_.value(s.id);   // "" when uninked (the common case)
     return s;
 }
 
@@ -809,10 +860,14 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         if (rows_[i].measured) measuredById.insert(ids_[i], fenwick_.height(i));
     const int last = std::min(lo + oldCount, static_cast<int>(rows_.size()));
     QSet<QString> newIds, oldIds;
+    bool inkTouched = false;
     for (const BlockSnap& s : snaps) newIds.insert(s.id);
     for (int i = lo; i < last; ++i) {
         oldIds.insert(ids_[i]);
-        if (doc_.isOpen() && !newIds.contains(ids_[i])) doc_.deleteBlock(ids_[i]);   // left the region
+        if (!newIds.contains(ids_[i])) {                     // left the region
+            if (inkByBlock_.remove(ids_[i]) > 0) inkTouched = true;   // DB cascades
+            if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);
+        }
     }
     rows_.erase(rows_.begin() + lo, rows_.begin() + last);
     content_.erase(content_.begin() + lo, content_.begin() + last);
@@ -840,6 +895,14 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
                 doc_.appendBlock(s.id, s.rank, s.depth, type, attrs, s.content);   // re-born (undo of a delete)
             }
         }
+        // Restore the snap's ink (after appendBlock — the FK needs the block
+        // row to exist). This is how undoing a block deletion brings its
+        // margin ink back.
+        if (s.ink != inkByBlock_.value(s.id)) {
+            inkTouched = true;
+            if (s.ink.isEmpty()) { inkByBlock_.remove(s.id); if (doc_.isOpen()) doc_.deleteInk(s.id); }
+            else { inkByBlock_.insert(s.id, s.ink); if (doc_.isOpen()) doc_.upsertInk(s.id, s.ink); }
+        }
         ++at;
     }
     const int regionEnd = lo + static_cast<int>(snaps.size());   // [lo,regionEnd) = restored snaps
@@ -857,6 +920,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     fenwick_.reset(std::move(heights));
     endResetModel();
     ++layoutRevision_; ++contentRevision_;
+    if (inkTouched) { ++inkRevision_; emit inkChanged(); }
     emit modelReset(); emit layoutChangedSpike(); emit contentChangedSpike();
     applying_ = false;
 }
@@ -887,7 +951,8 @@ void BlockModel::endTxn(const QString& coalesce) {
             if (x.id != y.id || x.rank != y.rank || x.type != y.type
                 || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
                 || x.content != y.content
-                || x.spans.size() != y.spans.size()) return false;
+                || x.spans.size() != y.spans.size()
+                || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
             for (size_t j = 0; j < x.spans.size(); ++j)
                 if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
                     || x.spans[j].kind != y.spans[j].kind) return false;
@@ -2653,8 +2718,10 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
 
     if (hiRow > loRow) {
         const int first = loRow + 1, last = hiRow, cnt = last - first + 1;
-        for (int i = first; i <= last; ++i)
+        for (int i = first; i <= last; ++i) {
+            dropBlockInk(ids_[i]);   // hash sync; DB cascades via FK
             if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);   // ids still valid pre-erase
+        }
         beginRemoveRows({}, first, last);
         // Gather current (measured/estimated) heights of surviving rows.
         std::vector<double> hs;
@@ -3225,6 +3292,7 @@ void BlockModel::duplicateBlock(int row) {
 void BlockModel::removeBlock(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);                          // after = empty
+    dropBlockInk(ids_[row]);   // DB side cascades with the block row (FK)
     if (doc_.isOpen()) doc_.deleteBlock(ids_[row]);
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);

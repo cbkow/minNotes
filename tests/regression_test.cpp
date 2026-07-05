@@ -300,6 +300,83 @@ static void testListsAndDepth() {
     QFile::remove(path);
 }
 
+// --- Test 8: margin-ink storage + undo integration ---------------------------
+// Tier-2 annotations: ink is an opaque blob per anchor block (block_ink
+// table), snapshotted into undo entries so deleting a block and undoing
+// restores its ink. setBlockInk is the single mutator (one undo step each).
+static void testInkUndoPersist() {
+    qInfo("[8] margin ink: set/undo/redo, delete-block restore, persistence");
+    const QString kInk = QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"block-local\",\"space\":\"px\","
+        "\"shapes\":[{\"id\":\"s1\",\"type\":\"freehand\",\"color\":[1,0,0,1],"
+        "\"stroke_width\":4,\"filled\":false,\"is_modeled\":true,"
+        "\"points\":[[-390.5,2.0],[10.0,44.5]]}]}");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_ink.mndb");
+    QFile::remove(path);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("beta"));
+    m.noteCaret(0, 0, 0, 0);
+    QObject::connect(&m, &BlockModel::caretRestoreRequested, &m,
+                     [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
+
+    // Set → undo → redo.
+    m.setBlockInk(0, kInk);
+    CHECK(m.inkForRow(0) == kInk, "setBlockInk stored the blob");
+    CHECK(m.dirty(), "ink edit marks the document dirty");
+    m.undo();
+    CHECK(m.inkForRow(0).isEmpty(), "undo removes the stroke");
+    m.redo();
+    CHECK(m.inkForRow(0) == kInk, "redo restores the stroke");
+
+    // Identical blob → sameSnaps no-op (no extra undo entry).
+    m.setBlockInk(0, kInk);
+    m.undo();
+    CHECK(m.inkForRow(0).isEmpty(), "identical re-set was a no-op (one undo clears)");
+    m.redo();
+
+    // Delete the inked block → ink gone; undo → block AND ink restored.
+    m.removeBlock(0);
+    CHECK(m.inkBlockIds().isEmpty(), "removeBlock drops the ink");
+    m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("alpha") && m.inkForRow(0) == kInk,
+          "undo of removeBlock restores block AND ink");
+
+    // deleteRange across the inked block → same round trip.
+    m.noteCaret(0, 0, 0, 0);
+    m.deleteRange(0, 0, 1, 2);   // merges rows 0-1, deletes block 1... region includes row 0
+    m.undo();
+    CHECK(m.inkForRow(0) == kInk, "undo of deleteRange keeps the ink");
+
+    // Typing coalesce in an inked block leaves ink intact through undo/redo.
+    m.noteCaret(0, 5, 0, 5);
+    m.insertText(0, 5, QStringLiteral("x"), 0, {}, {}); m.noteCaret(0, 6, 0, 6);
+    m.insertText(0, 6, QStringLiteral("y"), 0, {}, {}); m.noteCaret(0, 7, 0, 7);
+    m.undo();
+    CHECK(m.inkForRow(0) == kInk, "ink survives a coalesced typing undo");
+
+    // Persistence round-trip.
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    int inked = -1;
+    for (int i = 0; i < m2.rowCountQml(); ++i)
+        if (!m2.inkForRow(i).isEmpty()) { inked = i; break; }
+    CHECK(inked >= 0 && m2.inkForRow(inked) == kInk, "ink round-trips through save/reopen");
+    {
+        Document d;
+        CHECK(d.open(path), "raw open");
+        CHECK(d.schemaVersion() == Document::kSchemaVersion,
+              "stamped v%d", Document::kSchemaVersion);
+        d.close();
+    }
+    QFile::remove(path);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -315,6 +392,7 @@ int main(int argc, char** argv) {
     testUndoBranchCoalesce();
     testCanonicalizeAndStamp();
     testListsAndDepth();
+    testInkUndoPersist();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

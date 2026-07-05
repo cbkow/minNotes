@@ -98,6 +98,29 @@ bool Document::open(const QString& path) {
               created INTEGER, modified INTEGER, last_cursor TEXT
           ))");
 
+    // v2: document annotations. block_ink = ONE row per anchored block, the
+    // whole serialized stroke blob (block-local coordinate envelope, see
+    // app/notes/doc_ink.h). The FK cascade means deleting a block row drops
+    // its ink even in older builds editing this doc (foreign_keys=ON above is
+    // set by every version). Comments: threads + messages, cascade likewise.
+    exec(R"(CREATE TABLE IF NOT EXISTS block_ink (
+              block_id TEXT PRIMARY KEY REFERENCES blocks(id) ON DELETE CASCADE,
+              ink      TEXT NOT NULL,
+              modified INTEGER
+          ))");
+    exec(R"(CREATE TABLE IF NOT EXISTS comment_threads (
+              id       TEXT PRIMARY KEY,
+              created  INTEGER,
+              resolved INTEGER NOT NULL DEFAULT 0
+          ))");
+    exec(R"(CREATE TABLE IF NOT EXISTS comment_messages (
+              id        TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL REFERENCES comment_threads(id) ON DELETE CASCADE,
+              body      TEXT NOT NULL,
+              created   INTEGER,
+              modified  INTEGER
+          ))");
+
     // Sentinel: confirm the connection is actually usable. A WAL-stamped DB on a
     // filesystem that can't back the -shm shared memory (smbfs/NFS) opens but then
     // wedges — every pragma/DDL above returns SQLITE_CANTOPEN. Fail cleanly here so
@@ -246,4 +269,36 @@ void Document::deleteBlock(const QString& id) {
     q.addBindValue(id);
     if (!q.exec())
         qWarning() << "Document deleteBlock failed:" << q.lastError().text();
+}
+
+QHash<QString, QString> Document::allInk() const {
+    QHash<QString, QString> out;
+    if (!open_) return out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (!q.exec("SELECT block_id, ink FROM block_ink")) return out;
+    while (q.next())
+        out.insert(q.value(0).toString(), q.value(1).toString());
+    return out;
+}
+
+void Document::upsertInk(const QString& blockId, const QString& ink) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("INSERT INTO block_ink (block_id, ink, modified) VALUES (?, ?, ?) "
+              "ON CONFLICT(block_id) DO UPDATE SET ink = excluded.ink, "
+              "modified = excluded.modified");
+    q.addBindValue(blockId);
+    q.addBindValue(ink);
+    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    if (!q.exec())
+        qWarning() << "Document upsertInk failed:" << q.lastError().text();
+}
+
+void Document::deleteInk(const QString& blockId) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("DELETE FROM block_ink WHERE block_id = ?");
+    q.addBindValue(blockId);
+    if (!q.exec())
+        qWarning() << "Document deleteInk failed:" << q.lastError().text();
 }

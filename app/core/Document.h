@@ -1,4 +1,5 @@
 #pragma once
+#include <QHash>
 #include <QString>
 #include <vector>
 
@@ -37,8 +38,10 @@ public:
     // the blocks/attrs/content encoding; readers gate migrations on
     // schemaVersion(). v1 = clean-text+spans content (markdown markers are
     // consumed on load), string span kinds in attrs, media descriptors with
-    // portable src refs.
-    static constexpr int kSchemaVersion = 1;
+    // portable src refs. v2 adds document annotations: the block_ink table
+    // (block-pinned margin ink), comment_threads/comment_messages, and the
+    // "comment" span kind.
+    static constexpr int kSchemaVersion = 2;
     // Upsert the doc_meta row: `created` is written once, then every stamp
     // updates schema_version + app_version + modified. Called on the save
     // paths so a saved file always records what wrote it.
@@ -63,6 +66,13 @@ public:
     void updateMeta(const QString& id, const QString& type, const QString& attrs, int depth = 0);
     void updateRank(const QString& id, const QString& rank);   // reorder
     void deleteBlock(const QString& id);
+
+    // --- Block-pinned margin ink (v2). One row per anchored block; the blob
+    // is the block-local stroke envelope (app/notes/doc_ink.h). Deleting a
+    // block cascades its ink (FK).
+    QHash<QString, QString> allInk() const;                    // one SELECT at load
+    void upsertInk(const QString& blockId, const QString& ink);
+    void deleteInk(const QString& blockId);
 
 private:
     bool exec(const QString& sql) const;

@@ -53,6 +53,8 @@ qt_add_executable(minnotesapp
     notes/VideoAnnotator.cpp
     notes/SketchCanvas.h
     notes/SketchCanvas.cpp
+    notes/doc_ink.h
+    notes/doc_ink.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must

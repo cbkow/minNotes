@@ -46,6 +46,10 @@ class BlockModel : public QAbstractListModel {
     // save lifecycle (drives the title-bar status + conflict/failure UI).
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
     Q_PROPERTY(int saveState READ saveState NOTIFY saveStateChanged)
+    // Block-pinned margin ink: bumped on any ink change (add/erase/undo/load)
+    // so the DocInkCanvas overlay rebuilds its cache. Ink itself is an opaque
+    // per-block JSON blob (app/notes/doc_ink.h owns the format).
+    Q_PROPERTY(int inkRevision READ inkRevision NOTIFY inkChanged)
 public:
     // The explicit-save lifecycle for the active document's status indicator.
     enum SaveState { SaveClean = 0, SaveSaving = 1, SaveFailed = 2, SaveConflict = 3 };
@@ -121,6 +125,17 @@ public:
     Q_INVOKABLE int taskStateForRow(int row) const;   // task items: 0 todo / 1 doing / 2 done
     Q_INVOKABLE void toggleTask(int row);             // cycle todo→doing→done→todo
     Q_INVOKABLE int depthForRow(int row) const;       // list nesting level, else 0
+    // --- Block-pinned margin ink (tier 2 annotations). The model treats ink
+    // as an OPAQUE serialized blob per anchor block id (the sketch-content
+    // pattern); parsing/painting live in app/notes/. setBlockInk is the ONE
+    // mutator: a full-blob replace wrapped in beginTxn/endTxn — one undo step
+    // per stroke; gesture callers (eraser, re-anchor moves) group several
+    // calls via beginGroup/endGroup.
+    int inkRevision() const { return inkRevision_; }
+    Q_INVOKABLE QString inkForBlock(const QString& blockId) const;
+    Q_INVOKABLE QString inkForRow(int row) const;
+    Q_INVOKABLE QStringList inkBlockIds() const;
+    Q_INVOKABLE void setBlockInk(int row, const QString& inkJson);
     // Tab/Shift+Tab: shift every list item in [loRow,hiRow] by delta (±1),
     // clamped to [0, kMaxListDepth]. Non-list rows in the range are skipped;
     // a range with no list rows is a no-op. One undo step.
@@ -439,6 +454,7 @@ signals:
     void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset
     void heightSettled(int row, qreal delta);
     void undoStackChanged();
+    void inkChanged();     // any margin-ink change (add/erase/undo/load)
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
     // The open document changed (new/open/save-as). QML resets per-doc UI state
     // (active table/PDF/video/sketch tabs, the studio's notes path, the cursor).
@@ -476,6 +492,10 @@ private:
     // Full, restorable state of one block — the unit an undo transaction snaps.
     struct BlockSnap {
         QString id, rank, content, lang;
+        // The block's margin-ink blob at snapshot time ("" = none). Captured
+        // from inkByBlock_ (O(1) implicitly-shared copy) so undoing a block
+        // deletion restores its ink alongside the block.
+        QString ink;
         uint8_t type = 0, level = 0, taskState = 0, depth = 0;
         std::vector<Span> spans;
     };
@@ -574,6 +594,11 @@ private:
     bool untitled_ = true;   // scratch doc with no chosen path yet
     bool dirty_ = false;     // unsaved edits since open / last save
     int  saveState_ = SaveClean;
+    // Margin ink, keyed by anchor block id (opaque blobs; loaded whole at
+    // open — ink is light next to media, and one SELECT beats per-block
+    // lazy fetches). Kept strictly in sync with the block_ink table.
+    QHash<QString, QString> inkByBlock_;
+    int inkRevision_ = 0;
     qint64 origMtime_ = -1;  // original file mtime/size recorded at load + each save (conflict baseline)
     qint64 origSize_  = -1;
 
@@ -583,6 +608,9 @@ private:
     bool externalChangeDetected() const;
     bool writeBackToOriginal();        // checkpoint → VACUUM INTO temp → atomic replace over the original
     void markDirty();                  // set dirty_ + notify (idempotent)
+    // Erase a deleted block's in-memory ink (the DB row cascades via FK).
+    // Undo restores it through the BlockSnap.ink payload in applySnapshot.
+    void dropBlockInk(const QString& blockId);
     void setSaveState(int s);
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
