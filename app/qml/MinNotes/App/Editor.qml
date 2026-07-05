@@ -61,12 +61,20 @@ FocusScope {
     // above); the Inspector FLOATS instead of pushing the column (Main.qml);
     // the ink canvas takes the mouse. Mutually exclusive with full-frame tabs.
     property bool inkMode: false
+    // Show/hide the ink layer (data untouched — a reading-mode switch,
+    // mirroring the video studio's annotations toggle). Persisted app-wide;
+    // entering annotation mode forces it visible (drawing on a hidden layer
+    // would be baffling).
+    property alias inkLayerVisible: inkPrefs.layerVisible
+    Settings { id: inkPrefs; category: "annotations"; property bool layerVisible: true }
+    readonly property int inkStrokeCount: inkCanvas.strokeCount   // rail toggle enablement
     function setInkMode(on) {
         if (inkMode === !!on) return
         if (on) {
             if (activeTableId !== "" || activePdfId !== "" || activeVideoId !== ""
                 || activeSketchId !== "") setActiveTab("")   // back to the Document view
             inkMode = true
+            inkLayerVisible = true
             if (inspector) {
                 inspector.open = true
                 inspector.target = "draw"
@@ -3876,7 +3884,8 @@ FocusScope {
         // Squeezed page (narrower than the 760 frame the ink was drawn
         // against) → geometry no longer matches: FADE the layer out rather
         // than render it misplaced. Data untouched; the pill below says why.
-        opacity: root.inkSqueezed ? 0 : 1
+        // Also faded when the user hides annotations (the eye toggle).
+        opacity: root.inkSqueezed || !root.inkLayerVisible ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: 160 } }
     }
     // The frame doesn't fit → annotations are hidden, never silently: a pill
@@ -3884,7 +3893,10 @@ FocusScope {
     // 760 frame + pans — exactly the state that shows them again).
     readonly property bool inkSqueezed: !inkMode && width - 40 < Theme.dim.columnWidth
     Rectangle {
-        visible: root.inkSqueezed && inkCanvas.strokeCount > 0 && flick.visible
+        // Quiet while the user has deliberately hidden the layer — the pill
+        // explains the SQUEEZED case, not the chosen one.
+        visible: root.inkSqueezed && root.inkLayerVisible
+                 && inkCanvas.strokeCount > 0 && flick.visible
         z: 46
         anchors.top: parent.top; anchors.right: parent.right
         anchors.margins: 10
