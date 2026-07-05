@@ -2504,7 +2504,13 @@ void BlockModel::unlinkThread(const QString& threadId) {
 QVariantList BlockModel::commentThreads() const {
     QVariantList out;
     if (!doc_.isOpen()) return out;
+    // DOCUMENT order, not creation order: anchored threads sort by (row, span
+    // start) — reading top to bottom matches the panel top to bottom — with
+    // orphaned ("Unanchored") threads grouped last, oldest first.
+    struct Entry { QVariantMap m; int row; int col; qint64 created; };
+    std::vector<Entry> entries;
     const auto threads = doc_.commentThreads();
+    entries.reserve(threads.size());
     for (const auto& t : threads) {
         QVariantMap m;
         m.insert(QStringLiteral("id"), t.id);
@@ -2513,16 +2519,26 @@ QVariantList BlockModel::commentThreads() const {
         const int row = threadAnchorRow(t.id);
         m.insert(QStringLiteral("row"), row);              // -1 = orphaned ("Unanchored")
         QString excerpt;
+        int col = 0;
         if (row >= 0) {
             for (const Span& sp : rows_[row].spans)
                 if (sp.kind == SpanComment && sp.href == t.id) {
                     excerpt = content_[row].mid(sp.s, std::min(60, sp.e - sp.s));
+                    col = sp.s;
                     break;
                 }
         }
         m.insert(QStringLiteral("excerpt"), excerpt);
-        out.append(m);
+        entries.push_back({std::move(m), row, col, t.created});
     }
+    std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+        const bool ao = a.row < 0, bo = b.row < 0;
+        if (ao != bo) return bo;                     // anchored before orphaned
+        if (ao) return a.created < b.created;        // orphans: oldest first
+        if (a.row != b.row) return a.row < b.row;
+        return a.col < b.col;
+    });
+    for (auto& e : entries) out.append(std::move(e.m));
     return out;
 }
 

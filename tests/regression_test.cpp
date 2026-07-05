@@ -425,6 +425,16 @@ static void testComments() {
     CHECK(m2.commentMessages(tid).size() == 1, "thread body round-trips");
     CHECK(m2.commentThreads().size() == 1, "thread listed");
 
+    // Panel ordering is DOCUMENT order, not creation order: a newer thread
+    // anchored ABOVE an older one lists first.
+    m2.insertBlock(0);
+    m2.setContent(0, QStringLiteral("prologue paragraph"));
+    const QString tid2 = m2.addComment(0, 0, 8);
+    const QVariantList ordered = m2.commentThreads();
+    CHECK(ordered.size() == 2
+              && ordered[0].toMap().value(QStringLiteral("id")).toString() == tid2,
+          "threads sort by document position (new-above lists first)");
+
     // deleteThread: unlinks the span (undoable) and destroys the bodies (not).
     m2.deleteThread(tid);
     CHECK(m2.threadAnchorRow(tid) == -1, "deleteThread unlinked the span");
