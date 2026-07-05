@@ -355,7 +355,7 @@ Rectangle {
                                             Rectangle {
                                                 width: parent.width
                                                 height: Math.max(40, msgEdit.implicitHeight + 12)
-                                                color: Theme.colors.bg
+                                                color: Qt.tint(Theme.colors.bg, Qt.rgba(1, 1, 1, 0.035))
                                                 TextEdit {
                                                     id: msgEdit
                                                     anchors.fill: parent; anchors.margins: 6
@@ -391,7 +391,7 @@ Rectangle {
                                 Rectangle {
                                     visible: !modelData.resolved
                                     width: parent.width; height: 54
-                                    color: Theme.colors.bg   // flat recess, no border
+                                    color: Qt.tint(Theme.colors.bg, Qt.rgba(1, 1, 1, 0.035))   // its own tone — a field, not a hole to the page
                                     TextEdit {
                                         id: replyEdit
                                         anchors.fill: parent; anchors.margins: 6
