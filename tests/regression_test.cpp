@@ -377,6 +377,61 @@ static void testInkUndoPersist() {
     QFile::remove(path);
 }
 
+// --- Test 9: comments — span anchor, shift, orphan/undo, persistence ---------
+// Tier-3 annotations: a SpanComment span (payload = thread id) rides the span
+// machinery for free; thread bodies live in comment_* tables, are NOT undoable,
+// and survive orphaning (span deleted) until deleteThread.
+static void testComments() {
+    qInfo("[9] comments: span anchor, shift, orphan/undo, persistence");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_comments.mndb");
+    QFile::remove(path);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("review this sentence please"));
+    m.noteCaret(0, 0, 0, 0);
+    QObject::connect(&m, &BlockModel::caretRestoreRequested, &m,
+                     [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
+
+    const QString tid = m.addComment(0, 7, 11);   // "this"
+    CHECK(!tid.isEmpty(), "addComment mints a thread id");
+    CHECK(m.commentAt(0, 8) == tid, "commentAt hits inside the range");
+    CHECK(m.commentAt(0, 3).isEmpty(), "commentAt misses outside it");
+    m.addCommentMessage(tid, QStringLiteral("First message"));
+    CHECK(m.commentMessages(tid).size() == 1, "thread message stored");
+    CHECK(m.commentPinRows().size() == 1, "one pin row");
+
+    // The span rides edits: insert before it shifts the range.
+    m.insertText(0, 0, QStringLiteral("XX"), 0, {}, {});
+    CHECK(m.commentAt(0, 10) == tid, "span shifted with the insert");
+
+    // Deleting the anchoring text ORPHANS the thread (body survives).
+    m.noteCaret(0, 9, 0, 9);
+    m.deleteRange(0, 9, 0, 13);
+    CHECK(m.threadAnchorRow(tid) == -1, "span deletion orphans the thread");
+    CHECK(m.commentMessages(tid).size() == 1, "orphaned thread keeps its body");
+    m.undo();
+    CHECK(m.threadAnchorRow(tid) == 0 && m.commentAt(0, 10) == tid,
+          "undo re-links the thread");
+
+    // Persistence round-trip (span in attrs as k:"comment", bodies in tables).
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    CHECK(m2.commentAt(0, 10) == tid, "comment span round-trips");
+    CHECK(m2.commentMessages(tid).size() == 1, "thread body round-trips");
+    CHECK(m2.commentThreads().size() == 1, "thread listed");
+
+    // deleteThread: unlinks the span (undoable) and destroys the bodies (not).
+    m2.deleteThread(tid);
+    CHECK(m2.threadAnchorRow(tid) == -1, "deleteThread unlinked the span");
+    CHECK(m2.commentMessages(tid).isEmpty(), "deleteThread cascaded the messages");
+    QFile::remove(path);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -393,6 +448,7 @@ int main(int argc, char** argv) {
     testCanonicalizeAndStamp();
     testListsAndDepth();
     testInkUndoPersist();
+    testComments();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

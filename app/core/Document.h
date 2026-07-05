@@ -74,6 +74,21 @@ public:
     void upsertInk(const QString& blockId, const QString& ink);
     void deleteInk(const QString& blockId);
 
+    // --- Comments (v2). Threads are anchored by SpanComment spans (payload =
+    // thread id) in block attrs; these tables hold the bodies. Thread rows
+    // are NOT in the undo stack — span edits are, and orphaned threads
+    // survive until explicitly deleted.
+    struct CommentThread { QString id; qint64 created = 0; bool resolved = false; };
+    struct CommentMessage { QString id, threadId, body; qint64 created = 0, modified = 0; };
+    std::vector<CommentThread> commentThreads() const;
+    std::vector<CommentMessage> commentMessages(const QString& threadId) const;
+    void createThread(const QString& id);
+    void deleteThread(const QString& id);                      // cascades messages
+    void setThreadResolved(const QString& id, bool resolved);
+    void insertMessage(const QString& id, const QString& threadId, const QString& body);
+    void updateMessage(const QString& id, const QString& body);
+    void deleteMessage(const QString& id);
+
 private:
     bool exec(const QString& sql) const;
     QString conn_;

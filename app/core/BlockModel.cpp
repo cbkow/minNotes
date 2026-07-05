@@ -51,10 +51,11 @@ constexpr double kFileChip = 56.0;   // fixed height of an unsupported-file atta
 constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline PDF page
 
 // Span kinds whose `href` field carries a payload (URL for links, color hex for
-// color/highlight) — serialized as "u", and pushed whole (never merged by kind).
+// color/highlight, thread id for comments) — serialized as "u", and pushed
+// whole (never merged by kind).
 static inline bool spanHasPayload(uint8_t k) {
     return k == BlockModel::SpanLink || k == BlockModel::SpanFgColor
-        || k == BlockModel::SpanHighlight;
+        || k == BlockModel::SpanHighlight || k == BlockModel::SpanComment;
 }
                                      // (keep in sync with Editor.qml videoTransportH)
 
@@ -2264,6 +2265,7 @@ uint8_t BlockModel::spanKindFromString(const QString& s) {
     if (s == QLatin1String("link"))      return SpanLink;
     if (s == QLatin1String("color"))     return SpanFgColor;
     if (s == QLatin1String("highlight")) return SpanHighlight;
+    if (s == QLatin1String("comment"))   return SpanComment;
     return 0;
 }
 const char* BlockModel::spanKindToString(uint8_t k) {
@@ -2276,6 +2278,7 @@ const char* BlockModel::spanKindToString(uint8_t k) {
     case SpanLink:      return "link";
     case SpanFgColor:   return "color";
     case SpanHighlight: return "highlight";
+    case SpanComment:   return "comment";
     default:            return "";
     }
 }
@@ -2421,6 +2424,156 @@ QString BlockModel::linkAt(int row, int col) const {
     for (const Span& sp : rowAt(row).spans)
         if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return sp.href;
     return {};
+}
+
+// --- Comments (tier 3 annotations) -------------------------------------
+QString BlockModel::addComment(int row, int start, int end) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !doc_.isOpen()) return {};
+    const int len = content_[row].size();
+    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
+    if (start >= end) return {};
+    const QString id = makeUlid();
+    doc_.createThread(id);                                 // NOT undoable, by design
+    setPayloadSpan(row, start, end, SpanComment, id);      // undoable txn (the link pattern)
+    ++commentsRevision_;
+    emit commentsChanged();
+    return id;
+}
+
+QString BlockModel::commentAt(int row, int col) const {
+    if (rows_.empty()) return {};
+    for (const Span& sp : rowAt(row).spans)
+        if (sp.kind == SpanComment && col >= sp.s && col < sp.e) return sp.href;
+    return {};
+}
+
+QVariantList BlockModel::commentRangesForRow(int row) const {
+    QVariantList out;
+    if (rows_.empty()) return out;
+    row = clampRow(row);
+    for (const Span& sp : rows_[row].spans) {
+        if (sp.kind != SpanComment || sp.e <= sp.s) continue;
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("id"), sp.href);
+        out.append(m);
+    }
+    return out;
+}
+
+QVariantList BlockModel::commentPinRows() const {
+    QVariantList out;
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
+        for (const Span& sp : rows_[i].spans)
+            if (sp.kind == SpanComment && sp.e > sp.s) { out.append(i); break; }
+    return out;
+}
+
+int BlockModel::threadAnchorRow(const QString& threadId) const {
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
+        for (const Span& sp : rows_[i].spans)
+            if (sp.kind == SpanComment && sp.href == threadId) return i;
+    return -1;
+}
+
+void BlockModel::unlinkThread(const QString& threadId) {
+    // Collect the rows carrying this thread's span(s), then remove them in
+    // one grouped, undoable step (undo re-links the thread).
+    std::vector<int> rows;
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
+        for (const Span& sp : rows_[i].spans)
+            if (sp.kind == SpanComment && sp.href == threadId) { rows.push_back(i); break; }
+    if (rows.empty()) return;
+    beginTxn(rows.front(), rows.back());
+    for (int r : rows) {
+        auto& spans = rows_[r].spans;
+        spans.erase(std::remove_if(spans.begin(), spans.end(),
+                                   [&](const Span& sp) {
+                                       return sp.kind == SpanComment && sp.href == threadId;
+                                   }),
+                    spans.end());
+        persistMeta(r);
+        emit dataChanged(index(r), index(r), {});
+    }
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+QVariantList BlockModel::commentThreads() const {
+    QVariantList out;
+    if (!doc_.isOpen()) return out;
+    const auto threads = doc_.commentThreads();
+    for (const auto& t : threads) {
+        QVariantMap m;
+        m.insert(QStringLiteral("id"), t.id);
+        m.insert(QStringLiteral("resolved"), t.resolved);
+        m.insert(QStringLiteral("created"), t.created);
+        const int row = threadAnchorRow(t.id);
+        m.insert(QStringLiteral("row"), row);              // -1 = orphaned ("Unanchored")
+        QString excerpt;
+        if (row >= 0) {
+            for (const Span& sp : rows_[row].spans)
+                if (sp.kind == SpanComment && sp.href == t.id) {
+                    excerpt = content_[row].mid(sp.s, std::min(60, sp.e - sp.s));
+                    break;
+                }
+        }
+        m.insert(QStringLiteral("excerpt"), excerpt);
+        out.append(m);
+    }
+    return out;
+}
+
+QVariantList BlockModel::commentMessages(const QString& threadId) const {
+    QVariantList out;
+    if (!doc_.isOpen()) return out;
+    for (const auto& msg : doc_.commentMessages(threadId)) {
+        QVariantMap m;
+        m.insert(QStringLiteral("id"), msg.id);
+        m.insert(QStringLiteral("body"), msg.body);
+        m.insert(QStringLiteral("created"), msg.created);
+        m.insert(QStringLiteral("modified"), msg.modified);
+        out.append(m);
+    }
+    return out;
+}
+
+void BlockModel::addCommentMessage(const QString& threadId, const QString& body) {
+    if (!doc_.isOpen() || body.isEmpty()) return;
+    doc_.insertMessage(makeUlid(), threadId, body);
+    ++commentsRevision_; emit commentsChanged();
+    markDirty();
+}
+
+void BlockModel::updateCommentMessage(const QString& msgId, const QString& body) {
+    if (!doc_.isOpen()) return;
+    doc_.updateMessage(msgId, body);
+    ++commentsRevision_; emit commentsChanged();
+    markDirty();
+}
+
+void BlockModel::removeCommentMessage(const QString& msgId) {
+    if (!doc_.isOpen()) return;
+    doc_.deleteMessage(msgId);
+    ++commentsRevision_; emit commentsChanged();
+    markDirty();
+}
+
+void BlockModel::setThreadResolved(const QString& threadId, bool resolved) {
+    if (!doc_.isOpen()) return;
+    doc_.setThreadResolved(threadId, resolved);
+    ++commentsRevision_; emit commentsChanged();
+    markDirty();
+}
+
+void BlockModel::deleteThread(const QString& threadId) {
+    if (!doc_.isOpen()) return;
+    unlinkThread(threadId);            // span removal is undoable...
+    doc_.deleteThread(threadId);       // ...the bodies are gone for good
+    ++commentsRevision_; emit commentsChanged();
+    markDirty();
 }
 
 QVariantList BlockModel::linkRangeAt(int row, int col) const {

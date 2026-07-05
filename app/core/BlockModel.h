@@ -50,6 +50,9 @@ class BlockModel : public QAbstractListModel {
     // so the DocInkCanvas overlay rebuilds its cache. Ink itself is an opaque
     // per-block JSON blob (app/notes/doc_ink.h owns the format).
     Q_PROPERTY(int inkRevision READ inkRevision NOTIFY inkChanged)
+    // Comments: bumped on any thread/message/resolve change (span-side changes
+    // ride contentRevision as usual).
+    Q_PROPERTY(int commentsRevision READ commentsRevision NOTIFY commentsChanged)
 public:
     // The explicit-save lifecycle for the active document's status indicator.
     enum SaveState { SaveClean = 0, SaveSaving = 1, SaveFailed = 2, SaveConflict = 3 };
@@ -234,6 +237,27 @@ public:
     // covering `col` (for Cmd/Ctrl-click open + hover), or "" if none.
     Q_INVOKABLE void setLink(int row, int start, int end, const QString& url);
     Q_INVOKABLE QString linkAt(int row, int col) const;
+
+    // --- Comments (tier 3 annotations). A SpanComment span (payload = thread
+    // id ULID) anchors a thread to a text range — it rides every span shift,
+    // split, and undo snapshot for free. Thread BODIES live in the
+    // comment_threads/comment_messages tables and are deliberately NOT in the
+    // undo stack (deleting the anchoring text orphans a thread, it never
+    // destroys it; only deleteThread does).
+    int commentsRevision() const { return commentsRevision_; }
+    Q_INVOKABLE QString addComment(int row, int start, int end);   // mints + returns the thread id
+    Q_INVOKABLE QString commentAt(int row, int col) const;         // thread id under the caret, or ""
+    Q_INVOKABLE QVariantList commentRangesForRow(int row) const;   // [{s,e,id}] for tint rects
+    Q_INVOKABLE QVariantList commentPinRows() const;               // distinct rows carrying comment spans
+    Q_INVOKABLE void unlinkThread(const QString& threadId);        // remove its span(s), undoable
+    Q_INVOKABLE int threadAnchorRow(const QString& threadId) const; // -1 = orphaned
+    Q_INVOKABLE QVariantList commentThreads() const;   // [{id,resolved,created,row,excerpt}]
+    Q_INVOKABLE QVariantList commentMessages(const QString& threadId) const;
+    Q_INVOKABLE void addCommentMessage(const QString& threadId, const QString& body);
+    Q_INVOKABLE void updateCommentMessage(const QString& msgId, const QString& body);
+    Q_INVOKABLE void removeCommentMessage(const QString& msgId);
+    Q_INVOKABLE void setThreadResolved(const QString& threadId, bool resolved);
+    Q_INVOKABLE void deleteThread(const QString& threadId);        // bodies + span unlink
     // Text color / highlight over [start,end): an empty color removes that kind.
     // (Both ride the same payload-span path as links.)
     // `coalesce` (non-empty) merges a live run of recolouring (picker drag) into
@@ -455,6 +479,7 @@ signals:
     void heightSettled(int row, qreal delta);
     void undoStackChanged();
     void inkChanged();     // any margin-ink change (add/erase/undo/load)
+    void commentsChanged();   // thread/message/resolve change
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
     // The open document changed (new/open/save-as). QML resets per-doc UI state
     // (active table/PDF/video/sketch tabs, the studio's notes path, the cursor).
@@ -465,7 +490,8 @@ signals:
 public:
     enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
                               SpanStrike = 4, SpanUnderline = 5, SpanLink = 6,
-                              SpanFgColor = 7, SpanHighlight = 8 };  // href holds the color hex
+                              SpanFgColor = 7, SpanHighlight = 8,   // href holds the color hex
+                              SpanComment = 9 };                    // href holds the thread id
 
 private:
     // [s,e) over the row's text. `href` is set only for SpanLink (the link target);
@@ -599,6 +625,7 @@ private:
     // lazy fetches). Kept strictly in sync with the block_ink table.
     QHash<QString, QString> inkByBlock_;
     int inkRevision_ = 0;
+    int commentsRevision_ = 0;
     qint64 origMtime_ = -1;  // original file mtime/size recorded at load + each save (conflict baseline)
     qint64 origSize_  = -1;
 

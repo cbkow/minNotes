@@ -302,3 +302,103 @@ void Document::deleteInk(const QString& blockId) {
     if (!q.exec())
         qWarning() << "Document deleteInk failed:" << q.lastError().text();
 }
+
+std::vector<Document::CommentThread> Document::commentThreads() const {
+    std::vector<CommentThread> out;
+    if (!open_) return out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (!q.exec("SELECT id, created, resolved FROM comment_threads ORDER BY created"))
+        return out;
+    while (q.next()) {
+        CommentThread t;
+        t.id = q.value(0).toString();
+        t.created = q.value(1).toLongLong();
+        t.resolved = q.value(2).toInt() != 0;
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+std::vector<Document::CommentMessage> Document::commentMessages(const QString& threadId) const {
+    std::vector<CommentMessage> out;
+    if (!open_) return out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT id, body, created, modified FROM comment_messages "
+              "WHERE thread_id = ? ORDER BY created");
+    q.addBindValue(threadId);
+    if (!q.exec()) return out;
+    while (q.next()) {
+        CommentMessage m;
+        m.id = q.value(0).toString();
+        m.threadId = threadId;
+        m.body = q.value(1).toString();
+        m.created = q.value(2).toLongLong();
+        m.modified = q.value(3).toLongLong();
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+void Document::createThread(const QString& id) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("INSERT OR IGNORE INTO comment_threads (id, created, resolved) VALUES (?, ?, 0)");
+    q.addBindValue(id);
+    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    if (!q.exec())
+        qWarning() << "Document createThread failed:" << q.lastError().text();
+}
+
+void Document::deleteThread(const QString& id) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("DELETE FROM comment_threads WHERE id = ?");   // messages cascade (FK)
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document deleteThread failed:" << q.lastError().text();
+}
+
+void Document::setThreadResolved(const QString& id, bool resolved) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("UPDATE comment_threads SET resolved = ? WHERE id = ?");
+    q.addBindValue(resolved ? 1 : 0);
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document setThreadResolved failed:" << q.lastError().text();
+}
+
+void Document::insertMessage(const QString& id, const QString& threadId, const QString& body) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("INSERT INTO comment_messages (id, thread_id, body, created, modified) "
+              "VALUES (?, ?, ?, ?, ?)");
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    q.addBindValue(id);
+    q.addBindValue(threadId);
+    q.addBindValue(body);
+    q.addBindValue(now);
+    q.addBindValue(now);
+    if (!q.exec())
+        qWarning() << "Document insertMessage failed:" << q.lastError().text();
+}
+
+void Document::updateMessage(const QString& id, const QString& body) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("UPDATE comment_messages SET body = ?, modified = ? WHERE id = ?");
+    q.addBindValue(body);
+    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document updateMessage failed:" << q.lastError().text();
+}
+
+void Document::deleteMessage(const QString& id) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("DELETE FROM comment_messages WHERE id = ?");
+    q.addBindValue(id);
+    if (!q.exec())
+        qWarning() << "Document deleteMessage failed:" << q.lastError().text();
+}
