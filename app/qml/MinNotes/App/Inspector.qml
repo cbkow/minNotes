@@ -220,18 +220,15 @@ Rectangle {
                         readonly property bool expanded: panel.openThread === modelData.id
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
-                        // Flat recess against the panel. EXPANDED threads
-                        // brighten a touch so the reply field's dark recess
-                        // stands out inside them; RESOLVED threads fade
-                        // halfway toward the panel colour (still readable as
-                        // a card, clearly settled) and dim their content.
+                        // Flat recess against the panel (the input fields carry
+                        // their own lifted tone, so the open card keeps the
+                        // plain surface). RESOLVED threads fade halfway toward
+                        // the panel colour and dim their content.
                         color: modelData.resolved
                                ? Qt.tint(Theme.colors.surfaceRaised,
                                          Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
                                                  Theme.colors.surface.b, 0.5))
-                               : card.expanded
-                                 ? Qt.tint(Theme.colors.surface, Qt.rgba(1, 1, 1, 0.05))
-                                 : Theme.colors.surface
+                               : Theme.colors.surface
                         Behavior on color { ColorAnimation { duration: 160 } }
                         Column {
                             id: cardCol
