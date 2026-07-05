@@ -60,12 +60,22 @@ Rectangle {
                     vt.editor.ensureVideoActive(vt.row)
                     wasPlaying = vt.dec.isPlaying
                     vt.dec.pause(); vt.audio.pause()
-                } else if (wasPlaying) {
-                    vt.editor._vidSyncForResume(); vt.dec.play()
-                    if (vt.audio.hasAudio) vt.audio.play()
+                    if (vt.dec.fps > 0)   // deck-style scrub audio for the drag
+                        vt.editor.beginScrubAudio(value / vt.dec.fps)
+                } else {
+                    vt.editor.endScrubAudio()
+                    if (wasPlaying) {
+                        vt.editor._vidSyncForResume(); vt.dec.play()
+                        if (vt.audio.hasAudio) vt.audio.play()
+                    }
                 }
             }
-            onMoved: { vt.editor.ensureVideoActive(vt.row); vt.editor._vidScrubTo(Math.round(value)) }
+            onMoved: {
+                vt.editor.ensureVideoActive(vt.row)
+                var f = Math.round(value)
+                vt.editor._vidScrubTo(f)
+                if (vt.dec.fps > 0) vt.editor.scrubAudioMove(f / vt.dec.fps)
+            }
             Connections {
                 target: vt.dec
                 function onCurrentFrameChanged() {

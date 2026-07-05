@@ -422,7 +422,11 @@ FocusScope {
         f = Math.max(0, Math.min(videoDec.frameCount - 1, f))
         _vidScrubTarget = f
         videoDec.scrubToFrame(f)
-        if (videoDec.fps > 0) videoAudio.seek(f / videoDec.fps)
+        // While a shuttle gesture owns audio (drag-scrub or FF/RW grains),
+        // skip the per-tick decoder re-seek — the old "seek storm". The
+        // commit seek happens at gesture release (_vidSyncForResume).
+        if (!videoAudio.shuttleActive() && videoDec.fps > 0)
+            videoAudio.seek(f / videoDec.fps)
     }
     function _vidSyncForResume() {
         if (_vidScrubTarget < 0) return
@@ -438,6 +442,11 @@ FocusScope {
         if (videoPlayingRow === row) return true
         _rememberVideoPlayhead()              // bank the outgoing video's frame
         _videoSurfaceReady = false            // hide the surface until THIS video paints
+        // A teardown can land mid-gesture (note switch during a drag/FF hold);
+        // AudioPlayer.close() does NOT end the shuttle, and a live grain thread
+        // would keep reading the OLD clip after the swap.
+        if (videoAudio.shuttleActive()) videoAudio.endShuttle()
+        _scrubAudioActive = false
         videoDec.close(); videoAudio.close()
         _vidScrubTarget = -1
         var p = blockModel.mediaLocalPath(row)
@@ -477,6 +486,8 @@ FocusScope {
     }
     function stopVideo() {
         _rememberVideoPlayhead()
+        if (videoAudio.shuttleActive()) videoAudio.endShuttle()   // see _activateVideo
+        _scrubAudioActive = false
         videoDec.close(); videoAudio.close()
         videoPlayingRow = -1; _videoPlayingPath = ""; _videoSurfaceReady = false
         _vidScrubTarget = -1; _vidFastSeekDir = 0; videoFastSeekTimer.stop()
@@ -500,11 +511,56 @@ FocusScope {
         dir = dir > 0 ? 1 : -1
         if (_vidFastSeekDir === dir) return
         videoDec.pause(); videoAudio.pause()
+        // Shuttle and review speed are mutually exclusive transports —
+        // entering the gesture snaps the rate back to 1x (QCView rule).
+        if (videoSpeed !== 1.0) setVideoSpeed(1.0)
         _vidFastSeekDir = dir; _vidFastSeekSpeed = 2.0; _vidFastSeekElapsed = 0
         _vidFastSeekPos = (videoDec.fps > 0) ? _vidIntendedFrame() / videoDec.fps : 0
+        // Deck-style grain audio follows the fast-seek position (engine-side
+        // no-op when the clip has no audio).
+        if (videoAudio.hasAudio && _videoPlayingPath !== "")
+            videoAudio.beginShuttle(_videoPlayingPath, _vidFastSeekPos,
+                                    2.0 * dir, videoAudio.routingMode())
         videoFastSeekTimer.start()
     }
-    function stopVideoFastSeek() { _vidFastSeekDir = 0; videoFastSeekTimer.stop() }
+    function stopVideoFastSeek() {
+        _vidFastSeekDir = 0; videoFastSeekTimer.stop()
+        if (videoAudio.shuttleActive()) videoAudio.endShuttle()
+    }
+
+    // ---- Drag-scrub audio (transport-slider gesture) ----
+    // Analog-scrub grains through the shuttle engine, speed ESTIMATED from
+    // drag velocity: signed source-seconds per wall second, EMA-smoothed with
+    // a dt-scaled alpha (tau ≈ 80 ms) so mouse jitter doesn't warble the
+    // grain pitch. The engine's hold detection silences a stationary mouse.
+    property bool _scrubAudioActive: false
+    property real _scrubVelLastMs: 0
+    property real _scrubVelLastSec: 0
+    property real _scrubVelEma: 0
+    function beginScrubAudio(sec) {
+        if (!videoAudio.hasAudio || _videoPlayingPath === "") { _scrubAudioActive = false; return }
+        if (videoSpeed !== 1.0) setVideoSpeed(1.0)   // mutually exclusive transports
+        _scrubAudioActive = true
+        _scrubVelLastMs = Date.now(); _scrubVelLastSec = sec; _scrubVelEma = 0
+        videoAudio.beginShuttle(_videoPlayingPath, sec, 0.0, videoAudio.routingMode())
+    }
+    function scrubAudioMove(sec) {
+        if (!_scrubAudioActive) return
+        var now = Date.now()
+        var dt = (now - _scrubVelLastMs) * 1e-3
+        if (dt > 0.0005) {
+            var v = Math.max(-32, Math.min(32, (sec - _scrubVelLastSec) / dt))
+            var alpha = 1.0 - Math.exp(-dt / 0.080)
+            _scrubVelEma += alpha * (v - _scrubVelEma)
+            _scrubVelLastMs = now; _scrubVelLastSec = sec
+        }
+        videoAudio.shuttleTarget(_videoPlayingPath, sec, _scrubVelEma)
+    }
+    function endScrubAudio() {
+        if (!_scrubAudioActive) return
+        _scrubAudioActive = false
+        if (videoAudio.shuttleActive()) videoAudio.endShuttle()
+    }
 
     VideoDecoder { id: videoDec }
     AudioPlayer  { id: videoAudio }
@@ -526,6 +582,11 @@ FocusScope {
             var maxSec = (videoDec.frameCount - 1) / videoDec.fps
             root._vidFastSeekPos = Math.max(0, Math.min(maxSec, root._vidFastSeekPos))
             root._vidScrubTo(Math.round(root._vidFastSeekPos * videoDec.fps))
+            // Grain audio follows the integrated position + signed ramp speed
+            // (no-op unless beginShuttle ran at gesture start).
+            if (videoAudio.shuttleActive())
+                videoAudio.shuttleTarget(root._videoPlayingPath, root._vidFastSeekPos,
+                                         root._vidFastSeekSpeed * root._vidFastSeekDir)
         }
     }
     Connections {

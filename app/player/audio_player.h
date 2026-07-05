@@ -129,7 +129,7 @@ public:
 
     // Current decoder routing mode (for handing to the shuttle
     // engine's grain reader so shuttle honors the clip's fold).
-    int routingMode() const;
+    Q_INVOKABLE int routingMode() const;
 
     // ---- Shuttle (FF/RW hold gesture) ----
     // Grain-based varispeed audio following the fast-seek position;
