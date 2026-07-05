@@ -345,6 +345,27 @@ FocusScope {
     // switch re-points it before our onActiveChanged handler runs).
     property string _videoPlayingPath: ""
     property bool videoLoop: false
+    // Review-speed playback (QCView parity: R cycles 0.5→0.75→1→1.25→1.5→2,
+    // Shift+R resets, transport readout when ≠ 1x). Applied to BOTH the video
+    // pacing divisor and the audio TempoStage; the re-anchoring seek right
+    // after a change drops old-tempo ring residue so the sync servo restarts
+    // clean (without it the servo fights stale audio). Persists across clips.
+    property real videoSpeed: 1.0
+    function setVideoSpeed(s) {
+        videoSpeed = s
+        videoDec.setPlaybackSpeed(s)
+        videoAudio.setPlaybackTempo(s)
+        if (videoDec.fps > 0) videoAudio.seek(_vidIntendedFrame() / videoDec.fps)
+    }
+    function cycleVideoSpeed() {
+        var steps = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+        var nearest = 0, best = 1e9
+        for (var i = 0; i < steps.length; ++i) {
+            var d = Math.abs(steps[i] - videoSpeed)
+            if (d < best) { best = d; nearest = i }
+        }
+        setVideoSpeed(steps[(nearest + 1) % steps.length])
+    }
     // False from activation until the active video paints its first frame, so the
     // single shared surface never flashes the PREVIOUS video's stale frame — the
     // (correct) poster stays up until the new frame is ready.
@@ -425,6 +446,10 @@ FocusScope {
         _videoPlayingPath = p
         videoAudio.initialize()   // idempotent; open() no-ops without it
         videoAudio.open(p)
+        if (videoSpeed !== 1.0) {   // review speed persists across clips
+            videoDec.setPlaybackSpeed(videoSpeed)
+            videoAudio.setPlaybackTempo(videoSpeed)
+        }
         var resume = videoPlayheadFor(row)    // pick up where we left off
         if (resume > 0) {
             videoDec.seekToFrame(resume)      // streaming decoder parks here (not a scrub)
@@ -1730,6 +1755,8 @@ FocusScope {
             else if (k === Qt.Key_Right) { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(1) }
             else if (k === Qt.Key_Home)  { root.ensureVideoActive(root.activeVideoRow); root.seekVideoStart() }
             else if (k === Qt.Key_End)   { root.ensureVideoActive(root.activeVideoRow); root.seekVideoEnd() }
+            else if (k === Qt.Key_R)     { root.ensureVideoActive(root.activeVideoRow)
+                                           if (shift) root.setVideoSpeed(1.0); else root.cycleVideoSpeed() }
             event.accepted = true
         }
         // Sketch tab: the canvas is mouse-driven; swallow everything so typing

@@ -90,6 +90,21 @@ Rectangle {
             Layout.rightMargin: 4
         }
 
+        Text {   // review-speed readout — only when rate ≠ 1x (R cycles, Shift+R resets)
+            visible: Math.abs(vt.editor.videoSpeed - 1.0) > 0.001
+            text: vt.editor.videoSpeed.toFixed(2).replace(/\.?0+$/, "") + "×"
+            color: Theme.colors.accent
+            font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+            font.bold: true
+            verticalAlignment: Text.AlignVCenter
+            Layout.rightMargin: 4
+            MouseArea {   // click to cycle, matching the key
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { vt.editor.ensureVideoActive(vt.row); vt.editor.cycleVideoSpeed() }
+            }
+        }
+
         FlatButton { iconName: "repeat"; tooltip: qsTr("Loop"); tooltipSide: "top"
             checked: vt.editor.videoLoop; onClicked: vt.editor.toggleVideoLoop() }
         FlatButton {
