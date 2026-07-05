@@ -3836,6 +3836,39 @@ FocusScope {
         tool: root.inkMode && root.inspector ? root.inspector.drawTool : ""
         color: root.inspector ? root.inspector.drawColor : "#FF0000"
         strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+        // Squeezed page (narrower than the 760 frame the ink was drawn
+        // against) → geometry no longer matches: FADE the layer out rather
+        // than render it misplaced. Data untouched; the pill below says why.
+        opacity: root.inkSqueezed ? 0 : 1
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+    }
+    // The frame doesn't fit → annotations are hidden, never silently: a pill
+    // says how many, and clicking it enters annotation mode (which locks the
+    // 760 frame + pans — exactly the state that shows them again).
+    readonly property bool inkSqueezed: !inkMode && width - 40 < Theme.dim.columnWidth
+    Rectangle {
+        visible: root.inkSqueezed && inkCanvas.strokeCount > 0 && flick.visible
+        z: 46
+        anchors.top: parent.top; anchors.right: parent.right
+        anchors.margins: 10
+        width: pillText.implicitWidth + 24; height: 26
+        color: Theme.colors.surfaceRaised
+        border.width: 1; border.color: Theme.colors.border
+        Text {
+            id: pillText
+            anchors.centerIn: parent
+            text: inkCanvas.strokeCount === 1
+                  ? qsTr("1 annotation hidden — widen to show")
+                  : qsTr("%1 annotations hidden — widen to show").arg(inkCanvas.strokeCount)
+            color: Theme.colors.textMuted
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+        }
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.setInkMode(true)
+        }
     }
 
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
