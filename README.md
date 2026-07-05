@@ -28,7 +28,8 @@ Quick surface that owns the document model directly.
 - **FFmpeg** — vendored prebuilt under `external/ffmpeg` (gitignored).
 - **Sparkle** (macOS) — vendored once via `scripts/fetch_sparkle.sh` →
   `external/Sparkle/` (auto-update is a no-op shim if absent).
-- **ink-stroke-modeler** — fetched automatically by CMake (FetchContent).
+- **ink-stroke-modeler**, **SoundTouch** — fetched automatically by CMake
+  (FetchContent).
 
 ## Build
 
@@ -67,7 +68,7 @@ helpers in `scripts/` (`sign-and-notarize.sh`, `update_appcast*.sh`).
 minNotes is licensed **GPL-3.0-or-later**. See [`LICENSE`](LICENSE) for the GPL
 text and [`LICENSES/`](LICENSES/) for the third-party license texts minNotes
 redistributes (Qt LGPL-3.0, FFmpeg LGPL-2.1+, KSyntaxHighlighting MIT,
-ink-stroke-modeler Apache-2.0, Sparkle / WinSparkle MIT, Phosphor MIT, Aspekta
-SIL OFL, SQLite public domain).
+ink-stroke-modeler Apache-2.0, SoundTouch LGPL-2.1, Sparkle / WinSparkle MIT,
+Phosphor MIT, Aspekta SIL OFL, SQLite public domain).
 [`LICENSES/THIRD_PARTY_NOTICES.txt`](LICENSES/THIRD_PARTY_NOTICES.txt) is the
 index plus a categorised summary of the Qt-bundled support libraries.

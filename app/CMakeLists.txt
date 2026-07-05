@@ -84,6 +84,18 @@ qt_add_executable(minnotesapp
     player/audio_ring_buffer.h
     player/audio_routing.h
     player/i_audio_source.h
+    # Audio rate engine (ported from QCView fb398ef1): continuous A/V sync
+    # servo, constant-pitch review speeds (SoundTouch WSOLA), grain shuttle
+    # audio for FF/RW + drag-scrub.
+    player/audio_sync_servo.h
+    player/fractional_resampler.h
+    player/audio_routing_matrix.h
+    player/tempo_stage.h
+    player/tempo_stage.cpp
+    player/audio_chunk_reader.h
+    player/audio_chunk_reader.cpp
+    player/shuttle_audio_engine.h
+    player/shuttle_audio_engine.cpp
 )
 
 # Document.cpp stamps doc_meta.app_version with this on save. (The WinSparkle
@@ -178,6 +190,9 @@ target_link_libraries(minnotesapp PRIVATE
     minnotes::ffmpeg
     # Stroke smoothing (FetchContent, pinned in the root CMakeLists).
     InkStrokeModeler::stroke_modeler
+    # WSOLA tempo stage (constant-pitch review speeds). Static, vendored
+    # via FetchContent in the root CMakeLists.
+    SoundTouch
 )
 
 # ink-stroke-modeler doesn't propagate its include dir as a usage

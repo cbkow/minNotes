@@ -83,6 +83,22 @@ set(INSTALL_GTEST                        OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(ink_stroke_modeler)
 message(STATUS "ink-stroke-modeler: pinned commit da42d439")
 
+# ---- SoundTouch (WSOLA time-stretch, LGPL-2.1, static) -------------
+# Drives the audio engine's constant-pitch review speeds (TempoStage on the
+# decode thread). Same pin as QCView-Player. Float sample pipeline (matches
+# the f32 ring buffers straight from the decoders); NEON autodetects on arm64.
+FetchContent_Declare(
+    soundtouch
+    GIT_REPOSITORY https://codeberg.org/soundtouch/soundtouch.git
+    GIT_TAG 0047e0b1ecfceb041348579119bf79b73a322a3a   # tag 2.4.1
+    GIT_SHALLOW FALSE
+)
+set(INTEGER_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SOUNDSTRETCH    OFF CACHE BOOL "" FORCE)   # no CLI utility
+set(SOUNDTOUCH_DLL  OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(soundtouch)
+message(STATUS "SoundTouch: pinned commit 0047e0b1 (2.4.1)")
+
 # ---- ffmpeg (vendored prebuilt) ------------------------------------
 # The ported video engine (app/player/, from ufb) links FFmpeg for demux +
 # hardware-accelerated decode (VideoToolbox on macOS; Vulkan/D3D11 on Windows).

@@ -87,6 +87,21 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
    Linkage: compiled into Qt's bundled QSQLITE SQL driver. minNotes documents
             (.mndb) are SQLite databases.
 
+10. SoundTouch 2.4.1
+    Copyright (c) Olli Parviainen 2001-2026
+    License: GNU Lesser General Public License version 2.1 (LGPL v2.1)
+    File:    SoundTouch-LGPL-2.1.txt
+    https://www.surina.net/soundtouch/
+    Source:  https://codeberg.org/soundtouch/soundtouch
+             (pinned commit 0047e0b1 = release tag 2.4.1)
+    Linkage: static (FetchContent, float sample pipeline). Constant-pitch
+             time-stretch (WSOLA) for the review-speed playback feature.
+    Note: minNotes as a whole is distributed under GPL v3, which satisfies
+    LGPL v2.1 section 3's GPL-conversion option; the full corresponding
+    source (including the build scripts that fetch the pinned SoundTouch)
+    is available from the minNotes repository, covering relinking and
+    modification rights.
+
 ===============================================================================
 Indirect dependencies — Qt runtime libraries
 ===============================================================================
