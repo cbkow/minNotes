@@ -17,6 +17,10 @@ FocusScope {
     id: root
     focus: true
     Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth) }
+    // Closing the LAST tab unloads the whole Editor (the docContent Loader goes
+    // inactive) — stop the shared decoder/audio deliberately rather than letting
+    // child destruction race the decode/audio threads mid-playback.
+    Component.onDestruction: stopVideo()
     // Single 760 reading measure shared by ALL blocks (tables included for now),
     // left-aligned at a common edge (the column is centred in the window). Tables
     // scroll horizontally inside their delegate when content exceeds it.
@@ -1609,12 +1613,22 @@ FocusScope {
         // edited row → commit its inline md first. Skip when deleting the focused
         // block itself: its content is about to vanish (no point in an undo step),
         // and the backspace/forwardDelete callers always pass row == focusRow.
-        if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow)
+        // The commit is GROUPED with the delete so the gesture is ONE undo step
+        // (ungrouped it pushed two entries = two ⌘Z per delete). endGroup runs
+        // BEFORE setCaret: the entry's caret-before reads the model's cursor at
+        // endTxn time, and setCaret→sync→noteCaret would clobber it first.
+        var grouped = cursor.focusRow !== row
+        if (grouped) {
+            blockModel.beginGroup(Math.min(cursor.focusRow, row), Math.max(cursor.focusRow, row))
+            blockModel.commitMarkdown(cursor.focusRow)
+        }
         if (blockModel.count > 1) {
             blockModel.removeBlock(row)
+            if (grouped) blockModel.endGroup()
             cursor.setCaret(Math.max(0, row - (row >= blockModel.count ? 1 : 0)), 0)
         } else {
             blockModel.setContent(row, "")        // last block: clear rather than leave an empty doc
+            if (grouped) blockModel.endGroup()
             cursor.setCaret(row, 0)
         }
         cursor.sync()
@@ -1689,6 +1703,17 @@ FocusScope {
             if (k === Qt.Key_Y || shift) studioAnnotator.redo(); else studioAnnotator.undo()
             event.accepted = true
         }
+        // PDF tab: a pure viewer — swallow EVERYTHING (undo/clipboard/typing
+        // included) so keys can't invisibly edit the hidden document underneath.
+        // Must sit above the generic ⌘Z/⌘V branches; video/sketch have their own
+        // swallow branches below (sketch deliberately keeps doc ⌘Z — strokes are
+        // document content).
+        else if (root.activePdfRow >= 0) { event.accepted = true }
+        // Video/sketch tabs: clipboard ops target the hidden document — gate
+        // ⌘V/⌘X (silent document edits); ⌘C copies an invisible selection,
+        // swallow it too rather than surprise the user.
+        else if (cmd && (k === Qt.Key_C || k === Qt.Key_V || k === Qt.Key_X)
+                 && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0)) { event.accepted = true }
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
@@ -1865,7 +1890,27 @@ FocusScope {
         target: blockModel
         function onContentChangedSpike() {     // insert/delete/type change
             root._recomputeVideoRows(); root._recomputePdfRows()
+            root._reconcileVideoPlayingRow()
         }
+    }
+    // Structural edits shift row indices, and videoPlayingRow is imperative
+    // state (the studio self-heals by block id; the inline player can't — a
+    // pooled row index is all it has). If the playing block moved, re-point to
+    // its new row (closest path match, so a doc with the same clip twice picks
+    // the right one); if it's gone (deleted, or undone away), tear the player
+    // down instead of painting the surface over whatever block shifted into
+    // its old row.
+    function _reconcileVideoPlayingRow() {
+        if (videoPlayingRow < 0) return
+        if (blockModel.mediaLocalPath(videoPlayingRow) === _videoPlayingPath) return
+        var best = -1
+        for (var i = 0; i < allVideoRows.length; ++i) {
+            var r = allVideoRows[i]
+            if (blockModel.mediaLocalPath(r) !== _videoPlayingPath) continue
+            if (best < 0 || Math.abs(r - videoPlayingRow) < Math.abs(best - videoPlayingRow)) best = r
+        }
+        if (best >= 0) videoPlayingRow = best
+        else stopVideo()
     }
     // Switching NOTES re-points blockModel but emits no contentChangedSpike, so the
     // always-built video/pdf transport toolbars would keep the previous note's rows

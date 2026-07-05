@@ -110,6 +110,11 @@ private:
     void route(qcv::PointerPhase phase, QPointF pos, qint64 tMs);
     void commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke);
     void eraseAt(QPointF norm);
+    // Eraser gesture bracketing: one undo entry per press→release (per
+    // timecode touched — the eraser doesn't pause playback, so the playhead
+    // can move mid-drag), instead of one entry per stroke hit.
+    void beginEraseGesture();
+    void flushEraseGesture();   // push the pending entry if any hits landed
     void refreshStrokes();
     void scheduleThumb(const QString &timecode);
     void setDrawing(bool d);
@@ -139,6 +144,13 @@ private:
     qcv::ViewportAnnotator annot_;
     std::vector<qcv::ActiveStroke> strokes_;   // committed, current frame
     QList<UndoEntry> undo_, redo_;
+
+    // In-flight eraser gesture (see beginEraseGesture/flushEraseGesture).
+    bool    eraseGesture_ = false;
+    bool    eraseDirty_   = false;   // ≥1 hit landed since begin/re-anchor
+    QString eraseTc_;                // timecode the pending entry restores
+    int     eraseFrame_ = 0;
+    QString erasePrior_;             // annotation_data at gesture start
 
     bool drawToolActive_ = false;              // a real draw tool is armed (not select)
     int  selIdx_ = -1;                         // selected stroke (current frame), or -1

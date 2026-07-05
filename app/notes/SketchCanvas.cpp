@@ -211,15 +211,35 @@ void SketchCanvas::geometryChange(const QRectF &newGeo, const QRectF &oldGeo)
 void SketchCanvas::route(qcv::PointerPhase phase, QPointF pos, qint64 tMs)
 {
     annot_.setViewportRect(QPointF(0, 0), size());
+    // Eraser gesture bracket. Begin BEFORE dispatching Press — the annotator
+    // erases at the press point itself, so the working copy must exist first.
+    if (phase == qcv::PointerPhase::Press
+        && annot_.activeTool() == qcv::DrawingTool::Eraser) {
+        eraseGesture_ = true;
+        eraseDirty_   = false;
+        eraseStrokes_ = qcv::AnnotationSerializer::jsonStringToStrokes(data_);
+    }
     annot_.onPointerEvent(phase, pos, tMs);
     if (phase == qcv::PointerPhase::Press)   setDrawing(true);
-    if (phase == qcv::PointerPhase::Release) setDrawing(false);
+    if (phase == qcv::PointerPhase::Release) {
+        if (eraseGesture_) {
+            if (eraseDirty_)
+                emit edited(qcv::AnnotationSerializer::strokesToJsonString(eraseStrokes_));
+            eraseGesture_ = false;
+        }
+        setDrawing(false);
+    }
     update();   // live stroke repaint
 }
 
 void SketchCanvas::cancelStroke()
 {
     annot_.cancelActiveStroke();
+    if (eraseGesture_) {          // Esc mid-erase: drop the working copy —
+        eraseGesture_ = false;    // nothing reached the model, so restoring
+        eraseDirty_   = false;    // the paint source undoes the whole drag.
+        strokes_ = qcv::AnnotationSerializer::jsonStringToStrokes(data_);
+    }
     setDrawing(false);
     update();
 }
@@ -235,15 +255,11 @@ void SketchCanvas::commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke)
     emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes));
 }
 
-void SketchCanvas::eraseAt(QPointF norm)
+// QCView's eraser hit-test verbatim (see VideoAnnotator::eraseAt): bounding
+// box + normalized tolerance, last-drawn first, one hit per event.
+static int eraseHitIndex(const std::vector<qcv::ActiveStroke> &strokes, QPointF norm)
 {
-    std::vector<qcv::ActiveStroke> strokes =
-        qcv::AnnotationSerializer::jsonStringToStrokes(data_);
-    if (strokes.empty()) return;
-
-    // QCView's hit-test verbatim (see VideoAnnotator::eraseAt).
     const double tol = 0.012;
-    int hitIdx = -1;
     for (int i = int(strokes.size()) - 1; i >= 0; --i) {
         const qcv::ActiveStroke &s = strokes[size_t(i)];
         if (s.points.empty()) continue;
@@ -255,15 +271,32 @@ void SketchCanvas::eraseAt(QPointF norm)
         }
         const double pad = std::max(tol, double(s.strokeWidth) / 1920.0);
         if (norm.x() >= minX - pad && norm.x() <= maxX + pad
-            && norm.y() >= minY - pad && norm.y() <= maxY + pad) {
-            hitIdx = i;
-            break;
-        }
+            && norm.y() >= minY - pad && norm.y() <= maxY + pad)
+            return i;
     }
-    if (hitIdx < 0) return;
+    return -1;
+}
 
-    strokes.erase(strokes.begin() + hitIdx);
-    emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes));
+void SketchCanvas::eraseAt(QPointF norm)
+{
+    // The annotator only fires this during a press-drag, i.e. inside a
+    // gesture; the direct path stays as a safety net.
+    if (!eraseGesture_) {
+        std::vector<qcv::ActiveStroke> strokes =
+            qcv::AnnotationSerializer::jsonStringToStrokes(data_);
+        const int hitIdx = eraseHitIndex(strokes, norm);
+        if (hitIdx < 0) return;
+        strokes.erase(strokes.begin() + hitIdx);
+        emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes));
+        return;
+    }
+    const int hitIdx = eraseHitIndex(eraseStrokes_, norm);
+    if (hitIdx < 0) return;
+    eraseStrokes_.erase(eraseStrokes_.begin() + hitIdx);
+    eraseDirty_ = true;
+    strokes_ = eraseStrokes_;   // live paint feedback; the model commits on release
+    if (selKind_ == SelStroke && selIdx_ >= int(strokes_.size())) clearSelection();
+    update();
 }
 
 void SketchCanvas::setDrawing(bool d)

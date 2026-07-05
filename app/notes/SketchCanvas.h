@@ -142,6 +142,14 @@ private:
 
     qcv::ViewportAnnotator annot_;
     std::vector<qcv::ActiveStroke> strokes_;   // parsed from data_
+    // Eraser gesture (press→release): hits erase an in-flight WORKING COPY,
+    // committed as ONE edited() on release — one document-undo step per
+    // gesture. Also the correctness fix: the model round-trip that refreshes
+    // data_ lags the drag, so the old per-hit re-parse of data_ could
+    // resurrect a stroke erased earlier in the same drag.
+    bool eraseGesture_ = false;
+    bool eraseDirty_   = false;
+    std::vector<qcv::ActiveStroke> eraseStrokes_;   // working copy during the gesture
     std::vector<SketchImage> images_;          // parsed from data_ (under the strokes)
     QHash<QString, QImage> imgCache_;          // src → decoded image
 

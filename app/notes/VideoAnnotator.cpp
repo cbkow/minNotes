@@ -178,15 +178,52 @@ void VideoAnnotator::geometryChange(const QRectF &newGeo, const QRectF &oldGeo)
 void VideoAnnotator::route(qcv::PointerPhase phase, QPointF pos, qint64 tMs)
 {
     annot_.setViewportRect(QPointF(0, 0), size());
+    // Eraser gesture bracket. Begin BEFORE dispatching Press — the annotator
+    // erases at the press point itself, so the prior must be captured first.
+    if (phase == qcv::PointerPhase::Press
+        && annot_.activeTool() == qcv::DrawingTool::Eraser)
+        beginEraseGesture();
     annot_.onPointerEvent(phase, pos, tMs);
     if (phase == qcv::PointerPhase::Press)   setDrawing(true);
-    if (phase == qcv::PointerPhase::Release) setDrawing(false);
+    if (phase == qcv::PointerPhase::Release) {
+        flushEraseGesture();
+        eraseGesture_ = false;
+        setDrawing(false);
+    }
     update();   // live stroke repaint
+}
+
+void VideoAnnotator::beginEraseGesture()
+{
+    if (!notes_) return;
+    eraseGesture_ = true;
+    eraseDirty_   = false;
+    eraseTc_      = notes_->timecodeForFrame(frame_);
+    eraseFrame_   = frame_;
+    erasePrior_   = notes_->annotationDataFor(eraseTc_);
+}
+
+void VideoAnnotator::flushEraseGesture()
+{
+    if (!eraseGesture_ || !eraseDirty_) return;
+    undo_.append({eraseTc_, eraseFrame_, erasePrior_, /*wasNew=*/false});
+    redo_.clear();
+    emit undoStacksChanged();
+    eraseDirty_ = false;
 }
 
 void VideoAnnotator::cancelStroke()
 {
     annot_.cancelActiveStroke();
+    if (eraseGesture_) {   // Esc mid-erase: restore the pre-gesture ink (the
+        if (eraseDirty_ && notes_) {   // hits were written to the notes model live)
+            notes_->setAnnotationData(eraseTc_, eraseFrame_, erasePrior_);
+            scheduleThumb(eraseTc_);
+            refreshStrokes();
+        }
+        eraseGesture_ = false;
+        eraseDirty_   = false;
+    }
     setDrawing(false);
     update();
 }
@@ -245,9 +282,21 @@ void VideoAnnotator::eraseAt(QPointF norm)
     }
     if (hitIdx < 0) return;
 
-    undo_.append({tc, frame_, data, false});
-    redo_.clear();
-    emit undoStacksChanged();
+    if (eraseGesture_) {
+        // The eraser doesn't pause playback, so the playhead can cross onto a
+        // different note mid-drag: close the pending entry and re-anchor the
+        // prior on the new timecode. Otherwise just mark the gesture dirty —
+        // the single undo entry is pushed on release (flushEraseGesture).
+        if (tc != eraseTc_) {
+            flushEraseGesture();
+            eraseTc_ = tc; eraseFrame_ = frame_; erasePrior_ = data;
+        }
+        eraseDirty_ = true;
+    } else {   // safety net — the annotator only erases inside a press-drag
+        undo_.append({tc, frame_, data, false});
+        redo_.clear();
+        emit undoStacksChanged();
+    }
 
     strokes.erase(strokes.begin() + hitIdx);
     const QString json = strokes.empty()
