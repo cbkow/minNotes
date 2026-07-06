@@ -745,7 +745,7 @@ void BlockModel::setBlockInk(int row, const QString& inkJson) {
 }
 
 void BlockModel::dropBlockInk(const QString& blockId) {
-    if (inkByBlock_.remove(blockId) > 0) { ++inkRevision_; emit inkChanged(); }
+    if (inkByBlock_.remove(blockId)) { ++inkRevision_; emit inkChanged(); }
 }
 
 int BlockModel::orderedNumberForRow(int row) const {
@@ -866,7 +866,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     for (int i = lo; i < last; ++i) {
         oldIds.insert(ids_[i]);
         if (!newIds.contains(ids_[i])) {                     // left the region
-            if (inkByBlock_.remove(ids_[i]) > 0) inkTouched = true;   // DB cascades
+            if (inkByBlock_.remove(ids_[i])) inkTouched = true;   // DB cascades
             if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);
         }
     }
