@@ -127,23 +127,35 @@ Rectangle {
             }
         }
 
+        // The right-side cluster reserves its SPACE permanently (opacity, not
+        // visible): live-only controls appearing at activation used to reflow
+        // the row and shrink the scrubber mid-interaction.
         FlatButton {   // notes/annotations visibility — ONE switch shared with the studio
-            visible: vt.live && vt.editor.videoNoteArr.length > 0
+            readonly property bool show: (vt.live ? vt.editor.videoNoteArr.length
+                                                  : barNotes.count) > 0
+            opacity: show ? 1 : 0
+            enabled_: show
             iconName: vt.editor.annotationsHidden ? "eye" : "eye-slash"
-            checked: vt.editor.annotationsHidden
-            tooltip: vt.editor.annotationsHidden ? qsTr("Show notes") : qsTr("Hide notes")
+            checked: show && vt.editor.annotationsHidden
+            tooltip: show ? (vt.editor.annotationsHidden ? qsTr("Show notes")
+                                                         : qsTr("Hide notes")) : ""
             tooltipSide: "top"
             onClicked: vt.editor.annotationsHidden = !vt.editor.annotationsHidden
         }
         FlatButton { iconName: "repeat"; tooltip: qsTr("Loop"); tooltipSide: "top"
             checked: vt.editor.videoLoop; onClicked: vt.editor.toggleVideoLoop() }
         FlatButton {
-            visible: vt.live && vt.audio.hasAudio
+            readonly property bool avail: vt.live && vt.audio.hasAudio
+            opacity: avail ? 1 : 0
+            enabled_: avail
             iconName: (vt.audio.muted || vt.audio.volume <= 0) ? "speaker-x" : "speaker-high"
-            tooltip: qsTr("Mute"); tooltipSide: "top"; onClicked: vt.editor.toggleVideoMute()
+            tooltip: avail ? qsTr("Mute") : ""
+            tooltipSide: "top"; onClicked: vt.editor.toggleVideoMute()
         }
         FlatSlider {
-            visible: vt.live && vt.audio.hasAudio
+            readonly property bool avail: vt.live && vt.audio.hasAudio
+            opacity: avail ? 1 : 0
+            enabled: avail
             Layout.preferredWidth: 64; Layout.leftMargin: 2
             Layout.alignment: Qt.AlignVCenter
             from: 0; to: 1
