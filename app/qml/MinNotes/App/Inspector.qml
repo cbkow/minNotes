@@ -148,7 +148,7 @@ Rectangle {
         Row {
             id: tabRow
             anchors.centerIn: parent; spacing: 6
-            Rectangle { width: 12; height: 12; radius: 2; anchors.verticalCenter: parent.verticalCenter
+            Rectangle { width: 12; height: 12; radius: 0; anchors.verticalCenter: parent.verticalCenter
                         color: parent.parent.t === "fg" ? panel.fgColor
                              : parent.parent.t === "bg" ? panel.bgColor : panel.drawColor
                         border.width: 1; border.color: Theme.colors.border }
@@ -551,7 +551,7 @@ Rectangle {
             // Revert: soft grey (brighter than the page, not loud).
             Rectangle {
                 width: panel.contentW; height: 28
-                color: revertMA.containsMouse ? "#3a3a3a" : "#2e2e2e"
+                color: revertMA.containsMouse ? Theme.colors.divider : Theme.colors.surfaceHover
                 Row {
                     anchors.centerIn: parent; spacing: 6
                     Icon { name: "arrow-counter-clockwise"; size: 14; color: Theme.colors.text

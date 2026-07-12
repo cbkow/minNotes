@@ -359,7 +359,7 @@ Item {
                                             width: 10; height: 10
                                             anchors.verticalCenter: parent.verticalCenter
                                             Rectangle {
-                                                anchors.fill: parent; radius: 2
+                                                anchors.fill: parent; radius: 0
                                                 color: fieldRow.modelData.check === 2 ? Theme.colors.accent : "transparent"
                                                 border.width: fieldRow.modelData.check === 2 ? 0 : 1
                                                 border.color: fieldRow.modelData.check === 1

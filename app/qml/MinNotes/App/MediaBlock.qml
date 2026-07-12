@@ -227,13 +227,13 @@ Item {
         Rectangle {   // duration badge
             visible: mb.durMs > 0
             anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8
-            width: durText.width + 12; height: durText.height + 6; radius: 4
+            width: durText.width + 12; height: durText.height + 6; radius: 0
             color: Qt.rgba(0, 0, 0, 0.6)
             Text {
                 id: durText
                 anchors.centerIn: parent
                 text: mb._fmtDur(mb.durMs)
-                color: "#f2f2f2"; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                color: Theme.colors.textBright; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
         }
     }

@@ -7,13 +7,18 @@ QtObject {
     id: theme
 
     readonly property QtObject colors: QtObject {
+        // ── Tonal ladder (product pass 2026-07-11, mirrors QCView's
+        // Resolve-lean system): recess < page < card < raised < hover.
+        // Tone separates planes; borders only where same-tone surfaces meet.
         readonly property color bg:          "#121211"   // window shell
         readonly property color surface:     "#121211"   // the document "page"
+        readonly property color surfaceRecess: "#0e0e0e" // inset wells — inputs, code, thumbnail beds, tooltip
+        readonly property color card:        "#1a1a19"   // content cards on the page/panels (kanban, notes, threads)
         readonly property color surfaceHover: "#252525"  // flat-button hover fill
-        readonly property color surfaceRaised: "#202020" // raised panels (inspector) — a step above the page
-        readonly property color codeBg:      "#121212"   // code block fill
+        readonly property color surfaceRaised: "#202020" // raised panels (inspector, transport, tab strip)
+        readonly property color codeBg:      "#0e0e0e"   // code block fill — a recessed well (was #121212, invisible against the page)
         readonly property color border:      "#2a2a2a"
-        readonly property color divider:     "#333333"   // hr / separators
+        readonly property color divider:     "#333333"   // hr / separators / the SELECTION fill
 
         readonly property color text:        "#E4E3E2"   // body (default type colour)
         readonly property color textBright:  "#f0f0f0"   // headings / selected chrome (sub-white: no glow on dark, matches the highlighter's light text)
@@ -26,18 +31,23 @@ QtObject {
         readonly property color inlineCodeBg:   "#1d2733"   // blue-tinted dark chip
         readonly property color inlineCodeText: "#4aa8ff"   // accent-family blue
 
-        readonly property color accent:      "#0189f1"   // caret / primary
+        readonly property color accent:      "#0189f1"   // caret / primary — SEMANTIC moments only (live/insertion/link), never "toggle is on"
         readonly property color accentHover: "#1b95f1"   // primary button hover
-        readonly property color accentMuted: "#10395b"   // checked/active flat button fill
+        readonly property color accentMuted: "#10395b"   // primary-adjacent fills (NOT the default checked state — that's divider)
         readonly property color error:       "#c04040"   // danger button
+        readonly property color success:     "#4cb050"   // toast/outcome voice (family value, from QCView)
+        readonly property color warn:        "#f5a623"   // toast/outcome voice
         readonly property color selectionBg: "#2a568c"   // text-selection fill (saturated cobalt)
         readonly property color quoteBar:    "#3a5e86"
+        // QCView note markers — the SAME violet QCView uses on its timeline
+        // pins, so "a QCView note" is one color across both apps.
+        readonly property color noteMarker:  "#b48ef0"
     }
 
     readonly property QtObject dim: QtObject {
         readonly property int padding:        8
         readonly property int paddingLoose:   16
-        readonly property int radius:         4
+        readonly property int radius:         0    // squared corners everywhere (user ruling); was 4
         readonly property int scrollBarWidth: 14   // macOS always-on scrollbar width
         readonly property int columnWidth:    760    // prose reading measure (comfortable)
         readonly property int docTopPad:      28     // breathing room above block 0
@@ -84,6 +94,7 @@ QtObject {
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
         readonly property string serif:  theme.serifFont.name        // Lora (quotes)
         readonly property int sizeSmall: 12
+        readonly property int sizeChrome: 13 // panel/tab/toolbar labels (was a bare literal ~20 places)
         readonly property int sizeBody: 14   // a notch above the 13px kanban/tab tier
         readonly property int sizeMono: 13
     }

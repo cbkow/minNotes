@@ -13,7 +13,7 @@ ToolTip {
     timeout: 5000
 
     background: Rectangle {
-        color: "#0e0e0e"
+        color: Theme.colors.surfaceRecess
         border.color: Theme.colors.border
         border.width: 1
         radius: 0

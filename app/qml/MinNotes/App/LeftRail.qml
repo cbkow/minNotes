@@ -75,7 +75,7 @@ Rectangle {
             Rectangle {
                 anchors.bottom: parent.bottom; anchors.bottomMargin: 3
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 18; height: 3; radius: 1.5; color: parent.underColor
+                width: 18; height: 3; radius: 0; color: parent.underColor
             }
         }
 

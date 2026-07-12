@@ -413,7 +413,7 @@ Item {
                                 height: Math.max(16, cellText.implicitHeight - 2)
                                 width: Math.min(parent.width - 2 * tv.cellPadH,
                                                 cellRect.csel !== "" ? chipLabel.implicitWidth + 16 : 22)
-                                radius: height / 2
+                                radius: 0
                                 readonly property color _oc: cellRect.cselColor !== ""
                                     ? Qt.color(cellRect.cselColor) : Theme.colors.textMuted
                                 color: cellRect.csel !== "" ? Qt.rgba(_oc.r, _oc.g, _oc.b, 0.28) : "transparent"
@@ -448,14 +448,14 @@ Item {
                                 y: tv.cellPadV + Math.max(0, (cellText.implicitHeight - 14) / 2)
                                 width: 14; height: 14
                                 Rectangle {
-                                    anchors.fill: parent; radius: 3
+                                    anchors.fill: parent; radius: 0
                                     color: cellRect.ccheck === 2 ? Theme.colors.accent : "transparent"
                                     border.width: cellRect.ccheck === 2 ? 0 : 1.5
                                     border.color: cellRect.ccheck === 1 ? Theme.colors.accent : Theme.colors.textMuted
                                 }
                                 Rectangle {   // in-progress dash
                                     visible: cellRect.ccheck === 1
-                                    anchors.centerIn: parent; width: 7; height: 2; radius: 1
+                                    anchors.centerIn: parent; width: 7; height: 2; radius: 0
                                     color: Theme.colors.accent
                                 }
                                 Text {   // done check

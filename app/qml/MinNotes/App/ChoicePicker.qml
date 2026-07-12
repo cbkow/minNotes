@@ -33,7 +33,7 @@ Popup {
     signal editOptions()   // → the editor opens the modal option editor for this column
 
     background: Rectangle {
-        color: Theme.colors.surface; radius: 6
+        color: Theme.colors.surface; radius: 0
         border.width: 1; border.color: Theme.colors.border
     }
 
@@ -45,7 +45,7 @@ Popup {
             delegate: Rectangle {
                 id: optRow
                 required property var modelData
-                width: parent.width; height: 26; radius: 4
+                width: parent.width; height: 26; radius: 0
                 color: rowHover.hovered ? Theme.colors.surfaceHover : "transparent"
                 HoverHandler { id: rowHover }
 
@@ -79,7 +79,7 @@ Popup {
         Rectangle { visible: picker.selectedId !== ""; width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // clear the cell's selection
             visible: picker.selectedId !== ""
-            width: parent.width; height: 24; radius: 4
+            width: parent.width; height: 24; radius: 0
             color: clearMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {
                 anchors.verticalCenter: parent.verticalCenter; x: 24
@@ -95,7 +95,7 @@ Popup {
 
         Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // add a new option (stays open so several can be added)
-            width: parent.width; height: 26; radius: 4; color: "transparent"
+            width: parent.width; height: 26; radius: 0; color: "transparent"
             TextInput {
                 id: addField
                 anchors.fill: parent
@@ -122,7 +122,7 @@ Popup {
         }
         Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // open the full option editor (rename / colour / reorder / delete)
-            width: parent.width; height: 24; radius: 4
+            width: parent.width; height: 24; radius: 0
             color: editMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {
                 anchors.verticalCenter: parent.verticalCenter; x: 24

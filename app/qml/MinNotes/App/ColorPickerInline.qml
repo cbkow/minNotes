@@ -118,7 +118,7 @@ Item {
             }
         }
         Rectangle {   // hex field
-            width: 214; height: 28; radius: 4
+            width: 214; height: 28; radius: 0
             color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
             Text {
                 anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 8
@@ -143,7 +143,7 @@ Item {
             component Channel: Rectangle {
                 property string lab: ""
                 property alias field: chInput
-                width: 66; height: 26; radius: 4
+                width: 66; height: 26; radius: 0
                 color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
                 Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 6
                        text: parent.lab; color: Theme.colors.textMuted

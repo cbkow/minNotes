@@ -69,23 +69,23 @@ Rectangle {
     readonly property bool hovered: ma.containsMouse
 
     // Resolved colors per variant + state.
-    // No border at any state — checked-default uses an accentMuted
-    // fill so the active/selected segment differentiates by colour
-    // alone (matches sister-app FlatButton). Hover stays a tonal
-    // surfaceHover swap; primary/danger keep their accent/error
-    // fills.
+    // No border at any state — checked-default uses the family
+    // SELECTION language (divider-grey fill + bright text), so a
+    // toggle that's on never spends accent. Accent stays semantic:
+    // primary/danger variants keep their fills; anything needing a
+    // different checked fill sets checkedColor explicitly.
     readonly property color _bgIdle: {
         if (!enabled_) return "transparent"
         if (variant === "primary") return Theme.colors.accent
         if (variant === "danger")  return Theme.colors.error
-        if (checked) return checkedColor.a > 0 ? checkedColor : Theme.colors.accentMuted
+        if (checked) return checkedColor.a > 0 ? checkedColor : Theme.colors.divider
         return "transparent"
     }
     readonly property color _bgHover: {
         if (!enabled_) return _bgIdle
         if (variant === "primary") return Theme.colors.accentHover
         if (variant === "danger")  return Qt.lighter(Theme.colors.error, 1.15)
-        if (checked) return checkedColor.a > 0 ? Qt.lighter(checkedColor, 1.25) : Theme.colors.accent
+        if (checked) return Qt.lighter(checkedColor.a > 0 ? checkedColor : Theme.colors.divider, 1.25)
         return Theme.colors.surfaceHover
     }
     readonly property color _fg: {

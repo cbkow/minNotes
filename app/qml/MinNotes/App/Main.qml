@@ -616,7 +616,9 @@ ApplicationWindow {
                                         anchors.verticalCenter: parent.verticalCenter
                                         anchors.left: parent.left; anchors.leftMargin: 12
                                         anchors.right: parent.right; anchors.rightMargin: 10
-                                        text: (parent.modelData.untitled ? "• " : "") + parent.modelData.documentName
+                                        // Same dirty-dot rule as the tab strip: unsaved OR edited.
+                                        text: ((parent.modelData.untitled || parent.modelData.dirty) ? "• " : "")
+                                              + parent.modelData.documentName
                                         elide: Text.ElideMiddle   // keep the distinguishing tail
                                         color: parent.active ? Theme.colors.textBright : Theme.colors.text
                                         font.family: Theme.font.family; font.pixelSize: 13
@@ -660,6 +662,8 @@ ApplicationWindow {
                     visible: !!annotCluster.ed
                     width: 36; height: docTabBar.height
                     readonly property bool on: !!annotCluster.ed && annotCluster.ed.inkMode
+                    // Accent-on-toggle is a DELIBERATE exception here (user
+                    // ruling 2026-07-05): mode state earned the accent.
                     color: on ? Theme.colors.accent
                               : (annMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
                     Rectangle { anchors.left: parent.left; width: 1; height: parent.height
