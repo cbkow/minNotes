@@ -246,10 +246,10 @@ Item {
                     Rectangle {
                         width: 9; height: 9; radius: 4.5
                         anchors.verticalCenter: parent.verticalCenter
+                        // Uncolored lanes stay neutral — accent is rationed to
+                        // semantic moments, and "this lane has no color" isn't one.
                         color: laneItem.modelData.color !== "" ? laneItem.modelData.color
-                             : laneItem.modelData.key === "1" ? Theme.colors.accent
-                             : laneItem.modelData.key === "2" ? Theme.colors.accent
-                             : Theme.colors.textMuted
+                                                               : Theme.colors.textMuted
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
@@ -285,7 +285,7 @@ Item {
                             width: parent.width
                             height: card.modelData.h
                             radius: 0
-                            color: Theme.colors.surfaceHover
+                            color: Theme.colors.card
                             border.width: 1; border.color: Theme.colors.border
                             opacity: kb.dragRow === card.modelData.r ? 0.35 : 1
                             clip: true
@@ -471,7 +471,7 @@ Item {
         x: kb.dragX + 10; y: kb.dragY + 8
         width: kb.laneW - 16; height: kb.cardH
         radius: 0; z: 100
-        color: Theme.colors.surfaceHover
+        color: Theme.colors.card   // matches the card it mirrors
         border.width: 1; border.color: Theme.colors.accent
         opacity: 0.92
         Text {

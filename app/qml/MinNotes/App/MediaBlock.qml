@@ -190,7 +190,7 @@ Item {
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
         visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended && img.status !== Image.Ready
-        color: Theme.colors.surfaceHover; radius: Theme.dim.radius
+        color: Theme.colors.surfaceRecess; radius: Theme.dim.radius   // image bed = inset well
         border.width: 1; border.color: Theme.colors.border
         Text {
             anchors.centerIn: parent

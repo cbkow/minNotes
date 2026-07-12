@@ -500,10 +500,8 @@ ApplicationWindow {
             visible: docs.count > 0
             height: visible ? 36 : 0
             color: Theme.colors.surfaceRaised
-            Rectangle {   // bottom hairline
-                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                height: 1; color: Theme.colors.border
-            }
+            // (bottom hairline removed — the raised strip's tonal step against
+            // the page separates on its own; border diet, product pass 2)
 
             Row {
                 anchors.left: parent.left; anchors.top: parent.top
@@ -807,7 +805,7 @@ ApplicationWindow {
                         id: recentItem
                         required property var modelData
                         width: 440; height: 40; radius: 0
-                        color: recentMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.surface
+                        color: recentMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.card
                         border.width: 1; border.color: Theme.colors.border
                         Row {
                             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12

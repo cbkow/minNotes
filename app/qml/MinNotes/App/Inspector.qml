@@ -67,7 +67,7 @@ Rectangle {
     readonly property int contentW: panelW - 24   // inside the x:12 margins
     width: open ? panelW : 0
     Behavior on width { enabled: panel._ready; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-    color: Theme.colors.surfaceRaised                  // a step lighter than the page, so the panel reads as its own layer
+    color: Theme.colors.surfaceRecess                  // a darker WELL beside the lit page (QCView rail recipe); cards raise above it
     clip: true                                         // so content clips cleanly while sliding
 
     function targetColor() {
@@ -220,15 +220,14 @@ Rectangle {
                         readonly property bool expanded: panel.openThread === modelData.id
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
-                        // Flat recess against the panel (the input fields carry
-                        // their own lifted tone, so the open card keeps the
-                        // plain surface). RESOLVED threads fade halfway toward
-                        // the panel colour and dim their content.
+                        // Raised card on the panel's well (input fields recess
+                        // back into it). RESOLVED threads fade halfway toward
+                        // the well and dim their content.
                         color: modelData.resolved
-                               ? Qt.tint(Theme.colors.surfaceRaised,
-                                         Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
-                                                 Theme.colors.surface.b, 0.5))
-                               : Theme.colors.surface
+                               ? Qt.tint(Theme.colors.card,
+                                         Qt.rgba(Theme.colors.surfaceRecess.r, Theme.colors.surfaceRecess.g,
+                                                 Theme.colors.surfaceRecess.b, 0.5))
+                               : Theme.colors.card
                         Behavior on color { ColorAnimation { duration: 160 } }
                         Column {
                             id: cardCol
@@ -352,7 +351,7 @@ Rectangle {
                                             Rectangle {
                                                 width: parent.width
                                                 height: Math.max(40, msgEdit.implicitHeight + 12)
-                                                color: Qt.tint(Theme.colors.bg, Qt.rgba(1, 1, 1, 0.035))
+                                                color: Theme.colors.surfaceRecess   // input = well, inset into the card
                                                 TextEdit {
                                                     id: msgEdit
                                                     anchors.fill: parent; anchors.margins: 6
@@ -388,7 +387,7 @@ Rectangle {
                                 Rectangle {
                                     visible: !modelData.resolved
                                     width: parent.width; height: 54
-                                    color: Qt.tint(Theme.colors.bg, Qt.rgba(1, 1, 1, 0.035))   // its own tone — a field, not a hole to the page
+                                    color: Theme.colors.surfaceRecess   // input = well, inset into the card
                                     TextEdit {
                                         id: replyEdit
                                         anchors.fill: parent; anchors.margins: 6

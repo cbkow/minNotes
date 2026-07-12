@@ -21,7 +21,8 @@ Rectangle {
 
     height: editor ? editor.videoTransportH : 40
     color: Theme.colors.surfaceRaised   // the raised-chrome plane (tonal ladder)
-    Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
+    // (top hairline removed — the raised bar separates from the frame above
+    // by tone; border diet, product pass 2)
 
     RowLayout {
         id: transportRow

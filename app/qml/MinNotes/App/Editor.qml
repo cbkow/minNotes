@@ -3593,8 +3593,7 @@ FocusScope {
             id: studioNotes
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
             height: studioFrame.notesPanelH
-            color: Theme.colors.surface
-            Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
+            color: Theme.colors.surfaceRecess   // the filmstrip WELL — cards raise above it; tone replaces the old top hairline
 
             Rectangle {   // add-note tile (sticky left)
                 id: addNoteTile
@@ -3704,7 +3703,7 @@ FocusScope {
                     // width is fixed, so contentWidth doesn't depend on this — no loop).
                     height: noteStrip.height
                             - (noteStrip.contentWidth > noteStrip.width ? Theme.dim.scrollBarWidth + 6 : 12)
-                    color: Theme.colors.surfaceRaised
+                    color: Theme.colors.card
                     border.width: 1
                     border.color: current ? Theme.colors.textBright : Theme.colors.border
 
@@ -3714,7 +3713,7 @@ FocusScope {
 
                         Rectangle {   // thumbnail (click = seek to this frame)
                             width: parent.width; height: noteCard.thumbH
-                            color: Theme.colors.surface
+                            color: Theme.colors.surfaceRecess   // image bed reads as an inset well
                             clip: true
                             Image {
                                 anchors.fill: parent
@@ -3762,7 +3761,7 @@ FocusScope {
                         Rectangle {   // note text (commit on focus-out, QCView style)
                             width: parent.width
                             height: parent.height - noteCard.thumbH - 16 - 26 - 18   // thumb + tc row + buttons + 3×spacing
-                            color: Theme.colors.surface
+                            color: Theme.colors.surfaceRecess   // input = recessed well
                             border.width: 1
                             border.color: noteText.activeFocus ? Theme.colors.divider : Theme.colors.border
                             Flickable {
@@ -4228,8 +4227,7 @@ FocusScope {
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: measure
             height: root.pdfNavH
-            color: Theme.colors.surfaceRaised      // a hair lighter than the page
-            Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
+            color: Theme.colors.surfaceRaised      // raised bar — tone separates from the page above (border diet)
 
             RowLayout {
                 anchors.fill: parent
