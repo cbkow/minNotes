@@ -19,8 +19,23 @@ Type these at the **start** of a block and it converts as you go:
 | `> ` | Quote |
 | `- `, `* `, `+ ` | Bullet list item |
 | `- [ ] ` / `- [/] ` / `- [x] ` | Task (to-do / doing / done) |
+| `1. ` (any number) | Numbered list item |
 | ```` ``` ```` or ```` ```lang ```` then `Enter` | Code block (optionally for a language) |
 | `--- ` (or `---` / `***` / `___` then `Enter`) | Divider |
+
+List items nest with `Tab` / `Shift+Tab`.
+
+## The page
+
+The page is a fixed reading measure — it never squeezes. A narrow window
+scrolls sideways instead of rewrapping your text, and a wide table extends
+past the page into the margin, scrolling the page horizontally when it
+outgrows the window.
+
+Down the right side runs the **block ruler**: every block's number, a shared
+address you can reference anywhere ("see block 14" — the numbers also appear
+in exports). **Drag a number to reorder its block**; an accent line shows
+where it will land.
 
 ## Inline formatting
 
@@ -51,6 +66,37 @@ text and images; columns can be plain text, a **choice** (single-select
 options), or a **check** column. Sort by a column, fill a selection down/right,
 reorder rows and columns, and switch a choice/check column to a **board**
 (kanban) view.
+
+## Comments
+
+Select text in a single block and choose **Add comment** from the right-click
+menu. A blue bubble appears in the margin beside the block — click it to open
+the thread right there: read, reply, resolve. The Inspector's **Comments**
+view lists every thread in the note.
+
+## Page ink
+
+Click the **pen** on the tab strip to enter annotate mode and draw anywhere —
+over text, in the margins, on media. Ink pins to the block it overlaps (ink on
+an image scales with the image). The **eye** next to the pen shows or hides
+the ink layer.
+
+## Exporting
+
+**File ▸ Export** writes your note as:
+
+- **Markdown** — a portable `.md` plus a `.assets/` folder for images,
+  sketches, and video-note thumbnails. Comments become footnotes.
+- **HTML** — one self-contained file you can send anywhere. Colors,
+  highlights, and tables survive exactly; annotations ride as layers behind
+  an **Annotations** toggle; comment threads pop up on hover; every block
+  keeps its ruler number.
+- **Word (.docx)** — your comments arrive as **native Word review comments**,
+  anchored to the text, ready for replies.
+
+Videos, PDFs, and file attachments export as a poster image plus a reference
+card (name, path, and metadata) — and a video's QCView notes can come along
+underneath it, annotated frames included.
 
 ## Sketches
 

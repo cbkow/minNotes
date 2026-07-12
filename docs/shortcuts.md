@@ -24,6 +24,7 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Undo | ⌘Z |
 | Redo | ⌘⇧Z &nbsp;or&nbsp; ⌘Y |
 | Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
+| Indent / outdent list item | Tab / ⇧Tab |
 
 ## Inline formatting
 
@@ -46,6 +47,15 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Fill selection right | ⌘R |
 | Select all cells | ⌘A |
 
+## Video (while a video is active)
+
+| Action | Shortcut |
+|---|---|
+| Rewind (hold) | A or J |
+| Fast-forward (hold) | D or L |
+| Cycle review speed (0.5×–2×) | R |
+| Reset speed to 1× | ⇧R |
+
 ## In the document (markdown-style)
 
 Typed at the start of a block — see [Editing](editing.md):
@@ -55,6 +65,7 @@ Typed at the start of a block — see [Editing](editing.md):
 | `# ` … `###### ` | Heading 1–6 |
 | `> ` | Quote |
 | `- ` / `* ` / `+ ` | Bullet list |
+| `1. ` | Numbered list |
 | `- [ ] ` / `- [/] ` / `- [x] ` | Task: to-do / doing / done |
 | ```` ``` ```` + `Enter` | Code block |
 | `---` + `Enter` | Divider |

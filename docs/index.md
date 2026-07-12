@@ -13,13 +13,20 @@ Dropbox, LucidLink — and open on either platform.
 ## What it does
 
 - **Block editor** — paragraphs, headings, quotes, code blocks with syntax
-  highlighting, bullet / task / choice lists, dividers.
+  highlighting, bullet / numbered / task / choice lists, dividers. A fixed
+  reading measure with a block-number ruler down the right side — drag a
+  number to reorder its block.
 - **Tables + kanban** — rich cells, choice/check columns, sort & fill, and a
   one-click board view grouped by a column.
 - **Media inline** — drop or paste images, video (with a scrub + annotate
   studio), PDFs (page-by-page), and file attachments.
-- **Ink** — sketch blocks and on-video annotations, interchangeable with
-  QCView.
+- **Ink & comments** — sketch blocks, margin ink anywhere on the page,
+  on-video annotations (interchangeable with QCView), and comments anchored
+  to text — a blue bubble in the margin opens the thread right there.
+- **Export** — Markdown (with an assets folder), a self-contained HTML
+  review page (one file: annotations as toggleable layers, comment threads
+  on hover, block numbers in the margin), or a Word document where your
+  comments arrive as native review comments.
 - **Markdown-style input** — type `## `, `- `, `> `, ```` ``` ```` and the
   block converts as you go.
 - **Multi-document tabs** and **cross-OS path mapping** so referenced media

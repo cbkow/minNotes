@@ -10,9 +10,10 @@ Quick surface that owns the document model directly.
 |---|---|
 | App shell, editor, dialogs, menus | Qt 6.11 / QML / Qt Quick Controls 2 |
 | Document store (`.mndb`), blocks, undo | SQLite (C++ `app/core/`) |
-| Block types | paragraphs, headings, code (syntax-highlighted), quotes, task/choice lists, tables + kanban, dividers |
-| Media | inline images, video (decode + scrub + annotate), inline PDF, file attachments |
-| Ink | sketch blocks + on-video annotations (QCView-interop), ink-stroke-modeler smoothing |
+| Block types | paragraphs, headings, code (syntax-highlighted), quotes, bullet/numbered/task/choice lists, tables + kanban, dividers |
+| Media | inline images, video (decode + scrub/skim audio + annotate), inline PDF, file attachments |
+| Ink & comments | sketch blocks, page margin ink, on-video annotations (QCView-interop), text-anchored comment threads with in-margin cards |
+| Export | Markdown (+`.assets/`), self-contained HTML (annotation layers + toggle, hover comment threads, block ruler), DOCX with native Word review comments |
 | Cross-OS | OS-neutral path mappings for referenced media, multi-document tabs |
 | Updates | Sparkle (macOS) / WinSparkle (Windows), EdDSA-signed appcasts |
 
@@ -51,7 +52,7 @@ cmake --preset=debug && cmake --build --preset=debug --parallel
 
 ```
 app/core/    C++ document model: BlockModel, Document (SQLite), MediaStore,
-             DocumentManager, PathMap, image/PDF/video providers
+             DocumentManager, PathMap, Exporter (md/HTML/DOCX), providers
 app/notes/   ink stroke engine (sketch + video annotations)
 app/qml/     QML UI tree (Main, Editor, MediaBlock, tables, dialogs, …)
 external/    vendored deps (ffmpeg, kf6, Sparkle, aspekta font) + build-ksyntax.sh
