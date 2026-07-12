@@ -1,6 +1,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QSurfaceFormat>
+#include <QColorSpace>
 #include <QStyleHints>
 #include <QTimer>
 #include <QUrl>
@@ -40,6 +42,19 @@ static void resolveAndOpen(DocumentManager &docs, const QString &s)
 
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_MACOS
+    // Pin the default surface format to sRGB on macOS (the ufb recipe).
+    // Qt 6's RHI lets the platform pick the swapchain colour space, and on
+    // a Display P3 panel our sRGB-authored hex colours come out
+    // oversaturated. Setting the colour space on the default format BEFORE
+    // any QWindow exists makes Metal present in sRGB regardless of the
+    // screen's native gamut.
+    {
+        QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
+        fmt.setColorSpace(QColorSpace::SRgb);
+        QSurfaceFormat::setDefaultFormat(fmt);
+    }
+#endif
     MinNotesApplication app(argc, argv);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
