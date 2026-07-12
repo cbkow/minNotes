@@ -9,6 +9,7 @@
 #include "BlockModel.h"
 #include "Exporter.h"
 #include "../app/notes/doc_ink.h"
+#include <private/qzipreader_p.h>
 
 #include <QGuiApplication>
 #include <QDir>
@@ -563,6 +564,29 @@ static void testExportMarkdown() {
         CHECK(phtml.contains(QStringLiteral("position:absolute;left:"))
                   && phtml.count(QStringLiteral("class=\"ink\"")) >= 2,
               "text-block page ink exports as a positioned layer");
+        CHECK(phtml.contains(QStringLiteral("class=\"cmtcard\""))
+                  && phtml.contains(QStringLiteral("note body")),
+              "comment hover card rides inside the tinted range");
+
+        // --- DOCX: real Word parts, native comments, embedded image. ---
+        const QString docxPath = QDir::temp().filePath(QStringLiteral("mn_export_test.docx"));
+        QFile::remove(docxPath);
+        CHECK(ex.exportDocx(docxPath, true), "exportDocx wrote the file");
+        QZipReader zr(docxPath);
+        const QByteArray doc = zr.fileData(QStringLiteral("word/document.xml"));
+        const QByteArray cmts = zr.fileData(QStringLiteral("word/comments.xml"));
+        const QByteArray nums = zr.fileData(QStringLiteral("word/numbering.xml"));
+        CHECK(doc.contains("Title") && doc.contains("w:commentRangeStart"),
+              "document.xml carries content + native comment ranges");
+        CHECK(cmts.contains("note body"), "comments.xml carries the thread body");
+        CHECK(!nums.isEmpty() && doc.contains("w:numPr"),
+              "numbering part present and lists reference it");
+        CHECK(doc.contains("w:tbl") && doc.contains("w:gridCol"),
+              "table exports with a grid");
+        CHECK(!zr.fileData(QStringLiteral("word/media/image1.png")).isEmpty()
+                  || !zr.fileData(QStringLiteral("word/media/image1.jpeg")).isEmpty(),
+              "embedded media part present");
+        QFile::remove(docxPath);
         QFile::remove(imgPath);
     }
 

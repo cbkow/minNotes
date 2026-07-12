@@ -187,6 +187,7 @@ qt_add_shaders(minnotesapp "minnotes_player_shaders"
 
 target_link_libraries(minnotesapp PRIVATE
     Qt6::Core
+    Qt6::CorePrivate  # qzipwriter_p.h — the DOCX exporter's zip (the QCView recipe)
     Qt6::Gui
     Qt6::GuiPrivate   # rhi/qrhi.h for the VideoSurfaceItem QQuickRhiItem
     Qt6::Qml

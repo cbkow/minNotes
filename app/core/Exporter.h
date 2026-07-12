@@ -72,6 +72,12 @@ public:
     // Write a single self-contained `<path>.html` (images as data URIs).
     Q_INVOKABLE bool exportHtml(const QString& fileUrlOrPath,
                                 bool includeVideoNotes);
+    // Write a `.docx` (hand-rolled OOXML via Qt's private QZipWriter — the
+    // QCView recipe). Comments become NATIVE Word review comments; media
+    // ink bakes into the images (no layer toggle in Word); white-paper
+    // document styling, content-faithful rather than dark-theme-faithful.
+    Q_INVOKABLE bool exportDocx(const QString& fileUrlOrPath,
+                                bool includeVideoNotes);
 
 private:
     BlockModel* model_ = nullptr;

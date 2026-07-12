@@ -22,7 +22,7 @@ qt_add_executable(mn_regression_test
 )
 target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/core)
 target_link_libraries(mn_regression_test PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Sql Qt6::Network
+    Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
     minnotes::ffmpeg)              # MediaStore.cpp probes media via FFmpeg
 

@@ -824,11 +824,29 @@ QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
         }
         return {};
     };
-    auto closeTag = [](const Run& r) -> QString {
+    auto closeTag = [m](const Run& r) -> QString {
         switch (r.kind) {
-        case BlockModel::SpanComment:
-            return QStringLiteral("</span><sup class=\"cref\"><a href=\"#c%1\">%1</a></sup>")
+        case BlockModel::SpanComment: {
+            // The thread rides INSIDE the tinted range as a hover card (the
+            // app's margin card, exported); the section at the end remains
+            // for print and the superscript link.
+            QString card = QStringLiteral("<span class=\"cmtcard\">");
+            for (const QVariant& mv : m->commentMessages(r.u)) {
+                const QVariantMap msg = mv.toMap();
+                QString b = htmlEscape(msg.value(QStringLiteral("body")).toString());
+                b.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+                const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
+                card += QStringLiteral("<span class=\"cmsg\">%1%2</span>")
+                    .arg(b, created > 0
+                            ? QStringLiteral("<span class=\"stamp\">%1</span>")
+                                  .arg(QDateTime::fromMSecsSinceEpoch(created)
+                                           .toString(QStringLiteral("yyyy-MM-dd hh:mm")))
+                            : QString());
+            }
+            card += QStringLiteral("</span>");
+            return card + QStringLiteral("</span><sup class=\"cref\"><a href=\"#c%1\">%1</a></sup>")
                 .arg(r.note);
+        }
         case BlockModel::SpanLink:      return QStringLiteral("</a>");
         case BlockModel::SpanFgColor:
         case BlockModel::SpanHighlight: return QStringLiteral("</span>");
@@ -1209,7 +1227,17 @@ background:var(--bg)}
 td,th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word}
 th{background:#252525;color:var(--bright)}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright)}
-.cmt{background:rgba(1,137,241,.13)}
+.cmt{background:rgba(1,137,241,.13);position:relative}
+/* Hover thread card — the app's margin card, exported. Spans styled as
+   blocks (a real <p> inside a span would trip the parser). */
+.cmt .cmtcard{display:none;position:absolute;left:0;top:1.6em;z-index:30;
+width:300px;background:#202020;border:1px solid var(--border);
+padding:10px 12px;font-size:13px;font-style:normal;font-weight:400;
+line-height:1.5;color:var(--text)}
+.cmt:hover .cmtcard{display:block}
+.cmtcard .cmsg{display:block;margin-bottom:6px}
+.cmtcard .stamp{color:var(--subtle);font-size:11px;margin-left:8px}
+@media print{.cmt .cmtcard{display:none !important}}
 .cref a{font-size:.72em;color:var(--accent)}
 .ref{background:transparent;border:1px solid var(--border)}
 .ref img{display:block;width:100%}
@@ -1443,4 +1471,764 @@ bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes) 
     if (!f.open(QIODevice::WriteOnly)) return false;
     f.write(html.toUtf8());
     return f.commit();
+}
+
+// ============================ DOCX emitter =============================
+//
+// Hand-rolled OOXML via Qt's private QZipWriter — the QCView recipe,
+// grown from a flat note list to the full block walker. Comments become
+// NATIVE Word review comments (commentRangeStart/End + comments.xml).
+// White-paper document: content-faithful, not dark-theme-faithful.
+
+#include <QXmlStreamWriter>
+#include <private/qzipwriter_p.h>
+
+namespace {
+
+constexpr double kEmuPerPx = 9525.0;           // 96 dpi
+constexpr int    kDocxImgMaxPx = 624;          // 6.5in content width @96
+
+struct DocxCtx {
+    const BlockModel* m = nullptr;
+    Exporter::Options opt;
+    QList<QPair<QByteArray, QString>> images;  // bytes + extension, rIdImg<n>
+    QStringList links;                          // hyperlink targets, rIdLnk<n>
+    QStringList commentIds;                     // thread ids, w:id = index
+    int picId = 1;
+    int inkBaked = 0;
+};
+
+QByteArray docxXml(const std::function<void(QXmlStreamWriter&)>& fn) {
+    QByteArray ba;
+    QXmlStreamWriter w(&ba);
+    w.setAutoFormatting(false);
+    w.writeStartDocument(QStringLiteral("1.0"), true);
+    fn(w);
+    w.writeEndDocument();
+    return ba;
+}
+
+int docxAddImage(DocxCtx& c, const QByteArray& bytes, const QString& ext) {
+    c.images.append({bytes, ext});
+    return c.images.size();                     // 1-based rel index
+}
+int docxAddImage(DocxCtx& c, const QImage& img) {
+    QByteArray png;
+    QBuffer buf(&png);
+    buf.open(QIODevice::WriteOnly);
+    img.save(&buf, "PNG");
+    return docxAddImage(c, png, QStringLiteral("png"));
+}
+
+// Transplanted from QCView: the full inline-drawing XML for one image.
+void docxDrawing(QXmlStreamWriter& w, const QString& relId,
+                 int widthEmu, int heightEmu, int picId) {
+    w.writeStartElement(QStringLiteral("w:drawing"));
+    w.writeStartElement(QStringLiteral("wp:inline"));
+    for (const char* a : {"distT", "distB", "distL", "distR"})
+        w.writeAttribute(QLatin1String(a), QStringLiteral("0"));
+    w.writeStartElement(QStringLiteral("wp:extent"));
+    w.writeAttribute(QStringLiteral("cx"), QString::number(widthEmu));
+    w.writeAttribute(QStringLiteral("cy"), QString::number(heightEmu));
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("wp:docPr"));
+    w.writeAttribute(QStringLiteral("id"), QString::number(picId));
+    w.writeAttribute(QStringLiteral("name"), QStringLiteral("Picture %1").arg(picId));
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("a:graphic"));
+    w.writeAttribute(QStringLiteral("xmlns:a"),
+        QStringLiteral("http://schemas.openxmlformats.org/drawingml/2006/main"));
+    w.writeStartElement(QStringLiteral("a:graphicData"));
+    w.writeAttribute(QStringLiteral("uri"),
+        QStringLiteral("http://schemas.openxmlformats.org/drawingml/2006/picture"));
+    w.writeStartElement(QStringLiteral("pic:pic"));
+    w.writeAttribute(QStringLiteral("xmlns:pic"),
+        QStringLiteral("http://schemas.openxmlformats.org/drawingml/2006/picture"));
+    w.writeStartElement(QStringLiteral("pic:nvPicPr"));
+    w.writeStartElement(QStringLiteral("pic:cNvPr"));
+    w.writeAttribute(QStringLiteral("id"), QString::number(picId));
+    w.writeAttribute(QStringLiteral("name"), QStringLiteral("image%1").arg(picId));
+    w.writeEndElement();
+    w.writeEmptyElement(QStringLiteral("pic:cNvPicPr"));
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("pic:blipFill"));
+    w.writeStartElement(QStringLiteral("a:blip"));
+    w.writeAttribute(QStringLiteral("xmlns:r"),
+        QStringLiteral("http://schemas.openxmlformats.org/officeDocument/2006/relationships"));
+    w.writeAttribute(QStringLiteral("r:embed"), relId);
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("a:stretch"));
+    w.writeEmptyElement(QStringLiteral("a:fillRect"));
+    w.writeEndElement();
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("pic:spPr"));
+    w.writeStartElement(QStringLiteral("a:xfrm"));
+    w.writeStartElement(QStringLiteral("a:off"));
+    w.writeAttribute(QStringLiteral("x"), QStringLiteral("0"));
+    w.writeAttribute(QStringLiteral("y"), QStringLiteral("0"));
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("a:ext"));
+    w.writeAttribute(QStringLiteral("cx"), QString::number(widthEmu));
+    w.writeAttribute(QStringLiteral("cy"), QString::number(heightEmu));
+    w.writeEndElement();
+    w.writeEndElement();
+    w.writeStartElement(QStringLiteral("a:prstGeom"));
+    w.writeAttribute(QStringLiteral("prst"), QStringLiteral("rect"));
+    w.writeEmptyElement(QStringLiteral("a:avLst"));
+    w.writeEndElement();
+    w.writeEndElement();
+    w.writeEndElement();   // pic:pic
+    w.writeEndElement();   // a:graphicData
+    w.writeEndElement();   // a:graphic
+    w.writeEndElement();   // wp:inline
+    w.writeEndElement();   // w:drawing
+}
+
+// One paragraph holding one image, display width capped to the page.
+void docxImagePara(DocxCtx& c, QXmlStreamWriter& w, int relIdx,
+                   int pxW, int pxH) {
+    if (pxW <= 0 || pxH <= 0) return;
+    double dispW = std::min(pxW, kDocxImgMaxPx);
+    const double dispH = dispW * pxH / pxW;
+    w.writeStartElement(QStringLiteral("w:p"));
+    w.writeStartElement(QStringLiteral("w:r"));
+    docxDrawing(w, QStringLiteral("rIdImg%1").arg(relIdx),
+                int(dispW * kEmuPerPx), int(dispH * kEmuPerPx), c.picId++);
+    w.writeEndElement();
+    w.writeEndElement();
+}
+
+struct DocxRunProps {
+    bool b = false, i = false, strike = false, u = false, code = false;
+    QString color, highlight;                   // "#RRGGBB" or ""
+    int halfPtSize = 0;                          // 0 = default
+};
+
+void docxRunProps(QXmlStreamWriter& w, const DocxRunProps& rp) {
+    if (!rp.b && !rp.i && !rp.strike && !rp.u && !rp.code
+        && rp.color.isEmpty() && rp.highlight.isEmpty() && rp.halfPtSize == 0)
+        return;
+    w.writeStartElement(QStringLiteral("w:rPr"));
+    if (rp.code) {
+        w.writeStartElement(QStringLiteral("w:rFonts"));
+        w.writeAttribute(QStringLiteral("w:ascii"), QStringLiteral("Courier New"));
+        w.writeAttribute(QStringLiteral("w:hAnsi"), QStringLiteral("Courier New"));
+        w.writeEndElement();
+    }
+    if (rp.b) w.writeEmptyElement(QStringLiteral("w:b"));
+    if (rp.i) w.writeEmptyElement(QStringLiteral("w:i"));
+    if (rp.strike) w.writeEmptyElement(QStringLiteral("w:strike"));
+    if (rp.u) {
+        w.writeStartElement(QStringLiteral("w:u"));
+        w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("single"));
+        w.writeEndElement();
+    }
+    if (!rp.color.isEmpty()) {
+        w.writeStartElement(QStringLiteral("w:color"));
+        w.writeAttribute(QStringLiteral("w:val"), QString(rp.color).remove(QLatin1Char('#')).toUpper());
+        w.writeEndElement();
+    }
+    if (!rp.highlight.isEmpty() || rp.code) {
+        w.writeStartElement(QStringLiteral("w:shd"));
+        w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("clear"));
+        w.writeAttribute(QStringLiteral("w:fill"),
+            rp.highlight.isEmpty() ? QStringLiteral("EFEFEF")
+                                   : QString(rp.highlight).remove(QLatin1Char('#')).toUpper());
+        w.writeEndElement();
+    }
+    if (rp.halfPtSize > 0) {
+        w.writeStartElement(QStringLiteral("w:sz"));
+        w.writeAttribute(QStringLiteral("w:val"), QString::number(rp.halfPtSize));
+        w.writeEndElement();
+    }
+    w.writeEndElement();
+}
+
+void docxTextRun(QXmlStreamWriter& w, const QString& text, const DocxRunProps& rp) {
+    if (text.isEmpty()) return;
+    w.writeStartElement(QStringLiteral("w:r"));
+    docxRunProps(w, rp);
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (int i = 0; i < lines.size(); ++i) {
+        if (i > 0) w.writeEmptyElement(QStringLiteral("w:br"));
+        w.writeStartElement(QStringLiteral("w:t"));
+        w.writeAttribute(QStringLiteral("xml:space"), QStringLiteral("preserve"));
+        w.writeCharacters(lines.at(i));
+        w.writeEndElement();
+    }
+    w.writeEndElement();
+}
+
+// One block's text + spans → OOXML runs. Every run carries its FULL
+// properties, so overlapping spans need no nesting stack — only comment
+// range markers and hyperlink wrappers have element structure.
+void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
+              const DocxRunProps& base) {
+    const BlockModel* m = c.m;
+    const QString text = m->contentForRow(row);
+    const int len = text.size();
+
+    struct Run { int s, e; uint8_t kind; QString u; };
+    std::vector<Run> runs;
+    std::map<int, QStringList> cmtStart, cmtEnd;   // pos → thread ids
+    for (const QVariant& v : m->spansForRow(row)) {
+        const QVariantMap sp = v.toMap();
+        const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
+        const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
+        const int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
+        const QString u = sp.value(QStringLiteral("u")).toString();
+        if (k == BlockModel::SpanComment) {
+            if (e >= s) { cmtStart[s].append(u); cmtEnd[e].append(u); }
+            continue;
+        }
+        if (s >= e) continue;
+        runs.push_back({s, e, k, u});
+    }
+
+    std::set<int> bounds{0, len};
+    for (const Run& r : runs) { bounds.insert(r.s); bounds.insert(r.e); }
+    for (const auto& kv : cmtStart) bounds.insert(kv.first);
+    for (const auto& kv : cmtEnd) bounds.insert(kv.first);
+
+    auto cmtNum = [&](const QString& id) {
+        int i = c.commentIds.indexOf(id);
+        if (i < 0) { c.commentIds.append(id); i = c.commentIds.size() - 1; }
+        return i;
+    };
+    auto markers = [&](int pos) {
+        if (const auto it = cmtEnd.find(pos); it != cmtEnd.end())
+            for (const QString& id : it->second) {
+                const int n = cmtNum(id);
+                w.writeStartElement(QStringLiteral("w:commentRangeEnd"));
+                w.writeAttribute(QStringLiteral("w:id"), QString::number(n));
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:r"));
+                w.writeStartElement(QStringLiteral("w:commentReference"));
+                w.writeAttribute(QStringLiteral("w:id"), QString::number(n));
+                w.writeEndElement();
+                w.writeEndElement();
+            }
+        if (const auto it = cmtStart.find(pos); it != cmtStart.end())
+            for (const QString& id : it->second) {
+                w.writeStartElement(QStringLiteral("w:commentRangeStart"));
+                w.writeAttribute(QStringLiteral("w:id"), QString::number(cmtNum(id)));
+                w.writeEndElement();
+            }
+    };
+
+    QString openLink;   // active hyperlink target ("" = none)
+    auto setLink = [&](const QString& target) {
+        if (target == openLink) return;
+        if (!openLink.isEmpty()) w.writeEndElement();   // </w:hyperlink>
+        openLink = target;
+        if (!openLink.isEmpty()) {
+            int i = c.links.indexOf(openLink);
+            if (i < 0) { c.links.append(openLink); i = c.links.size() - 1; }
+            w.writeStartElement(QStringLiteral("w:hyperlink"));
+            w.writeAttribute(QStringLiteral("r:id"), QStringLiteral("rIdLnk%1").arg(i + 1));
+        }
+    };
+
+    auto it = bounds.begin();
+    int prev = *it;
+    for (++it; it != bounds.end(); ++it) {
+        const int a = prev, b = *it;
+        prev = *it;
+        if (a >= b) continue;
+        markers(a);
+        DocxRunProps rp = base;
+        QString link;
+        for (const Run& r : runs) {
+            if (!(r.s <= a && r.e >= b)) continue;
+            switch (r.kind) {
+            case BlockModel::SpanBold:      rp.b = true; break;
+            case BlockModel::SpanItalic:    rp.i = true; break;
+            case BlockModel::SpanCode:      rp.code = true; break;
+            case BlockModel::SpanStrike:    rp.strike = true; break;
+            case BlockModel::SpanUnderline: rp.u = true; break;
+            case BlockModel::SpanLink:      link = r.u; rp.color = QStringLiteral("#0563C1"); rp.u = true; break;
+            case BlockModel::SpanFgColor:   rp.color = r.u; break;
+            case BlockModel::SpanHighlight: rp.highlight = r.u; break;
+            default: break;
+            }
+        }
+        setLink(link);
+        docxTextRun(w, text.mid(a, b - a), rp);
+    }
+    setLink(QString());
+    markers(len);
+}
+
+void docxPara(DocxCtx& c, QXmlStreamWriter& w, int row, const DocxRunProps& base,
+              const std::function<void(QXmlStreamWriter&)>& pPr = nullptr) {
+    w.writeStartElement(QStringLiteral("w:p"));
+    if (pPr) { w.writeStartElement(QStringLiteral("w:pPr")); pPr(w); w.writeEndElement(); }
+    docxRuns(c, w, row, base);
+    w.writeEndElement();
+}
+
+void docxPlainPara(QXmlStreamWriter& w, const QString& text, const DocxRunProps& rp,
+                   const std::function<void(QXmlStreamWriter&)>& pPr = nullptr) {
+    w.writeStartElement(QStringLiteral("w:p"));
+    if (pPr) { w.writeStartElement(QStringLiteral("w:pPr")); pPr(w); w.writeEndElement(); }
+    docxTextRun(w, text, rp);
+    w.writeEndElement();
+}
+
+} // namespace
+
+namespace {
+
+// ---- Whole-document writers ----
+
+void docxHeading(DocxCtx& c, QXmlStreamWriter& w, int row, int level) {
+    static const int half[7] = {0, 36, 32, 28, 26, 24, 22};
+    DocxRunProps rp;
+    rp.b = true;
+    rp.halfPtSize = half[std::clamp(level, 1, 6)];
+    docxPara(c, w, row, rp);
+}
+
+void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
+    const BlockModel* m = c.m;
+    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    if (rows <= 0 || cols <= 0) return;
+    w.writeStartElement(QStringLiteral("w:tbl"));
+    w.writeStartElement(QStringLiteral("w:tblPr"));
+    w.writeStartElement(QStringLiteral("w:tblBorders"));
+    for (const char* side : {"top", "left", "bottom", "right", "insideH", "insideV"}) {
+        w.writeStartElement(QStringLiteral("w:") + QLatin1String(side));
+        w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("single"));
+        w.writeAttribute(QStringLiteral("w:sz"), QStringLiteral("4"));
+        w.writeAttribute(QStringLiteral("w:color"), QStringLiteral("999999"));
+        w.writeEndElement();
+    }
+    w.writeEndElement();
+    w.writeEndElement();
+    // Authored column widths carry through (px → dxa ≈ ×15); auto = 2000.
+    w.writeStartElement(QStringLiteral("w:tblGrid"));
+    for (int cix = 0; cix < cols; ++cix) {
+        const int px = m->tableColWidth(row, cix);
+        w.writeStartElement(QStringLiteral("w:gridCol"));
+        w.writeAttribute(QStringLiteral("w:w"), QString::number(px > 0 ? px * 15 : 2000));
+        w.writeEndElement();
+    }
+    w.writeEndElement();
+    const int hdr = m->tableHeaderRows(row);
+    for (int r = 0; r < rows; ++r) {
+        w.writeStartElement(QStringLiteral("w:tr"));
+        for (int cix = 0; cix < cols; ++cix) {
+            w.writeStartElement(QStringLiteral("w:tc"));
+            w.writeStartElement(QStringLiteral("w:tcPr"));
+            const QString bg = m->tableCellBg(row, r, cix);
+            if (!bg.isEmpty() || r < hdr) {
+                w.writeStartElement(QStringLiteral("w:shd"));
+                w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("clear"));
+                w.writeAttribute(QStringLiteral("w:fill"),
+                    bg.isEmpty() ? QStringLiteral("EDEDED")
+                                 : QString(bg).remove(QLatin1Char('#')).toUpper());
+                w.writeEndElement();
+            }
+            w.writeEndElement();
+            const int kind = m->tableColumnKind(row, cix);
+            QString cell;
+            if (kind == 2) {
+                switch (m->tableCellCheck(row, r, cix)) {
+                case 1:  cell = QStringLiteral("◐"); break;
+                case 2:  cell = QStringLiteral("☑"); break;
+                default: cell = QStringLiteral("☐"); break;
+                }
+            } else if (kind == 1) {
+                cell = m->tableCellChoiceLabel(row, r, cix);
+            } else {
+                cell = m->tableCell(row, r, cix);
+            }
+            DocxRunProps rp;
+            rp.b = (r < hdr);
+            const QString fg = m->tableCellFg(row, r, cix);
+            if (!fg.isEmpty()) rp.color = fg;
+            docxPlainPara(w, cell, rp);
+            w.writeEndElement();   // w:tc
+        }
+        w.writeEndElement();       // w:tr
+    }
+    w.writeEndElement();           // w:tbl
+    docxPlainPara(w, QString(), {});   // spacer after the table
+}
+
+void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
+    const BlockModel* m = c.m;
+    const QString kind = m->mediaKind(row);
+    const QString path = m->mediaLocalPath(row);
+    const QString name = QFileInfo(path).fileName();
+    DocxRunProps mono;
+    mono.code = true;
+    mono.halfPtSize = 18;   // 9pt paths
+
+    auto bakeInk = [&](QImage img) {
+        const QImage ink = renderMediaInk(m, row, img.size());
+        if (!ink.isNull()) {
+            QPainter p(&img);
+            p.drawImage(0, 0, ink);
+            p.end();
+            ++c.inkBaked;
+        }
+        return img;
+    };
+
+    if (kind == QLatin1String("sketch")) {
+        const QImage img = renderSketch(m, row);
+        if (!img.isNull())
+            docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());
+        return;
+    }
+    if (kind == QLatin1String("image")) {
+        QImage img(path);
+        if (!img.isNull()) {
+            const bool hasInk = mn::docInkHasStrokes(m->inkForRow(row));
+            if (hasInk) {
+                img = bakeInk(img);
+                docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());
+            } else {
+                // Untouched images ship their original bytes (no PNG bloat).
+                QFile f(path);
+                const QString ext = QFileInfo(path).suffix().toLower();
+                if (f.open(QIODevice::ReadOnly)
+                    && (ext == QLatin1String("png") || ext == QLatin1String("jpg")
+                        || ext == QLatin1String("jpeg"))) {
+                    docxImagePara(c, w,
+                        docxAddImage(c, f.readAll(),
+                                     ext == QLatin1String("png") ? QStringLiteral("png")
+                                                                 : QStringLiteral("jpeg")),
+                        img.width(), img.height());
+                } else {
+                    docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());
+                }
+            }
+        }
+        return;
+    }
+
+    // video / pdf / file → poster (ink baked) + reference paragraphs.
+    QImage poster;
+    QString meta;
+    if (kind == QLatin1String("video")) {
+        poster = MediaStore::extractFrame(path, 0, 1280);
+        meta = QStringLiteral("%1×%2 · %3 fps · %4 · %5 frames")
+                   .arg(m->mediaW(row)).arg(m->mediaH(row))
+                   .arg(m->mediaFps(row), 0, 'g', 5)
+                   .arg(humanDuration(m->mediaDurationMs(row)))
+                   .arg(m->mediaFrames(row));
+    } else if (kind == QLatin1String("pdf")) {
+        poster = MediaStore::renderPdfPage(path, 0, 1280);
+        meta = QStringLiteral("%1 pages").arg(m->mediaPdfPages(row));
+    } else {
+        const QFileInfo fi(path);
+        meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
+    }
+    if (!poster.isNull()) {
+        poster = bakeInk(poster);
+        docxImagePara(c, w, docxAddImage(c, poster), poster.width(), poster.height());
+    }
+    DocxRunProps bold; bold.b = true;
+    docxPlainPara(w, name, bold);
+    docxPlainPara(w, path, mono);
+    docxPlainPara(w, kind + QStringLiteral(" · ") + meta, mono);
+
+    if (kind == QLatin1String("video") && c.opt.includeVideoNotes) {
+        std::vector<qcv::AnnotationNote> notes;
+        if (qcv::annotation_io::loadNotes(notes, path) && !notes.empty()) {
+            DocxRunProps h; h.b = true;
+            docxPlainPara(w, QStringLiteral("Notes (%1)").arg(notes.size()), h);
+            const QString imagesDir = qcv::annotation_io::getImagesFolder(path);
+            for (const qcv::AnnotationNote& n : notes) {
+                const QString cleanName = qcv::annotation_io::generateImageFilename(n.timecode);
+                QString annName = cleanName;
+                annName.replace(QStringLiteral(".png"), QStringLiteral("_annotated.png"));
+                QImage thumb;
+                if (QFileInfo::exists(imagesDir + QLatin1Char('/') + annName))
+                    thumb.load(imagesDir + QLatin1Char('/') + annName);
+                else if (QFileInfo::exists(imagesDir + QLatin1Char('/') + cleanName)) {
+                    thumb.load(imagesDir + QLatin1Char('/') + cleanName);
+                    if (qcv::AnnotationSerializer::hasStrokes(n.annotation_data)) {
+                        const QImage composed = qcv::renderNoteThumbnail(
+                            thumb, qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data), 1, 1);
+                        if (!composed.isNull()) thumb = composed;
+                    }
+                }
+                if (!thumb.isNull())
+                    docxImagePara(c, w, docxAddImage(c, thumb), thumb.width(), thumb.height());
+                QString line = n.timecode;
+                if (!n.text.isEmpty()) line += QStringLiteral(" — ") + n.text;
+                if (n.addressed) line += QStringLiteral(" — ✓ addressed");
+                docxPlainPara(w, line, mono);
+            }
+        }
+    }
+}
+
+QByteArray docxDocumentXml(DocxCtx& c) {
+    return docxXml([&](QXmlStreamWriter& w) {
+        const BlockModel* m = c.m;
+        w.writeStartElement(QStringLiteral("w:document"));
+        w.writeAttribute(QStringLiteral("xmlns:w"),
+            QStringLiteral("http://schemas.openxmlformats.org/wordprocessingml/2006/main"));
+        w.writeAttribute(QStringLiteral("xmlns:r"),
+            QStringLiteral("http://schemas.openxmlformats.org/officeDocument/2006/relationships"));
+        w.writeAttribute(QStringLiteral("xmlns:wp"),
+            QStringLiteral("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"));
+        w.writeStartElement(QStringLiteral("w:body"));
+
+        const int count = m->rowCountQml();
+        for (int row = 0; row < count; ++row) {
+            const int type = m->typeForRow(row);
+            switch (type) {
+            case BlockModel::Heading:
+                docxHeading(c, w, row, m->levelForRow(row));
+                break;
+            case BlockModel::Quote: {
+                DocxRunProps rp; rp.i = true;
+                docxPara(c, w, row, rp, [](QXmlStreamWriter& pw) {
+                    pw.writeStartElement(QStringLiteral("w:ind"));
+                    pw.writeAttribute(QStringLiteral("w:left"), QStringLiteral("720"));
+                    pw.writeEndElement();
+                });
+                break;
+            }
+            case BlockModel::Code: {
+                DocxRunProps rp; rp.code = true; rp.halfPtSize = 18;
+                docxPlainPara(w, m->contentForRow(row), rp);
+                break;
+            }
+            case BlockModel::ListItem:
+            case BlockModel::TaskListItem:
+            case BlockModel::OrderedListItem: {
+                const int depth = std::clamp(m->depthForRow(row), 0, BlockModel::kMaxListDepth);
+                const int numId = (type == BlockModel::OrderedListItem) ? 2 : 1;
+                w.writeStartElement(QStringLiteral("w:p"));
+                w.writeStartElement(QStringLiteral("w:pPr"));
+                w.writeStartElement(QStringLiteral("w:numPr"));
+                w.writeStartElement(QStringLiteral("w:ilvl"));
+                w.writeAttribute(QStringLiteral("w:val"), QString::number(depth));
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:numId"));
+                w.writeAttribute(QStringLiteral("w:val"), QString::number(numId));
+                w.writeEndElement();
+                w.writeEndElement();
+                w.writeEndElement();
+                if (type == BlockModel::TaskListItem) {
+                    QString g = QStringLiteral("☐ ");
+                    if (m->taskStateForRow(row) == BlockModel::TaskDoing) g = QStringLiteral("◐ ");
+                    else if (m->taskStateForRow(row) == BlockModel::TaskDone) g = QStringLiteral("☑ ");
+                    docxTextRun(w, g, {});
+                }
+                docxRuns(c, w, row, {});
+                w.writeEndElement();
+                break;
+            }
+            case BlockModel::Divider:
+                docxPlainPara(w, QString(), {}, [](QXmlStreamWriter& pw) {
+                    pw.writeStartElement(QStringLiteral("w:pBdr"));
+                    pw.writeStartElement(QStringLiteral("w:bottom"));
+                    pw.writeAttribute(QStringLiteral("w:val"), QStringLiteral("single"));
+                    pw.writeAttribute(QStringLiteral("w:sz"), QStringLiteral("6"));
+                    pw.writeAttribute(QStringLiteral("w:color"), QStringLiteral("999999"));
+                    pw.writeEndElement();
+                    pw.writeEndElement();
+                });
+                break;
+            case BlockModel::Table:
+                docxTable(c, w, row);
+                break;
+            case BlockModel::Media:
+                docxMedia(c, w, row);
+                break;
+            case BlockModel::Paragraph:
+            default:
+                docxPara(c, w, row, {});
+                break;
+            }
+        }
+        w.writeEndElement();   // w:body
+        w.writeEndElement();   // w:document
+    });
+}
+
+QByteArray docxCommentsXml(const DocxCtx& c) {
+    return docxXml([&](QXmlStreamWriter& w) {
+        w.writeStartElement(QStringLiteral("w:comments"));
+        w.writeAttribute(QStringLiteral("xmlns:w"),
+            QStringLiteral("http://schemas.openxmlformats.org/wordprocessingml/2006/main"));
+        const QString author =
+            qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME", "minNotes"));
+        const QVariantList threads = c.m->commentThreads();
+        for (int i = 0; i < c.commentIds.size(); ++i) {
+            const QString id = c.commentIds.at(i);
+            bool resolved = false;
+            for (const QVariant& tv : threads) {
+                const QVariantMap t = tv.toMap();
+                if (t.value(QStringLiteral("id")).toString() == id) {
+                    resolved = t.value(QStringLiteral("resolved")).toBool();
+                    break;
+                }
+            }
+            w.writeStartElement(QStringLiteral("w:comment"));
+            w.writeAttribute(QStringLiteral("w:id"), QString::number(i));
+            w.writeAttribute(QStringLiteral("w:author"), author);
+            const QVariantList msgs = c.m->commentMessages(id);
+            if (!msgs.isEmpty()) {
+                const qint64 created = msgs.first().toMap()
+                                           .value(QStringLiteral("created")).toLongLong();
+                if (created > 0)
+                    w.writeAttribute(QStringLiteral("w:date"),
+                        QDateTime::fromMSecsSinceEpoch(created).toString(Qt::ISODate));
+            }
+            if (resolved) docxPlainPara(w, QStringLiteral("(resolved)"), {});
+            for (const QVariant& mv : msgs)
+                docxPlainPara(w, mv.toMap().value(QStringLiteral("body")).toString(), {});
+            w.writeEndElement();
+        }
+        w.writeEndElement();
+    });
+}
+
+QByteArray docxNumberingXml() {
+    return docxXml([](QXmlStreamWriter& w) {
+        w.writeStartElement(QStringLiteral("w:numbering"));
+        w.writeAttribute(QStringLiteral("xmlns:w"),
+            QStringLiteral("http://schemas.openxmlformats.org/wordprocessingml/2006/main"));
+        for (int abs = 0; abs < 2; ++abs) {
+            w.writeStartElement(QStringLiteral("w:abstractNum"));
+            w.writeAttribute(QStringLiteral("w:abstractNumId"), QString::number(abs));
+            for (int lvl = 0; lvl < 9; ++lvl) {
+                w.writeStartElement(QStringLiteral("w:lvl"));
+                w.writeAttribute(QStringLiteral("w:ilvl"), QString::number(lvl));
+                w.writeStartElement(QStringLiteral("w:numFmt"));
+                w.writeAttribute(QStringLiteral("w:val"),
+                    abs == 0 ? QStringLiteral("bullet") : QStringLiteral("decimal"));
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:lvlText"));
+                w.writeAttribute(QStringLiteral("w:val"),
+                    abs == 0 ? QStringLiteral("•") : QStringLiteral("%%%1.").arg(lvl + 1));
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:pPr"));
+                w.writeStartElement(QStringLiteral("w:ind"));
+                w.writeAttribute(QStringLiteral("w:left"), QString::number(720 * (lvl + 1)));
+                w.writeAttribute(QStringLiteral("w:hanging"), QStringLiteral("360"));
+                w.writeEndElement();
+                w.writeEndElement();
+                w.writeEndElement();
+            }
+            w.writeEndElement();
+        }
+        for (int n = 1; n <= 2; ++n) {
+            w.writeStartElement(QStringLiteral("w:num"));
+            w.writeAttribute(QStringLiteral("w:numId"), QString::number(n));
+            w.writeStartElement(QStringLiteral("w:abstractNumId"));
+            w.writeAttribute(QStringLiteral("w:val"), QString::number(n - 1));
+            w.writeEndElement();
+            w.writeEndElement();
+        }
+        w.writeEndElement();
+    });
+}
+
+} // namespace
+
+bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes) {
+    if (!model_) return false;
+    const QString outPath = localPathOf(fileUrlOrPath);
+    if (outPath.isEmpty()) return false;
+
+    DocxCtx c;
+    c.m = model_;
+    c.opt.includeVideoNotes = includeVideoNotes;
+    const QByteArray documentXml = docxDocumentXml(c);
+
+    const QByteArray contentTypes = docxXml([&](QXmlStreamWriter& w) {
+        w.writeStartElement(QStringLiteral("Types"));
+        w.writeAttribute(QStringLiteral("xmlns"),
+            QStringLiteral("http://schemas.openxmlformats.org/package/2006/content-types"));
+        auto def = [&](const char* ext, const char* type) {
+            w.writeStartElement(QStringLiteral("Default"));
+            w.writeAttribute(QStringLiteral("Extension"), QLatin1String(ext));
+            w.writeAttribute(QStringLiteral("ContentType"), QLatin1String(type));
+            w.writeEndElement();
+        };
+        def("rels", "application/vnd.openxmlformats-package.relationships+xml");
+        def("xml", "application/xml");
+        def("png", "image/png");
+        def("jpeg", "image/jpeg");
+        auto ovr = [&](const char* part, const char* type) {
+            w.writeStartElement(QStringLiteral("Override"));
+            w.writeAttribute(QStringLiteral("PartName"), QLatin1String(part));
+            w.writeAttribute(QStringLiteral("ContentType"), QLatin1String(type));
+            w.writeEndElement();
+        };
+        ovr("/word/document.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml");
+        ovr("/word/numbering.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml");
+        if (!c.commentIds.isEmpty())
+            ovr("/word/comments.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml");
+        w.writeEndElement();
+    });
+
+    const QByteArray pkgRels = docxXml([](QXmlStreamWriter& w) {
+        w.writeStartElement(QStringLiteral("Relationships"));
+        w.writeAttribute(QStringLiteral("xmlns"),
+            QStringLiteral("http://schemas.openxmlformats.org/package/2006/relationships"));
+        w.writeStartElement(QStringLiteral("Relationship"));
+        w.writeAttribute(QStringLiteral("Id"), QStringLiteral("rId1"));
+        w.writeAttribute(QStringLiteral("Type"),
+            QStringLiteral("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"));
+        w.writeAttribute(QStringLiteral("Target"), QStringLiteral("word/document.xml"));
+        w.writeEndElement();
+        w.writeEndElement();
+    });
+
+    const QByteArray docRels = docxXml([&](QXmlStreamWriter& w) {
+        w.writeStartElement(QStringLiteral("Relationships"));
+        w.writeAttribute(QStringLiteral("xmlns"),
+            QStringLiteral("http://schemas.openxmlformats.org/package/2006/relationships"));
+        auto rel = [&](const QString& id, const char* type, const QString& target,
+                       bool external = false) {
+            w.writeStartElement(QStringLiteral("Relationship"));
+            w.writeAttribute(QStringLiteral("Id"), id);
+            w.writeAttribute(QStringLiteral("Type"),
+                QStringLiteral("http://schemas.openxmlformats.org/officeDocument/2006/relationships/")
+                    + QLatin1String(type));
+            w.writeAttribute(QStringLiteral("Target"), target);
+            if (external)
+                w.writeAttribute(QStringLiteral("TargetMode"), QStringLiteral("External"));
+            w.writeEndElement();
+        };
+        rel(QStringLiteral("rIdNum"), "numbering", QStringLiteral("numbering.xml"));
+        if (!c.commentIds.isEmpty())
+            rel(QStringLiteral("rIdCmt"), "comments", QStringLiteral("comments.xml"));
+        for (int i = 0; i < c.images.size(); ++i)
+            rel(QStringLiteral("rIdImg%1").arg(i + 1), "image",
+                QStringLiteral("media/image%1.%2").arg(i + 1).arg(c.images.at(i).second));
+        for (int i = 0; i < c.links.size(); ++i)
+            rel(QStringLiteral("rIdLnk%1").arg(i + 1), "hyperlink", c.links.at(i), true);
+        w.writeEndElement();
+    });
+
+    QZipWriter zip(outPath);
+    zip.setCompressionPolicy(QZipWriter::AlwaysCompress);
+    if (zip.status() != QZipWriter::NoError) return false;
+    zip.addFile(QStringLiteral("[Content_Types].xml"), contentTypes);
+    zip.addFile(QStringLiteral("_rels/.rels"), pkgRels);
+    zip.addFile(QStringLiteral("word/document.xml"), documentXml);
+    zip.addFile(QStringLiteral("word/_rels/document.xml.rels"), docRels);
+    zip.addFile(QStringLiteral("word/numbering.xml"), docxNumberingXml());
+    if (!c.commentIds.isEmpty())
+        zip.addFile(QStringLiteral("word/comments.xml"), docxCommentsXml(c));
+    for (int i = 0; i < c.images.size(); ++i)
+        zip.addFile(QStringLiteral("word/media/image%1.%2")
+                        .arg(i + 1).arg(c.images.at(i).second),
+                    c.images.at(i).first);
+    zip.close();
+    return zip.status() == QZipWriter::NoError;
 }
