@@ -27,7 +27,7 @@ Rectangle {
     visible: ids.length > 0 || pdfIds.length > 0 || videoIds.length > 0 || sketchIds.length > 0
     readonly property int rowH: 34
     height: visible ? rowH : 0
-    color: Theme.colors.surface
+    color: Theme.colors.surfaceRaised   // sidebar tone — the item-tab strip is chrome, like the Inspector
 
     // A divider line along the top edge.
     Rectangle { width: parent.width; height: 1; color: Theme.colors.border; z: 1 }

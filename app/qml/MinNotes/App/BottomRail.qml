@@ -9,7 +9,7 @@ Rectangle {
     required property var editor       // for returning focus after an action
 
     height: 28
-    color: Theme.colors.surface
+    color: Theme.colors.surfaceRaised   // sidebar tone — the bottom strips read as chrome, like the Inspector
 
     readonly property string docPath: blockModel.documentPath
     readonly property string fileName: docPath.length ? docPath.substring(docPath.lastIndexOf("/") + 1) : "untitled"

@@ -33,15 +33,10 @@ FocusScope {
     // Media is known-geometry: tell the model the width it derives media heights
     // from, and re-tell it on resize so reserved height stays exact (no jump).
     onPageWidthChanged: blockModel.setContentWidth(pageWidth)
-    // While the editor surface is actively resizing (window drag, inspector
-    // slide), media SUSPENDS its texture render entirely — an accent-bordered
-    // placeholder holds the reserved geometry instead. Sidesteps the live-resize
-    // rendering glitch without touching the (correct) live layout; the real
-    // render returns 200ms after the size stops moving.
-    property bool windowResizing: false
-    onWidthChanged: { windowResizing = true; resizeSettle.restart() }
-    onHeightChanged: { windowResizing = true; resizeSettle.restart() }
-    Timer { id: resizeSettle; interval: 200; onTriggered: root.windowResizing = false }
+    // (The resize-suspension machinery is GONE: it existed because the page
+    // SQUEEZED on window resize, reflowing media live. The measure is a fixed
+    // 760 now — a window resize changes only the viewport, media geometry
+    // never moves, so there is nothing to suspend. 2026-07-12.)
     // Horizontal reach past the page for margin ink (each side, ink mode only).
     readonly property real inkGutter: 120
     // The document's CONTENT width: the viewport, grown to hold the widest
@@ -2279,7 +2274,7 @@ FocusScope {
                                        + (isVideoMedia ? root.videoTransportH
                                                        : isPdfMedia ? root.pdfNavH : 0)
                       : te.btype === 6 ? 12 + 18                       // divider
-                      : te.btype === 7 ? 26 + tableHost.implicitHeight // table: 6 top + 20 bottom (clears the +row button, which sits 2px below the table and is 14px tall)
+                      : te.btype === 7 ? 64 + tableHost.implicitHeight // table: 32 top + 32 bottom (user-tuned; bottom clears the 14px +row button)
                       : (te.btype === 2 ? 24 : 12) + te.height   // te.height = lineCount*lineH (even)
 
                 // Media is known-geometry: the MODEL derives its height from the
@@ -2448,7 +2443,6 @@ FocusScope {
                     id: mediaHost
                     visible: cell.active && cell.isMedia
                     active: cell.active && cell.isMedia
-                    suspended: root.windowResizing
                     logicalRow: cell.logicalRow
                     x: cell.colLeft; y: 6
                     // pageWidth directly (NOT cell.measure → te.btype → layoutRevision):
@@ -2488,7 +2482,6 @@ FocusScope {
 
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
                     id: tableHost
-                    suspended: root.windowResizing
                     visible: cell.active && te.btype === 7
                     logicalRow: cell.logicalRow
                     active: cell.active && te.btype === 7
@@ -2498,7 +2491,8 @@ FocusScope {
                     uncapped: true
                     maxWidth: root.pageWidth
                     width: implicitWidth
-                    x: cell.colLeft; y: 6
+                    // 32px top margin (user-tuned live, symmetric with the bottom).
+                    x: cell.colLeft; y: 32
                     // Width joins the model's measure-once cache (the height
                     // contract's sibling): the widest reported table drives
                     // flick.contentWidth via blockModel.maxContentWidth.
@@ -2736,6 +2730,9 @@ FocusScope {
 
             onPressed: (m) => {
                 root.forceActiveFocus()
+                // A press anywhere on the document closes an open margin
+                // thread card (the press then does its normal work).
+                if (root.openThreadId !== "") root.openThreadId = ""
                 // The desk right of the page is dead space — no caret, no
                 // menu (a table reaching into it still takes the hit).
                 if (root.inRightMargin(m.x, m.y)) return
@@ -2945,11 +2942,11 @@ FocusScope {
         visible: root.activeTableRow >= 0 && !root.boardMode
         anchors.fill: parent
         anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
-        contentWidth: width
-        // Room below the table: 4px gap (matching the +column side) + the
-        // h-scrollbar when present (+4) + the +row strip + a 20px bottom margin.
+        // The PAGE scrolls horizontally for wide tables (the table itself is
+        // uncapped) — same model as the notes view; one scrollbar, no nested one.
+        contentWidth: Math.max(width, 20 + frameTable.width + 4 + 14 + 20)
+        // Room below the table: 4px gap + the +row strip + a 20px bottom margin.
         contentHeight: frameTable.implicitHeight + 58
-                       + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 4 : 0)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
@@ -3026,13 +3023,14 @@ FocusScope {
             dragFrom = -1; dropGap = -1; gripC = -1; gripR = -1
         }
         ScrollBar.vertical: MnScrollBar {}
+        ScrollBar.horizontal: MnScrollBar {}
         BlockTable {
             id: frameTable
-            suspended: root.windowResizing
             active: root.activeTableRow >= 0
             logicalRow: root.activeTableRow
             x: 20; y: 20
-            maxWidth: tableFrame.width - 58        // 20 left + gap + the +column strip + 20 right
+            uncapped: true                         // natural width; the tab PAGE scrolls
+            maxWidth: tableFrame.width - 58        // (unused while uncapped)
             width: implicitWidth
             height: implicitHeight
             focused: root.activeTableRow >= 0
@@ -3164,32 +3162,8 @@ FocusScope {
             MouseArea { id: fAddColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: blockModel.tableInsertColumn(root.activeTableRow, blockModel.tableColumns(root.activeTableRow)) }
         }
-        Rectangle {   // horizontal scrollbar (when overflowing)
-            visible: frameTable.overflowing
+        Rectangle {   // + row
             x: 20; y: 20 + frameTable.height + 4
-            width: frameTable.width; height: Theme.dim.scrollBarWidth; color: "transparent"
-            readonly property real maxScroll: Math.max(0, frameTable.contentW - frameTable.width)
-            readonly property real thumbW: Math.max(24, width * frameTable.width / Math.max(1, frameTable.contentW))
-            readonly property real maxThumbX: width - thumbW
-            Rectangle {
-                height: parent.height; radius: 0; width: parent.thumbW
-                x: parent.maxScroll > 0 ? (frameTable.scrollX / parent.maxScroll) * parent.maxThumbX : 0
-                color: Theme.colors.textSubtle
-                opacity: fHbarMA.pressed ? 0.85 : (fHbarMA.containsMouse ? 0.65 : 0.45)
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
-            MouseArea {
-                id: fHbarMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                function setScroll(mx) {
-                    var tx = Math.max(0, Math.min(parent.maxThumbX, mx - parent.thumbW / 2))
-                    if (parent.maxThumbX > 0) frameTable.scrollX = (tx / parent.maxThumbX) * parent.maxScroll
-                }
-                onPressed: (m) => setScroll(m.x)
-                onPositionChanged: (m) => { if (pressed) setScroll(m.x) }
-            }
-        }
-        Rectangle {   // + row (below the scrollbar when present)
-            x: 20; y: 20 + frameTable.height + (frameTable.overflowing ? Theme.dim.scrollBarWidth + 8 : 4)
             width: frameTable.width; height: 14; radius: 0
             color: fAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
@@ -3315,7 +3289,6 @@ FocusScope {
         ScrollBar.horizontal: MnScrollBar {}
         BlockKanban {
             id: boardView
-            suspended: root.windowResizing
             x: 20; y: 20
             width: implicitWidth; height: implicitHeight
             active: boardFrame.visible
@@ -3467,7 +3440,7 @@ FocusScope {
         id: pdfFrame
         visible: root.activePdfRow >= 0
         anchors.fill: parent
-        color: Theme.colors.bg
+        color: Theme.colors.bgAlt   // full-frame tabs share the page field tone
         // A continuous-scroll page list (NOT PdfMultiPageView, whose internal
         // TableView always overflows horizontally by the vertical-scrollbar width
         // → a stray horizontal bar over the page). One PdfPageImage per page,
@@ -3532,7 +3505,7 @@ FocusScope {
         id: studioFrame
         visible: root.activeVideoRow >= 0
         anchors.fill: parent
-        color: Theme.colors.bg
+        color: Theme.colors.bgAlt   // full-frame tabs share the page field tone
         readonly property int r: root.activeVideoRow
         readonly property real notesPanelH: 320   // taller filmstrip → more room for long notes (stage shrinks to fit)
 
@@ -3590,8 +3563,8 @@ FocusScope {
                     visible: root.activeVideoRow >= 0
                              && root.videoPlayingRow === root.activeVideoRow
                              && root._videoSurfaceReady
-                    fillColor: Qt.rgba(Theme.colors.bg.r, Theme.colors.bg.g,
-                                       Theme.colors.bg.b, 1.0)
+                    fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g,
+                                       Theme.colors.bgAlt.b, 1.0)   // letterbox = the tab's field tone
                 }
 
                 // The stroke layer: renders the current frame's strokes
@@ -3644,7 +3617,7 @@ FocusScope {
             id: studioNotes
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
             height: studioFrame.notesPanelH
-            color: Theme.colors.surfaceRecess   // the filmstrip WELL — cards raise above it; tone replaces the old top hairline
+            color: Theme.colors.surfaceRaised   // chrome tone — the studio's bottom apparatus (cards recess into it, the Inspector recipe)
 
             Rectangle {   // add-note tile (sticky left)
                 id: addNoteTile
@@ -3754,7 +3727,10 @@ FocusScope {
                     // width is fixed, so contentWidth doesn't depend on this — no loop).
                     height: noteStrip.height
                             - (noteStrip.contentWidth > noteStrip.width ? Theme.dim.scrollBarWidth + 6 : 12)
-                    color: Theme.colors.card
+                    // Outline-defined cards (user ruling): the fill matches the
+                    // panel (transparent tracks it), the BORDER draws the card,
+                    // and the bright border marks the playhead's current frame.
+                    color: "transparent"
                     border.width: 1
                     border.color: current ? Theme.colors.textBright : Theme.colors.border
 
@@ -3876,7 +3852,7 @@ FocusScope {
         id: sketchFrame
         visible: root.activeSketchRow >= 0
         anchors.fill: parent
-        color: Theme.colors.bg
+        color: Theme.colors.bgAlt   // full-frame tabs share the page field tone
         readonly property int r: root.activeSketchRow
 
         // Clicking dead space reclaims focus (restores the key swallow).
@@ -3962,6 +3938,12 @@ FocusScope {
     // right margin. Root-level + model-driven (never per-delegate), gated to
     // the visible window like the video toolbars — contentRevision dep, NOT
     // layoutRevision (the 1946-1955 rule); y reads take the layout tuple.
+    // Clipped so half-scrolled rows' bubbles slide under the editor's top
+    // edge instead of painting over the tab rail.
+    Item {
+    anchors.fill: parent
+    clip: true
+    z: 56
     Repeater {
         model: (blockModel.contentRevision, blockModel.commentsRevision,
                 blockModel.commentPinRows())
@@ -3983,9 +3965,156 @@ FocusScope {
                 id: pinMA
                 anchors.fill: parent; hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
+                // The bubble toggles its thread's MARGIN CARD (the Inspector
+                // stays the all-threads overview).
                 onClicked: {
                     var rs = blockModel.commentRangesForRow(prow)
-                    if (rs.length > 0 && root.inspector) root.inspector.showComments(rs[0].id)
+                    if (rs.length === 0) return
+                    root.openThreadId = (root.openThreadId === rs[0].id) ? "" : rs[0].id
+                }
+            }
+        }
+    }
+    }
+
+    // --- Margin thread card: click a comment bubble → the conversation opens
+    // IN the margin, anchored to its block (it rides the scroll — a margin
+    // note, not a dialog). One card at a time; click-away or Esc-in-field
+    // closes; the Inspector remains the all-threads overview.
+    property string openThreadId: ""
+    function closeThreadCard() {
+        if (openThreadId !== "") { openThreadId = ""; forceActiveFocus() }
+    }
+    Item {
+        anchors.fill: parent
+        clip: true
+        z: 58
+        visible: root.openThreadId !== "" && flick.visible
+        Rectangle {
+            id: threadCard
+            // Arithmetic dep (elision-proof) — re-resolve the thread on any
+            // comment/content change; null when the thread vanished.
+            readonly property var info: {
+                var dep = blockModel.commentsRevision + blockModel.contentRevision
+                if (root.openThreadId === "") return null
+                var ts = blockModel.commentThreads()
+                for (var i = 0; i < ts.length; ++i)
+                    if (ts[i].id === root.openThreadId) return ts[i]
+                return null
+            }
+            readonly property int arow: info ? info.row : -1
+            visible: info !== null && arow >= 0
+            // Beside the bubble; clamped into the viewport when the window is
+            // narrower than the margin (the card may float over the page edge).
+            x: Math.min(root.leftEdge + root.pageWidth + 12 - flick.contentX,
+                        root.width - width - Theme.dim.scrollBarWidth - 40)
+            y: (blockModel.layoutRevision, arow >= 0 ? blockModel.yForRow(arow) : 0)
+               - flick.contentY + 2
+            width: 300
+            height: cardCol.implicitHeight + 20
+            color: Theme.colors.surfaceRaised
+            border.width: 1; border.color: Theme.colors.border
+            MouseArea { anchors.fill: parent }   // swallow — clicks stay in the card
+
+            Column {
+                id: cardCol
+                x: 10; y: 10; width: parent.width - 20
+                spacing: 8
+                Item {   // header: anchored excerpt + the rail's block address
+                    width: parent.width; height: 16
+                    Text {
+                        width: parent.width - 64
+                        elide: Text.ElideRight
+                        text: threadCard.info
+                              ? "“" + threadCard.info.excerpt + "”" : ""
+                        color: Theme.colors.textMuted
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                        font.italic: true
+                    }
+                    Text {
+                        anchors.right: parent.right
+                        text: threadCard.arow >= 0 ? qsTr("block %1").arg(threadCard.arow + 1) : ""
+                        color: Theme.colors.textSubtle
+                        font.family: Theme.font.mono; font.pixelSize: 11
+                    }
+                }
+                Flickable {   // messages — own scroll when the thread runs long
+                    width: parent.width
+                    height: Math.min(msgCol.implicitHeight, 260)
+                    contentHeight: msgCol.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    Column {
+                        id: msgCol
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            // Revision read is LOAD-BEARING (rule 1e).
+                            model: blockModel.commentsRevision >= 0 && root.openThreadId !== ""
+                                   ? blockModel.commentMessages(root.openThreadId) : []
+                            delegate: Column {
+                                required property var modelData
+                                width: msgCol.width
+                                Text {
+                                    width: parent.width; wrapMode: Text.Wrap
+                                    text: modelData.body
+                                    color: Theme.colors.text
+                                    font.family: Theme.font.family
+                                    font.pixelSize: Theme.font.sizeSmall
+                                }
+                                Text {
+                                    text: modelData.created > 0
+                                          ? new Date(modelData.created)
+                                                .toLocaleString(Qt.locale(), "yyyy-MM-dd hh:mm")
+                                          : ""
+                                    color: Theme.colors.textSubtle
+                                    font.family: Theme.font.family; font.pixelSize: 11
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {   // reply — input = recessed well, the family rule
+                    width: parent.width
+                    height: Math.max(34, replyEdit.implicitHeight + 12)
+                    color: Theme.colors.surfaceRecess
+                    TextEdit {
+                        id: replyEdit
+                        anchors.fill: parent; anchors.margins: 6
+                        wrapMode: TextEdit.Wrap
+                        color: Theme.colors.text
+                        selectionColor: Theme.colors.selectionBg
+                        selectByMouse: true
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                        Keys.onEscapePressed: root.closeThreadCard()
+                        Text {
+                            visible: replyEdit.text.length === 0 && !replyEdit.activeFocus
+                            text: qsTr("Reply…")
+                            color: Theme.colors.textSubtle
+                            font: replyEdit.font
+                        }
+                    }
+                }
+                Row {
+                    spacing: 6
+                    anchors.right: parent.right
+                    FlatButton {
+                        text: threadCard.info && threadCard.info.resolved
+                              ? qsTr("Reopen") : qsTr("Resolve")
+                        padding: 8; labelSize: Theme.font.sizeSmall
+                        onClicked: blockModel.setThreadResolved(
+                                       root.openThreadId,
+                                       !(threadCard.info && threadCard.info.resolved))
+                    }
+                    FlatButton {
+                        text: qsTr("Reply"); variant: "primary"
+                        padding: 8; labelSize: Theme.font.sizeSmall
+                        enabled_: replyEdit.text.trim().length > 0
+                        onClicked: {
+                            blockModel.addCommentMessage(root.openThreadId, replyEdit.text.trim())
+                            replyEdit.text = ""
+                        }
+                    }
                 }
             }
         }
@@ -4000,6 +4129,9 @@ FocusScope {
         id: blockRuler
         visible: flick.visible
         z: 44
+        // Clip: rows half-scrolled off the top otherwise paint their numbers
+        // at negative y, over the tab rail above the editor.
+        clip: true
         anchors { top: parent.top; bottom: parent.bottom; right: parent.right
                   rightMargin: Theme.dim.scrollBarWidth }
         width: 34
@@ -4539,7 +4671,7 @@ FocusScope {
             tcur.active ? root.cellForRow(cursor.focusRow) : null)
         readonly property Item tItem: dlg ? dlg.tableItem : null
         visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // Document view only
-        readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
+        readonly property real topV: dlg ? dlg.y - flick.contentY + 32 : 0   // table content top (tableHost y:32)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
         readonly property real tableX: root.leftEdge - flick.contentX   // shared edge, in VIEWPORT coords (page can h-scroll)
