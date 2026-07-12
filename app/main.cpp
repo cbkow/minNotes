@@ -16,6 +16,7 @@
 #include "sparkle_updater_macos.h"
 #include "core/BlockModel.h"
 #include "core/DocumentManager.h"
+#include "core/Exporter.h"
 #include "core/PathMapController.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
@@ -145,6 +146,14 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);
     engine.rootContext()->setContextProperty("pathMap", &pathMap);
+    // Document export (File ▸ Export…). Follows the active tab's model the
+    // same way `blockModel` does.
+    Exporter exporter;
+    exporter.setModel(docs.activeModel());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &exporter, [&exporter, &docs] {
+        exporter.setModel(docs.activeModel());
+    });
+    engine.rootContext()->setContextProperty("exporter", &exporter);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.

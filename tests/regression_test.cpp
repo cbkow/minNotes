@@ -7,6 +7,7 @@
 // Built only when configured with -DMINNOTES_BUILD_TESTS=ON. Exit code = number
 // of failed checks (0 = all pass).
 #include "BlockModel.h"
+#include "Exporter.h"
 
 #include <QGuiApplication>
 #include <QDir>
@@ -442,6 +443,91 @@ static void testComments() {
     QFile::remove(path);
 }
 
+// --- Test 10: Exporter — markdown emission over the model -------------------
+// Drives the export walker headless with a recording sink: block mapping,
+// overlapping-span nesting (whitespace-safe markers), links, comment
+// footnotes, list depth/blank-line policy, code fences, pipe tables.
+namespace {
+class RecordingSink : public Exporter::AssetSink {
+public:
+    QStringList files, images;
+    QString addFile(const QString&, const QString& baseName) override {
+        files << baseName;
+        return QStringLiteral("assets/") + baseName + QStringLiteral(".png");
+    }
+    QString addImage(const QImage&, const QString& baseName) override {
+        images << baseName;
+        return QStringLiteral("assets/") + baseName + QStringLiteral(".png");
+    }
+};
+} // namespace
+
+static void testExportMarkdown() {
+    qInfo("[10] Exporter: markdown emission (blocks, spans, footnotes, table)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+
+    m.insertBlock(0); m.setContent(0, QStringLiteral("Title"));
+    m.setHeading(0, 2);
+    //                                                 0123456789...
+    m.insertBlock(1); m.setContent(1, QStringLiteral("plain bold bolditalic italic link"));
+    m.toggleFormat(1, 6, 21, QStringLiteral("bold"));      // "bold bolditalic"
+    m.toggleFormat(1, 11, 28, QStringLiteral("italic"));   // "bolditalic italic"
+    m.setLink(1, 29, 33, QStringLiteral("https://example.com"));
+    const QString tid = m.addComment(1, 0, 5);             // footnote on "plain"
+    m.addCommentMessage(tid, QStringLiteral("note body"));
+
+    m.insertBlock(2); m.setContent(2, QStringLiteral("item one"));
+    m.setBlockType(2, BlockModel::ListItem);
+    m.insertBlock(3); m.setContent(3, QStringLiteral("sub item"));
+    m.setBlockType(3, BlockModel::ListItem);
+    m.indentBlocks(3, 3, 1);
+
+    m.insertDivider(3);                                    // → row 4
+    m.insertBlock(5); m.setContent(5, QStringLiteral("int x = 1;"));
+    m.makeCodeBlock(5, QStringLiteral("cpp"));
+
+    m.insertTable(5, 2, 2);                                // → row 6
+    const int t = 6;
+    m.tableSetHeaderRows(t, 1);
+    m.tableSetCell(t, 0, 0, QStringLiteral("H1"));
+    m.tableSetCell(t, 0, 1, QStringLiteral("H2"));
+    m.tableSetCell(t, 1, 0, QStringLiteral("a"));
+    m.tableSetCell(t, 1, 1, QStringLiteral("b|pipe"));
+
+    Exporter ex;
+    ex.setModel(&m);
+    RecordingSink sink;
+    const QString md = ex.toMarkdown(Exporter::Options{}, sink);
+
+    CHECK(md.contains(QStringLiteral("## Title")), "heading level maps to ##");
+    CHECK(md.contains(QStringLiteral(
+              "plain[^1] **bold *bolditalic*** *italic* [link](https://example.com)")),
+          "overlapping spans nest with whitespace-safe markers + footnote ref");
+    CHECK(md.contains(QStringLiteral("- item one\n  - sub item")),
+          "list run: single newline + 2-space depth indent");
+    CHECK(md.contains(QStringLiteral("---")), "divider emits");
+    CHECK(md.contains(QStringLiteral("```cpp\nint x = 1;\n```")), "code fence with language");
+    CHECK(md.contains(QStringLiteral("| H1 | H2 |")), "table header row");
+    CHECK(md.contains(QStringLiteral("| a | b\\|pipe |")), "table body row escapes pipes");
+    CHECK(md.contains(QStringLiteral("[^1]: note body")), "footnote body emitted");
+    const QVariantMap scan = ex.scan();
+    CHECK(scan.value(QStringLiteral("videos")).toInt() == 0
+              && scan.value(QStringLiteral("videoNotes")).toInt() == 0,
+          "scan reports no videos/notes on a text doc");
+
+    // End-to-end file path (the FileSink wrapper): write + read back.
+    const QString outPath = QDir::temp().filePath(QStringLiteral("mn_export_test.md"));
+    QFile::remove(outPath);
+    CHECK(ex.exportMarkdown(outPath, true), "exportMarkdown wrote the file");
+    QFile f(outPath);
+    QString onDisk;
+    if (f.open(QIODevice::ReadOnly)) { onDisk = QString::fromUtf8(f.readAll()); f.close(); }
+    CHECK(onDisk.contains(QStringLiteral("## Title")), "written file round-trips content");
+    QFile::remove(outPath);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -459,6 +545,7 @@ int main(int argc, char** argv) {
     testListsAndDepth();
     testInkUndoPersist();
     testComments();
+    testExportMarkdown();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

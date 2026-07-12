@@ -18,6 +18,8 @@ qt_add_executable(minnotesapp
     core/PathMapController.cpp
     core/Document.h
     core/Document.cpp
+    core/Exporter.h
+    core/Exporter.cpp
     core/InlineMarkdownHighlighter.h
     core/InlineMarkdownHighlighter.cpp
     core/CodeHighlighter.h

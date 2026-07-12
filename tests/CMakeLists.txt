@@ -10,6 +10,14 @@ qt_add_executable(mn_regression_test
     # PathMap.cpp defines mn::toRef / mn::resolveRef, referenced by BlockModel
     # and MediaStore (cross-OS path mapping). Link it or the test fails LNK2019.
     ${CMAKE_SOURCE_DIR}/app/core/PathMap.cpp
+    # Exporter + the QCView-port annotation layer it walks (sidecar notes IO,
+    # stroke serializer/painter for sketch + note-thumb rendering). None of
+    # these touch ink-stroke-modeler (only the wrapper does — not linked here).
+    ${CMAKE_SOURCE_DIR}/app/core/Exporter.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/annotation_note.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/annotation_io.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/annotation_serializer.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/annotation_thumbnail.cpp
 )
 target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/core)
 target_link_libraries(mn_regression_test PRIVATE

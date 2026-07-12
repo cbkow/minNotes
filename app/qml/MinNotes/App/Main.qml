@@ -92,6 +92,91 @@ ApplicationWindow {
             else saveFailedDialog.open()   // was silently ignored before the toast pass
         }
     }
+    // --- Export (File ▸ Export as Markdown…). A pre-scan decides whether the
+    // options dialog appears at all: options only exist when the document
+    // carries the thing they govern (video notes, page ink) — the common case
+    // goes straight to the save dialog. ---
+    property var _exportScan: ({})
+    property bool _exportNotes: true
+    function startExport() {
+        _exportScan = exporter.scan()
+        _exportNotes = true
+        if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0)
+            exportOptionsDialog.open()
+        else
+            exportSaveDialog.open()
+    }
+    FileDialog {
+        id: exportSaveDialog
+        title: "Export as Markdown"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "md"
+        nameFilters: ["Markdown (*.md)"]
+        onAccepted: {
+            var f = "" + selectedFile
+            if (exporter.exportMarkdown(f, win._exportNotes))
+                Toasts.show(qsTr("Exported ") + win.baseName(f))
+            else
+                Toasts.show(qsTr("Export failed"), 2)
+        }
+    }
+    Dialog {
+        id: exportOptionsDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: qsTr("Export as Markdown")
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Row {   // video-notes option — present only when notes were detected
+                visible: (win._exportScan.videoNotes || 0) > 0
+                spacing: 8
+                Rectangle {   // squared family checkbox (PathMappings pattern)
+                    width: 16; height: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: win._exportNotes ? Theme.colors.divider : "transparent"
+                    border.width: 1
+                    border.color: win._exportNotes ? Theme.colors.textBright : Theme.colors.border
+                    Text { anchors.centerIn: parent; visible: win._exportNotes
+                           text: "✓"; color: Theme.colors.textBright; font.pixelSize: 11 }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: win._exportNotes = !win._exportNotes }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: {
+                        var n = win._exportScan.videoNotes || 0
+                        var v = win._exportScan.videosWithNotes || 0
+                        return qsTr("Include video notes (%1 %2 on %3 %4)")
+                            .arg(n).arg(n === 1 ? qsTr("note") : qsTr("notes"))
+                            .arg(v).arg(v === 1 ? qsTr("video") : qsTr("videos"))
+                    }
+                    color: Theme.colors.text
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: win._exportNotes = !win._exportNotes }
+                }
+            }
+            Text {
+                visible: (win._exportScan.inkBlocks || 0) > 0
+                width: 400; wrapMode: Text.Wrap
+                text: qsTr("Page ink isn't included in Markdown export.")
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: qsTr("Cancel"); padding: 12
+                             onClicked: exportOptionsDialog.close() }
+                FlatButton { text: qsTr("Export…"); variant: "primary"; padding: 12
+                             onClicked: { exportOptionsDialog.close(); exportSaveDialog.open() } }
+            }
+        }
+    }
+
     // Mirrors BlockModel::SaveState (the enum isn't registered as a QML type — the
     // model is a context-property instance — so compare the int saveState here).
     readonly property int _saveClean: 0
@@ -353,6 +438,8 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 Platform.MenuSeparator {}
+                Platform.MenuItem { text: qsTr("Export as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport() }
+                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 Platform.MenuSeparator {}
                 // NoRole keeps it in File (reliably visible); see the updater note below.
@@ -423,6 +510,8 @@ ApplicationWindow {
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("&Export as Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport() }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 ThemedMenuSeparator {}
