@@ -3109,7 +3109,7 @@ FocusScope {
             width: 14; height: frameTable.height; radius: 0
             color: fAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
             MouseArea { id: fAddColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: blockModel.tableInsertColumn(root.activeTableRow, blockModel.tableColumns(root.activeTableRow)) }
         }
@@ -3142,7 +3142,7 @@ FocusScope {
             width: frameTable.width; height: 14; radius: 0
             color: fAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
             MouseArea { id: fAddRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: blockModel.tableInsertRow(root.activeTableRow, blockModel.tableRows(root.activeTableRow)) }
         }
@@ -3381,7 +3381,7 @@ FocusScope {
                 height: parent.height
                 checked: !root.boardMode
                 checkedColor: Theme.colors.divider   // grey — keep accent for real highlights
-                labelSize: 13
+                labelSize: Theme.font.sizeChrome
                 labelColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
                 iconColor: labelColor
                 onClicked: { root.showGridView(); root.forceActiveFocus() }
@@ -3392,7 +3392,7 @@ FocusScope {
                 checked: root.boardMode
                 enabled_: root.boardCol >= 0 || root.firstGroupCol >= 0
                 checkedColor: Theme.colors.divider   // grey — keep accent for real highlights
-                labelSize: 13
+                labelSize: Theme.font.sizeChrome
                 labelColor: !enabled_ ? Theme.colors.textSubtle
                           : checked ? Theme.colors.textBright : Theme.colors.textMuted
                 iconColor: labelColor
@@ -3610,7 +3610,7 @@ FocusScope {
                     Text {
                         text: "Add note"
                         color: Theme.colors.textMuted
-                        font.family: Theme.font.family; font.pixelSize: 13
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                 }
@@ -4145,7 +4145,7 @@ FocusScope {
                     Layout.fillWidth: true
                     text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.text : ""
                     color: Theme.colors.textBright
-                    font.family: Theme.font.family; font.pixelSize: 13
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                     elide: Text.ElideRight
                 }
             }
@@ -4500,7 +4500,7 @@ FocusScope {
             width: tableAdd.cw; height: 14; radius: 0; z: 40
             color: addRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
             MouseArea {
                 id: addRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: blockModel.tableInsertRow(cursor.focusRow, blockModel.tableRows(cursor.focusRow))
@@ -4511,7 +4511,7 @@ FocusScope {
             width: 14; height: tableAdd.ch; radius: 0; z: 40
             color: addColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: 13 }
+            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
             MouseArea {
                 id: addColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: blockModel.tableInsertColumn(cursor.focusRow, blockModel.tableColumns(cursor.focusRow))

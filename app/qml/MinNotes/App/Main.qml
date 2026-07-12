@@ -541,7 +541,7 @@ ApplicationWindow {
                             text: ((tab.modelData.untitled || tab.modelData.dirty) ? "• " : "")
                                   + tab.modelData.documentName
                             color: tab.active ? Theme.colors.textBright : Theme.colors.textMuted
-                            font.family: Theme.font.family; font.pixelSize: 13
+                            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                         }
                         MouseArea {
                             id: tabMA
@@ -575,7 +575,7 @@ ApplicationWindow {
             Rectangle {
                 id: navBtn
                 anchors.right: newTabBtn.left; anchors.top: parent.top
-                width: 34; height: docTabBar.height
+                width: 36; height: docTabBar.height   // one width for every strip button
                 color: navMenu.visible ? Theme.colors.divider
                      : (navMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
@@ -624,7 +624,7 @@ ApplicationWindow {
                                               + parent.modelData.documentName
                                         elide: Text.ElideMiddle   // keep the distinguishing tail
                                         color: parent.active ? Theme.colors.textBright : Theme.colors.text
-                                        font.family: Theme.font.family; font.pixelSize: 13
+                                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                                     }
                                     MouseArea {
                                         id: navItemMA

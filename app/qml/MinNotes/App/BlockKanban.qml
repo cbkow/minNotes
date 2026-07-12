@@ -255,7 +255,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: laneItem.modelData.label
                         color: Theme.colors.text
-                        font.family: Theme.font.family; font.pixelSize: 13; font.bold: true
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome; font.bold: true
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
@@ -326,7 +326,7 @@ Item {
                                     // editor overlays it — Column must not reflow
                                     opacity: kb.editRow === card.modelData.r ? 0 : 1
                                     color: Theme.colors.text
-                                    font.family: Theme.font.family; font.pixelSize: 13
+                                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                                 }
                                 Repeater {
                                     model: card.modelData.fields
@@ -399,7 +399,7 @@ Item {
                                 color: Theme.colors.text
                                 selectionColor: Theme.colors.selectionBg
                                 selectedTextColor: Theme.colors.textBright
-                                font.family: Theme.font.family; font.pixelSize: 13
+                                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                                 clip: true
                                 z: 6
                                 onVisibleChanged: if (visible) { text = ""; forceActiveFocus() }
@@ -480,7 +480,7 @@ Item {
             elide: Text.ElideRight
             text: kb.dragTitle
             color: Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: 13
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
         }
     }
 }

@@ -73,7 +73,7 @@ Rectangle {
             id: tabLabel
             anchors.centerIn: parent; text: parent.label
             color: parent.active ? Theme.colors.textBright : Theme.colors.textMuted
-            font.family: Theme.font.family; font.pixelSize: 13
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
         }
         MouseArea { id: tabMA; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked() }
@@ -185,7 +185,7 @@ Rectangle {
             text: parent.label
             elide: Text.ElideMiddle   // keep the distinguishing tail (_v001/_v002)
             color: parent.active ? Theme.colors.textBright : Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: 13
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
         }
         MouseArea { id: itemMA; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
