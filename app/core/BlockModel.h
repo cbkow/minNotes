@@ -518,7 +518,8 @@ private:
         bool isPdf = false;     // media only: kind=="pdf" → inline page view + nav
         bool isSketch = false;  // media only: kind=="sketch" → in-doc drawing canvas
         uint16_t dispW = 0;     // media only: per-block display width override (0 = default/fit)
-        uint16_t measuredW = 0; // tables only: reported natural width px (0 = unmeasured)
+        uint16_t measuredW = 0; // natural width px feeding maxContentWidth (0 = unmeasured):
+                                // tables/code report from QML; media = dispW via fillMediaMeta
         uint16_t mediaW = 0;    // media only: intrinsic width px  (exact no-upscale height estimate)
         uint16_t mediaH = 0;    // media only: intrinsic height px
         QString lang;       // code blocks: syntax-highlight language (else empty)

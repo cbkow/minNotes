@@ -24,6 +24,8 @@ qt_add_executable(minnotesapp
     core/InlineMarkdownHighlighter.cpp
     core/CodeHighlighter.h
     core/CodeHighlighter.cpp
+    core/CodeSyntax.h
+    core/CodeSyntax.cpp
     core/TableGrid.h
     core/TableGrid.cpp
     core/Clipboard.h

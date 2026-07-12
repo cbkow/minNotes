@@ -595,13 +595,20 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
     r.isPdf    = kind == QLatin1String("pdf");
     r.isSketch = kind == QLatin1String("sketch");
     r.dispW   = static_cast<uint16_t>(std::clamp(mo.value(QStringLiteral("dw")).toInt(), 0, 65535));
+    // A user-widened image joins the width cache (the tables' contract) so the
+    // page grows to hold it; ≤-page values are harmless under the max() scan.
+    // This is the ONE chokepoint every Row reconstruction funnels through
+    // (rule 2a), so load/insert/undo all publish it.
+    r.measuredW = r.dispW;
 }
 
-// Effective displayed width of a media block: the per-block override (clamped to
-// the page width) if set, else the default — PDFs fit the page, raster media is
-// intrinsic-capped (never upscaled by default).
+// Effective displayed width of a media block: the per-block override HONOURED
+// VERBATIM if set (user ruling: the drag may exceed the page — the screen is
+// the practical cap; the page scrolls like it does for wide tables/code), else
+// the default — PDFs fit the page, raster media is intrinsic-capped (never
+// upscaled by default).
 double BlockModel::mediaDisplayWidth(const Row& r) const {
-    if (r.dispW > 0) return std::min<double>(r.dispW, contentWidth_);
+    if (r.dispW > 0) return r.dispW;
     if (r.isPdf || r.isSketch) return contentWidth_;   // fit the page (sketches
                                                        // upscale — strokes are
                                                        // vector, no quality loss)
@@ -2792,10 +2799,12 @@ void BlockModel::bumpLayout() {
     emit layoutChangedSpike();
 }
 
-// The horizontal sibling of the height contract: table delegates report
-// their natural (uncapped) width once measured; the max drives the view's
-// contentWidth so the PAGE scrolls horizontally for wide tables. Only
-// tables report — everything else lives inside the prose measure.
+// The horizontal sibling of the height contract: delegates report their
+// natural (uncapped) width once measured; the max drives the view's
+// contentWidth so the PAGE scrolls horizontally for wide blocks. Reporters:
+// tables + code (delegate-measured); user-widened media publishes model-side
+// via fillMediaMeta (known-geometry). Other text lives inside the measure
+// and reports 0.
 void BlockModel::setMeasuredWidth(int row, qreal w) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || w <= 0.0) return;
     const uint16_t v = static_cast<uint16_t>(std::clamp<qreal>(w, 0.0, 65535.0));
@@ -2835,7 +2844,9 @@ void BlockModel::setMediaWidth(int row, int w) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
     QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     if (w <= 0) o.remove(QStringLiteral("dw"));                 // reset to intrinsic/default
-    else        o.insert(QStringLiteral("dw"), std::clamp(w, 80, int(contentWidth_)));
+    else        o.insert(QStringLiteral("dw"), std::clamp(w, 80, 65535));   // uncapped past the
+                                                                // page (user ruling) — the drag
+                                                                // distance is the practical cap
     const QString json = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
     beginTxn(row, row);
     content_[row] = json;

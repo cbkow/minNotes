@@ -621,8 +621,12 @@ static void testExportMarkdown() {
           "commented range tints + links to the comments section");
     CHECK(html.contains(QStringLiteral("<ul>")) && html.contains(QStringLiteral("item one</li>")),
           "HTML list run opens a real <ul>");
-    CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">int x = 1;")),
-          "HTML code block with language class");
+    // Syntax colouring wraps tokens in inline-styled spans ("int" is a cpp
+    // keyword; "=", "1", ";" get their own spans too), so assert the
+    // structure + a coloured keyword + the identifier left plain between them.
+    CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">"))
+              && html.contains(QStringLiteral(">int</span> x ")),
+          "HTML code block with language class + syntax-coloured spans");
     CHECK(html.contains(QStringLiteral("<th>H1</th>")) || html.contains(QStringLiteral("<th >H1</th>")),
           "HTML table header cell");
     CHECK(html.contains(QStringLiteral("id=\"c1\"")) && html.contains(QStringLiteral("note body")),

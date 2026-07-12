@@ -2,7 +2,15 @@
 
 #include "Exporter.h"
 #include "BlockModel.h"
+#include "CodeSyntax.h"
 #include "MediaStore.h"
+
+#include <KSyntaxHighlighting/AbstractHighlighter>
+#include <KSyntaxHighlighting/Definition>
+#include <KSyntaxHighlighting/Format>
+#include <KSyntaxHighlighting/Repository>
+#include <KSyntaxHighlighting/State>
+#include <KSyntaxHighlighting/Theme>
 
 #include "../notes/annotation_io.h"
 #include "../notes/annotation_note.h"
@@ -1074,20 +1082,32 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
     if (kind == QLatin1String("image")) {
         QString src = sink.addFile(path, QFileInfo(path).completeBaseName());
         if (src.isEmpty()) src = QStringLiteral("file://") + path;   // unreachable source
+        // Honour a user-set display width (the app's resize handle), including
+        // past the page measure — the tables' page-widening pattern. Untouched
+        // images carry no dw and stay responsive (max-width:100%).
+        const int dw = QJsonDocument::fromJson(m->contentForRow(row).toUtf8())
+                           .object().value(QStringLiteral("dw")).toInt(0);
+        const QString wstyle = dw > 0
+            ? QStringLiteral(" style=\"width:%1px;max-width:none\"").arg(dw)
+            : QString();
         const QImage ink = renderMediaInk(m, row, QSize(m->mediaW(row), m->mediaH(row)));
         if (!ink.isNull()) {
             const QString inkSrc = sink.addImage(ink, QFileInfo(path).completeBaseName()
                                                           + QStringLiteral("_ink"));
             if (!inkSrc.isEmpty()) {
                 ++inkLayers;
-                return QStringLiteral("<figure><div class=\"inkwrap\">"
-                                      "<img src=\"%1\" alt=\"%2\">"
-                                      "<img class=\"ink\" src=\"%3\" alt=\"\"></div></figure>")
-                    .arg(htmlEscape(src), htmlEscape(name), inkSrc);
+                // Width rides the WRAPPER (the ink layer is inset:0, so both
+                // images scale together); the base fills it when sized.
+                return QStringLiteral("<figure><div class=\"inkwrap\"%1>"
+                                      "<img src=\"%2\" alt=\"%3\"%4>"
+                                      "<img class=\"ink\" src=\"%5\" alt=\"\"></div></figure>")
+                    .arg(wstyle, htmlEscape(src), htmlEscape(name),
+                         dw > 0 ? QStringLiteral(" style=\"width:100%\"") : QString(),
+                         inkSrc);
             }
         }
-        return QStringLiteral("<figure><img src=\"%1\" alt=\"%2\"></figure>")
-            .arg(htmlEscape(src), htmlEscape(name));
+        return QStringLiteral("<figure><img src=\"%1\" alt=\"%2\"%3></figure>")
+            .arg(htmlEscape(src), htmlEscape(name), wstyle);
     }
 
     QString poster, posterInk, meta;
@@ -1167,6 +1187,53 @@ public:
 };
 
 // The exported page's whole design system — the minNotes look in a file:
+// Syntax-coloured code for the HTML export: the SAME engine, theme, and
+// lenient language resolver as the app's code blocks (CodeHighlighter), with
+// token spans emitted as inline-styled <span>s — self-contained, theme-exact.
+class HtmlCodeEmitter : public KSyntaxHighlighting::AbstractHighlighter {
+public:
+    HtmlCodeEmitter() {
+        setTheme(codeHighlightRepo().defaultTheme(
+            KSyntaxHighlighting::Repository::DarkTheme));
+    }
+    // The theme's editor background — the app fills code blocks with this
+    // (Editor.qml matches the token colours the same way).
+    QColor themeBackground() const {
+        return QColor(theme().editorColor(KSyntaxHighlighting::Theme::BackgroundColor));
+    }
+    // Escaped, span-wrapped HTML for `code`; plain escape when the language
+    // resolves to no definition (same silent fallback as the app).
+    QString colorize(const QString& lang, const QString& code) {
+        const KSyntaxHighlighting::Definition def = resolveCodeDefinition(lang);
+        if (!def.isValid()) return htmlEscape(code);
+        setDefinition(def);
+        out_.clear();
+        KSyntaxHighlighting::State st;
+        const QStringList lines = code.split(QLatin1Char('\n'));
+        for (int i = 0; i < lines.size(); ++i) {
+            line_ = lines.at(i);
+            st = highlightLine(line_, st);
+            if (i + 1 < lines.size()) out_ += QLatin1Char('\n');
+        }
+        return out_;
+    }
+protected:
+    void applyFormat(int offset, int length,
+                     const KSyntaxHighlighting::Format& f) override {
+        const QString seg = htmlEscape(line_.mid(offset, length));
+        QString style;
+        if (f.hasTextColor(theme()))
+            style += QStringLiteral("color:%1;").arg(f.textColor(theme()).name());
+        if (f.isBold(theme()))      style += QStringLiteral("font-weight:bold;");
+        if (f.isItalic(theme()))    style += QStringLiteral("font-style:italic;");
+        if (f.isUnderline(theme())) style += QStringLiteral("text-decoration:underline;");
+        if (style.isEmpty()) out_ += seg;
+        else out_ += QStringLiteral("<span style=\"%1\">%2</span>").arg(style, seg);
+    }
+private:
+    QString line_, out_;
+};
+
 // the dark page, the 760px measure, squared corners, rationed accent, the
 // QCView-note violet. System font stacks (no bundled fonts in v1).
 const char* kHtmlCss = R"CSS(
@@ -1182,11 +1249,13 @@ font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-ser
    left-aligned system instead of breaking a centered frame. */
 main{max-width:808px;margin:0;padding:48px 24px 96px}  /* content = the app's true 760 measure */
 /* The BLOCK RULER: every block's number in the right margin (the app's
-   rail). Elements host the span; all numbers align on one ledger line. */
+   rail). Elements host the span; all numbers align on one ledger line.
+   No rule line: the app made its rules focus-reactive, so a static export
+   shows numbers only. */
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main blockquote,
 main li,main figure,main .tablewrap,main .blkw{position:relative}
 .bnum{position:absolute;left:772px;top:4px;width:calc(100vw - 836px);
-min-width:48px;border-top:1px solid var(--border);padding-top:3px;
+min-width:48px;padding-top:3px;
 text-align:right;font-family:ui-monospace,Menlo,Consolas,monospace;
 font-size:11px;color:var(--subtle);user-select:none;pointer-events:none}
 /* Media-ink z-stack: frame-normalized margin ink rides its media exactly;
@@ -1201,7 +1270,10 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 hr{border:0;border-top:1px solid var(--divider);margin:24px 0}
 blockquote{font-family:Georgia,'Times New Roman',serif;border-left:3px solid var(--quote);
 margin:0;padding:2px 16px;color:var(--muted)}
-pre{background:var(--recess);border:1px solid var(--border);padding:12px 14px;overflow-x:auto;color:var(--codetext)}
+/* Code escapes the measure like tables do (user ruling: capping code is
+   purely aesthetic): natural width, page-level scroll, no inner scrollbar. */
+pre{background:var(--recess);border:1px solid var(--border);padding:12px 14px;
+width:max-content;min-width:100%;color:var(--codetext)}
 code{font-family:ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;font-size:.9em}
 :not(pre)>code{background:var(--chipbg);color:var(--chiptext);padding:1px 5px}
 img{max-width:100%}
@@ -1282,6 +1354,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     FootnoteCtx fn;
     QString body;
     int inkLayers = 0;                // stacked ink layers emitted (gates the toggle)
+    HtmlCodeEmitter codeEmitter;      // syntax colours, the app's engine + theme
     std::vector<QString> listStack;   // open list tags, one per depth level
 
     auto closeListsTo = [&](int n) {
@@ -1344,11 +1417,13 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
             body += injectInk(QStringLiteral("<blockquote>%1<p>%2</p></blockquote>\n")
                         .arg(bnum(row), emitInlineHtml(m, row, fn)), row, 0);
             break;
-        case BlockModel::Code:
+        case BlockModel::Code: {
+            const QString lang = m->languageForRow(row);
             body += injectInk(QStringLiteral("<div class=\"blkw\">%1<pre><code class=\"language-%2\">%3</code></pre></div>\n")
-                        .arg(bnum(row), htmlEscape(m->languageForRow(row)),
-                             htmlEscape(m->contentForRow(row))), row, 0);
+                        .arg(bnum(row), htmlEscape(lang),
+                             codeEmitter.colorize(lang, m->contentForRow(row))), row, 0);
             break;
+        }
         case BlockModel::ListItem:
         case BlockModel::TaskListItem:
         case BlockModel::OrderedListItem: {
@@ -1448,13 +1523,22 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
                          "<label for=\"mn-ink\">Annotations</label>\n")
         : QString();
 
+    // Code blocks fill with the syntax THEME's editor background (the app's
+    // recipe, Editor.qml) so the token colours sit on the surface they were
+    // designed for — patch it over the static recess tone.
+    QString css = QLatin1String(kHtmlCss);
+    const QColor codeBg = codeEmitter.themeBackground();
+    if (codeBg.isValid())
+        css.replace(QLatin1String("pre{background:var(--recess)"),
+                    QStringLiteral("pre{background:%1").arg(codeBg.name()));
+
     return QStringLiteral(
                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
                "<meta name=\"generator\" content=\"minNotes\">\n"
                "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n%4</main>\n"
                "</body>\n</html>\n")
-        .arg(htmlEscape(m->documentName()), QLatin1String(kHtmlCss), toggle, body);
+        .arg(htmlEscape(m->documentName()), css, toggle, body);
 }
 
 bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes) {

@@ -1108,17 +1108,6 @@ FocusScope {
         }
         return null
     }
-    // True when a CONTENT-coordinate point lies on the desk right of the
-    // page — clicks there land on NOTHING (the margin isn't the page).
-    // Exception: a table extending past the measure owns its full width.
-    function inRightMargin(cx, cy) {
-        if (cx <= leftEdge + pageWidth) return false
-        var r = blockModel.rowForY(Math.max(0, cy))
-        if (r < 0 || blockModel.typeForRow(r) !== 7) return true
-        var dcell = cellForRow(r)
-        var w = (dcell && dcell.tableItem) ? dcell.tableItem.implicitWidth : pageWidth
-        return cx > leftEdge + w
-    }
     // (cx, cy) in CONTENT coordinates → {row, col}.
     function hitTest(cx, cy) {
         var row = blockModel.rowForY(Math.max(0, cy))
@@ -2188,32 +2177,25 @@ FocusScope {
             function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta }
         }
 
-        Rectangle {   // the OVERFLOW DESK — grey only BEYOND the page zone
-                      // (user ruling: page + symmetric margins stay dark; the
-                      // grey starts after a right margin mirroring the left
-                      // one, marking the territory wide tables extend into).
-            id: deskRect
-            z: -1
-            x: root.leftEdge + root.pageWidth + Theme.dim.pageMargin
-            y: 0
-            width: Math.max(0, Math.max(flick.width, root.contentSpan) - x)
-            height: Math.max(flick.height, flick.contentHeight)
-            color: Theme.colors.bgAlt
-        }
-        Rectangle {   // "you are here" — the FOCUSED block's desk row. The one
-                      // fill on the desk, and it MEANS something (the zebra's
-                      // parity flipped on every insert; this doesn't).
+        Rectangle {   // "you are here" — the FOCUSED block's full row, page and
+                      // margins alike. The one fill on the field, and it MEANS
+                      // something (the zebra's parity flipped on every insert;
+                      // this doesn't).
             visible: cursor.focusRow >= 0 && cursor.focusRow < blockModel.count
             z: -1
-            x: deskRect.x
-            width: deskRect.width
+            x: 0
+            width: Math.max(flick.width, root.contentSpan)
             y: (blockModel.layoutRevision, blockModel.yForRow(cursor.focusRow))
-            height: Math.max(16, blockModel.heightForRow(cursor.focusRow))
+            // layoutRevision dep (rule 1): without it the fill only re-evaluates
+            // on focusRow change — a "# " conversion's height settle wouldn't
+            // reach it until Return moved the caret.
+            height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(cursor.focusRow)))
             color: Theme.colors.bgAlt2
         }
-        Repeater {   // desk RULES: a hairline at each block's top across the
-                     // grey field — a line that INFORMS ("a block starts
-                     // here") and stays put under editing, unlike zebra parity.
+        Repeater {   // RULES: a faint hairline at each block's top across the
+                     // whole field, text column included — a line that INFORMS
+                     // ("a block starts here") and stays put under editing,
+                     // unlike zebra parity.
             model: root.poolSize
             delegate: Rectangle {
                 required property int index
@@ -2222,11 +2204,25 @@ FocusScope {
                 visible: prow >= 0 && prow < blockModel.count
                          && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
                 z: -1
-                x: deskRect.x
-                width: deskRect.width
+                x: 0
+                width: Math.max(flick.width, root.contentSpan)
                 y: (blockModel.layoutRevision, blockModel.yForRow(prow))
                 height: 1
                 color: Theme.colors.border
+                // ROLLING VISIBILITY (user ruling): rules earn their ink when
+                // they're load-bearing — full strength bounding the focused
+                // block ±2 (local orientation), ALL of them during a block
+                // drag (the insertion grid), otherwise INVISIBLE (user: "more
+                // obvious — completely invisible except for the neighbors").
+                // Distance 0 = the two rules bounding the focus block
+                // (a rule at prow is the boundary ABOVE block prow).
+                readonly property real dist: cursor.focusRow < 0 ? 99
+                    : prow <= cursor.focusRow ? cursor.focusRow - prow
+                                              : prow - cursor.focusRow - 1
+                opacity: root.blockDragging ? 0.55
+                       : dist <= 2 ? 0.55
+                       : Math.max(0, 0.55 - (dist - 2) * 0.2)
+                Behavior on opacity { NumberAnimation { duration: 150 } }
             }
         }
 
@@ -2559,14 +2555,34 @@ FocusScope {
                     readonly property int taskState: (blockModel.contentRevision,
                                                       cell.active && btype === 8 ? blockModel.taskStateForRow(cell.logicalRow) : 0)
                     x: cell.colLeft + deco
-                    width: cell.measure - deco
+                    // Code is UNCAPPED like tables (user ruling: capping code
+                    // is purely aesthetic and wrapping breaks it): no wrap,
+                    // natural width — at least the page measure so the themed
+                    // fill still spans the column for short snippets — and the
+                    // widest line joins the model's width cache below so the
+                    // page scrolls horizontally to hold it.
+                    width: btype === 2 ? Math.max(cell.measure, implicitWidth)
+                                       : cell.measure - deco
                     y: btype === 2 ? 12 : 6   // code: centered in the taller (doubled-margin) cell
                     // Quotes are upright Lora (serif + bar + muted colour
                     // mark them); italic/bold come from spans so all four faces
                     // are reachable, rather than forcing the whole block italic.
                     text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
-                    wrapMode: TextEdit.Wrap
+                    wrapMode: btype === 2 ? TextEdit.NoWrap : TextEdit.Wrap
                     textFormat: TextEdit.PlainText
+                    // Width joins the measure-once cache (the tables' contract):
+                    // code reports its natural line width (+ the fill's 8px
+                    // overhang); every OTHER text type reports 0 so a block
+                    // leaving code releases the width its cached lines held.
+                    // Tables/media report via their own components.
+                    function reportW() {
+                        if (!cell.active || cell.isMedia || btype === 7) return
+                        blockModel.setMeasuredWidth(cell.logicalRow,
+                            btype === 2 ? implicitWidth + 16 : 0)
+                    }
+                    onImplicitWidthChanged: reportW()
+                    onBtypeChanged: reportW()
+                    Component.onCompleted: reportW()
                     // Revision dep: re-evaluate type when autoformat changes a block
                     // in place or a row-shift remaps this delegate — both bump
                     // contentRevision (rule 2). NOT layoutRevision: btype feeds
@@ -2725,7 +2741,6 @@ FocusScope {
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
                        : overClickable ? Qt.PointingHandCursor
-                       : root.inRightMargin(mouseX, mouseY) ? Qt.ArrowCursor   // desk, not page
                        : Qt.IBeamCursor
 
             onPressed: (m) => {
@@ -2733,9 +2748,6 @@ FocusScope {
                 // A press anywhere on the document closes an open margin
                 // thread card (the press then does its normal work).
                 if (root.openThreadId !== "") root.openThreadId = ""
-                // The desk right of the page is dead space — no caret, no
-                // menu (a table reaching into it still takes the hit).
-                if (root.inRightMargin(m.x, m.y)) return
                 // Right-click anywhere on a block → its context menu (capturing the
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
@@ -2883,7 +2895,6 @@ FocusScope {
                 // before release can't re-extend the selection back to the click
                 // point (which collapsed the word to word-start→cursor).
                 root.dragging = false; root.tableResizing = false
-                if (root.inRightMargin(m.x, m.y)) return   // the desk is dead space
                 // Double-click a file-attachment chip → reveal it in Finder/Explorer.
                 var mrow = blockModel.rowForY(m.y)
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
@@ -4522,8 +4533,11 @@ FocusScope {
                 }
                 onPositionChanged: (m) => {
                     if (!root.imageResizing) return
-                    root.imageResizeW = Math.max(80, Math.min(root.pageWidth,
-                        root._imgResizeStartW + (m.x - root._imgResizePressX)))
+                    // No page cap (user ruling): the drag can take an image
+                    // past the 760 measure — the reachable screen is the
+                    // practical limit, and the page h-scroll holds the rest.
+                    root.imageResizeW = Math.max(80,
+                        root._imgResizeStartW + (m.x - root._imgResizePressX))
                 }
                 onReleased: {
                     if (root.imageResizing) {

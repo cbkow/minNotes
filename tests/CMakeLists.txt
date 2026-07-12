@@ -14,6 +14,9 @@ qt_add_executable(mn_regression_test
     # stroke serializer/painter for sketch + note-thumb rendering). None of
     # these touch ink-stroke-modeler (only the wrapper does — not linked here).
     ${CMAKE_SOURCE_DIR}/app/core/Exporter.cpp
+    # CodeSyntax = the shared fence-tag resolver + KSyntax repo; the exporter
+    # colours code blocks with it (Quick-free by design for this target).
+    ${CMAKE_SOURCE_DIR}/app/core/CodeSyntax.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_note.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_io.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_serializer.cpp
@@ -24,6 +27,7 @@ target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/co
 target_link_libraries(mn_regression_test PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
+    KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks
     minnotes::ffmpeg)              # MediaStore.cpp probes media via FFmpeg
 
 # FFmpeg DLLs next to the test exe so it launches on Windows.
