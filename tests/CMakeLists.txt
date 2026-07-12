@@ -18,6 +18,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_io.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_serializer.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_thumbnail.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/doc_ink.cpp
 )
 target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/core)
 target_link_libraries(mn_regression_test PRIVATE

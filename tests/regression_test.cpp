@@ -8,6 +8,7 @@
 // of failed checks (0 = all pass).
 #include "BlockModel.h"
 #include "Exporter.h"
+#include "../app/notes/doc_ink.h"
 
 #include <QGuiApplication>
 #include <QDir>
@@ -517,6 +518,54 @@ static void testExportMarkdown() {
               && scan.value(QStringLiteral("videoNotes")).toInt() == 0,
           "scan reports no videos/notes on a text doc");
 
+    // --- Media ink → HTML z-layer: a synthetic image block with a
+    // programmatic Frame-space ink blob must export an .inkwrap stack and
+    // arm the Annotations toggle. ---
+    {
+        const QString imgPath = QDir::temp().filePath(QStringLiteral("mn_ink_test.png"));
+        QImage probe(64, 48, QImage::Format_RGB32);
+        probe.fill(Qt::darkGray);
+        probe.save(imgPath, "PNG");
+        CHECK(m.insertImageFromUrl(m.rowCountQml() - 1,
+                                   QStringLiteral("file://") + imgPath),
+              "synthetic image block inserted");
+        int imgRow = -1;
+        for (int i = 0; i < m.rowCountQml(); ++i)
+            if (m.typeForRow(i) == BlockModel::Media
+                && m.mediaKind(i) == QLatin1String("image")) { imgRow = i; break; }
+        CHECK(imgRow >= 0, "image row found");
+        mn::DocInkAnchor a;
+        a.space = mn::DocInkAnchor::Frame;
+        qcv::ActiveStroke st;
+        st.tool = qcv::DrawingTool::Freehand;
+        st.points = { QPointF(0.1, 0.1), QPointF(0.9, 0.9) };
+        st.strokeWidth = 4;
+        a.strokes.push_back(st);
+        m.setBlockInk(imgRow, mn::docInkToJson(a));
+        RecordingSink isink;
+        const QString ihtml = ex.toHtml(Exporter::Options{}, isink);
+        CHECK(ihtml.contains(QStringLiteral("class=\"inkwrap\""))
+                  && ihtml.contains(QStringLiteral("class=\"ink\"")),
+              "media ink exports as a z-layer stack");
+        CHECK(ihtml.contains(QStringLiteral("id=\"mn-ink\"")),
+              "ink layer arms the Annotations toggle");
+        // Page ink on a TEXT block exports too (Px space → positioned layer).
+        mn::DocInkAnchor pa;
+        pa.space = mn::DocInkAnchor::Px;
+        qcv::ActiveStroke pst;
+        pst.tool = qcv::DrawingTool::Freehand;
+        pst.points = { QPointF(-40, 4), QPointF(60, 18) };   // page px around center
+        pst.strokeWidth = 3;
+        pa.strokes.push_back(pst);
+        m.setBlockInk(1, mn::docInkToJson(pa));              // the spans paragraph
+        RecordingSink psink;
+        const QString phtml = ex.toHtml(Exporter::Options{}, psink);
+        CHECK(phtml.contains(QStringLiteral("position:absolute;left:"))
+                  && phtml.count(QStringLiteral("class=\"ink\"")) >= 2,
+              "text-block page ink exports as a positioned layer");
+        QFile::remove(imgPath);
+    }
+
     // End-to-end file path (the FileSink wrapper): write + read back.
     const QString outPath = QDir::temp().filePath(QStringLiteral("mn_export_test.md"));
     QFile::remove(outPath);
@@ -532,7 +581,9 @@ static void testExportMarkdown() {
     m.setTextColor(1, 0, 5, QStringLiteral("#ff6f68"));   // color "plain"
     RecordingSink hsink;
     const QString html = ex.toHtml(Exporter::Options{}, hsink);
-    CHECK(html.contains(QStringLiteral("<h2>Title</h2>")), "HTML heading tag");
+    CHECK(html.contains(QStringLiteral("Title</h2>"))
+              && html.contains(QStringLiteral("class=\"bnum\"")),
+          "HTML heading tag carries its block number");
     CHECK(html.contains(QStringLiteral("<span style=\"color:#ff6f68\">plain</span>")),
           "HTML keeps the color span markdown dropped");
     CHECK(html.contains(QStringLiteral("<strong>bold <em>bolditalic</em></strong>"))
@@ -543,7 +594,7 @@ static void testExportMarkdown() {
     CHECK(html.contains(QStringLiteral("class=\"cmt\""))
               && html.contains(QStringLiteral("href=\"#c1\"")),
           "commented range tints + links to the comments section");
-    CHECK(html.contains(QStringLiteral("<ul>")) && html.contains(QStringLiteral("<li>item one</li>")),
+    CHECK(html.contains(QStringLiteral("<ul>")) && html.contains(QStringLiteral("item one</li>")),
           "HTML list run opens a real <ul>");
     CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">int x = 1;")),
           "HTML code block with language class");

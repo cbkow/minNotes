@@ -169,7 +169,9 @@ ApplicationWindow {
             Text {
                 visible: (win._exportScan.inkBlocks || 0) > 0
                 width: 400; wrapMode: Text.Wrap
-                text: qsTr("Page ink isn't included in the export.")
+                text: win._exportFormat === "html"
+                      ? qsTr("Page ink exports as toggleable overlays (ink over text is position-approximate).")
+                      : qsTr("Page ink isn't included in Markdown export.")
                 color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
