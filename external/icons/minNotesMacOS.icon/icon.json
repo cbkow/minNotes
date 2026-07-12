@@ -1,7 +1,7 @@
 {
   "fill" : {
     "linear-gradient" : [
-      "display-p3:0.02402,0.02402,0.02402,1.00000",
+      "display-p3:0.19193,0.19193,0.19193,1.00000",
       "display-p3:0.05158,0.05158,0.05158,1.00000"
     ],
     "orientation" : {
@@ -20,10 +20,10 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "minNotesMacOS.svg",
-          "name" : "minNotesMacOS",
+          "image-name" : "minNotesMacOS 2.svg",
+          "name" : "minNotesMacOS 2",
           "position" : {
-            "scale" : 1.9,
+            "scale" : 1.62,
             "translation-in-points" : [
               0,
               0
