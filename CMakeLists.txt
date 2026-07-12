@@ -10,7 +10,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 project(MinNotes
-    VERSION 0.1.6
+    VERSION 0.1.7
     DESCRIPTION "minNotes — block-based markdown notes editor"
     LANGUAGES CXX
 )
