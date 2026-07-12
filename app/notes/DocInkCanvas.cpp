@@ -206,17 +206,24 @@ void DocInkCanvas::paint(QPainter* p)
             const qcv::ActiveStroke& src = it->strokes[size_t(i)];
             if (src.points.empty()) continue;
             // Transform into ITEM px (paintStroke w=h=1 passes points through).
+            // Positions go through the anchor transform; an oval's radii
+            // point (points[1]) is a VECTOR — scale only, never translate.
             qcv::ActiveStroke s = src;
-            qreal minX = 1e18, minY = 1e18, maxX = -1e18, maxY = -1e18;
-            for (QPointF& pt : s.points) {
-                const QPointF c = localToContent(pl, pt);
-                pt = QPointF(c.x() - contentX_, c.y() - contentY_);
-                minX = std::min(minX, pt.x()); maxX = std::max(maxX, pt.x());
-                minY = std::min(minY, pt.y()); maxY = std::max(maxY, pt.y());
+            const bool oval = (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2);
+            for (size_t pi = 0; pi < s.points.size(); ++pi) {
+                QPointF& pt = s.points[pi];
+                if (oval && pi == 1) {
+                    pt = QPointF(pt.x() * pl.scale.width(), pt.y() * pl.scale.height());
+                } else {
+                    const QPointF c = localToContent(pl, pt);
+                    pt = QPointF(c.x() - contentX_, c.y() - contentY_);
+                }
             }
             const double penW = std::max(1.0, double(s.strokeWidth) * pl.widthScale);
-            const QRectF bbox(QPointF(minX - penW, minY - penW),
-                              QPointF(maxX + penW, maxY + penW));
+            // strokeBoundsNorm knows the oval center±radii box; points are
+            // item px here, so its "normalized" units are already px.
+            const QRectF bbox = qcv::strokeBoundsNorm(s)
+                                    .adjusted(-penW, -penW, penW, penW);
             if (!bbox.intersects(viewport)) continue;
             qcv::paintStroke(*p, s, 1.0, 1.0, pl.widthScale);
 
@@ -337,6 +344,14 @@ void DocInkCanvas::commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke)
     qcv::ActiveStroke s = *stroke;
     for (size_t i = 0; i < content.size(); ++i)
         s.points[i] = contentToLocal(pl, content[i]);
+    // An oval's points[1] is its RADII — a VECTOR, not a position. The
+    // position transform above bakes the anchor origin + press-time scroll
+    // into it, which is the "circles morph when anything moves" bug: the
+    // radius then depends on where the page was scrolled when you drew.
+    // Vectors convert by scale alone.
+    if (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2)
+        s.points[1] = QPointF(stroke->points[1].x() * width() / pl.scale.width(),
+                              stroke->points[1].y() * height() / pl.scale.height());
     if (space == mn::DocInkAnchor::Frame)   // width stored in media-intrinsic px
         s.strokeWidth = float(double(s.strokeWidth) / pl.widthScale);
 
@@ -362,16 +377,12 @@ bool DocInkCanvas::hitTest(QPointF contentPt, QString& blockIdOut, int& idxOut) 
         for (int i = int(it->strokes.size()) - 1; i >= 0; --i) {   // last-drawn first
             const qcv::ActiveStroke& s = it->strokes[size_t(i)];
             if (s.points.empty()) continue;
-            double minX = s.points.front().x(), maxX = minX;
-            double minY = s.points.front().y(), maxY = minY;
-            for (const QPointF& p : s.points) {
-                minX = std::min(minX, p.x()); maxX = std::max(maxX, p.x());
-                minY = std::min(minY, p.y()); maxY = std::max(maxY, p.y());
-            }
+            // Oval-aware bounds (center ± radii); plain point bbox otherwise.
+            const QRectF b = qcv::strokeBoundsNorm(s);
             const double padX = tolX + double(s.strokeWidth) / (2.0 * pl.scale.width());
             const double padY = tolY + double(s.strokeWidth) / (2.0 * pl.scale.height());
-            if (local.x() >= minX - padX && local.x() <= maxX + padX
-                && local.y() >= minY - padY && local.y() <= maxY + padY) {
+            if (local.x() >= b.left() - padX && local.x() <= b.right() + padX
+                && local.y() >= b.top() - padY && local.y() <= b.bottom() + padY) {
                 blockIdOut = it.key();
                 idxOut = i;
                 return true;
@@ -458,7 +469,14 @@ void DocInkCanvas::selectMove(QPointF itemPos)
     const QPointF dLocal((contentPt.x() - lastContentPt_.x()) / pl.scale.width(),
                          (contentPt.y() - lastContentPt_.y()) / pl.scale.height());
     if (dLocal.isNull()) return;
-    for (QPointF& p : it->strokes[size_t(selIdx_)].points) p += dLocal;
+    {   // translate positions; an oval's radii vector is translation-immune
+        auto& mv = it->strokes[size_t(selIdx_)];
+        const bool oval = (mv.tool == qcv::DrawingTool::Oval && mv.points.size() >= 2);
+        for (size_t pi = 0; pi < mv.points.size(); ++pi) {
+            if (oval && pi == 1) continue;
+            mv.points[pi] += dLocal;
+        }
+    }
     lastContentPt_ = contentPt;
     moveDirty_ = true;
     update();
@@ -479,9 +497,9 @@ void DocInkCanvas::selectRelease()
     // Re-anchor by the topmost rule: a big move can land the stroke on a
     // different block.
     qcv::ActiveStroke moved = it->strokes[size_t(selIdx_)];
-    qreal minCy = 1e18;
-    for (const QPointF& p : moved.points)
-        minCy = std::min(minCy, localToContent(oldPl, p).y());
+    // Oval-aware top edge (the radii point is not a position — a raw
+    // min-over-points would read it as one).
+    const qreal minCy = localToContent(oldPl, qcv::strokeBoundsNorm(moved).topLeft()).y();
     const qreal total = std::max<qreal>(1.0, model_->totalHeight());
     const int newRow = model_->rowForY(std::clamp(minCy, qreal(0), total - 1));
     const int oldRow = oldPl.row;
@@ -496,8 +514,18 @@ void DocInkCanvas::selectRelease()
     const auto newSpace = media ? mn::DocInkAnchor::Frame : mn::DocInkAnchor::Px;
     const Placement newPl = placementFor(model_->idForRow(newRow), newSpace);
     if (!newPl.valid) return;
-    for (QPointF& p : moved.points)
-        p = contentToLocal(newPl, localToContent(oldPl, p));
+    {   // positions re-anchor through content space; the oval radii VECTOR
+        // converts by the two spaces' scale ratio alone.
+        const bool movedOval = (moved.tool == qcv::DrawingTool::Oval && moved.points.size() >= 2);
+        for (size_t pi = 0; pi < moved.points.size(); ++pi) {
+            QPointF& p = moved.points[pi];
+            if (movedOval && pi == 1)
+                p = QPointF(p.x() * oldPl.scale.width() / newPl.scale.width(),
+                            p.y() * oldPl.scale.height() / newPl.scale.height());
+            else
+                p = contentToLocal(newPl, localToContent(oldPl, p));
+        }
+    }
     // stroke_width: convert between the two spaces' width units via page px.
     moved.strokeWidth = float(double(moved.strokeWidth) * oldPl.widthScale / newPl.widthScale);
 
