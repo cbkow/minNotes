@@ -207,7 +207,7 @@ Item {
         id: posterRect
         anchors.fill: parent
         visible: mb.isVideo && !mb.isActivePlayer && !mb.suspended
-        color: Theme.colors.surface; radius: Theme.dim.radius
+        color: Theme.colors.bgAlt; radius: Theme.dim.radius   // = the page field (and the live surface's fill)
         clip: true
         onVisibleChanged: if (visible) posterFade.restart()
         NumberAnimation { id: posterFade; target: posterRect; property: "opacity"

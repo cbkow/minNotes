@@ -11,6 +11,8 @@ QtObject {
         // Resolve-lean system): recess < page < card < raised < hover.
         // Tone separates planes; borders only where same-tone surfaces meet.
         readonly property color bg:          "#121211"   // window shell
+        readonly property color bgAlt:       "#181817"   // the "desk" right of the page (the overflow margin field)
+        readonly property color bgAlt2:      "#1d1d1c"   // desk zebra stripe — every other block's span on the desk
         readonly property color surface:     "#121211"   // the document "page"
         readonly property color surfaceRecess: "#0e0e0e" // inset wells — inputs, code, thumbnail beds, tooltip
         readonly property color card:        "#1a1a19"   // content cards on the page/panels (kanban, notes, threads)
@@ -50,6 +52,7 @@ QtObject {
         readonly property int radius:         0    // squared corners everywhere (user ruling); was 4
         readonly property int scrollBarWidth: 14   // macOS always-on scrollbar width
         readonly property int columnWidth:    760    // prose reading measure (comfortable)
+        readonly property int pageMargin:     48     // LEFT-ANCHORED page: fixed left margin (grip gutter lives in it)
         readonly property int docTopPad:      28     // breathing room above block 0
         readonly property int toolStripHeight: 34    // flat-button row height / rail width
     }

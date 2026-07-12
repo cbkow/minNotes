@@ -21,14 +21,15 @@ FocusScope {
     // inactive) — stop the shared decoder/audio deliberately rather than letting
     // child destruction race the decode/audio threads mid-playback.
     Component.onDestruction: stopVideo()
-    // Single 760 reading measure shared by ALL blocks (tables included for now),
-    // left-aligned at a common edge (the column is centred in the window). Tables
-    // scroll horizontally inside their delegate when content exceeds it.
-    // ANNOTATION MODE locks the page at the full 760 regardless of window width
-    // (the frame ink was drawn against must be stable) — the window pans
-    // horizontally instead of squeezing the column.
-    property real pageWidth: inkMode ? Theme.dim.columnWidth
-                                     : Math.min(width - 40, Theme.dim.columnWidth)
+    // Single 760 reading measure shared by ALL blocks — ALWAYS the full
+    // measure (user ruling 2026-07-12): a narrow window scrolls the page
+    // horizontally instead of squeezing the column. That keeps the frame
+    // margin ink was drawn against stable in EVERY mode, so annotations
+    // never need to hide on shrink (the old inkSqueezed machinery is gone).
+    // The page is LEFT-ANCHORED at a fixed margin, matching the HTML
+    // export's layout language; the space to the right is where wide
+    // tables grow.
+    property real pageWidth: Theme.dim.columnWidth
     // Media is known-geometry: tell the model the width it derives media heights
     // from, and re-tell it on resize so reserved height stays exact (no jump).
     onPageWidthChanged: blockModel.setContentWidth(pageWidth)
@@ -43,12 +44,18 @@ FocusScope {
     Timer { id: resizeSettle; interval: 200; onTriggered: root.windowResizing = false }
     // Horizontal reach past the page for margin ink (each side, ink mode only).
     readonly property real inkGutter: 120
-    // The document's CONTENT width: normally the viewport (no horizontal
-    // scroll); in ink mode wide enough for the locked page + margins, so the
-    // Flickable pans natively (the kanban board's 2D-pan pattern).
+    // The document's CONTENT width: the viewport, grown to hold the widest
+    // measured block (wide tables — blockModel.maxContentWidth) so the PAGE
+    // scrolls horizontally, plus a right breathing margin. In ink mode wide
+    // enough for the locked page + gutters, so the Flickable pans natively
+    // (the kanban board's 2D-pan pattern).
     readonly property real contentSpan: inkMode
-        ? Math.max(flick.width, pageWidth + 2 * inkGutter) : flick.width
-    readonly property real leftEdge: (contentSpan - pageWidth) / 2
+        ? Math.max(flick.width, leftEdge + pageWidth + inkGutter)
+        : Math.max(flick.width,
+                   leftEdge + Math.max(pageWidth, blockModel.maxContentWidth) + 16)
+    // Left-anchored: a fixed margin, NOT centered. Ink mode widens it to the
+    // ink gutter so margin strokes have room on the left too.
+    readonly property real leftEdge: inkMode ? inkGutter : Theme.dim.pageMargin
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
 
@@ -266,11 +273,10 @@ FocusScope {
     // a drop-indicator line follow the cursor; on release → blockModel.moveBlock.
     property bool blockDragging: false
     property int  blockDragRow: -1       // logical row being dragged
-    property string blockDragText: ""    // first line, shown in the ghost
     property real blockDragViewY: 0       // viewport y of the cursor
     property int  dropGap: -1            // insertion gap 0..count (line at its top)
     property int  hoverRow: -1           // row whose grip is lit
-    readonly property real gutterX: leftEdge   // grip gutter sits just left of the common left edge
+    readonly property real gutterX: leftEdge   // drag-feedback overlays (drop line / ghost) align here
 
     // Block context-menu state: the right-clicked row and where the menu opened
     // (viewport coords; reused to anchor the language picker).
@@ -338,7 +344,8 @@ FocusScope {
     // The focused cell image's rect in viewport coords (re-evaluated on scroll /
     // table h-scroll / layout / cell change, then mapped from the BlockTable).
     readonly property rect cellImgRect: {
-        var dep = flick.contentY + blockModel.layoutRevision + blockModel.contentRevision
+        var dep = flick.contentY + flick.contentX
+                + blockModel.layoutRevision + blockModel.contentRevision
                 + (_cellImgBt ? _cellImgBt.scrollX : 0) + tcur.cr + tcur.cc + tcur.pos
         if (!cellImgActive || !_cellImgBt) return Qt.rect(0, 0, 0, 0)
         var r = _cellImgBt.cellImageRect(tcur.cr, tcur.cc)
@@ -348,8 +355,6 @@ FocusScope {
     // Column inner width for the focused cell (the resize upper bound).
     readonly property real cellImgMaxW: (cellImgActive && _cellImgBt) ? _cellImgBt.colW(tcur.cc) - 16 : 800
 
-    // Is a content-x in the left grip gutter (just left of the text column)?
-    function inGutter(mx) { return mx < gutterX - 4 && mx > gutterX - 40 }
     // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
     function gapForY(cy) {
         var n = blockModel.count
@@ -372,7 +377,9 @@ FocusScope {
         blockDragging = false; blockDragRow = -1; dropGap = -1
     }
 
-    Rectangle { anchors.fill: parent; color: Theme.colors.surface }
+    // The whole editor field is ONE tone now (user ruling 2026-07-12): the
+    // page shares the desk grey and the desk RULES alone carry structure.
+    Rectangle { anchors.fill: parent; color: Theme.colors.bgAlt }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
     // --- Inline video player. ONE decoder, root-owned (a pooled MediaBlock
@@ -698,8 +705,9 @@ FocusScope {
     DropArea {
         anchors.fill: parent
         keys: ["text/uri-list"]
-        onEntered: (drag) => { root.imageDropActive = true; root.aimDrop(drag.x, drag.y + flick.contentY) }
-        onPositionChanged: (drag) => { root.aimDrop(drag.x, drag.y + flick.contentY) }
+        onEntered: (drag) => { root.imageDropActive = true
+                               root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY) }
+        onPositionChanged: (drag) => { root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY) }
         onExited: { root.imageDropActive = false; root.clearDropState() }
         onDropped: (drop) => {
             root.imageDropActive = false
@@ -1104,6 +1112,17 @@ FocusScope {
             if (c && c.active && c.logicalRow === r) return c
         }
         return null
+    }
+    // True when a CONTENT-coordinate point lies on the desk right of the
+    // page — clicks there land on NOTHING (the margin isn't the page).
+    // Exception: a table extending past the measure owns its full width.
+    function inRightMargin(cx, cy) {
+        if (cx <= leftEdge + pageWidth) return false
+        var r = blockModel.rowForY(Math.max(0, cy))
+        if (r < 0 || blockModel.typeForRow(r) !== 7) return true
+        var dcell = cellForRow(r)
+        var w = (dcell && dcell.tableItem) ? dcell.tableItem.implicitWidth : pageWidth
+        return cx > leftEdge + w
     }
     // (cx, cy) in CONTENT coordinates → {row, col}.
     function hitTest(cx, cy) {
@@ -2174,6 +2193,48 @@ FocusScope {
             function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta }
         }
 
+        Rectangle {   // the OVERFLOW DESK — grey only BEYOND the page zone
+                      // (user ruling: page + symmetric margins stay dark; the
+                      // grey starts after a right margin mirroring the left
+                      // one, marking the territory wide tables extend into).
+            id: deskRect
+            z: -1
+            x: root.leftEdge + root.pageWidth + Theme.dim.pageMargin
+            y: 0
+            width: Math.max(0, Math.max(flick.width, root.contentSpan) - x)
+            height: Math.max(flick.height, flick.contentHeight)
+            color: Theme.colors.bgAlt
+        }
+        Rectangle {   // "you are here" — the FOCUSED block's desk row. The one
+                      // fill on the desk, and it MEANS something (the zebra's
+                      // parity flipped on every insert; this doesn't).
+            visible: cursor.focusRow >= 0 && cursor.focusRow < blockModel.count
+            z: -1
+            x: deskRect.x
+            width: deskRect.width
+            y: (blockModel.layoutRevision, blockModel.yForRow(cursor.focusRow))
+            height: Math.max(16, blockModel.heightForRow(cursor.focusRow))
+            color: Theme.colors.bgAlt2
+        }
+        Repeater {   // desk RULES: a hairline at each block's top across the
+                     // grey field — a line that INFORMS ("a block starts
+                     // here") and stays put under editing, unlike zebra parity.
+            model: root.poolSize
+            delegate: Rectangle {
+                required property int index
+                readonly property int prow: root.firstRow
+                    + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
+                visible: prow >= 0 && prow < blockModel.count
+                         && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+                z: -1
+                x: deskRect.x
+                width: deskRect.width
+                y: (blockModel.layoutRevision, blockModel.yForRow(prow))
+                height: 1
+                color: Theme.colors.border
+            }
+        }
+
         Repeater {
             id: pool
             model: root.poolSize
@@ -2431,11 +2492,23 @@ FocusScope {
                     visible: cell.active && te.btype === 7
                     logicalRow: cell.logicalRow
                     active: cell.active && te.btype === 7
-                    // Left-aligned at the shared left edge, up to the page measure;
-                    // wider content scrolls inside.
+                    // Left-aligned at the shared left edge, UNCAPPED — the table
+                    // takes its natural width and the page scrolls horizontally
+                    // (maxWidth is only the capped/full-frame fallback bound).
+                    uncapped: true
                     maxWidth: root.pageWidth
                     width: implicitWidth
                     x: cell.colLeft; y: 6
+                    // Width joins the model's measure-once cache (the height
+                    // contract's sibling): the widest reported table drives
+                    // flick.contentWidth via blockModel.maxContentWidth.
+                    function reportW() {
+                        if (active && implicitWidth > 0)
+                            blockModel.setMeasuredWidth(logicalRow, implicitWidth)
+                    }
+                    onImplicitWidthChanged: reportW()
+                    onActiveChanged: reportW()
+                    onLogicalRowChanged: reportW()
                     height: implicitHeight   // a bare Item won't adopt implicitHeight itself
                     // Focus / in-cell caret + selection (driven by the table sub-cursor).
                     focused: cell.isFocus && te.btype === 7
@@ -2638,29 +2711,9 @@ FocusScope {
                     color: Theme.colors.divider
                 }
 
-                // drag-reorder grip (left gutter). Shown on row hover; when the
-                // pointer is actually IN the gutter (or this block is being
-                // dragged) it goes hot — backing fill + bright dots — so the
-                // grab zone is unmistakable. Press starts the drag (handled by
-                // the persistent `mouse` area via the gutter zone).
-                Rectangle {
-                    visible: cell.active && !cell.isMedia
-                    readonly property bool hot: root.blockDragRow === cell.logicalRow
-                                              || (root.hoverRow === cell.logicalRow && mouse.overGrip)
-                    x: cell.colLeft - 30; y: te.y - 2
-                    width: 22; height: 24
-                    color: hot ? Theme.colors.surfaceHover : "transparent"
-                    opacity: hot ? 1.0
-                           : (root.hoverRow === cell.logicalRow ? 0.85 : 0.0)
-                    Behavior on opacity { NumberAnimation { duration: 90 } }
-                    Icon {
-                        anchors.centerIn: parent
-                        name: "dots-six-vertical"
-                        size: 20
-                        color: parent.hot ? Theme.colors.textBright : Theme.colors.text
-                    }
-                }
-
+                // (The left-gutter drag grip is GONE — user ruling 2026-07-12,
+                // "too much like milkdown": block reorder lives on the
+                // right-side ruler's number handles now.)
             }
         }
 
@@ -2674,15 +2727,18 @@ FocusScope {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             preventStealing: true
             hoverEnabled: true
-            property bool overGrip: false
             property bool overClickable: false   // over a task checkbox / table check or choice cell
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
                        : overClickable ? Qt.PointingHandCursor
-                       : (overGrip ? Qt.OpenHandCursor : Qt.IBeamCursor)
+                       : root.inRightMargin(mouseX, mouseY) ? Qt.ArrowCursor   // desk, not page
+                       : Qt.IBeamCursor
 
             onPressed: (m) => {
                 root.forceActiveFocus()
+                // The desk right of the page is dead space — no caret, no
+                // menu (a table reaching into it still takes the hit).
+                if (root.inRightMargin(m.x, m.y)) return
                 // Right-click anywhere on a block → its context menu (capturing the
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
@@ -2698,15 +2754,8 @@ FocusScope {
                     root.openBlockMenu(m.x - flick.contentX, m.y - flick.contentY, trow)
                     return
                 }
-                // Press in the grip gutter → start a block drag-reorder.
-                if (root.inGutter(m.x) && !(m.modifiers & Qt.ShiftModifier)) {
-                    root.blockDragRow = blockModel.rowForY(m.y)
-                    root.blockDragText = blockModel.contentForRow(root.blockDragRow).split("\n")[0]
-                    root.blockDragViewY = m.y - flick.contentY
-                    root.dropGap = root.gapForY(m.y)
-                    root.blockDragging = true
-                    return
-                }
+                // (Block drag-reorder starts from the ruler's number handles
+                // now — the left grip gutter is retired.)
                 cursor.resetGoalX(); cursor.clearMarks()
                 // Click into a table cell → place the table caret; arm drag for
                 // in-cell text selection / cross-cell range.
@@ -2765,10 +2814,8 @@ FocusScope {
                     cursor.move(h.row, h.col, true)
                     return
                 }
-                // hover (not pressed): light the row's grip; gutter → grab cursor;
-                // near a table column border → resize cursor.
+                // hover (not pressed): near a table column border → resize cursor.
                 root.hoverRow = blockModel.rowForY(m.y)
-                mouse.overGrip = root.inGutter(m.x)
                 var overBorder = false
                 if (blockModel.typeForRow(root.hoverRow) === 7) {
                     var hd = root.cellForRow(root.hoverRow), hbt = hd ? hd.tableItem : null
@@ -2823,7 +2870,7 @@ FocusScope {
                     linkTipHide.restart()
                 }
             }
-            onExited: { root.hoverRow = -1; mouse.overGrip = false; root.tableOverBorder = false
+            onExited: { root.hoverRow = -1; root.tableOverBorder = false
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
                 if (root.blockDragging) root.commitBlockDrag()
@@ -2839,6 +2886,7 @@ FocusScope {
                 // before release can't re-extend the selection back to the click
                 // point (which collapsed the word to word-start→cursor).
                 root.dragging = false; root.tableResizing = false
+                if (root.inRightMargin(m.x, m.y)) return   // the desk is dead space
                 // Double-click a file-attachment chip → reveal it in Finder/Explorer.
                 var mrow = blockModel.rowForY(m.y)
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
@@ -2884,6 +2932,9 @@ FocusScope {
         }
 
         ScrollBar.vertical: MnScrollBar {}
+        // The page-level horizontal bar — appears only when a wide table (or
+        // ink-mode pan span) pushes contentWidth past the viewport.
+        ScrollBar.horizontal: MnScrollBar {}
     }
 
     // --- Full-frame table view (the active table tab). Fills the editor; vertical
@@ -3899,46 +3950,12 @@ FocusScope {
         tool: root.inkMode && root.inspector ? root.inspector.drawTool : ""
         color: root.inspector ? root.inspector.drawColor : "#FF0000"
         strokeWidth: root.inspector ? root.inspector.drawWidth : 6
-        // Squeezed page (narrower than the 760 frame the ink was drawn
-        // against) → geometry no longer matches: FADE the layer out rather
-        // than render it misplaced. Data untouched; the pill below says why.
-        // Also faded when the user hides annotations (the eye toggle).
-        opacity: root.inkSqueezed || !root.inkLayerVisible ? 0 : 1
+        // Faded only when the user hides annotations (the eye toggle). The
+        // old "squeezed page" fade is gone: the page is ALWAYS the full 760
+        // measure now (narrow windows scroll horizontally instead of
+        // squeezing), so ink geometry always matches its frame.
+        opacity: root.inkLayerVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 160 } }
-    }
-    // The frame doesn't fit → annotations are hidden, never silently: a pill
-    // says how many, and clicking it enters annotation mode (which locks the
-    // 760 frame + pans — exactly the state that shows them again).
-    // (The Annotate/eye controls live at the right edge of the document TAB
-    // STRIP — Main.qml's annotCluster — where they can't fight the editor's
-    // overlay z-stack.)
-    readonly property bool inkSqueezed: !inkMode && width - 40 < Theme.dim.columnWidth
-    Rectangle {
-        // Quiet while the user has deliberately hidden the layer — the pill
-        // explains the SQUEEZED case, not the chosen one.
-        visible: root.inkSqueezed && root.inkLayerVisible
-                 && inkCanvas.strokeCount > 0 && flick.visible
-        z: 46
-        anchors.top: parent.top; anchors.right: parent.right
-        anchors.margins: 10
-        width: pillText.implicitWidth + 24; height: 26
-        color: Theme.colors.surfaceRaised
-        border.width: 1; border.color: Theme.colors.border
-        Text {
-            id: pillText
-            anchors.centerIn: parent
-            text: inkCanvas.strokeCount === 1
-                  ? qsTr("1 annotation hidden — widen to show")
-                  : qsTr("%1 annotations hidden — widen to show").arg(inkCanvas.strokeCount)
-            color: Theme.colors.textMuted
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-        }
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.setInkMode(true)
-        }
     }
 
     // --- Comment margin pins: one per row carrying comment spans, in the
@@ -3953,13 +3970,15 @@ FocusScope {
             readonly property int prow: modelData
             visible: flick.visible && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
             z: 56
-            width: 22; height: 22
-            x: root.leftEdge + root.pageWidth + 10 - flick.contentX
+            width: 24; height: 24
+            x: root.leftEdge + root.pageWidth + 12 - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY + 2
-            color: pinMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.surfaceRaised
-            border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "chat-circle-text"; size: 13
-                   color: pinMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+            // The comment BUBBLE (user ruling 2026-07-12): the margin is real
+            // space now, and blue = "a conversation lives here" — one of the
+            // few semantic accent uses.
+            color: pinMA.containsMouse ? Theme.colors.accentHover : Theme.colors.accent
+            Icon { anchors.centerIn: parent; name: "chat-circle-text"; weight: "fill"; size: 14
+                   color: Theme.colors.textBright }
             MouseArea {
                 id: pinMA
                 anchors.fill: parent; hoverEnabled: true
@@ -3972,39 +3991,100 @@ FocusScope {
         }
     }
 
+    // --- Block-number ruler: a quiet instrument rail at the viewport's right
+    // edge (inside the vertical scrollbar) — one mono number per visible
+    // block, the margin's shared address system ("block 14"). Display-only.
+    // Pool-math delegates (stable per index, like the block pool) so
+    // scrolling repositions instead of recreating.
+    Item {
+        id: blockRuler
+        visible: flick.visible
+        z: 44
+        anchors { top: parent.top; bottom: parent.bottom; right: parent.right
+                  rightMargin: Theme.dim.scrollBarWidth }
+        width: 34
+        // (No backing, no own stripes: the rail rides transparently on the
+        // desk's zebra — wide tables passing beneath carry their own paper.)
+        Repeater {
+            model: root.poolSize
+            delegate: Item {
+                id: rnum
+                required property int index
+                readonly property int prow: root.firstRow
+                    + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
+                visible: prow >= 0 && prow < blockModel.count
+                         && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+                width: blockRuler.width
+                height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
+                y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY
+                // Being dragged → the rail chip is the block's body; its slot dims.
+                opacity: root.blockDragging && rnum.prow === root.blockDragRow ? 0.3 : 1
+                Text {
+                    y: 2
+                    width: parent.width - 8
+                    horizontalAlignment: Text.AlignRight
+                    text: rnum.prow + 1
+                    color: rnum.prow === cursor.focusRow ? Theme.colors.textMuted
+                                                         : Theme.colors.textSubtle
+                    font.family: Theme.font.mono; font.pixelSize: 11
+                }
+                MouseArea {   // the number is the block's HANDLE — drag to
+                              // reorder (the left gutter's twin; reuses the
+                              // whole blockDrag lifecycle incl. auto-scroll)
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: root.blockDragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    property real pressY: 0
+                    onPressed: (m) => { pressY = m.y }
+                    onPositionChanged: (m) => {
+                        if (!pressed) return
+                        var vy = mapToItem(root, m.x, m.y).y
+                        if (!root.blockDragging) {
+                            if (Math.abs(m.y - pressY) < 4) return   // click ≠ drag
+                            root.blockDragRow = rnum.prow
+                            root.blockDragging = true
+                        }
+                        root.blockDragViewY = vy
+                        root.dropGap = root.gapForY(vy + flick.contentY)
+                    }
+                    onReleased: if (root.blockDragging) root.commitBlockDrag()
+                }
+            }
+        }
+        Rectangle {   // the drag's BODY: a zebra-toned chip riding the rail
+                      // under the cursor (the content area shows only the
+                      // drop-line locator — no ghosted content).
+            visible: root.blockDragging
+            z: 2
+            width: parent.width; height: 22
+            y: root.blockDragViewY - height / 2
+            color: Theme.colors.bgAlt
+            border.width: 1; border.color: Theme.colors.accent
+            Text {
+                anchors.centerIn: parent
+                text: root.blockDragRow + 1
+                color: Theme.colors.textBright
+                font.family: Theme.font.mono; font.pixelSize: 11
+            }
+        }
+    }
+
     // --- Block-drag overlays (viewport-fixed, on top of the document) ---
-    // Drop-indicator line at the insertion gap.
+    // Drop-indicator line at the insertion gap — FULL WIDTH, page through
+    // desk to the rail: the insertion is a document-wide event, and the line
+    // meets the drag chip riding the ruler.
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0
-        x: root.gutterX - flick.contentX; width: root.measureForRow(root.blockDragRow); height: 2; radius: 0
+        x: root.gutterX - flick.contentX
+        width: root.width - x
+        height: 2; radius: 0
         y: (blockModel.layoutRevision, root.gapY(root.dropGap)) - flick.contentY - 1
         color: Theme.colors.accent
         z: 50
     }
-    // Floating ghost of the dragged block — an accent outline with a barely-there
-    // translucent fill (the document shows through), following the cursor.
-    Rectangle {
-        visible: root.blockDragging
-        x: root.gutterX - flick.contentX; width: root.measureForRow(root.blockDragRow); height: 30
-        y: root.blockDragViewY - height / 2
-        readonly property color _a: Theme.colors.accent
-        color: Qt.rgba(_a.r, _a.g, _a.b, 0.06)
-        border.width: 1; border.color: Qt.rgba(_a.r, _a.g, _a.b, 0.55)
-        radius: Theme.dim.radius; z: 51
-        Row {
-            anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8
-                      verticalCenter: parent.verticalCenter }
-            spacing: 6
-            Icon { name: "dots-six-vertical"; size: Theme.icon.sizeToolbar
-                   color: Theme.colors.textMuted; anchors.verticalCenter: parent.verticalCenter }
-            Text {
-                width: parent.width - 30
-                text: root.blockDragText; color: Theme.colors.textMuted
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
-                elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-    }
+    // (The content-area floating ghost is GONE — user ruling 2026-07-12:
+    // content shows only the drop-line locator above; the drag's "body"
+    // lives on the ruler as a rail chip, over the zebra.)
 
     // Image-drop insertion indicator — a pulsing accent line at the snapped gap,
     // with an expanding ring on a solid dot, so it's obvious where a dragged image
@@ -4015,7 +4095,9 @@ FocusScope {
         readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.imageDropGap)) - flick.contentY
 
         Rectangle {   // insertion line
-            x: root.leftEdge - flick.contentX; width: root.textWidth; height: 3; radius: 0
+            // (was `root.textWidth` — an undefined property; the line had no
+            // width since forever. Surfaced by the left-anchor survey.)
+            x: root.leftEdge - flick.contentX; width: root.pageWidth; height: 3; radius: 0
             y: parent.lineY - 1.5
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: Theme.colors.accent
@@ -4072,8 +4154,8 @@ FocusScope {
             id: videoSurface
             anchors.fill: parent
             videoDecoder: videoDec
-            fillColor: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g,
-                               Theme.colors.surface.b, 1.0)
+            fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g,
+                               Theme.colors.bgAlt.b, 1.0)   // letterbox = the page field tone
         }
         // No click-to-play on the frame — the toolbar is the sole transport.
 
@@ -4460,7 +4542,7 @@ FocusScope {
         readonly property real topV: dlg ? dlg.y - flick.contentY + 6 : 0   // table content top (tableHost y:6)
         readonly property real cw: tItem ? tItem.width : 0
         readonly property real ch: tItem ? tItem.height : 0
-        readonly property real tableX: root.leftEdge   // table is left-aligned at the shared edge
+        readonly property real tableX: root.leftEdge - flick.contentX   // shared edge, in VIEWPORT coords (page can h-scroll)
         readonly property bool overflow: tItem ? tItem.overflowing : false
         readonly property real sbH: Theme.dim.scrollBarWidth
 

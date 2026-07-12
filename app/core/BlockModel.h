@@ -34,6 +34,10 @@ class BlockModel : public QAbstractListModel {
     // Bump on any CONTENT change (edit/delete). The Flickable arm's text
     // binding includes it to re-read contentForRow() without repositioning.
     Q_PROPERTY(int contentRevision READ contentRevision NOTIFY contentChangedSpike)
+    // Widest measured block (tables report their natural width; 0 until one
+    // does). Drives the view's horizontal content extent — the page scrolls
+    // for wide tables instead of tables scrolling inside themselves.
+    Q_PROPERTY(qreal maxContentWidth READ maxContentWidth NOTIFY maxContentWidthChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
     // The open document. `documentPath` is the file; `documentName` is its display
@@ -164,6 +168,10 @@ public:
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so
     // the Flickable arm can compensate contentY when an off-screen block settles.
     Q_INVOKABLE void setMeasuredHeight(int row, qreal h);
+    // Width sibling of the height report (tables only — soft measure-once
+    // cache; see maxContentWidth).
+    Q_INVOKABLE void setMeasuredWidth(int row, qreal w);
+    qreal maxContentWidth() const { return maxContentWidth_; }
     // Media is known-geometry: its height is a pure function of the probed dims
     // and the page width the doc is laid out at, so the view never measures it
     // back — it sets the width here (on load + resize) and the model re-derives
@@ -474,6 +482,7 @@ public:
 signals:
     void layoutChangedSpike();
     void contentChangedSpike();
+    void maxContentWidthChanged();
     void modelReset();
     void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset
     void heightSettled(int row, qreal delta);
@@ -509,6 +518,7 @@ private:
         bool isPdf = false;     // media only: kind=="pdf" → inline page view + nav
         bool isSketch = false;  // media only: kind=="sketch" → in-doc drawing canvas
         uint16_t dispW = 0;     // media only: per-block display width override (0 = default/fit)
+        uint16_t measuredW = 0; // tables only: reported natural width px (0 = unmeasured)
         uint16_t mediaW = 0;    // media only: intrinsic width px  (exact no-upscale height estimate)
         uint16_t mediaH = 0;    // media only: intrinsic height px
         QString lang;       // code blocks: syntax-highlight language (else empty)
@@ -580,6 +590,8 @@ private:
     static bool matchMarkdownPrefix(const QString& content, BlockType& type, int& level, int& strip);
     void persistMeta(int row);   // write type/attrs of content_[row]'s block
 
+    void refreshMaxContentWidth();
+    double maxContentWidth_ = 0.0;
     int clampRow(int row) const;
     // Safe row access: a default (empty paragraph) Row when the model is empty
     // (no document open), so query methods never index an empty vector.

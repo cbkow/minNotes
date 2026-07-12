@@ -131,8 +131,16 @@ Item {
         return s + 1                        // + the shared left border
     }
 
-    implicitWidth:  Math.min(contentW, maxWidth)
+    // Uncapped (the inline document table): natural content width — the PAGE
+    // scrolls horizontally instead of the table scrolling inside itself
+    // (user ruling 2026-07-12). Capped (the full-frame tab): clamp to
+    // maxWidth and scroll internally via hflick, as before.
+    property bool uncapped: false
+    implicitWidth:  uncapped ? contentW : Math.min(contentW, maxWidth)
     implicitHeight: grid.implicitHeight + 1
+
+    // (No paper backing: the whole editor field is one tone now — there is
+    // no desk/page seam for a wide table to cover.)
 
     // Scroll position, driven by the editor's root-overlay scrollbar (an inner
     // ScrollBar would sit under the document mouse layer and never get drags).

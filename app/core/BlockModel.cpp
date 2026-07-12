@@ -2785,7 +2785,32 @@ QHash<int, QByteArray> BlockModel::roleNames() const {
 
 void BlockModel::bumpLayout() {
     ++layoutRevision_;
+    // Row set may have changed (insert/remove/undo) — keep the width max
+    // honest. Cheap linear scan; widths are a soft cache (delegates
+    // re-report on their next render, exactly like heights).
+    refreshMaxContentWidth();
     emit layoutChangedSpike();
+}
+
+// The horizontal sibling of the height contract: table delegates report
+// their natural (uncapped) width once measured; the max drives the view's
+// contentWidth so the PAGE scrolls horizontally for wide tables. Only
+// tables report — everything else lives inside the prose measure.
+void BlockModel::setMeasuredWidth(int row, qreal w) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || w <= 0.0) return;
+    const uint16_t v = static_cast<uint16_t>(std::clamp<qreal>(w, 0.0, 65535.0));
+    if (rows_[row].measuredW == v) return;
+    rows_[row].measuredW = v;
+    refreshMaxContentWidth();
+}
+
+void BlockModel::refreshMaxContentWidth() {
+    double m = 0.0;
+    for (const Row& r : rows_) m = std::max(m, static_cast<double>(r.measuredW));
+    if (m != maxContentWidth_) {
+        maxContentWidth_ = m;
+        emit maxContentWidthChanged();
+    }
 }
 
 void BlockModel::setMeasuredHeight(int row, qreal h) {
