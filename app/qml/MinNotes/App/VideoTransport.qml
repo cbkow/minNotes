@@ -20,10 +20,11 @@ Rectangle {
                                             : (blockModel.contentRevision, blockModel.mediaFrames(row))
 
     height: editor ? editor.videoTransportH : 40
-    color: "#212121"      // a hair lighter than the page (#1b1b1b)
+    color: Theme.colors.surfaceRaised   // the raised-chrome plane (tonal ladder)
     Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
 
     RowLayout {
+        id: transportRow
         anchors.fill: parent
         anchors.leftMargin: 6; anchors.rightMargin: 8
         spacing: 0
@@ -89,14 +90,24 @@ Rectangle {
                 value: (vt.editor.videoPlayheadRev, vt.editor.videoPlayheadFor(vt.row))
                 when: !vt.live && !vscrub.pressed
             }
+
         }
 
-        Text {   // frame counter (mirrors ufb)
+        TextMetrics {   // the counter's widest possible string for this clip
+            id: counterMetrics
+            font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+            text: Math.max(0, vt.totalFrames - 1) + " / " + Math.max(0, vt.totalFrames - 1)
+        }
+        Text {   // frame counter (mirrors ufb) — width RESERVED at the clip max
+                 // so growing digits don't reflow the row (the slider would
+                 // shrink and the note markers would creep during playback)
             text: (vt.live ? vt.dec.currentFrame
                            : (vt.editor.videoPlayheadRev, vt.editor.videoPlayheadFor(vt.row)))
                   + " / " + Math.max(0, vt.totalFrames - 1)
             color: Theme.colors.textMuted
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+            Layout.preferredWidth: counterMetrics.width
+            horizontalAlignment: Text.AlignRight
             Layout.rightMargin: 4
         }
 
@@ -115,6 +126,14 @@ Rectangle {
             }
         }
 
+        FlatButton {   // notes/annotations visibility — ONE switch shared with the studio
+            visible: vt.live && vt.editor.videoNoteArr.length > 0
+            iconName: vt.editor.annotationsHidden ? "eye" : "eye-slash"
+            checked: vt.editor.annotationsHidden
+            tooltip: vt.editor.annotationsHidden ? qsTr("Show notes") : qsTr("Hide notes")
+            tooltipSide: "top"
+            onClicked: vt.editor.annotationsHidden = !vt.editor.annotationsHidden
+        }
         FlatButton { iconName: "repeat"; tooltip: qsTr("Loop"); tooltipSide: "top"
             checked: vt.editor.videoLoop; onClicked: vt.editor.toggleVideoLoop() }
         FlatButton {
@@ -130,6 +149,57 @@ Rectangle {
             value: vt.audio.muted ? 0 : vt.audio.volume
             fillColor: Theme.colors.textMuted
             onMoved: { vt.audio.setVolume(value); if (value > 0) vt.audio.setMuted(false) }
+        }
+    }
+
+    // Per-bar note store, so markers show BEFORE the video ever activates
+    // (the root vnotes only follows the screen-owning clip). Read-only —
+    // nothing here mutates; its file watcher keeps parked bars fresh when
+    // the studio or QCView saves the sidecar.
+    VideoNotesModel {
+        id: barNotes
+        mediaPath: (vt.row >= 0 && blockModel.contentRevision >= 0)
+                   ? blockModel.mediaLocalPath(vt.row) : ""
+        fps: vt.row >= 0 ? blockModel.mediaFps(vt.row) : 0
+    }
+
+    // QCView note markers: solid triangles straddling the bar's top edge
+    // (poking over the image a bit), tips pointing down at the timeline.
+    // x is the exact spot the HANDLE's center occupies at the note's frame,
+    // so the playhead parks precisely under a marker. The live bar reads the
+    // root list (instant on studio edits); parked bars read their own store
+    // (revision read load-bearing — rule 1e). Click = jump to the note's
+    // frame PAUSED (notes pin to one frame — land on it, read it).
+    Repeater {
+        model: vt.live ? vt.editor.videoNoteArr
+                       : (barNotes.revision >= 0 ? barNotes.noteList() : [])
+        delegate: Item {
+            required property var modelData
+            readonly property int nf: modelData.frame
+            readonly property real frac: nf / Math.max(1, vt.totalFrames - 1)
+            width: 12; height: 12
+            x: transportRow.x + vscrub.x + vscrub.leftPadding
+               + frac * (vscrub.availableWidth - vscrub.handle.width)
+               + vscrub.handle.width / 2 - width / 2
+            y: -5
+            Icon {
+                anchors.fill: parent
+                name: "caret-down"; weight: "fill"; size: 12
+                // QCView's timeline-pin violet — "a QCView note" is one
+                // color across both apps; addressed notes dim to grey.
+                color: modelData.addressed ? Theme.colors.textSubtle
+                                           : Theme.colors.noteMarker
+            }
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -2
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    vt.editor.ensureVideoActive(vt.row)
+                    vt.dec.pause(); vt.audio.pause()
+                    vt.editor._vidScrubTo(nf)
+                }
+            }
         }
     }
 }

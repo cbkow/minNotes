@@ -389,6 +389,15 @@ FocusScope {
     // switch re-points it before our onActiveChanged handler runs).
     property string _videoPlayingPath: ""
     property bool videoLoop: false
+    // ONE annotation-visibility switch for the whole app (inline player +
+    // studio): when true the on-video stroke overlay and the note caption
+    // hide so the clip can be watched clean. Note ticks and the studio
+    // filmstrip stay — they're navigation, not overlay.
+    property bool annotationsHidden: false
+    // The screen-owning clip's QCView notes for ticks + caption (and the
+    // studio filmstrip via vnotes directly). The revision read must be
+    // LOAD-BEARING (ternary, not comma-tuple — reactivity rule 1e).
+    readonly property var videoNoteArr: vnotes.revision >= 0 ? vnotes.noteList() : []
     // Review-speed playback (QCView parity: R cycles 0.5→0.75→1→1.25→1.5→2,
     // Shift+R resets, transport readout when ≠ 1x). Applied to BOTH the video
     // pacing divisor and the audio TempoStage; the re-anchoring seek right
@@ -573,10 +582,13 @@ FocusScope {
     }
 
     // ---- Drag-scrub audio (transport-slider gesture) ----
-    // Analog-scrub grains through the shuttle engine, speed ESTIMATED from
-    // drag velocity: signed source-seconds per wall second, EMA-smoothed with
-    // a dt-scaled alpha (tau ≈ 80 ms) so mouse jitter doesn't warble the
-    // grain pitch. The engine's hold detection silences a stationary mouse.
+    // Skim-style grains through the shuttle engine (natural pitch above 1x,
+    // varispeed below), speed ESTIMATED from drag velocity: signed
+    // source-seconds per wall second, EMA-smoothed with a dt-scaled alpha
+    // (tau ≈ 40 ms) so mouse jitter doesn't warble the grain pitch. Tau was
+    // 80 ms when above-1x jitter was audible; with the engine's 1x pitch cap
+    // only sub-1x drags hear the estimate, so a faster tracker wins. The
+    // engine's hold detection silences a stationary mouse.
     property bool _scrubAudioActive: false
     property real _scrubVelLastMs: 0
     property real _scrubVelLastSec: 0
@@ -594,7 +606,7 @@ FocusScope {
         var dt = (now - _scrubVelLastMs) * 1e-3
         if (dt > 0.0005) {
             var v = Math.max(-32, Math.min(32, (sec - _scrubVelLastSec) / dt))
-            var alpha = 1.0 - Math.exp(-dt / 0.080)
+            var alpha = 1.0 - Math.exp(-dt / 0.040)
             _scrubVelEma += alpha * (v - _scrubVelEma)
             _scrubVelLastMs = now; _scrubVelLastSec = sec
         }
@@ -608,6 +620,20 @@ FocusScope {
 
     VideoDecoder { id: videoDec }
     AudioPlayer  { id: videoAudio }
+    // The note store: QCView's sidecar (.qcview/<media>/notes.json), loaded
+    // for whichever video owns the screen — the studio's row when a video tab
+    // is open (poster case included), else the inline player's. Root-owned so
+    // the inline overlay + transports and the studio share ONE copy (two
+    // models on the same notes.json would only sync through the file
+    // watcher). Lives OUTSIDE the document + undo — it travels with the
+    // video, shared with QCView.
+    VideoNotesModel {
+        id: vnotes
+        readonly property int noteRow: root.activeVideoRow >= 0 ? root.activeVideoRow
+                                                                : root.videoPlayingRow
+        mediaPath: noteRow >= 0 ? blockModel.mediaLocalPath(noteRow) : ""
+        fps: noteRow >= 0 ? blockModel.mediaFps(noteRow) : 0
+    }
     // Keep audio aligned to the video playhead while playing (~30 Hz).
     Timer {
         interval: 33; repeat: true
@@ -2326,7 +2352,7 @@ FocusScope {
                         required property int index
                         readonly property rect rr: cell.codeRects[index]
                         color: Theme.colors.inlineCodeBg
-                        radius: 3
+                        radius: 0
                         z: 0
                         x: te.x + rr.x - 2
                         y: te.y + rr.y
@@ -2561,7 +2587,7 @@ FocusScope {
                     visible: cell.active && te.btype === 4
                     x: cell.colLeft + 4; y: te.y
                     width: 3; height: te.implicitHeight
-                    radius: 1; color: Theme.colors.quoteBar
+                    radius: 0; color: Theme.colors.quoteBar
                 }
                 Text {  // list: bullet (hollow at odd depths — cheap level cue)
                     visible: cell.active && te.btype === 5
@@ -2586,7 +2612,7 @@ FocusScope {
                     width: 14; height: 14
                     Rectangle {
                         anchors.fill: parent
-                        radius: 3
+                        radius: 0
                         color: te.taskState === 2 ? Theme.colors.accent : "transparent"
                         border.width: te.taskState === 2 ? 0 : 1.5
                         border.color: te.taskState === 1 ? Theme.colors.accent : Theme.colors.textMuted
@@ -2594,7 +2620,7 @@ FocusScope {
                     Rectangle {  // in-progress: centred dash
                         visible: te.taskState === 1
                         anchors.centerIn: parent
-                        width: 7; height: 2; radius: 1
+                        width: 7; height: 2; radius: 0
                         color: Theme.colors.accent
                     }
                     Text {  // done: check mark
@@ -3458,10 +3484,6 @@ FocusScope {
         color: Theme.colors.bg
         readonly property int r: root.activeVideoRow
         readonly property real notesPanelH: 320   // taller filmstrip → more room for long notes (stage shrinks to fit)
-        // When true, the on-video annotation overlay is hidden so the clip can
-        // be watched clean. The filmstrip notes list is unaffected; toggled from
-        // the tile under "Add note".
-        property bool annotationsHidden: false
 
         // image://videoframe poster URL (base64url path @ frame) — the stage
         // shows the banked frame until the decoder paints its first one. The byte
@@ -3534,7 +3556,7 @@ FocusScope {
                     // seek especially) — ink over a blank/stale stage reads
                     // as "annotations without the screenshot".
                     // Also hidden when the user toggles a clean (notes-off) view.
-                    visible: studioSurface.visible && !studioFrame.annotationsHidden
+                    visible: studioSurface.visible && !root.annotationsHidden
                     notes: vnotes
                     sourceWidth: studioStage.vw
                     // Load-bearing reads only (reactivity rule 1e).
@@ -3563,15 +3585,6 @@ FocusScope {
         // edit and restores the transport keys). Sits UNDER the notes panel
         // and transport, so their controls still take clicks first.
         MouseArea { anchors.fill: parent; z: -1; onClicked: root.forceActiveFocus() }
-
-        // The note store: QCView's sidecar (.qcview/<media>/notes.json),
-        // loaded for whichever video the studio shows. Lives OUTSIDE the
-        // document + undo — it travels with the video, shared with QCView.
-        VideoNotesModel {
-            id: vnotes
-            mediaPath: studioFrame.r >= 0 ? blockModel.mediaLocalPath(studioFrame.r) : ""
-            fps: studioFrame.r >= 0 ? blockModel.mediaFps(studioFrame.r) : 0
-        }
 
         // Notes panel — the QCView filmstrip in family dress: sticky add-note
         // tile, then one card per note (thumbnail / timecode / text /
@@ -3624,22 +3637,22 @@ FocusScope {
                 anchors { left: parent.left; bottom: parent.bottom
                           leftMargin: 12; bottomMargin: 12 }
                 width: 96; height: 40
-                color: studioFrame.annotationsHidden ? Theme.colors.accentMuted
+                color: root.annotationsHidden ? Theme.colors.divider
                      : (hideMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
                 border.width: 1
-                border.color: studioFrame.annotationsHidden ? Theme.colors.accent : Theme.colors.border
+                border.color: root.annotationsHidden ? Theme.colors.textBright : Theme.colors.border
                 Row {
                     anchors.centerIn: parent; spacing: 6
                     Icon {
                         anchors.verticalCenter: parent.verticalCenter
-                        name: studioFrame.annotationsHidden ? "eye" : "eye-slash"
+                        name: root.annotationsHidden ? "eye" : "eye-slash"
                         size: 16
-                        color: studioFrame.annotationsHidden ? Theme.colors.textBright : Theme.colors.textMuted
+                        color: root.annotationsHidden ? Theme.colors.textBright : Theme.colors.textMuted
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: studioFrame.annotationsHidden ? "Show" : "Hide"
-                        color: studioFrame.annotationsHidden ? Theme.colors.textBright : Theme.colors.textMuted
+                        text: root.annotationsHidden ? "Show" : "Hide"
+                        color: root.annotationsHidden ? Theme.colors.textBright : Theme.colors.textMuted
                         font.family: Theme.font.family; font.pixelSize: 12
                     }
                 }
@@ -3647,7 +3660,7 @@ FocusScope {
                     id: hideMA
                     anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: studioFrame.annotationsHidden = !studioFrame.annotationsHidden
+                    onClicked: root.annotationsHidden = !root.annotationsHidden
                 }
             }
 
@@ -3964,7 +3977,7 @@ FocusScope {
     // Drop-indicator line at the insertion gap.
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0
-        x: root.gutterX - flick.contentX; width: root.measureForRow(root.blockDragRow); height: 2; radius: 1
+        x: root.gutterX - flick.contentX; width: root.measureForRow(root.blockDragRow); height: 2; radius: 0
         y: (blockModel.layoutRevision, root.gapY(root.dropGap)) - flick.contentY - 1
         color: Theme.colors.accent
         z: 50
@@ -4003,7 +4016,7 @@ FocusScope {
         readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.imageDropGap)) - flick.contentY
 
         Rectangle {   // insertion line
-            x: root.leftEdge - flick.contentX; width: root.textWidth; height: 3; radius: 2
+            x: root.leftEdge - flick.contentX; width: root.textWidth; height: 3; radius: 0
             y: parent.lineY - 1.5
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: Theme.colors.accent
@@ -4064,6 +4077,80 @@ FocusScope {
                                Theme.colors.surface.b, 1.0)
         }
         // No click-to-play on the frame — the toolbar is the sole transport.
+
+        // ---- QCView note presentation (read-only; editing lives in the studio) ----
+        readonly property int curFrame: videoDec.currentFrame
+        // The caption's note, or null. Notes pin to ONE frame by design, so
+        // during playback/shuttle/scrub the TEXT lingers ~2.5 s after crossing
+        // the frame (a one-frame flash is unreadable) — while a paused
+        // frame-step tracks exactly. Strokes stay strictly per-frame.
+        property var capNote: null
+        function _noteAt(f) {
+            var a = root.videoNoteArr
+            for (var i = 0; i < a.length; ++i) if (a[i].frame === f) return a[i]
+            return null
+        }
+        function _updateCaption() {
+            var n = _noteAt(curFrame)
+            if (n) { capNote = n; capLinger.restart() }
+            else if (!(videoDec.isPlaying || root._scrubAudioActive
+                       || root._vidFastSeekDir !== 0)) {
+                capNote = null; capLinger.stop()
+            }
+        }
+        onCurFrameChanged: _updateCaption()
+        onRChanged: { capNote = null; capLinger.stop() }
+        readonly property var _noteDep: root.videoNoteArr   // note edits/deletes refresh the caption
+        on_NoteDepChanged: _updateCaption()
+        Timer {
+            id: capLinger; interval: 2500
+            onTriggered: if (!videoSurfaceOverlay._noteAt(videoSurfaceOverlay.curFrame))
+                             videoSurfaceOverlay.capNote = null
+        }
+
+        // The stroke layer: the studio's exact overlay (same normalized
+        // space, same painter) but DISABLED — it never takes mouse.
+        VideoAnnotator {
+            anchors.fill: parent
+            visible: !root.annotationsHidden
+            enabled: false
+            notes: vnotes
+            sourceWidth: videoSurfaceOverlay.vw
+            frame: videoSurfaceOverlay.curFrame
+            tool: ""
+        }
+
+        // Note caption: subtitle-style strip on the frame's bottom edge —
+        // timecode + text, single line (the studio filmstrip holds the long
+        // form). Addressed notes get the muted check.
+        Rectangle {
+            visible: !root.annotationsHidden && videoSurfaceOverlay.capNote !== null
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: 26
+            color: Qt.rgba(0, 0, 0, 0.62)
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 8; anchors.rightMargin: 8
+                spacing: 8
+                Icon {
+                    visible: videoSurfaceOverlay.capNote !== null
+                             && videoSurfaceOverlay.capNote.addressed === true
+                    name: "check"; size: 12; color: Theme.colors.textMuted
+                }
+                Text {
+                    text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.timecode : ""
+                    color: Theme.colors.textMuted
+                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.text : ""
+                    color: Theme.colors.textBright
+                    font.family: Theme.font.family; font.pixelSize: 13
+                    elide: Text.ElideRight
+                }
+            }
+        }
     }
 
     // Persistent transport toolbar for EVERY video (all built on load — see
@@ -4141,7 +4228,7 @@ FocusScope {
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: measure
             height: root.pdfNavH
-            color: "#212121"      // a hair lighter than the page
+            color: Theme.colors.surfaceRaised      // a hair lighter than the page
             Rectangle { width: parent.width; height: 1; color: Theme.colors.border }   // top hairline
 
             RowLayout {
@@ -4186,12 +4273,12 @@ FocusScope {
         Rectangle {   // fit-to-width (top-right)
             id: fitBtn
             visible: !root.imageResizing
-            width: 24; height: 24; radius: 4
+            width: 24; height: 24; radius: 0
             x: imgResize.imgX + imgResize.imgW - width - 6
             y: imgResize.imgTopV + 6
             color: fitMA.containsMouse ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
             border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 14; color: "#f2f2f2" }
+            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 14; color: Theme.colors.textBright }
             MouseArea {
                 id: fitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: blockModel.setMediaWidth(imgResize.row, Math.round(root.pageWidth))
@@ -4200,12 +4287,12 @@ FocusScope {
 
         Rectangle {   // proportional drag handle (bottom-right)
             id: dragHandle
-            width: 22; height: 22; radius: 4
+            width: 22; height: 22; radius: 0
             x: imgResize.imgX + imgResize.imgW - width - 6
             y: imgResize.imgTopV + imgResize.imgH - height - 6
             color: (dragMA.containsMouse || root.imageResizing) ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
             border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "resize"; size: 14; color: "#f2f2f2" }
+            Icon { anchors.centerIn: parent; name: "resize"; size: 14; color: Theme.colors.textBright }
             MouseArea {
                 id: dragMA
                 anchors.fill: parent; hoverEnabled: true; preventStealing: true
@@ -4253,12 +4340,12 @@ FocusScope {
         radius: Theme.dim.radius
         Rectangle {
             anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
-            width: dimLabel.width + 10; height: dimLabel.height + 6; radius: 3
+            width: dimLabel.width + 10; height: dimLabel.height + 6; radius: 0
             color: Qt.rgba(0, 0, 0, 0.7)
             Text {
                 id: dimLabel; anchors.centerIn: parent
                 text: Math.round(root.imageResizeW) + " × " + Math.round(root.imageResizeW * root.imageResizeAspect)
-                color: "#f2f2f2"; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                color: Theme.colors.textBright; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             }
         }
     }
@@ -4277,12 +4364,12 @@ FocusScope {
 
         Rectangle {   // fit-to-column (top-right)
             visible: !root.cellImgResizing
-            width: 20; height: 20; radius: 4
+            width: 20; height: 20; radius: 0
             x: cellImgResize.rx + cellImgResize.rw - width - 4
             y: cellImgResize.ry + 4
             color: cFitMA.containsMouse ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
             border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 12; color: "#f2f2f2" }
+            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 12; color: Theme.colors.textBright }
             MouseArea {
                 id: cFitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, Math.round(root.cellImgMaxW))
@@ -4290,12 +4377,12 @@ FocusScope {
         }
 
         Rectangle {   // proportional drag (bottom-right)
-            width: 18; height: 18; radius: 4
+            width: 18; height: 18; radius: 0
             x: cellImgResize.rx + cellImgResize.rw - width - 4
             y: cellImgResize.ry + cellImgResize.rh - height - 4
             color: (cDragMA.containsMouse || root.cellImgResizing) ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
             border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "resize"; size: 12; color: "#f2f2f2" }
+            Icon { anchors.centerIn: parent; name: "resize"; size: 12; color: Theme.colors.textBright }
             MouseArea {
                 id: cDragMA
                 anchors.fill: parent; hoverEnabled: true; preventStealing: true
@@ -4337,12 +4424,12 @@ FocusScope {
         border.width: 2; border.color: Theme.colors.accent
         Rectangle {
             anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4
-            width: cDimLabel.width + 10; height: cDimLabel.height + 6; radius: 3
+            width: cDimLabel.width + 10; height: cDimLabel.height + 6; radius: 0
             color: Qt.rgba(0, 0, 0, 0.7)
             Text {
                 id: cDimLabel; anchors.centerIn: parent
                 text: Math.round(root.cellResizeW) + " × " + Math.round(root.cellResizeW * root.cellResizeAspect)
-                color: "#f2f2f2"; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                color: Theme.colors.textBright; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             }
         }
     }
@@ -4742,7 +4829,7 @@ FocusScope {
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: { targetRow = -1; root.forceActiveFocus() }
-        background: Rectangle { color: Theme.colors.surface; radius: 6
+        background: Rectangle { color: Theme.colors.surface; radius: 0
                                 border.width: 1; border.color: Theme.colors.border }
         function apply(lang) {
             if (langPopup.targetRow >= 0)
@@ -4754,7 +4841,7 @@ FocusScope {
             // Plain TextInput (not a Controls TextField, which the native macOS
             // style refuses to theme) in a themed frame, with a placeholder overlay.
             Rectangle {
-                width: parent.width; height: 30; radius: 4
+                width: parent.width; height: 30; radius: 0
                 color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
                 TextInput {
                     id: langField
@@ -4781,7 +4868,7 @@ FocusScope {
                     model: langPopup.quick
                     delegate: Rectangle {
                         required property string modelData
-                        height: 20; width: chipText.implicitWidth + 14; radius: 3
+                        height: 20; width: chipText.implicitWidth + 14; radius: 0
                         color: chipMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.codeBg
                         border.width: 1; border.color: Theme.colors.border
                         Text { id: chipText; anchors.centerIn: parent; text: modelData
@@ -4809,7 +4896,7 @@ FocusScope {
         x: px; y: py
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: root.forceActiveFocus()
-        background: Rectangle { color: Theme.colors.surface; radius: 6
+        background: Rectangle { color: Theme.colors.surface; radius: 0
                                 border.width: 1; border.color: Theme.colors.border }
         function openAtCaret() {
             var ax = root.width / 2 - width / 2, ay = 80
@@ -4828,7 +4915,7 @@ FocusScope {
         contentItem: Column {
             spacing: 6
             Rectangle {
-                width: parent.width; height: 30; radius: 4
+                width: parent.width; height: 30; radius: 0
                 color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
                 TextInput {
                     id: linkField
