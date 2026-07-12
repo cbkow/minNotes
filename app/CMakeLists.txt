@@ -112,6 +112,8 @@ target_compile_definitions(minnotesapp PRIVATE
 # qmldir registers it correctly (else `Theme.colors.x` fails to resolve).
 set_source_files_properties(qml/MinNotes/App/Theme.qml PROPERTIES
     QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/MinNotes/App/Toasts.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(minnotesapp
     URI MinNotes.App
@@ -139,6 +141,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/BlockKanban.qml
         qml/MinNotes/App/VideoTransport.qml
         qml/MinNotes/App/PathMappingsDialog.qml
+        qml/MinNotes/App/Toasts.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf

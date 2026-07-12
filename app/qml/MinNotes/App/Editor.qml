@@ -4720,7 +4720,8 @@ FocusScope {
                 MenuRow { visible: blockMenu.isMedia
                                    && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
                           text: "Copy image"
-                          onActivated: clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow)) }
+                          onActivated: { clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow))
+                                         Toasts.show(qsTr("Image copied")) } }
                 MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch   // sketch has no backing file
                           text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                           onActivated: blockModel.revealMedia(root.menuRow) }
@@ -4746,7 +4747,8 @@ FocusScope {
                 // cell image (right-clicked table cell)
                 Rectangle { visible: root.menuCellHasImage; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: root.menuCellHasImage; text: "Copy image"
-                          onActivated: clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC)) }
+                          onActivated: { clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC))
+                                         Toasts.show(qsTr("Image copied")) } }
                 MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
                 Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }

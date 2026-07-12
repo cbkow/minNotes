@@ -48,6 +48,7 @@ Popup {
         }
         pathMap.setMappingsJson(JSON.stringify(arr))
         dlg.close()
+        Toasts.show(qsTr("Path mappings saved"))
     }
 
     component MiniIcon: Item {

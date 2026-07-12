@@ -67,7 +67,10 @@ Rectangle {
     readonly property int contentW: panelW - 24   // inside the x:12 margins
     width: open ? panelW : 0
     Behavior on width { enabled: panel._ready; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-    color: Theme.colors.surfaceRecess                  // a darker WELL beside the lit page (QCView rail recipe); cards raise above it
+    // A step LIGHTER than the page so the panel reads as its own raised layer.
+    // (The QCView darker-well recipe was tried in the product pass and vetoed
+    // — the raised panel is the minNotes look; threads recess INTO it.)
+    color: Theme.colors.surfaceRaised
     clip: true                                         // so content clips cleanly while sliding
 
     function targetColor() {
@@ -220,13 +223,13 @@ Rectangle {
                         readonly property bool expanded: panel.openThread === modelData.id
                         width: threadsCol.width
                         height: cardCol.implicitHeight + 16
-                        // Raised card on the panel's well (input fields recess
-                        // back into it). RESOLVED threads fade halfway toward
-                        // the well and dim their content.
+                        // Card recessed into the raised panel (the input fields
+                        // recess a step further). RESOLVED threads fade halfway
+                        // toward the panel and dim their content.
                         color: modelData.resolved
                                ? Qt.tint(Theme.colors.card,
-                                         Qt.rgba(Theme.colors.surfaceRecess.r, Theme.colors.surfaceRecess.g,
-                                                 Theme.colors.surfaceRecess.b, 0.5))
+                                         Qt.rgba(Theme.colors.surfaceRaised.r, Theme.colors.surfaceRaised.g,
+                                                 Theme.colors.surfaceRaised.b, 0.5))
                                : Theme.colors.card
                         Behavior on color { ColorAnimation { duration: 160 } }
                         Column {

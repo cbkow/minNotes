@@ -86,7 +86,11 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         defaultSuffix: "mndb"
         nameFilters: ["minNotes documents (*.mndb)"]
-        onAccepted: blockModel.saveAs("" + selectedFile)
+        onAccepted: {
+            var f = "" + selectedFile
+            if (blockModel.saveAs(f)) Toasts.show(qsTr("Saved as ") + win.baseName(f))
+            else saveFailedDialog.open()   // was silently ignored before the toast pass
+        }
     }
     // Mirrors BlockModel::SaveState (the enum isn't registered as a QML type — the
     // model is a context-property instance — so compare the int saveState here).
@@ -100,7 +104,7 @@ ApplicationWindow {
     function _saveOrSaveAs() {
         if (!blockModel.documentOpen) return
         if (blockModel.untitled) { saveAsDialog.open(); return }
-        if (blockModel.save()) return
+        if (blockModel.save()) { Toasts.show(qsTr("Saved")); return }
         if (blockModel.saveState === win._saveConflict) conflictDialog.open()
         else if (blockModel.saveState === win._saveFailed) saveFailedDialog.open()
     }
@@ -129,7 +133,8 @@ ApplicationWindow {
                              onClicked: { conflictDialog.close(); saveAsDialog.open() } }
                 FlatButton { text: "Overwrite"; variant: "primary"; padding: 12
                              onClicked: { conflictDialog.close()
-                                          if (!blockModel.overwriteSave()) saveFailedDialog.open() } }
+                                          if (blockModel.overwriteSave()) Toasts.show(qsTr("Saved"))
+                                          else saveFailedDialog.open() } }
             }
         }
     }
@@ -832,5 +837,45 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    // Toast — the app's outcome voice (Toasts singleton holds the state; a
+    // new show() replaces the message and restarts the clock). Top-right
+    // under the tab strip, above every overlay; click dismisses early.
+    // Non-modal and non-focusable — it never interrupts typing.
+    Rectangle {
+        id: toastBox
+        z: 300
+        visible: opacity > 0
+        opacity: Toasts.active ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
+        anchors { top: parent.top; right: parent.right
+                  topMargin: (docTabBar.visible ? docTabBar.height : 0) + 8; rightMargin: 12 }
+        width: toastRow.implicitWidth + 24
+        height: 32
+        radius: 0
+        color: Theme.colors.surfaceRaised
+        border.width: 1; border.color: Theme.colors.divider
+        Row {
+            id: toastRow
+            anchors.centerIn: parent
+            spacing: 8
+            Icon {
+                anchors.verticalCenter: parent.verticalCenter
+                name: Toasts.kind === 2 ? "x-circle"
+                    : Toasts.kind === 1 ? "warning" : "check-circle"
+                size: 15
+                color: Toasts.kind === 2 ? Theme.colors.error
+                     : Toasts.kind === 1 ? Theme.colors.warn : Theme.colors.success
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: Toasts.message
+                color: Theme.colors.text
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+            }
+        }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                    onClicked: Toasts.dismiss() }
     }
 }
