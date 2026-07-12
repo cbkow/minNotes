@@ -98,9 +98,13 @@ ApplicationWindow {
     // goes straight to the save dialog. ---
     property var _exportScan: ({})
     property bool _exportNotes: true
-    function startExport() {
+    property string _exportFormat: "md"   // "md" | "html"
+    function startExport(format) {
+        _exportFormat = format || "md"
         _exportScan = exporter.scan()
         _exportNotes = true
+        // Ink only affects markdown (HTML doesn't carry it either yet, but
+        // the note is markdown-worded); notes matter to both.
         if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0)
             exportOptionsDialog.open()
         else
@@ -108,16 +112,17 @@ ApplicationWindow {
     }
     FileDialog {
         id: exportSaveDialog
-        title: "Export as Markdown"
+        title: win._exportFormat === "html" ? "Export as HTML" : "Export as Markdown"
         fileMode: FileDialog.SaveFile
-        defaultSuffix: "md"
-        nameFilters: ["Markdown (*.md)"]
+        defaultSuffix: win._exportFormat
+        nameFilters: win._exportFormat === "html" ? ["HTML (*.html)"] : ["Markdown (*.md)"]
         onAccepted: {
             var f = "" + selectedFile
-            if (exporter.exportMarkdown(f, win._exportNotes))
-                Toasts.show(qsTr("Exported ") + win.baseName(f))
-            else
-                Toasts.show(qsTr("Export failed"), 2)
+            var ok = win._exportFormat === "html"
+                ? exporter.exportHtml(f, win._exportNotes)
+                : exporter.exportMarkdown(f, win._exportNotes)
+            if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f))
+            else    Toasts.show(qsTr("Export failed"), 2)
         }
     }
     Dialog {
@@ -128,7 +133,8 @@ ApplicationWindow {
         contentItem: Column {
             spacing: 14
             Text { width: 400; wrapMode: Text.Wrap
-                   text: qsTr("Export as Markdown")
+                   text: win._exportFormat === "html" ? qsTr("Export as HTML")
+                                                      : qsTr("Export as Markdown")
                    color: Theme.colors.textBright; font.family: Theme.font.family
                    font.pixelSize: Theme.font.sizeBody; font.bold: true }
             Row {   // video-notes option — present only when notes were detected
@@ -163,7 +169,7 @@ ApplicationWindow {
             Text {
                 visible: (win._exportScan.inkBlocks || 0) > 0
                 width: 400; wrapMode: Text.Wrap
-                text: qsTr("Page ink isn't included in Markdown export.")
+                text: qsTr("Page ink isn't included in the export.")
                 color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
@@ -438,7 +444,8 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 Platform.MenuSeparator {}
-                Platform.MenuItem { text: qsTr("Export as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport() }
+                Platform.MenuItem { text: qsTr("Export as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
+                Platform.MenuItem { text: qsTr("Export as HTML…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 Platform.MenuSeparator {}
@@ -511,7 +518,8 @@ ApplicationWindow {
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Export as Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport() }
+                Action { text: qsTr("&Export as Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
+                Action { text: qsTr("Export as &HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 ThemedMenuSeparator {}

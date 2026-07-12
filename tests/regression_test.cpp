@@ -526,6 +526,32 @@ static void testExportMarkdown() {
     if (f.open(QIODevice::ReadOnly)) { onDisk = QString::fromUtf8(f.readAll()); f.close(); }
     CHECK(onDisk.contains(QStringLiteral("## Title")), "written file round-trips content");
     QFile::remove(outPath);
+
+    // --- HTML emitter over the same document (+ a color span, which HTML
+    // keeps and markdown drops). ---
+    m.setTextColor(1, 0, 5, QStringLiteral("#ff6f68"));   // color "plain"
+    RecordingSink hsink;
+    const QString html = ex.toHtml(Exporter::Options{}, hsink);
+    CHECK(html.contains(QStringLiteral("<h2>Title</h2>")), "HTML heading tag");
+    CHECK(html.contains(QStringLiteral("<span style=\"color:#ff6f68\">plain</span>")),
+          "HTML keeps the color span markdown dropped");
+    CHECK(html.contains(QStringLiteral("<strong>bold <em>bolditalic</em></strong>"))
+              || html.contains(QStringLiteral("<strong>bold <em>bolditalic</em></strong><em>")),
+          "HTML nests overlapping bold/italic");
+    CHECK(html.contains(QStringLiteral("<a href=\"https://example.com\">link</a>")),
+          "HTML link tag");
+    CHECK(html.contains(QStringLiteral("class=\"cmt\""))
+              && html.contains(QStringLiteral("href=\"#c1\"")),
+          "commented range tints + links to the comments section");
+    CHECK(html.contains(QStringLiteral("<ul>")) && html.contains(QStringLiteral("<li>item one</li>")),
+          "HTML list run opens a real <ul>");
+    CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">int x = 1;")),
+          "HTML code block with language class");
+    CHECK(html.contains(QStringLiteral("<th>H1</th>")) || html.contains(QStringLiteral("<th >H1</th>")),
+          "HTML table header cell");
+    CHECK(html.contains(QStringLiteral("id=\"c1\"")) && html.contains(QStringLiteral("note body")),
+          "comments section carries the thread body");
+    CHECK(html.startsWith(QStringLiteral("<!doctype html>")), "self-contained document skeleton");
 }
 
 int main(int argc, char** argv) {

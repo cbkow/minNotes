@@ -9,6 +9,7 @@
 #include "../notes/annotation_serializer.h"
 #include "../notes/annotation_thumbnail.h"
 
+#include <QBuffer>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -673,5 +674,620 @@ bool Exporter::exportMarkdown(const QString& fileUrlOrPath, bool includeVideoNot
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) return false;
     f.write(md.toUtf8());
+    return f.commit();
+}
+
+// ============================ HTML emitter =============================
+
+namespace {
+
+QString htmlEscape(const QString& s) {
+    QString out;
+    out.reserve(s.size() + 16);
+    for (const QChar c : s) {
+        switch (c.unicode()) {
+        case '&':  out += QStringLiteral("&amp;");  break;
+        case '<':  out += QStringLiteral("&lt;");   break;
+        case '>':  out += QStringLiteral("&gt;");   break;
+        case '"':  out += QStringLiteral("&quot;"); break;
+        default:   out += c; break;
+        }
+    }
+    return out;
+}
+
+// Highlight text needs contrast against the user's swatch — the same
+// auto-contrast idea the in-app highlighter uses, approximated by luma.
+QString contrastOn(const QString& hex) {
+    const QColor c(hex);
+    if (!c.isValid()) return QStringLiteral("#f0f0f0");
+    const double luma = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue();
+    return luma > 140.0 ? QStringLiteral("#111111") : QStringLiteral("#f0f0f0");
+}
+
+// Everything the HTML walk styles, comment ranges included (they render as a
+// tinted span closed by a superscript reference into the comments section).
+int htmlRankOf(uint8_t k) {
+    switch (k) {
+    case BlockModel::SpanComment:   return 0;   // outermost
+    case BlockModel::SpanLink:      return 1;
+    case BlockModel::SpanFgColor:   return 2;
+    case BlockModel::SpanHighlight: return 3;
+    case BlockModel::SpanBold:      return 4;
+    case BlockModel::SpanItalic:    return 5;
+    case BlockModel::SpanStrike:    return 6;
+    case BlockModel::SpanUnderline: return 7;
+    case BlockModel::SpanCode:      return 8;
+    }
+    return 9;
+}
+
+QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
+    const QString text = m->contentForRow(row);
+    const int len = text.size();
+
+    struct Run { int s, e; uint8_t kind; QString u; int note = 0;
+                 bool operator==(const Run& o) const {
+                     return kind == o.kind && u == o.u && s == o.s && e == o.e; } };
+    std::vector<Run> runs;
+    for (const QVariant& v : m->spansForRow(row)) {
+        const QVariantMap sp = v.toMap();
+        const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
+        const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
+        const int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
+        if (s >= e) continue;
+        Run r{s, e, k, sp.value(QStringLiteral("u")).toString(), 0};
+        if (k == BlockModel::SpanComment)
+            r.note = fn.numberFor(r.u);
+        runs.push_back(r);
+    }
+
+    std::set<int> bounds{0, len};
+    for (const Run& r : runs) { bounds.insert(r.s); bounds.insert(r.e); }
+
+    auto openTag = [](const Run& r) -> QString {
+        switch (r.kind) {
+        case BlockModel::SpanComment:   return QStringLiteral("<span class=\"cmt\">");
+        case BlockModel::SpanLink:
+            return QStringLiteral("<a href=\"%1\">").arg(htmlEscape(r.u));
+        case BlockModel::SpanFgColor:
+            return QStringLiteral("<span style=\"color:%1\">").arg(htmlEscape(r.u));
+        case BlockModel::SpanHighlight:
+            return QStringLiteral("<span style=\"background:%1;color:%2;padding:1px 2px\">")
+                .arg(htmlEscape(r.u), contrastOn(r.u));
+        case BlockModel::SpanBold:      return QStringLiteral("<strong>");
+        case BlockModel::SpanItalic:    return QStringLiteral("<em>");
+        case BlockModel::SpanStrike:    return QStringLiteral("<s>");
+        case BlockModel::SpanUnderline: return QStringLiteral("<u>");
+        case BlockModel::SpanCode:      return QStringLiteral("<code>");
+        }
+        return {};
+    };
+    auto closeTag = [](const Run& r) -> QString {
+        switch (r.kind) {
+        case BlockModel::SpanComment:
+            return QStringLiteral("</span><sup class=\"cref\"><a href=\"#c%1\">%1</a></sup>")
+                .arg(r.note);
+        case BlockModel::SpanLink:      return QStringLiteral("</a>");
+        case BlockModel::SpanFgColor:
+        case BlockModel::SpanHighlight: return QStringLiteral("</span>");
+        case BlockModel::SpanBold:      return QStringLiteral("</strong>");
+        case BlockModel::SpanItalic:    return QStringLiteral("</em>");
+        case BlockModel::SpanStrike:    return QStringLiteral("</s>");
+        case BlockModel::SpanUnderline: return QStringLiteral("</u>");
+        case BlockModel::SpanCode:      return QStringLiteral("</code>");
+        }
+        return {};
+    };
+
+    QString out;
+    std::vector<Run> stack;
+    auto it = bounds.begin();
+    int prev = *it;
+    for (++it; it != bounds.end(); ++it) {
+        const int a = prev, b = *it;
+        prev = *it;
+        if (a >= b) continue;
+        std::vector<Run> desired;
+        for (const Run& r : runs)
+            if (r.s <= a && r.e >= b) desired.push_back(r);
+        std::sort(desired.begin(), desired.end(), [](const Run& x, const Run& y) {
+            if (htmlRankOf(x.kind) != htmlRankOf(y.kind))
+                return htmlRankOf(x.kind) < htmlRankOf(y.kind);
+            if (x.s != y.s) return x.s < y.s;
+            return x.u < y.u;
+        });
+        size_t common = 0;
+        while (common < stack.size() && common < desired.size()
+               && stack[common] == desired[common]) ++common;
+        while (stack.size() > common) { out += closeTag(stack.back()); stack.pop_back(); }
+        for (size_t i = common; i < desired.size(); ++i) {
+            out += openTag(desired[i]);
+            stack.push_back(desired[i]);
+        }
+        out += htmlEscape(text.mid(a, b - a));
+    }
+    while (!stack.empty()) { out += closeTag(stack.back()); stack.pop_back(); }
+    out.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+    return out;
+}
+
+// Mirrors the app's tri-state checkbox exactly (Editor.qml task item):
+// todo = muted 1.5px border; doing = accent border + centered accent dash;
+// done = borderless accent fill + white check. Pure CSS (.cb in kHtmlCss).
+QString taskGlyphHtml(int state) {
+    switch (state) {
+    case BlockModel::TaskDoing: return QStringLiteral("<span class=\"cb doing\"></span>");
+    case BlockModel::TaskDone:  return QStringLiteral("<span class=\"cb done\"></span>");
+    default:                    return QStringLiteral("<span class=\"cb\"></span>");
+    }
+}
+
+QString cellHtml(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& sink) {
+    const int kind = m->tableColumnKind(row, c);
+    if (kind == 2) return taskGlyphHtml(m->tableCellCheck(row, r, c));
+    if (kind == 1) {
+        const QString label = m->tableCellChoiceLabel(row, r, c);
+        if (label.isEmpty()) return {};
+        const QString col = m->tableCellChoiceColor(row, r, c);
+        const QColor cc(col);
+        const QString bg = cc.isValid()
+            ? QStringLiteral("rgba(%1,%2,%3,0.28)").arg(cc.red()).arg(cc.green()).arg(cc.blue())
+            : QStringLiteral("#333333");
+        return QStringLiteral("<span class=\"chip\" style=\"background:%1\">%2</span>")
+            .arg(bg, htmlEscape(label));
+    }
+    QString out;
+    if (!m->tableCellMedia(row, r, c).isEmpty()) {
+        const QString p = localPathOf(m->tableCellMediaUrl(row, r, c));
+        const QString src = sink.addFile(p, QFileInfo(p).completeBaseName());
+        if (!src.isEmpty())
+            out += QStringLiteral("<img src=\"%1\" alt=\"\"><br>").arg(src);
+    }
+    QString t = htmlEscape(m->tableCell(row, r, c));
+    t.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+    return out + t;
+}
+
+QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
+    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    const int hdr = m->tableHeaderRows(row);
+    if (rows <= 0 || cols <= 0) return {};
+    auto cellStyle = [&](int r, int c) {
+        QString st;
+        const QString bg = m->tableCellBg(row, r, c);
+        const QString fg = m->tableCellFg(row, r, c);
+        if (!bg.isEmpty()) st += QStringLiteral("background:%1;").arg(htmlEscape(bg));
+        if (!fg.isEmpty()) st += QStringLiteral("color:%1;").arg(htmlEscape(fg));
+        switch (m->tableColAlign(row, c)) {
+        case 1: st += QStringLiteral("text-align:center;"); break;
+        case 2: st += QStringLiteral("text-align:right;"); break;
+        default: break;
+        }
+        return st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st);
+    };
+    // Column widths authored in the app (drag-resized; 0 = auto) carry into
+    // the export as a colgroup: set columns hold their width, auto columns
+    // keep flexing. When EVERY column is authored the table goes
+    // table-layout:fixed so the widths are exact (content wraps inside,
+    // matching the app), not just minimums.
+    QString colTags;
+    int authored = 0;
+    for (int c = 0; c < cols; ++c) {
+        const int w = m->tableColWidth(row, c);
+        if (w > 0) {
+            colTags += QStringLiteral("<col style=\"width:%1px\">").arg(w);
+            ++authored;
+        } else {
+            colTags += QStringLiteral("<col>");
+        }
+    }
+    QString out = (authored == cols && authored > 0)
+        ? QStringLiteral("<table style=\"table-layout:fixed\">")
+        : QStringLiteral("<table>");
+    if (authored > 0)
+        out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
+    for (int r = 0; r < rows; ++r) {
+        const bool isHdr = r < hdr;
+        out += QStringLiteral("<tr>");
+        for (int c = 0; c < cols; ++c)
+            out += QStringLiteral("<%1%2>%3</%1>")
+                       .arg(isHdr ? QStringLiteral("th") : QStringLiteral("td"),
+                            cellStyle(r, c), cellHtml(m, row, r, c, sink));
+        out += QStringLiteral("</tr>");
+    }
+    out += QStringLiteral("</table>");
+    return out;
+}
+
+// Note thumbs export as LAYERS when possible: the clean frame at the base
+// and the ink on a transparent PNG stacked above it (z), so the page-level
+// Annotations toggle can flip between marked-up and clean — the in-app eye
+// switch, carried into the deliverable. The ink layer reuses
+// renderNoteThumbnail's exact geometry by passing a transparent base.
+// Falls back to the flattened annotated/composited image when the clean
+// frame is missing or a render fails. `inkLayers` counts emitted layers so
+// the toggle only appears on pages that have something to toggle.
+QString emitVideoNotesHtml(const QString& mediaPath, Exporter::AssetSink& sink,
+                           int& inkLayers) {
+    std::vector<qcv::AnnotationNote> notes;
+    if (!qcv::annotation_io::loadNotes(notes, mediaPath) || notes.empty())
+        return {};
+    const QString imagesDir = qcv::annotation_io::getImagesFolder(mediaPath);
+    const QString base = sanitizedBase(mediaPath);
+    QString out = QStringLiteral("<section class=\"vnotes\"><h4>Notes (%1)</h4>")
+                      .arg(notes.size());
+    for (const qcv::AnnotationNote& n : notes) {
+        const QString cleanName = qcv::annotation_io::generateImageFilename(n.timecode);
+        QString annName = cleanName;
+        annName.replace(QStringLiteral(".png"), QStringLiteral("_annotated.png"));
+        const QString cleanPath = imagesDir + QLatin1Char('/') + cleanName;
+        const QString annPath   = imagesDir + QLatin1Char('/') + annName;
+        const QString assetBase = base + QStringLiteral("_") + QFileInfo(cleanName).completeBaseName();
+        const bool hasStrokes = qcv::AnnotationSerializer::hasStrokes(n.annotation_data);
+
+        QString baseSrc, inkSrc;
+        if (QFileInfo::exists(cleanPath)) {
+            if (hasStrokes) {
+                const QImage clean(cleanPath);
+                QImage blank(clean.size(), QImage::Format_ARGB32_Premultiplied);
+                blank.fill(Qt::transparent);
+                const QImage ink = qcv::renderNoteThumbnail(
+                    blank, qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data),
+                    1, 1);
+                if (!ink.isNull()) {
+                    baseSrc = sink.addFile(cleanPath, assetBase + QStringLiteral("_clean"));
+                    inkSrc  = sink.addImage(ink, assetBase + QStringLiteral("_ink"));
+                }
+                if (baseSrc.isEmpty() || inkSrc.isEmpty()) {   // fall back to flattened
+                    baseSrc.clear(); inkSrc.clear();
+                    const QImage composed = qcv::renderNoteThumbnail(
+                        clean, qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data),
+                        1, 1);
+                    baseSrc = composed.isNull() ? sink.addFile(cleanPath, assetBase)
+                                                : sink.addImage(composed, assetBase);
+                }
+            } else {
+                baseSrc = sink.addFile(cleanPath, assetBase);
+            }
+        } else if (QFileInfo::exists(annPath)) {
+            baseSrc = sink.addFile(annPath, assetBase);   // flattened — no clean to layer over
+        }
+
+        out += QStringLiteral("<div class=\"notecard%1\">")
+                   .arg(n.addressed ? QStringLiteral(" addressed") : QString());
+        if (!inkSrc.isEmpty()) {
+            ++inkLayers;
+            out += QStringLiteral("<div class=\"thumb\"><img src=\"%1\" alt=\"%2\">"
+                                  "<img class=\"ink\" src=\"%3\" alt=\"\"></div>")
+                       .arg(baseSrc, htmlEscape(n.timecode), inkSrc);
+        } else if (!baseSrc.isEmpty()) {
+            out += QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(baseSrc, htmlEscape(n.timecode));
+        }
+        out += QStringLiteral("<div><span class=\"tc\">%1</span>%2")
+                   .arg(htmlEscape(n.timecode),
+                        n.addressed ? QStringLiteral(" <span class=\"ok\">✓ addressed</span>")
+                                    : QString());
+        if (!n.text.isEmpty()) {
+            QString t = htmlEscape(n.text);
+            t.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+            out += QStringLiteral("<p>%1</p>").arg(t);
+        }
+        out += QStringLiteral("</div></div>");
+    }
+    out += QStringLiteral("</section>");
+    return out;
+}
+
+QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt,
+                      Exporter::AssetSink& sink, int& inkLayers) {
+    const QString kind = m->mediaKind(row);
+    const QString path = m->mediaLocalPath(row);
+    const QString name = QFileInfo(path).fileName();
+
+    if (kind == QLatin1String("sketch")) {
+        const QImage img = renderSketch(m, row);
+        if (img.isNull()) return {};
+        const QString src = sink.addImage(img, QStringLiteral("sketch"));
+        return src.isEmpty() ? QString()
+            : QStringLiteral("<figure><img class=\"sketch\" src=\"%1\" alt=\"Sketch\"></figure>").arg(src);
+    }
+    if (kind == QLatin1String("image")) {
+        QString src = sink.addFile(path, QFileInfo(path).completeBaseName());
+        if (src.isEmpty()) src = QStringLiteral("file://") + path;   // unreachable source
+        return QStringLiteral("<figure><img src=\"%1\" alt=\"%2\"></figure>")
+            .arg(htmlEscape(src), htmlEscape(name));
+    }
+
+    QString poster, meta;
+    if (kind == QLatin1String("video")) {
+        const QImage p = MediaStore::extractFrame(path, 0, 1280);
+        if (!p.isNull()) poster = sink.addImage(p, sanitizedBase(path) + QStringLiteral("_poster"));
+        meta = QStringLiteral("%1×%2 · %3 fps · %4 · %5 frames")
+                   .arg(m->mediaW(row)).arg(m->mediaH(row))
+                   .arg(m->mediaFps(row), 0, 'g', 5)
+                   .arg(humanDuration(m->mediaDurationMs(row)))
+                   .arg(m->mediaFrames(row));
+    } else if (kind == QLatin1String("pdf")) {
+        const QImage p = MediaStore::renderPdfPage(path, 0, 1280);
+        if (!p.isNull()) poster = sink.addImage(p, sanitizedBase(path) + QStringLiteral("_page1"));
+        meta = QStringLiteral("%1 pages").arg(m->mediaPdfPages(row));
+    } else {
+        const QFileInfo fi(path);
+        meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
+    }
+
+    QString out = QStringLiteral("<figure class=\"ref\">");
+    if (!poster.isEmpty())
+        out += QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(poster, htmlEscape(name));
+    out += QStringLiteral("<figcaption><div class=\"fname\">%1</div>"
+                          "<div class=\"fpath\">%2</div>"
+                          "<div class=\"fmeta\">%3 · %4</div></figcaption></figure>")
+               .arg(htmlEscape(name), htmlEscape(path), htmlEscape(kind), htmlEscape(meta));
+
+    if (kind == QLatin1String("video") && opt.includeVideoNotes)
+        out += emitVideoNotesHtml(path, sink, inkLayers);
+    return out;
+}
+
+// Self-contained sink: every asset becomes a data URI inline in the page.
+class DataUriSink : public Exporter::AssetSink {
+public:
+    QString addFile(const QString& srcPath, const QString&) override {
+        QFile f(srcPath);
+        if (!f.open(QIODevice::ReadOnly)) return {};
+        const QString ext = QFileInfo(srcPath).suffix().toLower();
+        QString mime = QStringLiteral("image/png");
+        if (ext == QLatin1String("jpg") || ext == QLatin1String("jpeg"))
+            mime = QStringLiteral("image/jpeg");
+        else if (ext == QLatin1String("gif"))  mime = QStringLiteral("image/gif");
+        else if (ext == QLatin1String("webp")) mime = QStringLiteral("image/webp");
+        else if (ext == QLatin1String("svg"))  mime = QStringLiteral("image/svg+xml");
+        return QStringLiteral("data:%1;base64,%2")
+            .arg(mime, QString::fromLatin1(f.readAll().toBase64()));
+    }
+    QString addImage(const QImage& img, const QString&) override {
+        if (img.isNull()) return {};
+        QByteArray png;
+        QBuffer buf(&png);
+        buf.open(QIODevice::WriteOnly);
+        img.save(&buf, "PNG");
+        return QStringLiteral("data:image/png;base64,%1")
+            .arg(QString::fromLatin1(png.toBase64()));
+    }
+};
+
+// The exported page's whole design system — the minNotes look in a file:
+// the dark page, the 760px measure, squared corners, rationed accent, the
+// QCView-note violet. System font stacks (no bundled fonts in v1).
+const char* kHtmlCss = R"CSS(
+:root{--bg:#121211;--text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
+--border:#2a2a2a;--divider:#333333;--accent:#0189f1;--recess:#0e0e0e;--card:#1a1a19;
+--chipbg:#1d2733;--chiptext:#4aa8ff;--violet:#b48ef0;--sel:#2a568c;--quote:#3a5e86}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);margin:0;
+font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+/* Left-anchored page (user ruling): the prose measure hugs the left edge
+   rather than centering, so wide tables growing rightward read as one
+   left-aligned system instead of breaking a centered frame. */
+main{max-width:760px;margin:0;padding:48px 24px 96px}
+::selection{background:var(--sel);color:var(--bright)}
+h1,h2,h3,h4,h5,h6{color:var(--bright);line-height:1.25}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+hr{border:0;border-top:1px solid var(--divider);margin:24px 0}
+blockquote{font-family:Georgia,'Times New Roman',serif;border-left:3px solid var(--quote);
+margin:0;padding:2px 16px;color:var(--muted)}
+pre{background:var(--recess);border:1px solid var(--border);padding:12px 14px;overflow-x:auto}
+code{font-family:ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;font-size:.9em}
+:not(pre)>code{background:var(--chipbg);color:var(--chiptext);padding:1px 5px}
+img{max-width:100%}
+figure{margin:16px 0}
+ul,ol{padding-left:24px}li{margin:2px 0}
+/* Tri-state checkboxes, the app's exact recipe (squared, accent = task-state). */
+.cb{display:inline-block;width:14px;height:14px;box-sizing:border-box;position:relative;
+border:1.5px solid var(--muted);vertical-align:-2px;margin-right:6px}
+.cb.doing{border-color:var(--accent)}
+.cb.doing::after{content:"";position:absolute;left:2px;top:4.5px;width:7px;height:2px;background:var(--accent)}
+.cb.done{background:var(--accent);border:0}
+.cb.done::after{content:"";position:absolute;left:4.5px;top:1.5px;width:3.5px;height:7.5px;
+border:solid var(--bright);border-width:0 2px 2px 0;transform:rotate(45deg)}
+/* Tables size to content and escape the prose measure when wide: same left
+   edge as everything else, growing rightward UNCAPPED (user ruling — a
+   table wider than the viewport widens the page, one honest page-level
+   scrollbar instead of a nested one). Narrow tables still fill the column. */
+.tablewrap{margin:16px 0;width:fit-content;min-width:100%}
+table{border-collapse:collapse;width:max-content;min-width:100%;font-size:14px}
+td,th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word}
+th{background:#252525;color:var(--bright)}
+.chip{padding:1px 8px;font-size:13px;color:var(--bright)}
+.cmt{background:rgba(1,137,241,.13)}
+.cref a{font-size:.72em;color:var(--accent)}
+.ref{background:var(--card);border:1px solid var(--border)}
+.ref img{display:block;width:100%}
+.ref figcaption{padding:10px 14px}
+.fname{color:var(--bright)}
+.fpath{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+.fmeta{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--subtle);margin-top:2px}
+.vnotes h4{color:var(--violet);margin:14px 0 8px}
+.notecard{display:flex;gap:12px;background:var(--card);border:1px solid var(--border);
+padding:10px;margin-bottom:10px;align-items:flex-start}
+.notecard>img{width:220px;flex:none;background:var(--recess)}
+/* Layered thumbs: clean frame at the base, ink on a transparent PNG above
+   (z-stack) — the page-level Annotations toggle flips the ink layer. */
+.notecard .thumb{position:relative;width:220px;flex:none}
+.notecard .thumb img{display:block;width:100%;background:var(--recess)}
+.notecard .thumb .ink{position:absolute;inset:0;z-index:1;background:transparent}
+#mn-ink{display:none}
+label[for=mn-ink]{position:fixed;top:14px;right:16px;z-index:9;cursor:pointer;
+user-select:none;font-size:12px;padding:5px 12px;color:var(--muted);
+background:var(--card);border:1px solid var(--border)}
+#mn-ink:checked~label[for=mn-ink]{color:var(--bright);background:var(--divider);
+border-color:var(--divider)}
+#mn-ink:not(:checked)~main .ink{visibility:hidden}
+@media print{label[for=mn-ink]{display:none}}
+.notecard .tc{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--bright)}
+.notecard p{margin:6px 0 0;font-size:14px}
+.notecard.addressed{opacity:.55}
+.notecard .ok{color:var(--muted);font-size:12px;margin-left:8px}
+.sketch{background:transparent}
+.comments{margin-top:48px;border-top:1px solid var(--divider);padding-top:12px}
+.comments h2{font-size:18px}
+.comments li{margin-bottom:12px;font-size:14px}
+.comments .stamp{color:var(--subtle);font-size:12px;margin-left:8px}
+.comments li.resolved{opacity:.55}
+)CSS";
+
+} // namespace
+
+QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
+    if (!model_) return {};
+    const BlockModel* m = model_;
+    FootnoteCtx fn;
+    QString body;
+    int inkLayers = 0;                // stacked ink layers emitted (gates the toggle)
+    std::vector<QString> listStack;   // open list tags, one per depth level
+
+    auto closeListsTo = [&](int n) {
+        while (static_cast<int>(listStack.size()) > n) {
+            body += QStringLiteral("</%1>\n").arg(listStack.back());
+            listStack.pop_back();
+        }
+    };
+
+    const int count = m->rowCountQml();
+    for (int row = 0; row < count; ++row) {
+        const int type = m->typeForRow(row);
+        if (!BlockModel::isListType(static_cast<uint8_t>(type)))
+            closeListsTo(0);
+
+        switch (type) {
+        case BlockModel::Heading: {
+            const int lvl = std::clamp(m->levelForRow(row), 1, 6);
+            body += QStringLiteral("<h%1>%2</h%1>\n").arg(lvl).arg(emitInlineHtml(m, row, fn));
+            break;
+        }
+        case BlockModel::Quote:
+            body += QStringLiteral("<blockquote><p>%1</p></blockquote>\n")
+                        .arg(emitInlineHtml(m, row, fn));
+            break;
+        case BlockModel::Code:
+            body += QStringLiteral("<pre><code class=\"language-%1\">%2</code></pre>\n")
+                        .arg(htmlEscape(m->languageForRow(row)),
+                             htmlEscape(m->contentForRow(row)));
+            break;
+        case BlockModel::ListItem:
+        case BlockModel::TaskListItem:
+        case BlockModel::OrderedListItem: {
+            const int want = std::clamp(m->depthForRow(row), 0, BlockModel::kMaxListDepth) + 1;
+            const QString tag = (type == BlockModel::OrderedListItem)
+                                    ? QStringLiteral("ol") : QStringLiteral("ul");
+            closeListsTo(want);
+            if (static_cast<int>(listStack.size()) == want && listStack.back() != tag)
+                closeListsTo(want - 1);
+            while (static_cast<int>(listStack.size()) < want) {
+                QString open = tag;
+                if (tag == QLatin1String("ol")) {
+                    const int start = m->orderedNumberForRow(row);
+                    if (start > 1) open += QStringLiteral(" start=\"%1\"").arg(start);
+                }
+                body += QStringLiteral("<%1>\n").arg(open);
+                listStack.push_back(tag);
+            }
+            QString li = emitInlineHtml(m, row, fn);
+            if (type == BlockModel::TaskListItem)
+                li = taskGlyphHtml(m->taskStateForRow(row)) + li;
+            body += QStringLiteral("<li>%1</li>\n").arg(li);
+            break;
+        }
+        case BlockModel::Divider:
+            body += QStringLiteral("<hr>\n");
+            break;
+        case BlockModel::Table:
+            // Wrapped so wide tables can BREAK OUT of the prose measure
+            // (centered, viewport-capped, inner horizontal scroll) while
+            // small ones still fill the column — see .tablewrap in the CSS.
+            body += QStringLiteral("<div class=\"tablewrap\">%1</div>\n")
+                        .arg(emitTableHtml(m, row, sink));
+            break;
+        case BlockModel::Media:
+            body += emitMediaHtml(m, row, opt, sink, inkLayers) + QLatin1Char('\n');
+            break;
+        case BlockModel::Paragraph:
+        default: {
+            const QString inl = emitInlineHtml(m, row, fn);
+            body += inl.isEmpty() ? QStringLiteral("<p>&nbsp;</p>\n")
+                                  : QStringLiteral("<p>%1</p>\n").arg(inl);
+            break;
+        }
+        }
+    }
+    closeListsTo(0);
+
+    // Comments section (linked from the superscript refs).
+    if (!fn.threadIds.isEmpty()) {
+        body += QStringLiteral("<section class=\"comments\"><h2>Comments</h2><ol>\n");
+        const QVariantList threads = m->commentThreads();
+        for (int i = 0; i < fn.threadIds.size(); ++i) {
+            const QString id = fn.threadIds.at(i);
+            bool resolved = false;
+            for (const QVariant& tv : threads) {
+                const QVariantMap t = tv.toMap();
+                if (t.value(QStringLiteral("id")).toString() == id) {
+                    resolved = t.value(QStringLiteral("resolved")).toBool();
+                    break;
+                }
+            }
+            body += QStringLiteral("<li id=\"c%1\"%2>")
+                        .arg(i + 1)
+                        .arg(resolved ? QStringLiteral(" class=\"resolved\"") : QString());
+            if (resolved) body += QStringLiteral("<em>(resolved)</em> ");
+            for (const QVariant& mv : m->commentMessages(id)) {
+                const QVariantMap msg = mv.toMap();
+                QString b = htmlEscape(msg.value(QStringLiteral("body")).toString());
+                b.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+                const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
+                body += QStringLiteral("<p>%1%2</p>")
+                            .arg(b, created > 0
+                                     ? QStringLiteral("<span class=\"stamp\">%1</span>")
+                                           .arg(QDateTime::fromMSecsSinceEpoch(created)
+                                                    .toString(QStringLiteral("yyyy-MM-dd hh:mm")))
+                                     : QString());
+            }
+            body += QStringLiteral("</li>\n");
+        }
+        body += QStringLiteral("</ol></section>\n");
+    }
+
+    // The Annotations toggle (the app's eye switch, CSS-only): present only
+    // when ink layers were actually emitted. Checked = ink shown, matching
+    // how the app opens; unchecking hides every .ink layer via the sibling
+    // selector. Works without JavaScript and disappears in print.
+    const QString toggle = inkLayers > 0
+        ? QStringLiteral("<input type=\"checkbox\" id=\"mn-ink\" checked>"
+                         "<label for=\"mn-ink\">Annotations</label>\n")
+        : QString();
+
+    return QStringLiteral(
+               "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+               "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+               "<meta name=\"generator\" content=\"minNotes\">\n"
+               "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n%4</main>\n"
+               "</body>\n</html>\n")
+        .arg(htmlEscape(m->documentName()), QLatin1String(kHtmlCss), toggle, body);
+}
+
+bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes) {
+    if (!model_) return false;
+    const QString path = localPathOf(fileUrlOrPath);
+    if (path.isEmpty()) return false;
+
+    Options opt;
+    opt.includeVideoNotes = includeVideoNotes;
+    DataUriSink sink;
+    const QString html = toHtml(opt, sink);
+
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    f.write(html.toUtf8());
     return f.commit();
 }

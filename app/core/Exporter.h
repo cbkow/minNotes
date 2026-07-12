@@ -54,6 +54,13 @@ public:
     // routed through `sink`.
     QString toMarkdown(const Options& opt, AssetSink& sink) const;
 
+    // The fidelity ceiling: color/highlight spans survive, comments render
+    // as tinted ranges + a linked comments section, tables keep their
+    // colors/chips, video notes become cards. Assets still route through
+    // `sink` — exportHtml passes a data-URI sink so the file is
+    // SELF-CONTAINED (one .html you can send anywhere).
+    QString toHtml(const Options& opt, AssetSink& sink) const;
+
     // Export-dialog pre-scan: {videos, videosWithNotes, videoNotes,
     // inkBlocks, sketches}. Cheap — sidecar JSON reads only.
     Q_INVOKABLE QVariantMap scan() const;
@@ -62,6 +69,9 @@ public:
     // URL or a plain path. False on any write failure.
     Q_INVOKABLE bool exportMarkdown(const QString& fileUrlOrPath,
                                     bool includeVideoNotes);
+    // Write a single self-contained `<path>.html` (images as data URIs).
+    Q_INVOKABLE bool exportHtml(const QString& fileUrlOrPath,
+                                bool includeVideoNotes);
 
 private:
     BlockModel* model_ = nullptr;
