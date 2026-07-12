@@ -1,6 +1,19 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-gray:0.03412,1.00000"
+    "linear-gradient" : [
+      "display-p3:0.02402,0.02402,0.02402,1.00000",
+      "display-p3:0.05158,0.05158,0.05158,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
   },
   "groups" : [
     {
@@ -10,10 +23,10 @@
           "image-name" : "minNotesMacOS.svg",
           "name" : "minNotesMacOS",
           "position" : {
-            "scale" : 2.03,
+            "scale" : 1.9,
             "translation-in-points" : [
               0,
-              180.90345000000002
+              0
             ]
           }
         }
