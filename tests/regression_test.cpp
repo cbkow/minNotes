@@ -14,6 +14,7 @@
 #include <QGuiApplication>
 #include <QDir>
 #include <QFile>
+#include <QUrl>
 #include <QtGlobal>
 
 static int g_fail = 0;
@@ -528,7 +529,7 @@ static void testExportMarkdown() {
         probe.fill(Qt::darkGray);
         probe.save(imgPath, "PNG");
         CHECK(m.insertImageFromUrl(m.rowCountQml() - 1,
-                                   QStringLiteral("file://") + imgPath),
+                                   QUrl::fromLocalFile(imgPath).toString()),
               "synthetic image block inserted");
         int imgRow = -1;
         for (int i = 0; i < m.rowCountQml(); ++i)
