@@ -110,6 +110,39 @@ QString MediaStore::assetsDir() const {
     return dir;
 }
 
+// True when `path` lives somewhere that routinely deletes its own
+// contents — system temp dirs, ~/Library (CleanShot's media store,
+// Mail/Messages attachment caches), Windows temp. An image referenced
+// in place from one of these rots within days: the block keeps
+// rendering from the app's image cache while it's open, and the HTML
+// export then finds nothing and emits a dead file:// link (the
+// "unreachable source" fallback — bit a real export 2026-08-13).
+static bool isVolatileSource(const QString& path) {
+    const QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    QStringList roots;
+    roots << QDir::tempPath();
+#if defined(Q_OS_MACOS)
+    roots << QDir::homePath() + QStringLiteral("/Library")
+          << QStringLiteral("/private/var/folders")
+          << QStringLiteral("/var/folders");
+#elif defined(Q_OS_WIN)
+    const QString localTemp = qEnvironmentVariable("TEMP");
+    if (!localTemp.isEmpty()) roots << QDir::cleanPath(localTemp);
+#endif
+    const Qt::CaseSensitivity cs =
+#if defined(Q_OS_WIN)
+        Qt::CaseInsensitive;
+#else
+        Qt::CaseSensitive;
+#endif
+    for (const QString& root : roots) {
+        if (root.isEmpty()) continue;
+        if (p.startsWith(root + QLatin1Char('/'), cs) || p.compare(root, cs) == 0)
+            return true;
+    }
+    return false;
+}
+
 MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath) const {
     QString path = fileUrlOrPath;
     if (path.startsWith(QLatin1String("file:")))
@@ -117,6 +150,31 @@ MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath) const 
     QImageReader r(path);
     const QSize sz = r.size();            // header-only probe; no full decode
     if (!sz.isValid() || sz.isEmpty()) return {};
+
+    // Volatile sources get copied into .minnotes/ (content-addressed on
+    // the RAW file bytes — no re-encode, so JPEG stays JPEG and the copy
+    // dedups). Stable locations (job folders, NAS) stay referenced in
+    // place as before — that's deliberate; media there is the shared
+    // source of truth and can be huge.
+    if (isVolatileSource(path)) {
+        QFile f(path);
+        if (f.open(QIODevice::ReadOnly)) {
+            const QByteArray bytes = f.readAll();
+            const QString sha = QString::fromLatin1(
+                QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex());
+            QString ext = QFileInfo(path).suffix().toLower();
+            if (ext.isEmpty()) ext = QStringLiteral("img");
+            const QString rel = QStringLiteral(".minnotes/") + sha + QLatin1Char('.') + ext;
+            const QString abs = docDir_ + QStringLiteral("/") + rel;
+            if (!QFileInfo::exists(abs)) {
+                assetsDir();               // ensure the folder
+                QFile out(abs);
+                if (out.open(QIODevice::WriteOnly)) { out.write(bytes); out.close(); }
+                else return { path, sz.width(), sz.height() };  // copy failed → reference
+            }
+            return { rel, sz.width(), sz.height() };
+        }
+    }
     return { path, sz.width(), sz.height() };   // referenced in place (absolute)
 }
 
