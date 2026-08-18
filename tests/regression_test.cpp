@@ -14,6 +14,9 @@
 #include <QGuiApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUrl>
 #include <QtGlobal>
 
@@ -634,6 +637,212 @@ static void testExportMarkdown() {
     CHECK(html.startsWith(QStringLiteral("<!doctype html>")), "self-contained document skeleton");
 }
 
+// --- Test 11: sketch canvas resize — renormalization + layout + undo --------
+// sketchResizeCanvas applies per-side source-px deltas, rewriting every stroke
+// point and image rect so the ink keeps its position (ovals: center shifts,
+// radii only rescale). Must also re-derive media meta + Fenwick height (the
+// setMediaWidth sequence), and round-trip through undo/persistence.
+static void testSketchResizeRenorm() {
+    qInfo("[11] sketch resize: renormalize strokes/images, heights, undo, persist");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_sketch.mndb");
+    QFile::remove(path);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("para"));
+    const int row = m.insertSketch(0);
+    CHECK(row == 1 && m.mediaW(row) == 480 && m.mediaH(row) == 480,
+          "insertSketch seeds a 480x480 canvas at row 1");
+
+    // Freehand (positions) + oval (center = position, radii = scale-only).
+    m.sketchSetShapes(row, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.5,0.5],[0.25,0.75]]},"
+        "{\"id\":\"o1\",\"type\":\"oval\",\"color\":[0,1,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":false,\"points\":[[0.5,0.5],[0.2,0.1]]}]}"));
+    const QString probePng = QDir::temp().filePath(QStringLiteral("mn_sketch_probe.png"));
+    { QImage probe(64, 48, QImage::Format_RGB32); probe.fill(Qt::darkGray);
+      probe.save(probePng, "PNG"); }
+    CHECK(m.sketchAddImageFromUrl(row, QUrl::fromLocalFile(probePng).toString()),
+          "probe image placed into the sketch");
+    const QString preResize = m.contentForRow(row);
+    const double img0x = QJsonDocument::fromJson(preResize.toUtf8()).object()
+        .value(QStringLiteral("images")).toArray().at(0).toObject()
+        .value(QStringLiteral("x")).toDouble();
+    const qreal hBefore = m.heightForRow(row);
+
+    m.sketchResizeCanvas(row, 100, 50, 0, 0);   // grow left+top = origin shift
+    const QJsonObject o = QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object();
+    CHECK(o.value(QStringLiteral("w")).toInt() == 580
+              && o.value(QStringLiteral("h")).toInt() == 530
+              && m.mediaW(row) == 580 && m.mediaH(row) == 530,
+          "frame 480x480 + (dl=100,dt=50) = 580x530, media meta re-derived");
+    const QJsonArray shapes = o.value(QStringLiteral("shapes")).toArray();
+    const QJsonArray fp = shapes.at(0).toObject()
+        .value(QStringLiteral("points")).toArray().at(0).toArray();
+    CHECK(qFuzzyCompare(fp.at(0).toDouble(), (0.5 * 480 + 100) / 580.0)
+              && qFuzzyCompare(fp.at(1).toDouble(), (0.5 * 480 + 50) / 530.0),
+          "freehand point renormalized exactly ((x*oldW+dl)/newW)");
+    const QJsonArray oc = shapes.at(1).toObject()
+        .value(QStringLiteral("points")).toArray().at(0).toArray();
+    const QJsonArray orr = shapes.at(1).toObject()
+        .value(QStringLiteral("points")).toArray().at(1).toArray();
+    CHECK(qFuzzyCompare(oc.at(0).toDouble(), (0.5 * 480 + 100) / 580.0)
+              && qFuzzyCompare(orr.at(0).toDouble(), 0.2 * 480 / 580.0)
+              && qFuzzyCompare(orr.at(1).toDouble(), 0.1 * 480 / 530.0),
+          "oval center shifted, radii rescaled WITHOUT origin shift");
+    const QJsonObject img = o.value(QStringLiteral("images")).toArray().at(0).toObject();
+    CHECK(qFuzzyCompare(img.value(QStringLiteral("x")).toDouble(),
+                        (img0x * 480 + 100) / 580.0)
+              && qFuzzyCompare(img.value(QStringLiteral("w")).toDouble(),
+                               (64.0 / 480.0) * 480 / 580.0),
+          "image rect: position shifted, size rescaled");
+    CHECK(!qFuzzyCompare(hBefore, m.heightForRow(row)),
+          "Fenwick height re-derived from the new aspect (%.1f -> %.1f)",
+          hBefore, m.heightForRow(row));
+
+    m.undo();
+    CHECK(m.contentForRow(row) == preResize && m.mediaW(row) == 480,
+          "undo restores byte-identical content + media meta");
+    m.redo();
+    CHECK(m.mediaW(row) == 580, "redo re-applies the resize");
+
+    // Cap clamps (source px): grow far past max, shrink far past min.
+    m.sketchResizeCanvas(row, 0, 0, 20000, 0);
+    CHECK(m.mediaW(row) == 8192, "width clamps to 8192");
+    m.sketchResizeCanvas(row, 0, 0, -20000, -20000);
+    CHECK(m.mediaW(row) == 64 && m.mediaH(row) == 64, "frame clamps to 64 minimum");
+
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    int srow = -1;
+    for (int i = 0; i < m2.rowCountQml(); ++i)
+        if (m2.mediaKind(i) == QLatin1String("sketch")) { srow = i; break; }
+    CHECK(srow >= 0 && m2.mediaW(srow) == 64, "resized frame round-trips save/reopen");
+    QFile::remove(path);
+    QFile::remove(probePng);
+}
+
+// --- Test 13: sketch export — raster cap + HTML natural width ---------------
+// renderSketch rasterizes at 2× until the output long edge would hit 8192,
+// then 1×..2× proportional (a max canvas exports at 1×, never a GiB image);
+// HTML shows the sketch at its SOURCE size (or dw), not the raster size.
+static void testSketchExportCaps() {
+    qInfo("[13] sketch export: raster cap at 8192, HTML width in source px");
+    class SizeSink : public Exporter::AssetSink {
+    public:
+        QList<QSize> sizes;
+        QString addFile(const QString&, const QString& b) override {
+            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
+        QString addImage(const QImage& img, const QString& b) override {
+            sizes << img.size();
+            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
+    };
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    const int row = m.insertSketch(-1);
+    m.sketchSetShapes(row, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.9,0.9]]}]}"));
+
+    Exporter ex;
+    ex.setModel(&m);
+
+    SizeSink s1;
+    QString html = ex.toHtml(Exporter::Options{}, s1);
+    CHECK(s1.sizes.size() == 1 && s1.sizes[0] == QSize(960, 960),
+          "480x480 canvas rasters at 2x (960x960)");
+    CHECK(html.contains(QStringLiteral("class=\"sketch\""))
+              && html.contains(QStringLiteral("width:480px")),
+          "HTML sketch width is the SOURCE 480px, not the raster 960");
+
+    m.sketchResizeCanvas(row, 0, 0, 6000 - 480, 3000 - 480);   // → 6000x3000
+    SizeSink s2;
+    html = ex.toHtml(Exporter::Options{}, s2);
+    CHECK(s2.sizes.size() == 1 && s2.sizes[0] == QSize(8192, 4096),
+          "6000x3000 canvas caps at output long edge 8192 (got %dx%d)",
+          s2.sizes.isEmpty() ? 0 : s2.sizes[0].width(),
+          s2.sizes.isEmpty() ? 0 : s2.sizes[0].height());
+    CHECK(html.contains(QStringLiteral("width:6000px")),
+          "HTML width follows the resized source frame");
+
+    m.setMediaWidth(row, 700);                                  // dw override
+    SizeSink s3;
+    html = ex.toHtml(Exporter::Options{}, s3);
+    CHECK(html.contains(QStringLiteral("width:700px;max-width:none")),
+          "dw override rides the export like the image branch");
+}
+
+// --- Test 12: sketch fit-to-ink — signed overflow coords, bbox resize -------
+// Overflow ink stores as coords < 0 / > 1 (signed normalized, no clamping
+// anywhere in the pipeline); sketchFitToInk grows/shrinks the frame to the
+// signed bbox + 8px margin, pulling everything back into [0,1].
+static void testSketchFitToInk() {
+    qInfo("[12] sketch fit-to-ink: signed coords survive, bbox resize");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    const int row = m.insertSketch(-1);
+
+    CHECK(!m.sketchFitToInk(row), "empty sketch: fit is a no-op (false)");
+
+    m.sketchSetShapes(row, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,"
+        "\"points\":[[-0.1,0.2],[0.5,0.5],[1.2,0.9]]}]}"));
+    CHECK(m.contentForRow(row).contains(QStringLiteral("-0.1")),
+          "signed overflow coords round-trip the model untouched");
+
+    CHECK(m.sketchFitToInk(row), "fit-to-ink resizes");
+    // bbox src: x [-48,576] pad 2 -> [-50,578] margin 8 -> [-58,586] => w 644
+    //           y [96,432]  pad 2 -> [94,434]  margin 8 -> [86,442]  => h 356
+    CHECK(m.mediaW(row) == 644 && m.mediaH(row) == 356,
+          "frame = signed bbox + stroke pad + 8px margin (got %dx%d)",
+          m.mediaW(row), m.mediaH(row));
+    const QJsonArray pts = QJsonDocument::fromJson(m.contentForRow(row).toUtf8())
+        .object().value(QStringLiteral("shapes")).toArray().at(0).toObject()
+        .value(QStringLiteral("points")).toArray();
+    bool allIn = true;
+    for (const QJsonValue& v : pts) {
+        const QJsonArray p = v.toArray();
+        allIn = allIn && p.at(0).toDouble() >= 0.0 && p.at(0).toDouble() <= 1.0
+                      && p.at(1).toDouble() >= 0.0 && p.at(1).toDouble() <= 1.0;
+    }
+    CHECK(allIn, "all points pulled inside [0,1] after fit");
+    CHECK(!m.sketchFitToInk(row), "second fit is a no-op (frame already fits)");
+}
+
+// --- Test 14: sketch embed width — natural size, dw honoured -----------------
+// Sketches left the "always page-wide" special case (only PDFs keep it):
+// natural canvas width up to the page, dw drag-resize like any image.
+static void testSketchEmbedWidth() {
+    qInfo("[14] sketch embed width: natural up to page, dw override");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    const int row = m.insertSketch(-1);
+    m.setContentWidth(760.0);
+    CHECK(m.mediaDispWidth(row) == 480,
+          "480 canvas embeds at natural 480, not page-wide (got %d)",
+          m.mediaDispWidth(row));
+    m.sketchResizeCanvas(row, 0, 0, 1520, 0);   // → 2000 wide
+    CHECK(m.mediaDispWidth(row) == 760,
+          "2000 canvas caps at the page measure (got %d)", m.mediaDispWidth(row));
+    m.setMediaWidth(row, 900);
+    CHECK(m.mediaDispWidth(row) == 900,
+          "dw override honoured past the page (got %d)", m.mediaDispWidth(row));
+    m.setMediaWidth(row, 0);
+    CHECK(m.mediaDispWidth(row) == 760, "dw reset returns to the default");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -652,6 +861,10 @@ int main(int argc, char** argv) {
     testInkUndoPersist();
     testComments();
     testExportMarkdown();
+    testSketchResizeRenorm();
+    testSketchFitToInk();
+    testSketchExportCaps();
+    testSketchEmbedWidth();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

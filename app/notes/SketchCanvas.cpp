@@ -12,6 +12,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QUrl>
+#include <QWheelEvent>
+
+#include <algorithm>
+#include <cmath>
 
 SketchCanvas::SketchCanvas(QQuickItem *parent)
     : QQuickPaintedItem(parent)
@@ -32,6 +36,7 @@ void SketchCanvas::setData(const QString &data)
     data_ = data;
     strokes_ = qcv::AnnotationSerializer::jsonStringToStrokes(data_);
     parseImages(data_);
+    invalidateBounds();
     // Keep the selection only if its index still resolves (sizes shift on
     // undo / external edits); otherwise drop it.
     if ((selKind_ == SelStroke && selIdx_ >= int(strokes_.size()))
@@ -105,11 +110,23 @@ void SketchCanvas::setSelectable(bool s)
 
 void SketchCanvas::applyAcceptedButtons()
 {
-    const bool accept = armed() || inSelectMode();
+    const bool accept = panMode_ || armed() || inSelectMode();
     setAcceptedMouseButtons(accept ? Qt::LeftButton : Qt::NoButton);
-    if (armed())            setCursor(QCursor(Qt::CrossCursor));
+    if (panMode_)            setCursor(QCursor(panning_ ? Qt::ClosedHandCursor
+                                                        : Qt::OpenHandCursor));
+    else if (armed())        setCursor(QCursor(Qt::CrossCursor));
     else if (inSelectMode()) setCursor(QCursor(Qt::ArrowCursor));
-    else                    setCursor(QCursor());
+    else                     setCursor(QCursor());
+}
+
+void SketchCanvas::setPanMode(bool on)
+{
+    if (on == panMode_) return;
+    panMode_ = on;
+    if (!on) panning_ = false;
+    applyAcceptedButtons();
+    emit panModeChanged();
+    update();   // hide/show the brush circle
 }
 
 void SketchCanvas::setColor(const QColor &c)
@@ -130,29 +147,194 @@ void SketchCanvas::setSourceWidth(int w)
 {
     if (w == sourceWidth_) return;
     sourceWidth_ = w;
+    invalidateBounds();
+    pushViewport();
     emit sourceWidthChanged();
     update();
+}
+
+void SketchCanvas::setSourceHeight(int h)
+{
+    if (h == sourceHeight_) return;
+    sourceHeight_ = h;
+    invalidateBounds();
+    pushViewport();
+    emit sourceHeightChanged();
+    update();
+}
+
+void SketchCanvas::setCameraEnabled(bool on)
+{
+    if (on == cameraEnabled_) return;
+    cameraEnabled_ = on;
+    annot_.setUnclamped(on);   // camera mode captures overflow ink
+    pushViewport();
+    emit cameraEnabledChanged();
+    update();
+}
+
+void SketchCanvas::setPanX(qreal x)
+{
+    if (qFuzzyCompare(x, panX_)) return;
+    panX_ = x;
+    pushViewport();
+    emit cameraChanged();
+    update();
+}
+
+void SketchCanvas::setPanY(qreal y)
+{
+    if (qFuzzyCompare(y, panY_)) return;
+    panY_ = y;
+    pushViewport();
+    emit cameraChanged();
+    update();
+}
+
+void SketchCanvas::setZoom(qreal z)
+{
+    z = std::clamp(z, 0.02, 8.0);   // hard sanity bounds; QML applies the UX range
+    if (qFuzzyCompare(z, zoom_)) return;
+    zoom_ = z;
+    pushViewport();
+    emit cameraChanged();
+    update();
+}
+
+void SketchCanvas::setFrameBorderColor(const QColor &c)
+{
+    if (c == frameBorderColor_) return;
+    frameBorderColor_ = c;
+    emit frameBorderColorChanged();
+    update();
+}
+
+qreal SketchCanvas::effZoom() const
+{
+    if (cameraEnabled_) return zoom_;
+    return sourceWidth_ > 0 ? width() / double(sourceWidth_) : 1.0;
+}
+
+QRectF SketchCanvas::frameScreenRect() const
+{
+    if (!cameraEnabled_) return QRectF(0, 0, width(), height());
+    const int sw = sourceWidth_ > 0 ? sourceWidth_ : 1;
+    const int sh = sourceHeight_ > 0 ? sourceHeight_ : sw;
+    return QRectF(panX_, panY_, sw * zoom_, sh * zoom_);
+}
+
+QPointF SketchCanvas::screenToNorm(QPointF pos) const
+{
+    const QRectF f = frameScreenRect();
+    if (f.width() <= 0.0 || f.height() <= 0.0) return {};
+    return QPointF((pos.x() - f.x()) / f.width(), (pos.y() - f.y()) / f.height());
+}
+
+QPointF SketchCanvas::normToScreen(QPointF norm) const
+{
+    const QRectF f = frameScreenRect();
+    return QPointF(f.x() + norm.x() * f.width(), f.y() + norm.y() * f.height());
+}
+
+void SketchCanvas::pushViewport()
+{
+    const QRectF f = frameScreenRect();
+    annot_.setViewportRect(f.topLeft(), f.size());
+}
+
+double SketchCanvas::hitTolNorm() const
+{
+    const QRectF f = frameScreenRect();
+    return f.width() > 0.0 ? 12.0 / f.width() : 0.012;
+}
+
+QRectF SketchCanvas::contentBoundsNorm() const
+{
+    if (contentBounds_) return *contentBounds_;
+    const double srcW = sourceWidth_  > 0 ? sourceWidth_  : 480.0;
+    const double srcH = sourceHeight_ > 0 ? sourceHeight_ : srcW;
+    QRectF acc;
+    auto add = [&acc](const QRectF &r) { acc = acc.isValid() ? acc.united(r) : r; };
+    for (const qcv::ActiveStroke &s : strokes_) {
+        const QRectF b = qcv::strokeBoundsNorm(s);
+        if (b.isNull()) continue;
+        const double px = s.strokeWidth / (2.0 * srcW);
+        const double py = s.strokeWidth / (2.0 * srcH);
+        add(b.adjusted(-px, -py, px, py));
+    }
+    for (const SketchImage &im : images_) add(im.rect);
+    contentBounds_ = acc;
+    return acc;
+}
+
+bool SketchCanvas::hasOverflow() const
+{
+    const QRectF b = contentBoundsNorm();
+    return b.isValid() && !QRectF(0, 0, 1, 1).contains(b);
 }
 
 void SketchCanvas::paint(QPainter *p)
 {
     if (width() <= 0 || height() <= 0) return;
+    const QRectF f = frameScreenRect();
+    if (f.width() <= 0 || f.height() <= 0) return;
     p->setRenderHint(QPainter::Antialiasing, true);
     p->setRenderHint(QPainter::SmoothPixmapTransform, true);
-    // Image layer (beneath the ink): normalized rect → display px.
-    for (const SketchImage &im : images_) {
-        const QImage &img = imageFor(im.src);
-        if (img.isNull()) continue;
-        const QRectF target(im.rect.x() * width(), im.rect.y() * height(),
-                            im.rect.width() * width(), im.rect.height() * height());
-        p->drawImage(target, img);
+
+    // Scene painter, frame space via translate; paintStroke's (w,h) is the
+    // frame's SCREEN size, so normalized coords land in screen px and
+    // effZoom() carries source-px stroke widths to screen.
+    const double scale = effZoom();
+    auto drawScene = [&](QPainter *pp) {
+        pp->translate(f.topLeft());
+        for (const SketchImage &im : images_) {
+            const QImage &img = imageFor(im.src);
+            if (img.isNull()) continue;
+            const QRectF target(im.rect.x() * f.width(), im.rect.y() * f.height(),
+                                im.rect.width() * f.width(), im.rect.height() * f.height());
+            pp->drawImage(target, img);
+        }
+        for (const qcv::ActiveStroke &s : strokes_)
+            qcv::paintStroke(*pp, s, f.width(), f.height(), scale);
+        qcv::ActiveStroke live;
+        if (annot_.snapshotActiveStroke(live))
+            qcv::paintStroke(*pp, live, f.width(), f.height(), scale);
+    };
+
+    // Ghost pass (tab only, and only when overflow exists — or mid-gesture,
+    // so the live stroke stays visible while crossing the edge): the whole
+    // scene unclipped at 35%. The clipped full-opacity pass paints on top.
+    if (cameraEnabled_ && (drawing_ || moving_ || resizing_ || hasOverflow())) {
+        p->save();
+        p->setOpacity(0.35);
+        drawScene(p);
+        p->restore();
     }
-    const double scale = sourceWidth_ > 0 ? width() / double(sourceWidth_) : 1.0;
-    for (const qcv::ActiveStroke &s : strokes_)
-        qcv::paintStroke(*p, s, width(), height(), scale);
-    qcv::ActiveStroke live;
-    if (annot_.snapshotActiveStroke(live))
-        qcv::paintStroke(*p, live, width(), height(), scale);
+
+    // Main pass, clipped to the frame — overflow ink is invisible here (the
+    // embed's hard clip; in legacy mode the frame IS the item, a no-op).
+    p->save();
+    p->setClipRect(f);
+    drawScene(p);
+    p->restore();
+
+    // Frame border (camera mode): drawn here, never a lagging QML sibling.
+    if (cameraEnabled_) {
+        QPen bp(frameBorderColor_, 1.0); bp.setCosmetic(true);
+        p->setBrush(Qt::NoBrush); p->setPen(bp);
+        p->drawRect(f);
+    }
+
+    // Brush-size cursor: the exact mark the armed tool would make at this
+    // zoom (marks are canvas-absolute — the circle IS the feedback that the
+    // panel number means source px).
+    if (cameraEnabled_ && armed() && hoverValid_ && !drawing_ && !panMode_
+        && annot_.activeTool() != qcv::DrawingTool::Eraser) {
+        const double r = std::max(1.0, annot_.strokeWidth() * effZoom() * 0.5);
+        QPen cp(QColor(160, 160, 160, 200), 1.0); cp.setCosmetic(true);
+        p->setBrush(Qt::NoBrush); p->setPen(cp);
+        p->drawEllipse(hoverPos_, r, r);
+    }
 
     // Selection affordance. An image gets a translucent accent wash + solid
     // border (a thin outline is lost against the picture); a stroke gets a
@@ -183,6 +365,13 @@ void SketchCanvas::paint(QPainter *p)
 
 void SketchCanvas::mousePressEvent(QMouseEvent *e)
 {
+    if (panMode_) {
+        panning_ = true;
+        lastPanPos_ = e->position();
+        applyAcceptedButtons();   // closed hand
+        e->accept();
+        return;
+    }
     if (inSelectMode()) { selectPress(e->position()); e->accept(); return; }
     route(qcv::PointerPhase::Press, e->position(), qint64(e->timestamp()));
     e->accept();
@@ -190,6 +379,15 @@ void SketchCanvas::mousePressEvent(QMouseEvent *e)
 
 void SketchCanvas::mouseMoveEvent(QMouseEvent *e)
 {
+    if (panning_) {
+        const QPointF d = e->position() - lastPanPos_;
+        lastPanPos_ = e->position();
+        setPanX(panX_ + d.x());
+        setPanY(panY_ + d.y());
+        emit userCameraInput();
+        e->accept();
+        return;
+    }
     if (inSelectMode()) { selectMove(e->position()); e->accept(); return; }
     route(qcv::PointerPhase::Move, e->position(), qint64(e->timestamp()));
     e->accept();
@@ -197,20 +395,74 @@ void SketchCanvas::mouseMoveEvent(QMouseEvent *e)
 
 void SketchCanvas::mouseReleaseEvent(QMouseEvent *e)
 {
+    if (panning_) {
+        panning_ = false;
+        applyAcceptedButtons();   // back to open hand
+        e->accept();
+        return;
+    }
     if (inSelectMode()) { selectRelease(); e->accept(); return; }
     route(qcv::PointerPhase::Release, e->position(), qint64(e->timestamp()));
     e->accept();
 }
 
+void SketchCanvas::wheelEvent(QWheelEvent *e)
+{
+    if (!cameraEnabled_) { e->ignore(); return; }
+    if (e->modifiers() & Qt::ControlModifier) {
+        // ⌘/Ctrl-wheel: zoom anchored at the pointer.
+        const double factor = std::pow(1.2, e->angleDelta().y() / 120.0);
+        zoomAboutPoint(zoom_ * factor, e->position());
+    } else {
+        // Plain scroll / trackpad: pan. pixelDelta is the trackpad's true
+        // gesture; wheel notches fall back to angleDelta.
+        const QPoint px = e->pixelDelta();
+        const QPointF d = !px.isNull()
+            ? QPointF(px)
+            : QPointF(e->angleDelta().x(), e->angleDelta().y()) / 2.0;
+        setPanX(panX_ + d.x());
+        setPanY(panY_ + d.y());
+    }
+    emit userCameraInput();
+    e->accept();
+}
+
+bool SketchCanvas::event(QEvent *ev)
+{
+    if (cameraEnabled_ && ev->type() == QEvent::NativeGesture) {
+        auto *g = static_cast<QNativeGestureEvent *>(ev);
+        if (g->gestureType() == Qt::ZoomNativeGesture) {
+            zoomAboutPoint(zoom_ * (1.0 + g->value()), g->position());
+            emit userCameraInput();
+            return true;
+        }
+    }
+    return QQuickPaintedItem::event(ev);
+}
+
+void SketchCanvas::zoomAboutPoint(qreal newZoom, QPointF anchor)
+{
+    newZoom = std::clamp(newZoom, 0.02, 8.0);
+    if (qFuzzyCompare(newZoom, zoom_)) return;
+    // The world point under `anchor` stays under it: pan' = a − (a − pan)·z'/z.
+    const qreal r = newZoom / zoom_;
+    panX_ = anchor.x() - (anchor.x() - panX_) * r;
+    panY_ = anchor.y() - (anchor.y() - panY_) * r;
+    zoom_ = newZoom;
+    pushViewport();
+    emit cameraChanged();
+    update();
+}
+
 void SketchCanvas::geometryChange(const QRectF &newGeo, const QRectF &oldGeo)
 {
     QQuickPaintedItem::geometryChange(newGeo, oldGeo);
-    annot_.setViewportRect(QPointF(0, 0), newGeo.size());
+    pushViewport();
 }
 
 void SketchCanvas::route(qcv::PointerPhase phase, QPointF pos, qint64 tMs)
 {
-    annot_.setViewportRect(QPointF(0, 0), size());
+    pushViewport();
     // Eraser gesture bracket. Begin BEFORE dispatching Press — the annotator
     // erases at the press point itself, so the working copy must exist first.
     if (phase == qcv::PointerPhase::Press
@@ -239,6 +491,7 @@ void SketchCanvas::cancelStroke()
         eraseGesture_ = false;    // nothing reached the model, so restoring
         eraseDirty_   = false;    // the paint source undoes the whole drag.
         strokes_ = qcv::AnnotationSerializer::jsonStringToStrokes(data_);
+        invalidateBounds();
     }
     setDrawing(false);
     update();
@@ -255,11 +508,14 @@ void SketchCanvas::commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke)
     emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes));
 }
 
-// QCView's eraser hit-test verbatim (see VideoAnnotator::eraseAt): bounding
-// box + normalized tolerance, last-drawn first, one hit per event.
-static int eraseHitIndex(const std::vector<qcv::ActiveStroke> &strokes, QPointF norm)
+// QCView's eraser hit-test shape (see VideoAnnotator::eraseAt): bounding box
+// + tolerance, last-drawn first, one hit per event. Tolerances are now the
+// caller's: `tol` is a SCREEN-px slop converted to normalized (constant feel
+// at any zoom — the DocInkCanvas kHitTolPx pattern), `srcW` converts the
+// source-px stroke width to its normalized half-width.
+static int eraseHitIndex(const std::vector<qcv::ActiveStroke> &strokes, QPointF norm,
+                         double tol, double srcW)
 {
-    const double tol = 0.012;
     for (int i = int(strokes.size()) - 1; i >= 0; --i) {
         const qcv::ActiveStroke &s = strokes[size_t(i)];
         if (s.points.empty()) continue;
@@ -269,7 +525,7 @@ static int eraseHitIndex(const std::vector<qcv::ActiveStroke> &strokes, QPointF 
             minX = std::min(minX, p.x()); maxX = std::max(maxX, p.x());
             minY = std::min(minY, p.y()); maxY = std::max(maxY, p.y());
         }
-        const double pad = std::max(tol, double(s.strokeWidth) / 1920.0);
+        const double pad = std::max(tol, double(s.strokeWidth) / (2.0 * srcW));
         if (norm.x() >= minX - pad && norm.x() <= maxX + pad
             && norm.y() >= minY - pad && norm.y() <= maxY + pad)
             return i;
@@ -279,22 +535,25 @@ static int eraseHitIndex(const std::vector<qcv::ActiveStroke> &strokes, QPointF 
 
 void SketchCanvas::eraseAt(QPointF norm)
 {
+    const double tol = hitTolNorm();
+    const double srcW = sourceWidth_ > 0 ? sourceWidth_ : 480.0;
     // The annotator only fires this during a press-drag, i.e. inside a
     // gesture; the direct path stays as a safety net.
     if (!eraseGesture_) {
         std::vector<qcv::ActiveStroke> strokes =
             qcv::AnnotationSerializer::jsonStringToStrokes(data_);
-        const int hitIdx = eraseHitIndex(strokes, norm);
+        const int hitIdx = eraseHitIndex(strokes, norm, tol, srcW);
         if (hitIdx < 0) return;
         strokes.erase(strokes.begin() + hitIdx);
         emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes));
         return;
     }
-    const int hitIdx = eraseHitIndex(eraseStrokes_, norm);
+    const int hitIdx = eraseHitIndex(eraseStrokes_, norm, tol, srcW);
     if (hitIdx < 0) return;
     eraseStrokes_.erase(eraseStrokes_.begin() + hitIdx);
     eraseDirty_ = true;
     strokes_ = eraseStrokes_;   // live paint feedback; the model commits on release
+    invalidateBounds();
     if (selKind_ == SelStroke && selIdx_ >= int(strokes_.size())) clearSelection();
     update();
 }
@@ -334,11 +593,12 @@ QRectF SketchCanvas::selBoundsNorm() const
 int SketchCanvas::hitTest(QPointF norm, SelKind &kindOut) const
 {
     // Strokes are drawn on top of images → test them first (reverse = topmost).
-    const double tol = 0.012;
+    const double tol = hitTolNorm();
+    const double srcW = sourceWidth_ > 0 ? sourceWidth_ : 480.0;
     for (int i = int(strokes_.size()) - 1; i >= 0; --i) {
         const QRectF b = strokeBoundsNorm(i);
         if (b.isNull()) continue;
-        const double pad = std::max(tol, double(strokes_[size_t(i)].strokeWidth) / 1920.0);
+        const double pad = std::max(tol, double(strokes_[size_t(i)].strokeWidth) / (2.0 * srcW));
         if (b.adjusted(-pad, -pad, pad, pad).contains(norm)) { kindOut = SelStroke; return i; }
     }
     for (int i = int(images_.size()) - 1; i >= 0; --i)
@@ -355,7 +615,7 @@ void SketchCanvas::selectPress(QPointF pos)
         const int h = handleAtPx(pos);
         if (h >= 0) { beginResize(h); return; }
     }
-    const QPointF norm(pos.x() / width(), pos.y() / height());
+    const QPointF norm = screenToNorm(pos);
     SelKind k = SelNone;
     const int idx = hitTest(norm, k);
     if (k == SelNone) { clearSelection(); return; }
@@ -371,9 +631,9 @@ void SketchCanvas::translateSelection(QPointF dNorm)
     if (selKind_ == SelNone) return;
     const QRectF b = selBoundsNorm();
     if (!b.isValid()) return;
-    // Clamp the delta so the element's bounds stay within [0,1].
-    double dx = std::clamp(dNorm.x(), -b.left(), 1.0 - b.right());
-    double dy = std::clamp(dNorm.y(), -b.top(),  1.0 - b.bottom());
+    // No bounds clamp: overflow is legal (capture-and-hide) — the frame clips
+    // display in the embed/exports; the tab ghosts it.
+    const double dx = dNorm.x(), dy = dNorm.y();
     if (dx == 0.0 && dy == 0.0) return;
     if (selKind_ == SelStroke) {
         qcv::ActiveStroke &s = strokes_[size_t(selIdx_)];
@@ -387,13 +647,14 @@ void SketchCanvas::translateSelection(QPointF dNorm)
         images_[size_t(selIdx_)].rect.translate(dx, dy);
     }
     moveDirty_ = true;
+    invalidateBounds();
     update();
 }
 
 void SketchCanvas::selectMove(QPointF pos)
 {
     if (width() <= 0 || height() <= 0) return;
-    const QPointF norm(pos.x() / width(), pos.y() / height());
+    const QPointF norm = screenToNorm(pos);
     if (resizing_) { resizeTo(norm); return; }
     if (!moving_) return;
     translateSelection(norm - lastNorm_);
@@ -418,6 +679,7 @@ void SketchCanvas::deleteSelection()
 {
     if (selKind_ == SelStroke && selIdx_ < int(strokes_.size())) {
         strokes_.erase(strokes_.begin() + selIdx_);
+        invalidateBounds();
         const int wasIdx = selIdx_;
         clearSelection();
         Q_UNUSED(wasIdx);
@@ -433,7 +695,9 @@ QRectF SketchCanvas::selDisplayRect() const
 {
     const QRectF b = selBoundsNorm();
     if (!b.isValid() || width() <= 0 || height() <= 0) return {};
-    QRectF r(b.x() * width(), b.y() * height(), b.width() * width(), b.height() * height());
+    const QRectF f = frameScreenRect();
+    QRectF r(f.x() + b.x() * f.width(), f.y() + b.y() * f.height(),
+             b.width() * f.width(), b.height() * f.height());
     if (selKind_ == SelStroke) r = r.adjusted(-3, -3, 3, 3);   // breathing room around ink
     return r;
 }
@@ -481,12 +745,10 @@ void SketchCanvas::resizeTo(QPointF norm)
     const double newH = std::abs(norm.y() - pivot.y());
     double s = std::max(newW / origW, newH / origH);              // proportional
     s = std::max(s, std::max(0.03 / origW, 0.03 / origH));        // min size
-    // Clamp so the moving (far) corner stays on the canvas.
-    const double sMaxX = dxs > 0 ? (1.0 - pivot.x()) / dxs : (dxs < 0 ? -pivot.x() / dxs : 1e9);
-    const double sMaxY = dys > 0 ? (1.0 - pivot.y()) / dys : (dys < 0 ? -pivot.y() / dys : 1e9);
-    s = std::min(s, std::min(sMaxX, sMaxY));
+    // No far-corner clamp: resizing past the frame is legal overflow.
     if (s <= 0) return;
     moveDirty_ = true;
+    invalidateBounds();
     if (selKind_ == SelStroke && origPoints_.size() == strokes_[size_t(selIdx_)].points.size()) {
         qcv::ActiveStroke &st = strokes_[size_t(selIdx_)];
         std::vector<QPointF> &pts = st.points;
@@ -508,11 +770,23 @@ void SketchCanvas::resizeTo(QPointF norm)
 
 void SketchCanvas::hoverMoveEvent(QHoverEvent *e)
 {
-    if (inSelectMode() && selKind_ != SelNone) {
+    if (inSelectMode() && selKind_ != SelNone && !panMode_) {
         const int h = handleAtPx(e->position());
         if (h == 0 || h == 3)      setCursor(QCursor(Qt::SizeFDiagCursor));   // TL / BR
         else if (h == 1 || h == 2) setCursor(QCursor(Qt::SizeBDiagCursor));   // TR / BL
         else                       setCursor(QCursor(Qt::ArrowCursor));
     }
+    // Brush-size cursor anchor (armed camera mode): repaint tracks the hover.
+    if (cameraEnabled_ && armed() && !panMode_) {
+        hoverPos_ = e->position();
+        hoverValid_ = true;
+        update();
+    }
     QQuickPaintedItem::hoverMoveEvent(e);
+}
+
+void SketchCanvas::hoverLeaveEvent(QHoverEvent *e)
+{
+    if (hoverValid_) { hoverValid_ = false; update(); }
+    QQuickPaintedItem::hoverLeaveEvent(e);
 }

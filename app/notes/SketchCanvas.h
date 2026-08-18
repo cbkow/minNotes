@@ -26,6 +26,7 @@
 #include <QString>
 #include <QtQmlIntegration>
 
+#include <optional>
 #include <vector>
 
 class SketchCanvas : public QQuickPaintedItem
@@ -41,6 +42,23 @@ class SketchCanvas : public QQuickPaintedItem
     // Canvas intrinsic width in source px — stroke widths are stored in
     // source units (QCView semantics); rendering scales by width()/sourceWidth.
     Q_PROPERTY(int sourceWidth READ sourceWidth WRITE setSourceWidth NOTIFY sourceWidthChanged FINAL)
+    Q_PROPERTY(int sourceHeight READ sourceHeight WRITE setSourceHeight NOTIFY sourceHeightChanged FINAL)
+    // Camera mode (the full-frame tab): the item fills the stage and the
+    // canvas FRAME floats inside it at pan/zoom — panX/panY = the frame's
+    // top-left in item px, zoom = screen px per source px. Capture goes
+    // unclamped (overflow ink), painting clips to the frame. Disabled
+    // (default, the inline embed): the frame IS the item and zoom derives
+    // from width()/sourceWidth — bit-identical to the pre-camera behavior.
+    Q_PROPERTY(bool cameraEnabled READ cameraEnabled WRITE setCameraEnabled NOTIFY cameraEnabledChanged FINAL)
+    Q_PROPERTY(qreal panX READ panX WRITE setPanX NOTIFY cameraChanged FINAL)
+    Q_PROPERTY(qreal panY READ panY WRITE setPanY NOTIFY cameraChanged FINAL)
+    Q_PROPERTY(qreal zoom READ zoom WRITE setZoom NOTIFY cameraChanged FINAL)
+    // Frame-border tone, bound from QML Theme (drawn in C++ so it can never
+    // lag the camera by a frame).
+    Q_PROPERTY(QColor frameBorderColor READ frameBorderColor WRITE setFrameBorderColor NOTIFY frameBorderColorChanged FINAL)
+    // Space held (the tab drives it): mouse drags pan the camera instead of
+    // drawing/selecting; open/closed-hand cursors.
+    Q_PROPERTY(bool panMode READ panMode WRITE setPanMode NOTIFY panModeChanged FINAL)
     Q_PROPERTY(bool armed READ armed NOTIFY toolChanged FINAL)
     Q_PROPERTY(bool drawing READ isDrawing NOTIFY drawingChanged FINAL)
     Q_PROPERTY(bool empty READ empty NOTIFY dataChanged FINAL)
@@ -49,6 +67,11 @@ class SketchCanvas : public QQuickPaintedItem
     // embed leaves this false (passive); the full-frame tab sets it true.
     Q_PROPERTY(bool selectable READ selectable WRITE setSelectable NOTIFY selectableChanged FINAL)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
+    // Signed content bbox (normalized; strokes padded by half their width) and
+    // whether ink lives beyond the frame. Consumed by fit-to-ink zoom, the
+    // ghost pass, and the tab's overflow indicator.
+    Q_PROPERTY(QRectF contentBoundsNorm READ contentBoundsNorm NOTIFY dataChanged FINAL)
+    Q_PROPERTY(bool hasOverflow READ hasOverflow NOTIFY dataChanged FINAL)
     QML_ELEMENT
 
 public:
@@ -67,12 +90,28 @@ public:
     void setStrokeWidth(qreal w);
     int sourceWidth() const { return sourceWidth_; }
     void setSourceWidth(int w);
+    int sourceHeight() const { return sourceHeight_; }
+    void setSourceHeight(int h);
+    bool cameraEnabled() const { return cameraEnabled_; }
+    void setCameraEnabled(bool on);
+    qreal panX() const { return panX_; }
+    void setPanX(qreal x);
+    qreal panY() const { return panY_; }
+    void setPanY(qreal y);
+    qreal zoom() const { return zoom_; }
+    void setZoom(qreal z);
+    QColor frameBorderColor() const { return frameBorderColor_; }
+    void setFrameBorderColor(const QColor &c);
+    bool panMode() const { return panMode_; }
+    void setPanMode(bool on);
     bool armed() const { return drawToolActive_; }   // a real draw tool (not select)
     bool isDrawing() const { return drawing_; }
     bool empty() const { return strokes_.empty() && images_.empty(); }
     bool selectable() const { return selectable_; }
     void setSelectable(bool s);
     bool hasSelection() const { return selKind_ != SelNone; }
+    QRectF contentBoundsNorm() const;
+    bool hasOverflow() const;
 
     Q_INVOKABLE void cancelStroke();      // Esc mid-drag
     Q_INVOKABLE void clearSelection();    // Esc / click empty
@@ -84,6 +123,14 @@ signals:
     void colorChanged();
     void strokeWidthChanged();
     void sourceWidthChanged();
+    void sourceHeightChanged();
+    void cameraEnabledChanged();
+    void cameraChanged();
+    void frameBorderColorChanged();
+    void panModeChanged();
+    // Any direct camera input on the canvas (wheel/pinch/pan-drag) — the tab
+    // flips its "user owns the camera" flag so resizes stop re-fitting.
+    void userCameraInput();
     void drawingChanged();
     void selectableChanged();
     void selectionChanged();
@@ -99,10 +146,28 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
-    void hoverMoveEvent(QHoverEvent *e) override;   // resize-cursor feedback
+    void hoverMoveEvent(QHoverEvent *e) override;   // resize cursors + brush circle
+    void hoverLeaveEvent(QHoverEvent *e) override;
+    void wheelEvent(QWheelEvent *e) override;       // camera: scroll pan / ⌘-zoom
+    bool event(QEvent *ev) override;                // camera: native pinch
     void geometryChange(const QRectF &newGeo, const QRectF &oldGeo) override;
 
 private:
+    // --- Camera mapping. World = normalized × (sourceW, sourceH) source px;
+    // screen = world × zoom + pan. The frame's screen rect is the single
+    // basis: the annotator gets it as its viewport, paint clips to it, and
+    // both normalization directions go through it.
+    qreal effZoom() const;               // screen px per source px
+    QRectF frameScreenRect() const;      // the canvas frame in item px
+    QPointF screenToNorm(QPointF pos) const;
+    QPointF normToScreen(QPointF norm) const;
+    void pushViewport();                 // re-sync annot_'s viewport rect
+    void zoomAboutPoint(qreal newZoom, QPointF anchor);   // keep anchor fixed
+    // Hit slop: 12 SCREEN px expressed in normalized units — constant feel at
+    // any zoom (marks are canvas-absolute; tolerances are screen-absolute).
+    double hitTolNorm() const;
+    void invalidateBounds() { contentBounds_.reset(); }
+
     void route(qcv::PointerPhase phase, QPointF pos, qint64 tMs);
     void commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke);
     void eraseAt(QPointF norm);
@@ -136,6 +201,15 @@ private:
     QString data_;
     QString toolName_;
     int sourceWidth_ = 0;
+    int sourceHeight_ = 0;
+    bool cameraEnabled_ = false;
+    qreal panX_ = 0.0, panY_ = 0.0, zoom_ = 1.0;
+    QColor frameBorderColor_ = QColor(0x33, 0x33, 0x33);
+    bool panMode_ = false;               // space held
+    bool panning_ = false;               // pan-drag in progress
+    QPointF lastPanPos_;
+    QPointF hoverPos_;                   // brush-circle anchor
+    bool hoverValid_ = false;
     bool drawing_ = false;
     bool selectable_ = false;
     bool drawToolActive_ = false;              // a real draw tool is armed (not select)
@@ -152,6 +226,7 @@ private:
     std::vector<qcv::ActiveStroke> eraseStrokes_;   // working copy during the gesture
     std::vector<SketchImage> images_;          // parsed from data_ (under the strokes)
     QHash<QString, QImage> imgCache_;          // src → decoded image
+    mutable std::optional<QRectF> contentBounds_;   // lazy signed bbox cache
 
     SelKind selKind_ = SelNone;                // current selection
     int     selIdx_ = -1;

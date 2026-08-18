@@ -161,6 +161,7 @@ Item {
             id: inlineSketch
             anchors.fill: parent
             data: mb.sketchJson
+            sourceHeight: mb.ih
             sourceWidth: mb.iw
         }
         Text {   // empty-canvas hint

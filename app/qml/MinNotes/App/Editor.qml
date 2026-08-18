@@ -199,6 +199,9 @@ FocusScope {
         flick.contentY = m.scrollY
     }
 
+    // Inspector hook: after a model-side Fit-to-ink, frame the new canvas.
+    function sketchRefitCamera() { if (activeSketchRow >= 0) sketchStage.fitCamera() }
+
     function insertSketchAt(row) {
         blockModel.commitMarkdown(cursor.focusRow)   // leaving the edited block → consume its inline md
         var r = blockModel.insertSketch(row)
@@ -1852,6 +1855,15 @@ FocusScope {
         cursor.sync()
     }
 
+    // Space-up releases the sketch tab's hand-pan (press side lives in the
+    // sketch branch of Keys.onPressed below).
+    Keys.onReleased: (event) => {
+        if (root.activeSketchRow >= 0 && event.key === Qt.Key_Space && !event.isAutoRepeat) {
+            sketchEditCanvas.panMode = false
+            event.accepted = true
+        }
+    }
+
     Keys.onPressed: (event) => {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
@@ -1923,10 +1935,21 @@ FocusScope {
         // Sketch tab: the canvas is mouse-driven; swallow everything so typing
         // can't invisibly edit the hidden document. (cmd+Z above = doc undo —
         // sketch strokes are document content, unlike video notes.) Delete/
-        // Backspace removes the selected stroke/image when in select mode.
+        // Backspace removes the selected stroke/image when in select mode;
+        // space holds the hand (camera pan); ⌘+/− zoom, ⌘0 = 100%, ⌘1 = Fit.
         else if (root.activeSketchRow >= 0) {
             if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && sketchEditCanvas.hasSelection)
                 sketchEditCanvas.deleteSelection()
+            else if (k === Qt.Key_Space && !event.isAutoRepeat)
+                sketchEditCanvas.panMode = true
+            else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal))
+                sketchStage.zoomStep(1)
+            else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore))
+                sketchStage.zoomStep(-1)
+            else if (cmd && k === Qt.Key_0)
+                sketchStage.zoomTo100()
+            else if (cmd && k === Qt.Key_1)
+                sketchStage.fitCamera()
             event.accepted = true
         }
         // Ink mode: the canvas is mouse-driven; swallow everything so typing
@@ -3875,41 +3898,224 @@ FocusScope {
             readonly property int vw: sketchFrame.r >= 0
                 ? (blockModel.contentRevision, blockModel.mediaW(sketchFrame.r)) : 0
             readonly property int vh: sketchFrame.r >= 0 ? blockModel.mediaH(sketchFrame.r) : 0
-            readonly property real fitScale: (vw > 0 && vh > 0 && width > 0 && height > 0)
-                ? Math.min(width / vw, height / vh) : 0
+            // Session-only camera. Fit is an ACTION, not a sticky mode: the tab
+            // opens at Fit and stage/canvas resizes re-fit only until the user
+            // takes the camera (pan/zoom input flips userCam).
+            property bool userCam: false
 
-            Rectangle {   // the canvas: transparent fill, divider border = extent
+            function fitCamera() {
+                if (vw <= 0 || vh <= 0 || width <= 0 || height <= 0) return
+                sketchEditCanvas.zoom = Math.min(width / vw, height / vh)
+                sketchEditCanvas.panX = (width - vw * sketchEditCanvas.zoom) / 2
+                sketchEditCanvas.panY = (height - vh * sketchEditCanvas.zoom) / 2
+                userCam = false
+            }
+            // Zoom keeping the stage point (cx,cy) fixed; UX range 10%–800%
+            // (the canvas clamps harder underneath).
+            function zoomAt(cx, cy, nz) {
+                nz = Math.max(0.10, Math.min(8.0, nz))
+                var z = sketchEditCanvas.zoom
+                if (z <= 0) return
+                sketchEditCanvas.panX = cx - (cx - sketchEditCanvas.panX) * nz / z
+                sketchEditCanvas.panY = cy - (cy - sketchEditCanvas.panY) * nz / z
+                sketchEditCanvas.zoom = nz
+                userCam = true
+            }
+            function zoomStep(dir) {   // ⌘+/⌘−: ×√2 about the viewport center
+                zoomAt(width / 2, height / 2,
+                       sketchEditCanvas.zoom * Math.pow(Math.SQRT2, dir))
+            }
+            function zoomTo100() { zoomAt(width / 2, height / 2, 1.0) }
+            // Frame the signed ink bbox (frame + overflow) — a CAMERA move;
+            // the model-side resize lives on the Inspector's Fit-to-ink.
+            function fitInkCamera() {
+                var b = sketchEditCanvas.contentBoundsNorm
+                if (b.width <= 0 || b.height <= 0 || vw <= 0 || vh <= 0) return
+                var bw = b.width * vw, bh = b.height * vh          // source px
+                var nz = Math.max(0.10, Math.min(8.0,
+                    Math.min(width / (bw + 16), height / (bh + 16))))
+                sketchEditCanvas.zoom = nz
+                sketchEditCanvas.panX = width / 2 - (b.x + b.width / 2) * vw * nz
+                sketchEditCanvas.panY = height / 2 - (b.y + b.height / 2) * vh * nz
+                userCam = true
+            }
+            onWidthChanged:  if (!userCam) fitCamera()
+            onHeightChanged: if (!userCam) fitCamera()
+            onVwChanged:     if (!userCam) fitCamera()
+            onVhChanged:     if (!userCam) fitCamera()
+
+            SketchCanvas {
+                id: sketchEditCanvas
+                anchors.fill: parent
+                cameraEnabled: true   // frame floats at pan/zoom; overflow captures
+                frameBorderColor: Theme.colors.divider
+                // Load-bearing revision dep (reactivity rule 1e). Resolved JSON
+                // so embedded image srcs are loadable URLs.
+                data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
+                    ? blockModel.sketchResolvedJson(sketchFrame.r) : ""
+                sourceWidth: sketchStage.vw
+                sourceHeight: sketchStage.vh
+                tool: (root.activeSketchRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
+                color: root.inspector ? root.inspector.drawColor : "#FF0000"
+                strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+                selectable: true   // no tool armed → click-select / drag-move / Delete
+                onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
+                onImageRectChanged: (i, x, y, w, h) => blockModel.sketchSetImageRect(sketchFrame.r, i, x, y, w, h)
+                onImageRemoved: (i) => blockModel.sketchRemoveImage(sketchFrame.r, i)
+                onUserCameraInput: sketchStage.userCam = true
+            }
+            Text {   // arm hint on a fresh canvas
+                visible: sketchEditCanvas.empty && !sketchEditCanvas.armed
                 anchors.centerIn: parent
-                width: Math.round(sketchStage.vw * sketchStage.fitScale)
-                height: Math.round(sketchStage.vh * sketchStage.fitScale)
-                color: "transparent"
-                border.width: 1; border.color: Theme.colors.divider
+                text: "Pick a tool in the Draw panel to start"
+                color: Theme.colors.textSubtle
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+            }
+            Rectangle {   // overflow tick: ghost ink exists beyond the frame
+                visible: sketchEditCanvas.hasOverflow
+                width: 6; height: 6
+                x: sketchEditCanvas.panX + sketchStage.vw * sketchEditCanvas.zoom + 5
+                y: sketchEditCanvas.panY - 11
+                color: Theme.colors.textSubtle
+            }
+            ZoomBadge {   // the tab's only zoom chrome (readout + menu)
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                zoomValue: sketchEditCanvas.zoom
+                showFitInk: sketchEditCanvas.hasOverflow
+                onFitRequested: sketchStage.fitCamera()
+                onHundredRequested: sketchStage.zoomTo100()
+                onFitInkRequested: sketchStage.fitInkCamera()
+            }
 
-                SketchCanvas {
-                    id: sketchEditCanvas
-                    anchors.fill: parent
-                    // Load-bearing revision dep (reactivity rule 1e). Resolved JSON
-                    // so embedded image srcs are loadable URLs.
-                    data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
-                        ? blockModel.sketchResolvedJson(sketchFrame.r) : ""
-                    sourceWidth: sketchStage.vw
-                    tool: (root.activeSketchRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
-                    color: root.inspector ? root.inspector.drawColor : "#FF0000"
-                    strokeWidth: root.inspector ? root.inspector.drawWidth : 6
-                    selectable: true   // no tool armed → click-select / drag-move / Delete
-                    onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
-                    onImageRectChanged: (i, x, y, w, h) => blockModel.sketchSetImageRect(sketchFrame.r, i, x, y, w, h)
-                    onImageRemoved: (i) => blockModel.sketchRemoveImage(sketchFrame.r, i)
+            // --- Frame resize handles: 8 edge/corner grips on the canvas
+            // border, live in SCREEN space at any zoom. The imgResize pattern:
+            // preview outline + one-txn commit on release (the document — and
+            // the ink — never move mid-drag; only the frame line does).
+            // Growing left/top is the origin shift; the camera compensates on
+            // commit so ink stays visually fixed.
+            Item {
+                id: frameResize
+                anchors.fill: parent
+                visible: !sketchEditCanvas.armed && !sketchEditCanvas.panMode
+                readonly property real fx: sketchEditCanvas.panX
+                readonly property real fy: sketchEditCanvas.panY
+                readonly property real fw: sketchStage.vw * sketchEditCanvas.zoom
+                readonly property real fh: sketchStage.vh * sketchEditCanvas.zoom
+                property bool dragging: false
+                property int dl: 0; property int dt: 0
+                property int dr: 0; property int db: 0
+                property int grabEdges: 0     // bitmask 1=L 2=T 4=R 8=B
+                property real startX: 0; property real startY: 0
+                readonly property int previewW: sketchStage.vw + dl + dr
+                readonly property int previewH: sketchStage.vh + dt + db
+
+                function snap(v) { return Math.round(v / 10) * 10 }
+                function begin(edges, p) {
+                    grabEdges = edges; startX = p.x; startY = p.y
+                    dl = dt = dr = db = 0
+                    dragging = true
                 }
-                Text {   // arm hint on a fresh canvas
-                    visible: sketchEditCanvas.empty && !sketchEditCanvas.armed
-                    anchors.centerIn: parent
-                    text: "Pick a tool in the Draw panel to start"
+                function dragTo(p) {
+                    var z = sketchEditCanvas.zoom
+                    if (z <= 0) return
+                    var dxs = (p.x - startX) / z, dys = (p.y - startY) / z
+                    dl = (grabEdges & 1) ? snap(-dxs) : 0
+                    dr = (grabEdges & 4) ? snap(dxs)  : 0
+                    dt = (grabEdges & 2) ? snap(-dys) : 0
+                    db = (grabEdges & 8) ? snap(dys)  : 0
+                    // Hard stop at the [64, 8192] frame bounds (source px).
+                    var w = sketchStage.vw + dl + dr
+                    if (w < 64 || w > 8192) {
+                        var cw = Math.max(64, Math.min(8192, w)) - sketchStage.vw
+                        if (grabEdges & 1) dl = cw - dr; else dr = cw - dl
+                    }
+                    var h = sketchStage.vh + dt + db
+                    if (h < 64 || h > 8192) {
+                        var ch = Math.max(64, Math.min(8192, h)) - sketchStage.vh
+                        if (grabEdges & 2) dt = ch - db; else db = ch - dt
+                    }
+                }
+                function commit() {
+                    if (!dragging) return
+                    dragging = false
+                    var _dl = dl, _dt = dt, _dr = dr, _db = db
+                    dl = dt = dr = db = 0
+                    if (_dl === 0 && _dt === 0 && _dr === 0 && _db === 0) return
+                    var z = sketchEditCanvas.zoom
+                    // userCam FIRST: the resize bumps vw/vh, whose handlers
+                    // would otherwise re-fit the camera mid-commit.
+                    sketchStage.userCam = true
+                    blockModel.sketchResizeCanvas(sketchFrame.r, _dl, _dt, _dr, _db)
+                    sketchEditCanvas.panX -= _dl * z
+                    sketchEditCanvas.panY -= _dt * z
+                }
+                function cancel() { dragging = false; dl = dt = dr = db = 0 }
+
+                component FrameHandle: MouseArea {
+                    property int edges: 0
+                    hoverEnabled: true
+                    preventStealing: true
+                    cursorShape: edges === 3 || edges === 12 ? Qt.SizeFDiagCursor   // TL / BR
+                                 : edges === 6 || edges === 9 ? Qt.SizeBDiagCursor  // TR / BL
+                                 : (edges & 5) ? Qt.SizeHorCursor : Qt.SizeVerCursor
+                    onPressed: (m) => frameResize.begin(edges, mapToItem(frameResize, m.x, m.y))
+                    onPositionChanged: (m) => { if (frameResize.dragging)
+                        frameResize.dragTo(mapToItem(frameResize, m.x, m.y)) }
+                    onReleased: frameResize.commit()
+                    onCanceled: frameResize.cancel()
+                }
+                // Edges (thin strips straddling the border, corners excluded).
+                FrameHandle { edges: 1; x: frameResize.fx - 6; y: frameResize.fy + 8
+                              width: 12; height: Math.max(0, frameResize.fh - 16) }
+                FrameHandle { edges: 4; x: frameResize.fx + frameResize.fw - 6; y: frameResize.fy + 8
+                              width: 12; height: Math.max(0, frameResize.fh - 16) }
+                FrameHandle { edges: 2; x: frameResize.fx + 8; y: frameResize.fy - 6
+                              width: Math.max(0, frameResize.fw - 16); height: 12 }
+                FrameHandle { edges: 8; x: frameResize.fx + 8; y: frameResize.fy + frameResize.fh - 6
+                              width: Math.max(0, frameResize.fw - 16); height: 12 }
+                // Corners (TL=3, TR=6, BL=9, BR=12).
+                FrameHandle { edges: 3;  x: frameResize.fx - 7; y: frameResize.fy - 7; width: 14; height: 14 }
+                FrameHandle { edges: 6;  x: frameResize.fx + frameResize.fw - 7; y: frameResize.fy - 7; width: 14; height: 14 }
+                FrameHandle { edges: 9;  x: frameResize.fx - 7; y: frameResize.fy + frameResize.fh - 7; width: 14; height: 14 }
+                FrameHandle { edges: 12; x: frameResize.fx + frameResize.fw - 7; y: frameResize.fy + frameResize.fh - 7; width: 14; height: 14 }
+
+                // Visible nubs: corners + edge midpoints, divider tone.
+                Repeater {
+                    model: [[0,0],[1,0],[2,0],[0,1],[2,1],[0,2],[1,2],[2,2]]   // [col,row]
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: 6; height: 6
+                        color: Theme.colors.divider
+                        border.width: 1; border.color: Theme.colors.border
+                        x: frameResize.fx + modelData[0] * frameResize.fw / 2 - 3
+                        y: frameResize.fy + modelData[1] * frameResize.fh / 2 - 3
+                    }
+                }
+
+                // Drag preview: target-frame outline + transient W×H readout.
+                Rectangle {
+                    visible: frameResize.dragging
+                    color: "transparent"
+                    border.width: 1; border.color: Theme.colors.textSubtle
+                    x: frameResize.fx - frameResize.dl * sketchEditCanvas.zoom
+                    y: frameResize.fy - frameResize.dt * sketchEditCanvas.zoom
+                    width: frameResize.previewW * sketchEditCanvas.zoom
+                    height: frameResize.previewH * sketchEditCanvas.zoom
+                }
+                Text {
+                    visible: frameResize.dragging
+                    x: frameResize.fx - frameResize.dl * sketchEditCanvas.zoom + 8
+                    y: frameResize.fy - frameResize.dt * sketchEditCanvas.zoom
+                       + frameResize.previewH * sketchEditCanvas.zoom + 6
+                    text: frameResize.previewW + " × " + frameResize.previewH
                     color: Theme.colors.textSubtle
-                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
                 }
             }
         }
+        // Every entry into a sketch tab (or switch between two) starts at Fit.
+        onRChanged: if (r >= 0) sketchStage.fitCamera()
     }
 
     // --- Margin-ink layer (tier 2 annotations). ONE viewport-sized canvas

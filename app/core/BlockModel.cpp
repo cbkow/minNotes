@@ -27,6 +27,7 @@
 #include <QDateTime>
 #include <functional>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #ifdef Q_OS_WIN
 #define NOMINMAX            // keep std::min/std::max usable (windows.h min/max macros)
@@ -609,9 +610,9 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 // upscaled by default).
 double BlockModel::mediaDisplayWidth(const Row& r) const {
     if (r.dispW > 0) return r.dispW;
-    if (r.isPdf || r.isSketch) return contentWidth_;   // fit the page (sketches
-                                                       // upscale — strokes are
-                                                       // vector, no quality loss)
+    if (r.isPdf) return contentWidth_;   // fit the page
+    // Sketches ride the image path since the frame became user-sized: natural
+    // (canvas) width up to the page, dw drag-resize honoured like any image.
     if (r.mediaW > 0) return std::min<double>(contentWidth_, r.mediaW);
     return contentWidth_;
 }
@@ -1840,6 +1841,170 @@ void BlockModel::sketchRemoveImage(int row, int idx) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+}
+
+// Canvas-frame bounds (source px). Min keeps a degenerate frame grabbable;
+// max is the raster/export ceiling (a 4K paste keeps native resolution).
+static constexpr int kSketchMinDim = 64;
+static constexpr int kSketchMaxDim = 8192;
+
+// Apply per-side source-px deltas to a sketch descriptor, rewriting stroke
+// points and image rects so the ink keeps its position relative to the old
+// frame. Pure JSON — unknown fields pass through. If the [min,max] clamp
+// shrinks the requested growth, the left/top share is re-derived
+// proportionally so the mapping always matches the w/h actually written.
+// Ovals encode {center, radii}: radii are scale quantities, not positions —
+// they rescale but take no origin shift (mirrors strokeBoundsNorm/paintStroke).
+static QJsonObject renormalizeSketchContent(QJsonObject root,
+                                            int dl, int dt, int dr, int db) {
+    const int oldW = root.value(QStringLiteral("w")).toInt(480);
+    const int oldH = root.value(QStringLiteral("h")).toInt(480);
+    const int newW = std::clamp(oldW + dl + dr, kSketchMinDim, kSketchMaxDim);
+    const int newH = std::clamp(oldH + dt + db, kSketchMinDim, kSketchMaxDim);
+    auto effLeft = [](int dA, int dTotalWanted, int dTotalEff) {
+        if (dTotalWanted == dTotalEff || dTotalWanted == 0) return dA;
+        return int(std::lround(double(dA) * double(dTotalEff) / double(dTotalWanted)));
+    };
+    const double eDl = effLeft(dl, dl + dr, newW - oldW);
+    const double eDt = effLeft(dt, dt + db, newH - oldH);
+    const double oW = oldW, oH = oldH, nW = newW, nH = newH;
+
+    QJsonArray shapes = root.value(QStringLiteral("shapes")).toArray();
+    for (int i = 0; i < shapes.size(); ++i) {
+        QJsonObject s = shapes.at(i).toObject();
+        const bool oval = s.value(QStringLiteral("type")).toString()
+                          == QLatin1String("oval");
+        QJsonArray pts = s.value(QStringLiteral("points")).toArray();
+        for (int j = 0; j < pts.size(); ++j) {
+            const QJsonArray p = pts.at(j).toArray();
+            if (p.size() < 2) continue;
+            QJsonArray np;
+            if (oval && j == 1) {   // radii: rescale only
+                np.append(p.at(0).toDouble() * oW / nW);
+                np.append(p.at(1).toDouble() * oH / nH);
+            } else {
+                np.append((p.at(0).toDouble() * oW + eDl) / nW);
+                np.append((p.at(1).toDouble() * oH + eDt) / nH);
+            }
+            for (int k = 2; k < p.size(); ++k) np.append(p.at(k));
+            pts.replace(j, np);
+        }
+        s.insert(QStringLiteral("points"), pts);
+        shapes.replace(i, s);
+    }
+    root.insert(QStringLiteral("shapes"), shapes);
+
+    if (root.contains(QStringLiteral("images"))) {
+        QJsonArray images = root.value(QStringLiteral("images")).toArray();
+        for (int i = 0; i < images.size(); ++i) {
+            QJsonObject o = images.at(i).toObject();
+            o.insert(QStringLiteral("x"),
+                     (o.value(QStringLiteral("x")).toDouble() * oW + eDl) / nW);
+            o.insert(QStringLiteral("y"),
+                     (o.value(QStringLiteral("y")).toDouble() * oH + eDt) / nH);
+            o.insert(QStringLiteral("w"),
+                     o.value(QStringLiteral("w")).toDouble() * oW / nW);
+            o.insert(QStringLiteral("h"),
+                     o.value(QStringLiteral("h")).toDouble() * oH / nH);
+            images.replace(i, o);
+        }
+        root.insert(QStringLiteral("images"), images);
+    }
+
+    root.insert(QStringLiteral("w"), newW);
+    root.insert(QStringLiteral("h"), newH);
+    return root;
+}
+
+// Signed ink bbox of a sketch descriptor in source px (strokes padded by half
+// their width, images as-is), or an invalid rect when the sketch is empty.
+static QRectF sketchInkBoundsSrc(const QJsonObject& root) {
+    const double w = root.value(QStringLiteral("w")).toInt(480);
+    const double h = root.value(QStringLiteral("h")).toInt(480);
+    QRectF acc;
+    auto add = [&acc](const QRectF& r) { acc = acc.isValid() ? acc.united(r) : r; };
+    const QJsonArray shapes = root.value(QStringLiteral("shapes")).toArray();
+    for (const QJsonValue& v : shapes) {
+        const QJsonObject s = v.toObject();
+        const QJsonArray pts = s.value(QStringLiteral("points")).toArray();
+        if (pts.isEmpty()) continue;
+        QRectF b;
+        if (s.value(QStringLiteral("type")).toString() == QLatin1String("oval")
+            && pts.size() >= 2) {
+            const QJsonArray c = pts.at(0).toArray(), r = pts.at(1).toArray();
+            if (c.size() < 2 || r.size() < 2) continue;
+            const double rx = std::abs(r.at(0).toDouble()) * w;
+            const double ry = std::abs(r.at(1).toDouble()) * h;
+            b = QRectF(c.at(0).toDouble() * w - rx, c.at(1).toDouble() * h - ry,
+                       2.0 * rx, 2.0 * ry);
+        } else {
+            double minX = 0, maxX = 0, minY = 0, maxY = 0; bool first = true;
+            for (const QJsonValue& pv : pts) {
+                const QJsonArray p = pv.toArray();
+                if (p.size() < 2) continue;
+                const double x = p.at(0).toDouble() * w, y = p.at(1).toDouble() * h;
+                if (first) { minX = maxX = x; minY = maxY = y; first = false; }
+                else { minX = std::min(minX, x); maxX = std::max(maxX, x);
+                       minY = std::min(minY, y); maxY = std::max(maxY, y); }
+            }
+            if (first) continue;
+            b = QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+        }
+        const double pad = s.value(QStringLiteral("stroke_width")).toDouble(2.5) * 0.5;
+        add(b.adjusted(-pad, -pad, pad, pad));
+    }
+    const QJsonArray images = root.value(QStringLiteral("images")).toArray();
+    for (const QJsonValue& v : images) {
+        const QJsonObject o = v.toObject();
+        add(QRectF(o.value(QStringLiteral("x")).toDouble() * w,
+                   o.value(QStringLiteral("y")).toDouble() * h,
+                   o.value(QStringLiteral("w")).toDouble() * w,
+                   o.value(QStringLiteral("h")).toDouble() * h));
+    }
+    return acc;
+}
+
+void BlockModel::sketchResizeCanvas(int row, int dl, int dt, int dr, int db) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    if (dl == 0 && dt == 0 && dr == 0 && db == 0) return;
+    const QJsonObject root = renormalizeSketchContent(
+        QJsonDocument::fromJson(content_[row].toUtf8()).object(), dl, dt, dr, db);
+    const QString json = QString::fromUtf8(
+        QJsonDocument(root).toJson(QJsonDocument::Compact));
+    if (json == content_[row]) return;   // clamped to a no-op
+    // The setMediaWidth sequence: w/h feed layout, so unlike the other sketch
+    // mutators this must re-derive the media meta + Fenwick height.
+    beginTxn(row, row);
+    content_[row] = json;
+    fillMediaMeta(rows_[row], json);
+    rows_[row].measured = false;
+    fenwick_.setHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+bool BlockModel::sketchFitToInk(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return false;
+    const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QRectF ink = sketchInkBoundsSrc(root);
+    if (!ink.isValid()) return false;                  // empty sketch
+    const double margin = 8.0;
+    const int oldW = root.value(QStringLiteral("w")).toInt(480);
+    const int oldH = root.value(QStringLiteral("h")).toInt(480);
+    // Epsilon absorbs the renormalization round-trip (coord*newW can land a
+    // hair under an exact px), so fitting an already-fit frame is a no-op.
+    const double eps = 1e-6;
+    const int dl = -int(std::floor(ink.left() - margin + eps));
+    const int dt = -int(std::floor(ink.top() - margin + eps));
+    const int dr = int(std::ceil(ink.right() + margin - eps)) - oldW;
+    const int db = int(std::ceil(ink.bottom() + margin - eps)) - oldH;
+    if (dl == 0 && dt == 0 && dr == 0 && db == 0) return false;
+    sketchResizeCanvas(row, dl, dt, dr, db);
+    return true;
 }
 
 int BlockModel::rowForId(const QString& id) const {

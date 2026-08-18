@@ -77,6 +77,18 @@ public:
     // Update on every viewport resize / aspect-fit recompute.
     void setViewportRect(QPointF displayPos, QSizeF displaySize);
 
+    // ---- Unclamped capture (sketch overflow ink) ----
+    // Default (false): capture is bounded by the viewport rect — points clamp
+    // to [0,1], the shape tools ignore outside input, and Freehand
+    // auto-finalizes when the pointer leaves. That is what video ink (frame-
+    // normalized) and doc ink (viewport-clipped) want.
+    // Unclamped (true): the rect stays the normalization basis but stops
+    // bounding — points go signed (< 0 / > 1), nothing is gated on inside,
+    // and Freehand keeps capturing across the edge. The sketch tab's
+    // capture-and-hide overflow mode.
+    bool unclamped() const     { return unclamped_; }
+    void setUnclamped(bool u)  { unclamped_ = u; }
+
     // ---- Input ----
     // Returns true if the event was consumed by the annotation system.
     // `screenPos` is in viewport-window pixels (same coord system as
@@ -152,6 +164,11 @@ public:
                                        QSizeF displaySize);
 
 private:
+    // Instance-side conversions: honour unclamped_ (the public statics keep
+    // their always-clamping contract for external callers).
+    QPointF toNorm(QPointF screenPos) const;
+    bool    inCaptureArea(QPointF screenPos) const;
+
     void processFreehand (PointerPhase phase, QPointF screenPos, qint64 timestampMs);
     void processRectangle(PointerPhase phase, QPointF screenPos, qint64 timestampMs);
     void processOval     (PointerPhase phase, QPointF screenPos, qint64 timestampMs);
@@ -167,6 +184,7 @@ private:
     float        stroke_width_ = 4.0f;
 #endif
     bool         fill_enabled_ = false;
+    bool         unclamped_    = false;
 
     QPointF display_pos_;
     QSizeF  display_size_;

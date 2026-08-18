@@ -145,11 +145,8 @@ bool ViewportAnnotator::onPointerEvent(PointerPhase phase,
             } else if (!is_drawing_) {
                 return true;   // hover / pre-press Move → no-op
             }
-            if (!isInsideDisplayArea(screenPos, display_pos_,
-                                       display_size_)) return true;
-            const QPointF norm = screenToNormalized(screenPos,
-                                                     display_pos_,
-                                                     display_size_);
+            if (!inCaptureArea(screenPos)) return true;
+            const QPointF norm = toNorm(screenPos);
             if (erase_at_cb_) erase_at_cb_(norm);
             return true;
         }
@@ -211,6 +208,21 @@ bool ViewportAnnotator::isInsideDisplayArea(QPointF screenPos,
            screenPos.y() <= displayPos.y() + displaySize.height();
 }
 
+QPointF ViewportAnnotator::toNorm(QPointF screenPos) const
+{
+    if (display_size_.width() <= 0.0 || display_size_.height() <= 0.0) return {};
+    const QPointF raw((screenPos.x() - display_pos_.x()) / display_size_.width(),
+                      (screenPos.y() - display_pos_.y()) / display_size_.height());
+    return unclamped_ ? raw : QPointF(clamp01(raw.x()), clamp01(raw.y()));
+}
+
+bool ViewportAnnotator::inCaptureArea(QPointF screenPos) const
+{
+    // Unclamped mode has no boundary: nothing gates on "inside", which also
+    // retires Freehand's auto-finalize-on-leave (the pointer never "leaves").
+    return unclamped_ || isInsideDisplayArea(screenPos, display_pos_, display_size_);
+}
+
 // ---------------------------------------------------------------------
 // Freehand
 // ---------------------------------------------------------------------
@@ -219,14 +231,15 @@ void ViewportAnnotator::processFreehand(PointerPhase phase,
                                         QPointF screenPos,
                                         qint64 timestampMs)
 {
-    const bool inside = isInsideDisplayArea(screenPos, display_pos_, display_size_);
+    const bool inside = inCaptureArea(screenPos);
 
     // Mouse left the display area mid-stroke → finalize (matches old
-    // app behavior; only Freehand auto-finalizes on leave).
+    // app behavior; only Freehand auto-finalizes on leave). In unclamped
+    // mode `inside` is always true, so the stroke keeps capturing.
     if (is_drawing_ && phase == PointerPhase::Move && !inside) {
         if (stroke_modeler_ && stroke_modeler_->IsActive()) {
             const QPointF lastNorm = active_stroke_.points.empty()
-                ? screenToNormalized(screenPos, display_pos_, display_size_)
+                ? toNorm(screenPos)
                 : active_stroke_.points.back();
             const double t = (timestampMs - stroke_t0_ms_) / 1000.0;
             for (const QPointF &pt : stroke_modeler_->EndStroke(lastNorm, t)) {
@@ -256,7 +269,7 @@ void ViewportAnnotator::processFreehand(PointerPhase phase,
             stroke_modeler_->BeginStroke(cfg);
         }
 
-        const QPointF norm = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF norm = toNorm(screenPos);
         if (stroke_modeler_ && stroke_modeler_->IsActive()) {
             for (const QPointF &pt : stroke_modeler_->AddPoint(norm, 0.0, true)) {
                 active_stroke_.points.push_back(pt);
@@ -273,7 +286,7 @@ void ViewportAnnotator::processFreehand(PointerPhase phase,
     if (!is_drawing_) return;
 
     if (phase == PointerPhase::Move) {
-        const QPointF norm = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF norm = toNorm(screenPos);
         const double  t    = (timestampMs - stroke_t0_ms_) / 1000.0;
 
         if (stroke_modeler_ && stroke_modeler_->IsActive()) {
@@ -290,7 +303,7 @@ void ViewportAnnotator::processFreehand(PointerPhase phase,
     }
 
     if (phase == PointerPhase::Release) {
-        const QPointF norm = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF norm = toNorm(screenPos);
         const double  t    = (timestampMs - stroke_t0_ms_) / 1000.0;
 
         if (stroke_modeler_ && stroke_modeler_->IsActive()) {
@@ -312,8 +325,7 @@ void ViewportAnnotator::processRectangle(PointerPhase phase,
                                          QPointF screenPos,
                                          qint64 /*timestampMs*/)
 {
-    if (!isInsideDisplayArea(screenPos, display_pos_, display_size_) &&
-        phase != PointerPhase::Release) {
+    if (!inCaptureArea(screenPos) && phase != PointerPhase::Release) {
         return;
     }
 
@@ -324,14 +336,14 @@ void ViewportAnnotator::processRectangle(PointerPhase phase,
         active_stroke_.color       = drawing_color_;
         active_stroke_.strokeWidth = stroke_width_;
         active_stroke_.filled      = fill_enabled_;
-        drag_start_norm_ = screenToNormalized(screenPos, display_pos_, display_size_);
+        drag_start_norm_ = toNorm(screenPos);
         return;
     }
 
     if (!is_drawing_) return;
 
     if (phase == PointerPhase::Move) {
-        const QPointF cur = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF cur = toNorm(screenPos);
         active_stroke_.points = {
             QPointF(drag_start_norm_.x(), drag_start_norm_.y()),  // TL
             QPointF(cur.x(),              drag_start_norm_.y()),  // TR
@@ -355,8 +367,7 @@ void ViewportAnnotator::processOval(PointerPhase phase,
                                     QPointF screenPos,
                                     qint64 /*timestampMs*/)
 {
-    if (!isInsideDisplayArea(screenPos, display_pos_, display_size_) &&
-        phase != PointerPhase::Release) {
+    if (!inCaptureArea(screenPos) && phase != PointerPhase::Release) {
         return;
     }
 
@@ -367,14 +378,14 @@ void ViewportAnnotator::processOval(PointerPhase phase,
         active_stroke_.color       = drawing_color_;
         active_stroke_.strokeWidth = stroke_width_;
         active_stroke_.filled      = fill_enabled_;
-        drag_start_norm_ = screenToNormalized(screenPos, display_pos_, display_size_);
+        drag_start_norm_ = toNorm(screenPos);
         return;
     }
 
     if (!is_drawing_) return;
 
     if (phase == PointerPhase::Move) {
-        const QPointF cur = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF cur = toNorm(screenPos);
         const QPointF center((drag_start_norm_.x() + cur.x()) * 0.5,
                              (drag_start_norm_.y() + cur.y()) * 0.5);
         const QPointF radii(std::abs(cur.x() - drag_start_norm_.x()) * 0.5,
@@ -397,8 +408,7 @@ void ViewportAnnotator::processArrow(PointerPhase phase,
                                      QPointF screenPos,
                                      qint64 /*timestampMs*/)
 {
-    if (!isInsideDisplayArea(screenPos, display_pos_, display_size_) &&
-        phase != PointerPhase::Release) {
+    if (!inCaptureArea(screenPos) && phase != PointerPhase::Release) {
         return;
     }
 
@@ -408,7 +418,7 @@ void ViewportAnnotator::processArrow(PointerPhase phase,
         active_stroke_.tool        = DrawingTool::Arrow;
         active_stroke_.color       = drawing_color_;
         active_stroke_.strokeWidth = stroke_width_;
-        drag_start_norm_ = screenToNormalized(screenPos, display_pos_, display_size_);
+        drag_start_norm_ = toNorm(screenPos);
         active_stroke_.points.push_back(drag_start_norm_);
         return;
     }
@@ -416,7 +426,7 @@ void ViewportAnnotator::processArrow(PointerPhase phase,
     if (!is_drawing_) return;
 
     if (phase == PointerPhase::Move) {
-        const QPointF cur = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF cur = toNorm(screenPos);
         if (active_stroke_.points.size() < 2) active_stroke_.points.push_back(cur);
         else                                  active_stroke_.points[1] = cur;
         return;
@@ -432,8 +442,7 @@ void ViewportAnnotator::processLine(PointerPhase phase,
                                     QPointF screenPos,
                                     qint64 /*timestampMs*/)
 {
-    if (!isInsideDisplayArea(screenPos, display_pos_, display_size_) &&
-        phase != PointerPhase::Release) {
+    if (!inCaptureArea(screenPos) && phase != PointerPhase::Release) {
         return;
     }
 
@@ -443,7 +452,7 @@ void ViewportAnnotator::processLine(PointerPhase phase,
         active_stroke_.tool        = DrawingTool::Line;
         active_stroke_.color       = drawing_color_;
         active_stroke_.strokeWidth = stroke_width_;
-        drag_start_norm_ = screenToNormalized(screenPos, display_pos_, display_size_);
+        drag_start_norm_ = toNorm(screenPos);
         active_stroke_.points.push_back(drag_start_norm_);
         return;
     }
@@ -451,7 +460,7 @@ void ViewportAnnotator::processLine(PointerPhase phase,
     if (!is_drawing_) return;
 
     if (phase == PointerPhase::Move) {
-        const QPointF cur = screenToNormalized(screenPos, display_pos_, display_size_);
+        const QPointF cur = toNorm(screenPos);
         if (active_stroke_.points.size() < 2) active_stroke_.points.push_back(cur);
         else                                  active_stroke_.points[1] = cur;
         return;

@@ -179,8 +179,9 @@ public:
     Q_INVOKABLE void  setContentWidth(qreal w);
     Q_INVOKABLE qreal mediaDisplayHeight(int row) const;
     // Effective displayed media width (per-block override or default). Set a new
-    // per-block width (w<=0 resets to the default); clamped to [80, pageWidth].
-    // Persists in the descriptor, so undo/reload Just Work; one undo step.
+    // per-block width (w<=0 resets to the default); clamped to [80, 65535] —
+    // deliberately uncapped past the page (the drag distance is the practical
+    // cap). Persists in the descriptor, so undo/reload Just Work; one undo step.
     Q_INVOKABLE int  mediaDispWidth(int row) const;
     Q_INVOKABLE void setMediaWidth(int row, int w);
     Q_INVOKABLE void setContent(int row, const QString& text);
@@ -436,6 +437,13 @@ public:
     // canvas binds THIS, not raw content — the stored src stays doc-relative).
     Q_INVOKABLE QString sketchResolvedJson(int row) const;
     Q_INVOKABLE QStringList sketchBlockIds() const;
+    // Resize the canvas frame by per-side source-px deltas (grow left/top =
+    // origin shift), renormalizing every stroke point and image rect so the
+    // ink keeps its position; w/h clamp to [64, 8192]. One undo step per call.
+    Q_INVOKABLE void sketchResizeCanvas(int row, int dl, int dt, int dr, int db);
+    // Resize the frame to the signed ink bbox (+8px margin) — pulls overflow
+    // ink back inside [0,1]. False when the sketch is empty or already fits.
+    Q_INVOKABLE bool sketchFitToInk(int row);
     // Current row of a block id, or -1 if it no longer exists.
     Q_INVOKABLE int rowForId(const QString& id) const;
     // Block id at `row` (empty if out of range).

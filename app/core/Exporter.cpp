@@ -395,7 +395,12 @@ QImage renderSketch(const BlockModel* m, int row) {
     const int w = obj.value(QStringLiteral("w")).toInt(480);
     const int h = obj.value(QStringLiteral("h")).toInt(480);
     if (w <= 0 || h <= 0) return {};
-    const int W = w * 2, H = h * 2;
+    // 2× until the output long edge would hit 8192, then scale down — a
+    // max-size canvas exports at 1× (the unconditional 2× would allocate a
+    // 1 GiB image at the 8192 frame cap), and a pasted 4K screenshot keeps
+    // native resolution.
+    const double s = std::min(2.0, 8192.0 / double(std::max(w, h)));
+    const int W = int(std::lround(w * s)), H = int(std::lround(h * s));
     QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     QPainter p(&img);
@@ -1076,8 +1081,16 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
         const QImage img = renderSketch(m, row);
         if (img.isNull()) return {};
         const QString src = sink.addImage(img, QStringLiteral("sketch"));
-        return src.isEmpty() ? QString()
-            : QStringLiteral("<figure><img class=\"sketch\" src=\"%1\" alt=\"Sketch\"></figure>").arg(src);
+        if (src.isEmpty()) return {};
+        // Display at the canvas's SOURCE size (the raster may be 2×), or the
+        // user's dw — the image branch's rules.
+        const int dw = QJsonDocument::fromJson(m->contentForRow(row).toUtf8())
+                           .object().value(QStringLiteral("dw")).toInt(0);
+        const QString wstyle = dw > 0
+            ? QStringLiteral(" style=\"width:%1px;max-width:none\"").arg(dw)
+            : QStringLiteral(" style=\"width:%1px\"").arg(m->mediaW(row));
+        return QStringLiteral("<figure><img class=\"sketch\" src=\"%1\" alt=\"Sketch\"%2></figure>")
+            .arg(src, wstyle);
     }
     if (kind == QLatin1String("image")) {
         QString src = sink.addFile(path, QFileInfo(path).completeBaseName());
@@ -1962,8 +1975,14 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
 
     if (kind == QLatin1String("sketch")) {
         const QImage img = renderSketch(m, row);
-        if (!img.isNull())
-            docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());
+        if (!img.isNull()) {
+            // Size by the SOURCE canvas px, not the (possibly 2×) raster —
+            // docxImagePara treats px as 96-dpi, like every other image here.
+            const int srcW = m->mediaW(row), srcH = m->mediaH(row);
+            docxImagePara(c, w, docxAddImage(c, img),
+                          srcW > 0 ? srcW : img.width(),
+                          srcH > 0 ? srcH : img.height());
+        }
         return;
     }
     if (kind == QLatin1String("image")) {
