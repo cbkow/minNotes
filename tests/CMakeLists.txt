@@ -6,6 +6,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/BlockModel.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Importer.cpp
     ${CMAKE_SOURCE_DIR}/app/core/DocxReader.cpp
+    $<IF:$<PLATFORM_ID:Darwin>,${CMAKE_SOURCE_DIR}/app/core/RtfConvert_mac.mm,${CMAKE_SOURCE_DIR}/app/core/RtfConvert_stub.cpp>
     ${CMAKE_SOURCE_DIR}/app/core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
     ${CMAKE_SOURCE_DIR}/app/core/PackageExporter.cpp
@@ -43,6 +44,10 @@ target_link_libraries(mn_regression_test PRIVATE
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
     KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks
     minnotes::ffmpeg)              # MediaStore.cpp probes media via FFmpeg
+if(APPLE)
+    # RtfConvert_mac.mm — NSAttributedString RTF→HTML
+    target_link_libraries(mn_regression_test PRIVATE "-framework AppKit")
+endif()
 
 # FFmpeg DLLs next to the test exe so it launches on Windows.
 if(WIN32)

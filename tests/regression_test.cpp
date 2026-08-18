@@ -15,6 +15,7 @@
 #include "../app/notes/sketch_text.h"
 #include "PackageFormat.h"
 #include "PackageExporter.h"
+#include "RtfConvert.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 
@@ -2262,6 +2263,43 @@ static void testDocxRoundTrip() {
     dir.removeRecursively();
 }
 
+static void testRtfImport() {
+    qInfo("[29] RTF import (macOS native converter + class inliner)");
+    if (!mn::rtfImportSupported()) {
+        qInfo("  (skipped: RTF unsupported on this platform)");
+        return;
+    }
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_rtf"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString rtf = dir.filePath(QStringLiteral("t.rtf"));
+    {
+        QFile f(rtf);
+        CHECK(f.open(QIODevice::WriteOnly), "rtf fixture writable");
+        f.write("{\\rtf1\\ansi\\deff0 {\\fonttbl{\\f0 Helvetica;}}\n"
+                "{\\b bold} normal {\\i ital} {\\ul under}\\par\n"
+                "second paragraph\\par\n}");
+    }
+    CHECK(Importer::formatForPath(rtf) == QStringLiteral("rtf"),
+          "rtf classifies where supported");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    CHECK(Importer::importRtfFile(rtf, &m), "rtf imported");
+    CHECK(m.contentForRow(0) == QStringLiteral("bold normal ital under"),
+          "text flattened correctly ('%s')", qPrintable(m.contentForRow(0)));
+    CHECK(m.hasFormat(0, 0, 4, QStringLiteral("bold")), "bold span");
+    CHECK(m.hasFormat(0, 12, 16, QStringLiteral("italic")), "italic span");
+    CHECK(m.hasFormat(0, 17, 22, QStringLiteral("underline")),
+          "underline recovered via the Cocoa class INLINER");
+    CHECK(m.contentForRow(1) == QStringLiteral("second paragraph"),
+          "second paragraph (rows=%d row1='%s' type=%d)",
+          m.rowCountQml(), qPrintable(m.contentForRow(1)), m.typeForRow(1));
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
 // MN_OPEN_PROBE=<dir> — diagnostic, not a test: builds (once) a package with
 // three junk multi-GB "videos" in <dir>, then times each stage of the open
 // path. For chasing "opening a package freezes" reports.
@@ -2359,6 +2397,7 @@ int main(int argc, char** argv) {
     testEnexImport();
     testNotionImport();
     testDocxRoundTrip();
+    testRtfImport();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

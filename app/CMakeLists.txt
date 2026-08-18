@@ -12,6 +12,7 @@ qt_add_executable(minnotesapp
     core/BlockModel.cpp
     core/Importer.cpp
     core/DocxReader.cpp
+    $<IF:$<PLATFORM_ID:Darwin>,core/RtfConvert_mac.mm,core/RtfConvert_stub.cpp>
     core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
     core/PackageExporter.cpp
@@ -476,7 +477,8 @@ if(APPLE)
         "-framework QuartzCore"
         "-framework AudioToolbox"
         "-framework CoreAudio"
-        "-framework AudioUnit")
+        "-framework AudioUnit"
+        "-framework AppKit")   # RtfConvert_mac.mm — NSAttributedString RTF→HTML
     # FFmpeg rpath is set in the .app bundle block above (BUILD_RPATH carries
     # both @executable_path/../Frameworks for Sparkle and the FFmpeg lib dir so
     # the dev .app resolves the @rpath/lib*.dylib install_names from the build

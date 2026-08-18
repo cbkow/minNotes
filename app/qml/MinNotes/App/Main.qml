@@ -101,14 +101,23 @@ ApplicationWindow {
     FileDialog {
         id: importDialog
         title: "Import"
-        nameFilters: ["Importable documents (*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.docx *.enex *.zip)",
-                      "Markdown (*.md *.markdown *.mdown)",
-                      "Plain text (*.txt *.text *.log)",
-                      "CSV / TSV (*.csv *.tsv *.tab)",
-                      "HTML (*.html *.htm)",
-                      "Word document (*.docx)",
-                      "Evernote export (*.enex)",
-                      "Notion export (*.zip)"]
+        // RTF rides the OS-native converter — macOS only for now; the arm
+        // (and the classifier) hide elsewhere.
+        nameFilters: {
+            var all = "*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.docx *.enex *.zip"
+            var f = []
+            if (Qt.platform.os === "osx") all += " *.rtf"
+            f.push("Importable documents (" + all + ")")
+            f = f.concat(["Markdown (*.md *.markdown *.mdown)",
+                          "Plain text (*.txt *.text *.log)",
+                          "CSV / TSV (*.csv *.tsv *.tab)",
+                          "HTML (*.html *.htm)",
+                          "Word document (*.docx)",
+                          "Evernote export (*.enex)",
+                          "Notion export (*.zip)"])
+            if (Qt.platform.os === "osx") f.push("RTF (*.rtf)")
+            return f
+        }
         onAccepted: win.startImport("" + selectedFile)
     }
     // Multi-document imports (ENEX, Notion zips) write N .mndb files into a

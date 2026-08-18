@@ -82,6 +82,9 @@ public:
     // Word .docx → DocxReader specs + native comment threads (the DOCX
     // emitter's mirror; round-trips our own exports).
     static bool importDocxFile(const QString& path, BlockModel* m);
+    // RTF via the OS-native converter (macOS; elsewhere the classifier
+    // hides RTF entirely) → HTML → walker.
+    static bool importRtfFile(const QString& path, BlockModel* m);
 
     // Walk `doc`'s frame tree into BlockSpecs (BlockModel::insertSpecs's IR).
     // `store` receives embedded/local images (null = skip images). `baseDir`

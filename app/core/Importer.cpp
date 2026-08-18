@@ -1,6 +1,7 @@
 #include "Importer.h"
 #include "DocxReader.h"
 #include "MediaStore.h"
+#include "RtfConvert.h"
 #include "TableGrid.h"
 #include <QTextDocument>
 #include <QTextBlock>
@@ -60,6 +61,7 @@ QString Importer::formatForPath(const QString& fileUrlOrPath) {
     if (ext == QLatin1String("tsv") || ext == QLatin1String("tab"))       return QStringLiteral("tsv");
     if (ext == QLatin1String("html") || ext == QLatin1String("htm"))      return QStringLiteral("html");
     if (ext == QLatin1String("docx"))                                     return QStringLiteral("docx");
+    if (ext == QLatin1String("rtf") && mn::rtfImportSupported())          return QStringLiteral("rtf");
     if (ext == QLatin1String("enex"))                                     return QStringLiteral("enex");
     if (ext == QLatin1String("zip")) {
         // Only NOTION-shaped zips import (md/csv entries in the central
@@ -109,7 +111,37 @@ bool Importer::importFile(const QString& fileUrlOrPath) {
     if (fmt == QLatin1String("tsv"))  return importCsvFile(path, model_, true);
     if (fmt == QLatin1String("html")) return importHtmlFile(path, model_);
     if (fmt == QLatin1String("docx")) return importDocxFile(path, model_);
+    if (fmt == QLatin1String("rtf"))  return importRtfFile(path, model_);
     return false;
+}
+
+bool Importer::importRtfFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    const QString html = mn::rtfFileToHtml(path);
+    if (html.isEmpty()) return false;
+    QTextDocument doc;
+    doc.setHtml(html);
+    std::vector<BlockModel::BlockSpec> specs =
+        specsFromTextDocument(doc, m->mediaStore(), QFileInfo(path).absolutePath());
+    // Cocoa's writer leaves trailing spaces on paragraphs — trim them (and
+    // clamp spans), code blocks excepted.
+    for (auto& sp : specs) {
+        if (sp.type == BlockModel::Code) continue;
+        int len = sp.text.size();
+        while (len > 0 && (sp.text.at(len - 1) == QLatin1Char(' ')
+                           || sp.text.at(len - 1) == QLatin1Char('\t')))
+            --len;
+        if (len != sp.text.size()) {
+            sp.text.truncate(len);
+            for (auto& x : sp.spans) {
+                x.s = std::min(x.s, len);
+                x.e = std::min(x.e, len);
+            }
+        }
+    }
+    if (specs.empty()) return true;
+    m->insertSpecs(0, specs, true);
+    return true;
 }
 
 bool Importer::importDocxFile(const QString& path, BlockModel* m) {
