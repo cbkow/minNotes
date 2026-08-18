@@ -1138,6 +1138,10 @@ static void testDocInkTexts() {
     CHECK(html.contains(QStringLiteral("left:-50%"))
               && html.contains(QStringLiteral("right:auto;bottom:auto;max-width:none")),
           "overshooting media ink carries percent offsets (not frame-clipped)");
+    CHECK(html.contains(QStringLiteral("id=\"mn-lb\""))
+              && html.contains(QStringLiteral("ArrowRight"))
+              && html.contains(QStringLiteral("cursor:zoom-in")),
+          "lightbox chrome + script + zoom cursor emitted");
 
     // Undo semantics ride setBlockInk (one step per call — the test-8 rule).
     m.setBlockInk(0, QString());

@@ -1411,6 +1411,37 @@ background:var(--recess);border:1px solid var(--border)}
 border-color:var(--divider)}
 #mn-ink:not(:checked)~main .ink{visibility:hidden}
 @media print{label[for=mn-ink]{display:none}}
+/* Lightbox: click any figure image for full-screen; ‹ › buttons or arrow
+   keys navigate document order, Esc / backdrop closes. Annotation overlays
+   ride along (their percent offsets scale with the staged image) and honour
+   the Annotations toggle. Squared, monochrome — the family chrome. */
+main figure img:not(.ink){cursor:zoom-in}
+#mn-lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99;
+display:flex;align-items:center;justify-content:center;
+opacity:0;visibility:hidden;pointer-events:none;
+transition:opacity 160ms ease,visibility 0s linear 160ms}   /* fade out, THEN hide */
+#mn-lb.open{opacity:1;visibility:visible;pointer-events:auto;
+transition:opacity 160ms ease}
+@keyframes mnlb-in{from{opacity:0}to{opacity:1}}
+#mn-lb .stage>div{position:relative;display:inline-block;
+animation:mnlb-in 160ms ease}   /* each staged photo reveals (rebuilt per show) */
+#mn-lb .stage>div>img:first-child{max-width:86vw;max-height:92vh;display:block}
+#mn-lb .nav{position:fixed;top:50%;transform:translateY(-50%);z-index:100;
+width:44px;height:64px;background:rgba(0,0,0,.55);color:var(--text);
+border:1px solid var(--border);border-radius:0;cursor:pointer;padding:0;
+display:flex;align-items:center;justify-content:center}
+/* Inline SVG glyphs: centered by geometry, not font metrics — identical on
+   every platform (text glyphs sat visibly low on some). currentColor keeps
+   the hover tint. */
+#mn-lb .nav svg{display:block}
+#mn-lb .nav:hover{background:var(--divider);color:var(--bright)}
+#mn-lb .prev{left:16px}
+#mn-lb .next{right:16px}
+#mn-lb .close{position:fixed;top:14px;right:16px;transform:none;
+width:44px;height:44px}
+#mn-lb .cnt{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+@media print{#mn-lb{display:none!important}}
 .notecard .tc{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--bright)}
 .notecard p{margin:6px 0 0;font-size:14px}
 .notecard.addressed{opacity:.55}
@@ -1611,13 +1642,61 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         css.replace(QLatin1String("pre{background:var(--recess)"),
                     QStringLiteral("pre{background:%1").arg(codeBg.name()));
 
+    // Lightbox: the page's one script (everything else is CSS-only). Vanilla,
+    // self-contained; removes itself when the page has no figure images. The
+    // stage rebuilds base + (toggle-honouring) annotation overlay per show —
+    // the overlay reuses the layer's own percent geometry, so overshoot ink
+    // scales with the staged image exactly as it does in the page.
+    static const char kLightbox[] = R"MNLB(<div id="mn-lb"><button class="nav prev" aria-label="Previous"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg></button><div class="stage"></div><button class="nav next" aria-label="Next"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button><button class="nav close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><span class="cnt"></span></div>
+<script>
+(function(){
+var lb=document.getElementById('mn-lb');if(!lb)return;
+var imgs=[].slice.call(document.querySelectorAll('main figure img')).filter(function(im){return im.className.indexOf('ink')<0});
+if(!imgs.length){lb.parentNode.removeChild(lb);return;}
+var stage=lb.querySelector('.stage'),cnt=lb.querySelector('.cnt'),cur=-1;
+function show(i){
+cur=(i+imgs.length)%imgs.length;
+var im=imgs[cur];
+stage.innerHTML='';
+var wrap=document.createElement('div');
+var b=document.createElement('img');b.src=im.src;wrap.appendChild(b);
+var tgl=document.getElementById('mn-ink');
+var ink=(im.parentElement&&im.parentElement.className.indexOf('inkwrap')>=0)
+?im.parentElement.querySelector('img.ink'):null;
+if(ink&&(!tgl||tgl.checked)){
+var o=document.createElement('img');o.src=ink.src;
+var st=ink.getAttribute('style');
+o.setAttribute('style',st||'left:0;top:0;width:100%;max-width:none');
+o.style.position='absolute';
+wrap.appendChild(o);}
+stage.appendChild(wrap);
+cnt.textContent=(cur+1)+' / '+imgs.length;
+lb.classList.add('open');}
+imgs.forEach(function(im,i){im.addEventListener('click',function(){show(i)})});
+function close(){lb.classList.remove('open');cur=-1}
+lb.addEventListener('click',function(e){if(e.target===lb)close()});
+lb.querySelector('.prev').addEventListener('click',function(){show(cur-1)});
+lb.querySelector('.next').addEventListener('click',function(){show(cur+1)});
+lb.querySelector('.close').addEventListener('click',close);
+document.addEventListener('keydown',function(e){
+if(cur<0)return;
+if(e.key==='Escape')close();
+else if(e.key==='ArrowLeft')show(cur-1);
+else if(e.key==='ArrowRight')show(cur+1);
+else return;
+e.preventDefault();});
+})();
+</script>
+)MNLB";
+
     return QStringLiteral(
                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
                "<meta name=\"generator\" content=\"minNotes\">\n"
                "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n%4</main>\n"
-               "</body>\n</html>\n")
-        .arg(htmlEscape(m->documentName()), css, toggle, body);
+               "%5</body>\n</html>\n")
+        .arg(htmlEscape(m->documentName()), css, toggle, body,
+             QLatin1String(kLightbox));
 }
 
 bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes) {
