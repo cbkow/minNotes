@@ -5,6 +5,7 @@ qt_add_executable(mn_regression_test
     regression_test.cpp
     ${CMAKE_SOURCE_DIR}/app/core/BlockModel.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Importer.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/DocxReader.cpp
     ${CMAKE_SOURCE_DIR}/app/core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
     ${CMAKE_SOURCE_DIR}/app/core/PackageExporter.cpp

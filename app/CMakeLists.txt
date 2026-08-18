@@ -11,6 +11,7 @@ qt_add_executable(minnotesapp
     core/BlockModel.h
     core/BlockModel.cpp
     core/Importer.cpp
+    core/DocxReader.cpp
     core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
     core/PackageExporter.cpp

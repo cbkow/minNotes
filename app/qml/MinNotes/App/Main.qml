@@ -101,11 +101,12 @@ ApplicationWindow {
     FileDialog {
         id: importDialog
         title: "Import"
-        nameFilters: ["Importable documents (*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.enex *.zip)",
+        nameFilters: ["Importable documents (*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.docx *.enex *.zip)",
                       "Markdown (*.md *.markdown *.mdown)",
                       "Plain text (*.txt *.text *.log)",
                       "CSV / TSV (*.csv *.tsv *.tab)",
                       "HTML (*.html *.htm)",
+                      "Word document (*.docx)",
                       "Evernote export (*.enex)",
                       "Notion export (*.zip)"]
         onAccepted: win.startImport("" + selectedFile)

@@ -211,6 +211,23 @@ QHash<QString, EntrySpan> entrySpans(const QString& zipPath) {
     return out;
 }
 
+QByteArray readEntry(const QString& zipPath, const QString& entryName) {
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_reader_init_file(&zip, zipPath.toUtf8().constData(), 0)) return {};
+    size_t size = 0;
+    void* data = mz_zip_reader_extract_file_to_heap(
+        &zip, entryName.toUtf8().constData(), &size, 0);
+    QByteArray out;
+    if (data) {
+        out = QByteArray(static_cast<const char*>(data),
+                         static_cast<qsizetype>(size));
+        mz_free(data);
+    }
+    mz_zip_reader_end(&zip);
+    return out;
+}
+
 static mz_zip_archive* Z(void* p) { return static_cast<mz_zip_archive*>(p); }
 
 PackageWriter::PackageWriter(const QString& zipPath) {

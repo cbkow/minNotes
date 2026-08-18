@@ -1,4 +1,5 @@
 #include "Importer.h"
+#include "DocxReader.h"
 #include "MediaStore.h"
 #include "TableGrid.h"
 #include <QTextDocument>
@@ -58,6 +59,7 @@ QString Importer::formatForPath(const QString& fileUrlOrPath) {
     if (ext == QLatin1String("csv"))                                      return QStringLiteral("csv");
     if (ext == QLatin1String("tsv") || ext == QLatin1String("tab"))       return QStringLiteral("tsv");
     if (ext == QLatin1String("html") || ext == QLatin1String("htm"))      return QStringLiteral("html");
+    if (ext == QLatin1String("docx"))                                     return QStringLiteral("docx");
     if (ext == QLatin1String("enex"))                                     return QStringLiteral("enex");
     if (ext == QLatin1String("zip")) {
         // Only NOTION-shaped zips import (md/csv entries in the central
@@ -106,7 +108,24 @@ bool Importer::importFile(const QString& fileUrlOrPath) {
     if (fmt == QLatin1String("csv"))  return importCsvFile(path, model_, false);
     if (fmt == QLatin1String("tsv"))  return importCsvFile(path, model_, true);
     if (fmt == QLatin1String("html")) return importHtmlFile(path, model_);
+    if (fmt == QLatin1String("docx")) return importDocxFile(path, model_);
     return false;
+}
+
+bool Importer::importDocxFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    const DocxReader::Result res = DocxReader::read(path, m->mediaStore());
+    if (!res.ok) return false;
+    if (res.specs.empty()) return true;
+    m->insertSpecs(0, res.specs, true);
+    // Reuse folds spec 0 into row 0, the rest follow — spec i is row i.
+    for (const DocxReader::CommentOut& co : res.comments) {
+        const QString threadId = m->addComment(co.specIndex, co.start, co.end);
+        if (threadId.isEmpty()) continue;
+        for (const QString& body : co.messages)
+            m->addCommentMessage(threadId, body);
+    }
+    return true;
 }
 
 bool Importer::importMarkdownFile(const QString& path, BlockModel* m) {

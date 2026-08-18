@@ -79,6 +79,9 @@ public:
     // HTML file → setHtml → walker (relative images resolve against the
     // file's directory; remote ones localize async post-insert).
     static bool importHtmlFile(const QString& path, BlockModel* m);
+    // Word .docx → DocxReader specs + native comment threads (the DOCX
+    // emitter's mirror; round-trips our own exports).
+    static bool importDocxFile(const QString& path, BlockModel* m);
 
     // Walk `doc`'s frame tree into BlockSpecs (BlockModel::insertSpecs's IR).
     // `store` receives embedded/local images (null = skip images). `baseDir`

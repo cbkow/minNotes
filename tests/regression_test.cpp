@@ -2168,6 +2168,100 @@ static void testNotionImport() {
     dir.removeRecursively();
 }
 
+static void testDocxRoundTrip() {
+    qInfo("[28] DOCX round-trip: our export reads back structurally intact");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_docx"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    { QImage img(10, 8, QImage::Format_RGB32); img.fill(Qt::darkRed);
+      img.save(dir.filePath(QStringLiteral("pic.png")), "PNG"); }
+
+    const QString docx = dir.filePath(QStringLiteral("round.docx"));
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        std::vector<BlockModel::BlockSpec> specs;
+        {
+            BlockModel::BlockSpec h; h.type = BlockModel::Heading; h.level = 2;
+            h.text = QStringLiteral("Section title"); specs.push_back(h);
+            BlockModel::BlockSpec p; p.text = QStringLiteral("hello bold world");
+            p.spans.push_back({6, 10, BlockModel::SpanBold, {}}); specs.push_back(p);
+            BlockModel::BlockSpec l; l.type = BlockModel::ListItem; l.depth = 1;
+            l.text = QStringLiteral("nested bullet"); specs.push_back(l);
+            BlockModel::BlockSpec o; o.type = BlockModel::OrderedListItem;
+            o.text = QStringLiteral("first item"); specs.push_back(o);
+            BlockModel::BlockSpec tk; tk.type = BlockModel::TaskListItem;
+            tk.taskState = BlockModel::TaskDoing;
+            tk.text = QStringLiteral("doing task"); specs.push_back(tk);
+            BlockModel::BlockSpec cd; cd.type = BlockModel::Code;
+            cd.text = QStringLiteral("int x;\nint y;"); specs.push_back(cd);
+            TableGrid g = TableGrid::makeEmpty(2, 2);
+            g.setCellText(1, 0, QStringLiteral("cell A"));
+            BlockModel::BlockSpec tb; tb.type = BlockModel::Table;
+            tb.tableJson = g.toJson(); specs.push_back(tb);
+        }
+        m.insertSpecs(0, specs, true);
+        const QString threadId = m.addComment(1, 0, 5);
+        m.addCommentMessage(threadId, QStringLiteral("check this wording"));
+        m.insertImageFromUrl(m.rowCountQml() - 1,
+            QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString());
+
+        Exporter ex;
+        ex.setModel(&m);
+        CHECK(ex.exportDocx(docx, false), "our DOCX exported");
+        m.closeDocument();
+    }
+
+    BlockModel m2;
+    m2.newDocument();
+    while (m2.rowCountQml() > 0) m2.removeBlock(0);
+    m2.insertBlock(0);
+    CHECK(Importer::importDocxFile(docx, &m2), "docx imported");
+
+    CHECK(m2.typeForRow(0) == BlockModel::Heading && m2.levelForRow(0) == 2
+              && m2.contentForRow(0) == QStringLiteral("Section title"),
+          "direct-formatted heading level survives (size heuristic)");
+    CHECK(m2.contentForRow(1) == QStringLiteral("hello bold world")
+              && m2.hasFormat(1, 6, 10, QStringLiteral("bold")),
+          "paragraph + bold span round-trips");
+    CHECK(m2.typeForRow(2) == BlockModel::ListItem && m2.depthForRow(2) == 1,
+          "nested bullet + depth");
+    CHECK(m2.typeForRow(3) == BlockModel::OrderedListItem,
+          "ordered item (numId 2 → ordered)");
+    CHECK(m2.typeForRow(4) == BlockModel::TaskListItem
+              && m2.taskStateForRow(4) == BlockModel::TaskDoing
+              && m2.contentForRow(4) == QStringLiteral("doing task"),
+          "tri-state task via glyph sniff (DOING survives!)");
+    int codeRow = -1, tableRow = -1, mediaRow = -1;
+    for (int r2 = 0; r2 < m2.rowCountQml(); ++r2) {
+        if (m2.typeForRow(r2) == BlockModel::Code) codeRow = r2;
+        if (m2.typeForRow(r2) == BlockModel::Table && tableRow < 0) tableRow = r2;
+        if (m2.typeForRow(r2) == BlockModel::Media) mediaRow = r2;
+    }
+    CHECK(codeRow >= 0 && m2.contentForRow(codeRow) == QStringLiteral("int x;\nint y;"),
+          "code block (Courier+EFEFEF) coalesced back to one block");
+    CHECK(tableRow >= 0 && m2.tableCell(tableRow, 1, 0) == QStringLiteral("cell A"),
+          "table cell text");
+    CHECK(mediaRow >= 0 && QFileInfo::exists(m2.mediaLocalPath(mediaRow)),
+          "image re-imported into the sidecar");
+    // Comment thread → native thread with the body preserved.
+    bool commentOk = false;
+    const QVariantList threads = m2.commentThreads();
+    for (const QVariant& tv : threads) {
+        const QVariantMap t = tv.toMap();
+        const QVariantList msgs = m2.commentMessages(t.value(QStringLiteral("id")).toString());
+        for (const QVariant& mv : msgs)
+            if (mv.toMap().value(QStringLiteral("body")).toString()
+                    .contains(QStringLiteral("check this wording")))
+                commentOk = true;
+    }
+    CHECK(commentOk, "Word comment → native thread with body");
+    m2.closeDocument();
+    dir.removeRecursively();
+}
+
 // MN_OPEN_PROBE=<dir> — diagnostic, not a test: builds (once) a package with
 // three junk multi-GB "videos" in <dir>, then times each stage of the open
 // path. For chasing "opening a package freezes" reports.
@@ -2264,6 +2358,7 @@ int main(int argc, char** argv) {
     testPackageStreaming();
     testEnexImport();
     testNotionImport();
+    testDocxRoundTrip();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

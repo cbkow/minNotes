@@ -86,6 +86,10 @@ struct EntrySpan {
 // Entry name → span for every file entry (empty on unreadable archive).
 QHash<QString, EntrySpan> entrySpans(const QString& zipPath);
 
+// One entry's bytes ({} if absent/unreadable). Small parts only (DOCX xml,
+// manifests) — whole entry lands in RAM.
+QByteArray readEntry(const QString& zipPath, const QString& entryName);
+
 // Streaming package writer: per-entry STORE/DEFLATE, zip64 when needed,
 // entries stream from disk in chunks (no RAM spike). Write everything, then
 // finish(); any failed add poisons the writer (ok() false, finish() false).
