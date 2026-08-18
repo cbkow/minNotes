@@ -38,7 +38,9 @@ target_include_directories(mn_regression_test PRIVATE
 # The bundled app fonts: the harness registers Inter so sketch-text height
 # derivation matches the app (assertions stay font-relative regardless).
 target_compile_definitions(mn_regression_test PRIVATE
-    MN_FONTS_DIR="${CMAKE_SOURCE_DIR}/app/qml/MinNotes/App/fonts")
+    MN_FONTS_DIR="${CMAKE_SOURCE_DIR}/app/qml/MinNotes/App/fonts"
+    # Source root: the streaming test finds the vendored ffmpeg CLI with it.
+    MN_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(mn_regression_test PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument

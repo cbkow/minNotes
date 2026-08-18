@@ -1971,8 +1971,13 @@ static void testPackageStreaming() {
 
     // Real decode through the spec (libav in-process): generate a genuine
     // mp4 with the vendored ffmpeg when present; skip quietly otherwise.
-    const QString ffmpeg = QStringLiteral(
-        "/Users/chris/Documents/GitHub/minNotes/external/ffmpeg/bin/ffmpeg");
+#if defined(Q_OS_WIN)
+    const QString ffmpeg = QStringLiteral(MN_SOURCE_DIR "/external/ffmpeg/bin/ffmpeg.exe");
+    const QString h264enc = QStringLiteral("libx264");
+#else
+    const QString ffmpeg = QStringLiteral(MN_SOURCE_DIR "/external/ffmpeg/bin/ffmpeg");
+    const QString h264enc = QStringLiteral("h264_videotoolbox");
+#endif
     if (QFileInfo::exists(ffmpeg)) {
         const QString real = dir.filePath(QStringLiteral("real.mp4"));
         QProcess p;
@@ -1980,7 +1985,8 @@ static void testPackageStreaming() {
                          QStringLiteral("error"), QStringLiteral("-f"), QStringLiteral("lavfi"),
                          QStringLiteral("-i"), QStringLiteral("testsrc=size=320x240:rate=24"),
                          QStringLiteral("-t"), QStringLiteral("1"),
-                         QStringLiteral("-c:v"), QStringLiteral("h264_videotoolbox"),
+                         QStringLiteral("-c:v"), h264enc,
+                         QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
                          QStringLiteral("-y"), real});
         p.waitForFinished(20000);
         if (p.exitCode() == 0 && QFileInfo::exists(real)) {

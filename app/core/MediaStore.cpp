@@ -1,4 +1,5 @@
 #include "MediaStore.h"
+#include "BlockModel.h"
 #include "PackageFormat.h"
 #include "PathMap.h"
 #include "../notes/annotation_io.h"   // sanitizeMediaName — sidecar dir naming
@@ -142,6 +143,11 @@ static bool isVolatileSource(const QString& path) {
     const QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
     QStringList roots;
     roots << QDir::tempPath();
+    // The app's own scratch root (staged imports, working copies) is
+    // reclaimed across sessions — always volatile, on every platform.
+    // On macOS it happens to sit under ~/Library; on Windows it's under
+    // AppData/Roaming, which no generic rule below covers.
+    roots << QDir::cleanPath(BlockModel::scratchDir());
 #if defined(Q_OS_MACOS)
     roots << QDir::homePath() + QStringLiteral("/Library")
           << QStringLiteral("/private/var/folders")
