@@ -19,6 +19,7 @@
 #include "core/BlockModel.h"
 #include "core/DocumentManager.h"
 #include "core/Exporter.h"
+#include "core/Importer.h"
 #include "core/PathMapController.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
@@ -169,6 +170,15 @@ int main(int argc, char *argv[])
         exporter.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("exporter", &exporter);
+    // Document import (File ▸ Import…, drop/paste intercepts, welcome screen).
+    // Follows the active tab the same way the exporter does — a fresh tab is
+    // opened first, so the import lands in the new active model.
+    Importer importer;
+    importer.setModel(docs.activeModel());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &importer, [&importer, &docs] {
+        importer.setModel(docs.activeModel());
+    });
+    engine.rootContext()->setContextProperty("importer", &importer);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.

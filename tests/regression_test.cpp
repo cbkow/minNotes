@@ -8,6 +8,9 @@
 // of failed checks (0 = all pass).
 #include "BlockModel.h"
 #include "Exporter.h"
+#include "Importer.h"
+#include "TableGrid.h"
+#include <QTextDocument>
 #include "../app/notes/doc_ink.h"
 #include "../app/notes/sketch_text.h"
 #include <private/qzipreader_p.h>
@@ -1246,6 +1249,247 @@ static void testConsumeEmptyAnchor() {
     QFile::remove(probe2);
 }
 
+// --- Test 18: insertSpecs — the shared importer sink persists depth/lang ---
+// Extracting the pasteHtml tail into insertSpecs FIXED two latent drops:
+// list depth and code lang were never written to the DB (appendBlock got
+// literal 0 / no lang). Drive the sink directly and prove a reload keeps them.
+static void testInsertSpecs() {
+    qInfo("[18] insertSpecs: depth + lang persist through save/reopen");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_specs.mndb");
+    QFile::remove(path);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);   // blank paragraph — the reuse row
+
+    std::vector<BlockModel::BlockSpec> specs;
+    {
+        BlockModel::BlockSpec a; a.type = BlockModel::ListItem; a.text = QStringLiteral("parent");
+        BlockModel::BlockSpec b; b.type = BlockModel::ListItem; b.text = QStringLiteral("child"); b.depth = 2;
+        BlockModel::BlockSpec c; c.type = BlockModel::Code; c.lang = QStringLiteral("cpp");
+        c.text = QStringLiteral("int x = 1;\nint y = 2;");
+        BlockModel::BlockSpec d; d.type = BlockModel::OrderedListItem; d.text = QStringLiteral("numbered"); d.depth = 1;
+        specs = { a, b, c, d };
+    }
+    const auto [cr, cc] = m.insertSpecs(0, specs);
+    CHECK(cr == 3 && m.rowCountQml() == 4, "reuse folded spec 0 into the blank row (caret %d)", cr);
+    CHECK(m.typeForRow(1) == BlockModel::ListItem && m.depthForRow(1) == 2,
+          "nested list depth held in-memory");
+    CHECK(m.typeForRow(2) == BlockModel::Code
+              && m.languageForRow(2) == QStringLiteral("cpp"),
+          "code lang held in-memory");
+    CHECK(m.typeForRow(3) == BlockModel::OrderedListItem && m.depthForRow(3) == 1,
+          "ordered item + depth held in-memory");
+
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    CHECK(m2.depthForRow(1) == 2, "list depth SURVIVES reload (the fixed drop)");
+    CHECK(m2.languageForRow(2) == QStringLiteral("cpp"),
+          "code lang SURVIVES reload (the fixed drop)");
+    CHECK(m2.typeForRow(3) == BlockModel::OrderedListItem && m2.depthForRow(3) == 1,
+          "ordered depth survives reload");
+    QFile::remove(path);
+}
+
+static void testImporterWalker() {
+    qInfo("[19] Importer walker: HTML + Markdown reader conventions decode");
+    using Spec = BlockModel::BlockSpec;
+
+    // --- HTML reader ---------------------------------------------------------
+    {
+        QTextDocument d;
+        d.setHtml(QStringLiteral(
+            "<ol><li>one</li><li>two</li></ol>"
+            "<ul><li>a<ul><li>b</li></ul></li></ul>"
+            "<blockquote><p>quoted text</p></blockquote>"
+            "<pre>line1\nline2</pre>"
+            "<hr>"
+            "<p><span style=\"color:#ff0000\">red</span> and "
+            "<span style=\"background-color:#ffff00\">hi</span></p>"
+            "<p style=\"color:#000000\">explicit black</p>"
+            "<table><thead><tr><th>H</th></tr></thead>"
+            "<tbody><tr><td>c</td></tr></tbody></table>"));
+        const std::vector<Spec> s = Importer::specsFromTextDocument(d, nullptr);
+        CHECK(s.size() == 10, "HTML fixture → 10 specs (got %d)", int(s.size()));
+        if (s.size() == 10) {
+            CHECK(s[0].type == BlockModel::OrderedListItem && s[0].depth == 0
+                      && s[1].type == BlockModel::OrderedListItem,
+                  "<ol> items → OrderedListItem");
+            CHECK(s[2].type == BlockModel::ListItem && s[2].depth == 0
+                      && s[3].type == BlockModel::ListItem && s[3].depth == 1,
+                  "nested <ul> → depth 0 / 1");
+            CHECK(s[4].type == BlockModel::Quote && s[4].text == QStringLiteral("quoted text"),
+                  "<blockquote> → Quote");
+            CHECK(s[5].type == BlockModel::Code && s[5].lang.isEmpty()
+                      && s[5].text == QStringLiteral("line1\nline2"),
+                  "<pre> lines coalesce into ONE Code block");
+            CHECK(s[6].type == BlockModel::Divider, "<hr> → Divider");
+            bool fg = false, bg = false;
+            for (const auto& x : s[7].spans) {
+                if (x.kind == BlockModel::SpanFgColor && x.href == QStringLiteral("#ff0000")) fg = true;
+                if (x.kind == BlockModel::SpanHighlight && x.href == QStringLiteral("#ffff00")) bg = true;
+            }
+            CHECK(s[7].type == BlockModel::Paragraph && fg && bg,
+                  "explicit color/background-color → SpanFgColor + SpanHighlight");
+            bool anyColor = false;
+            for (const auto& x : s[8].spans) anyColor |= (x.kind == BlockModel::SpanFgColor);
+            CHECK(!anyColor, "explicit BLACK fg is skipped (browser default ink)");
+            CHECK(s[9].type == BlockModel::Table
+                      && TableGrid::fromJson(s[9].tableJson).headerRows() == 1
+                      && TableGrid::fromJson(s[9].tableJson).cellText(1, 0) == QStringLiteral("c"),
+                  "<thead> → headerRows 1, body cell intact");
+        }
+    }
+
+    // --- Markdown reader (GitHub dialect) ------------------------------------
+    {
+        QTextDocument d;
+        d.setMarkdown(QStringLiteral(
+                          "1. one\n2. two\n\n"
+                          "- a\n  - b\n    - c\n\n"
+                          "> a quote\n\n"
+                          "```cpp\nint x;\n\nint y;\n```\n\n"
+                          "---\n\n"
+                          "- [ ] todo\n- [x] done\n\n"
+                          "para one\nsame para hard-wrapped\n"),
+                      QTextDocument::MarkdownDialectGitHub);
+        const std::vector<Spec> s = Importer::specsFromTextDocument(d, nullptr);
+        CHECK(s.size() == 11, "MD fixture → 11 specs (got %d)", int(s.size()));
+        if (s.size() == 11) {
+            CHECK(s[0].type == BlockModel::OrderedListItem
+                      && s[1].type == BlockModel::OrderedListItem,
+                  "md ordered list → OrderedListItem");
+            CHECK(s[2].depth == 0 && s[3].depth == 1 && s[4].depth == 2
+                      && s[4].type == BlockModel::ListItem,
+                  "md nested bullets → depth 0/1/2");
+            CHECK(s[5].type == BlockModel::Quote, "md > quote → Quote");
+            CHECK(s[6].type == BlockModel::Code && s[6].lang == QStringLiteral("cpp")
+                      && s[6].text == QStringLiteral("int x;\n\nint y;"),
+                  "fence → ONE Code block, lang carried, BLANK LINE inside survives");
+            CHECK(s[7].type == BlockModel::Divider, "md --- → Divider");
+            CHECK(s[8].type == BlockModel::TaskListItem && s[8].taskState == BlockModel::TaskTodo
+                      && s[9].type == BlockModel::TaskListItem && s[9].taskState == BlockModel::TaskDone,
+                  "GFM task markers → todo/done");
+            CHECK(s[10].type == BlockModel::Paragraph
+                      && s[10].text == QStringLiteral("para one same para hard-wrapped"),
+                  "hard-wrapped paragraph JOINS; leaked list marker does NOT make it a task");
+        }
+    }
+
+    // --- pasteHtml still routes through the walker ---------------------------
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        m.pasteHtml(0, 0, QStringLiteral(
+            "<ol><li>first</li></ol><p><span style=\"color:#00ff00\">green</span></p>"));
+        CHECK(m.rowCountQml() == 2 && m.typeForRow(0) == BlockModel::OrderedListItem,
+              "pasteHtml delegation: ordered item landed");
+        CHECK(m.hasFormat(1, 0, 5, QStringLiteral("color")),
+              "pasteHtml delegation: color span landed");
+        m.closeDocument();
+    }
+}
+
+static void testImportFileCores() {
+    qInfo("[20] Importer file cores: md / txt / csv / html land in a fresh doc");
+    QDir dir(QDir::temp().filePath(QStringLiteral("mn_import_fixtures")));
+    dir.removeRecursively();
+    QDir::temp().mkpath(QStringLiteral("mn_import_fixtures"));
+    auto writeFixture = [&](const QString& name, const QByteArray& bytes) {
+        QFile f(dir.filePath(name));
+        if (f.open(QIODevice::WriteOnly)) f.write(bytes);
+        return dir.filePath(name);
+    };
+    auto freshModel = [](BlockModel& m) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);   // the fresh-tab shape: one blank paragraph
+    };
+
+    Importer imp;
+    CHECK(imp.formatFor(QStringLiteral("file:///x/Notes%20File.MD")) == QStringLiteral("md")
+              && imp.formatFor(QStringLiteral("a.htm")) == QStringLiteral("html")
+              && imp.formatFor(QStringLiteral("a.mndb")).isEmpty()
+              && imp.formatFor(QStringLiteral("a")).isEmpty(),
+          "formatFor: case-folded extensions classify; unknown → \"\"");
+
+    // --- Markdown (incl. the tri-state sentinel round-trip) ------------------
+    {
+        const QString p = writeFixture(QStringLiteral("doc.md"),
+            "# Title\n\n"
+            "- [ ] todo\n- [/] doing **now**\n- [x] done\n\n"
+            "```js\nlet a = 1;\n```\n");
+        BlockModel m; freshModel(m);
+        imp.setModel(&m);
+        CHECK(imp.importFile(QUrl::fromLocalFile(p).toString()), "md import succeeded");
+        CHECK(m.rowCountQml() == 5 && m.typeForRow(0) == BlockModel::Heading,
+              "md: blank row consumed, heading first (%d rows)", m.rowCountQml());
+        CHECK(m.taskStateForRow(1) == BlockModel::TaskTodo
+                  && m.taskStateForRow(2) == BlockModel::TaskDoing
+                  && m.taskStateForRow(3) == BlockModel::TaskDone,
+              "md: tri-state `- [/] ` survives the GFM reader via the sentinel");
+        CHECK(m.contentForRow(2) == QStringLiteral("doing now")
+                  && m.hasFormat(2, 6, 9, QStringLiteral("bold")),
+              "md: sentinel stripped, span offsets shifted with it");
+        CHECK(m.typeForRow(4) == BlockModel::Code
+                  && m.languageForRow(4) == QStringLiteral("js"),
+              "md: fence lang carried");
+        m.closeDocument();
+    }
+
+    // --- Plain text (smart-prefix rules) -------------------------------------
+    {
+        const QString p = writeFixture(QStringLiteral("doc.txt"),
+                                       "# heading line\nplain line\n");
+        BlockModel m; freshModel(m);
+        imp.setModel(&m);
+        CHECK(imp.importFile(p), "txt import succeeded");
+        CHECK(m.rowCountQml() == 2 && m.typeForRow(0) == BlockModel::Heading
+                  && m.typeForRow(1) == BlockModel::Paragraph,
+              "txt: pasteText smart prefixes applied");
+        m.closeDocument();
+    }
+
+    // --- CSV (quoted fields, embedded comma + newline) -----------------------
+    {
+        const QString p = writeFixture(QStringLiteral("data.csv"),
+            "name,note\n\"Doe, Jane\",\"line1\nline2\"\nplain,cell\n");
+        BlockModel m; freshModel(m);
+        imp.setModel(&m);
+        CHECK(imp.importFile(p), "csv import succeeded");
+        CHECK(m.rowCountQml() == 1 && m.typeForRow(0) == BlockModel::Table,
+              "csv: one Table block, blank row consumed");
+        CHECK(m.tableCell(0, 1, 0) == QStringLiteral("Doe, Jane")
+                  && m.tableCell(0, 1, 1) == QStringLiteral("line1\nline2")
+                  && m.tableCell(0, 2, 1) == QStringLiteral("cell"),
+              "csv: RFC-4180 quoting held (comma + newline in cells)");
+        m.closeDocument();
+    }
+
+    // --- HTML file (relative image resolves against the file's dir) ----------
+    {
+        { QImage probe(10, 8, QImage::Format_RGB32); probe.fill(Qt::red);
+          probe.save(dir.filePath(QStringLiteral("pic.png")), "PNG"); }
+        const QString p = writeFixture(QStringLiteral("page.html"),
+            "<h2>Hi</h2><p>before</p><img src=\"pic.png\"><p>after</p>");
+        BlockModel m; freshModel(m);
+        imp.setModel(&m);
+        CHECK(imp.importFile(p), "html import succeeded");
+        CHECK(m.rowCountQml() == 4 && m.typeForRow(0) == BlockModel::Heading,
+              "html: heading + paragraphs landed (%d rows)", m.rowCountQml());
+        CHECK(m.typeForRow(2) == BlockModel::Media,
+              "html: RELATIVE img src resolved against the file's directory");
+        m.closeDocument();
+    }
+
+    dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -1276,6 +1520,9 @@ int main(int argc, char** argv) {
     testSketchTextElements();
     testDocInkTexts();
     testConsumeEmptyAnchor();
+    testInsertSpecs();
+    testImporterWalker();
+    testImportFileCores();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

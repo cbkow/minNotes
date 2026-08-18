@@ -1,4 +1,5 @@
 #include "BlockModel.h"
+#include "Importer.h"
 #include "PathMap.h"
 #include "../notes/sketch_text.h"
 #include <QStringBuilder>
@@ -2259,11 +2260,7 @@ int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectPa
 // srcs match no volume root and pass through unchanged, so it's safe to apply to
 // every descriptor builder uniformly.
 static QString mediaJson(const MediaStore::ImageRef& ref) {
-    QJsonObject o;
-    o.insert(QStringLiteral("src"), mn::toRef(ref.src));
-    o.insert(QStringLiteral("w"), ref.w);
-    o.insert(QStringLiteral("h"), ref.h);
-    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    return MediaStore::imageDescriptorJson(ref);   // shared with Importer
 }
 static QString videoMediaJson(const MediaStore::VideoRef& ref) {
     QJsonObject o;
@@ -2277,11 +2274,7 @@ static QString videoMediaJson(const MediaStore::VideoRef& ref) {
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 static QString remoteImageJson(const QString& url) {
-    QJsonObject o;
-    o.insert(QStringLiteral("src"), url);    // http(s) — loads remotely + gets localized
-    o.insert(QStringLiteral("w"), 480);      // placeholder dims until the download lands
-    o.insert(QStringLiteral("h"), 300);
-    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    return MediaStore::remoteImageDescriptorJson(url);   // shared with Importer
 }
 static QString pdfMediaJson(const MediaStore::PdfRef& ref) {
     QJsonObject o;
@@ -2357,6 +2350,13 @@ int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
     }
     const int r = insertImageFromUrl(afterRow, fileUrl);
     if (r >= 0) return r;
+    // Importable document formats (md/txt/csv/html/…) never become file chips:
+    // hand the path to QML (drop AND url-paste both funnel here — ONE seam),
+    // which raises the import flow. −1 = nothing inserted.
+    if (!Importer::formatForPath(fileUrl).isEmpty()) {
+        emit importFileRequested(fileUrl);
+        return -1;
+    }
     return insertFileFromUrl(afterRow, fileUrl);
 }
 
@@ -3441,134 +3441,11 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     QTextDocument doc;
     doc.setHtml(html);
 
-    struct Spec { uint8_t type = Paragraph; uint8_t level = 0; uint8_t taskState = 0;
-                  QString text; std::vector<Span> spans; QString tableJson; QString mediaJson; };
-    std::vector<Spec> specs;
-
-    // A QTextBlock → spec(s): heading/list/paragraph text (with inline bold/italic/
-    // underline/strike/code/link spans), PLUS any embedded images as their own
-    // Media specs, interleaved in fragment order (so a figure's image and caption
-    // land as separate blocks in reading order). Image bytes come from the
-    // QTextDocument resource cache (data: URIs decode there); local file:// images
-    // are referenced in place. Remote http(s) images are left for a later pass.
-    auto buildText = [&](const QTextBlock& b) {
-        const int hl = b.blockFormat().headingLevel();
-        uint8_t btype = Paragraph, blevel = 0, btask = 0;
-        if (hl >= 1 && hl <= 6) { btype = Heading; blevel = static_cast<uint8_t>(hl); }
-        else if (b.textList())  {
-            // GFM task items parse with a checkbox marker; plain bullets have none.
-            const QTextBlockFormat::MarkerType mk = b.blockFormat().marker();
-            if (mk == QTextBlockFormat::MarkerType::Checked)        { btype = TaskListItem; btask = TaskDone; }
-            else if (mk == QTextBlockFormat::MarkerType::Unchecked) { btype = TaskListItem; btask = TaskTodo; }
-            else                                                     { btype = ListItem; }
-        }
-
-        QString text; std::vector<Span> spans;
-        auto flushText = [&]() {
-            if (!text.trimmed().isEmpty()) {
-                Spec sp; sp.type = btype; sp.level = blevel; sp.taskState = btask;
-                sp.text = text; sp.spans = spans;
-                specs.push_back(std::move(sp));
-            }
-            text.clear(); spans.clear();
-        };
-
-        for (auto it = b.begin(); !it.atEnd(); ++it) {
-            const QTextFragment frag = it.fragment();
-            if (!frag.isValid()) continue;
-            const QTextCharFormat cf = frag.charFormat();
-            if (cf.isImageFormat() && mediaStore_) {       // embedded image → Media spec
-                const QString src = cf.toImageFormat().name();
-                const QVariant res = doc.resource(QTextDocument::ImageResource, QUrl(src));
-                MediaStore::ImageRef ref;
-                if (res.canConvert<QImage>())       ref = mediaStore_->importImage(res.value<QImage>());
-                else if (res.canConvert<QPixmap>()) ref = mediaStore_->importImage(res.value<QPixmap>().toImage());
-                else if (!src.startsWith(QLatin1String("http"))) ref = mediaStore_->importFile(src);
-                if (ref.ok()) {
-                    flushText();
-                    Spec sp; sp.type = Media; sp.mediaJson = mediaJson(ref);
-                    specs.push_back(std::move(sp));
-                } else if (src.startsWith(QLatin1String("http"))) {   // remote → fetched after insert
-                    flushText();
-                    Spec sp; sp.type = Media; sp.mediaJson = remoteImageJson(src);
-                    specs.push_back(std::move(sp));
-                }
-                continue;
-            }
-            QString t = frag.text();
-            t.replace(QChar(0xFFFC), QString());          // stray object-replacement
-            if (t.isEmpty()) continue;
-            const int s = text.size();
-            text += t;
-            const int e = text.size();
-            if (cf.isAnchor() && !cf.anchorHref().isEmpty()) {
-                spans.push_back({s, e, SpanLink, cf.anchorHref()});
-            } else {
-                if (cf.fontWeight() >= QFont::Bold) spans.push_back({s, e, SpanBold});
-                if (cf.fontItalic())                spans.push_back({s, e, SpanItalic});
-                if (cf.fontUnderline())             spans.push_back({s, e, SpanUnderline});
-                if (cf.fontFixedPitch())            spans.push_back({s, e, SpanCode});
-            }
-            if (cf.fontStrikeOut())                 spans.push_back({s, e, SpanStrike});
-        }
-        flushText();
-    };
-
-    // A QTextTable → Table block spec (cell text joined per cell).
-    auto buildTable = [&](QTextTable* t) {
-        const int nr = t->rows(), nc = t->columns();
-        if (nr < 1 || nc < 1) return;
-        TableGrid g = TableGrid::makeEmpty(nr, nc);
-        for (int r = 0; r < nr; ++r)
-            for (int c = 0; c < nc; ++c) {
-                QTextTableCell cell = t->cellAt(r, c);
-                if (!cell.isValid()) continue;
-                QString ct;
-                for (auto bit = cell.begin(); !bit.atEnd(); ++bit) {
-                    const QTextBlock cb = bit.currentBlock();
-                    if (!cb.isValid()) continue;
-                    QString bt = cb.text(); bt.replace(QChar(0xFFFC), QString());
-                    if (bt.isEmpty()) continue;
-                    if (!ct.isEmpty()) ct += QLatin1Char(' ');
-                    ct += bt;
-                }
-                g.setCellText(r, c, ct);
-            }
-        Spec sp; sp.type = Table; sp.tableJson = g.toJson();
-        specs.push_back(std::move(sp));
-    };
-
-    // Walk the frame tree so table cells aren't flattened into loose blocks.
-    std::function<void(QTextFrame*)> walk = [&](QTextFrame* frame) {
-        for (auto it = frame->begin(); !it.atEnd(); ++it) {
-            if (QTextFrame* child = it.currentFrame()) {
-                if (QTextTable* tbl = qobject_cast<QTextTable*>(child)) buildTable(tbl);
-                else walk(child);
-            } else {
-                const QTextBlock block = it.currentBlock();
-                if (block.isValid()) buildText(block);
-            }
-        }
-    };
-    walk(doc.rootFrame());
+    // The frame-tree walker lives in Importer (shared with the file importers);
+    // paste has no source directory, so relative image srcs don't resolve here.
+    std::vector<BlockSpec> specs =
+        Importer::specsFromTextDocument(doc, mediaStore_.get(), QString());
     if (specs.empty()) return {};
-
-    // Turn a spec into (Row, content).
-    auto specRow = [&](const Spec& sp, Row& r, QString& content) {
-        r = Row{};
-        if (!sp.mediaJson.isEmpty()) {              // embedded image → Media block
-            r.type = Media;
-            content = sp.mediaJson;
-            fillMediaMeta(r, content);              // dims/aspect-param from the descriptor
-        } else if (sp.type == Table) {
-            r.type = Table;
-            r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(sp.tableJson).rows()));
-            content = sp.tableJson;
-        } else {
-            r.type = sp.type; r.level = sp.level; r.taskState = sp.taskState; r.param = 1; r.spans = sp.spans;
-            content = sp.text;
-        }
-    };
 
     const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
                          || rows_[row].type == Divider);
@@ -3577,7 +3454,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     // styled words from a browser stays in the sentence and keeps its formatting),
     // unless the target block is opaque (then fall through to insert-after).
     if (specs.size() == 1 && specs[0].type == Paragraph && !opaque) {
-        const Spec& sp = specs[0];
+        const BlockSpec& sp = specs[0];
         const QString s = content_[row];
         col = std::clamp(col, 0, static_cast<int>(s.size()));
         beginTxn(row, row);
@@ -3597,7 +3474,43 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
         return QVariantList{ row, col + static_cast<int>(sp.text.size()) };
     }
 
-    const bool reuse = !opaque && content_[row].isEmpty()
+    const auto [caretRow, caretCol] = insertSpecs(row, specs, /*allowReuseBlankRow=*/true);
+    fetchRemoteMediaIn(row, caretRow);     // localize any remote <img> in the background
+    return QVariantList{ caretRow, caretCol };
+}
+
+std::pair<int,int> BlockModel::insertSpecs(int row, const std::vector<BlockSpec>& specs,
+                                           bool allowReuseBlankRow) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || specs.empty())
+        return { std::max(0, row), 0 };
+
+    // Turn a spec into (Row, content). depth/lang carry through (their former
+    // silent drop at appendBlock was the latent paste bug this extraction
+    // fixed); Code rows keep the makeCodeBlock convention param = line count.
+    auto specRow = [&](const BlockSpec& sp, Row& r, QString& content) {
+        r = Row{};
+        if (!sp.mediaJson.isEmpty()) {              // embedded image → Media block
+            r.type = Media;
+            content = sp.mediaJson;
+            fillMediaMeta(r, content);              // dims/aspect-param from the descriptor
+        } else if (sp.type == Table) {
+            r.type = Table;
+            r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(sp.tableJson).rows()));
+            content = sp.tableJson;
+        } else {
+            r.type = sp.type; r.level = sp.level; r.taskState = sp.taskState;
+            r.depth = sp.depth; r.lang = sp.lang;
+            r.param = (sp.type == Code)
+                ? static_cast<uint16_t>(std::clamp<int>(sp.text.count(QLatin1Char('\n')) + 1, 1, 65535))
+                : 1;
+            r.spans = sp.spans;
+            content = sp.text;
+        }
+    };
+
+    const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
+                         || rows_[row].type == Divider);
+    const bool reuse = allowReuseBlankRow && !opaque && content_[row].isEmpty()
         && (rows_[row].type == Paragraph || rows_[row].type == Heading
             || rows_[row].type == Quote || rows_[row].type == ListItem);
 
@@ -3626,7 +3539,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
         beginInsertRows({}, first, last);
         for (int k = 0; k < cnt; ++k) {
             const int at = first + k;
-            const Spec& sp = specs[startSpec + k];
+            const BlockSpec& sp = specs[startSpec + k];
             Row r; QString content; specRow(sp, r, content);
             const QString id = makeUlid();
             const QString rk = rankBetween(prevRank, nextRank); prevRank = rk;
@@ -3641,16 +3554,15 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
         endInsertRows();
         if (doc_.isOpen())
             for (const NewBlk& b : made)
-                doc_.appendBlock(b.id, b.rank, 0, QString::fromLatin1(typeToString(b.r.type)),
-                                 attrsJson(b.r.type, b.r.level, QString(), b.r.spans, b.r.taskState), b.content);
+                doc_.appendBlock(b.id, b.rank, b.r.depth, QString::fromLatin1(typeToString(b.r.type)),
+                                 attrsJson(b.r.type, b.r.level, b.r.lang, b.r.spans, b.r.taskState), b.content);
     }
 
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
-    fetchRemoteMediaIn(row, caretRow);     // localize any remote <img> in the background
-    return QVariantList{ caretRow, caretCol };
+    return { caretRow, caretCol };
 }
 
 // Scan [lo,hi] for media blocks whose src is a remote http(s) URL and download

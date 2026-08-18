@@ -60,6 +60,14 @@ public:
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;
 
+    // Media-block descriptor JSON ({src,w,h}; src through mn::toRef so portable
+    // {vol,rel} refs apply uniformly). Shared by BlockModel and Importer so the
+    // descriptor shape has ONE definition.
+    static QString imageDescriptorJson(const ImageRef& ref);
+    // Descriptor for a not-yet-downloaded http(s) image: placeholder dims until
+    // the async localize pass lands the real file.
+    static QString remoteImageDescriptorJson(const QString& url);
+
     // Stored src (absolute, or ".minnotes/…" relative) → a loadable file:// URL.
     QString resolveUrl(const QString& src) const;
     // Descriptor `src` value, which may be a portable path-mapping ref object

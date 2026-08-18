@@ -224,6 +224,39 @@ public:
     // dropped for now (a later milestone fetches them into the sidecar).
     Q_INVOKABLE QVariantList pasteHtml(int row, int col, const QString& html);
 
+    // [s,e) over the row's text. `href` is set only for SpanLink (the link target);
+    // empty for every other kind. Aggregate-init as {s,e,kind} leaves href empty.
+    // (Public since the importer arc: importers construct spans directly.)
+    struct Span { int s; int e; uint8_t kind; QString href; };
+
+    // --- The importer/paste IR: one entry per block-to-be. Built by the
+    // pasteHtml walker today and by every file importer (Importer.cpp) —
+    // the shared sink is insertSpecs below. depth/lang PERSIST (extracting
+    // the sink fixed their former silent drop at appendBlock). ---
+    struct BlockSpec {
+        uint8_t type = Paragraph;
+        uint8_t level = 0;          // heading level
+        uint8_t taskState = 0;
+        uint8_t depth = 0;          // list nesting
+        QString lang;               // code-block language
+        QString text;
+        std::vector<Span> spans;
+        QString tableJson;          // Table blocks
+        QString mediaJson;          // Media blocks (descriptor)
+    };
+    // Insert specs into/after `row` (the pasteHtml tail, extracted): folds
+    // the first spec into a blank simple row when allowed, rank-chains the
+    // rest, ONE undo txn. Returns {caretRow, caretCol}. NOT invokable —
+    // C++ importer seam (QML goes through paste/import invokables).
+    std::pair<int,int> insertSpecs(int row, const std::vector<BlockSpec>& specs,
+                                   bool allowReuseBlankRow = true);
+    // Localize remote http(s) media descriptors in [lo,hi] (async, best
+    // effort) — the importer's post-insert pass.
+    void localizeRemoteMedia(int loRow, int hiRow) { fetchRemoteMediaIn(loRow, hiRow); }
+    // The document's media sidecar (null before a document is loaded) — the
+    // importer walker routes embedded/local images through it.
+    MediaStore* mediaStore() const { return mediaStore_.get(); }
+
     // --- Semantic format spans (DESIGN §5 endgame): bold/italic/code as a span
     // [s,e) over the block's text, NOT `**` markers in the content. This is how
     // the menu (and, later, markdown-as-input) applies formatting; the render
@@ -520,6 +553,9 @@ signals:
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
     // The open document changed (new/open/save-as). QML resets per-doc UI state
     // (active table/PDF/video/sketch tabs, the studio's notes path, the cursor).
+    // A dropped/pasted file has an importable document format (md/txt/csv/…):
+    // nothing was inserted; QML raises the import flow for `fileUrl`.
+    void importFileRequested(const QString& fileUrl);
     void documentChanged();
     void dirtyChanged();       // unsaved-edits flag flipped
     void saveStateChanged();   // save lifecycle state changed (Saving/Failed/Conflict/Clean)
@@ -531,9 +567,6 @@ public:
                               SpanComment = 9 };                    // href holds the thread id
 
 private:
-    // [s,e) over the row's text. `href` is set only for SpanLink (the link target);
-    // empty for every other kind. Aggregate-init as {s,e,kind} leaves href empty.
-    struct Span { int s; int e; uint8_t kind; QString href; };
     struct Row {
         uint8_t type;
         uint16_t param;   // paragraph/code: line count; media: aspect*100; heading: 0

@@ -92,6 +92,42 @@ ApplicationWindow {
             else saveFailedDialog.open()   // was silently ignored before the toast pass
         }
     }
+    // --- Import (File ▸ Import…, drop/paste intercept, welcome screen). A
+    // single-document import lands in a FRESH untitled tab (preview before
+    // commit — nothing touches disk until the user saves). The intercept:
+    // dropping/pasting an importable file into the editor funnels through
+    // blockModel.insertMediaFromUrl → importFileRequested (one C++ seam for
+    // both paths) → this flow. ---
+    FileDialog {
+        id: importDialog
+        title: "Import"
+        nameFilters: ["Importable documents (*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm)",
+                      "Markdown (*.md *.markdown *.mdown)",
+                      "Plain text (*.txt *.text *.log)",
+                      "CSV / TSV (*.csv *.tsv *.tab)",
+                      "HTML (*.html *.htm)"]
+        onAccepted: win.startImport("" + selectedFile)
+    }
+    function startImport(fileUrl) {
+        docs.newTab()   // activeChanged re-points the importer synchronously
+        if (importer.importFile(fileUrl))
+            Toasts.show(qsTr("Imported ") + win.importBaseName(fileUrl))
+        else
+            Toasts.show(qsTr("Import failed"), 2)
+    }
+    function importBaseName(path) { return ("" + path).split("/").pop() }
+    Connections {
+        target: blockModel
+        // Deferred: the signal fires synchronously from inside the editor's
+        // drop/paste LOOP — importing immediately would newTab() and re-point
+        // `blockModel` mid-loop (a mixed drop of an image + a .md would chain
+        // rows into the wrong document). Fresh closures per file: Qt.callLater
+        // only coalesces IDENTICAL functions.
+        function onImportFileRequested(fileUrl) {
+            Qt.callLater(function () { win.startImport(fileUrl) })
+        }
+    }
+
     // --- Export (File ▸ Export as Markdown…). A pre-scan decides whether the
     // options dialog appears at all: options only exist when the document
     // carries the thing they govern (video notes, page ink) — the common case
@@ -452,6 +488,8 @@ ApplicationWindow {
                     Platform.MenuItem { text: qsTr("Clear Menu"); onTriggered: recentsStore.paths = "[]" }
                 }
                 Platform.MenuSeparator {}
+                Platform.MenuItem { text: qsTr("Import…"); role: Platform.MenuItem.NoRole; onTriggered: importDialog.open() }
+                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 Platform.MenuSeparator {}
@@ -526,6 +564,8 @@ ApplicationWindow {
                         MenuItem { text: qsTr("Clear Menu"); onTriggered: recentsStore.paths = "[]" }
                     }
                 }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("&Import…"); onTriggered: importDialog.open() }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
@@ -881,6 +921,27 @@ ApplicationWindow {
         // Swallow stray clicks so nothing reaches the rail/editor underneath.
         MouseArea { anchors.fill: parent }
 
+        // Drop a document right onto the welcome screen: .mndb opens, any
+        // importable format (importer.formatFor) imports into a fresh tab.
+        DropArea {
+            id: welcomeDrop
+            anchors.fill: parent
+            onDropped: function (drop) {
+                if (!drop.hasUrls) return
+                for (var i = 0; i < drop.urls.length; ++i) {
+                    var u = "" + drop.urls[i]
+                    if (/\.mndb$/i.test(u)) win.openDoc(u)
+                    else if (importer.formatFor(u) !== "") win.startImport(u)
+                }
+            }
+        }
+        Rectangle {
+            anchors.fill: parent
+            visible: welcomeDrop.containsDrag
+            color: "transparent"
+            border.width: 2; border.color: Theme.colors.accent
+        }
+
         Column {
             anchors.centerIn: parent
             width: 440
@@ -890,7 +951,7 @@ ApplicationWindow {
                 width: parent.width; spacing: 4
                 Text { text: "minNotes"; color: Theme.colors.textBright
                        font.family: Theme.font.family; font.pixelSize: 34; font.bold: true }
-                Text { text: "Create a new document or open an existing one."
+                Text { text: "Create a new document, open one, or drop a file here to import."
                        color: Theme.colors.textMuted
                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody }
             }

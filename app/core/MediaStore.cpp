@@ -1,5 +1,7 @@
 #include "MediaStore.h"
 #include "PathMap.h"
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <QFileInfo>
 #include <QDir>
 #include <QUrl>
@@ -22,6 +24,21 @@ extern "C" {
 }
 
 MediaStore::MediaStore(const QString& docPath) : docDir_(QFileInfo(docPath).absolutePath()) {}
+
+QString MediaStore::imageDescriptorJson(const ImageRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), mn::toRef(ref.src));
+    o.insert(QStringLiteral("w"), ref.w);
+    o.insert(QStringLiteral("h"), ref.h);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+QString MediaStore::remoteImageDescriptorJson(const QString& url) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), url);    // http(s) — loads remotely + gets localized
+    o.insert(QStringLiteral("w"), 480);      // placeholder dims until the download lands
+    o.insert(QStringLiteral("h"), 300);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
 
 bool MediaStore::isVideoPath(const QString& path) {
     static const QStringList exts = {
