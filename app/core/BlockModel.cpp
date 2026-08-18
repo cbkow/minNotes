@@ -1148,9 +1148,10 @@ void BlockModel::setBlockType(int row, int type) {
     endTxn();
 }
 
-void BlockModel::insertDivider(int afterRow) {
-    afterRow = std::clamp(afterRow, -1, static_cast<int>(rows_.size()) - 1);
-    const int at = afterRow + 1;
+int BlockModel::insertDivider(int afterRow) {
+  afterRow = std::clamp(afterRow, -1, static_cast<int>(rows_.size()) - 1);
+  return insertReplacingEmpty(afterRow, [&](int after) {
+    const int at = after + 1;
     beginTxn(at, at - 1);        // empty `before`; after = [at,at]
     const QString newId = makeUlid();
     const QString newRank = rankBetween(
@@ -1170,6 +1171,8 @@ void BlockModel::insertDivider(int afterRow) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+    return at;
+  });
 }
 
 QString BlockModel::languageForRow(int row) const {
@@ -1680,7 +1683,8 @@ QStringList BlockModel::sketchBlockIds() const {
 }
 
 int BlockModel::insertSketch(int afterRow) {
-    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+  return insertReplacingEmpty(afterRow, [&](int after) {
+    const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
     // Default canvas: square, 480 source px (ruling 2026-06-11). Strokes are
     // normalized [0,1] of that square — QCView's exact stroke schema, so the
     // one engine serializes/renders sketches and video notes alike.
@@ -1718,6 +1722,7 @@ int BlockModel::insertSketch(int afterRow) {
     emit contentChangedSpike();
     endTxn();
     return at;
+  });
 }
 
 void BlockModel::sketchSetShapes(int row, const QString& strokesJson) {
@@ -2134,10 +2139,11 @@ QString BlockModel::idForRow(int row) const {
     return (row >= 0 && row < static_cast<int>(ids_.size())) ? ids_[row] : QString();
 }
 
-void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
-    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
-    nRows = std::max(1, nRows); nCols = std::max(1, nCols);
-    const QString json = TableGrid::makeEmpty(nRows, nCols).toJson();
+int BlockModel::insertTable(int afterRow, int nRows, int nCols) {
+  nRows = std::max(1, nRows); nCols = std::max(1, nCols);
+  const QString json = TableGrid::makeEmpty(nRows, nCols).toJson();
+  return insertReplacingEmpty(afterRow, [&](int after) {
+    const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
     beginTxn(at, at - 1);                        // empty `before`; after = [at,at]
     const QString newId = makeUlid();
     const QString newRank = rankBetween(
@@ -2160,13 +2166,16 @@ void BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+    return at;
+  });
 }
 
 int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
-    const TableGrid g = TableGrid::fromTSV(tsv);
-    if (g.rows() < 1 || g.cols() < 1) return -1;
-    const QString json = g.toJson();
-    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+  const TableGrid g = TableGrid::fromTSV(tsv);
+  if (g.rows() < 1 || g.cols() < 1) return -1;
+  const QString json = g.toJson();
+  return insertReplacingEmpty(afterRow, [&](int after) {
+    const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
     beginTxn(at, at - 1);                         // empty `before`; after = [at,at]
     const QString newId = makeUlid();
     const QString newRank = rankBetween(
@@ -2190,14 +2199,34 @@ int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
     emit contentChangedSpike();
     endTxn();
     return at;
+  });
 }
 
 // === Media ===============================================================
 // The descriptor ({src,w,h}) lives as JSON in `content` (like tables), so undo +
 // persistence reuse the chokepoint. Bytes are never stored here (see MediaStore).
 
-void BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectParam) {
-    const int at = std::clamp(afterRow + 1, 0, static_cast<int>(rows_.size()));
+bool BlockModel::isConsumableAnchor(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    if (rows_[row].type != Paragraph) return false;
+    if (!content_[row].isEmpty()) return false;
+    return inkForRow(row).isEmpty();   // ink pins its block — never consume it
+}
+
+int BlockModel::insertReplacingEmpty(int afterRow, const std::function<int(int)>& ins) {
+    if (!isConsumableAnchor(afterRow)) return ins(afterRow);
+    // One undo step: the outer txn region is the consumed anchor (net row
+    // delta 0 — one in, one out), and the nested insert/remove txns fold in.
+    beginTxn(afterRow, afterRow);
+    const int at = ins(afterRow);
+    removeBlock(afterRow);
+    endTxn();
+    return at - 1;                     // the new block slid into the anchor's row
+}
+
+int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectParam) {
+  return insertReplacingEmpty(afterRow, [&](int after) {
+    const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
     beginTxn(at, at - 1);
     const QString newId = makeUlid();
     const QString newRank = rankBetween(
@@ -2221,6 +2250,8 @@ void BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectP
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
+    return at;
+  });
 }
 
 // toRef converts an absolute referenced path to a portable {vol,rel} ref when it
@@ -2278,52 +2309,54 @@ static uint16_t aspectParam(const MediaStore::ImageRef& ref) {
     return aspectParam(ref.w, ref.h);
 }
 
-bool BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl) {
-    if (!mediaStore_) return false;
+int BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore_) return -1;
     const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);
-    if (!ref.ok()) return false;
-    insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
-    return true;
+    if (!ref.ok()) return -1;
+    return insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
 }
 
-bool BlockModel::insertImageFromClipboard(int afterRow) {
-    if (!mediaStore_) return false;
+int BlockModel::insertImageFromClipboard(int afterRow) {
+    if (!mediaStore_) return -1;
     const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
-    if (!ref.ok()) return false;
-    insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
-    return true;
+    if (!ref.ok()) return -1;
+    return insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
 }
 
-bool BlockModel::insertVideoFromUrl(int afterRow, const QString& fileUrl) {
-    if (!mediaStore_) return false;
+int BlockModel::insertVideoFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore_) return -1;
     const MediaStore::VideoRef ref = mediaStore_->importVideoFile(fileUrl);
-    if (!ref.ok()) return false;
-    insertMedia(afterRow, videoMediaJson(ref), aspectParam(ref.w, ref.h));
-    return true;
+    if (!ref.ok()) return -1;
+    return insertMedia(afterRow, videoMediaJson(ref), aspectParam(ref.w, ref.h));
 }
 
-bool BlockModel::insertPdfFromUrl(int afterRow, const QString& fileUrl) {
-    if (!mediaStore_) return false;
+int BlockModel::insertPdfFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore_) return -1;
     const MediaStore::PdfRef ref = mediaStore_->importPdfFile(fileUrl);
-    if (!ref.ok()) return false;
-    insertMedia(afterRow, pdfMediaJson(ref), aspectParam(ref.w, ref.h));
-    return true;
+    if (!ref.ok()) return -1;
+    return insertMedia(afterRow, pdfMediaJson(ref), aspectParam(ref.w, ref.h));
 }
 
-bool BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
+int BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
     const QString path = fileUrl.startsWith(QLatin1String("file:"))
                        ? QUrl(fileUrl).toLocalFile() : fileUrl;
-    if (path.isEmpty()) return false;
-    insertMedia(afterRow, fileMediaJson(path), static_cast<uint16_t>(kFileChip));
-    return true;
+    if (path.isEmpty()) return -1;
+    return insertMedia(afterRow, fileMediaJson(path), static_cast<uint16_t>(kFileChip));
 }
 
-bool BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
+int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
     // Video / PDF (by extension + a successful probe), else a loadable image,
     // else a generic file attachment chip — so any dropped/pasted file lands.
-    if (MediaStore::isVideoPath(fileUrl) && insertVideoFromUrl(afterRow, fileUrl)) return true;
-    if (MediaStore::isPdfPath(fileUrl)   && insertPdfFromUrl(afterRow, fileUrl))   return true;
-    if (insertImageFromUrl(afterRow, fileUrl)) return true;
+    if (MediaStore::isVideoPath(fileUrl)) {
+        const int r = insertVideoFromUrl(afterRow, fileUrl);
+        if (r >= 0) return r;
+    }
+    if (MediaStore::isPdfPath(fileUrl)) {
+        const int r = insertPdfFromUrl(afterRow, fileUrl);
+        if (r >= 0) return r;
+    }
+    const int r = insertImageFromUrl(afterRow, fileUrl);
+    if (r >= 0) return r;
     return insertFileFromUrl(afterRow, fileUrl);
 }
 

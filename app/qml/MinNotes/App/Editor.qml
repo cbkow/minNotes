@@ -763,8 +763,12 @@ FocusScope {
             }
             var afterRow = root.imageDropGap - 1      // insert AT the gap (= after gap-1)
             var any = false
-            for (var i = 0; i < drop.urls.length; ++i)
-                if (blockModel.insertMediaFromUrl(afterRow, drop.urls[i].toString())) { afterRow++; any = true }
+            for (var i = 0; i < drop.urls.length; ++i) {
+                // Inserts return the ACTUAL new row (an empty-paragraph anchor
+                // is consumed, shifting placement) — chain from it, never +1.
+                var nr = blockModel.insertMediaFromUrl(afterRow, drop.urls[i].toString())
+                if (nr >= 0) { afterRow = nr; any = true }
+            }
             root.clearDropState()
             if (any) { cursor.setCaret(Math.max(0, afterRow), 0); root.ensureVisible(afterRow) }
             drop.accept()
@@ -1589,11 +1593,32 @@ FocusScope {
     // below the fold otherwise (same "block exists but unseen" family as the Enter bug).
     function addBlockAbove(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.insertBlock(row);     cursor.setCaret(row, 0);     cursor.sync(); root.ensureVisible(row) }
     function addBlockBelow(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.insertBlock(row + 1); cursor.setCaret(row + 1, 0); cursor.sync(); root.ensureVisible(row + 1) }
+    // Context-menu Paste: paste where the click pointed. Text-ish targets take
+    // the clipboard at the caret (moved to the block's end if it wasn't
+    // already inside); non-text targets (media/table/divider) get a fresh
+    // paragraph below first — a caret parked inside their JSON content would
+    // corrupt it — and media/table pastes then CONSUME that empty paragraph.
+    function pasteAtBlock(row) {
+        if (row < 0) return
+        var t = blockModel.typeForRow(row)
+        var textish = !(t === 3 || t === 6 || t === 7)   // Media / Divider / Table
+        if (textish) {
+            if (cursor.focusRow !== row)
+                cursor.setCaret(row, blockModel.contentForRow(row).length)
+        } else {
+            addBlockBelow(row)                            // caret lands in it
+        }
+        doPaste()
+    }
     function duplicateBlock(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync(); root.ensureVisible(row + 1) }
     // Make code: skip the commit when converting the focused row itself, so its
     // markers stay LITERAL as code (don't strip *…* into a span code ignores).
     function makeCodeAt(row)    { if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow); blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
-    function insertTableAt(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.insertTable(row, 3, 3); cursor.setCaret(row + 1, 0); tcur.place(0, 0, 0); root.ensureVisible(row + 1) }
+    function insertTableAt(row) {
+        blockModel.commitMarkdown(cursor.focusRow)
+        var tr = blockModel.insertTable(row, 3, 3)   // actual row (anchor may be consumed)
+        if (tr >= 0) { cursor.setCaret(tr, 0); tcur.place(0, 0, 0); root.ensureVisible(tr) }
+    }
     function insertTableAtCaret() { insertTableAt(cursor.focusRow) }
     // Table context-menu ops — act on the right-clicked block (menuRow) + cell.
     function tblInsRowAbove() { blockModel.tableInsertRow(menuRow, menuCellR) }
@@ -1759,15 +1784,18 @@ FocusScope {
             // do this — it would shift focusCol; here the caret goes to a new block).
             blockModel.commitMarkdown(cursor.focusRow)
             var afterRow = cursor.focusRow, anyU = false
-            for (var i = 0; i < urls.length; ++i)
-                if (blockModel.insertMediaFromUrl(afterRow, urls[i])) { afterRow++; anyU = true }
+            for (var i = 0; i < urls.length; ++i) {
+                var nrU = blockModel.insertMediaFromUrl(afterRow, urls[i])
+                if (nrU >= 0) { afterRow = nrU; anyU = true }
+            }
             if (anyU) { cursor.setCaret(afterRow, 0); root.ensureVisible(afterRow); return }
         }
         // --- Raster image on the clipboard (screenshot, "Copy Image") → media block. ---
         if (clipboard.hasImage()) {
             blockModel.commitMarkdown(cursor.focusRow)   // caret moves to the new media → consume inline md
-            if (blockModel.insertImageFromClipboard(cursor.focusRow)) {
-                cursor.setCaret(cursor.focusRow + 1, 0); root.ensureVisible(cursor.focusRow)
+            var imgRow = blockModel.insertImageFromClipboard(cursor.focusRow)
+            if (imgRow >= 0) {
+                cursor.setCaret(imgRow, 0); root.ensureVisible(imgRow)
                 return
             }
         }
@@ -5443,6 +5471,7 @@ FocusScope {
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Paste"; onActivated: root.pasteAtBlock(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia
                                    && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
                           text: "Copy image"

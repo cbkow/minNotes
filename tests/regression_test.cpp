@@ -538,7 +538,7 @@ static void testExportMarkdown() {
         probe.fill(Qt::darkGray);
         probe.save(imgPath, "PNG");
         CHECK(m.insertImageFromUrl(m.rowCountQml() - 1,
-                                   QUrl::fromLocalFile(imgPath).toString()),
+                                   QUrl::fromLocalFile(imgPath).toString()) >= 0,
               "synthetic image block inserted");
         int imgRow = -1;
         for (int i = 0; i < m.rowCountQml(); ++i)
@@ -1084,7 +1084,7 @@ static void testDocInkTexts() {
     const QString probePng = QDir::temp().filePath(QStringLiteral("mn_ink_text_probe.png"));
     { QImage probe(64, 48, QImage::Format_RGB32); probe.fill(Qt::darkGray);
       probe.save(probePng, "PNG"); }
-    CHECK(m.insertImageFromUrl(0, QUrl::fromLocalFile(probePng).toString()),
+    CHECK(m.insertImageFromUrl(0, QUrl::fromLocalFile(probePng).toString()) >= 0,
           "image block inserted for the frame anchor");
     int imgRow = -1;
     for (int i = 0; i < m.rowCountQml(); ++i)
@@ -1152,6 +1152,100 @@ static void testDocInkTexts() {
     QFile::remove(probePng);
 }
 
+// --- Test 17: empty-anchor consumption — inserts replace an empty block ----
+// Inserting a new block AFTER an empty paragraph consumes it: the new block
+// takes its row (one undo step restores the paragraph). Non-empty, non-
+// paragraph, and ink-bearing anchors are never consumed; failed inserts
+// leave the anchor (and the undo stack) untouched.
+static void testConsumeEmptyAnchor() {
+    qInfo("[17] empty-anchor consume: replace-not-stack, one undo, guards");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertBlock(1);                                    // the empty anchor
+    m.insertBlock(2); m.setContent(2, QStringLiteral("below"));
+    CHECK(m.rowCountQml() == 3, "fixture: above / (empty) / below");
+
+    const int tr = m.insertTable(1, 2, 2);
+    CHECK(tr == 1 && m.rowCountQml() == 3 && m.typeForRow(1) == BlockModel::Table,
+          "table CONSUMED the empty anchor (row %d, count %d)", tr, m.rowCountQml());
+    CHECK(m.contentForRow(2) == QStringLiteral("below"), "below block undisturbed");
+    m.undo();
+    CHECK(m.rowCountQml() == 3 && m.typeForRow(1) == BlockModel::Paragraph
+              && m.contentForRow(1).isEmpty(),
+          "ONE undo restores the empty paragraph");
+    m.redo();
+    CHECK(m.typeForRow(1) == BlockModel::Table, "redo re-consumes");
+    m.undo();
+
+    // Sketch + divider consume too (returned row = the anchor's row).
+    CHECK(m.insertSketch(1) == 1 && m.mediaKind(1) == QLatin1String("sketch"),
+          "sketch consumes the empty anchor");
+    m.undo();
+    CHECK(m.insertDivider(1) == 1 && m.typeForRow(1) == BlockModel::Divider,
+          "divider consumes the empty anchor");
+    m.undo();
+
+    // Media consumes; multi-insert chains off the returned rows in order.
+    const QString probe2 = QDir::temp().filePath(QStringLiteral("mn_consume_probe.png"));
+    { QImage pr(32, 24, QImage::Format_RGB32); pr.fill(Qt::gray); pr.save(probe2, "PNG"); }
+    const int m1 = m.insertMediaFromUrl(1, QUrl::fromLocalFile(probe2).toString());
+    CHECK(m1 == 1 && m.typeForRow(1) == BlockModel::Media && m.rowCountQml() == 3,
+          "media consumes the empty anchor");
+    const int m2 = m.insertMediaFromUrl(m1, QUrl::fromLocalFile(probe2).toString());
+    CHECK(m2 == 2 && m.rowCountQml() == 4
+              && m.typeForRow(2) == BlockModel::Media
+              && m.contentForRow(3) == QStringLiteral("below"),
+          "second media chains AFTER the first (no consume of a media anchor)");
+    m.undo(); m.undo();
+    CHECK(m.rowCountQml() == 3 && m.contentForRow(1).isEmpty(),
+          "two undos restore the empty paragraph");
+
+    // Guards: non-empty, non-paragraph, and inked anchors are NOT consumed.
+    m.setContent(1, QStringLiteral("text"));
+    CHECK(m.insertTable(1, 2, 2) == 2 && m.rowCountQml() == 4,
+          "non-empty anchor: inserts BELOW");
+    m.undo();
+    m.setContent(1, QString());
+    m.setHeading(1, 2);                                  // empty HEADING
+    CHECK(m.insertDivider(1) == 2 && m.rowCountQml() == 4,
+          "empty heading anchor: not consumed");
+    m.undo();
+    m.setHeading(1, 0);
+    m.setBlockInk(1, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"block-local\",\"space\":\"px\","
+        "\"shapes\":[{\"id\":\"s1\",\"type\":\"line\",\"color\":[1,0,0,1],"
+        "\"stroke_width\":4,\"filled\":false,\"is_modeled\":false,"
+        "\"points\":[[0,0],[10,10]]}]}"));
+    CHECK(m.insertDivider(1) == 2 && m.rowCountQml() == 4,
+          "ink-bearing empty anchor: not consumed (ink pins its block)");
+    m.undo();
+    m.setBlockInk(1, QString());
+
+    // Failed insert: anchor intact, no undo entry burned.
+    const int fr = m.insertMediaFromUrl(1, QStringLiteral("file:///nope/missing.zzz"));
+    // (an unknown file lands as a generic attachment chip — force a REAL
+    // failure with an empty path instead)
+    if (fr >= 0) m.undo();
+    const int fail = m.insertImageFromUrl(1, QString());
+    CHECK(fail < 0 && m.rowCountQml() == 3 && m.contentForRow(1).isEmpty(),
+          "failed insert leaves the empty anchor untouched");
+
+    // Single-empty-block document: consuming may not strand a zero-block doc.
+    BlockModel s;
+    s.newDocument();
+    while (s.rowCountQml() > 0) s.removeBlock(0);
+    s.insertBlock(0);                                    // lone empty paragraph
+    CHECK(s.insertTable(0, 2, 2) == 0 && s.rowCountQml() == 1
+              && s.typeForRow(0) == BlockModel::Table,
+          "lone empty block: table takes its place");
+    s.undo();
+    CHECK(s.rowCountQml() == 1 && s.typeForRow(0) == BlockModel::Paragraph,
+          "undo restores the lone empty paragraph");
+    QFile::remove(probe2);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -1181,6 +1275,7 @@ int main(int argc, char** argv) {
     testSketchEmbedWidth();
     testSketchTextElements();
     testDocInkTexts();
+    testConsumeEmptyAnchor();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

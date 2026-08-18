@@ -300,7 +300,11 @@ public:
     // Set a text block's type to paragraph(0)/quote(4)/list_item(5). Undoable.
     Q_INVOKABLE void setBlockType(int row, int type);
     // Insert a divider block after `afterRow` (undoable).
-    Q_INVOKABLE void insertDivider(int afterRow);
+    // Block-creating inserts follow the CONSUME rule (2026-08-18): inserting
+    // after an EMPTY paragraph (no ink) replaces it — the new block takes its
+    // row instead of stacking under a stray empty line, one undo step total.
+    // Each returns the ACTUAL new row (adjusted when the anchor was consumed).
+    Q_INVOKABLE int insertDivider(int afterRow);
 
     // --- Code blocks ---
     Q_INVOKABLE QString languageForRow(int row) const;          // syntax language, "" if none
@@ -317,7 +321,7 @@ public:
     // parse and the mutators reserialize + persist through the txn chokepoint, so
     // undo/redo work unchanged. Cell typing coalesces per cell ("tcell:r:c").
     // Insert a fresh `nRows`x`nCols` table block after `afterRow` (undoable).
-    Q_INVOKABLE void insertTable(int afterRow, int nRows, int nCols);
+    Q_INVOKABLE int  insertTable(int afterRow, int nRows, int nCols);
     // Build a table block from pasted TSV (tabs = columns, newlines = rows) and
     // insert it after `afterRow`. Returns the new table's row index, or -1.
     Q_INVOKABLE int  insertTableFromTSV(int afterRow, const QString& tsv);
@@ -468,15 +472,15 @@ public:
     // --- Media (images + video). The media descriptor lives as JSON in the
     // block's content ({src,w,h,kind,...}) so undo/persistence reuse the
     // chokepoint; bytes are never in the DB (see MediaStore). ---
-    Q_INVOKABLE bool insertImageFromUrl(int afterRow, const QString& fileUrl);
-    Q_INVOKABLE bool insertImageFromClipboard(int afterRow);
-    Q_INVOKABLE bool insertVideoFromUrl(int afterRow, const QString& fileUrl);
+    Q_INVOKABLE int insertImageFromUrl(int afterRow, const QString& fileUrl);   // new row, -1 fail
+    Q_INVOKABLE int insertImageFromClipboard(int afterRow);
+    Q_INVOKABLE int insertVideoFromUrl(int afterRow, const QString& fileUrl);
     // PDF → inline page view (kind:"pdf", referenced in place).
-    Q_INVOKABLE bool insertPdfFromUrl(int afterRow, const QString& fileUrl);
+    Q_INVOKABLE int insertPdfFromUrl(int afterRow, const QString& fileUrl);
     // Unsupported file → a generic attachment chip (referenced in place, no copy).
-    Q_INVOKABLE bool insertFileFromUrl(int afterRow, const QString& fileUrl);
+    Q_INVOKABLE int insertFileFromUrl(int afterRow, const QString& fileUrl);
     // Route a dropped/pasted file: video → pdf → image → file-attachment fallback.
-    Q_INVOKABLE bool insertMediaFromUrl(int afterRow, const QString& fileUrl);
+    Q_INVOKABLE int insertMediaFromUrl(int afterRow, const QString& fileUrl);
     Q_INVOKABLE QString mediaUrl(int row) const;   // resolved file:// URL ("" if none)
     Q_INVOKABLE QString mediaLocalPath(int row) const; // resolved absolute path (for the decoder)
     Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
@@ -645,6 +649,12 @@ private:
     // Append an image element to a sketch's descriptor (normalized centered rect)
     // and commit as one undo step. (src/iw/ih come from a MediaStore import.)
     bool sketchAppendImage(int row, const QString& src, int iw, int ih);
+    // The consume rule's guts: a consumable anchor is an EMPTY Paragraph with
+    // no ink (ink pins its block); insertReplacingEmpty runs an infallible
+    // single-block insert and, when the anchor is consumable, folds its
+    // removal into the same txn and returns the slid-down row.
+    bool isConsumableAnchor(int row) const;
+    int insertReplacingEmpty(int afterRow, const std::function<int(int)>& ins);
     static BlockType typeFromString(const QString& s);
     static const char* typeToString(uint8_t t);
     // Lexicographic fractional rank strictly between a and b (DESIGN §4).
@@ -697,7 +707,7 @@ private:
     void fetchRemoteMediaIn(int loRow, int hiRow);                    // scan a range, fetch http src
     void updateMediaDescriptor(const QString& blockId, const QString& json);  // localized → swap in
     // Insert a media block (content = descriptor JSON) after `afterRow`; undoable.
-    void insertMedia(int afterRow, const QString& json, uint16_t aspectParam);
+    int insertMedia(int afterRow, const QString& json, uint16_t aspectParam);   // → new row
     // Apply a mutation to the table at `row` via a lambda, then reserialize to
     // content, persist, and snapshot (one txn; `coalesce` groups cell typing).
     void mutateTable(int row, const std::function<void(TableGrid&)>& fn,
