@@ -48,9 +48,10 @@ FocusScope {
         ? Math.max(flick.width, leftEdge + pageWidth + inkGutter)
         : Math.max(flick.width,
                    leftEdge + Math.max(pageWidth, blockModel.maxContentWidth) + 16)
-    // Left-anchored: a fixed margin, NOT centered. Ink mode widens it to the
-    // ink gutter so margin strokes have room on the left too.
-    readonly property real leftEdge: inkMode ? inkGutter : Theme.dim.pageMargin
+    // Left-anchored: a fixed margin, NOT centered. ALWAYS the ink gutter
+    // (user ruling 2026-08-18): margin annotations stay visible in writing
+    // mode, and the page no longer jumps 72px when annotation mode toggles.
+    readonly property real leftEdge: inkGutter
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
 

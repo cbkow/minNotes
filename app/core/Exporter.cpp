@@ -330,32 +330,68 @@ QString sanitizedBase(const QString& path) {
 }
 
 // Margin ink on a MEDIA block is frame-normalized (it scales with the
-// media), so it exports EXACTLY: strokes rendered to a transparent PNG the
-// size of the exported image/poster, stacked as a z-layer wired to the
-// page's Annotations toggle. (Text-block ink is px-anchored to the app's
-// layout and stays out — layering can't fix anchoring.)
-QImage renderMediaInk(const BlockModel* m, int row, const QSize& target) {
+// media). Ink may OVERSHOOT the frame (values outside [0,1] = margin
+// overshoot, per doc_ink.h), so the raster covers frame ∪ ink bbox and
+// `boxNorm` says where it sits in FRAME units — the HTML layer positions it
+// with percent offsets (scales with the responsive image); a unit rect means
+// exactly-the-frame (the legacy inset:0 case). (Text-block ink is
+// px-anchored to the app's layout and rides inside its block instead.)
+struct MediaInk { QImage img; QRectF boxNorm; };
+MediaInk renderMediaInk(const BlockModel* m, int row, const QSize& target) {
+    MediaInk out;
     mn::DocInkAnchor a;
     if (!mn::docInkFromJson(m->inkForRow(row), a)
         || (a.strokes.empty() && a.texts.empty())
         || a.space != mn::DocInkAnchor::Frame || target.isEmpty())
-        return {};
-    QImage img(target, QImage::Format_ARGB32_Premultiplied);
+        return out;
+    const double mw = std::max(1, m->mediaW(row));
+    const double mh = std::max(1, m->mediaH(row));
+    // strokeWidth is stored in media-INTRINSIC px (the doc_ink convention).
+    const double ws = double(target.width()) / mw;
+    for (mn::SketchTextSpec& t : a.texts) t.family = mn::sketchTextFamily();
+
+    // Signed bbox in frame units: the frame itself ∪ every stroke (padded by
+    // half its width) ∪ every chip's derived rect.
+    QRectF box(0, 0, 1, 1);
+    for (const qcv::ActiveStroke& s : a.strokes) {
+        const double px = double(s.strokeWidth) / (2.0 * mw);
+        const double py = double(s.strokeWidth) / (2.0 * mh);
+        box = box.united(qcv::strokeBoundsNorm(s).adjusted(-px, -py, px, py));
+    }
+    for (const mn::SketchTextSpec& t : a.texts) {
+        const QRectF r = mn::sketchTextRectSrc(t, mw, mh);   // intrinsic px
+        box = box.united(QRectF(r.x() / mw, r.y() / mh,
+                                r.width() / mw, r.height() / mh));
+    }
+
+    const int W = int(std::ceil(box.width() * target.width()));
+    const int H = int(std::ceil(box.height() * target.height()));
+    if (W <= 0 || H <= 0 || W > 8192 || H > 8192) return out;
+    QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     QPainter p(&img);
     p.setRenderHint(QPainter::Antialiasing, true);
-    // strokeWidth is stored in media-INTRINSIC px (the doc_ink convention).
-    const double ws = double(target.width()) / std::max(1, m->mediaW(row));
+    p.translate(-box.left() * target.width(), -box.top() * target.height());
     // Text chips before the ink (z-order: strokes can circle labels).
-    for (mn::SketchTextSpec t : a.texts) {
-        t.family = mn::sketchTextFamily();
-        mn::paintSketchText(p, t, std::max(1, m->mediaW(row)),
-                            std::max(1, m->mediaH(row)), ws);
-    }
+    for (const mn::SketchTextSpec& t : a.texts)
+        mn::paintSketchText(p, t, mw, mh, ws);
     for (const qcv::ActiveStroke& s : a.strokes)
         qcv::paintStroke(p, s, target.width(), target.height(), ws);
     p.end();
-    return img;
+    out.img = img;
+    out.boxNorm = box;
+    return out;
+}
+
+// Inline geometry for an overshooting media-ink layer: percent-of-frame
+// offsets override the stylesheet's inset:0;width:100% (right/bottom back to
+// auto, and out of the global img max-width clamp). Unit rect → no style.
+QString mediaInkStyle(const QRectF& b) {
+    if (b == QRectF(0, 0, 1, 1)) return {};
+    return QStringLiteral(" style=\"left:%1%;top:%2%;width:%3%;height:%4%;"
+                          "right:auto;bottom:auto;max-width:none\"")
+        .arg(b.left() * 100).arg(b.top() * 100)
+        .arg(b.width() * 100).arg(b.height() * 100);
 }
 
 // Page ink on a TEXT-ish block (px space: X from page center, Y from block
@@ -1125,27 +1161,28 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
         const QString wstyle = dw > 0
             ? QStringLiteral(" style=\"width:%1px;max-width:none\"").arg(dw)
             : QString();
-        const QImage ink = renderMediaInk(m, row, QSize(m->mediaW(row), m->mediaH(row)));
-        if (!ink.isNull()) {
-            const QString inkSrc = sink.addImage(ink, QFileInfo(path).completeBaseName()
-                                                          + QStringLiteral("_ink"));
+        const MediaInk ink = renderMediaInk(m, row, QSize(m->mediaW(row), m->mediaH(row)));
+        if (!ink.img.isNull()) {
+            const QString inkSrc = sink.addImage(ink.img, QFileInfo(path).completeBaseName()
+                                                              + QStringLiteral("_ink"));
             if (!inkSrc.isEmpty()) {
                 ++inkLayers;
-                // Width rides the WRAPPER (the ink layer is inset:0, so both
-                // images scale together); the base fills it when sized.
+                // Width rides the WRAPPER (the ink layer is frame-positioned,
+                // so both images scale together); the base fills it when
+                // sized. Overshooting ink carries percent offsets.
                 return QStringLiteral("<figure><div class=\"inkwrap\"%1>"
                                       "<img src=\"%2\" alt=\"%3\"%4>"
-                                      "<img class=\"ink\" src=\"%5\" alt=\"\"></div></figure>")
+                                      "<img class=\"ink\" src=\"%5\" alt=\"\"%6></div></figure>")
                     .arg(wstyle, htmlEscape(src), htmlEscape(name),
                          dw > 0 ? QStringLiteral(" style=\"width:100%\"") : QString(),
-                         inkSrc);
+                         inkSrc, mediaInkStyle(ink.boxNorm));
             }
         }
         return QStringLiteral("<figure><img src=\"%1\" alt=\"%2\"%3></figure>")
             .arg(htmlEscape(src), htmlEscape(name), wstyle);
     }
 
-    QString poster, posterInk, meta;
+    QString poster, posterInk, posterInkStyle, meta;
     QSize posterSize;
     if (kind == QLatin1String("video")) {
         const QImage p = MediaStore::extractFrame(path, 0, 1280);
@@ -1170,17 +1207,19 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
         meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
     }
     if (!poster.isEmpty()) {
-        const QImage ink = renderMediaInk(m, row, posterSize);
-        if (!ink.isNull())
-            posterInk = sink.addImage(ink, sanitizedBase(path) + QStringLiteral("_ink"));
+        const MediaInk ink = renderMediaInk(m, row, posterSize);
+        if (!ink.img.isNull()) {
+            posterInk = sink.addImage(ink.img, sanitizedBase(path) + QStringLiteral("_ink"));
+            posterInkStyle = mediaInkStyle(ink.boxNorm);
+        }
     }
 
     QString out = QStringLiteral("<figure class=\"ref\">");
     if (!poster.isEmpty() && !posterInk.isEmpty()) {
         ++inkLayers;
         out += QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\">"
-                              "<img class=\"ink\" src=\"%3\" alt=\"\"></div>")
-                   .arg(poster, htmlEscape(name), posterInk);
+                              "<img class=\"ink\" src=\"%3\" alt=\"\"%4></div>")
+                   .arg(poster, htmlEscape(name), posterInk, posterInkStyle);
     } else if (!poster.isEmpty()) {
         out += QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(poster, htmlEscape(name));
     }
@@ -1282,14 +1321,17 @@ font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-ser
 /* Left-anchored page (user ruling): the prose measure hugs the left edge
    rather than centering, so wide tables growing rightward read as one
    left-aligned system instead of breaking a centered frame. */
-main{max-width:808px;margin:0;padding:48px 24px 96px}  /* content = the app's true 760 measure */
+main{max-width:1000px;margin:0;padding:48px 120px 96px}  /* content = the app's true 760
+   measure, flanked by the app's 120px ink gutters so margin annotations render
+   instead of cropping at the viewport's left origin */
 /* The BLOCK RULER: every block's number in the right margin (the app's
    rail). Elements host the span; all numbers align on one ledger line.
    No rule line: the app made its rules focus-reactive, so a static export
    shows numbers only. */
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main blockquote,
 main li,main figure,main .tablewrap,main .blkw{position:relative}
-.bnum{position:absolute;left:772px;top:4px;width:calc(100vw - 836px);
+.bnum{position:absolute;left:772px;top:4px;width:calc(100vw - 932px);   /* 932 = the 836
+   ledger constant + the 96px the wider left gutter shifted every block */
 min-width:48px;padding-top:3px;
 text-align:right;font-family:ui-monospace,Menlo,Consolas,monospace;
 font-size:11px;color:var(--subtle);user-select:none;pointer-events:none}
@@ -1421,9 +1463,11 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
         if (src.isEmpty()) return blk;
         ++inkLayers;
+        // max-width:none: the global img{max-width:100%} would clamp a
+        // margin-spanning layer to the 760 block and squeeze its right side.
         const QString tag = QStringLiteral(
             "<img class=\"ink\" style=\"position:absolute;left:%1px;top:%2px;"
-            "width:%3px;height:%4px;z-index:2\" src=\"%5\" alt=\"\">")
+            "width:%3px;height:%4px;max-width:none;z-index:2\" src=\"%5\" alt=\"\">")
             .arg(380.0 + ti.box.left() - indent)
             .arg(ti.box.top())
             .arg(ti.box.width())
@@ -1985,10 +2029,14 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
     mono.halfPtSize = 18;   // 9pt paths
 
     auto bakeInk = [&](QImage img) {
-        const QImage ink = renderMediaInk(m, row, img.size());
-        if (!ink.isNull()) {
+        const MediaInk ink = renderMediaInk(m, row, img.size());
+        if (!ink.img.isNull()) {
             QPainter p(&img);
-            p.drawImage(0, 0, ink);
+            // The raster covers frame ∪ overshoot; place it at its offset —
+            // overshoot beyond the image clips in the bake (a composited
+            // DOCX image has nowhere else to put it).
+            p.drawImage(QPointF(ink.boxNorm.left() * img.width(),
+                                ink.boxNorm.top() * img.height()), ink.img);
             p.end();
             ++c.inkBaked;
         }

@@ -1092,8 +1092,21 @@ static void testDocInkTexts() {
     mn::DocInkAnchor pxA;
     pxA.space = mn::DocInkAnchor::Px;
     pxA.texts.push_back(t);
+    // Margin-spanning chips: LEFT gutter (x from page CENTER, page = ±380,
+    // gutter to ±500) and RIGHT gutter — the layer bbox must exceed the 760
+    // block, which the global img{max-width:100%} used to squeeze.
+    mn::SketchTextSpec lm = t; lm.x = -500.0; lm.w = 110.0;
+    mn::SketchTextSpec rm = t; rm.x = 390.0;  rm.w = 110.0;
+    pxA.texts.push_back(lm);
+    pxA.texts.push_back(rm);
     m.setBlockInk(0, mn::docInkToJson(pxA));           // px text-only anchor
-    m.setBlockInk(imgRow, mn::docInkToJson(onlyText)); // frame text-only anchor
+    // Frame anchor gains an OVERSHOOTING chip (x < 0 = margin overshoot):
+    // the layer raster must widen past the frame and carry percent offsets.
+    mn::DocInkAnchor frameA = onlyText;
+    mn::SketchTextSpec ov = onlyText.texts[0];
+    ov.x = -0.5; ov.y = 0.2; ov.w = 0.4; ov.size = 8;
+    frameA.texts.push_back(ov);
+    m.setBlockInk(imgRow, mn::docInkToJson(frameA));   // frame anchor w/ overshoot
 
     Exporter ex;
     ex.setModel(&m);
@@ -1109,6 +1122,22 @@ static void testDocInkTexts() {
                 if (qAlpha(im.pixel(xx, yy)) != 0) anyLit = true;
     CHECK(sink.images.size() >= 2 && anyLit,
           "chips baked into the ink rasters (%d ink images)", int(sink.images.size()));
+    // Margin-spanning layer: wider than the 760 block (2x raster), and the
+    // tag opts out of the global img{max-width:100%} clamp that squeezed it.
+    int widest = 0;
+    for (const QImage& im : sink.images) widest = std::max(widest, im.width());
+    CHECK(widest > 1520, "margin-spanning ink raster exceeds the block width (%d)", widest);
+    {   // Inspection artifact: the emitted page for eyeballing ink geometry.
+        QFile hf(QDir::tempPath() + QStringLiteral("/mn_ink_export_probe.html"));
+        if (hf.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            hf.write(html.toUtf8());
+    }
+    CHECK(html.contains(QStringLiteral("class=\"ink\" style=\"position:absolute"))
+              && html.contains(QStringLiteral("max-width:none;z-index:2")),
+          "page-ink layer escapes the max-width clamp");
+    CHECK(html.contains(QStringLiteral("left:-50%"))
+              && html.contains(QStringLiteral("right:auto;bottom:auto;max-width:none")),
+          "overshooting media ink carries percent offsets (not frame-clipped)");
 
     // Undo semantics ride setBlockInk (one step per call — the test-8 rule).
     m.setBlockInk(0, QString());
