@@ -171,8 +171,12 @@ Rectangle {
     // the studio or QCView saves the sidecar.
     VideoNotesModel {
         id: barNotes
+        // mediaViewPath (NON-blocking): a packaged video still extracting
+        // reads "" (no markers yet); the completion revision-bump re-binds.
+        // The old blocking call here serialized a package open behind the
+        // FULL video extraction — the transport bar builds with the delegate.
         mediaPath: (vt.row >= 0 && blockModel.contentRevision >= 0)
-                   ? blockModel.mediaLocalPath(vt.row) : ""
+                   ? blockModel.mediaViewPath(vt.row) : ""
         fps: vt.row >= 0 ? blockModel.mediaFps(vt.row) : 0
     }
 

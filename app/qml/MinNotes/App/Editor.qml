@@ -481,7 +481,9 @@ FocusScope {
     property var videoPlayheads: ({})
     property int videoPlayheadRev: 0
     function videoPlayheadFor(row) {
-        var key = blockModel.mediaLocalPath(row)
+        // NON-blocking key: poster bindings call this at delegate creation —
+        // a blocking resolve here would freeze scroll on packaged videos.
+        var key = blockModel.mediaViewPath(row)
         return (key !== "" && videoPlayheads[key] !== undefined) ? videoPlayheads[key] : 0
     }
     function _rememberVideoPlayhead() {   // bank the last-accessed frame
@@ -498,13 +500,13 @@ FocusScope {
     property var pdfPages: ({})
     property int pdfPageRev: 0
     function pdfPageFor(row) {
-        var key = blockModel.mediaLocalPath(row)
+        var key = blockModel.mediaViewPath(row)   // non-blocking (delegate bindings)
         return (key !== "" && pdfPages[key] !== undefined) ? pdfPages[key] : 0
     }
     function setPdfPage(row, page) {
         var n = blockModel.mediaPdfPages(row)
         var p = Math.max(0, Math.min(page, n - 1))
-        var key = blockModel.mediaLocalPath(row)
+        var key = blockModel.mediaViewPath(row)
         if (key !== "") { pdfPages[key] = p; pdfPageRev++ }
     }
     function pdfStep(row, d) { setPdfPage(row, pdfPageFor(row) + d) }
@@ -2208,11 +2210,14 @@ FocusScope {
     // its old row.
     function _reconcileVideoPlayingRow() {
         if (videoPlayingRow < 0) return
-        if (blockModel.mediaLocalPath(videoPlayingRow) === _videoPlayingPath) return
+        // mediaViewPath: the PLAYING clip is extracted (play is blocking), so
+        // its path resolves; other rows may still be in-archive and must NOT
+        // block-extract just to be compared.
+        if (blockModel.mediaViewPath(videoPlayingRow) === _videoPlayingPath) return
         var best = -1
         for (var i = 0; i < allVideoRows.length; ++i) {
             var r = allVideoRows[i]
-            if (blockModel.mediaLocalPath(r) !== _videoPlayingPath) continue
+            if (blockModel.mediaViewPath(r) !== _videoPlayingPath) continue
             if (best < 0 || Math.abs(r - videoPlayingRow) < Math.abs(best - videoPlayingRow)) best = r
         }
         if (best >= 0) videoPlayingRow = best

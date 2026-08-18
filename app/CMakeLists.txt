@@ -11,6 +11,9 @@ qt_add_executable(minnotesapp
     core/BlockModel.h
     core/BlockModel.cpp
     core/Importer.cpp
+    core/PackageFormat.cpp
+    ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
+    core/PackageExporter.cpp
     core/DocumentManager.h
     core/DocumentManager.cpp
     core/PathMap.h
@@ -176,7 +179,10 @@ target_include_directories(minnotesapp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/notes
     ${CMAKE_CURRENT_SOURCE_DIR}/player
-    ${CMAKE_CURRENT_SOURCE_DIR}/player/d3d11)
+    ${CMAKE_CURRENT_SOURCE_DIR}/player/d3d11
+    # miniz: the .mnpkg zip backend (zip64 + streaming — Qt's private QZip
+    # caps at 4 GiB and RAM-buffers whole entries, so packages outgrew it).
+    ${CMAKE_SOURCE_DIR}/external/miniz)
 
 # Video YUV->RGB + passthrough GLSL compiled to .qsb bundles. The resource
 # PREFIX is kept as "/ufb" so VideoSurfaceItem.cpp (a verbatim port) finds them

@@ -12,7 +12,7 @@ endif()
 project(MinNotes
     VERSION 0.1.8
     DESCRIPTION "minNotes — block-based markdown notes editor"
-    LANGUAGES CXX
+    LANGUAGES CXX C   # C: vendored miniz (the .mnpkg zip backend)
 )
 
 # Auto-update signing: the Ed25519 PUBLIC key the updater verifies releases

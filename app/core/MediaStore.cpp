@@ -1,5 +1,9 @@
 #include "MediaStore.h"
+#include "PackageFormat.h"
 #include "PathMap.h"
+#include "../notes/annotation_io.h"   // sanitizeMediaName — sidecar dir naming
+#include <QSet>
+#include <QThreadPool>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QFileInfo>
@@ -312,10 +316,130 @@ QImage MediaStore::extractFrame(const QString& path, int frameNo, int maxW) {
     return result;
 }
 
+struct MediaStore::LazyState {
+    QMutex m;
+    QSet<QString> pending;            // paths with an extraction in flight
+    std::function<void()> notify;     // fired (worker thread) per completion
+};
+
+MediaStore::~MediaStore() {
+    if (lazy_) {                      // workers must not notify a dead doc
+        QMutexLocker l(&lazy_->m);
+        lazy_->notify = nullptr;
+    }
+}
+
+void MediaStore::setPackageSource(const QString& zipPath) {
+    packageZip_ = zipPath;
+    if (!lazy_) lazy_ = std::make_shared<LazyState>();
+}
+
+void MediaStore::setLazyNotify(std::function<void()> cb) {
+    if (!lazy_) lazy_ = std::make_shared<LazyState>();
+    QMutexLocker l(&lazy_->m);
+    lazy_->notify = std::move(cb);
+}
+
+// Blocking entry(+video sidecar) pull. extractEntry writes temp + atomic
+// rename, so racing a background worker on the same path is harmless.
+void MediaStore::extractNow(const QString& path) const {
+    const QString rel = QDir(docDir_ + QStringLiteral("/.minnotes")).relativeFilePath(path);
+    mnpkg::extractEntry(packageZip_, QStringLiteral("media/") + rel, path);
+    if (isVideoPath(path)) {
+        const QString name =
+            qcv::annotation_io::sanitizeMediaName(QFileInfo(path).fileName());
+        mnpkg::extractMatching(packageZip_,
+                               QStringLiteral("media/.qcview/") + name + QLatin1Char('/'),
+                               QStringLiteral("media/"),
+                               docDir_ + QStringLiteral("/.minnotes"));
+    }
+}
+
+bool MediaStore::enqueueExtract(const QString& path) const {
+    {
+        QMutexLocker l(&lazy_->m);
+        if (lazy_->pending.contains(path)) return false;
+        lazy_->pending.insert(path);
+    }
+    const auto st = lazy_;
+    const QString zip = packageZip_, dir = docDir_, p = path;
+    const bool video = isVideoPath(path);
+    QThreadPool::globalInstance()->start([st, zip, dir, p, video] {
+        const QString rel = QDir(dir + QStringLiteral("/.minnotes")).relativeFilePath(p);
+        mnpkg::extractEntry(zip, QStringLiteral("media/") + rel, p);
+        if (video) {
+            const QString name =
+                qcv::annotation_io::sanitizeMediaName(QFileInfo(p).fileName());
+            mnpkg::extractMatching(zip,
+                                   QStringLiteral("media/.qcview/") + name + QLatin1Char('/'),
+                                   QStringLiteral("media/"),
+                                   dir + QStringLiteral("/.minnotes"));
+        }
+        std::function<void()> cb;
+        {
+            QMutexLocker l(&st->m);
+            st->pending.remove(p);
+            cb = st->notify;
+        }
+        if (cb) cb();
+    });
+    return true;
+}
+
 QString MediaStore::resolvePath(const QString& src) const {
-    if (src.startsWith(QLatin1String(".minnotes/")))
-        return docDir_ + QStringLiteral("/") + src;
+    if (src.startsWith(QLatin1String(".minnotes/"))) {
+        const QString path = docDir_ + QStringLiteral("/") + src;
+        // Lazily-opened package, BLOCKING mode: callers of this variant need
+        // a real file (export, reveal, playback start, sidecar anchor) —
+        // pull it now. Videos bring their .qcview sidecar tree along, since
+        // sidecar reads go through plain file IO (annotation_io), never
+        // through this resolver.
+        if (!packageZip_.isEmpty() && !QFileInfo::exists(path)) {
+            QMutexLocker lock(&lazyMutex_);
+            if (!QFileInfo::exists(path)) extractNow(path);
+        }
+        return path;
+    }
     return src;                            // absolute reference
+}
+
+QString MediaStore::resolvePathAsync(const QString& src) const {
+    if (src.startsWith(QLatin1String(".minnotes/"))) {
+        const QString path = docDir_ + QStringLiteral("/") + src;
+        // NON-BLOCKING display mode: missing packaged media kicks off a
+        // background extraction and reports "" — delegates show their
+        // loading window, and completion bumps contentRevision so they
+        // re-resolve and reveal.
+        if (!packageZip_.isEmpty() && !QFileInfo::exists(path)) {
+            enqueueExtract(path);
+            return {};
+        }
+        return path;
+    }
+    return src;
+}
+
+bool MediaStore::extractionPending(const QString& src) const {
+    if (!lazy_ || !src.startsWith(QLatin1String(".minnotes/"))) return false;
+    const QString path = docDir_ + QStringLiteral("/") + src;
+    QMutexLocker l(&lazy_->m);
+    return lazy_->pending.contains(path);
+}
+
+QString MediaStore::resolveUrlAsync(const QString& src) const {
+    if (src.isEmpty()) return {};
+    if (src.startsWith(QLatin1String("http://")) || src.startsWith(QLatin1String("https://")))
+        return src;
+    const QString p = resolvePathAsync(src);
+    return p.isEmpty() ? QString() : QUrl::fromLocalFile(p).toString();
+}
+
+QString MediaStore::resolveUrlAsync(const QJsonValue& src) const {
+    if (src.isObject()) {
+        const QString abs = mn::resolveRef(src);
+        return abs.isEmpty() ? QString() : QUrl::fromLocalFile(abs).toString();
+    }
+    return resolveUrlAsync(mn::resolveRef(src));
 }
 
 QString MediaStore::resolveUrl(const QString& src) const {

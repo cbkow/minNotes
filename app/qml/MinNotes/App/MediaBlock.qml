@@ -31,11 +31,15 @@ Item {
     readonly property string sketchJson: (active && isSketch)
         ? (mb._rev, blockModel.sketchResolvedJson(logicalRow)) : ""
     property int  pdfPage: 0          // current page (driven by the editor's nav)
-    readonly property string pdfPath: (active && isPdf) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
+    // Display paths use the NON-BLOCKING resolvers: packaged media not yet
+    // extracted reads "" (loading window shows), a background pull lands, the
+    // _rev bump re-resolves. mediaLocalPath (blocking) stays for file OPS.
+    readonly property string pdfPath: (active && isPdf) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
-    readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
+    readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
-    readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaLocalPath(logicalRow)) : ""
+    readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
+    readonly property bool   extracting: active ? (mb._rev, blockModel.mediaExtracting(logicalRow)) : false
     // Dims keyed on logicalRow (not active) so the displayed width is correct the
     // instant a delegate recycles onto a media row (no `active`-settle frame where
     // it reads 0). The frame HEIGHT is the model's authoritative mediaDisplayHeight
@@ -196,7 +200,8 @@ Item {
         border.width: 1; border.color: Theme.colors.border
         Text {
             anchors.centerIn: parent
-            text: (mb.url === "" || img.status === Image.Error) ? "image unavailable" : "loading…"
+            text: ((mb.url === "" || img.status === Image.Error) && !mb.extracting)
+                      ? "image unavailable" : "loading…"
             color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
         }
     }

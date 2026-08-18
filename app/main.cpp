@@ -20,6 +20,7 @@
 #include "core/DocumentManager.h"
 #include "core/Exporter.h"
 #include "core/Importer.h"
+#include "core/PackageExporter.h"
 #include "core/PathMapController.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
@@ -179,6 +180,14 @@ int main(int argc, char *argv[])
         importer.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("importer", &importer);
+    // .mnpkg package export (File ▸ Export as Package…). Same model-following.
+    PackageExporter packageExporter;
+    packageExporter.setModel(docs.activeModel());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &packageExporter,
+                     [&packageExporter, &docs] {
+        packageExporter.setModel(docs.activeModel());
+    });
+    engine.rootContext()->setContextProperty("packageExporter", &packageExporter);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.

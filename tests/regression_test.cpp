@@ -13,12 +13,18 @@
 #include <QTextDocument>
 #include "../app/notes/doc_ink.h"
 #include "../app/notes/sketch_text.h"
+#include "PackageFormat.h"
+#include "PackageExporter.h"
 #include <private/qzipreader_p.h>
+#include <private/qzipwriter_p.h>
 
 #include <QFontDatabase>
 
 #include <QGuiApplication>
+#include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1490,12 +1496,478 @@ static void testImportFileCores() {
     dir.removeRecursively();
 }
 
+static void testPackageFormat() {
+    qInfo("[21] mnpkg archive layer: round-trip, entry methods, zip-slip, manifest");
+    QDir dir(QDir::temp().filePath(QStringLiteral("mn_pkg_test")));
+    dir.removeRecursively();
+    QDir::temp().mkpath(QStringLiteral("mn_pkg_test"));
+
+    // Incompressible-ish fixture standing in for media bytes.
+    QByteArray mediaBytes;
+    for (int i = 0; i < 4096; ++i) mediaBytes += char((i * 37 + i / 7) & 0xff);
+    const QString mediaPath = dir.filePath(QStringLiteral("media.bin"));
+    { QFile f(mediaPath); if (f.open(QIODevice::WriteOnly)) f.write(mediaBytes); }
+
+    const QString zipPath = dir.filePath(QStringLiteral("pkg.mnpkg"));
+    {
+        mnpkg::PackageWriter w(zipPath);
+        CHECK(w.ok(), "writer opened");
+        CHECK(w.addCompressed(QLatin1String(mnpkg::kDbEntry), QByteArray(2000, 'a')),
+              "db entry added (deflate)");
+        CHECK(w.addStoredFile(QStringLiteral("media/media.bin"), mediaPath),
+              "media entry added (store)");
+        const QJsonObject man = mnpkg::makeManifest(1, mediaBytes.size());
+        CHECK(w.addCompressed(QLatin1String(mnpkg::kManifestEntry),
+                              QJsonDocument(man).toJson(QJsonDocument::Compact)),
+              "manifest added");
+        CHECK(w.bytesAdded() > 4096, "bytes counter runs");
+        CHECK(w.finish(), "finish clean");
+    }
+
+    CHECK(mnpkg::isPackagePath(QStringLiteral("file:///x/Doc.MnPkg"))
+              && !mnpkg::isPackagePath(QStringLiteral("/x/doc.mndb")),
+          "isPackagePath: extension classifier (case-folded, URL-tolerant)");
+
+    const QJsonObject man = mnpkg::readManifest(zipPath);
+    CHECK(man.value(QStringLiteral("formatVersion")).toInt() == mnpkg::kFormatVersion
+              && man.value(QStringLiteral("mediaCount")).toInt() == 1,
+          "manifest round-trips");
+
+    // Entry compression methods, from the raw zip local headers (PK\3\4 …
+    // method = LE u16 at +8, name at +30): media must be STORED (0), the db
+    // DEFLATE (8) — the disk-copy-speed repack contract.
+    {
+        QFile f(zipPath);
+        CHECK(f.open(QIODevice::ReadOnly), "zip readable raw");
+        const QByteArray z = f.readAll();
+        int dbMethod = -1, mediaMethod = -1;
+        for (int i = 0; i + 30 <= z.size();) {
+            if (!(z[i] == 'P' && z[i+1] == 'K' && z[i+2] == 3 && z[i+3] == 4)) { ++i; continue; }
+            const int method = quint8(z[i+8]) | (quint8(z[i+9]) << 8);
+            const int nameLen = quint8(z[i+26]) | (quint8(z[i+27]) << 8);
+            const QByteArray name = z.mid(i + 30, nameLen);
+            if (name == mnpkg::kDbEntry) dbMethod = method;
+            if (name == "media/media.bin") mediaMethod = method;
+            i += 30 + nameLen;
+        }
+        CHECK(mediaMethod == 0, "media entry STORED (method %d)", mediaMethod);
+        CHECK(dbMethod == 8, "db entry DEFLATEd (method %d)", dbMethod);
+    }
+
+    // Extraction round-trip (byte-exact).
+    const QString out = dir.filePath(QStringLiteral("out"));
+    CHECK(mnpkg::extractArchive(zipPath, out), "extractArchive succeeded");
+    {
+        QFile m(out + QStringLiteral("/media/media.bin"));
+        QFile d(out + QStringLiteral("/document.mndb"));
+        CHECK(m.open(QIODevice::ReadOnly) && m.readAll() == mediaBytes,
+              "stored media byte-exact after extract");
+        CHECK(d.open(QIODevice::ReadOnly) && d.readAll() == QByteArray(2000, 'a'),
+              "deflated db byte-exact after extract");
+    }
+
+    // Zip-slip: a hostile `../` entry fails the WHOLE extraction, and nothing
+    // lands outside the destination.
+    const QString evilZip = dir.filePath(QStringLiteral("evil.zip"));
+    {
+        QZipWriter z(evilZip);
+        z.addFile(QStringLiteral("ok.txt"), QByteArray("fine"));
+        z.addFile(QStringLiteral("../escape.txt"), QByteArray("evil"));
+        z.close();
+    }
+    const QString slipDir = dir.filePath(QStringLiteral("slip"));
+    CHECK(!mnpkg::extractArchive(evilZip, slipDir), "zip-slip archive rejected");
+    CHECK(!QFileInfo::exists(dir.filePath(QStringLiteral("escape.txt")))
+              && !QFileInfo::exists(slipDir + QStringLiteral("/ok.txt"))
+              && !QFileInfo::exists(slipDir),
+          "traversal left NOTHING behind (dest cleaned, nothing outside)");
+
+    // The sidecar convention survives packaging: `.qcview` is a MID-path dot
+    // component, which QZipReader leaves alone (only LEADING dots mangle).
+    const QString scZip = dir.filePath(QStringLiteral("sidecar.zip"));
+    {
+        mnpkg::PackageWriter w(scZip);
+        w.addStoredFile(QStringLiteral("media/.qcview/media.bin/notes.json"), mediaPath);
+        CHECK(w.finish(), "sidecar-path package wrote");
+    }
+    const QString scOut = dir.filePath(QStringLiteral("sc-out"));
+    CHECK(mnpkg::extractArchive(scZip, scOut)
+              && QFileInfo::exists(scOut + QStringLiteral("/media/.qcview/media.bin/notes.json")),
+          "mid-path .qcview sidecar dir round-trips verbatim");
+
+    dir.removeRecursively();
+}
+
+static void testPackageExporter() {
+    qInfo("[22] packer: descriptor-walk plan, rewrite-on-copy, sidecar carry");
+    // NOT under temp/~Library: those are VOLATILE roots (2d9e45b) and
+    // importFile would copy-not-reference, hiding the absolute-src rewrite
+    // and collision paths this test exists to cover. The build dir is stable.
+    QDir dir(QCoreApplication::applicationDirPath()
+             + QStringLiteral("/mn_pack_src"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    QDir().mkpath(dir.filePath(QStringLiteral("b")));
+    QDir().mkpath(dir.filePath(QStringLiteral("c")));
+
+    auto writePng = [&](const QString& rel, QColor color) {
+        QImage img(12, 10, QImage::Format_RGB32);
+        img.fill(color);
+        img.save(dir.filePath(rel), "PNG");
+        return dir.filePath(rel);
+    };
+    const QString picB = writePng(QStringLiteral("b/pic.png"), Qt::red);
+    const QString picC = writePng(QStringLiteral("c/pic.png"), Qt::blue);
+    // A junk "video" + its QCView sidecar tree (content is never probed by
+    // the packer — the descriptor is hand-built below).
+    const QString clip = dir.filePath(QStringLiteral("clip.mp4"));
+    { QFile f(clip); if (f.open(QIODevice::WriteOnly)) f.write(QByteArray(512, 'V')); }
+    QDir().mkpath(dir.filePath(QStringLiteral(".qcview/clip.mp4/images")));
+    { QFile f(dir.filePath(QStringLiteral(".qcview/clip.mp4/notes.json")));
+      if (f.open(QIODevice::WriteOnly)) f.write("{\"notes\":[]}"); }
+    { QFile f(dir.filePath(QStringLiteral(".qcview/clip.mp4/images/note_00.png")));
+      if (f.open(QIODevice::WriteOnly)) f.write(QByteArray(64, 'N')); }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("hello"));
+    const int img1 = m.insertImageFromUrl(0, QUrl::fromLocalFile(picB).toString());
+    const int img2 = m.insertImageFromUrl(img1, QUrl::fromLocalFile(picC).toString());
+    CHECK(img1 > 0 && img2 > img1, "fixture images inserted");
+    const int tRow = m.insertTable(img2, 2, 2);
+    CHECK(tRow > 0 && m.tableSetCellImageFromUrl(tRow, 1, 0,
+              QUrl::fromLocalFile(picB).toString()),
+          "table cell image set");
+    // Hand-built video descriptor (absolute src — the referenced-in-place shape).
+    {
+        BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+        sp.mediaJson = QStringLiteral(
+            "{\"src\":\"%1\",\"w\":320,\"h\":240,\"kind\":\"video\","
+            "\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(clip);
+        m.insertSpecs(tRow, {sp}, false);
+    }
+    const int vRow = tRow + 1;
+    CHECK(m.mediaKind(vRow) == QStringLiteral("video"), "video row landed");
+
+    // Plan: videos detected; excluded by default option…
+    const auto planNoVid = PackageExporter::buildPackPlan(&m, /*includeVideos*/false);
+    CHECK(planNoVid.videoCount == 1 && planNoVid.excludedVideos == 1,
+          "plan counts the video, excludes it without the option");
+    bool clipPlanned = false;
+    for (const auto& it : planNoVid.items) clipPlanned |= it.srcPath == clip;
+    CHECK(!clipPlanned, "excluded video not in the pack items");
+    // …and included with it, sidecar discovered, same-name images deduped.
+    const auto plan = PackageExporter::buildPackPlan(&m, /*includeVideos*/true);
+    QString clipSidecar; QSet<QString> names;
+    for (const auto& it : plan.items) {
+        names.insert(it.packedName);
+        if (it.srcPath == clip) clipSidecar = it.sidecarDir;
+    }
+    CHECK(!clipSidecar.isEmpty(), "video sidecar dir discovered by layout");
+    CHECK(names.contains(QStringLiteral("pic.png")) && names.contains(QStringLiteral("pic-2.png")),
+          "basename collision → unique -2 suffix");
+
+    // Pack. The LIVE document's descriptors must be untouched.
+    const QString before = m.contentForRow(img1);
+    const QString pkg = QDir::temp().filePath(QStringLiteral("mn_pack_out.mnpkg"));
+    QFile::remove(pkg);
+    QString err;
+    CHECK(PackageExporter::packDocument(&m, pkg, /*includeVideos*/true, &err),
+          "packDocument succeeded (%s)", qPrintable(err));
+    CHECK(m.contentForRow(img1) == before, "live descriptors untouched by packing");
+    m.closeDocument();
+
+    // Open path simulation: extract, media/ → .minnotes/, open the db.
+    const QString ext = QDir::temp().filePath(QStringLiteral("mn_pack_ext"));
+    QDir(ext).removeRecursively();
+    CHECK(mnpkg::extractArchive(pkg, ext), "package extracts");
+    CHECK(QDir(ext).rename(QStringLiteral("media"), QStringLiteral(".minnotes")),
+          "media/ renamed to .minnotes/");
+    CHECK(QFileInfo::exists(ext + QStringLiteral("/.minnotes/.qcview/clip.mp4/notes.json"))
+              && QFileInfo::exists(ext + QStringLiteral("/.minnotes/.qcview/clip.mp4/images/note_00.png")),
+          "sidecar tree re-associates by layout beside the packed video");
+
+    BlockModel m2;
+    CHECK(m2.openDocument(ext + QStringLiteral("/document.mndb")), "packed db opens");
+    int mediaRows = 0; QSet<QString> resolved;
+    for (int r = 0; r < m2.rowCountQml(); ++r) {
+        if (m2.typeForRow(r) != BlockModel::Media) continue;
+        ++mediaRows;
+        const QString p = m2.mediaLocalPath(r);
+        CHECK(!p.isEmpty() && QFileInfo::exists(p)
+                  && p.startsWith(ext + QStringLiteral("/.minnotes/")),
+              "media row %d resolves INSIDE the package dir", r);
+        resolved.insert(QFileInfo(p).fileName());
+    }
+    CHECK(mediaRows == 3 && resolved.contains(QStringLiteral("clip.mp4")),
+          "all three media rows resolve (imgs + video)");
+    // Byte-exact through the STORE path, collisions kept distinct.
+    {
+        QFile o(picB), p(ext + QStringLiteral("/.minnotes/pic.png"));
+        QFile o2(picC), p2(ext + QStringLiteral("/.minnotes/pic-2.png"));
+        CHECK(o.open(QIODevice::ReadOnly) && p.open(QIODevice::ReadOnly)
+                  && o.readAll() == p.readAll(),
+              "pic.png byte-exact in the package");
+        CHECK(o2.open(QIODevice::ReadOnly) && p2.open(QIODevice::ReadOnly)
+                  && o2.readAll() == p2.readAll(),
+              "collision copy pic-2.png byte-exact");
+    }
+    // Table cell media rewrote to the packaged copy.
+    {
+        const QString desc = m2.tableCellMedia(tRow, 1, 0);
+        CHECK(desc.contains(QStringLiteral(".minnotes/pic")),
+              "table cell descriptor rewrote to the packaged src");
+    }
+    m2.closeDocument();
+
+    QFile::remove(pkg);
+    QDir(ext).removeRecursively();
+    dir.removeRecursively();
+}
+
+static void testPackageLifecycle() {
+    qInfo("[23] .mnpkg lifecycle: sealed snapshot — lazy view, Save As materializes");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_pkglife"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    { QImage img(8, 8, QImage::Format_RGB32); img.fill(Qt::green);
+      img.save(dir.filePath(QStringLiteral("pic.png")), "PNG"); }
+
+    // Author a doc + pack it.
+    const QString pkg = dir.filePath(QStringLiteral("doc.mnpkg"));
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        m.setContent(0, QStringLiteral("original"));
+        CHECK(m.insertImageFromUrl(0,
+                  QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString()) == 1,
+              "fixture image inserted");
+        QString err;
+        CHECK(PackageExporter::packDocument(&m, pkg, true, &err),
+              "fixture package packed (%s)", qPrintable(err));
+        m.closeDocument();
+    }
+
+    const auto pkgScratchCount = [] {
+        return QDir(BlockModel::scratchDir())
+            .entryList({QStringLiteral("pkg-*")}, QDir::Dirs).size();
+    };
+    const auto beforeOpen = pkgScratchCount();
+
+    // Open the package LIVE, edit, save (repack), reopen.
+    {
+        BlockModel m;
+        CHECK(m.openDocument(pkg), "package opens as a live document");
+        CHECK(m.documentName() == QStringLiteral("doc"), "documentName from the .mnpkg");
+        CHECK(pkgScratchCount() == beforeOpen + 1, "extraction dir staged in scratch");
+        // LAZY open: only the db is extracted up front; media stays in the
+        // archive until something resolves it.
+        QString pkgScratch;
+        for (const QString& d : QDir(BlockModel::scratchDir())
+                 .entryList({QStringLiteral("pkg-*")}, QDir::Dirs))
+            pkgScratch = BlockModel::scratchDir() + QLatin1Char('/') + d;
+        CHECK(QFileInfo::exists(pkgScratch + QStringLiteral("/document.mndb"))
+                  && !QFileInfo::exists(pkgScratch + QStringLiteral("/.minnotes/pic.png")),
+              "lazy open: db extracted, media NOT yet");
+        const QString mp = m.mediaLocalPath(1);
+        CHECK(!mp.isEmpty() && QFileInfo::exists(mp)
+                  && mp.contains(QStringLiteral("/pkg-")),
+              "first access extracts the media into the extraction dir");
+        // SEALED SNAPSHOT: typing works, but save() refuses (untitled
+        // semantics — Save As is the only way out) and the .mnpkg on disk
+        // is never written.
+        const qint64 pkgSize = QFileInfo(pkg).size();
+        const QDateTime pkgMtime = QFileInfo(pkg).lastModified();
+        m.setContent(0, QStringLiteral("edited in view"));
+        CHECK(!m.save() && !m.overwriteSave(),
+              "packages are snapshots: save/overwrite refuse");
+        CHECK(QFileInfo(pkg).size() == pkgSize
+                  && QFileInfo(pkg).lastModified() == pkgMtime,
+              "the .mnpkg was NEVER written");
+        m.closeDocument();
+        CHECK(pkgScratchCount() == beforeOpen, "extraction dir cleaned on close");
+    }
+    {
+        BlockModel m;
+        CHECK(m.openDocument(pkg), "package reopens");
+        CHECK(m.contentForRow(0) == QStringLiteral("original"),
+              "view edits were DISCARDED (snapshot untouched)");
+        CHECK(m.documentName() == QStringLiteral("doc"),
+              "package view keeps the package's name (not 'Untitled')");
+
+        // Save As → .mndb materializes the package (db + .minnotes sidecar),
+        // media included even though nothing lazily extracted it first.
+        m.setContent(0, QStringLiteral("my copy"));
+        const QString mndb = dir.filePath(QStringLiteral("materialized.mndb"));
+        CHECK(m.saveAs(mndb), "Save As .mndb from a package view");
+        CHECK(m.documentName() == QStringLiteral("materialized"), "identity re-homed");
+        CHECK(m.save(), "the materialized copy saves normally from now on");
+        m.closeDocument();
+
+        BlockModel m2;
+        CHECK(m2.openDocument(mndb), "materialized .mndb opens");
+        CHECK(m2.contentForRow(0) == QStringLiteral("my copy"),
+              "content in the materialized doc");
+        const QString mp2 = m2.mediaLocalPath(1);
+        bool bytesOk = false;
+        {
+            QFile a(dir.filePath(QStringLiteral("pic.png"))), b(mp2);
+            bytesOk = a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
+                      && a.readAll() == b.readAll();
+        }
+        CHECK(!mp2.isEmpty() && bytesOk
+                  && mp2.startsWith(dir.absolutePath() + QStringLiteral("/.minnotes/")),
+              "media materialized beside the .mndb BYTE-EXACT (never lazily touched)");
+        m2.closeDocument();
+    }
+
+    dir.removeRecursively();
+}
+
+static void testAsyncPackagePaths() {
+    qInfo("[24] async package paths: non-blocking display resolve + worker export splice");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_pkgasync"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    { QImage img(8, 8, QImage::Format_RGB32); img.fill(Qt::magenta);
+      img.save(dir.filePath(QStringLiteral("pic.png")), "PNG"); }
+
+    const QString pkg = dir.filePath(QStringLiteral("doc.mnpkg"));
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        m.setContent(0, QStringLiteral("hello"));
+        CHECK(m.insertImageFromUrl(0,
+                  QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString()) == 1,
+              "fixture image inserted");
+        QString err;
+        CHECK(PackageExporter::packDocument(&m, pkg, true, &err),
+              "fixture packed (%s)", qPrintable(err));
+        m.closeDocument();
+    }
+
+    // --- Non-blocking display resolve: "" + pending, then lands + reveals.
+    {
+        BlockModel m;
+        CHECK(m.openDocument(pkg), "package view opens");
+        const QString firstUrl = m.mediaUrl(1);
+        CHECK(firstUrl.isEmpty() && m.mediaExtracting(1),
+              "display URL is \"\" while the background extraction runs");
+        QElapsedTimer t; t.start();
+        while (m.mediaUrl(1).isEmpty() && t.elapsed() < 5000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        CHECK(!m.mediaUrl(1).isEmpty() && !m.mediaExtracting(1),
+              "background extraction landed; URL resolves");
+        CHECK(QFileInfo::exists(QUrl(m.mediaUrl(1)).toLocalFile()),
+              "extracted file exists on disk");
+        m.closeDocument();
+    }
+
+    // --- Worker export from an untouched view: pure SPLICE (no extraction).
+    {
+        BlockModel m;
+        CHECK(m.openDocument(pkg), "package view reopens");
+        // mediaUrl NOT called — the media must go archive→archive.
+        const QString pkg2 = dir.filePath(QStringLiteral("resend.mnpkg"));
+        PackageExporter pe;
+        pe.setModel(&m);
+        bool done = false, okResult = false;
+        QObject::connect(&pe, &PackageExporter::exportFinished, &pe,
+                         [&](bool ok, const QString&) { done = true; okResult = ok; });
+        pe.startExport(QUrl::fromLocalFile(pkg2).toString(), /*videos*/true);
+        QElapsedTimer t; t.start();
+        while (!done && t.elapsed() < 10000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        CHECK(done && okResult, "async export finished ok");
+        CHECK(!pe.running(), "running flag cleared");
+        m.closeDocument();
+
+        // The re-exported package carries the media even though this session
+        // never extracted it.
+        BlockModel m2;
+        CHECK(m2.openDocument(pkg2), "re-exported package opens");
+        const QString p = m2.mediaLocalPath(1);   // blocking pull
+        bool bytesOk = false;
+        {
+            QFile a(dir.filePath(QStringLiteral("pic.png"))), b(p);
+            bytesOk = a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
+                      && a.readAll() == b.readAll();
+        }
+        CHECK(bytesOk, "media SPLICED archive→archive byte-exact (never extracted)");
+        m2.closeDocument();
+    }
+
+    dir.removeRecursively();
+}
+
+// MN_OPEN_PROBE=<dir> — diagnostic, not a test: builds (once) a package with
+// three junk multi-GB "videos" in <dir>, then times each stage of the open
+// path. For chasing "opening a package freezes" reports.
+static int runOpenProbe(const QString& base) {
+    QDir().mkpath(base);
+    const QString pkg = base + QStringLiteral("/big.mnpkg");
+    if (!QFileInfo::exists(pkg)) {
+        for (int i = 0; i < 3; ++i) {
+            QFile f(base + QStringLiteral("/clip%1.mp4").arg(i));
+            if (f.open(QIODevice::WriteOnly)) {
+                const QByteArray chunk(1 << 20, char('A' + i));
+                for (int k = 0; k < 700; ++k) f.write(chunk);   // ~700MB each
+            }
+        }
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        m.setContent(0, QStringLiteral("big test"));
+        int at = 0;
+        for (int i = 0; i < 3; ++i) {
+            BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+            sp.mediaJson = QStringLiteral(
+                "{\"src\":\"%1/clip%2.mp4\",\"w\":1920,\"h\":1080,"
+                "\"kind\":\"video\",\"durMs\":3600000,\"frames\":86400,\"fps\":24}")
+                .arg(base).arg(i);
+            at = m.insertSpecs(at, {sp}, false).first;
+        }
+        QString err;
+        QElapsedTimer tp; tp.start();
+        if (!PackageExporter::packDocument(&m, pkg, true, &err)) {
+            qCritical() << "probe pack failed" << err;
+            return 1;
+        }
+        qInfo() << "probe: packed in" << tp.elapsed() << "ms";
+        m.closeDocument();
+    }
+    QElapsedTimer t; t.start();
+    BlockModel m2;
+    const bool ok = m2.openDocument(pkg);
+    qInfo() << "probe: openDocument" << t.elapsed() << "ms ok" << ok
+            << "rows" << m2.rowCountQml();
+    t.restart();
+    for (int r = 0; r < m2.rowCountQml(); ++r) {
+        m2.mediaUrl(r); m2.mediaViewPath(r); m2.mediaKind(r);
+        m2.mediaExtracting(r); m2.mediaFps(r); m2.mediaDurationMs(r);
+    }
+    qInfo() << "probe: all display resolves" << t.elapsed() << "ms";
+    t.restart();
+    m2.closeDocument();
+    qInfo() << "probe: close" << t.elapsed() << "ms";
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
     QGuiApplication app(argc, argv);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
+    if (!qEnvironmentVariable("MN_OPEN_PROBE").isEmpty())
+        return runOpenProbe(qEnvironmentVariable("MN_OPEN_PROBE"));
     // Register the app text font so sketch-text height derivation matches the
     // app. Non-fatal if missing — text assertions are font-relative (computed
     // through the same helper the code under test uses).
@@ -1523,6 +1995,10 @@ int main(int argc, char** argv) {
     testInsertSpecs();
     testImporterWalker();
     testImportFileCores();
+    testPackageFormat();
+    testPackageExporter();
+    testPackageLifecycle();
+    testAsyncPackagePaths();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

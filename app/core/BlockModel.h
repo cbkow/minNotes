@@ -81,6 +81,9 @@ public:
     Q_INVOKABLE bool save();                              // write working copy → original; false if untitled/conflict/failed
     Q_INVOKABLE bool overwriteSave();                     // save ignoring an external-change conflict ("Overwrite")
     Q_INVOKABLE bool saveAs(const QString& pathOrUrl);    // VACUUM INTO new path + media-sidecar copy
+    // Clean stamped snapshot of the CURRENT document state to `path` (the
+    // packaging source) — the live working copy and identity are untouched.
+    bool snapshotTo(const QString& path);
     enum Roles {
         TypeRole = Qt::UserRole + 1,
         ContentRole,
@@ -514,8 +517,10 @@ public:
     Q_INVOKABLE int insertFileFromUrl(int afterRow, const QString& fileUrl);
     // Route a dropped/pasted file: video → pdf → image → file-attachment fallback.
     Q_INVOKABLE int insertMediaFromUrl(int afterRow, const QString& fileUrl);
-    Q_INVOKABLE QString mediaUrl(int row) const;   // resolved file:// URL ("" if none)
-    Q_INVOKABLE QString mediaLocalPath(int row) const; // resolved absolute path (for the decoder)
+    Q_INVOKABLE QString mediaUrl(int row) const;   // display URL, NON-blocking ("" while a packaged file extracts)
+    Q_INVOKABLE QString mediaViewPath(int row) const;  // display local path (posters/PDF providers), NON-blocking
+    Q_INVOKABLE bool mediaExtracting(int row) const;   // background extraction in flight → "loading…", not "unavailable"
+    Q_INVOKABLE QString mediaLocalPath(int row) const; // file-op path, BLOCKING (reveal/export/playback get a real file)
     Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
     Q_INVOKABLE int mediaH(int row) const;          // intrinsic height
     Q_INVOKABLE QString mediaKind(int row) const;   // "image" | "video" | "file"
@@ -697,6 +702,12 @@ private:
     Document doc_;
     QString docPath_;        // canonical original (or the untitled identity path); media anchor + Save-As source
     QString scratchPath_;    // local working-copy DB the SQLite connection actually runs against
+    // Open .mnpkg: the per-document extraction dir (scratch subdir holding
+    // document.mndb + .minnotes/). Empty for plain .mndb docs. Tracked for
+    // cleanup + the media anchor; the SAVE fork keys off isPackagePath(docPath_)
+    // instead (Save As can re-home a package doc to .mndb while its working
+    // copy stays here).
+    QString pkgDir_;
     bool untitled_ = true;   // scratch doc with no chosen path yet
     bool dirty_ = false;     // unsaved edits since open / last save
     int  saveState_ = SaveClean;
@@ -714,6 +725,9 @@ private:
     void recordOriginalStat();         // snapshot the original's mtime/size as the conflict baseline
     bool externalChangeDetected() const;
     bool writeBackToOriginal();        // checkpoint → VACUUM INTO temp → atomic replace over the original
+    // Where this doc's sidecar media lives: the package extraction dir for
+    // .mnpkg docs, else the original's folder.
+    QString mediaAnchorDir() const;
     void markDirty();                  // set dirty_ + notify (idempotent)
     // Erase a deleted block's in-memory ink (the DB row cascades via FK).
     // Undo restores it through the BlockSnap.ink payload in applySnapshot.

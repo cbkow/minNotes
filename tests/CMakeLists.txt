@@ -5,6 +5,9 @@ qt_add_executable(mn_regression_test
     regression_test.cpp
     ${CMAKE_SOURCE_DIR}/app/core/BlockModel.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Importer.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/PackageFormat.cpp
+    ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
+    ${CMAKE_SOURCE_DIR}/app/core/PackageExporter.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Document.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
@@ -27,7 +30,9 @@ qt_add_executable(mn_regression_test
     # consumed by BlockModel (fit-to-ink) and Exporter (raster bake).
     ${CMAKE_SOURCE_DIR}/app/notes/sketch_text.cpp
 )
-target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/core)
+target_include_directories(mn_regression_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/core
+    ${CMAKE_SOURCE_DIR}/external/miniz)
 # The bundled app fonts: the harness registers Inter so sketch-text height
 # derivation matches the app (assertions stay font-relative regardless).
 target_compile_definitions(mn_regression_test PRIVATE

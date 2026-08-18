@@ -77,7 +77,7 @@ ApplicationWindow {
     FileDialog {
         id: openDialog
         title: "Open document"
-        nameFilters: ["minNotes documents (*.mndb)"]
+        nameFilters: ["minNotes documents (*.mndb *.mnpkg)"]
         onAccepted: win.openDoc(selectedFile)
     }
     FileDialog {
@@ -124,7 +124,10 @@ ApplicationWindow {
         // rows into the wrong document). Fresh closures per file: Qt.callLater
         // only coalesces IDENTICAL functions.
         function onImportFileRequested(fileUrl) {
-            Qt.callLater(function () { win.startImport(fileUrl) })
+            Qt.callLater(function () {
+                if (/\.mnpkg$/i.test("" + fileUrl)) win.openDoc(fileUrl)
+                else win.startImport(fileUrl)
+            })
         }
     }
 
@@ -134,11 +137,28 @@ ApplicationWindow {
     // goes straight to the save dialog. ---
     property var _exportScan: ({})
     property bool _exportNotes: true
-    property string _exportFormat: "md"   // "md" | "html" | "docx"
+    property bool _exportVideos: true     // mnpkg: videos default IN (copy, never
+                                          // transcode — user ruling 2026-08-18;
+                                          // the checkbox opts OUT for size)
+    property string _exportFormat: "md"   // "md" | "html" | "docx" | "mnpkg"
+    function fmtBytes(b) {
+        b = b || 0
+        if (b >= 1e9) return (b / 1e9).toFixed(1) + " GB"
+        if (b >= 1e6) return (b / 1e6).toFixed(0) + " MB"
+        return Math.max(1, Math.round(b / 1e3)) + " KB"
+    }
     function startExport(format) {
         _exportFormat = format || "md"
-        _exportScan = exporter.scan()
         _exportNotes = true
+        _exportVideos = true
+        if (_exportFormat === "mnpkg") {
+            // Package pre-scan: the only option is detection-driven videos.
+            _exportScan = packageExporter.scan()
+            if ((_exportScan.videos || 0) > 0) exportOptionsDialog.open()
+            else exportSaveDialog.open()
+            return
+        }
+        _exportScan = exporter.scan()
         // Ink only affects markdown (HTML doesn't carry it either yet, but
         // the note is markdown-worded); notes matter to both.
         if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0)
@@ -150,14 +170,23 @@ ApplicationWindow {
         id: exportSaveDialog
         title: win._exportFormat === "html" ? "Export as HTML"
              : win._exportFormat === "docx" ? "Export as Word document"
+             : win._exportFormat === "mnpkg" ? "Export as Package"
              : "Export as Markdown"
         fileMode: FileDialog.SaveFile
         defaultSuffix: win._exportFormat
         nameFilters: win._exportFormat === "html" ? ["HTML (*.html)"]
                    : win._exportFormat === "docx" ? ["Word document (*.docx)"]
+                   : win._exportFormat === "mnpkg" ? ["minNotes package (*.mnpkg)"]
                    : ["Markdown (*.md)"]
         onAccepted: {
             var f = "" + selectedFile
+            if (win._exportFormat === "mnpkg") {
+                // Async: the zip assembles on a worker; the progress dialog
+                // tracks it and the finished signal owns the toast.
+                win._exportPkgName = win.baseName(f)
+                packageExporter.startExport(f, win._exportVideos)
+                return
+            }
             var ok = win._exportFormat === "html"
                 ? exporter.exportHtml(f, win._exportNotes)
                 : win._exportFormat === "docx"
@@ -165,6 +194,58 @@ ApplicationWindow {
                 : exporter.exportMarkdown(f, win._exportNotes)
             if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f))
             else    Toasts.show(qsTr("Export failed"), 2)
+        }
+    }
+    // --- Package export progress (async worker; family dialog chrome). ---
+    property string _exportPkgName: ""
+    Connections {
+        target: packageExporter
+        function onExportFinished(ok, error) {
+            if (ok) Toasts.show(qsTr("Exported ") + win._exportPkgName)
+            else if (error === "Cancelled") Toasts.show(qsTr("Export cancelled"))
+            else Toasts.show(qsTr("Export failed — ") + error, 2)
+        }
+    }
+    Popup {
+        id: exportProgressDialog
+        visible: packageExporter.running
+        modal: true
+        closePolicy: Popup.NoAutoClose   // cancel is the only way out
+        anchors.centerIn: Overlay.overlay
+        width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text {
+                text: qsTr("Exporting package…")
+                color: Theme.colors.textBright; font.family: Theme.font.family
+                font.pixelSize: Theme.font.sizeBody; font.bold: true
+            }
+            Text {
+                width: 400; elide: Text.ElideMiddle
+                text: packageExporter.currentItem
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Rectangle {   // FlatSlider-background recipe: recessed track + fill
+                width: 400; height: 6
+                color: Theme.colors.surfaceRecess
+                border.width: 1; border.color: Theme.colors.border
+                Rectangle {
+                    width: Math.round((parent.width - 2) * Math.min(1, packageExporter.progress))
+                    height: parent.height - 2
+                    x: 1; y: 1
+                    color: Theme.colors.divider
+                }
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton {
+                    text: qsTr("Cancel"); padding: 12
+                    onClicked: packageExporter.cancel()
+                }
+            }
         }
     }
     Dialog {
@@ -177,11 +258,46 @@ ApplicationWindow {
             Text { width: 400; wrapMode: Text.Wrap
                    text: win._exportFormat === "html" ? qsTr("Export as HTML")
                        : win._exportFormat === "docx" ? qsTr("Export as Word document")
+                       : win._exportFormat === "mnpkg" ? qsTr("Export as Package")
                        : qsTr("Export as Markdown")
                    color: Theme.colors.textBright; font.family: Theme.font.family
                    font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Row {   // mnpkg: detection-driven "Include videos" (default off — size)
+                visible: win._exportFormat === "mnpkg" && (win._exportScan.videos || 0) > 0
+                spacing: 8
+                Rectangle {
+                    width: 16; height: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: win._exportVideos ? Theme.colors.divider : "transparent"
+                    border.width: 1
+                    border.color: win._exportVideos ? Theme.colors.textBright : Theme.colors.border
+                    Text { anchors.centerIn: parent; visible: win._exportVideos
+                           text: "✓"; color: Theme.colors.textBright; font.pixelSize: 11 }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: win._exportVideos = !win._exportVideos }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: {
+                        var n = win._exportScan.videos || 0
+                        return qsTr("Include videos (%1, %2)")
+                            .arg(n).arg(win.fmtBytes(win._exportScan.videoBytes))
+                    }
+                    color: Theme.colors.text
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: win._exportVideos = !win._exportVideos }
+                }
+            }
+            Text {
+                visible: win._exportFormat === "mnpkg" && (win._exportScan.videos || 0) > 0
+                width: 400; wrapMode: Text.Wrap
+                text: qsTr("Videos left out stay as references to their original locations.")
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
             Row {   // video-notes option — present only when notes were detected
-                visible: (win._exportScan.videoNotes || 0) > 0
+                visible: win._exportFormat !== "mnpkg" && (win._exportScan.videoNotes || 0) > 0
                 spacing: 8
                 Rectangle {   // squared family checkbox (PathMappings pattern)
                     width: 16; height: 16
@@ -210,7 +326,7 @@ ApplicationWindow {
                 }
             }
             Text {
-                visible: (win._exportScan.inkBlocks || 0) > 0
+                visible: win._exportFormat !== "mnpkg" && (win._exportScan.inkBlocks || 0) > 0
                 width: 400; wrapMode: Text.Wrap
                 text: win._exportFormat === "html"
                       ? qsTr("Page ink exports as toggleable overlays (ink over text is position-approximate).")
@@ -377,7 +493,7 @@ ApplicationWindow {
         if (list.length > 10) list = list.slice(0, 10)
         recentsStore.paths = JSON.stringify(list)
     }
-    function baseName(path) { var n = ("" + path).split("/").pop(); return n.replace(/\.mndb$/i, "") }
+    function baseName(path) { var n = ("" + path).split("/").pop(); return n.replace(/\.(mndb|mnpkg)$/i, "") }
     function removeRecent(path) {
         recentsStore.paths = JSON.stringify(
             recentPaths().filter(function (p) { return p !== path }))
@@ -388,7 +504,13 @@ ApplicationWindow {
     property string openFailedPath: ""
     function openDoc(path) {
         path = "" + path
-        if (docs.openTab(path)) return
+        if (docs.openTab(path)) {
+            // Packages are sealed snapshots: you're viewing, and persistence
+            // goes through Save As (untitled semantics under the hood).
+            if (/\.mnpkg$/i.test(path))
+                Toasts.show(qsTr("Viewing a package — saving creates a new document"))
+            return
+        }
         openFailedPath = path
         removeRecent(path)
         openFailedDialog.open()
@@ -496,6 +618,7 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("Export as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
                 Platform.MenuItem { text: qsTr("Export as HTML…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
                 Platform.MenuItem { text: qsTr("Export as Word Document…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Platform.MenuItem { text: qsTr("Export as Package…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 Platform.MenuSeparator {}
@@ -573,6 +696,7 @@ ApplicationWindow {
                 Action { text: qsTr("&Export as Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
                 Action { text: qsTr("Export as &HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
                 Action { text: qsTr("Export as &Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Action { text: qsTr("Export as &Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
                 ThemedMenuSeparator {}
@@ -930,7 +1054,7 @@ ApplicationWindow {
                 if (!drop.hasUrls) return
                 for (var i = 0; i < drop.urls.length; ++i) {
                     var u = "" + drop.urls[i]
-                    if (/\.mndb$/i.test(u)) win.openDoc(u)
+                    if (/\.(mndb|mnpkg)$/i.test(u)) win.openDoc(u)
                     else if (importer.formatFor(u) !== "") win.startImport(u)
                 }
             }

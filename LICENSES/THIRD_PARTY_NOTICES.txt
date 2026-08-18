@@ -102,6 +102,16 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
     is available from the minNotes repository, covering relinking and
     modification rights.
 
+11. miniz 3.0.2
+    Copyright 2013-2014 RAD Game Tools and Valve Software
+    Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+    License: MIT
+    File:    miniz-MIT.txt
+    https://github.com/richgel999/miniz
+    Linkage: static (single-file amalgamation vendored at external/miniz,
+             compiled into minNotes). The zip backend for .mnpkg packages
+             (zip64 + streaming; app/core/PackageFormat.cpp).
+
 ===============================================================================
 Indirect dependencies — Qt runtime libraries
 ===============================================================================

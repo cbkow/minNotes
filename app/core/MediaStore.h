@@ -2,6 +2,9 @@
 #include <QString>
 #include <QImage>
 #include <QJsonValue>
+#include <QMutex>
+#include <functional>
+#include <memory>
 
 // Media asset bookkeeping for one document. Media is NEVER ingested into the DB
 // (no byte bloat): file-referenced media is stored as an absolute path; pasted /
@@ -60,6 +63,25 @@ public:
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;
 
+    // Lazily-opened .mnpkg: missing `.minnotes/…` files extract from this
+    // archive on access (videos bring their .qcview sidecar tree along).
+    // Empty = normal doc, no lazy behavior. Two access modes:
+    //   resolveUrl / resolvePath — BLOCKING ensure (file ops, exports,
+    //     sidecar anchors, small assets: you get a real file).
+    //   resolveUrlAsync / resolvePathAsync — NON-BLOCKING display path:
+    //     returns "" while a background extraction runs; completion fires
+    //     the lazy-notify (→ BlockModel::refreshMedia → delegates re-resolve
+    //     and reveal through the normal loading windows).
+    void setPackageSource(const QString& zipPath);
+    // Called (from a worker thread) when a background extraction lands.
+    void setLazyNotify(std::function<void()> cb);
+    QString resolveUrlAsync(const QString& src) const;
+    QString resolveUrlAsync(const QJsonValue& src) const;
+    QString resolvePathAsync(const QString& src) const;
+    // True while `src` (a relative descriptor src) is extracting in the
+    // background — the delegate's "loading…" (vs "unavailable") signal.
+    bool extractionPending(const QString& src) const;
+
     // Media-block descriptor JSON ({src,w,h}; src through mn::toRef so portable
     // {vol,rel} refs apply uniformly). Shared by BlockModel and Importer so the
     // descriptor shape has ONE definition.
@@ -80,4 +102,20 @@ private:
     QString assetsDir() const;            // <docDir>/.minnotes (created on demand)
     QString resolvePath(const QString& src) const;
     QString docDir_;
+    QString packageZip_;    // lazy .mnpkg source ("" = none)
+    mutable QMutex lazyMutex_;   // serializes on-demand extraction (GUI + poster threads)
+    // Shared with background extraction workers (outlives `this` via the
+    // shared_ptr, so a doc close mid-extraction is safe; the dtor nulls the
+    // notify under the lock).
+    struct LazyState;
+    std::shared_ptr<LazyState> lazy_;
+    void extractNow(const QString& path) const;      // blocking entry+sidecar pull
+    bool enqueueExtract(const QString& path) const;  // false = already pending
+
+public:
+    ~MediaStore();
+    // The doc-sidecar anchor dir + lazy source — the package exporter's
+    // no-side-effect plan resolution reads these directly.
+    QString docDir() const { return docDir_; }
+    QString packageSource() const { return packageZip_; }
 };

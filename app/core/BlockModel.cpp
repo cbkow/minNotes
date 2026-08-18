@@ -5,6 +5,8 @@
 #include <QStringBuilder>
 #include <QStandardPaths>
 #include <QDir>
+#include <QDirIterator>
+#include <QPointer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -31,10 +33,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#ifdef Q_OS_WIN
-#define NOMINMAX            // keep std::min/std::max usable (windows.h min/max macros)
-#include <windows.h>
-#endif
+#include "PackageFormat.h"   // mnpkg::atomicReplace — the save write-back primitive
 
 namespace {
 // Deterministic per-row hash (no RNG: must be stable across rebuilds and frames).
@@ -95,8 +94,10 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
 
 QString BlockModel::documentName() const {
     if (!documentOpen()) return QString();
-    if (untitled_) return QStringLiteral("Untitled");
-    return QFileInfo(docPath_).completeBaseName();   // basename without .mndb
+    // Package views are untitled (snapshot semantics) but keep the package's
+    // name — the tab should say what you're looking at.
+    if (untitled_ && pkgDir_.isEmpty()) return QStringLiteral("Untitled");
+    return QFileInfo(docPath_).completeBaseName();   // basename without .mndb/.mnpkg
 }
 
 void BlockModel::closeDocument() {
@@ -135,18 +136,11 @@ static void copyMediaSidecar(const QString& srcDocDir, const QString& dstDocDir)
                      dstDocDir + QStringLiteral("/.minnotes"));
 }
 
-// Replace `dst` with `src` atomically (same directory → same filesystem). POSIX
-// rename(2) is atomic and overwrites; Win32 MoveFileEx with REPLACE_EXISTING is
-// the closest equivalent. Used for the save write-back so an interrupted save
-// never leaves a half-written original.
+// Replace `dst` with `src` atomically (same directory → same filesystem), so an
+// interrupted save never leaves a half-written original. Definition lives in
+// PackageFormat (shared with package repack).
 static bool atomicReplace(const QString& src, const QString& dst) {
-#ifdef Q_OS_WIN
-    return MoveFileExW(reinterpret_cast<const wchar_t*>(src.utf16()),
-                       reinterpret_cast<const wchar_t*>(dst.utf16()),
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    return std::rename(src.toUtf8().constData(), dst.toUtf8().constData()) == 0;
-#endif
+    return mnpkg::atomicReplace(src, dst);
 }
 
 static QString g_scratchRoot;   // set once by main() to this session's subdir
@@ -167,11 +161,19 @@ QString BlockModel::newScratchPath() {
 }
 
 void BlockModel::cleanupScratch() {
+    if (!pkgDir_.isEmpty()) {          // package extraction dir (db + media)
+        QDir(pkgDir_).removeRecursively();
+        pkgDir_.clear();
+    }
     if (scratchPath_.isEmpty()) return;
     QFile::remove(scratchPath_);
     QFile::remove(scratchPath_ + QStringLiteral("-wal"));
     QFile::remove(scratchPath_ + QStringLiteral("-shm"));
     scratchPath_.clear();
+}
+
+QString BlockModel::mediaAnchorDir() const {
+    return pkgDir_.isEmpty() ? QFileInfo(docPath_).absolutePath() : pkgDir_;
 }
 
 void BlockModel::recordOriginalStat() {
@@ -208,6 +210,55 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
     // (atomic replace on save). `path` stays the identity + media anchor.
     doc_.close();
     cleanupScratch();
+
+    // .mnpkg fork: packages are SEALED SNAPSHOTS (user ruling 2026-08-18 —
+    // .mndb is the ONE editable format; a package is produced by Export and
+    // received for viewing). Opening one is a LAZY read: only document.mndb
+    // extracts up front (instant regardless of package size); media stays in
+    // the archive until something touches it (MediaStore::resolvePath pulls
+    // `media/<x>` → `.minnotes/<x>` on first access; videos bring their
+    // .qcview sidecar). The doc opens with UNTITLED semantics — you can read,
+    // play, even type, but nothing persists until Save As materializes a
+    // real .mndb; the package file itself is NEVER written. docPath_ stays
+    // the .mnpkg for tab dedupe, recents, and documentName.
+    if (!untitled && mnpkg::isPackagePath(path)) {
+        if (!QFileInfo::exists(path)) return false;
+        pkgDir_ = scratchDir() + QStringLiteral("/pkg-") + makeUlid();
+        scratchPath_ = pkgDir_ + QStringLiteral("/document.mndb");
+        if (!mnpkg::extractEntry(path, QLatin1String(mnpkg::kDbEntry), scratchPath_)) {
+            qWarning() << "BlockModel: package has no readable document.mndb" << path;
+            cleanupScratch();
+            return false;
+        }
+        QFile::setPermissions(scratchPath_, QFile::ReadOwner | QFile::WriteOwner
+                                          | QFile::ReadUser  | QFile::WriteUser);
+        if (!doc_.open(scratchPath_)) {
+            qWarning() << "BlockModel: cannot open package working copy" << scratchPath_;
+            cleanupScratch();
+            return false;
+        }
+        docPath_ = path;
+        untitled_ = true;   // snapshot: save() routes to Save As, no conflict baseline
+        mediaStore_ = std::make_unique<MediaStore>(scratchPath_);  // anchored to the extraction
+        mediaStore_->setPackageSource(path);                       // lazy media source
+        // A background extraction landing bumps contentRevision (queued to
+        // the GUI thread) so display bindings re-resolve and reveal.
+        {
+            QPointer<BlockModel> self(this);
+            mediaStore_->setLazyNotify([self] {
+                if (self)
+                    QMetaObject::invokeMethod(self, [self] {
+                        if (self) self->refreshMedia();
+                    }, Qt::QueuedConnection);
+            });
+        }
+        recordOriginalStat();
+        dirty_ = false;
+        setSaveState(SaveClean);
+        clearUndo();
+        return true;
+    }
+
     scratchPath_ = newScratchPath();
     if (!untitled && QFileInfo::exists(path)) {
         QFile::remove(scratchPath_);
@@ -327,7 +378,7 @@ bool BlockModel::saveAs(const QString& pathOrUrl) {
                  ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
     if (path.isEmpty()) return false;
     if (!path.endsWith(QLatin1String(".mndb"), Qt::CaseInsensitive)) path += QStringLiteral(".mndb");
-    const QString srcMediaDir = QFileInfo(docPath_).absolutePath();
+    const QString srcMediaDir = mediaAnchorDir();   // package docs: the extraction dir
     const QString dstDir = QFileInfo(path).absolutePath();
     QDir().mkpath(dstDir);
     setSaveState(SaveSaving);
@@ -351,6 +402,14 @@ bool BlockModel::saveAs(const QString& pathOrUrl) {
         return false;
     }
     // Critical: bring the pasted-media sidecar along to the new location.
+    // A lazily-opened package first materializes everything still in the
+    // archive (skip-if-exists: files already extracted — possibly edited
+    // sidecar notes — win), or the folder copy would silently drop media
+    // nothing had touched yet.
+    if (mnpkg::isPackagePath(docPath_) && QFileInfo::exists(docPath_))
+        mnpkg::extractMatching(docPath_, QStringLiteral("media/"),
+                               QStringLiteral("media/"),
+                               pkgDir_ + QStringLiteral("/.minnotes"));
     copyMediaSidecar(srcMediaDir, dstDir);
     // Re-home identity + media anchor to the new file; keep editing the SAME
     // working copy (no reload — it already holds the content).
@@ -363,6 +422,14 @@ bool BlockModel::saveAs(const QString& pathOrUrl) {
     emit documentChanged();
     emit dirtyChanged();
     return true;
+}
+
+bool BlockModel::snapshotTo(const QString& path) {
+    if (!doc_.isOpen()) return false;
+    doc_.stampMeta();
+    doc_.checkpoint();
+    QFile::remove(path);
+    return doc_.vacuumInto(path);
 }
 
 BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
@@ -2350,25 +2417,49 @@ int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
     }
     const int r = insertImageFromUrl(afterRow, fileUrl);
     if (r >= 0) return r;
-    // Importable document formats (md/txt/csv/html/…) never become file chips:
-    // hand the path to QML (drop AND url-paste both funnel here — ONE seam),
-    // which raises the import flow. −1 = nothing inserted.
-    if (!Importer::formatForPath(fileUrl).isEmpty()) {
+    // Importable document formats (md/txt/csv/html/…) and .mnpkg packages
+    // never become file chips: hand the path to QML (drop AND url-paste both
+    // funnel here — ONE seam), which raises the import flow (or opens the
+    // package). −1 = nothing inserted.
+    if (!Importer::formatForPath(fileUrl).isEmpty() || mnpkg::isPackagePath(fileUrl)) {
         emit importFileRequested(fileUrl);
         return -1;
     }
     return insertFileFromUrl(afterRow, fileUrl);
 }
 
+// Display URL — NON-BLOCKING: packaged media not yet extracted returns ""
+// while a background pull runs; completion bumps contentRevision so bound
+// delegates re-resolve (their loading windows cover the wait).
 QString BlockModel::mediaUrl(int row) const {
     if (rows_.empty() || !mediaStore_) return {};   // no doc / empty model → no media
     row = clampRow(row);
     if (rows_[row].type != Media) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
+    return mediaStore_->resolveUrlAsync(o.value(QStringLiteral("src")));
 }
-QString BlockModel::mediaLocalPath(int row) const {
+// Display local path (poster/PDF image providers) — same non-blocking rules.
+QString BlockModel::mediaViewPath(int row) const {
     const QString url = mediaUrl(row);
+    return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
+}
+// True while row's packaged media is mid-extraction ("loading…", not
+// "unavailable"). Bound with a contentRevision dep so it re-polls.
+bool BlockModel::mediaExtracting(int row) const {
+    if (rows_.empty() || !mediaStore_) return false;
+    row = clampRow(row);
+    if (rows_[row].type != Media) return false;
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    return mediaStore_->extractionPending(o.value(QStringLiteral("src")).toString());
+}
+// File-op local path — BLOCKING: reveal/export/playback/sidecar anchors get
+// a real file (packaged media extracts inline; the explicit-action cost).
+QString BlockModel::mediaLocalPath(int row) const {
+    if (rows_.empty() || !mediaStore_) return {};
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QString url = mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
     return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
 }
 void BlockModel::refreshMedia() {
@@ -2390,9 +2481,17 @@ void BlockModel::revealMedia(int row) const {
 QString BlockModel::mediaFileName(int row) const {
     row = clampRow(row);
     if (rowAt(row).type != Media) return {};
-    const QString name = QJsonDocument::fromJson(content_[row].toUtf8())
-                             .object().value(QStringLiteral("name")).toString();
-    return name.isEmpty() ? QFileInfo(mediaLocalPath(row)).fileName() : name;
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QString name = o.value(QStringLiteral("name")).toString();
+    if (!name.isEmpty()) return name;
+    // Derive from the descriptor src as a pure STRING op — this is a display
+    // binding (tab labels, file chips) evaluated at delegate build, and the
+    // old mediaLocalPath fallback block-extracted packaged media just to
+    // read its basename (the frozen-package-open bug, caught by `sample`).
+    const QJsonValue src = o.value(QStringLiteral("src"));
+    if (src.isObject())
+        return QFileInfo(src.toObject().value(QStringLiteral("rel")).toString()).fileName();
+    return QFileInfo(src.toString()).fileName();
 }
 int BlockModel::mediaPdfPages(int row) const {
     row = clampRow(row);
