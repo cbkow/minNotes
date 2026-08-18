@@ -520,7 +520,16 @@ public:
     Q_INVOKABLE QString mediaUrl(int row) const;   // display URL, NON-blocking ("" while a packaged file extracts)
     Q_INVOKABLE QString mediaViewPath(int row) const;  // display local path (posters/PDF providers), NON-blocking
     Q_INVOKABLE bool mediaExtracting(int row) const;   // background extraction in flight → "loading…", not "unavailable"
-    Q_INVOKABLE QString mediaLocalPath(int row) const; // file-op path, BLOCKING (reveal/export/playback get a real file)
+    Q_INVOKABLE QString mediaLocalPath(int row) const; // file-op path, BLOCKING (reveal/export get a real file)
+    // Playback source for the libav stack (player/poster/scrub): a local
+    // path, or a `subfile` spec that streams a packaged video STRAIGHT out
+    // of the archive (no extraction, instant play). "" = not yet servable
+    // (an async extraction fallback was enqueued).
+    Q_INVOKABLE QString mediaPlaybackSource(int row) const;
+    // The path the media occupies (or WOULD occupy) — pure computation, no
+    // IO. Sidecar anchor (`.qcview/<name>/` derives from dirname+basename)
+    // + stable playhead/page map keys.
+    Q_INVOKABLE QString mediaAnchorPath(int row) const;
     Q_INVOKABLE int mediaW(int row) const;          // intrinsic width (0 if unknown)
     Q_INVOKABLE int mediaH(int row) const;          // intrinsic height
     Q_INVOKABLE QString mediaKind(int row) const;   // "image" | "video" | "file"

@@ -38,7 +38,9 @@ Item {
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
     readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
-    readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
+    // Playback source: a local path, or a subfile spec streaming the frame
+    // straight out of a package (posters decode without any extraction).
+    readonly property string localPath: (active && isVideo) ? (mb._rev, blockModel.mediaPlaybackSource(logicalRow)) : ""
     readonly property bool   extracting: active ? (mb._rev, blockModel.mediaExtracting(logicalRow)) : false
     // Dims keyed on logicalRow (not active) so the displayed width is correct the
     // instant a delegate recycles onto a media row (no `active`-settle frame where

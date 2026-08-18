@@ -222,7 +222,12 @@ bool VideoDecoder::open(const QString &path)
     close();
     m_reopening = false;
 
-    if (!QFileInfo(path).isFile()) {
+    // avformat URL specs (subfile,… — a packaged clip streaming from its
+    // archive; or any proto://) aren't files — let avformat_open_input be
+    // the judge of those.
+    const bool isAvUrl = path.startsWith(QLatin1String("subfile,"))
+                         || path.contains(QLatin1String("://"));
+    if (!isAvUrl && !QFileInfo(path).isFile()) {
         setError(tr("File not found: %1").arg(path));
         setState(Errored);
         // close() suppressed its empty-path emit because we promised

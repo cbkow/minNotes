@@ -241,6 +241,13 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
         untitled_ = true;   // snapshot: save() routes to Save As, no conflict baseline
         mediaStore_ = std::make_unique<MediaStore>(scratchPath_);  // anchored to the extraction
         mediaStore_->setPackageSource(path);                       // lazy media source
+        // QCView sidecars extract EAGERLY (notes.json + thumbs — small):
+        // note models and file watchers anchor to real files immediately,
+        // while the videos themselves STREAM from the archive and never
+        // extract for playback.
+        mnpkg::extractMatching(path, QStringLiteral("media/.qcview/"),
+                               QStringLiteral("media/"),
+                               pkgDir_ + QStringLiteral("/.minnotes"));
         // A background extraction landing bumps contentRevision (queued to
         // the GUI thread) so display bindings re-resolve and reveal.
         {
@@ -2452,8 +2459,22 @@ bool BlockModel::mediaExtracting(int row) const {
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     return mediaStore_->extractionPending(o.value(QStringLiteral("src")).toString());
 }
-// File-op local path — BLOCKING: reveal/export/playback/sidecar anchors get
-// a real file (packaged media extracts inline; the explicit-action cost).
+QString BlockModel::mediaPlaybackSource(int row) const {
+    if (rows_.empty() || !mediaStore_) return {};
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    return mediaStore_->playbackSourceFor(o.value(QStringLiteral("src")));
+}
+QString BlockModel::mediaAnchorPath(int row) const {
+    if (rows_.empty() || !mediaStore_) return {};
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    return mediaStore_->anchorPathFor(o.value(QStringLiteral("src")));
+}
+// File-op local path — BLOCKING: reveal/export get a real file (packaged
+// media extracts inline; the explicit-action cost).
 QString BlockModel::mediaLocalPath(int row) const {
     if (rows_.empty() || !mediaStore_) return {};
     row = clampRow(row);

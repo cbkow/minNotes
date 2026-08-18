@@ -331,6 +331,8 @@ MediaStore::~MediaStore() {
 
 void MediaStore::setPackageSource(const QString& zipPath) {
     packageZip_ = zipPath;
+    // Byte-range map for streaming playback (one central-directory read).
+    spans_ = mnpkg::entrySpans(zipPath);
     if (!lazy_) lazy_ = std::make_shared<LazyState>();
 }
 
@@ -424,6 +426,39 @@ bool MediaStore::extractionPending(const QString& src) const {
     const QString path = docDir_ + QStringLiteral("/") + src;
     QMutexLocker l(&lazy_->m);
     return lazy_->pending.contains(path);
+}
+
+QString MediaStore::playbackSourceFor(const QJsonValue& src) const {
+    // {vol,rel} / absolute / http resolve through the normal side-effect-free
+    // path; only relative sidecar srcs get the streaming treatment.
+    const QString s = src.isObject() ? QString() : mn::resolveRef(src);
+    if (src.isObject() || !s.startsWith(QLatin1String(".minnotes/"))) {
+        const QString url = src.isObject()
+                                ? resolveUrlAsync(src) : resolveUrlAsync(s);
+        if (url.startsWith(QLatin1String("file:"))) return QUrl(url).toLocalFile();
+        return url;   // http passthrough or ""
+    }
+    const QString path = docDir_ + QStringLiteral("/") + s;
+    if (packageZip_.isEmpty() || QFileInfo::exists(path)) return path;
+    const auto it = spans_.constFind(
+        QStringLiteral("media/") + s.mid(int(qstrlen(".minnotes/"))));
+    if (it != spans_.constEnd() && it->stored && it->size > 0) {
+        // libavformat `subfile`: play the byte range straight out of the
+        // archive. The archive is immutable while open (sealed snapshots),
+        // so the offsets can never go stale under a player.
+        return QStringLiteral("subfile,,start,%1,end,%2,,:%3")
+            .arg(it->offset).arg(it->offset + it->size).arg(packageZip_);
+    }
+    // Not streamable (deflated / foreign) — fall back to async extraction.
+    enqueueExtract(path);
+    return {};
+}
+
+QString MediaStore::anchorPathFor(const QJsonValue& src) const {
+    const QString s = mn::resolveRef(src);   // handles {vol,rel} + strings
+    if (s.startsWith(QLatin1String(".minnotes/")))
+        return docDir_ + QStringLiteral("/") + s;
+    return s;   // absolute (or "" for unresolvable refs)
 }
 
 QString MediaStore::resolveUrlAsync(const QString& src) const {

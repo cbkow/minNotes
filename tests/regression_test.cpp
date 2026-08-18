@@ -25,6 +25,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QProcess>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1906,6 +1907,111 @@ static void testAsyncPackagePaths() {
     dir.removeRecursively();
 }
 
+static void testPackageStreaming() {
+    qInfo("[25] streaming: packaged video plays from a byte range, no extraction");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_pkgstream"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+
+    // Junk "video" + a QCView sidecar beside it.
+    const QString clip = dir.filePath(QStringLiteral("clip.mp4"));
+    QByteArray clipBytes;
+    for (int i = 0; i < 100000; ++i) clipBytes += char((i * 131) & 0xff);
+    { QFile f(clip); if (f.open(QIODevice::WriteOnly)) f.write(clipBytes); }
+    QDir().mkpath(dir.filePath(QStringLiteral(".qcview/clip.mp4")));
+    { QFile f(dir.filePath(QStringLiteral(".qcview/clip.mp4/notes.json")));
+      if (f.open(QIODevice::WriteOnly)) f.write("{\"notes\":[]}"); }
+
+    const QString pkg = dir.filePath(QStringLiteral("doc.mnpkg"));
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+        sp.mediaJson = QStringLiteral(
+            "{\"src\":\"%1\",\"w\":320,\"h\":240,\"kind\":\"video\","
+            "\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(clip);
+        m.insertSpecs(0, {sp}, false);
+        QString err;
+        CHECK(PackageExporter::packDocument(&m, pkg, true, &err),
+              "fixture packed (%s)", qPrintable(err));
+        m.closeDocument();
+    }
+
+    {
+        BlockModel m;
+        CHECK(m.openDocument(pkg), "package view opens");
+        // Sidecar extracted EAGERLY; the video is NOT.
+        const QString anchor = m.mediaAnchorPath(1);
+        CHECK(!anchor.isEmpty() && !QFileInfo::exists(anchor),
+              "anchor path computed; video NOT on disk");
+        CHECK(QFileInfo::exists(QFileInfo(anchor).absolutePath()
+                                + QStringLiteral("/.qcview/clip.mp4/notes.json")),
+              "sidecar extracted eagerly beside the anchor");
+        // Playback source = subfile spec whose byte range IS the video.
+        const QString spec = m.mediaPlaybackSource(1);
+        CHECK(spec.startsWith(QStringLiteral("subfile,,start,")),
+              "playback source is a subfile spec (%s)", qPrintable(spec.left(40)));
+        const QStringList parts = spec.split(QLatin1Char(','));
+        const qint64 start = parts.value(3).toLongLong();
+        const qint64 end = parts.value(5).toLongLong();
+        QFile zf(pkg);
+        QByteArray range;
+        if (zf.open(QIODevice::ReadOnly) && zf.seek(start))
+            range = zf.read(end - start);
+        CHECK(range == clipBytes, "spec byte range is the video BYTE-EXACT");
+        CHECK(!QFileInfo::exists(anchor),
+              "resolving the playback source extracted NOTHING");
+        m.closeDocument();
+    }
+
+    // Real decode through the spec (libav in-process): generate a genuine
+    // mp4 with the vendored ffmpeg when present; skip quietly otherwise.
+    const QString ffmpeg = QStringLiteral(
+        "/Users/chris/Documents/GitHub/minNotes/external/ffmpeg/bin/ffmpeg");
+    if (QFileInfo::exists(ffmpeg)) {
+        const QString real = dir.filePath(QStringLiteral("real.mp4"));
+        QProcess p;
+        p.start(ffmpeg, {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                         QStringLiteral("error"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                         QStringLiteral("-i"), QStringLiteral("testsrc=size=320x240:rate=24"),
+                         QStringLiteral("-t"), QStringLiteral("1"),
+                         QStringLiteral("-c:v"), QStringLiteral("h264_videotoolbox"),
+                         QStringLiteral("-y"), real});
+        p.waitForFinished(20000);
+        if (p.exitCode() == 0 && QFileInfo::exists(real)) {
+            BlockModel m;
+            m.newDocument();
+            while (m.rowCountQml() > 0) m.removeBlock(0);
+            m.insertBlock(0);
+            BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+            sp.mediaJson = QStringLiteral(
+                "{\"src\":\"%1\",\"w\":320,\"h\":240,\"kind\":\"video\","
+                "\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(real);
+            m.insertSpecs(0, {sp}, false);
+            const QString pkg2 = dir.filePath(QStringLiteral("real.mnpkg"));
+            QString err;
+            CHECK(PackageExporter::packDocument(&m, pkg2, true, &err), "real pkg packed");
+            m.closeDocument();
+            BlockModel m2;
+            CHECK(m2.openDocument(pkg2), "real pkg opens");
+            const QImage frame =
+                MediaStore::extractFrame(m2.mediaPlaybackSource(1), 0, 64);
+            CHECK(!frame.isNull() && frame.width() > 0,
+                  "libav DECODED a frame straight out of the archive (%dx%d)",
+                  frame.width(), frame.height());
+            m2.closeDocument();
+        } else {
+            qInfo("  (real-decode leg skipped: ffmpeg testsrc encode unavailable)");
+        }
+    } else {
+        qInfo("  (real-decode leg skipped: vendored ffmpeg absent)");
+    }
+
+    dir.removeRecursively();
+}
+
 // MN_OPEN_PROBE=<dir> — diagnostic, not a test: builds (once) a package with
 // three junk multi-GB "videos" in <dir>, then times each stage of the open
 // path. For chasing "opening a package freezes" reports.
@@ -1999,6 +2105,7 @@ int main(int argc, char** argv) {
     testPackageExporter();
     testPackageLifecycle();
     testAsyncPackagePaths();
+    testPackageStreaming();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

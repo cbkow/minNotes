@@ -481,14 +481,14 @@ FocusScope {
     property var videoPlayheads: ({})
     property int videoPlayheadRev: 0
     function videoPlayheadFor(row) {
-        // NON-blocking key: poster bindings call this at delegate creation —
-        // a blocking resolve here would freeze scroll on packaged videos.
-        var key = blockModel.mediaViewPath(row)
+        // Anchor-path key: pure computation (no IO), stable whether the clip
+        // streams from a package or lives on disk.
+        var key = blockModel.mediaAnchorPath(row)
         return (key !== "" && videoPlayheads[key] !== undefined) ? videoPlayheads[key] : 0
     }
     function _rememberVideoPlayhead() {   // bank the last-accessed frame
         if (videoPlayingRow < 0) return
-        var key = _videoPlayingPath
+        var key = videoPlayingRow >= 0 ? blockModel.mediaAnchorPath(videoPlayingRow) : ""
         // _vidIntendedFrame: the scrubbed-to frame if mid-scrub, else the live
         // playhead — scrubToFrame leaves currentFrame at the old streaming spot,
         // so reading currentFrame here would lose the scrub position.
@@ -546,7 +546,9 @@ FocusScope {
         _scrubAudioActive = false
         videoDec.close(); videoAudio.close()
         _vidScrubTarget = -1
-        var p = blockModel.mediaLocalPath(row)
+        // Playback source: disk path, or a subfile spec streaming a packaged
+        // clip straight from the archive — play starts without extraction.
+        var p = blockModel.mediaPlaybackSource(row)
         if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; _videoPlayingPath = ""; return false }
         videoPlayingRow = row
         _videoPlayingPath = p
@@ -675,7 +677,7 @@ FocusScope {
         id: vnotes
         readonly property int noteRow: root.activeVideoRow >= 0 ? root.activeVideoRow
                                                                 : root.videoPlayingRow
-        mediaPath: noteRow >= 0 ? blockModel.mediaLocalPath(noteRow) : ""
+        mediaPath: noteRow >= 0 ? blockModel.mediaAnchorPath(noteRow) : ""
         fps: noteRow >= 0 ? blockModel.mediaFps(noteRow) : 0
     }
     // Keep audio aligned to the video playhead while playing (~30 Hz).
@@ -2210,14 +2212,13 @@ FocusScope {
     // its old row.
     function _reconcileVideoPlayingRow() {
         if (videoPlayingRow < 0) return
-        // mediaViewPath: the PLAYING clip is extracted (play is blocking), so
-        // its path resolves; other rows may still be in-archive and must NOT
-        // block-extract just to be compared.
-        if (blockModel.mediaViewPath(videoPlayingRow) === _videoPlayingPath) return
+        // Compare by playback SOURCE (what the decoder was opened with — a
+        // path or a stream spec); pure lookups, nothing extracts.
+        if (blockModel.mediaPlaybackSource(videoPlayingRow) === _videoPlayingPath) return
         var best = -1
         for (var i = 0; i < allVideoRows.length; ++i) {
             var r = allVideoRows[i]
-            if (blockModel.mediaViewPath(r) !== _videoPlayingPath) continue
+            if (blockModel.mediaPlaybackSource(r) !== _videoPlayingPath) continue
             if (best < 0 || Math.abs(r - videoPlayingRow) < Math.abs(best - videoPlayingRow)) best = r
         }
         if (best >= 0) videoPlayingRow = best
@@ -3665,7 +3666,7 @@ FocusScope {
                     anchors.fill: parent
                     visible: !studioSurface.visible
                     source: studioFrame.r >= 0
-                        ? studioFrame._vframeSrc(blockModel.mediaLocalPath(studioFrame.r),
+                        ? studioFrame._vframeSrc(blockModel.mediaPlaybackSource(studioFrame.r),
                                                  (root.videoPlayheadRev, root.videoPlayheadFor(studioFrame.r)))
                         : ""
                     asynchronous: true; cache: true

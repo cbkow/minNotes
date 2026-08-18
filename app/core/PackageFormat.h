@@ -73,6 +73,19 @@ bool atomicReplace(const QString& src, const QString& dst);
 // opened package still holds a media file, without extracting it.
 QHash<QString, qint64> entrySizes(const QString& zipPath);
 
+// A STORE entry is a CONTIGUOUS byte range of the package file — the
+// streaming substrate: libavformat's `subfile` protocol plays a video
+// directly out of the archive, no extraction. `offset` is the DATA start
+// (local header parsed for its name/extra lengths, which may differ from
+// the central directory's).
+struct EntrySpan {
+    qint64 offset = 0;   // first data byte in the package file
+    qint64 size = 0;     // uncompressed == stored size (STORE only)
+    bool stored = false; // false = DEFLATE — not streamable, extract instead
+};
+// Entry name → span for every file entry (empty on unreadable archive).
+QHash<QString, EntrySpan> entrySpans(const QString& zipPath);
+
 // Streaming package writer: per-entry STORE/DEFLATE, zip64 when needed,
 // entries stream from disk in chunks (no RAM spike). Write everything, then
 // finish(); any failed add poisons the writer (ok() false, finish() false).

@@ -1,4 +1,5 @@
 #pragma once
+#include "PackageFormat.h"
 #include <QString>
 #include <QImage>
 #include <QJsonValue>
@@ -78,6 +79,17 @@ public:
     QString resolveUrlAsync(const QString& src) const;
     QString resolveUrlAsync(const QJsonValue& src) const;
     QString resolvePathAsync(const QString& src) const;
+    // Playback source for libavformat consumers (player, posters, scrub):
+    // a plain local path when the file is on disk — or, for a STORE entry
+    // still inside the package, a `subfile` protocol spec that PLAYS the
+    // bytes directly out of the archive (no extraction, no wait). "" only
+    // when nothing can serve it (a background extraction is then enqueued
+    // as the fallback).
+    QString playbackSourceFor(const QJsonValue& src) const;
+    // The local path the media occupies (or WOULD occupy) — no IO, no
+    // extraction. Sidecar anchoring + stable map keys: annotation_io derives
+    // `.qcview/<name>/` from dirname+basename, which needs no actual file.
+    QString anchorPathFor(const QJsonValue& src) const;
     // True while `src` (a relative descriptor src) is extracting in the
     // background — the delegate's "loading…" (vs "unavailable") signal.
     bool extractionPending(const QString& src) const;
@@ -103,6 +115,7 @@ private:
     QString resolvePath(const QString& src) const;
     QString docDir_;
     QString packageZip_;    // lazy .mnpkg source ("" = none)
+    QHash<QString, mnpkg::EntrySpan> spans_;   // package entry → byte range (streaming)
     mutable QMutex lazyMutex_;   // serializes on-demand extraction (GUI + poster threads)
     // Shared with background extraction workers (outlives `this` via the
     // shared_ptr, so a doc close mid-extraction is safe; the dtor nulls the

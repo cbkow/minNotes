@@ -180,6 +180,37 @@ QHash<QString, qint64> entrySizes(const QString& zipPath) {
     return out;
 }
 
+QHash<QString, EntrySpan> entrySpans(const QString& zipPath) {
+    QHash<QString, EntrySpan> out;
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_reader_init_file(&zip, zipPath.toUtf8().constData(), 0)) return out;
+    QFile f(zipPath);
+    if (!f.open(QIODevice::ReadOnly)) { mz_zip_reader_end(&zip); return out; }
+    const mz_uint n = mz_zip_reader_get_num_files(&zip);
+    for (mz_uint i = 0; i < n; ++i) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&zip, i, &st) || st.m_is_directory) continue;
+        // Data offset = local header + fixed 30 bytes + ITS name/extra
+        // lengths (fields 26..29; zip64 stores may carry a local extra
+        // field the central directory doesn't mention).
+        unsigned char hdr[30];
+        if (!f.seek(static_cast<qint64>(st.m_local_header_ofs))
+            || f.read(reinterpret_cast<char*>(hdr), 30) != 30
+            || !(hdr[0] == 'P' && hdr[1] == 'K' && hdr[2] == 3 && hdr[3] == 4))
+            continue;
+        const int nameLen  = hdr[26] | (hdr[27] << 8);
+        const int extraLen = hdr[28] | (hdr[29] << 8);
+        EntrySpan span;
+        span.offset = static_cast<qint64>(st.m_local_header_ofs) + 30 + nameLen + extraLen;
+        span.size = static_cast<qint64>(st.m_uncomp_size);
+        span.stored = (st.m_method == 0);
+        out.insert(QString::fromUtf8(st.m_filename), span);
+    }
+    mz_zip_reader_end(&zip);
+    return out;
+}
+
 static mz_zip_archive* Z(void* p) { return static_cast<mz_zip_archive*>(p); }
 
 PackageWriter::PackageWriter(const QString& zipPath) {

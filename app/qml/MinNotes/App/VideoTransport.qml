@@ -171,12 +171,14 @@ Rectangle {
     // the studio or QCView saves the sidecar.
     VideoNotesModel {
         id: barNotes
-        // mediaViewPath (NON-blocking): a packaged video still extracting
-        // reads "" (no markers yet); the completion revision-bump re-binds.
-        // The old blocking call here serialized a package open behind the
-        // FULL video extraction — the transport bar builds with the delegate.
+        // mediaAnchorPath: the path the video occupies (or WOULD — packaged
+        // videos STREAM and may never exist on disk). Sidecars derive from
+        // dirname+basename and are extracted eagerly at package open, so
+        // markers work while the clip itself stays in the archive. (An
+        // earlier blocking call here serialized package opens behind full
+        // video extraction — the transport bar builds with the delegate.)
         mediaPath: (vt.row >= 0 && blockModel.contentRevision >= 0)
-                   ? blockModel.mediaViewPath(vt.row) : ""
+                   ? blockModel.mediaAnchorPath(vt.row) : ""
         fps: vt.row >= 0 ? blockModel.mediaFps(vt.row) : 0
     }
 

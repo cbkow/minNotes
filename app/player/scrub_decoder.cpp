@@ -70,7 +70,11 @@ bool ScrubDecoder::open(const QString &path)
 {
     close();
 
-    if (!QFileInfo(path).isFile()) {
+    // avformat URL specs (subfile,… / proto://) aren't files — let
+    // avformat_open_input be the judge.
+    const bool isAvUrl = path.startsWith(QLatin1String("subfile,"))
+                         || path.contains(QLatin1String("://"));
+    if (!isAvUrl && !QFileInfo(path).isFile()) {
         qWarning("ScrubDecoder: file not found: %s", qPrintable(path));
         return false;
     }
