@@ -53,15 +53,18 @@ Rectangle {
     // backed like QCView's annotation/colorHex). drawTool "" = disarmed.
     property color drawColor: "#FF0000"                // QCView's default stroke red
     property string drawTool: ""                       // freehand|rect|oval|arrow|line|eraser
-    property real drawWidth: 6                         // source-pixel stroke width (1..24)
+    property real drawWidth: 6                         // source-pixel stroke width (1..64)
+    property real drawTextSize: 16                     // sketch text-box font px (source px)
     Settings {
         id: drawStore
         category: "drawing"
         property string colorHex: ""
         property real width: 0
+        property real textSize: 0
     }
     onDrawColorChanged: drawStore.colorHex = "" + drawColor
     onDrawWidthChanged: drawStore.width = drawWidth
+    onDrawTextSizeChanged: drawStore.textSize = drawTextSize
 
     readonly property int panelW: 248
     readonly property int contentW: panelW - 24   // inside the x:12 margins
@@ -123,6 +126,7 @@ Rectangle {
                                    userSlots = n } } catch (e) {}
         if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
         if (drawStore.width > 0) drawWidth = drawStore.width
+        if (drawStore.textSize > 0) drawTextSize = drawStore.textSize
         open = panelStore.open      // restore last open/closed state (no slide)
         if (panelStore.view === "comments") view = "comments"
         _ready = true               // toggles from here on animate + persist
@@ -467,7 +471,7 @@ Rectangle {
                             onClicked: panel.drawTool = "select" }
             }
             Grid {
-                columns: 6; spacing: 4
+                columns: 7; spacing: 4
                 Repeater {
                     model: [
                         { tool: "freehand", icon: "scribble",      tip: qsTr("Freehand") },
@@ -475,11 +479,12 @@ Rectangle {
                         { tool: "oval",     icon: "circle",        tip: qsTr("Oval") },
                         { tool: "arrow",    icon: "arrow-up-right",tip: qsTr("Arrow") },
                         { tool: "line",     icon: "line-segment",  tip: qsTr("Line") },
+                        { tool: "text",     icon: "text-t",        tip: qsTr("Text") },
                         { tool: "eraser",   icon: "eraser",        tip: qsTr("Eraser") }
                     ]
                     delegate: FlatButton {
                         required property var modelData
-                        width: (panel.contentW - 20) / 6; height: width
+                        width: (panel.contentW - 24) / 7; height: width
                         iconName: modelData.icon
                         iconSize: 18
                         checked: panel.drawTool === modelData.tool
@@ -509,6 +514,31 @@ Rectangle {
                 }
                 Text {
                     text: Math.round(panel.drawWidth)
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.colors.textSubtle
+                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                }
+            }
+            Row {
+                // Text-box font size (source px) — the first tool-gated control.
+                visible: panel.drawTool === "text"
+                spacing: 8
+                Text {
+                    text: "Size"
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.colors.textMuted
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                }
+                FlatSlider {
+                    width: panel.contentW - 80
+                    anchors.verticalCenter: parent.verticalCenter
+                    from: 8; to: 96
+                    value: panel.drawTextSize
+                    fillColor: Theme.colors.textMuted
+                    onMoved: panel.drawTextSize = value
+                }
+                Text {
+                    text: Math.round(panel.drawTextSize)
                     anchors.verticalCenter: parent.verticalCenter
                     color: Theme.colors.textSubtle
                     font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall

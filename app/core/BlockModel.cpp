@@ -1,5 +1,6 @@
 #include "BlockModel.h"
 #include "PathMap.h"
+#include "../notes/sketch_text.h"
 #include <QStringBuilder>
 #include <QStandardPaths>
 #include <QDir>
@@ -1911,6 +1912,23 @@ static QJsonObject renormalizeSketchContent(QJsonObject root,
         root.insert(QStringLiteral("images"), images);
     }
 
+    if (root.contains(QStringLiteral("texts"))) {
+        QJsonArray texts = root.value(QStringLiteral("texts")).toArray();
+        for (int i = 0; i < texts.size(); ++i) {
+            QJsonObject o = texts.at(i).toObject();
+            o.insert(QStringLiteral("x"),
+                     (o.value(QStringLiteral("x")).toDouble() * oW + eDl) / nW);
+            o.insert(QStringLiteral("y"),
+                     (o.value(QStringLiteral("y")).toDouble() * oH + eDt) / nH);
+            o.insert(QStringLiteral("w"),
+                     o.value(QStringLiteral("w")).toDouble() * oW / nW);
+            // size (source px), text, color untouched: absolute wrap width and
+            // glyph size are preserved, like image absolute size.
+            texts.replace(i, o);
+        }
+        root.insert(QStringLiteral("texts"), texts);
+    }
+
     root.insert(QStringLiteral("w"), newW);
     root.insert(QStringLiteral("h"), newH);
     return root;
@@ -1961,6 +1979,11 @@ static QRectF sketchInkBoundsSrc(const QJsonObject& root) {
                    o.value(QStringLiteral("w")).toDouble() * w,
                    o.value(QStringLiteral("h")).toDouble() * h));
     }
+    for (mn::SketchTextSpec t : mn::parseSketchTexts(root)) {
+        t.family = mn::sketchTextFamily();
+        const QRectF r = mn::sketchTextRectSrc(t, w, h);   // derived height
+        if (r.height() > 0) add(r);
+    }
     return acc;
 }
 
@@ -2005,6 +2028,100 @@ bool BlockModel::sketchFitToInk(int row) {
     if (dl == 0 && dt == 0 && dr == 0 && db == 0) return false;
     sketchResizeCanvas(row, dl, dt, dr, db);
     return true;
+}
+
+int BlockModel::sketchAddText(int row, qreal x, qreal y, qreal w,
+                              const QString& text, qreal size,
+                              const QString& colorHex) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return -1;
+    if (text.trimmed().isEmpty() || size <= 0) return -1;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const double srcW = root.value(QStringLiteral("w")).toInt(480);
+    QJsonObject t;
+    t.insert(QStringLiteral("text"), text);
+    t.insert(QStringLiteral("x"), x);
+    t.insert(QStringLiteral("y"), y);
+    t.insert(QStringLiteral("w"), std::max(w, (2.0 * size) / srcW));   // 2em floor
+    t.insert(QStringLiteral("size"), size);
+    t.insert(QStringLiteral("color"), colorHex);
+    QJsonArray texts = root.value(QStringLiteral("texts")).toArray();
+    texts.append(t);
+    root.insert(QStringLiteral("texts"), texts);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return texts.size() - 1;
+}
+
+void BlockModel::sketchSetText(int row, int idx, const QString& text) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    QJsonArray texts = root.value(QStringLiteral("texts")).toArray();
+    if (idx < 0 || idx >= texts.size()) return;
+    QJsonObject o = texts.at(idx).toObject();
+    if (o.value(QStringLiteral("text")).toString() == text) return;   // no txn
+    if (text.trimmed().isEmpty()) {
+        texts.removeAt(idx);            // blank commit = delete (overlay contract)
+    } else {
+        o.insert(QStringLiteral("text"), text);
+        texts.replace(idx, o);
+    }
+    root.insert(QStringLiteral("texts"), texts);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+void BlockModel::sketchSetTextBox(int row, int idx, qreal x, qreal y,
+                                  qreal w, qreal size) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    if (size <= 0) return;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    QJsonArray texts = root.value(QStringLiteral("texts")).toArray();
+    if (idx < 0 || idx >= texts.size()) return;
+    const double srcW = root.value(QStringLiteral("w")).toInt(480);
+    QJsonObject o = texts.at(idx).toObject();
+    o.insert(QStringLiteral("x"), x);
+    o.insert(QStringLiteral("y"), y);
+    o.insert(QStringLiteral("w"), std::max(w, (2.0 * size) / srcW));
+    o.insert(QStringLiteral("size"), size);
+    texts.replace(idx, o);
+    root.insert(QStringLiteral("texts"), texts);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+void BlockModel::sketchRemoveText(int row, int idx) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isSketch) return;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    QJsonArray texts = root.value(QStringLiteral("texts")).toArray();
+    if (idx < 0 || idx >= texts.size()) return;
+    texts.removeAt(idx);
+    root.insert(QStringLiteral("texts"), texts);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
 }
 
 int BlockModel::rowForId(const QString& id) const {

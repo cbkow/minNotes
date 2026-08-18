@@ -16,6 +16,7 @@
 #include "../notes/annotation_note.h"
 #include "../notes/annotation_serializer.h"
 #include "../notes/annotation_thumbnail.h"
+#include "../notes/sketch_text.h"
 #include "../notes/doc_ink.h"
 
 #include <QBuffer>
@@ -415,6 +416,11 @@ QImage renderSketch(const BlockModel* m, int row) {
                            im.value(QStringLiteral("w")).toDouble() * W,
                            im.value(QStringLiteral("h")).toDouble() * H),
                     src);
+    }
+    // Text elements between images and ink (z-order: ink can circle labels).
+    for (mn::SketchTextSpec t : mn::parseSketchTexts(obj)) {
+        t.family = mn::sketchTextFamily();
+        mn::paintSketchText(p, t, w, h, double(W) / double(w));
     }
     // strokeWidth is stored in SOURCE px (the w-wide canvas) — scale to 2x.
     for (const qcv::ActiveStroke& s : qcv::AnnotationSerializer::jsonStringToStrokes(json))

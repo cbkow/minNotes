@@ -1856,9 +1856,11 @@ FocusScope {
     }
 
     // Space-up releases the sketch tab's hand-pan (press side lives in the
-    // sketch branch of Keys.onPressed below).
+    // sketch branch of Keys.onPressed below). Gated off while the text
+    // overlay edits — a stuck panMode would hide the frame handles.
     Keys.onReleased: (event) => {
-        if (root.activeSketchRow >= 0 && event.key === Qt.Key_Space && !event.isAutoRepeat) {
+        if (root.activeSketchRow >= 0 && !sketchTextSession.active
+                && event.key === Qt.Key_Space && !event.isAutoRepeat) {
             sketchEditCanvas.panMode = false
             event.accepted = true
         }
@@ -1869,7 +1871,13 @@ FocusScope {
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
         var inTable = tcur.active
-        if (k === Qt.Key_Escape) {
+        // Sketch text overlay owns the keyboard while editing (belt-and-braces:
+        // the TextEdit consumes nearly everything before it can bubble here).
+        if (root.activeSketchRow >= 0 && sketchTextSession.active) {
+            if (k === Qt.Key_Escape) sketchTextSession.commit()
+            event.accepted = true
+        }
+        else if (k === Qt.Key_Escape) {
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
@@ -3949,6 +3957,7 @@ FocusScope {
                 anchors.fill: parent
                 cameraEnabled: true   // frame floats at pan/zoom; overflow captures
                 frameBorderColor: Theme.colors.divider
+                fontFamily: Theme.font.family   // text elements = the chrome font (ruling)
                 // Load-bearing revision dep (reactivity rule 1e). Resolved JSON
                 // so embedded image srcs are loadable URLs.
                 data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
@@ -3962,6 +3971,11 @@ FocusScope {
                 onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
                 onImageRectChanged: (i, x, y, w, h) => blockModel.sketchSetImageRect(sketchFrame.r, i, x, y, w, h)
                 onImageRemoved: (i) => blockModel.sketchRemoveImage(sketchFrame.r, i)
+                onTextBoxChanged: (i, x, y, w, s) => blockModel.sketchSetTextBox(sketchFrame.r, i, x, y, w, s)
+                onTextRemoved: (i) => blockModel.sketchRemoveText(sketchFrame.r, i)
+                editingTextIndex: sketchTextSession.mode === "edit" ? sketchTextSession.index : -1
+                onTextCreateRequested: (nx, ny) => sketchTextSession.beginCreate(nx, ny)
+                onTextEditRequested: (i) => sketchTextSession.beginEdit(i)
                 onUserCameraInput: sketchStage.userCam = true
             }
             Text {   // arm hint on a fresh canvas
@@ -3988,6 +4002,121 @@ FocusScope {
                 onFitInkRequested: sketchStage.fitInkCamera()
             }
 
+            // --- Text-box editing session. The canvas paints COMMITTED text;
+            // while a session is open the overlay TextEdit is the only visual
+            // (create: no model element exists yet; edit: the element is
+            // hidden from paint). Commit on click-away = ONE model txn (one
+            // ⌘Z per session); Escape cancels; blank commits delete (model
+            // contract); create-then-nothing touches nothing at all. ---
+            QtObject {
+                id: sketchTextSession
+                property string mode: ""        // "" | "create" | "edit"
+                property int row: -1            // captured at begin — commit may
+                                                // land after a tab switch
+                property int index: -1          // edit mode: element index
+                property real ex: 0; property real ey: 0; property real ew: 0
+                property real esize: 16
+                property color ecolor: "#E4E3E2"
+                property string origText: ""
+                readonly property bool active: mode !== ""
+                // Chip padding (derived from size, the helper's 0.4em rule).
+                readonly property real padPx: esize * 0.4 * sketchEditCanvas.zoom
+
+                function beginCreate(nx, ny) {
+                    commit()                    // a canvas press can race focus-out
+                    row = sketchFrame.r
+                    esize = root.inspector ? root.inspector.drawTextSize : 16
+                    ecolor = root.inspector ? root.inspector.drawColor : "#E4E3E2"
+                    ex = nx; ey = ny
+                    ew = Math.min(0.5, Math.max(240, 2 * esize) / Math.max(1, sketchStage.vw))
+                    index = -1; origText = ""
+                    mode = "create"
+                }
+                function beginEdit(i) {
+                    commit()
+                    row = sketchFrame.r
+                    var t = sketchEditCanvas.textElementAt(i)
+                    if (t.text === undefined) return
+                    index = i
+                    ex = t.x; ey = t.y; ew = t.w
+                    esize = t.size; ecolor = t.color
+                    origText = t.text
+                    mode = "edit"
+                }
+                function commit() {
+                    if (mode === "") return
+                    // Close the session BEFORE the model call so the data
+                    // round-trip can't re-enter it (Connections below).
+                    var m = mode, r = row, i = index, orig = origText
+                    var txt = sketchTextEditor.text
+                    mode = ""
+                    if (m === "create" && txt.trim() !== "")
+                        blockModel.sketchAddText(r, ex, ey, ew, txt, esize, "" + ecolor)
+                    else if (m === "edit" && txt !== orig)
+                        blockModel.sketchSetText(r, i, txt)   // blank ⇒ model deletes
+                    root.forceActiveFocus()
+                }
+                function cancel() {
+                    if (mode === "") return
+                    mode = ""
+                    root.forceActiveFocus()
+                }
+            }
+            Connections {
+                // External data change mid-EDIT (another surface, programmatic
+                // undo) → the element under the overlay is stale: cancel.
+                // Create sessions have no element and just continue.
+                target: sketchEditCanvas
+                function onDataChanged() {
+                    if (sketchTextSession.mode === "edit") sketchTextSession.cancel()
+                }
+            }
+            Connections {
+                // ANY tool change commits the session — Inspector buttons are
+                // plain MouseAreas that never steal keyboard focus, so without
+                // this a mid-edit tool switch leaves the overlay live and
+                // typing keeps landing in it.
+                target: root.inspector
+                function onDrawToolChanged() { sketchTextSession.commit() }
+            }
+            Rectangle {   // the live CHIP: fill = element color, accent border = session
+                visible: sketchTextEditor.visible
+                x: sketchEditCanvas.panX + sketchTextSession.ex * sketchStage.vw * sketchEditCanvas.zoom
+                y: sketchEditCanvas.panY + sketchTextSession.ey * sketchStage.vh * sketchEditCanvas.zoom
+                width: sketchTextSession.ew * sketchStage.vw * sketchEditCanvas.zoom
+                height: sketchTextEditor.height + 2 * sketchTextSession.padPx
+                color: sketchTextSession.ecolor
+                border.width: 1; border.color: Theme.colors.accent
+            }
+            TextEdit {
+                id: sketchTextEditor
+                visible: sketchTextSession.active
+                x: sketchEditCanvas.panX + sketchTextSession.ex * sketchStage.vw * sketchEditCanvas.zoom
+                   + sketchTextSession.padPx
+                y: sketchEditCanvas.panY + sketchTextSession.ey * sketchStage.vh * sketchEditCanvas.zoom
+                   + sketchTextSession.padPx
+                width: Math.max(4, sketchTextSession.ew * sketchStage.vw * sketchEditCanvas.zoom
+                                   - 2 * sketchTextSession.padPx)
+                // Height implicit: the chip grows downward while typing, same
+                // as the committed paint's derived height.
+                wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+                textMargin: 0
+                font.family: Theme.font.family   // == the canvas's fontFamily
+                font.pixelSize: Math.max(1, sketchTextSession.esize * sketchEditCanvas.zoom)
+                color: sketchEditCanvas.textInkFor(sketchTextSession.ecolor)
+                selectByMouse: true
+                selectionColor: Theme.colors.divider
+                onVisibleChanged: if (visible) {
+                    text = sketchTextSession.mode === "edit" ? sketchTextSession.origText : ""
+                    cursorPosition = text.length
+                    forceActiveFocus()
+                }
+                onActiveFocusChanged: if (!activeFocus && visible) sketchTextSession.commit()
+                // Escape COMMITS (the note-card island precedent — losing typed
+                // text to a reflexive Esc is worse; blanking the box deletes).
+                Keys.onEscapePressed: sketchTextSession.commit()
+            }
+
             // --- Frame resize handles: 8 edge/corner grips on the canvas
             // border, live in SCREEN space at any zoom. The imgResize pattern:
             // preview outline + one-txn commit on release (the document — and
@@ -4012,6 +4141,7 @@ FocusScope {
 
                 function snap(v) { return Math.round(v / 10) * 10 }
                 function begin(edges, p) {
+                    sketchTextSession.commit()   // a handle grab is a mode change
                     grabEdges = edges; startX = p.x; startY = p.y
                     dl = dt = dr = db = 0
                     dragging = true
@@ -4115,7 +4245,11 @@ FocusScope {
             }
         }
         // Every entry into a sketch tab (or switch between two) starts at Fit.
-        onRChanged: if (r >= 0) sketchStage.fitCamera()
+        // A live text session commits first (its row was captured at begin).
+        onRChanged: {
+            sketchTextSession.commit()
+            if (r >= 0) sketchStage.fitCamera()
+        }
     }
 
     // --- Margin-ink layer (tier 2 annotations). ONE viewport-sized canvas

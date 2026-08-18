@@ -16,6 +16,7 @@
 #pragma once
 
 #include "active_stroke.h"
+#include "sketch_text.h"
 #include "viewport_annotator.h"
 
 #include <QColor>
@@ -24,6 +25,7 @@
 #include <QQuickPaintedItem>
 #include <QRectF>
 #include <QString>
+#include <QVariant>
 #include <QtQmlIntegration>
 
 #include <optional>
@@ -59,6 +61,12 @@ class SketchCanvas : public QQuickPaintedItem
     // Space held (the tab drives it): mouse drags pan the camera instead of
     // drawing/selecting; open/closed-hand cursors.
     Q_PROPERTY(bool panMode READ panMode WRITE setPanMode NOTIFY panModeChanged FINAL)
+    // Text-element font, QML-bound from Theme (identical to the editing
+    // overlay's by construction — never resolved independently in C++ here).
+    Q_PROPERTY(QString fontFamily READ fontFamily WRITE setFontFamily NOTIFY fontFamilyChanged FINAL)
+    // Index of the text element the QML overlay is editing (hidden from
+    // paint so there's no double-vision); -1 = none.
+    Q_PROPERTY(int editingTextIndex READ editingTextIndex WRITE setEditingTextIndex NOTIFY editingTextIndexChanged FINAL)
     Q_PROPERTY(bool armed READ armed NOTIFY toolChanged FINAL)
     Q_PROPERTY(bool drawing READ isDrawing NOTIFY drawingChanged FINAL)
     Q_PROPERTY(bool empty READ empty NOTIFY dataChanged FINAL)
@@ -104,9 +112,14 @@ public:
     void setFrameBorderColor(const QColor &c);
     bool panMode() const { return panMode_; }
     void setPanMode(bool on);
-    bool armed() const { return drawToolActive_; }   // a real draw tool (not select)
+    QString fontFamily() const { return fontFamily_; }
+    void setFontFamily(const QString &f);
+    int editingTextIndex() const { return editingTextIndex_; }
+    void setEditingTextIndex(int i);
+    // A placing tool is armed (draw tool or text tool — not select).
+    bool armed() const { return drawToolActive_ || textToolArmed_; }
     bool isDrawing() const { return drawing_; }
-    bool empty() const { return strokes_.empty() && images_.empty(); }
+    bool empty() const { return strokes_.empty() && images_.empty() && texts_.empty(); }
     bool selectable() const { return selectable_; }
     void setSelectable(bool s);
     bool hasSelection() const { return selKind_ != SelNone; }
@@ -116,6 +129,13 @@ public:
     Q_INVOKABLE void cancelStroke();      // Esc mid-drag
     Q_INVOKABLE void clearSelection();    // Esc / click empty
     Q_INVOKABLE void deleteSelection();   // Delete / Backspace
+    // The overlay's read of one text element: {x, y, w, text, size, color}.
+    Q_INVOKABLE QVariantMap textElementAt(int index) const;
+    // Chip glyph color for a fill (black/white by luminance) — the overlay
+    // asks HERE so QML and C++ can never disagree on the formula.
+    Q_INVOKABLE QColor textInkFor(const QColor &bg) const {
+        return mn::sketchTextInkColor(bg);
+    }
 
 signals:
     void dataChanged();
@@ -128,6 +148,8 @@ signals:
     void cameraChanged();
     void frameBorderColorChanged();
     void panModeChanged();
+    void fontFamilyChanged();
+    void editingTextIndexChanged();
     // Any direct camera input on the canvas (wheel/pinch/pan-drag) — the tab
     // flips its "user owns the camera" flag so resizes stop re-fitting.
     void userCameraInput();
@@ -141,11 +163,20 @@ signals:
     // never round-tripped through the canvas. QML commits via the block model.
     void imageRectChanged(int index, qreal x, qreal y, qreal w, qreal h);
     void imageRemoved(int index);
+    // Text-element edits (index-based, the image pattern): geometry from
+    // move/scale/wrap drags, removal from Delete.
+    void textBoxChanged(int index, qreal x, qreal y, qreal w, qreal size);
+    void textRemoved(int index);
+    // Text-tool click on the canvas (normalized point) → the QML overlay
+    // opens a create session; double-click a text element → re-edit.
+    void textCreateRequested(qreal nx, qreal ny);
+    void textEditRequested(int index);
 
 protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
+    void mouseDoubleClickEvent(QMouseEvent *e) override;   // re-edit a text box
     void hoverMoveEvent(QHoverEvent *e) override;   // resize cursors + brush circle
     void hoverLeaveEvent(QHoverEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;       // camera: scroll pan / ⌘-zoom
@@ -173,13 +204,15 @@ private:
     void eraseAt(QPointF norm);
     void setDrawing(bool d);
     void parseImages(const QString &data);     // pull the `images` array from data_
+    void parseTexts(const QString &data);      // pull `texts[]`; derives heights
+    void refreshTextHeights();                 // recompute hNorm (font/size deps)
     const QImage &imageFor(const QString &src);   // cached load (src = resolved URL/path)
 
     // --- Selection / move (select mode = selectable_ && no tool armed) ---
-    enum SelKind { SelNone, SelStroke, SelImage };
-    // Select mode = selectable and not holding a real draw tool — so the explicit
+    enum SelKind { SelNone, SelStroke, SelImage, SelText };
+    // Select mode = selectable and not holding a placing tool — so the explicit
     // "select" tool AND a bare disarm ("") both land here.
-    bool inSelectMode() const { return selectable_ && !drawToolActive_; }
+    bool inSelectMode() const { return selectable_ && !drawToolActive_ && !textToolArmed_; }
     void applyAcceptedButtons();               // accept mouse iff drawing or selecting
     void selectPress(QPointF pos);
     void selectMove(QPointF pos);
@@ -188,7 +221,9 @@ private:
     QRectF strokeBoundsNorm(int idx) const;    // normalized bbox of a stroke
     QRectF selBoundsNorm() const;              // normalized bbox of the current selection
     QRectF selDisplayRect() const;             // px rect for outline + handles
-    int  handleAtPx(QPointF px) const;         // corner under px (0=TL 1=TR 2=BL 3=BR), or -1
+    // Handle under px: 0=TL 1=TR 2=BL 3=BR corners; 4=left-mid 5=right-mid
+    // (SelText only — the wrap-width grips); -1 = none.
+    int  handleAtPx(QPointF px) const;
     void translateSelection(QPointF dNorm);    // move (clamped to canvas), live
     void beginResize(int corner);              // grab a handle; pivot = opposite corner
     void resizeTo(QPointF norm);               // proportional scale about the pivot, live
@@ -213,6 +248,7 @@ private:
     bool drawing_ = false;
     bool selectable_ = false;
     bool drawToolActive_ = false;              // a real draw tool is armed (not select)
+    bool textToolArmed_ = false;               // the text tool (places boxes, no strokes)
 
     qcv::ViewportAnnotator annot_;
     std::vector<qcv::ActiveStroke> strokes_;   // parsed from data_
@@ -224,7 +260,15 @@ private:
     bool eraseGesture_ = false;
     bool eraseDirty_   = false;
     std::vector<qcv::ActiveStroke> eraseStrokes_;   // working copy during the gesture
+    // A text element: the persisted spec + the DERIVED wrapped height
+    // (normalized), computed eagerly at parse so paint/bounds/hit never run
+    // layout per frame.
+    struct SketchText { mn::SketchTextSpec spec; double hNorm = 0; };
+
     std::vector<SketchImage> images_;          // parsed from data_ (under the strokes)
+    std::vector<SketchText> texts_;            // parsed from data_ (over images, under ink)
+    QString fontFamily_;                       // QML-bound (Theme); "" → helper probe
+    int editingTextIndex_ = -1;                // hidden from paint while overlaid
     QHash<QString, QImage> imgCache_;          // src → decoded image
     mutable std::optional<QRectF> contentBounds_;   // lazy signed bbox cache
 
@@ -237,4 +281,5 @@ private:
     int     grabCorner_ = -1;                  // handle being dragged
     QRectF  origBounds_;                       // selection bounds at resize start (norm)
     std::vector<QPointF> origPoints_;          // stroke points at resize start (absolute scale)
+    double  origTextW_ = 0, origTextSize_ = 0; // text w/size at resize start
 };

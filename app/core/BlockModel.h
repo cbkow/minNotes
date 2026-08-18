@@ -444,6 +444,22 @@ public:
     // Resize the frame to the signed ink bbox (+8px margin) — pulls overflow
     // ink back inside [0,1]. False when the sketch is empty or already fits.
     Q_INVOKABLE bool sketchFitToInk(int row);
+    // --- Sketch text elements: descriptor `texts[]` = {x,y,w,text,size,color}
+    // (x/y/w normalized, size = font px in SOURCE px, height always DERIVED
+    // from wrapping — never stored). One undo step per call, images[] rules. ---
+    // Add a wrapping text box; returns the new index, or -1 (blank text /
+    // bad size rejected). Width clamps to a 2em floor.
+    Q_INVOKABLE int sketchAddText(int row, qreal x, qreal y, qreal w,
+                                  const QString& text, qreal size,
+                                  const QString& colorHex);
+    // Replace a text element's content. BLANK (or whitespace) text DELETES
+    // the element in the same txn — the overlay's empty-commit contract.
+    // Unchanged text is a no-op (no txn, no undo step).
+    Q_INVOKABLE void sketchSetText(int row, int index, const QString& text);
+    // Move/resize the box (x/y/w normalized, size source px); 2em width floor.
+    Q_INVOKABLE void sketchSetTextBox(int row, int index, qreal x, qreal y,
+                                      qreal w, qreal size);
+    Q_INVOKABLE void sketchRemoveText(int row, int index);
     // Current row of a block id, or -1 if it no longer exists.
     Q_INVOKABLE int rowForId(const QString& id) const;
     // Block id at `row` (empty if out of range).

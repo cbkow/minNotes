@@ -22,8 +22,15 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_serializer.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_thumbnail.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/doc_ink.cpp
+    # sketch_text = the shared text-element layout/paint core (QTextDocument),
+    # consumed by BlockModel (fit-to-ink) and Exporter (raster bake).
+    ${CMAKE_SOURCE_DIR}/app/notes/sketch_text.cpp
 )
 target_include_directories(mn_regression_test PRIVATE ${CMAKE_SOURCE_DIR}/app/core)
+# The bundled app fonts: the harness registers Inter so sketch-text height
+# derivation matches the app (assertions stay font-relative regardless).
+target_compile_definitions(mn_regression_test PRIVATE
+    MN_FONTS_DIR="${CMAKE_SOURCE_DIR}/app/qml/MinNotes/App/fonts")
 target_link_libraries(mn_regression_test PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument

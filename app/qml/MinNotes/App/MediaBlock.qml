@@ -162,6 +162,7 @@ Item {
             anchors.fill: parent
             data: mb.sketchJson
             sourceHeight: mb.ih
+            fontFamily: Theme.font.family
             sourceWidth: mb.iw
         }
         Text {   // empty-canvas hint

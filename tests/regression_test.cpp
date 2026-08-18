@@ -9,7 +9,10 @@
 #include "BlockModel.h"
 #include "Exporter.h"
 #include "../app/notes/doc_ink.h"
+#include "../app/notes/sketch_text.h"
 #include <private/qzipreader_p.h>
+
+#include <QFontDatabase>
 
 #include <QGuiApplication>
 #include <QDir>
@@ -19,6 +22,9 @@
 #include <QJsonObject>
 #include <QUrl>
 #include <QtGlobal>
+
+#include <algorithm>
+#include <cmath>
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { \
@@ -667,6 +673,9 @@ static void testSketchResizeRenorm() {
       probe.save(probePng, "PNG"); }
     CHECK(m.sketchAddImageFromUrl(row, QUrl::fromLocalFile(probePng).toString()),
           "probe image placed into the sketch");
+    CHECK(m.sketchAddText(row, 0.5, 0.5, 0.3, QStringLiteral("note"), 20,
+                          QStringLiteral("#FF8800")) == 0,
+          "text element added at index 0");
     const QString preResize = m.contentForRow(row);
     const double img0x = QJsonDocument::fromJson(preResize.toUtf8()).object()
         .value(QStringLiteral("images")).toArray().at(0).toObject()
@@ -699,6 +708,14 @@ static void testSketchResizeRenorm() {
               && qFuzzyCompare(img.value(QStringLiteral("w")).toDouble(),
                                (64.0 / 480.0) * 480 / 580.0),
           "image rect: position shifted, size rescaled");
+    const QJsonObject txt = o.value(QStringLiteral("texts")).toArray().at(0).toObject();
+    CHECK(qFuzzyCompare(txt.value(QStringLiteral("x")).toDouble(), (0.5 * 480 + 100) / 580.0)
+              && qFuzzyCompare(txt.value(QStringLiteral("y")).toDouble(), (0.5 * 480 + 50) / 530.0)
+              && qFuzzyCompare(txt.value(QStringLiteral("w")).toDouble(), 0.3 * 480 / 580.0)
+              && txt.value(QStringLiteral("size")).toDouble() == 20.0
+              && txt.value(QStringLiteral("text")).toString() == QStringLiteral("note")
+              && txt.value(QStringLiteral("color")).toString() == QStringLiteral("#FF8800"),
+          "text element: position shifted, width rescaled, size/text/color untouched");
     CHECK(!qFuzzyCompare(hBefore, m.heightForRow(row)),
           "Fenwick height re-derived from the new aspect (%.1f -> %.1f)",
           hBefore, m.heightForRow(row));
@@ -736,10 +753,12 @@ static void testSketchExportCaps() {
     class SizeSink : public Exporter::AssetSink {
     public:
         QList<QSize> sizes;
+        QImage last;
         QString addFile(const QString&, const QString& b) override {
             return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
         QString addImage(const QImage& img, const QString& b) override {
             sizes << img.size();
+            last = img;
             return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
     };
 
@@ -778,6 +797,28 @@ static void testSketchExportCaps() {
     html = ex.toHtml(Exporter::Options{}, s3);
     CHECK(html.contains(QStringLiteral("width:700px;max-width:none")),
           "dw override rides the export like the image branch");
+
+    // Text-only sketch: baked into the raster (dimensions unchanged, glyph
+    // pixels present under any resolved font).
+    {
+        BlockModel tm;
+        tm.newDocument();
+        while (tm.rowCountQml() > 0) tm.removeBlock(0);
+        const int trow = tm.insertSketch(-1);
+        tm.sketchAddText(trow, 0.1, 0.1, 0.5, QStringLiteral("baked label"), 32,
+                         QStringLiteral("#FFFFFF"));
+        Exporter tex;
+        tex.setModel(&tm);
+        SizeSink ts;
+        tex.toHtml(Exporter::Options{}, ts);
+        CHECK(ts.sizes.size() == 1 && ts.sizes[0] == QSize(960, 960),
+              "text-only sketch rasters at 2x, dimensions unchanged");
+        bool lit = false;
+        for (int yy = 0; yy < ts.last.height() && !lit; yy += 2)
+            for (int xx = 0; xx < ts.last.width() && !lit; xx += 2)
+                if (qAlpha(ts.last.pixel(xx, yy)) != 0) lit = true;
+        CHECK(lit, "text glyphs baked into the raster");
+    }
 }
 
 // --- Test 12: sketch fit-to-ink — signed overflow coords, bbox resize -------
@@ -820,6 +861,113 @@ static void testSketchFitToInk() {
     CHECK(!m.sketchFitToInk(row), "second fit is a no-op (frame already fits)");
 }
 
+// --- Test 15: sketch text elements — invokables, undo, fit-to-ink ------------
+// texts[] = {x,y,w,text,size,color}: height is DERIVED (never stored), blank
+// setText deletes (the overlay's empty-commit contract), fit-to-ink uses the
+// same layout helper the model does so the check is font-agnostic.
+static void testSketchTextElements() {
+    qInfo("[15] sketch text: add/set/box/remove, blank-deletes, fit-to-ink");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_text.mndb");
+    QFile::remove(path);
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    const int row = m.insertSketch(-1);
+    auto texts = [&m, row] {
+        return QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
+            .value(QStringLiteral("texts")).toArray();
+    };
+
+    CHECK(m.sketchAddText(row, 0.1, 0.2, 0.4, QStringLiteral("   "), 24,
+                          QStringLiteral("#FF5768")) == -1,
+          "blank text rejected (no element, no undo step)");
+    const int idx = m.sketchAddText(row, 0.1, 0.2, 0.001,
+        QStringLiteral("hello wrap world, a label long enough to wrap"),
+        24, QStringLiteral("#FF5768"));
+    CHECK(idx == 0, "text added at index 0");
+    CHECK(qFuzzyCompare(texts().at(0).toObject().value(QStringLiteral("w")).toDouble(),
+                        2.0 * 24 / 480.0),
+          "width clamped to the 2em floor");
+    m.undo();
+    CHECK(texts().isEmpty(), "one undo removes the add");
+    m.redo();
+    CHECK(texts().size() == 1, "redo restores it");
+
+    m.sketchSetText(row, 0, QStringLiteral("edited"));
+    CHECK(texts().at(0).toObject().value(QStringLiteral("text")).toString()
+              == QStringLiteral("edited"), "setText replaces content (one txn)");
+    m.sketchSetText(row, 0, QStringLiteral("edited"));   // unchanged → no txn
+    m.undo();
+    CHECK(texts().at(0).toObject().value(QStringLiteral("text")).toString()
+              .startsWith(QStringLiteral("hello")),
+          "unchanged setText added no undo step (one undo crosses the edit)");
+    m.redo();
+
+    m.sketchSetText(row, 0, QStringLiteral("  "));
+    CHECK(texts().isEmpty(), "blank setText DELETES the element");
+    m.undo();
+    CHECK(texts().size() == 1
+              && texts().at(0).toObject().value(QStringLiteral("text")).toString()
+                     == QStringLiteral("edited"),
+          "undo resurrects the deleted element");
+
+    m.sketchSetTextBox(row, 0, 0.3, 0.4, 0.5, 24);
+    const QJsonObject tb = texts().at(0).toObject();
+    CHECK(qFuzzyCompare(tb.value(QStringLiteral("x")).toDouble(), 0.3)
+              && qFuzzyCompare(tb.value(QStringLiteral("w")).toDouble(), 0.5),
+          "setTextBox moves/resizes");
+
+    // Fit-to-ink expectation computed through the SAME helper + margin math
+    // the model uses — holds under any resolved font.
+    mn::SketchTextSpec spec;
+    spec.text = tb.value(QStringLiteral("text")).toString();
+    spec.x = 0.3; spec.y = 0.4; spec.w = 0.5; spec.size = 24;
+    spec.family = mn::sketchTextFamily();
+    const QRectF r = mn::sketchTextRectSrc(spec, 480, 480);
+    const double eps = 1e-6, margin = 8.0;
+    const int dl = -int(std::floor(r.left() - margin + eps));
+    const int dt = -int(std::floor(r.top() - margin + eps));
+    const int dr = int(std::ceil(r.right() + margin - eps)) - 480;
+    const int db = int(std::ceil(r.bottom() + margin - eps)) - 480;
+    const int expW = std::clamp(480 + dl + dr, 64, 8192);
+    const int expH = std::clamp(480 + dt + db, 64, 8192);
+    CHECK(m.sketchFitToInk(row), "fit-to-ink on a text-only sketch resizes");
+    CHECK(m.mediaW(row) == expW && m.mediaH(row) == expH,
+          "frame = derived text rect + margin (got %dx%d want %dx%d)",
+          m.mediaW(row), m.mediaH(row), expW, expH);
+
+    // R7: a stroke edit merges through sketchSetShapes — texts[] must survive
+    // the merge byte-identically (unknown-key preservation, the old-build
+    // compatibility guarantee).
+    const QString preShapes = QString::fromUtf8(QJsonDocument(
+        QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
+            .value(QStringLiteral("texts")).toArray().at(0).toObject()
+        ).toJson(QJsonDocument::Compact));
+    m.sketchSetShapes(row, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"s9\",\"type\":\"line\",\"color\":[0,0,1,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":false,\"points\":[[0.1,0.1],[0.9,0.9]]}]}"));
+    const QString postShapes = QString::fromUtf8(QJsonDocument(
+        QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
+            .value(QStringLiteral("texts")).toArray().at(0).toObject()
+        ).toJson(QJsonDocument::Compact));
+    CHECK(postShapes == preShapes, "texts[] survives a stroke-edit merge byte-identically");
+
+    m.sketchRemoveText(row, 0);
+    CHECK(texts().isEmpty(), "removeText deletes");
+    m.undo();
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    int srow = -1;
+    for (int i = 0; i < m2.rowCountQml(); ++i)
+        if (m2.mediaKind(i) == QLatin1String("sketch")) { srow = i; break; }
+    CHECK(srow >= 0 && m2.contentForRow(srow).contains(QStringLiteral("\"texts\"")),
+          "texts[] round-trips save/reopen");
+    QFile::remove(path);
+}
+
 // --- Test 14: sketch embed width — natural size, dw honoured -----------------
 // Sketches left the "always page-wide" special case (only PDFs keep it):
 // natural canvas width up to the page, dw drag-resize like any image.
@@ -849,6 +997,11 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
+    // Register the app text font so sketch-text height derivation matches the
+    // app. Non-fatal if missing — text assertions are font-relative (computed
+    // through the same helper the code under test uses).
+    QFontDatabase::addApplicationFont(
+        QStringLiteral(MN_FONTS_DIR "/Inter_18pt-Regular.ttf"));
 
     qInfo("=== minNotes regression pass ===");
     testCountNotify();
@@ -865,6 +1018,7 @@ int main(int argc, char** argv) {
     testSketchFitToInk();
     testSketchExportCaps();
     testSketchEmbedWidth();
+    testSketchTextElements();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
