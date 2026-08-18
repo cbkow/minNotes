@@ -75,6 +75,9 @@ class SketchCanvas : public QQuickPaintedItem
     // embed leaves this false (passive); the full-frame tab sets it true.
     Q_PROPERTY(bool selectable READ selectable WRITE setSelectable NOTIFY selectableChanged FINAL)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
+    // The selected TEXT element's index (-1 unless a chip is selected) — the
+    // Inspector Size slider retargets it.
+    Q_PROPERTY(int selectedTextIndex READ selectedTextIndex NOTIFY selectionChanged FINAL)
     // Signed content bbox (normalized; strokes padded by half their width) and
     // whether ink lives beyond the frame. Consumed by fit-to-ink zoom, the
     // ghost pass, and the tab's overflow indicator.
@@ -123,6 +126,7 @@ public:
     bool selectable() const { return selectable_; }
     void setSelectable(bool s);
     bool hasSelection() const { return selKind_ != SelNone; }
+    int selectedTextIndex() const { return selKind_ == SelText ? selIdx_ : -1; }
     QRectF contentBoundsNorm() const;
     bool hasOverflow() const;
 

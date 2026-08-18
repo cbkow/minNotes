@@ -520,8 +520,13 @@ Rectangle {
                 }
             }
             Row {
-                // Text-box font size (source px) — the first tool-gated control.
-                visible: panel.drawTool === "text"
+                // Text-box font size. Two targets: the text tool armed → the
+                // default for NEW chips (live, persisted); a chip SELECTED on
+                // either ink surface → THAT chip, committed as one undo step
+                // on slider release.
+                id: textSizeRow
+                readonly property bool chipTarget: !!panel.editor && panel.editor.selChipSize > 0
+                visible: panel.drawTool === "text" || chipTarget
                 spacing: 8
                 Text {
                     text: "Size"
@@ -530,15 +535,23 @@ Rectangle {
                     font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
                 }
                 FlatSlider {
+                    id: textSizeSlider
                     width: panel.contentW - 80
                     anchors.verticalCenter: parent.verticalCenter
                     from: 8; to: 96
-                    value: panel.drawTextSize
                     fillColor: Theme.colors.textMuted
-                    onMoved: panel.drawTextSize = value
+                    // Imperative sync (a dragged QQC2 Slider breaks a value
+                    // binding, so we re-seed whenever the target changes).
+                    readonly property real target: textSizeRow.chipTarget
+                        ? panel.editor.selChipSize : panel.drawTextSize
+                    onTargetChanged: if (!pressed) value = target
+                    Component.onCompleted: value = target
+                    onMoved: if (!textSizeRow.chipTarget) panel.drawTextSize = value
+                    onPressedChanged: if (!pressed && textSizeRow.chipTarget)
+                        panel.editor.applyChipSize(value)
                 }
                 Text {
-                    text: Math.round(panel.drawTextSize)
+                    text: Math.round(textSizeSlider.value)
                     anchors.verticalCenter: parent.verticalCenter
                     color: Theme.colors.textSubtle
                     font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall

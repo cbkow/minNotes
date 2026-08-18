@@ -336,7 +336,8 @@ QString sanitizedBase(const QString& path) {
 // layout and stays out — layering can't fix anchoring.)
 QImage renderMediaInk(const BlockModel* m, int row, const QSize& target) {
     mn::DocInkAnchor a;
-    if (!mn::docInkFromJson(m->inkForRow(row), a) || a.strokes.empty()
+    if (!mn::docInkFromJson(m->inkForRow(row), a)
+        || (a.strokes.empty() && a.texts.empty())
         || a.space != mn::DocInkAnchor::Frame || target.isEmpty())
         return {};
     QImage img(target, QImage::Format_ARGB32_Premultiplied);
@@ -345,6 +346,12 @@ QImage renderMediaInk(const BlockModel* m, int row, const QSize& target) {
     p.setRenderHint(QPainter::Antialiasing, true);
     // strokeWidth is stored in media-INTRINSIC px (the doc_ink convention).
     const double ws = double(target.width()) / std::max(1, m->mediaW(row));
+    // Text chips before the ink (z-order: strokes can circle labels).
+    for (mn::SketchTextSpec t : a.texts) {
+        t.family = mn::sketchTextFamily();
+        mn::paintSketchText(p, t, std::max(1, m->mediaW(row)),
+                            std::max(1, m->mediaH(row)), ws);
+    }
     for (const qcv::ActiveStroke& s : a.strokes)
         qcv::paintStroke(p, s, target.width(), target.height(), ws);
     p.end();
@@ -362,14 +369,21 @@ struct TextInk { QImage img; QRectF box; };
 TextInk renderTextInk(const BlockModel* m, int row) {
     TextInk out;
     mn::DocInkAnchor a;
-    if (!mn::docInkFromJson(m->inkForRow(row), a) || a.strokes.empty()
+    if (!mn::docInkFromJson(m->inkForRow(row), a)
+        || (a.strokes.empty() && a.texts.empty())
         || a.space != mn::DocInkAnchor::Px)
         return out;
+    for (mn::SketchTextSpec& t : a.texts) t.family = mn::sketchTextFamily();
     QRectF box;
     for (const qcv::ActiveStroke& st : a.strokes) {
         QRectF b = qcv::strokeBoundsNorm(st);
         const double pad = std::max<double>(2.0, st.strokeWidth);
         b.adjust(-pad, -pad, pad, pad);
+        box = box.isNull() ? b : box.united(b);
+    }
+    for (const mn::SketchTextSpec& t : a.texts) {
+        // px space: local units ARE page px (x from page center — negative ok).
+        const QRectF b = mn::sketchTextRectSrc(t, 1.0, 1.0).adjusted(-2, -2, 2, 2);
         box = box.isNull() ? b : box.united(b);
     }
     const int W = int(std::ceil(box.width() * 2.0));
@@ -381,6 +395,8 @@ TextInk renderTextInk(const BlockModel* m, int row) {
     p.setRenderHint(QPainter::Antialiasing, true);
     p.scale(2.0, 2.0);
     p.translate(-box.left(), -box.top());
+    for (const mn::SketchTextSpec& t : a.texts)   // chips under the ink
+        mn::paintSketchText(p, t, 1.0, 1.0, 1.0);  // painter carries the 2×
     for (const qcv::ActiveStroke& st : a.strokes)
         qcv::paintStroke(p, st, 1.0, 1.0, 1.0);
     p.end();
@@ -1994,7 +2010,7 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
     if (kind == QLatin1String("image")) {
         QImage img(path);
         if (!img.isNull()) {
-            const bool hasInk = mn::docInkHasStrokes(m->inkForRow(row));
+            const bool hasInk = mn::docInkHasContent(m->inkForRow(row));   // strokes OR chips
             if (hasInk) {
                 img = bakeInk(img);
                 docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());

@@ -22,6 +22,7 @@
 #pragma once
 
 #include "active_stroke.h"
+#include "sketch_text.h"
 
 #include <QString>
 #include <vector>
@@ -32,6 +33,14 @@ struct DocInkAnchor {
     enum Space { Px, Frame };
     Space space = Px;
     std::vector<qcv::ActiveStroke> strokes;
+    // Text chips (`texts[]` in the envelope, the sketch element schema).
+    // Units follow the anchor's space: px anchors store x/y/w/size in page
+    // px (x = Δ from page CENTER, like stroke points); frame anchors store
+    // x/y/w frame-normalized with size in media-INTRINSIC px (the
+    // stroke_width convention). A TYPED member — the writer rebuilds the
+    // envelope from this struct, so a mere pass-through key would be
+    // destroyed on every stroke commit.
+    std::vector<mn::SketchTextSpec> texts;
 };
 
 // Serialize an anchor's strokes ("" when empty — the delete-the-row signal
@@ -44,5 +53,7 @@ QString docInkToJson(const DocInkAnchor& anchor);
 bool docInkFromJson(const QString& json, DocInkAnchor& out);
 
 bool docInkHasStrokes(const QString& json);
+// Strokes OR text chips (the ink-presence gate once texts exist).
+bool docInkHasContent(const QString& json);
 
 } // namespace mn

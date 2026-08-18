@@ -72,6 +72,7 @@ FocusScope {
     readonly property int inkStrokeCount: inkCanvas.strokeCount   // rail toggle enablement
     function setInkMode(on) {
         if (inkMode === !!on) return
+        inkTextSession.commit()   // leaving (or re-entering) ink mode COMMITS
         if (on) {
             if (activeTableId !== "" || activePdfId !== "" || activeVideoId !== ""
                 || activeSketchId !== "") setActiveTab("")   // back to the Document view
@@ -201,6 +202,41 @@ FocusScope {
 
     // Inspector hook: after a model-side Fit-to-ink, frame the new canvas.
     function sketchRefitCamera() { if (activeSketchRow >= 0) sketchStage.fitCamera() }
+
+    // --- Inspector Size-slider chip targeting: when a text chip is SELECTED
+    // on either surface, the slider edits that chip (value in page/source px;
+    // ink frame chips convert via the placement scale). -1 = no target, the
+    // slider falls back to the new-chip default. ---
+    readonly property real selChipSize: {
+        if (activeSketchRow >= 0 && sketchEditCanvas.selectedTextIndex >= 0) {
+            var t = (blockModel.contentRevision,
+                     sketchEditCanvas.textElementAt(sketchEditCanvas.selectedTextIndex))
+            return t.size !== undefined ? t.size : -1
+        }
+        if (inkMode && inkCanvas.selectedTextIndex >= 0) {
+            var r = inkCanvas.selectedTextRow
+            var u = (blockModel.inkRevision,
+                     inkCanvas.inkTextAt(r, inkCanvas.selectedTextIndex))
+            return u.size !== undefined ? u.size * inkCanvas.inkTextSizeScale(r) : -1
+        }
+        return -1
+    }
+    function applyChipSize(v) {
+        if (v <= 0) return
+        if (activeSketchRow >= 0 && sketchEditCanvas.selectedTextIndex >= 0) {
+            var i = sketchEditCanvas.selectedTextIndex
+            var t = sketchEditCanvas.textElementAt(i)
+            if (t.size !== undefined && Math.abs(t.size - v) > 0.01)
+                blockModel.sketchSetTextBox(activeSketchRow, i, t.x, t.y, t.w, v)
+        } else if (inkMode && inkCanvas.selectedTextIndex >= 0) {
+            var r = inkCanvas.selectedTextRow, j = inkCanvas.selectedTextIndex
+            var u = inkCanvas.inkTextAt(r, j)
+            var sc = inkCanvas.inkTextSizeScale(r)
+            var lv = sc > 0 ? v / sc : v
+            if (u.size !== undefined && Math.abs(u.size - lv) > 0.01)
+                inkCanvas.inkSetTextBox(r, j, u.x, u.y, u.w, lv)
+        }
+    }
 
     function insertSketchAt(row) {
         blockModel.commitMarkdown(cursor.focusRow)   // leaving the edited block → consume its inline md
@@ -1875,6 +1911,11 @@ FocusScope {
         // the TextEdit consumes nearly everything before it can bubble here).
         if (root.activeSketchRow >= 0 && sketchTextSession.active) {
             if (k === Qt.Key_Escape) sketchTextSession.commit()
+            event.accepted = true
+        }
+        // Same island rule for the ink text overlay.
+        else if (root.inkMode && inkTextSession.active) {
+            if (k === Qt.Key_Escape) inkTextSession.commit()
             event.accepted = true
         }
         else if (k === Qt.Key_Escape) {
@@ -3957,7 +3998,7 @@ FocusScope {
                 anchors.fill: parent
                 cameraEnabled: true   // frame floats at pan/zoom; overflow captures
                 frameBorderColor: Theme.colors.divider
-                fontFamily: Theme.font.family   // text elements = the chrome font (ruling)
+                fontFamily: Theme.font.body   // chips = Aspekta, the document face (ruling 2026-08-18)
                 // Load-bearing revision dep (reactivity rule 1e). Resolved JSON
                 // so embedded image srcs are loadable URLs.
                 data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
@@ -4101,7 +4142,7 @@ FocusScope {
                 // as the committed paint's derived height.
                 wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
                 textMargin: 0
-                font.family: Theme.font.family   // == the canvas's fontFamily
+                font.family: Theme.font.body   // == the canvas's fontFamily
                 font.pixelSize: Math.max(1, sketchTextSession.esize * sketchEditCanvas.zoom)
                 color: sketchEditCanvas.textInkFor(sketchTextSession.ecolor)
                 selectByMouse: true
@@ -4277,12 +4318,128 @@ FocusScope {
         tool: root.inkMode && root.inspector ? root.inspector.drawTool : ""
         color: root.inspector ? root.inspector.drawColor : "#FF0000"
         strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+        textSize: root.inspector ? root.inspector.drawTextSize : 16
+        textFamily: Theme.font.body   // chips = Aspekta, the document face (ruling 2026-08-18)
+        onTextCreateRequested: (r, lx, ly, lw, lsize) => inkTextSession.beginCreate(r, lx, ly, lw, lsize)
+        onTextEditRequested: (r, i) => inkTextSession.beginEdit(r, i)
         // Faded only when the user hides annotations (the eye toggle). The
         // old "squeezed page" fade is gone: the page is ALWAYS the full 760
         // measure now (narrow windows scroll horizontally instead of
         // squeezing), so ink geometry always matches its frame.
         opacity: root.inkLayerVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 160 } }
+    }
+
+    // --- Ink text-chip editing session: the sketchTextSession contract on
+    // the margin-ink surface. The canvas paints COMMITTED chips; while a
+    // session is open the overlay TextEdit is the only visual. Deferred
+    // create = one setBlockInk per session; Escape COMMITS; blank deletes.
+    // Coordinates are ANCHOR-LOCAL (scroll-invariant) — the geometry binding
+    // re-maps to item px through the canvas placement on every scroll/layout
+    // change (rule 1e deps below). ---
+    QtObject {
+        id: inkTextSession
+        property string mode: ""        // "" | "create" | "edit"
+        property int row: -1            // captured at begin
+        property int index: -1
+        property real ex: 0; property real ey: 0; property real ew: 0
+        property real esize: 16         // anchor-local units (space-converted)
+        property color ecolor: "#E4E3E2"
+        property string origText: ""
+        readonly property bool active: mode !== ""
+        // Load-bearing reactivity deps (rule 1e): scroll + layout re-map.
+        readonly property var geom: (inkCanvas.contentX, inkCanvas.contentY,
+            blockModel.layoutRevision, blockModel.contentRevision,
+            active ? inkCanvas.inkTextOverlayGeom(row, ex, ey, ew, esize) : null)
+
+        function beginCreate(r, lx, ly, lw, lsize) {
+            commit()                    // a canvas press can race focus-out
+            row = r; index = -1
+            ex = lx; ey = ly; ew = lw; esize = lsize
+            ecolor = root.inspector ? root.inspector.drawColor : "#E4E3E2"
+            origText = ""
+            mode = "create"
+        }
+        function beginEdit(r, i) {
+            commit()
+            var t = inkCanvas.inkTextAt(r, i)
+            if (t.text === undefined) return
+            row = r; index = i
+            ex = t.x; ey = t.y; ew = t.w
+            esize = t.size; ecolor = t.color
+            origText = t.text
+            mode = "edit"
+        }
+        function commit() {
+            if (mode === "") return
+            // Close BEFORE the model call: the inkChanged round-trip must not
+            // re-enter the session (staleness Connections below).
+            var m = mode, r = row, i = index, orig = origText
+            var txt = inkTextEditor.text
+            mode = ""
+            if (m === "create" && txt.trim() !== "")
+                inkCanvas.inkAddText(r, ex, ey, ew, txt, esize, "" + ecolor)
+            else if (m === "edit" && txt !== orig)
+                inkCanvas.inkSetText(r, i, txt)   // blank ⇒ the model deletes
+            root.forceActiveFocus()
+        }
+        function cancel() {
+            if (mode === "") return
+            mode = ""
+            root.forceActiveFocus()
+        }
+    }
+    Connections {
+        // External ink change mid-EDIT (undo elsewhere, another surface) →
+        // the element under the overlay is stale: cancel. Our own commit
+        // closes the session before the model call, so it never lands here.
+        target: blockModel
+        function onInkChanged() {
+            if (inkTextSession.mode === "edit") inkTextSession.cancel()
+        }
+    }
+    Connections {
+        // Any tool change commits (Inspector buttons never steal focus).
+        target: root.inspector
+        function onDrawToolChanged() { inkTextSession.commit() }
+    }
+    Item {
+        anchors.fill: inkCanvas
+        z: 46   // above the canvas (45), below the comment pins (56)
+        visible: inkCanvas.visible && inkTextSession.active
+                 && !!inkTextSession.geom && inkTextSession.geom.valid === true
+        readonly property var g: inkTextSession.geom
+        Rectangle {   // the live CHIP: fill = element color, accent border = session
+            visible: parent.visible
+            x: parent.g ? parent.g.x : 0
+            y: parent.g ? parent.g.y : 0
+            width: parent.g ? parent.g.w : 0
+            height: inkTextEditor.height + 2 * (parent.g ? parent.g.padPx : 0)
+            color: inkTextSession.ecolor
+            border.width: 1; border.color: Theme.colors.accent
+        }
+        TextEdit {
+            id: inkTextEditor
+            visible: parent.visible
+            x: (parent.g ? parent.g.x + parent.g.padPx : 0)
+            y: (parent.g ? parent.g.y + parent.g.padPx : 0)
+            width: Math.max(4, (parent.g ? parent.g.w - 2 * parent.g.padPx : 4))
+            wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+            textMargin: 0
+            font.family: Theme.font.body   // == the canvas's textFamily
+            font.pixelSize: Math.max(1, parent.g ? parent.g.sizePx : 16)
+            color: inkCanvas.textInkFor(inkTextSession.ecolor)
+            selectByMouse: true
+            selectionColor: Theme.colors.divider
+            onVisibleChanged: if (visible) {
+                text = inkTextSession.mode === "edit" ? inkTextSession.origText : ""
+                cursorPosition = text.length
+                forceActiveFocus()
+            }
+            onActiveFocusChanged: if (!activeFocus && visible) inkTextSession.commit()
+            // Escape COMMITS (the island rule shipped with sketch chips).
+            Keys.onEscapePressed: inkTextSession.commit()
+        }
     }
 
     // --- Comment margin pins: one per row carrying comment spans, in the

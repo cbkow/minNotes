@@ -50,7 +50,9 @@ QString sketchTextFamily()
 {
     static const QString family = [] {
         const QStringList all = QFontDatabase::families();
-        for (const char* want : { "Inter 18pt", "Inter" })
+        // The bundled face's real family name is "Aspekta 400" (the static
+        // weights carry the weight in the family, like "Inter 18pt").
+        for (const char* want : { "Aspekta 400", "Aspekta", "Inter 18pt", "Inter" })
             if (all.contains(QLatin1String(want)))
                 return QString::fromLatin1(want);
         return QFontDatabase::systemFont(QFontDatabase::GeneralFont).family();
@@ -76,6 +78,18 @@ std::vector<SketchTextSpec> parseSketchTexts(const QJsonObject& root)
         out.push_back(std::move(t));
     }
     return out;
+}
+
+QJsonObject sketchTextToJson(const SketchTextSpec& t)
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("text"), t.text);
+    o.insert(QStringLiteral("x"), t.x);
+    o.insert(QStringLiteral("y"), t.y);
+    o.insert(QStringLiteral("w"), t.w);
+    o.insert(QStringLiteral("size"), t.size);
+    o.insert(QStringLiteral("color"), t.color.name());
+    return o;
 }
 
 double sketchTextHeightSrc(const SketchTextSpec& t, double srcW)

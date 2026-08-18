@@ -3,6 +3,7 @@
 #include "../core/BlockModel.h"
 
 #include <QCursor>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <algorithm>
@@ -82,6 +83,8 @@ void DocInkCanvas::setTool(const QString& tool)
     else if (tool == QLatin1String("line"))     t = qcv::DrawingTool::Line;
     else if (tool == QLatin1String("eraser"))   t = qcv::DrawingTool::Eraser;
 
+    // The text tool places chips via textCreateRequested — no stroke engine.
+    textToolArmed_ = (tool == QLatin1String("text"));
     drawToolActive_ = (t != qcv::DrawingTool::None);
     annot_.cancelActiveStroke();
     annot_.setActiveTool(t);
@@ -107,6 +110,13 @@ void DocInkCanvas::setStrokeWidth(qreal w)
     emit strokeWidthChanged();
 }
 
+void DocInkCanvas::setTextSize(qreal s)
+{
+    if (qFuzzyCompare(textSize_, s)) return;
+    textSize_ = s;
+    emit textSizeChanged();
+}
+
 void DocInkCanvas::setInkMode(bool on)
 {
     if (on == inkMode_) return;
@@ -129,9 +139,10 @@ void DocInkCanvas::applyAcceptedButtons()
     setAcceptedMouseButtons(inkMode_ ? Qt::LeftButton : Qt::NoButton);
     // Mode cursor: crosshair while a draw/erase tool is armed, the plain
     // arrow in select mode, and no override at all outside ink mode.
-    if (inkMode_ && drawToolActive_) setCursor(Qt::CrossCursor);
-    else if (inkMode_)               setCursor(Qt::ArrowCursor);
-    else                             unsetCursor();
+    if (inkMode_ && textToolArmed_)       setCursor(Qt::IBeamCursor);
+    else if (inkMode_ && drawToolActive_) setCursor(Qt::CrossCursor);
+    else if (inkMode_)                    setCursor(Qt::ArrowCursor);
+    else                                  unsetCursor();
 }
 
 void DocInkCanvas::rebuildCache()
@@ -142,19 +153,61 @@ void DocInkCanvas::rebuildCache()
         const QStringList ids = model_->inkBlockIds();
         for (const QString& id : ids) {
             mn::DocInkAnchor a;
-            if (mn::docInkFromJson(model_->inkForBlock(id), a) && !a.strokes.empty()) {
-                n += int(a.strokes.size());
+            if (mn::docInkFromJson(model_->inkForBlock(id), a)
+                && (!a.strokes.empty() || !a.texts.empty())) {
+                n += int(a.strokes.size()) + int(a.texts.size());
                 cache_.insert(id, std::move(a));
             }
         }
     }
-    if (selIdx_ >= 0) {
+    rebuildTextHeights();
+    if (selKind_ != SelNone) {
         auto it = cache_.constFind(selBlockId_);
-        if (it == cache_.constEnd() || selIdx_ >= int(it->strokes.size()))
-            clearSelection();
+        const bool ok = it != cache_.constEnd()
+            && (selKind_ == SelStroke ? selIdx_ < int(it->strokes.size())
+                                      : selIdx_ < int(it->texts.size()));
+        if (!ok) clearSelection();
     }
     if (n != strokeCount_) { strokeCount_ = n; emit strokeCountChanged(); }
     update();
+}
+
+void DocInkCanvas::setTextFamily(const QString& f)
+{
+    if (f == textFamily_) return;
+    textFamily_ = f;
+    rebuildTextHeights();
+    emit textFamilyChanged();
+    update();
+}
+
+double DocInkCanvas::textLocalHeight(const mn::DocInkAnchor& a, const Placement& pl,
+                                     const mn::SketchTextSpec& t) const
+{
+    mn::SketchTextSpec spec = t;
+    spec.family = textFamily_;
+    if (a.space == mn::DocInkAnchor::Frame) {
+        // Layout at media-INTRINSIC px; local units are display-frame
+        // fractions (aspect preserved, so hSrc/mediaH is the local height).
+        const double mw = pl.row >= 0 && model_ ? std::max(1, model_->mediaW(pl.row)) : 1.0;
+        const double mh = pl.row >= 0 && model_ ? std::max(1, model_->mediaH(pl.row)) : 1.0;
+        return mn::sketchTextHeightSrc(spec, mw) / mh;
+    }
+    return mn::sketchTextHeightSrc(spec, 1.0);   // px space: local IS page px
+}
+
+void DocInkCanvas::rebuildTextHeights()
+{
+    textH_.clear();
+    for (auto it = cache_.constBegin(); it != cache_.constEnd(); ++it) {
+        if (it->texts.empty()) continue;
+        const Placement pl = placementFor(it.key(), it->space);
+        std::vector<double> hs;
+        hs.reserve(it->texts.size());
+        for (const mn::SketchTextSpec& t : it->texts)
+            hs.push_back(pl.valid ? textLocalHeight(*it, pl, t) : 0.0);
+        textH_.insert(it.key(), std::move(hs));
+    }
 }
 
 DocInkCanvas::Placement DocInkCanvas::placementFor(const QString& blockId,
@@ -202,6 +255,58 @@ void DocInkCanvas::paint(QPainter* p)
     for (auto it = cache_.constBegin(); it != cache_.constEnd(); ++it) {
         const Placement pl = placementFor(it.key(), it->space);
         if (!pl.valid) continue;
+
+        // Text chips paint BEFORE the anchor's strokes (z-order rule: ink
+        // can circle/arrow over labels). Geometry from the cached local
+        // heights; the per-space helper compositions from the plan.
+        if (!it->texts.empty()) {
+            const QPointF originItem(pl.origin.x() - contentX_,
+                                     pl.origin.y() - contentY_);
+            const auto th = textH_.constFind(it.key());
+            for (int i = 0; i < int(it->texts.size()); ++i) {
+                mn::SketchTextSpec spec = it->texts[size_t(i)];
+                spec.family = textFamily_;
+                const double hLocal =
+                    (th != textH_.constEnd() && i < int(th->size()))
+                        ? (*th)[size_t(i)] : 0.0;
+                const QRectF itemRect(
+                    originItem.x() + spec.x * pl.scale.width(),
+                    originItem.y() + spec.y * pl.scale.height(),
+                    spec.w * pl.scale.width(), hLocal * pl.scale.height());
+                if (!itemRect.intersects(viewport)) continue;
+                p->save();
+                p->translate(originItem);
+                if (it->space == mn::DocInkAnchor::Frame)
+                    mn::paintSketchText(*p, spec,
+                                        std::max(1, model_->mediaW(pl.row)),
+                                        std::max(1, model_->mediaH(pl.row)),
+                                        pl.widthScale);
+                else
+                    mn::paintSketchText(*p, spec, 1.0, 1.0, 1.0);
+                p->restore();
+
+                if (selKind_ == SelText && it.key() == selBlockId_ && i == selIdx_) {
+                    // Dashed accent box + 4 corner grips + 2 mid-edge wrap
+                    // grips (the SketchCanvas chrome, item px).
+                    const QColor accent(0x01, 0x89, 0xf1);
+                    QPen pen(accent, 1.0, Qt::DashLine);
+                    p->setPen(pen);
+                    p->setBrush(Qt::NoBrush);
+                    p->drawRect(itemRect);
+                    const double hs = 4.5;
+                    const QPointF gs[6] = {
+                        itemRect.topLeft(), itemRect.topRight(),
+                        itemRect.bottomLeft(), itemRect.bottomRight(),
+                        QPointF(itemRect.left(),  itemRect.center().y()),
+                        QPointF(itemRect.right(), itemRect.center().y()) };
+                    p->setBrush(accent);
+                    p->setPen(QPen(QColor(255, 255, 255), 1.0));
+                    for (const QPointF& g : gs)
+                        p->drawRect(QRectF(g.x() - hs, g.y() - hs, hs * 2, hs * 2));
+                }
+            }
+        }
+
         for (int i = 0; i < int(it->strokes.size()); ++i) {
             const qcv::ActiveStroke& src = it->strokes[size_t(i)];
             if (src.points.empty()) continue;
@@ -227,7 +332,7 @@ void DocInkCanvas::paint(QPainter* p)
             if (!bbox.intersects(viewport)) continue;
             qcv::paintStroke(*p, s, 1.0, 1.0, pl.widthScale);
 
-            if (it.key() == selBlockId_ && i == selIdx_) {   // selection outline
+            if (selKind_ == SelStroke && it.key() == selBlockId_ && i == selIdx_) {   // selection outline
                 QPen pen(QColor(0x01, 0x89, 0xf1));          // Theme accent
                 pen.setStyle(Qt::DashLine);
                 pen.setWidthF(1.0);
@@ -248,6 +353,25 @@ void DocInkCanvas::paint(QPainter* p)
 
 void DocInkCanvas::mousePressEvent(QMouseEvent* e)
 {
+    if (inkMode_ && textToolArmed_) {
+        // Place a chip: same topmost-anchor rule as a finished stroke; emit
+        // ANCHOR-LOCAL geometry (size space-converted) for the QML overlay.
+        const QPointF contentPt(e->position().x() + contentX_,
+                                e->position().y() + contentY_);
+        int row = -1; Placement pl;
+        if (anchorAtContent(contentPt, row, pl)) {
+            const QPointF local = contentToLocal(pl, contentPt);
+            const bool frame = pl.space == mn::DocInkAnchor::Frame;
+            const double lsize = frame ? textSize_ / pl.widthScale : textSize_;
+            const double defWPage = std::min(0.5 * pageWidth_,
+                                             std::max(240.0, 2.0 * textSize_));
+            const double lw = frame ? std::min(0.9, defWPage / pl.scale.width())
+                                    : defWPage;
+            emit textCreateRequested(row, local.x(), local.y(), lw, lsize);
+        }
+        e->accept();
+        return;
+    }
     if (inSelectMode()) { selectPress(e->position()); e->accept(); return; }
     route(qcv::PointerPhase::Press, e->position(), qint64(e->timestamp()));
     e->accept();
@@ -330,16 +454,10 @@ void DocInkCanvas::commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke)
         content.push_back(c);
     }
 
-    // Topmost overlapped block = the anchor. Clamp covers strokes drawn
-    // above the first / below the last block.
-    const qreal total = std::max<qreal>(1.0, model_->totalHeight());
-    const int row = model_->rowForY(std::clamp(minCy, qreal(0), total - 1));
-    if (row < 0 || row >= model_->rowCountQml()) return;
-
-    const bool media = model_->typeForRow(row) == BlockModel::Media;
-    const auto space = media ? mn::DocInkAnchor::Frame : mn::DocInkAnchor::Px;
-    const Placement pl = placementFor(model_->idForRow(row), space);
-    if (!pl.valid) return;
+    // Topmost overlapped block = the anchor (shared rule, see anchorAtContent).
+    int row = -1; Placement pl;
+    if (!anchorAtContent(QPointF(0, minCy), row, pl)) return;
+    const auto space = pl.space;
 
     qcv::ActiveStroke s = *stroke;
     for (size_t i = 0; i < content.size(); ++i)
@@ -360,6 +478,142 @@ void DocInkCanvas::commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke)
     a.space = space;   // anchor type determines the space, always
     a.strokes.push_back(std::move(s));
     model_->setBlockInk(row, mn::docInkToJson(a));   // one undo step
+}
+
+int DocInkCanvas::selectedTextRow() const
+{
+    if (selKind_ != SelText || !model_) return -1;
+    return model_->rowForId(selBlockId_);
+}
+
+qreal DocInkCanvas::inkTextSizeScale(int row) const
+{
+    if (!model_ || row < 0 || row >= model_->rowCountQml()) return 1.0;
+    if (model_->typeForRow(row) != BlockModel::Media) return 1.0;
+    const Placement pl = placementFor(model_->idForRow(row), mn::DocInkAnchor::Frame);
+    return pl.valid && pl.widthScale > 0 ? pl.widthScale : 1.0;
+}
+
+bool DocInkCanvas::anchorAtContent(QPointF contentPt, int& rowOut, Placement& plOut) const
+{
+    if (!model_) return false;
+    const qreal total = std::max<qreal>(1.0, model_->totalHeight());
+    const int row = model_->rowForY(std::clamp(contentPt.y(), qreal(0), total - 1));
+    if (row < 0 || row >= model_->rowCountQml()) return false;
+    const bool media = model_->typeForRow(row) == BlockModel::Media;
+    const auto space = media ? mn::DocInkAnchor::Frame : mn::DocInkAnchor::Px;
+    plOut = placementFor(model_->idForRow(row), space);
+    if (!plOut.valid) return false;
+    rowOut = row;
+    return true;
+}
+
+// ---- Text chips ----------------------------------------------------------
+
+namespace {
+// 2em width floor in the anchor's local units.
+double inkTextMinW(mn::DocInkAnchor::Space space, double size, double mediaW)
+{
+    return space == mn::DocInkAnchor::Frame ? (2.0 * size) / std::max(1.0, mediaW)
+                                            : 2.0 * size;
+}
+} // namespace
+
+int DocInkCanvas::inkAddText(int row, qreal x, qreal y, qreal w,
+                             const QString& text, qreal size,
+                             const QString& colorHex)
+{
+    if (!model_ || row < 0 || row >= model_->rowCountQml()) return -1;
+    if (text.trimmed().isEmpty() || size <= 0) return -1;
+    const bool media = model_->typeForRow(row) == BlockModel::Media;
+    const auto space = media ? mn::DocInkAnchor::Frame : mn::DocInkAnchor::Px;
+    mn::DocInkAnchor a;
+    mn::docInkFromJson(model_->inkForRow(row), a);
+    a.space = space;   // anchor type determines the space, always
+    mn::SketchTextSpec t;
+    t.text = text;
+    t.x = x; t.y = y;
+    t.w = std::max<double>(w, inkTextMinW(space, size, model_->mediaW(row)));
+    t.size = size;
+    t.color = QColor(colorHex);
+    a.texts.push_back(std::move(t));
+    model_->setBlockInk(row, mn::docInkToJson(a));   // one undo step
+    return int(a.texts.size()) - 1;
+}
+
+void DocInkCanvas::inkSetText(int row, int idx, const QString& text)
+{
+    if (!model_ || row < 0 || row >= model_->rowCountQml()) return;
+    mn::DocInkAnchor a;
+    if (!mn::docInkFromJson(model_->inkForRow(row), a)) return;
+    if (idx < 0 || idx >= int(a.texts.size())) return;
+    if (a.texts[size_t(idx)].text == text) return;   // no txn
+    if (text.trimmed().isEmpty())
+        a.texts.erase(a.texts.begin() + idx);        // blank commit = delete
+    else
+        a.texts[size_t(idx)].text = text;
+    model_->setBlockInk(row, mn::docInkToJson(a));   // "" when anchor empties
+}
+
+void DocInkCanvas::inkSetTextBox(int row, int idx, qreal x, qreal y,
+                                 qreal w, qreal size)
+{
+    if (!model_ || row < 0 || row >= model_->rowCountQml() || size <= 0) return;
+    mn::DocInkAnchor a;
+    if (!mn::docInkFromJson(model_->inkForRow(row), a)) return;
+    if (idx < 0 || idx >= int(a.texts.size())) return;
+    mn::SketchTextSpec& t = a.texts[size_t(idx)];
+    t.x = x; t.y = y;
+    t.w = std::max<double>(w, inkTextMinW(a.space, size, model_->mediaW(row)));
+    t.size = size;
+    model_->setBlockInk(row, mn::docInkToJson(a));
+}
+
+void DocInkCanvas::inkRemoveText(int row, int idx)
+{
+    if (!model_ || row < 0 || row >= model_->rowCountQml()) return;
+    mn::DocInkAnchor a;
+    if (!mn::docInkFromJson(model_->inkForRow(row), a)) return;
+    if (idx < 0 || idx >= int(a.texts.size())) return;
+    a.texts.erase(a.texts.begin() + idx);
+    model_->setBlockInk(row, mn::docInkToJson(a));   // "" when anchor empties
+}
+
+QVariantMap DocInkCanvas::inkTextAt(int row, int idx) const
+{
+    QVariantMap out;
+    if (!model_ || row < 0 || row >= model_->rowCountQml()) return out;
+    mn::DocInkAnchor a;
+    if (!mn::docInkFromJson(model_->inkForRow(row), a)) return out;
+    if (idx < 0 || idx >= int(a.texts.size())) return out;
+    const mn::SketchTextSpec& t = a.texts[size_t(idx)];
+    out.insert(QStringLiteral("x"), t.x);
+    out.insert(QStringLiteral("y"), t.y);
+    out.insert(QStringLiteral("w"), t.w);
+    out.insert(QStringLiteral("text"), t.text);
+    out.insert(QStringLiteral("size"), t.size);
+    out.insert(QStringLiteral("color"), t.color.name());
+    return out;
+}
+
+QVariantMap DocInkCanvas::inkTextOverlayGeom(int row, qreal lx, qreal ly,
+                                             qreal lw, qreal lsize) const
+{
+    QVariantMap out;
+    out.insert(QStringLiteral("valid"), false);
+    if (!model_ || row < 0 || row >= model_->rowCountQml()) return out;
+    const bool media = model_->typeForRow(row) == BlockModel::Media;
+    const auto space = media ? mn::DocInkAnchor::Frame : mn::DocInkAnchor::Px;
+    const Placement pl = placementFor(model_->idForRow(row), space);
+    if (!pl.valid) return out;
+    const double sizeScale = space == mn::DocInkAnchor::Frame ? pl.widthScale : 1.0;
+    out.insert(QStringLiteral("valid"), true);
+    out.insert(QStringLiteral("x"), pl.origin.x() + lx * pl.scale.width() - contentX_);
+    out.insert(QStringLiteral("y"), pl.origin.y() + ly * pl.scale.height() - contentY_);
+    out.insert(QStringLiteral("w"), lw * pl.scale.width());
+    out.insert(QStringLiteral("sizePx"), lsize * sizeScale);
+    out.insert(QStringLiteral("padPx"), lsize * 0.4 * sizeScale);
+    return out;
 }
 
 // ---- Eraser --------------------------------------------------------------
@@ -423,8 +677,9 @@ void DocInkCanvas::flushEraseGesture()
         const int row = model_->rowForId(id);
         if (row < 0) continue;
         const auto it = cache_.constFind(id);
-        model_->setBlockInk(row, (it == cache_.constEnd() || it->strokes.empty())
-                                     ? QString() : mn::docInkToJson(*it));
+        model_->setBlockInk(row,
+            (it == cache_.constEnd() || (it->strokes.empty() && it->texts.empty()))
+                ? QString() : mn::docInkToJson(*it));
     }
     model_->endGroup();
     eraseDirty_.clear();
@@ -435,8 +690,9 @@ void DocInkCanvas::flushEraseGesture()
 void DocInkCanvas::clearSelection()
 {
     moving_ = false; moveDirty_ = false;
-    if (selIdx_ < 0) return;
-    selBlockId_.clear(); selIdx_ = -1;
+    resizing_ = false; grabCorner_ = -1;
+    if (selKind_ == SelNone) return;
+    selBlockId_.clear(); selKind_ = SelNone; selIdx_ = -1;
     emit selectionChanged();
     update();
 }
@@ -444,10 +700,32 @@ void DocInkCanvas::clearSelection()
 void DocInkCanvas::selectPress(QPointF itemPos)
 {
     const QPointF contentPt(itemPos.x() + contentX_, itemPos.y() + contentY_);
-    QString id; int idx = -1;
-    if (hitTest(contentPt, id, idx)) {
-        if (id != selBlockId_ || idx != selIdx_) {
-            selBlockId_ = id; selIdx_ = idx;
+    // A press on the selected chip's grip starts a resize.
+    if (selKind_ == SelText) {
+        const int h = textHandleAt(itemPos);
+        if (h >= 0) {
+            auto it = cache_.constFind(selBlockId_);
+            if (it != cache_.constEnd() && selIdx_ < int(it->texts.size())) {
+                const mn::SketchTextSpec& t = it->texts[size_t(selIdx_)];
+                const auto th = textH_.constFind(selBlockId_);
+                const double hLocal =
+                    (th != textH_.constEnd() && selIdx_ < int(th->size()))
+                        ? (*th)[size_t(selIdx_)] : 0.0;
+                origLocalRect_ = QRectF(t.x, t.y, t.w, hLocal);
+                origTextW_ = t.w;
+                origTextSize_ = t.size;
+                grabCorner_ = h;
+                resizing_ = true;
+                moving_ = false;
+                moveDirty_ = false;
+                return;
+            }
+        }
+    }
+    QString id; SelKind k = SelNone; int idx = -1;
+    if (hitTestAny(contentPt, id, k, idx)) {
+        if (id != selBlockId_ || k != selKind_ || idx != selIdx_) {
+            selBlockId_ = id; selKind_ = k; selIdx_ = idx;
             emit selectionChanged();
         }
         moving_ = true; moveDirty_ = false;
@@ -458,18 +736,80 @@ void DocInkCanvas::selectPress(QPointF itemPos)
     }
 }
 
+bool DocInkCanvas::hitTestAny(QPointF contentPt, QString& blockIdOut,
+                              SelKind& kindOut, int& idxOut) const
+{
+    // Strokes paint on top of chips — test them first.
+    if (hitTest(contentPt, blockIdOut, idxOut)) { kindOut = SelStroke; return true; }
+    for (auto it = cache_.constBegin(); it != cache_.constEnd(); ++it) {
+        if (it->texts.empty()) continue;
+        const Placement pl = placementFor(it.key(), it->space);
+        if (!pl.valid) continue;
+        const QPointF local = contentToLocal(pl, contentPt);
+        const auto th = textH_.constFind(it.key());
+        for (int i = int(it->texts.size()) - 1; i >= 0; --i) {
+            const mn::SketchTextSpec& t = it->texts[size_t(i)];
+            const double hLocal = (th != textH_.constEnd() && i < int(th->size()))
+                                      ? (*th)[size_t(i)] : 0.0;
+            if (QRectF(t.x, t.y, t.w, hLocal).contains(local)) {
+                blockIdOut = it.key(); kindOut = SelText; idxOut = i;
+                return true;
+            }
+        }
+    }
+    kindOut = SelNone;
+    return false;
+}
+
+QRectF DocInkCanvas::selTextItemRect() const
+{
+    if (selKind_ != SelText) return {};
+    auto it = cache_.constFind(selBlockId_);
+    if (it == cache_.constEnd() || selIdx_ >= int(it->texts.size())) return {};
+    const Placement pl = placementFor(selBlockId_, it->space);
+    if (!pl.valid) return {};
+    const mn::SketchTextSpec& t = it->texts[size_t(selIdx_)];
+    const auto th = textH_.constFind(selBlockId_);
+    const double hLocal = (th != textH_.constEnd() && selIdx_ < int(th->size()))
+                              ? (*th)[size_t(selIdx_)] : 0.0;
+    return QRectF(pl.origin.x() + t.x * pl.scale.width() - contentX_,
+                  pl.origin.y() + t.y * pl.scale.height() - contentY_,
+                  t.w * pl.scale.width(), hLocal * pl.scale.height());
+}
+
+int DocInkCanvas::textHandleAt(QPointF itemPos) const
+{
+    const QRectF r = selTextItemRect();
+    if (!r.isValid()) return -1;
+    const double tol = 9.0;   // screen px (tolerances are screen-absolute)
+    const QPointF gs[6] = { r.topLeft(), r.topRight(), r.bottomLeft(),
+                            r.bottomRight(),
+                            QPointF(r.left(),  r.center().y()),
+                            QPointF(r.right(), r.center().y()) };
+    for (int i = 0; i < 6; ++i)
+        if (QLineF(itemPos, gs[i]).length() <= tol) return i;
+    return -1;
+}
+
 void DocInkCanvas::selectMove(QPointF itemPos)
 {
-    if (!moving_ || selIdx_ < 0) return;
+    const QPointF contentPt(itemPos.x() + contentX_, itemPos.y() + contentY_);
+    if (resizing_) { textResizeTo(contentPt); return; }
+    if (!moving_ || selKind_ == SelNone) return;
     auto it = cache_.find(selBlockId_);
-    if (it == cache_.end() || selIdx_ >= int(it->strokes.size())) return;
+    if (it == cache_.end()) return;
     const Placement pl = placementFor(selBlockId_, it->space);
     if (!pl.valid) return;
-    const QPointF contentPt(itemPos.x() + contentX_, itemPos.y() + contentY_);
     const QPointF dLocal((contentPt.x() - lastContentPt_.x()) / pl.scale.width(),
                          (contentPt.y() - lastContentPt_.y()) / pl.scale.height());
     if (dLocal.isNull()) return;
-    {   // translate positions; an oval's radii vector is translation-immune
+    if (selKind_ == SelText) {
+        if (selIdx_ >= int(it->texts.size())) return;
+        it->texts[size_t(selIdx_)].x += dLocal.x();
+        it->texts[size_t(selIdx_)].y += dLocal.y();
+    } else {
+        if (selIdx_ >= int(it->strokes.size())) return;
+        // translate positions; an oval's radii vector is translation-immune
         auto& mv = it->strokes[size_t(selIdx_)];
         const bool oval = (mv.tool == qcv::DrawingTool::Oval && mv.points.size() >= 2);
         for (size_t pi = 0; pi < mv.points.size(); ++pi) {
@@ -482,12 +822,110 @@ void DocInkCanvas::selectMove(QPointF itemPos)
     update();
 }
 
+void DocInkCanvas::textResizeTo(QPointF contentPt)
+{
+    if (selKind_ != SelText || !origLocalRect_.isValid()) return;
+    auto it = cache_.find(selBlockId_);
+    if (it == cache_.end() || selIdx_ >= int(it->texts.size())) return;
+    const Placement pl = placementFor(selBlockId_, it->space);
+    if (!pl.valid) return;
+    const QPointF local = contentToLocal(pl, contentPt);
+    mn::SketchTextSpec& t = it->texts[size_t(selIdx_)];
+    const double mediaW = pl.row >= 0 && model_ ? model_->mediaW(pl.row) : 1.0;
+    if (grabCorner_ >= 4) {
+        // Mid-edge wrap drag: the opposite edge stays fixed; text reflows.
+        const double minW = (it->space == mn::DocInkAnchor::Frame)
+            ? (2.0 * t.size) / std::max(1.0, mediaW) : 2.0 * t.size;
+        const double fixedX = grabCorner_ == 4 ? origLocalRect_.right()
+                                               : origLocalRect_.left();
+        const double newW = std::max(minW, grabCorner_ == 4 ? fixedX - local.x()
+                                                            : local.x() - fixedX);
+        t.x = grabCorner_ == 4 ? fixedX - newW : fixedX;
+        t.w = newW;
+    } else {
+        // Corner: proportional scale of size+w about the opposite corner —
+        // the w/size ratio stays constant, so wrap points are preserved.
+        QPointF pivot;
+        switch (grabCorner_) {
+            case 0: pivot = origLocalRect_.bottomRight(); break;   // TL
+            case 1: pivot = origLocalRect_.bottomLeft();  break;   // TR
+            case 2: pivot = origLocalRect_.topRight();    break;   // BL
+            default: pivot = origLocalRect_.topLeft();    break;   // BR
+        }
+        const double ow = origLocalRect_.width(), oh = origLocalRect_.height();
+        if (ow <= 0 || oh <= 0) return;
+        double s = std::max(std::abs(local.x() - pivot.x()) / ow,
+                            std::abs(local.y() - pivot.y()) / oh);
+        const double minW = (it->space == mn::DocInkAnchor::Frame)
+            ? (2.0 * origTextSize_) / std::max(1.0, mediaW) : 2.0 * origTextSize_;
+        s = std::max(s, minW / std::max(1e-9, origTextW_));
+        t.x = pivot.x() + (origLocalRect_.left() - pivot.x()) * s;
+        t.y = pivot.y() + (origLocalRect_.top()  - pivot.y()) * s;
+        t.w = origTextW_ * s;
+        t.size = origTextSize_ * s;
+    }
+    // Live reflow: refresh this anchor's cached heights.
+    auto th = textH_.find(selBlockId_);
+    if (th != textH_.end() && selIdx_ < int(th->size()))
+        (*th)[size_t(selIdx_)] = textLocalHeight(*it, pl, t);
+    moveDirty_ = true;
+    update();
+}
+
 void DocInkCanvas::selectRelease()
 {
+    if (resizing_) {
+        resizing_ = false; grabCorner_ = -1;
+        const bool dirty = moveDirty_;
+        moveDirty_ = false;
+        if (!dirty || selKind_ != SelText || !model_) return;
+        auto rit = cache_.find(selBlockId_);
+        const int rrow = model_->rowForId(selBlockId_);
+        if (rit != cache_.end() && rrow >= 0)
+            model_->setBlockInk(rrow, mn::docInkToJson(*rit));   // one undo step
+        return;
+    }
     if (!moving_) return;
     moving_ = false;
-    if (!moveDirty_ || selIdx_ < 0 || !model_) return;
+    if (!moveDirty_ || selKind_ == SelNone || !model_) return;
     moveDirty_ = false;
+
+    if (selKind_ == SelText) {
+        auto tit = cache_.find(selBlockId_);
+        if (tit == cache_.end() || selIdx_ >= int(tit->texts.size())) return;
+        const Placement oldPl = placementFor(selBlockId_, tit->space);
+        if (!oldPl.valid) return;
+        mn::SketchTextSpec moved = tit->texts[size_t(selIdx_)];
+        const int oldRow = oldPl.row;
+        const qreal topCy = localToContent(oldPl, QPointF(moved.x, moved.y)).y();
+        int newRow = -1; Placement newPl;
+        if (!anchorAtContent(QPointF(0, topCy), newRow, newPl) || newRow == oldRow) {
+            model_->setBlockInk(oldRow, mn::docInkToJson(*tit));   // one undo step
+            return;
+        }
+        // Cross-anchor: position through content px; w/size by the spaces'
+        // scale ratios (page-px-preserving — the stroke re-anchor rule).
+        const QPointF newLocal =
+            contentToLocal(newPl, localToContent(oldPl, QPointF(moved.x, moved.y)));
+        moved.x = newLocal.x();
+        moved.y = newLocal.y();
+        moved.w = moved.w * oldPl.scale.width() / newPl.scale.width();
+        moved.size = moved.size * oldPl.widthScale / newPl.widthScale;
+        mn::DocInkAnchor oldAnchor = *tit;
+        oldAnchor.texts.erase(oldAnchor.texts.begin() + selIdx_);
+        mn::DocInkAnchor newAnchor;
+        mn::docInkFromJson(model_->inkForRow(newRow), newAnchor);
+        newAnchor.space = newPl.space;
+        newAnchor.texts.push_back(std::move(moved));
+        model_->beginGroup(std::min(oldRow, newRow), std::max(oldRow, newRow));
+        model_->setBlockInk(oldRow,
+            (oldAnchor.strokes.empty() && oldAnchor.texts.empty())
+                ? QString() : mn::docInkToJson(oldAnchor));
+        model_->setBlockInk(newRow, mn::docInkToJson(newAnchor));
+        model_->endGroup();
+        clearSelection();
+        return;
+    }
 
     auto it = cache_.find(selBlockId_);
     if (it == cache_.end() || selIdx_ >= int(it->strokes.size())) return;
@@ -537,8 +975,9 @@ void DocInkCanvas::selectRelease()
     newAnchor.strokes.push_back(std::move(moved));
 
     model_->beginGroup(std::min(oldRow, newRow), std::max(oldRow, newRow));
-    model_->setBlockInk(oldRow, oldAnchor.strokes.empty() ? QString()
-                                                          : mn::docInkToJson(oldAnchor));
+    model_->setBlockInk(oldRow,
+        (oldAnchor.strokes.empty() && oldAnchor.texts.empty())
+            ? QString() : mn::docInkToJson(oldAnchor));
     model_->setBlockInk(newRow, mn::docInkToJson(newAnchor));
     model_->endGroup();
     clearSelection();
@@ -546,13 +985,45 @@ void DocInkCanvas::selectRelease()
 
 void DocInkCanvas::deleteSelection()
 {
-    if (selIdx_ < 0 || !model_) return;
+    if (selKind_ == SelNone || !model_) return;
     auto it = cache_.find(selBlockId_);
-    if (it == cache_.end() || selIdx_ >= int(it->strokes.size())) { clearSelection(); return; }
+    if (it == cache_.end()) { clearSelection(); return; }
     const int row = model_->rowForId(selBlockId_);
     if (row < 0) { clearSelection(); return; }
     mn::DocInkAnchor a = *it;
-    a.strokes.erase(a.strokes.begin() + selIdx_);
+    if (selKind_ == SelText) {
+        if (selIdx_ >= int(a.texts.size())) { clearSelection(); return; }
+        a.texts.erase(a.texts.begin() + selIdx_);
+    } else {
+        if (selIdx_ >= int(a.strokes.size())) { clearSelection(); return; }
+        a.strokes.erase(a.strokes.begin() + selIdx_);
+    }
     clearSelection();
-    model_->setBlockInk(row, a.strokes.empty() ? QString() : mn::docInkToJson(a));
+    model_->setBlockInk(row, (a.strokes.empty() && a.texts.empty())
+                                 ? QString() : mn::docInkToJson(a));
+}
+
+void DocInkCanvas::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    if (inSelectMode()) {
+        const QPointF contentPt(e->position().x() + contentX_,
+                                e->position().y() + contentY_);
+        QString id; SelKind k = SelNone; int idx = -1;
+        if (hitTestAny(contentPt, id, k, idx) && k == SelText) {
+            // The first press of the double-click armed a move — cancel it or
+            // a 1px jitter commits a phantom move txn (disarm-first rule).
+            moving_ = false;
+            moveDirty_ = false;
+            if (id != selBlockId_ || k != selKind_ || idx != selIdx_) {
+                selBlockId_ = id; selKind_ = k; selIdx_ = idx;
+                emit selectionChanged();
+                update();
+            }
+            const int row = model_ ? model_->rowForId(id) : -1;
+            if (row >= 0) emit textEditRequested(row, idx);
+            e->accept();
+            return;
+        }
+    }
+    QQuickPaintedItem::mouseDoubleClickEvent(e);
 }

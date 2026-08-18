@@ -9,7 +9,9 @@ namespace mn {
 
 QString docInkToJson(const DocInkAnchor& anchor)
 {
-    if (anchor.strokes.empty()) return {};
+    // "" is the delete-the-row signal: only when the anchor holds NOTHING —
+    // a text-only anchor must not self-delete.
+    if (anchor.strokes.empty() && anchor.texts.empty()) return {};
     QJsonObject root;
     root.insert(QStringLiteral("version"), QStringLiteral("2.0"));
     root.insert(QStringLiteral("coordinate_system"), QStringLiteral("block-local"));
@@ -20,6 +22,12 @@ QString docInkToJson(const DocInkAnchor& anchor)
     for (const qcv::ActiveStroke& s : anchor.strokes)
         shapes.append(qcv::AnnotationSerializer::strokeToJson(s));
     root.insert(QStringLiteral("shapes"), shapes);
+    if (!anchor.texts.empty()) {   // omitted when empty: old blobs stay byte-identical
+        QJsonArray texts;
+        for (const mn::SketchTextSpec& t : anchor.texts)
+            texts.append(mn::sketchTextToJson(t));
+        root.insert(QStringLiteral("texts"), texts);
+    }
     return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
 }
 
@@ -27,6 +35,7 @@ bool docInkFromJson(const QString& json, DocInkAnchor& out)
 {
     out.space = DocInkAnchor::Px;
     out.strokes.clear();
+    out.texts.clear();
     if (json.isEmpty()) return true;
 
     const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
@@ -48,6 +57,7 @@ bool docInkFromJson(const QString& json, DocInkAnchor& out)
         if (qcv::AnnotationSerializer::jsonToStroke(v.toObject(), s))
             out.strokes.push_back(std::move(s));
     }
+    out.texts = mn::parseSketchTexts(root);
     return true;
 }
 
@@ -55,6 +65,12 @@ bool docInkHasStrokes(const QString& json)
 {
     DocInkAnchor a;
     return docInkFromJson(json, a) && !a.strokes.empty();
+}
+
+bool docInkHasContent(const QString& json)
+{
+    DocInkAnchor a;
+    return docInkFromJson(json, a) && (!a.strokes.empty() || !a.texts.empty());
 }
 
 } // namespace mn

@@ -53,6 +53,12 @@ double sketchTextPadSrc(const SketchTextSpec& t);   // chip padding, source px
 // The descriptor's `texts[]` array → specs (family left empty).
 std::vector<SketchTextSpec> parseSketchTexts(const QJsonObject& root);
 
+// One spec → its element JSON (x/y/w/text/size/color — family is a render
+// concern, never serialized). The inverse of the parser, kept beside it so
+// the sketch descriptor and the doc-ink envelope can never diverge on the
+// element schema.
+QJsonObject sketchTextToJson(const SketchTextSpec& t);
+
 // Derived height of the wrapped text in SOURCE px.
 double sketchTextHeightSrc(const SketchTextSpec& t, double srcW);
 

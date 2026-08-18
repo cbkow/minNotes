@@ -991,6 +991,134 @@ static void testSketchEmbedWidth() {
     CHECK(m.mediaDispWidth(row) == 760, "dw reset returns to the default");
 }
 
+// --- Test 16: doc-ink text chips — envelope round-trip + export presence ----
+// texts[] is a TYPED DocInkAnchor member: the writer rebuilds the envelope
+// from the struct, so this locks the critical mechanic — a stroke commit
+// (parse → append stroke → serialize) must never destroy texts, and a
+// text-only anchor must not serialize to "" (the delete-the-row signal).
+static void testDocInkTexts() {
+    qInfo("[16] doc-ink texts: envelope round-trip, stroke-commit survival");
+
+    mn::SketchTextSpec t;
+    t.text = QStringLiteral("margin note");
+    t.x = -120.0; t.y = 40.0; t.w = 240.0;   // px space: x is Δ from page CENTER
+    t.size = 16.0;
+    t.color = QColor(QStringLiteral("#FF5768"));
+
+    // Mixed anchor: one stroke + one text → full field fidelity.
+    mn::DocInkAnchor a;
+    a.space = mn::DocInkAnchor::Px;
+    qcv::ActiveStroke st;
+    st.tool = qcv::DrawingTool::Freehand;
+    st.points = { QPointF(-50.0, 10.0), QPointF(80.0, 90.0) };
+    st.strokeWidth = 4;
+    a.strokes.push_back(st);
+    a.texts.push_back(t);
+
+    const QString blob = mn::docInkToJson(a);
+    mn::DocInkAnchor b;
+    CHECK(mn::docInkFromJson(blob, b) && b.strokes.size() == 1 && b.texts.size() == 1,
+          "mixed anchor round-trips");
+    CHECK(b.texts[0].text == t.text && qFuzzyCompare(b.texts[0].x, t.x)
+              && qFuzzyCompare(b.texts[0].w, t.w) && qFuzzyCompare(b.texts[0].size, t.size)
+              && b.texts[0].color.name() == QStringLiteral("#ff5768"),
+          "text fields survive with fidelity (incl. negative x)");
+
+    // THE mechanic: a stroke commit is parse → append → serialize.
+    mn::DocInkAnchor c = b;
+    qcv::ActiveStroke st2 = st;
+    st2.points = { QPointF(0.0, 0.0), QPointF(10.0, 10.0) };
+    c.strokes.push_back(st2);
+    mn::DocInkAnchor d;
+    CHECK(mn::docInkFromJson(mn::docInkToJson(c), d)
+              && d.strokes.size() == 2 && d.texts.size() == 1
+              && d.texts[0].text == t.text,
+          "stroke commit (parse->append->serialize) preserves texts");
+
+    // Text-only anchor: must NOT serialize to "" (the delete signal).
+    mn::DocInkAnchor onlyText;
+    onlyText.space = mn::DocInkAnchor::Frame;
+    mn::SketchTextSpec ft = t;
+    ft.x = 0.1; ft.y = 0.1; ft.w = 0.4; ft.size = 24;   // frame space: normalized
+    onlyText.texts.push_back(ft);
+    const QString tBlob = mn::docInkToJson(onlyText);
+    CHECK(!tBlob.isEmpty(), "text-only anchor serializes non-empty");
+    mn::DocInkAnchor e;
+    CHECK(mn::docInkFromJson(tBlob, e) && e.strokes.empty() && e.texts.size() == 1
+              && e.space == mn::DocInkAnchor::Frame,
+          "text-only anchor survives round-trip with its space");
+
+    // Legacy stroke-only blob (no texts key) parses clean; empty anchor = "".
+    mn::DocInkAnchor legacyIn;
+    legacyIn.space = mn::DocInkAnchor::Px;
+    legacyIn.strokes.push_back(st);
+    const QString legacy = mn::docInkToJson(legacyIn);
+    CHECK(!legacy.contains(QStringLiteral("\"texts\"")),
+          "texts key omitted when empty (old blobs stay byte-stable)");
+    mn::DocInkAnchor f;
+    CHECK(mn::docInkFromJson(legacy, f) && f.texts.empty(), "legacy blob -> empty texts");
+    CHECK(mn::docInkToJson(mn::DocInkAnchor{}).isEmpty(),
+          "truly empty anchor still serializes to the delete signal");
+
+    // Truth table.
+    CHECK(mn::docInkHasStrokes(blob) && mn::docInkHasContent(blob),
+          "mixed: hasStrokes && hasContent");
+    CHECK(!mn::docInkHasStrokes(tBlob) && mn::docInkHasContent(tBlob),
+          "text-only: !hasStrokes && hasContent");
+    CHECK(!mn::docInkHasContent(QString()), "empty: no content");
+
+    // --- Export presence: text-only anchors reach BOTH renderers ---
+    class InkSink : public Exporter::AssetSink {
+    public:
+        QList<QImage> images;
+        QString addFile(const QString&, const QString& b) override {
+            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
+        QString addImage(const QImage& img, const QString& b) override {
+            images << img;
+            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
+    };
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("annotated paragraph"));
+    const QString probePng = QDir::temp().filePath(QStringLiteral("mn_ink_text_probe.png"));
+    { QImage probe(64, 48, QImage::Format_RGB32); probe.fill(Qt::darkGray);
+      probe.save(probePng, "PNG"); }
+    CHECK(m.insertImageFromUrl(0, QUrl::fromLocalFile(probePng).toString()),
+          "image block inserted for the frame anchor");
+    int imgRow = -1;
+    for (int i = 0; i < m.rowCountQml(); ++i)
+        if (m.mediaKind(i) == QLatin1String("image")) { imgRow = i; break; }
+    mn::DocInkAnchor pxA;
+    pxA.space = mn::DocInkAnchor::Px;
+    pxA.texts.push_back(t);
+    m.setBlockInk(0, mn::docInkToJson(pxA));           // px text-only anchor
+    m.setBlockInk(imgRow, mn::docInkToJson(onlyText)); // frame text-only anchor
+
+    Exporter ex;
+    ex.setModel(&m);
+    InkSink sink;
+    const QString html = ex.toHtml(Exporter::Options{}, sink);
+    CHECK(html.contains(QStringLiteral("id=\"mn-ink\"")),
+          "text-only ink arms the Annotations toggle");
+    CHECK(html.contains(QStringLiteral("class=\"ink\"")), "ink layer(s) emitted");
+    bool anyLit = false;
+    for (const QImage& im : sink.images)
+        for (int yy = 0; yy < im.height() && !anyLit; yy += 2)
+            for (int xx = 0; xx < im.width() && !anyLit; xx += 2)
+                if (qAlpha(im.pixel(xx, yy)) != 0) anyLit = true;
+    CHECK(sink.images.size() >= 2 && anyLit,
+          "chips baked into the ink rasters (%d ink images)", int(sink.images.size()));
+
+    // Undo semantics ride setBlockInk (one step per call — the test-8 rule).
+    m.setBlockInk(0, QString());
+    CHECK(!mn::docInkHasContent(m.inkForRow(0)), "text anchor cleared");
+    m.undo();
+    CHECK(mn::docInkHasContent(m.inkForRow(0)) && !mn::docInkHasStrokes(m.inkForRow(0)),
+          "one undo restores the text-only anchor");
+    QFile::remove(probePng);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -1001,7 +1129,7 @@ int main(int argc, char** argv) {
     // app. Non-fatal if missing — text assertions are font-relative (computed
     // through the same helper the code under test uses).
     QFontDatabase::addApplicationFont(
-        QStringLiteral(MN_FONTS_DIR "/Inter_18pt-Regular.ttf"));
+        QStringLiteral(MN_FONTS_DIR "/Aspekta-400.ttf"));
 
     qInfo("=== minNotes regression pass ===");
     testCountNotify();
@@ -1019,6 +1147,7 @@ int main(int argc, char** argv) {
     testSketchExportCaps();
     testSketchEmbedWidth();
     testSketchTextElements();
+    testDocInkTexts();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
