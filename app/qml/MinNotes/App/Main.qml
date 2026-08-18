@@ -123,18 +123,59 @@ ApplicationWindow {
     // Multi-document imports (ENEX, Notion zips) write N .mndb files into a
     // chosen folder — the OS organizes (no vault) — then open the first.
     property string _pendingMultiImport: ""
+    property string _pendingImportName: ""
     FolderDialog {
         id: importFolderDialog
         title: "Choose a folder for the imported documents"
-        onAccepted: {
-            var res = importer.importToFolder(win._pendingMultiImport, "" + selectedFolder)
-            if (res.ok) {
-                Toasts.show(res.count === 1
-                            ? qsTr("Imported 1 document")
-                            : qsTr("Imported %1 documents").arg(res.count))
-                win.openDoc(res.firstPath)
+        onAccepted: importer.startImportToFolder(win._pendingMultiImport, "" + selectedFolder)
+    }
+    // Imports run on a worker (parsing + media copies); the dialog returns
+    // immediately and this popup owns the wait. Modal — which also pins the
+    // fresh target tab open until the insert lands.
+    Connections {
+        target: importer
+        function onImportFinished(ok, count, firstPath, error) {
+            if (!ok) {
+                Toasts.show(qsTr("Import failed") + (error !== "" ? " — " + error : ""), 2)
+                return
+            }
+            if (firstPath !== "") {   // multi-doc: open the first, say how many
+                Toasts.show(count === 1 ? qsTr("Imported 1 document")
+                                        : qsTr("Imported %1 documents").arg(count))
+                win.openDoc(firstPath)
             } else {
-                Toasts.show(qsTr("Import failed — ") + res.error, 2)
+                Toasts.show(qsTr("Imported ") + win._pendingImportName)
+            }
+        }
+    }
+    Popup {
+        id: importProgressDialog
+        visible: importer.running
+        modal: true
+        closePolicy: Popup.NoAutoClose
+        anchors.centerIn: Overlay.overlay
+        width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text {
+                text: qsTr("Importing…")
+                color: Theme.colors.textBright; font.family: Theme.font.family
+                font.pixelSize: Theme.font.sizeBody; font.bold: true
+            }
+            Text {
+                width: 400; elide: Text.ElideMiddle
+                text: importer.currentItem
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton {
+                    text: qsTr("Cancel"); padding: 12
+                    onClicked: importer.cancel()
+                }
             }
         }
     }
@@ -144,11 +185,9 @@ ApplicationWindow {
             importFolderDialog.open()
             return
         }
+        win._pendingImportName = win.importBaseName(fileUrl)
         docs.newTab()   // activeChanged re-points the importer synchronously
-        if (importer.importFile(fileUrl))
-            Toasts.show(qsTr("Imported ") + win.importBaseName(fileUrl))
-        else
-            Toasts.show(qsTr("Import failed"), 2)
+        importer.startImportFile(fileUrl)
     }
     function importBaseName(path) { return ("" + path).split("/").pop() }
     Connections {

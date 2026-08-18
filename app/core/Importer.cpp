@@ -21,6 +21,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QPointer>
 #include <QUuid>
 #include <QXmlStreamReader>
 #include "PackageFormat.h"
@@ -117,76 +118,194 @@ bool Importer::importFile(const QString& fileUrlOrPath) {
 
 bool Importer::importRtfFile(const QString& path, BlockModel* m) {
     if (!m || m->rowCountQml() < 1) return false;
-    const QString html = mn::rtfFileToHtml(path);
-    if (html.isEmpty()) return false;
-    QTextDocument doc;
-    doc.setHtml(html);
-    std::vector<BlockModel::BlockSpec> specs =
-        specsFromTextDocument(doc, m->mediaStore(), QFileInfo(path).absolutePath());
-    // Cocoa's writer leaves trailing spaces on paragraphs — trim them (and
-    // clamp spans), code blocks excepted.
-    for (auto& sp : specs) {
-        if (sp.type == BlockModel::Code) continue;
-        int len = sp.text.size();
-        while (len > 0 && (sp.text.at(len - 1) == QLatin1Char(' ')
-                           || sp.text.at(len - 1) == QLatin1Char('\t')))
-            --len;
-        if (len != sp.text.size()) {
-            sp.text.truncate(len);
-            for (auto& x : sp.spans) {
-                x.s = std::min(x.s, len);
-                x.e = std::min(x.e, len);
-            }
-        }
-    }
-    if (specs.empty()) return true;
-    m->insertSpecs(0, specs, true);
-    return true;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("rtf"), m->mediaStore()));
 }
 
-bool Importer::importDocxFile(const QString& path, BlockModel* m) {
-    if (!m || m->rowCountQml() < 1) return false;
-    const DocxReader::Result res = DocxReader::read(path, m->mediaStore());
-    if (!res.ok) return false;
-    if (res.specs.empty()) return true;
-    m->insertSpecs(0, res.specs, true);
+// Build one file's spec output — worker-safe: file IO + MediaStore's const
+// import seams only, never the model.
+Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString& fmt,
+                                             MediaStore* store) {
+    FileSpecs out;
+    if (fmt == QLatin1String("md")) {
+        bool ok = false;
+        QString text = readTextFile(path, &ok);
+        if (!ok) return out;
+        static const QRegularExpression doingRe(
+            QStringLiteral("^(\\s*(?:[-*+]|\\d+[.)])\\s)\\[/\\]\\s"),
+            QRegularExpression::MultilineOption);
+        text.replace(doingRe, QStringLiteral("\\1[ ] ") + kDoingSentinel);
+        QTextDocument doc;
+        doc.setMarkdown(text, QTextDocument::MarkdownDialectGitHub);
+        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath());
+        for (auto& sp : out.specs) {
+            if (sp.type == BlockModel::TaskListItem && sp.text.startsWith(kDoingSentinel)) {
+                sp.text.remove(0, 1);
+                for (auto& x : sp.spans) { x.s = std::max(0, x.s - 1); x.e = std::max(0, x.e - 1); }
+                sp.taskState = BlockModel::TaskDoing;
+            }
+        }
+        out.ok = true;
+    } else if (fmt == QLatin1String("html")) {
+        bool ok = false;
+        const QString html = readTextFile(path, &ok);
+        if (!ok) return out;
+        QTextDocument doc;
+        doc.setHtml(html);
+        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath());
+        out.ok = true;
+    } else if (fmt == QLatin1String("csv") || fmt == QLatin1String("tsv")) {
+        bool ok = false;
+        const QString text = readTextFile(path, &ok);
+        if (!ok) return out;
+        const TableGrid g = fmt == QLatin1String("tsv") ? TableGrid::fromTSV(text)
+                                                        : TableGrid::fromCSV(text);
+        if (g.rows() >= 1 && g.cols() >= 1) {
+            BlockModel::BlockSpec sp;
+            sp.type = BlockModel::Table;
+            sp.tableJson = g.toJson();
+            out.specs.push_back(std::move(sp));
+        }
+        out.ok = true;
+    } else if (fmt == QLatin1String("docx")) {
+        DocxReader::Result res = DocxReader::read(path, store);
+        if (!res.ok) return out;
+        out.specs = std::move(res.specs);
+        out.comments = std::move(res.comments);
+        out.ok = true;
+    } else if (fmt == QLatin1String("rtf")) {
+        const QString html = mn::rtfFileToHtml(path);
+        if (html.isEmpty()) return out;
+        QTextDocument doc;
+        doc.setHtml(html);
+        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath());
+        // Cocoa's writer leaves trailing spaces on paragraphs — trim them
+        // (and clamp spans), code blocks excepted.
+        for (auto& sp : out.specs) {
+            if (sp.type == BlockModel::Code) continue;
+            int len = sp.text.size();
+            while (len > 0 && (sp.text.at(len - 1) == QLatin1Char(' ')
+                               || sp.text.at(len - 1) == QLatin1Char('\t')))
+                --len;
+            if (len != sp.text.size()) {
+                sp.text.truncate(len);
+                for (auto& x : sp.spans) {
+                    x.s = std::min(x.s, len);
+                    x.e = std::min(x.e, len);
+                }
+            }
+        }
+        out.ok = true;
+    }
+    return out;
+}
+
+// GUI-thread half: land the specs + comments + async remote localize.
+bool Importer::applySpecs(BlockModel* m, const FileSpecs& fs) {
+    if (!fs.ok || !m) return false;
+    if (fs.specs.empty()) return true;   // empty file → empty doc, not a failure
+    const auto [caretRow, caretCol] = m->insertSpecs(0, fs.specs, true);
+    Q_UNUSED(caretCol);
     // Reuse folds spec 0 into row 0, the rest follow — spec i is row i.
-    for (const DocxReader::CommentOut& co : res.comments) {
+    for (const DocxReader::CommentOut& co : fs.comments) {
         const QString threadId = m->addComment(co.specIndex, co.start, co.end);
         if (threadId.isEmpty()) continue;
         for (const QString& body : co.messages)
             m->addCommentMessage(threadId, body);
     }
+    m->localizeRemoteMedia(0, caretRow);
     return true;
+}
+
+Importer::~Importer() {
+    cancel_ = true;
+    if (worker_.joinable()) worker_.join();
+}
+
+void Importer::setBusy(bool running, const QString& item) {
+    running_ = running;
+    currentItem_ = item;
+    emit runningChanged();
+    emit progressChanged();
+}
+
+void Importer::finishOnGui(bool ok, int count, const QString& firstPath,
+                           const QString& error) {
+    QMetaObject::invokeMethod(this, [this, ok, count, firstPath, error] {
+        setBusy(false, QString());
+        emit importFinished(ok, count, firstPath, error);
+    }, Qt::QueuedConnection);
+}
+
+void Importer::startImportFile(const QString& fileUrlOrPath) {
+    if (running_ || !model_ || !model_->mediaStore()) return;
+    if (worker_.joinable()) worker_.join();
+    cancel_ = false;
+    const QString path = localPath(fileUrlOrPath);
+    const QString fmt = formatForPath(path);
+    if (fmt.isEmpty()) {
+        emit importFinished(false, 0, {}, QStringLiteral("Unsupported file"));
+        return;
+    }
+    if (fmt == QLatin1String("txt")) {   // trivial read — no worker needed
+        const bool ok = importTextFile(path, model_);
+        emit importFinished(ok, 1, {}, ok ? QString() : QStringLiteral("Read failed"));
+        return;
+    }
+    setBusy(true, QFileInfo(path).fileName());
+    QPointer<BlockModel> target(model_);
+    MediaStore* store = model_->mediaStore();   // modal popup pins the tab open
+    worker_ = std::thread([this, path, fmt, store, target] {
+        const FileSpecs fs = buildFileSpecs(path, fmt, store);
+        QMetaObject::invokeMethod(this, [this, fs, target] {
+            const bool ok = target ? applySpecs(target, fs) : false;
+            setBusy(false, QString());
+            emit importFinished(ok, 1, {},
+                                ok ? QString() : QStringLiteral("Import failed"));
+        }, Qt::QueuedConnection);
+    });
+}
+
+void Importer::startImportToFolder(const QString& fileUrlOrPath,
+                                   const QString& destDirUrlOrPath) {
+    if (running_) return;
+    if (worker_.joinable()) worker_.join();
+    cancel_ = false;
+    const QString path = localPath(fileUrlOrPath);
+    const QString destDir = localPath(destDirUrlOrPath);
+    const QString fmt = formatForPath(path);
+    if (fmt != QLatin1String("enex") && fmt != QLatin1String("notion")) {
+        emit importFinished(false, 0, {}, QStringLiteral("Unsupported file"));
+        return;
+    }
+    setBusy(true, QFileInfo(path).fileName());
+    worker_ = std::thread([this, path, destDir, fmt] {
+        QString firstPath;
+        const FolderProgress progress = [this](int done, const QString& name) {
+            QMetaObject::invokeMethod(this, [this, done, name] {
+                currentItem_ = QStringLiteral("%1 (%2)").arg(name).arg(done);
+                emit progressChanged();
+            }, Qt::QueuedConnection);
+            return !cancel_.load();
+        };
+        const int n = fmt == QLatin1String("enex")
+            ? importEnexToFolder(path, destDir, &firstPath, progress)
+            : importNotionZipToFolder(path, destDir, &firstPath, progress);
+        const bool cancelled = cancel_.load();
+        finishOnGui(n > 0, n, firstPath,
+                    n > 0 ? QString()
+                          : (cancelled ? QStringLiteral("Cancelled")
+                                       : QStringLiteral("Nothing importable found")));
+    });
+}
+
+bool Importer::importDocxFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("docx"), m->mediaStore()));
 }
 
 bool Importer::importMarkdownFile(const QString& path, BlockModel* m) {
     if (!m || m->rowCountQml() < 1) return false;
-    bool ok = false;
-    QString text = readTextFile(path, &ok);
-    if (!ok) return false;
-
-    static const QRegularExpression doingRe(
-        QStringLiteral("^(\\s*(?:[-*+]|\\d+[.)])\\s)\\[/\\]\\s"),
-        QRegularExpression::MultilineOption);
-    text.replace(doingRe, QStringLiteral("\\1[ ] ") + kDoingSentinel);
-
-    QTextDocument doc;
-    doc.setMarkdown(text, QTextDocument::MarkdownDialectGitHub);
-    std::vector<BlockModel::BlockSpec> specs =
-        specsFromTextDocument(doc, m->mediaStore(), QFileInfo(path).absolutePath());
-    for (auto& sp : specs) {
-        if (sp.type == BlockModel::TaskListItem && sp.text.startsWith(kDoingSentinel)) {
-            sp.text.remove(0, 1);
-            for (auto& x : sp.spans) { x.s = std::max(0, x.s - 1); x.e = std::max(0, x.e - 1); }
-            sp.taskState = BlockModel::TaskDoing;
-        }
-    }
-    if (specs.empty()) return true;   // empty file → empty doc, not a failure
-    const auto [caretRow, caretCol] = m->insertSpecs(0, specs, true);
-    Q_UNUSED(caretCol);
-    m->localizeRemoteMedia(0, caretRow);
-    return true;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("md"), m->mediaStore()));
 }
 
 bool Importer::importTextFile(const QString& path, BlockModel* m) {
@@ -200,33 +319,13 @@ bool Importer::importTextFile(const QString& path, BlockModel* m) {
 
 bool Importer::importCsvFile(const QString& path, BlockModel* m, bool tsv) {
     if (!m || m->rowCountQml() < 1) return false;
-    bool ok = false;
-    const QString text = readTextFile(path, &ok);
-    if (!ok) return false;
-    const TableGrid g = tsv ? TableGrid::fromTSV(text) : TableGrid::fromCSV(text);
-    if (g.rows() < 1 || g.cols() < 1) return true;   // empty file → empty doc
-    BlockModel::BlockSpec sp;
-    sp.type = BlockModel::Table;
-    sp.tableJson = g.toJson();
-    m->insertSpecs(0, {sp}, true);
-    return true;
+    return applySpecs(m, buildFileSpecs(
+        path, tsv ? QStringLiteral("tsv") : QStringLiteral("csv"), m->mediaStore()));
 }
 
 bool Importer::importHtmlFile(const QString& path, BlockModel* m) {
     if (!m || m->rowCountQml() < 1) return false;
-    bool ok = false;
-    const QString html = readTextFile(path, &ok);
-    if (!ok) return false;
-
-    QTextDocument doc;
-    doc.setHtml(html);
-    std::vector<BlockModel::BlockSpec> specs =
-        specsFromTextDocument(doc, m->mediaStore(), QFileInfo(path).absolutePath());
-    if (specs.empty()) return true;
-    const auto [caretRow, caretCol] = m->insertSpecs(0, specs, true);
-    Q_UNUSED(caretCol);
-    m->localizeRemoteMedia(0, caretRow);
-    return true;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("html"), m->mediaStore()));
 }
 
 std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
@@ -617,7 +716,7 @@ QString stripNotionId(const QString& baseName) {
 } // namespace
 
 int Importer::importEnexToFolder(const QString& path, const QString& destDir,
-                                 QString* firstPath) {
+                                 QString* firstPath, const FolderProgress& progress) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return 0;
     QDir().mkpath(destDir);
@@ -661,6 +760,8 @@ int Importer::importEnexToFolder(const QString& path, const QString& destDir,
                 inResource = false;
             } else if (name == QLatin1String("note") && inNote) {
                 inNote = false;
+                if (progress && !progress(count, sanitizeDocName(title)))
+                    return count;   // cancelled between notes
                 const QString docPath =
                     uniqueDocPath(destDir, sanitizeDocName(title), taken);
                 if (writeEnexNote(sanitizeDocName(title), enml, resources, docPath)) {
@@ -674,7 +775,7 @@ int Importer::importEnexToFolder(const QString& path, const QString& destDir,
 }
 
 int Importer::importNotionZipToFolder(const QString& path, const QString& destDir,
-                                      QString* firstPath) {
+                                      QString* firstPath, const FolderProgress& progress) {
     QDir().mkpath(destDir);
     const QString stage = BlockModel::scratchDir() + QStringLiteral("/import-")
         + QUuid::createUuid().toString(QUuid::Id128);
@@ -696,6 +797,10 @@ int Importer::importNotionZipToFolder(const QString& path, const QString& destDi
     mdFiles.sort();
     csvFiles.sort();
     for (const QString& md : mdFiles) {
+        if (progress && !progress(count, QFileInfo(md).completeBaseName())) {
+            QDir(stage).removeRecursively();
+            return count;
+        }
         BlockModel m;
         freshDoc(m);
         if (importMarkdownFile(md, &m)) {
@@ -710,6 +815,10 @@ int Importer::importNotionZipToFolder(const QString& path, const QString& destDi
         m.closeDocument();
     }
     for (const QString& csv : csvFiles) {
+        if (progress && !progress(count, QFileInfo(csv).completeBaseName())) {
+            QDir(stage).removeRecursively();
+            return count;
+        }
         BlockModel m;
         freshDoc(m);
         if (importCsvFile(csv, &m, false)) {

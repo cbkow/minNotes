@@ -1,6 +1,9 @@
 #pragma once
 #include "BlockModel.h"
+#include "DocxReader.h"
 #include <QVariantMap>
+#include <atomic>
+#include <thread>
 
 class QTextDocument;
 class MediaStore;
@@ -25,10 +28,37 @@ class MediaStore;
 // headless per-format cores for the regression suite.
 class Importer : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool running READ running NOTIFY runningChanged)
+    Q_PROPERTY(QString currentItem READ currentItem NOTIFY progressChanged)
 public:
     explicit Importer(QObject* parent = nullptr) : QObject(parent) {}
+    ~Importer() override;
 
     void setModel(BlockModel* m) { model_ = m; }
+
+    bool running() const { return running_; }
+    QString currentItem() const { return currentItem_; }
+
+    // --- Async entry points (the UI path; the sync invokables below remain
+    // for tests). Spec-building/parsing runs on a worker (file IO + media
+    // copies through MediaStore's thread-safe const seams); only the final
+    // insertSpecs lands queued on the GUI thread. importFinished carries
+    // {ok, count, firstPath ("" for single-doc — the fresh tab already shows
+    // it), error}. The progress popup is modal, which also guarantees the
+    // target tab can't close mid-import.
+    Q_INVOKABLE void startImportFile(const QString& fileUrlOrPath);
+    Q_INVOKABLE void startImportToFolder(const QString& fileUrlOrPath,
+                                         const QString& destDirUrlOrPath);
+    // Folder imports stop between notes/pages; single-file parses finish.
+    Q_INVOKABLE void cancel() { cancel_ = true; }
+
+signals:
+    void runningChanged();
+    void progressChanged();
+    void importFinished(bool ok, int count, const QString& firstPath,
+                        const QString& error);
+
+public:
 
     // Import-format token for a path/URL by extension — "md", "txt", "csv",
     // "tsv", "html" so far; "" = not importable. THE classifier: menus, drop
@@ -65,17 +95,22 @@ public:
     // CSV / TSV → one Table block (first row = header, the app default).
     // CSV parses RFC-4180-ish via TableGrid::fromCSV; TSV splits on tabs.
     static bool importCsvFile(const QString& path, BlockModel* m, bool tsv = false);
+    // Per-doc progress hook for the folder cores: (done, name); return false
+    // to stop between docs (docs already written stay).
+    using FolderProgress = std::function<bool(int, const QString&)>;
     // Evernote .enex → one .mndb per <note> in destDir (streamed XML; ENML →
     // HTML → walker; image resources inline via their MD5 hash, other
     // resources become file chips in the doc's sidecar; en-todo → real
     // tri-state tasks). Returns docs written; firstPath = first doc.
     static int importEnexToFolder(const QString& path, const QString& destDir,
-                                  QString* firstPath = nullptr);
+                                  QString* firstPath = nullptr,
+                                  const FolderProgress& progress = {});
     // Notion export zip → one .mndb per .md page (+ one per standalone .csv
     // database) in destDir. Extracts to session scratch, resolves Notion's
     // %-encoded relative image links, strips the 32-hex page ids from names.
     static int importNotionZipToFolder(const QString& path, const QString& destDir,
-                                       QString* firstPath = nullptr);
+                                       QString* firstPath = nullptr,
+                                       const FolderProgress& progress = {});
     // HTML file → setHtml → walker (relative images resolve against the
     // file's directory; remote ones localize async post-insert).
     static bool importHtmlFile(const QString& path, BlockModel* m);
@@ -93,5 +128,22 @@ public:
         QTextDocument& doc, MediaStore* store, const QString& baseDir = QString());
 
 private:
+    // One file's parsed output — built on the worker, applied on the GUI.
+    struct FileSpecs {
+        std::vector<BlockModel::BlockSpec> specs;
+        std::vector<DocxReader::CommentOut> comments;   // docx only
+        bool ok = false;
+    };
+    static FileSpecs buildFileSpecs(const QString& path, const QString& fmt,
+                                    MediaStore* store);
+    static bool applySpecs(BlockModel* m, const FileSpecs& fs);
+    void setBusy(bool running, const QString& item);
+    void finishOnGui(bool ok, int count, const QString& firstPath,
+                     const QString& error);
+
     BlockModel* model_ = nullptr;
+    bool running_ = false;
+    QString currentItem_;
+    std::atomic<bool> cancel_{false};
+    std::thread worker_;
 };

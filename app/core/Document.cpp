@@ -1,4 +1,5 @@
 #include "Document.h"
+#include <atomic>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
@@ -15,7 +16,9 @@
 #endif
 
 namespace {
-int g_conn_seq = 0;
+// Atomic: import workers open headless Documents off the GUI thread, and
+// connection names must stay unique across threads.
+std::atomic<int> g_conn_seq{0};
 }
 
 QString makeUlid() {
