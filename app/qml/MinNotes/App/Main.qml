@@ -101,12 +101,14 @@ ApplicationWindow {
     FileDialog {
         id: importDialog
         title: "Import"
-        // RTF rides the OS-native converter — macOS only for now; the arm
-        // (and the classifier) hide elsewhere.
+        // RTF rides the OS-native converter — ask the CLASSIFIER whether this
+        // build supports it (macOS today; Windows lights up automatically
+        // when RtfConvert_win lands) rather than hard-coding platforms.
         nameFilters: {
+            var rtfOk = importer.formatFor("probe.rtf") !== ""
             var all = "*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.docx *.enex *.zip"
             var f = []
-            if (Qt.platform.os === "osx") all += " *.rtf"
+            if (rtfOk) all += " *.rtf"
             f.push("Importable documents (" + all + ")")
             f = f.concat(["Markdown (*.md *.markdown *.mdown)",
                           "Plain text (*.txt *.text *.log)",
@@ -115,7 +117,7 @@ ApplicationWindow {
                           "Word document (*.docx)",
                           "Evernote export (*.enex)",
                           "Notion export (*.zip)"])
-            if (Qt.platform.os === "osx") f.push("RTF (*.rtf)")
+            if (rtfOk) f.push("RTF (*.rtf)")
             return f
         }
         onAccepted: win.startImport("" + selectedFile)

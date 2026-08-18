@@ -108,6 +108,15 @@ Root: HKA; Subkey: "Software\Classes\minNotes.Document"; ValueType: string; Valu
 Root: HKA; Subkey: "Software\Classes\minNotes.Document\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\minNotes.ico,0"
 Root: HKA; Subkey: "Software\Classes\minNotes.Document\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
+; ---- .mnpkg package association (minNotes.Package progid) ------------
+; The hand-off package (sealed snapshot): double-click opens a read-only
+; view; Save As materializes a .mndb. It's a zip inside — users can rename
+; to .zip to inspect.
+Root: HKA; Subkey: "Software\Classes\.mnpkg"; ValueType: string; ValueName: ""; ValueData: "minNotes.Package"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\minNotes.Package"; ValueType: string; ValueName: ""; ValueData: "minNotes Package"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\minNotes.Package\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\minNotes.ico,0"
+Root: HKA; Subkey: "Software\Classes\minNotes.Package\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+
 ; ---- minnotes:// URI scheme (deep links) ----------------------------
 ; minnotes:///abs/path/doc.mndb → resolveAndOpen() opens that document.
 Root: HKA; Subkey: "Software\Classes\minnotes"; ValueType: string; ValueName: ""; ValueData: "URL:minNotes Protocol"; Flags: uninsdeletekey
