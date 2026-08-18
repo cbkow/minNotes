@@ -1,5 +1,6 @@
 #pragma once
 #include "BlockModel.h"
+#include <QVariantMap>
 
 class QTextDocument;
 class MediaStore;
@@ -39,13 +40,20 @@ public:
     // The classifier itself, callable without an instance (BlockModel's
     // drop/paste intercept runs it before the file-chip fallback).
     static QString formatForPath(const QString& fileUrlOrPath);
-    // Whether the file expands to MULTIPLE documents (ENEX/Notion zips later;
-    // everything current is single-doc → lands in the active untitled tab).
+    // Whether the file expands to MULTIPLE documents (ENEX exports, Notion
+    // zips) — QML routes these through the destination-folder flow instead
+    // of a fresh tab (user ruling: the OS organizes; N .mndb files land in
+    // a chosen folder).
     Q_INVOKABLE bool isMultiDocument(const QString& fileUrlOrPath) const;
     // Import a single-document file into the ACTIVE model (QML opens a fresh
     // tab first; the initial blank paragraph is consumed by the insert).
     // False on unknown format or read failure.
     Q_INVOKABLE bool importFile(const QString& fileUrlOrPath);
+    // Multi-document import: write one .mndb per note/page into destDir.
+    // Returns {ok, count, firstPath, error} — QML opens firstPath and toasts
+    // the count.
+    Q_INVOKABLE QVariantMap importToFolder(const QString& fileUrlOrPath,
+                                           const QString& destDirUrlOrPath);
 
     // --- Headless per-format cores (regression-suite entry points) ---
     // Markdown: tri-state `- [/] ` sentinel pre-scan → setMarkdown(GitHub) →
@@ -57,6 +65,17 @@ public:
     // CSV / TSV → one Table block (first row = header, the app default).
     // CSV parses RFC-4180-ish via TableGrid::fromCSV; TSV splits on tabs.
     static bool importCsvFile(const QString& path, BlockModel* m, bool tsv = false);
+    // Evernote .enex → one .mndb per <note> in destDir (streamed XML; ENML →
+    // HTML → walker; image resources inline via their MD5 hash, other
+    // resources become file chips in the doc's sidecar; en-todo → real
+    // tri-state tasks). Returns docs written; firstPath = first doc.
+    static int importEnexToFolder(const QString& path, const QString& destDir,
+                                  QString* firstPath = nullptr);
+    // Notion export zip → one .mndb per .md page (+ one per standalone .csv
+    // database) in destDir. Extracts to session scratch, resolves Notion's
+    // %-encoded relative image links, strips the 32-hex page ids from names.
+    static int importNotionZipToFolder(const QString& path, const QString& destDir,
+                                       QString* firstPath = nullptr);
     // HTML file → setHtml → walker (relative images resolve against the
     // file's directory; remote ones localize async post-insert).
     static bool importHtmlFile(const QString& path, BlockModel* m);

@@ -21,6 +21,8 @@
 #include <QFontDatabase>
 
 #include <QGuiApplication>
+#include <QBuffer>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -2012,6 +2014,160 @@ static void testPackageStreaming() {
     dir.removeRecursively();
 }
 
+static void testEnexImport() {
+    qInfo("[26] ENEX import: notes → folder of docs (images, todos, attachments)");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_enex"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+
+    // A real 4x4 png, base64'd, plus its MD5 (the en-media linkage key).
+    QByteArray png;
+    {
+        QImage img(4, 4, QImage::Format_RGB32); img.fill(Qt::cyan);
+        QBuffer b(&png); b.open(QIODevice::WriteOnly); img.save(&b, "PNG");
+    }
+    const QString pngMd5 = QString::fromLatin1(
+        QCryptographicHash::hash(png, QCryptographicHash::Md5).toHex());
+    const QByteArray attach("PDFISH-BYTES-123");
+    const QString attachMd5 = QString::fromLatin1(
+        QCryptographicHash::hash(attach, QCryptographicHash::Md5).toHex());
+
+    const QString enexPath = dir.filePath(QStringLiteral("export.enex"));
+    {
+        QFile f(enexPath);
+        CHECK(f.open(QIODevice::WriteOnly), "enex fixture writable");
+        QString enex = QStringLiteral(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<en-export application=\"Evernote\">\n"
+            "<note><title>Trip Plan</title>\n"
+            "<content><![CDATA[<?xml version=\"1.0\"?>"
+            "<!DOCTYPE en-note SYSTEM \"http://xml.evernote.com/pub/enml2.dtd\">"
+            "<en-note><div>Pack the <b>camera</b></div>"
+            "<div><en-todo checked=\"false\"/>buy tickets</div>"
+            "<div><en-todo checked=\"true\"/>book hotel</div>"
+            "<en-media hash=\"%1\" type=\"image/png\"/>"
+            "<en-media hash=\"%2\" type=\"application/pdf\"/>"
+            "</en-note>]]></content>\n"
+            "<resource><data encoding=\"base64\">%3</data><mime>image/png</mime>"
+            "<resource-attributes><file-name>view.png</file-name></resource-attributes></resource>\n"
+            "<resource><data encoding=\"base64\">%4</data><mime>application/pdf</mime>"
+            "<resource-attributes><file-name>itinerary.pdf</file-name></resource-attributes></resource>\n"
+            "</note>\n"
+            "<note><title>Trip Plan</title>"
+            "<content><![CDATA[<en-note><div>second note, same title</div></en-note>]]></content></note>\n"
+            "</en-export>\n")
+            .arg(pngMd5, attachMd5,
+                 QString::fromLatin1(png.toBase64()),
+                 QString::fromLatin1(attach.toBase64()));
+        f.write(enex.toUtf8());
+    }
+
+    const QString dest = dir.filePath(QStringLiteral("out"));
+    QString firstPath;
+    const int n = Importer::importEnexToFolder(enexPath, dest, &firstPath);
+    CHECK(n == 2, "two notes → two docs (%d)", n);
+    CHECK(QFileInfo::exists(dest + QStringLiteral("/Trip Plan.mndb"))
+              && QFileInfo::exists(dest + QStringLiteral("/Trip Plan-2.mndb")),
+          "title collision → -2 suffix");
+
+    BlockModel m;
+    CHECK(m.openDocument(firstPath), "first doc opens");
+    CHECK(m.typeForRow(0) == BlockModel::Heading
+              && m.contentForRow(0) == QStringLiteral("Trip Plan"),
+          "note title → H1");
+    CHECK(m.contentForRow(1) == QStringLiteral("Pack the camera")
+              && m.hasFormat(1, 9, 15, QStringLiteral("bold")),
+          "ENML div text + bold span");
+    CHECK(m.typeForRow(2) == BlockModel::TaskListItem
+              && m.taskStateForRow(2) == BlockModel::TaskTodo
+              && m.contentForRow(2) == QStringLiteral("buy tickets"),
+          "en-todo unchecked → task todo");
+    CHECK(m.typeForRow(3) == BlockModel::TaskListItem
+              && m.taskStateForRow(3) == BlockModel::TaskDone,
+          "en-todo checked → task done");
+    int imgRow = -1, fileRow = -1;
+    for (int r = 0; r < m.rowCountQml(); ++r) {
+        if (m.typeForRow(r) != BlockModel::Media) continue;
+        if (m.mediaKind(r) == QStringLiteral("file")) fileRow = r;
+        else imgRow = r;
+    }
+    CHECK(imgRow >= 0 && QFileInfo::exists(m.mediaLocalPath(imgRow)),
+          "image resource inlined via hash, file in the doc's sidecar");
+    CHECK(fileRow >= 0 && m.mediaFileName(fileRow) == QStringLiteral("itinerary.pdf"),
+          "non-image resource → file chip with its original name");
+    {
+        QFile f(m.mediaLocalPath(fileRow));
+        CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == attach,
+              "attachment bytes byte-exact in the sidecar");
+    }
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
+static void testNotionImport() {
+    qInfo("[27] Notion zip import: pages + database → folder of docs");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_notion"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+
+    QByteArray png;
+    {
+        QImage img(6, 5, QImage::Format_RGB32); img.fill(Qt::yellow);
+        QBuffer b(&png); b.open(QIODevice::WriteOnly); img.save(&b, "PNG");
+    }
+    const QString zipPath = dir.filePath(QStringLiteral("notion.zip"));
+    {
+        // Notion shape: "Title <32hex>.md" + an asset dir of the same name;
+        // image links inside the md are %-ENCODED while entry names carry
+        // literal spaces.
+        const QString id = QStringLiteral("0123456789abcdef0123456789abcdef");
+        mnpkg::PackageWriter w(zipPath);
+        w.addCompressed(QStringLiteral("Meeting Notes %1.md").arg(id),
+                        QStringLiteral("# Meeting Notes\n\nAgenda item **one**\n\n"
+                                       "![view](Meeting%20Notes%20""%1/view.png)\n").arg(id).toUtf8());
+        const QString picTmp = dir.filePath(QStringLiteral("view.png"));
+        { QFile f(picTmp); if (f.open(QIODevice::WriteOnly)) f.write(png); }
+        w.addStoredFile(QStringLiteral("Meeting Notes %1/view.png").arg(id), picTmp);
+        w.addCompressed(QStringLiteral("Tasks %1.csv").arg(id),
+                        QByteArray("Name,Status\nShip it,Done\n"));
+        CHECK(w.finish(), "notion fixture zip wrote");
+    }
+
+    CHECK(Importer::formatForPath(zipPath) == QStringLiteral("notion"),
+          "zip with md/csv classifies as notion");
+    CHECK(Importer::formatForPath(QStringLiteral("/x/random.zip")).isEmpty(),
+          "unreadable/other zips do NOT classify");
+
+    const QString dest = dir.filePath(QStringLiteral("out"));
+    QString firstPath;
+    const int n = Importer::importNotionZipToFolder(zipPath, dest, &firstPath);
+    CHECK(n == 2, "page + database → two docs (%d)", n);
+    CHECK(QFileInfo::exists(dest + QStringLiteral("/Meeting Notes.mndb"))
+              && QFileInfo::exists(dest + QStringLiteral("/Tasks.mndb")),
+          "32-hex Notion ids stripped from doc names");
+
+    BlockModel m;
+    CHECK(m.openDocument(dest + QStringLiteral("/Meeting Notes.mndb")), "page opens");
+    CHECK(m.typeForRow(0) == BlockModel::Heading, "md heading landed");
+    int imgRow = -1;
+    for (int r = 0; r < m.rowCountQml(); ++r)
+        if (m.typeForRow(r) == BlockModel::Media) imgRow = r;
+    CHECK(imgRow >= 0, "image block landed");
+    const QString p = m.mediaLocalPath(imgRow);
+    CHECK(!p.isEmpty() && QFileInfo::exists(p)
+              && p.startsWith(dest + QStringLiteral("/.minnotes/")),
+          "%%-encoded relative image resolved AND copied into the doc sidecar");
+    m.closeDocument();
+
+    BlockModel m2;
+    CHECK(m2.openDocument(dest + QStringLiteral("/Tasks.mndb")), "database opens");
+    CHECK(m2.typeForRow(0) == BlockModel::Table
+              && m2.tableCell(0, 1, 0) == QStringLiteral("Ship it"),
+          "csv database → Table doc");
+    m2.closeDocument();
+    dir.removeRecursively();
+}
+
 // MN_OPEN_PROBE=<dir> — diagnostic, not a test: builds (once) a package with
 // three junk multi-GB "videos" in <dir>, then times each stage of the open
 // path. For chasing "opening a package freezes" reports.
@@ -2106,6 +2262,8 @@ int main(int argc, char** argv) {
     testPackageLifecycle();
     testAsyncPackagePaths();
     testPackageStreaming();
+    testEnexImport();
+    testNotionImport();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

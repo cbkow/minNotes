@@ -101,14 +101,39 @@ ApplicationWindow {
     FileDialog {
         id: importDialog
         title: "Import"
-        nameFilters: ["Importable documents (*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm)",
+        nameFilters: ["Importable documents (*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.enex *.zip)",
                       "Markdown (*.md *.markdown *.mdown)",
                       "Plain text (*.txt *.text *.log)",
                       "CSV / TSV (*.csv *.tsv *.tab)",
-                      "HTML (*.html *.htm)"]
+                      "HTML (*.html *.htm)",
+                      "Evernote export (*.enex)",
+                      "Notion export (*.zip)"]
         onAccepted: win.startImport("" + selectedFile)
     }
+    // Multi-document imports (ENEX, Notion zips) write N .mndb files into a
+    // chosen folder — the OS organizes (no vault) — then open the first.
+    property string _pendingMultiImport: ""
+    FolderDialog {
+        id: importFolderDialog
+        title: "Choose a folder for the imported documents"
+        onAccepted: {
+            var res = importer.importToFolder(win._pendingMultiImport, "" + selectedFolder)
+            if (res.ok) {
+                Toasts.show(res.count === 1
+                            ? qsTr("Imported 1 document")
+                            : qsTr("Imported %1 documents").arg(res.count))
+                win.openDoc(res.firstPath)
+            } else {
+                Toasts.show(qsTr("Import failed — ") + res.error, 2)
+            }
+        }
+    }
     function startImport(fileUrl) {
+        if (importer.isMultiDocument(fileUrl)) {
+            win._pendingMultiImport = "" + fileUrl
+            importFolderDialog.open()
+            return
+        }
         docs.newTab()   // activeChanged re-points the importer synchronously
         if (importer.importFile(fileUrl))
             Toasts.show(qsTr("Imported ") + win.importBaseName(fileUrl))

@@ -14,6 +14,14 @@
 #include <QPixmap>
 #include <QRegularExpression>
 #include <QStringConverter>
+#include <QCryptographicHash>
+#include <QDirIterator>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSet>
+#include <QUuid>
+#include <QXmlStreamReader>
+#include "PackageFormat.h"
 #include <functional>
 
 // file:// URL or plain path → plain path (FileDialog and drops hand us URLs).
@@ -41,7 +49,8 @@ static QString readTextFile(const QString& path, bool* ok) {
 static const QChar kDoingSentinel(0xE0D0);
 
 QString Importer::formatForPath(const QString& fileUrlOrPath) {
-    const QString ext = QFileInfo(localPath(fileUrlOrPath)).suffix().toLower();
+    const QString path = localPath(fileUrlOrPath);
+    const QString ext = QFileInfo(path).suffix().toLower();
     if (ext == QLatin1String("md") || ext == QLatin1String("markdown")
         || ext == QLatin1String("mdown"))                                 return QStringLiteral("md");
     if (ext == QLatin1String("txt") || ext == QLatin1String("text")
@@ -49,12 +58,43 @@ QString Importer::formatForPath(const QString& fileUrlOrPath) {
     if (ext == QLatin1String("csv"))                                      return QStringLiteral("csv");
     if (ext == QLatin1String("tsv") || ext == QLatin1String("tab"))       return QStringLiteral("tsv");
     if (ext == QLatin1String("html") || ext == QLatin1String("htm"))      return QStringLiteral("html");
+    if (ext == QLatin1String("enex"))                                     return QStringLiteral("enex");
+    if (ext == QLatin1String("zip")) {
+        // Only NOTION-shaped zips import (md/csv entries in the central
+        // directory — one cheap read); any other zip stays a file chip.
+        const auto entries = mnpkg::entrySizes(path);
+        for (auto it = entries.constBegin(); it != entries.constEnd(); ++it)
+            if (it.key().endsWith(QLatin1String(".md"), Qt::CaseInsensitive)
+                || it.key().endsWith(QLatin1String(".csv"), Qt::CaseInsensitive))
+                return QStringLiteral("notion");
+        return {};
+    }
     return {};
 }
 
 bool Importer::isMultiDocument(const QString& fileUrlOrPath) const {
-    Q_UNUSED(fileUrlOrPath);
-    return false;   // ENEX / Notion zips arrive in a later phase
+    const QString fmt = formatForPath(fileUrlOrPath);
+    return fmt == QLatin1String("enex") || fmt == QLatin1String("notion");
+}
+
+QVariantMap Importer::importToFolder(const QString& fileUrlOrPath,
+                                     const QString& destDirUrlOrPath) {
+    QVariantMap out;
+    const QString path = localPath(fileUrlOrPath);
+    const QString destDir = localPath(destDirUrlOrPath);
+    QString firstPath;
+    int count = 0;
+    const QString fmt = formatForPath(path);
+    if (fmt == QLatin1String("enex"))
+        count = importEnexToFolder(path, destDir, &firstPath);
+    else if (fmt == QLatin1String("notion"))
+        count = importNotionZipToFolder(path, destDir, &firstPath);
+    out.insert(QStringLiteral("ok"), count > 0);
+    out.insert(QStringLiteral("count"), count);
+    out.insert(QStringLiteral("firstPath"), firstPath);
+    out.insert(QStringLiteral("error"),
+               count > 0 ? QString() : QStringLiteral("Nothing importable found"));
+    return out;
 }
 
 bool Importer::importFile(const QString& fileUrlOrPath) {
@@ -242,6 +282,13 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
                                        ? QUrl(src).toLocalFile() : src;
                     if (!baseDir.isEmpty() && QFileInfo(path).isRelative())
                         path = QDir(baseDir).filePath(path);
+                    // Notion exports link images with %-encoded relative
+                    // paths while the files on disk carry literal spaces —
+                    // fall back to the decoded form when the raw one misses.
+                    if (!QFileInfo::exists(path)) {
+                        const QString dec = QUrl::fromPercentEncoding(path.toUtf8());
+                        if (dec != path && QFileInfo::exists(dec)) path = dec;
+                    }
                     ref = store->importFile(path);
                 }
                 if (ref.ok()) {
@@ -330,4 +377,301 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
     };
     walk(doc.rootFrame());
     return specs;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-document imports (ENEX / Notion) — one .mndb per note/page, written
+// into a user-chosen folder (the OS organizes; no vault).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Filesystem-safe doc name from a note/page title.
+QString sanitizeDocName(QString s) {
+    static const QString invalid = QStringLiteral("<>:\"/\\|?*");
+    for (QChar& c : s)
+        if (invalid.contains(c) || c.unicode() < 0x20) c = QLatin1Char('-');
+    s = s.trimmed();
+    if (s.size() > 80) s = s.left(80).trimmed();
+    return s.isEmpty() ? QStringLiteral("Untitled note") : s;
+}
+
+// destDir/<base>.mndb, -2/-3… on collision (against both this run and disk).
+QString uniqueDocPath(const QString& destDir, const QString& base,
+                      QSet<QString>& taken) {
+    QString name = base;
+    for (int n = 2;
+         taken.contains(name.toLower())
+             || QFileInfo::exists(destDir + QLatin1Char('/') + name + QStringLiteral(".mndb"));
+         ++n)
+        name = base + QLatin1Char('-') + QString::number(n);
+    taken.insert(name.toLower());
+    return destDir + QLatin1Char('/') + name + QStringLiteral(".mndb");
+}
+
+// Fresh headless model in the untitled scratch (the regression pattern):
+// caller inserts, then saveAs materializes doc + .minnotes into destDir.
+void freshDoc(BlockModel& m) {
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+}
+
+// ENEX sentinels (PUA): en-todo state + non-image resource placeholders
+// survive the QTextDocument round-trip as text, then post-process into real
+// task states / file-chip specs.
+const QChar kEnexTodo(0xE0D1);
+const QChar kEnexFileRes(0xE0D2);
+
+struct EnexResource {
+    QByteArray bytes;
+    QString mime;
+    QString fileName;
+    QString md5;        // hex — the en-media linkage key
+};
+
+// One <note>'s ENML + resources → a saved .mndb. Returns false on write
+// failure (malformed notes still produce whatever converted).
+bool writeEnexNote(const QString& title, const QString& enml,
+                   const QList<EnexResource>& resources,
+                   const QString& docPath) {
+    // ENML → HTML: drop the XML/DOCTYPE preamble, neutralize <en-note>,
+    // inline image media via pre-registered resources, sentinel the rest.
+    QString html = enml;
+    static const QRegularExpression preamble(
+        QStringLiteral("^.*?<en-note[^>]*>"),
+        QRegularExpression::DotMatchesEverythingOption);
+    html.replace(preamble, QStringLiteral("<div>"));
+    html.replace(QLatin1String("</en-note>"), QLatin1String("</div>"));
+    static const QRegularExpression todoRe(
+        QStringLiteral("<en-todo([^>]*)/?>"),
+        QRegularExpression::CaseInsensitiveOption);
+    // Replace todos first (checked attr decides the state glyph).
+    {
+        QRegularExpressionMatchIterator it = todoRe.globalMatch(html);
+        QString outHtml;
+        int last = 0;
+        while (it.hasNext()) {
+            const QRegularExpressionMatch mt = it.next();
+            outHtml += html.mid(last, mt.capturedStart() - last);
+            const bool checked = mt.captured(1).contains(
+                QStringLiteral("checked=\"true\""), Qt::CaseInsensitive);
+            outHtml += QString(kEnexTodo) + (checked ? QLatin1Char('1') : QLatin1Char('0'));
+            last = mt.capturedEnd();
+        }
+        outHtml += html.mid(last);
+        html = outHtml;
+    }
+    static const QRegularExpression mediaRe(
+        QStringLiteral("<en-media([^>]*)/?>(</en-media>)?"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression hashRe(QStringLiteral("hash=\"([0-9a-fA-F]+)\""));
+    static const QRegularExpression typeRe(QStringLiteral("type=\"([^\"]+)\""));
+    {
+        QRegularExpressionMatchIterator it = mediaRe.globalMatch(html);
+        QString outHtml;
+        int last = 0;
+        while (it.hasNext()) {
+            const QRegularExpressionMatch mt = it.next();
+            outHtml += html.mid(last, mt.capturedStart() - last);
+            const QString attrs = mt.captured(1);
+            const QString hash = hashRe.match(attrs).captured(1).toLower();
+            const QString mime = typeRe.match(attrs).captured(1).toLower();
+            if (mime.startsWith(QLatin1String("image/")))
+                outHtml += QStringLiteral("<img src=\"enres:%1\">").arg(hash);
+            else
+                outHtml += QStringLiteral("<p>%1%2</p>").arg(kEnexFileRes).arg(hash);
+            last = mt.capturedEnd();
+        }
+        outHtml += html.mid(last);
+        html = outHtml;
+    }
+
+    BlockModel m;
+    freshDoc(m);
+
+    QTextDocument doc;
+    QHash<QString, const EnexResource*> byHash;
+    for (const EnexResource& r : resources) {
+        byHash.insert(r.md5, &r);
+        if (r.mime.startsWith(QLatin1String("image/"))) {
+            const QImage img = QImage::fromData(r.bytes);
+            if (!img.isNull())
+                doc.addResource(QTextDocument::ImageResource,
+                                QUrl(QStringLiteral("enres:") + r.md5), img);
+        }
+    }
+    doc.setHtml(html);
+    std::vector<BlockModel::BlockSpec> specs =
+        Importer::specsFromTextDocument(doc, m.mediaStore(), QString());
+
+    // Post-pass: sentinels → real structures.
+    std::vector<BlockModel::BlockSpec> outSpecs;
+    {   // title first (H1)
+        BlockModel::BlockSpec t;
+        t.type = BlockModel::Heading; t.level = 1; t.text = title;
+        outSpecs.push_back(std::move(t));
+    }
+    for (auto& sp : specs) {
+        if (!sp.text.isEmpty() && sp.text.at(0) == kEnexFileRes) {
+            const QString hash = sp.text.mid(1).trimmed().toLower();
+            const EnexResource* r = byHash.value(hash, nullptr);
+            if (r && m.mediaStore()) {
+                const QString name = r->fileName.isEmpty()
+                    ? QStringLiteral("attachment") : r->fileName;
+                const QString rel = m.mediaStore()->importBytes(r->bytes, name);
+                if (!rel.isEmpty()) {
+                    QJsonObject o;
+                    o.insert(QStringLiteral("src"), rel);
+                    o.insert(QStringLiteral("kind"), QStringLiteral("file"));
+                    o.insert(QStringLiteral("name"), name);
+                    o.insert(QStringLiteral("ext"), QFileInfo(name).suffix().toLower());
+                    BlockModel::BlockSpec fs;
+                    fs.type = BlockModel::Media;
+                    fs.mediaJson = QString::fromUtf8(
+                        QJsonDocument(o).toJson(QJsonDocument::Compact));
+                    outSpecs.push_back(std::move(fs));
+                }
+            }
+            continue;   // unmatched placeholder drops (capability map)
+        }
+        while (!sp.text.isEmpty() && sp.text.at(0) == kEnexTodo) {
+            const QChar state = sp.text.size() > 1 ? sp.text.at(1) : QLatin1Char('0');
+            sp.text.remove(0, sp.text.size() > 2 && sp.text.at(2) == QLatin1Char(' ') ? 3 : 2);
+            for (auto& x : sp.spans) {
+                x.s = std::max(0, x.s - 2);
+                x.e = std::max(0, x.e - 2);
+            }
+            sp.type = BlockModel::TaskListItem;
+            sp.taskState = state == QLatin1Char('1') ? BlockModel::TaskDone
+                                                     : BlockModel::TaskTodo;
+            break;
+        }
+        outSpecs.push_back(std::move(sp));
+    }
+    m.insertSpecs(0, outSpecs, true);
+    const bool ok = m.saveAs(docPath);
+    m.closeDocument();
+    return ok;
+}
+
+// Trailing Notion page id: " <32 hex>" before the extension.
+QString stripNotionId(const QString& baseName) {
+    static const QRegularExpression idRe(QStringLiteral("\\s+[0-9a-f]{32}$"));
+    QString out = baseName;
+    out.remove(idRe);
+    return out;
+}
+
+} // namespace
+
+int Importer::importEnexToFolder(const QString& path, const QString& destDir,
+                                 QString* firstPath) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return 0;
+    QDir().mkpath(destDir);
+    QXmlStreamReader xml(&f);
+    int count = 0;
+    QSet<QString> taken;
+
+    QString title, enml;
+    QList<EnexResource> resources;
+    EnexResource res;
+    bool inNote = false, inResource = false;
+    while (!xml.atEnd()) {
+        const QXmlStreamReader::TokenType t = xml.readNext();
+        if (t == QXmlStreamReader::StartElement) {
+            const auto name = xml.name();
+            if (name == QLatin1String("note")) {
+                inNote = true; title.clear(); enml.clear(); resources.clear();
+            } else if (!inNote) {
+                continue;
+            } else if (name == QLatin1String("title") && !inResource) {
+                title = xml.readElementText();
+            } else if (name == QLatin1String("content")) {
+                enml = xml.readElementText();
+            } else if (name == QLatin1String("resource")) {
+                inResource = true; res = EnexResource();
+            } else if (inResource && name == QLatin1String("data")) {
+                res.bytes = QByteArray::fromBase64(
+                    xml.readElementText().toLatin1(),
+                    QByteArray::Base64Encoding | QByteArray::IgnoreBase64DecodingErrors);
+            } else if (inResource && name == QLatin1String("mime")) {
+                res.mime = xml.readElementText().toLower();
+            } else if (inResource && name == QLatin1String("file-name")) {
+                res.fileName = xml.readElementText();
+            }
+        } else if (t == QXmlStreamReader::EndElement) {
+            const auto name = xml.name();
+            if (name == QLatin1String("resource") && inResource) {
+                res.md5 = QString::fromLatin1(
+                    QCryptographicHash::hash(res.bytes, QCryptographicHash::Md5).toHex());
+                resources.push_back(res);
+                inResource = false;
+            } else if (name == QLatin1String("note") && inNote) {
+                inNote = false;
+                const QString docPath =
+                    uniqueDocPath(destDir, sanitizeDocName(title), taken);
+                if (writeEnexNote(sanitizeDocName(title), enml, resources, docPath)) {
+                    if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
+                    ++count;
+                }
+            }
+        }
+    }
+    return count;
+}
+
+int Importer::importNotionZipToFolder(const QString& path, const QString& destDir,
+                                      QString* firstPath) {
+    QDir().mkpath(destDir);
+    const QString stage = BlockModel::scratchDir() + QStringLiteral("/import-")
+        + QUuid::createUuid().toString(QUuid::Id128);
+    if (!mnpkg::extractArchive(path, stage)) return 0;
+    int count = 0;
+    QSet<QString> taken;
+
+    // Every .md page becomes a doc (subpages included — flat, per the
+    // no-vault direction). The staging dir is under the session scratch —
+    // a VOLATILE root, so referenced images copy into each doc's .minnotes
+    // via the standard importFile policy.
+    QStringList mdFiles, csvFiles;
+    QDirIterator it(stage, {QStringLiteral("*.md"), QStringLiteral("*.csv")},
+                    QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString p = it.next();
+        (p.endsWith(QLatin1String(".md"), Qt::CaseInsensitive) ? mdFiles : csvFiles) << p;
+    }
+    mdFiles.sort();
+    csvFiles.sort();
+    for (const QString& md : mdFiles) {
+        BlockModel m;
+        freshDoc(m);
+        if (importMarkdownFile(md, &m)) {
+            const QString docPath = uniqueDocPath(
+                destDir, sanitizeDocName(stripNotionId(QFileInfo(md).completeBaseName())),
+                taken);
+            if (m.saveAs(docPath)) {
+                if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
+                ++count;
+            }
+        }
+        m.closeDocument();
+    }
+    for (const QString& csv : csvFiles) {
+        BlockModel m;
+        freshDoc(m);
+        if (importCsvFile(csv, &m, false)) {
+            const QString docPath = uniqueDocPath(
+                destDir, sanitizeDocName(stripNotionId(QFileInfo(csv).completeBaseName())),
+                taken);
+            if (m.saveAs(docPath)) {
+                if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
+                ++count;
+            }
+        }
+        m.closeDocument();
+    }
+    QDir(stage).removeRecursively();
+    return count;
 }

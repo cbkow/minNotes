@@ -199,6 +199,25 @@ MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath) const 
     return { path, sz.width(), sz.height() };   // referenced in place (absolute)
 }
 
+QString MediaStore::importBytes(const QByteArray& bytes, const QString& suggestedName) const {
+    if (bytes.isEmpty()) return {};
+    // Content-addressed like pasted images (dedup), original extension kept
+    // so kind detection and external opens still work.
+    const QString sha = QString::fromLatin1(
+        QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex());
+    const QString suffix = QFileInfo(suggestedName).suffix().toLower();
+    const QString rel = QStringLiteral(".minnotes/") + sha
+        + (suffix.isEmpty() ? QString() : QLatin1Char('.') + suffix);
+    const QString abs = docDir_ + QStringLiteral("/") + rel;
+    if (!QFileInfo::exists(abs)) {
+        assetsDir();
+        QFile f(abs);
+        if (!f.open(QIODevice::WriteOnly)) return {};
+        f.write(bytes);
+    }
+    return rel;
+}
+
 MediaStore::ImageRef MediaStore::importImage(const QImage& img) const {
     if (img.isNull()) return {};
     // Encode to PNG once, hash the bytes → content-addressed filename (dedup).

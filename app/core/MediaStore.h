@@ -63,6 +63,10 @@ public:
     // Read the system clipboard image, save it to `.minnotes/<sha>.png`, return a
     // doc-relative src + dims. Invalid ref if the clipboard has no image.
     ImageRef importClipboardImage() const;
+    // Raw bytes → `.minnotes/<sha>.<ext>` (content-addressed, dedups);
+    // returns the relative src ("" on failure). Importer resources (ENEX
+    // attachments, later DOCX media) that never existed as local files.
+    QString importBytes(const QByteArray& bytes, const QString& suggestedName) const;
 
     // Lazily-opened .mnpkg: missing `.minnotes/…` files extract from this
     // archive on access (videos bring their .qcview sidecar tree along).
