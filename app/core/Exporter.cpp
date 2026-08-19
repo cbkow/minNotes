@@ -1415,7 +1415,7 @@ border-color:var(--divider)}
    keys navigate document order, Esc / backdrop closes. Annotation overlays
    ride along (their percent offsets scale with the staged image) and honour
    the Annotations toggle. Squared, monochrome — the family chrome. */
-main figure img:not(.ink){cursor:zoom-in}
+main figure img:not(.ink),main .notecard img:not(.ink){cursor:zoom-in}
 #mn-lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99;
 display:flex;align-items:center;justify-content:center;
 opacity:0;visibility:hidden;pointer-events:none;
@@ -1668,7 +1668,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
 <script>
 (function(){
 var lb=document.getElementById('mn-lb');if(!lb)return;
-var imgs=[].slice.call(document.querySelectorAll('main figure img')).filter(function(im){return im.className.indexOf('ink')<0});
+var imgs=[].slice.call(document.querySelectorAll('main figure img,main .notecard img')).filter(function(im){return im.className.indexOf('ink')<0});
 if(!imgs.length){lb.parentNode.removeChild(lb);return;}
 var stage=lb.querySelector('.stage'),cnt=lb.querySelector('.cnt'),cur=-1;
 function show(i){
@@ -1678,8 +1678,9 @@ stage.innerHTML='';
 var wrap=document.createElement('div');
 var b=document.createElement('img');b.src=im.src;wrap.appendChild(b);
 var tgl=document.getElementById('mn-ink');
-var ink=(im.parentElement&&im.parentElement.className.indexOf('inkwrap')>=0)
-?im.parentElement.querySelector('img.ink'):null;
+var p=im.parentElement;
+var ink=(p&&(p.className.indexOf('inkwrap')>=0||p.className.indexOf('thumb')>=0))
+?p.querySelector('img.ink'):null;
 if(ink&&(!tgl||tgl.checked)){
 var o=document.createElement('img');o.src=ink.src;
 var st=ink.getAttribute('style');
