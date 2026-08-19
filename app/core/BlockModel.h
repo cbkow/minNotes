@@ -46,6 +46,10 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
     Q_PROPERTY(bool untitled READ untitled NOTIFY documentChanged)
     Q_PROPERTY(bool documentOpen READ documentOpen NOTIFY documentChanged)
+    // Per-document page measure (v3; 760 for every pre-v3 doc). Changing it
+    // migrates px-space margin ink by edge affinity and is ONE undo step —
+    // see setPageWidth below.
+    Q_PROPERTY(qreal pageWidth READ pageWidth NOTIFY pageWidthChanged)
     // Unsaved-edits flag (drives the tab dot + close/quit guards) and the explicit
     // save lifecycle (drives the title-bar status + conflict/failure UI).
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
@@ -552,6 +556,15 @@ public:
     // which every media-url binding depends on). No model/layout reset.
     Q_INVOKABLE void    refreshMedia();
 
+    // --- Per-document page width (v3). setPageWidth = the ONE width mutator:
+    // clamps, migrates px-space ink by DERIVED edge affinity (an element
+    // fully in a margin keeps its CONTENT position — the left page edge is
+    // fixed, so its center-relative X shifts by ∓Δw/2; in-column marks stay
+    // center-relative; Frame anchors are width-immune), persists to doc_meta,
+    // and lands as ONE undo step (ink blobs + the width flip, atomic).
+    qreal pageWidth() const { return pageWidth_; }
+    Q_INVOKABLE void setPageWidth(qreal w);
+
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
     bool canUndo() const;
@@ -579,6 +592,7 @@ signals:
     // nothing was inserted; QML raises the import flow for `fileUrl`.
     void importFileRequested(const QString& fileUrl);
     void documentChanged();
+    void pageWidthChanged();   // the per-document page measure changed (set/undo/open)
     void dirtyChanged();       // unsaved-edits flag flipped
     void saveStateChanged();   // save lifecycle state changed (Saving/Failed/Conflict/Clean)
 
@@ -629,6 +643,10 @@ private:
         int cRowA = 0, cColA = 0, aRowA = 0, aColA = 0;   // caret after
         int parent = -1;
         QString coalesce;   // non-empty + equal + contiguous ⇒ merge into prev
+        // A page-width change rode this entry (0 = none): undo/redo restore
+        // the width atomically with the migrated ink blobs. The one
+        // undo-architecture extension of the page-width program.
+        qreal widthBefore = 0, widthAfter = 0;
     };
 
     static uint8_t spanKindFromString(const QString& s);
@@ -667,6 +685,7 @@ private:
     void beginTxn(int lo, int hi);              // snapshot `before` for [lo,hi]
     void endTxn(const QString& coalesce = {});  // snapshot `after`, push (or coalesce)
     void clearUndo();
+    void applyUndoWidth(qreal w);               // restore an entry's page width (0 = none)
 
     // Rule table: does `content` start with a markdown trigger? Fills type/
     // level and the prefix length to strip. The single source of truth that
@@ -676,6 +695,7 @@ private:
 
     void refreshMaxContentWidth();
     double maxContentWidth_ = 0.0;
+    qreal pageWidth_ = 760;   // the open doc's page measure (synced on load/close)
     int clampRow(int row) const;
     // Safe row access: a default (empty paragraph) Row when the model is empty
     // (no document open), so query methods never index an empty vector.

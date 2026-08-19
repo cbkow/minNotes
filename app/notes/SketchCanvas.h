@@ -125,8 +125,11 @@ public:
     bool empty() const { return strokes_.empty() && images_.empty() && texts_.empty(); }
     bool selectable() const { return selectable_; }
     void setSelectable(bool s);
-    bool hasSelection() const { return selKind_ != SelNone; }
-    int selectedTextIndex() const { return selKind_ == SelText ? selIdx_ : -1; }
+    bool hasSelection() const { return !sel_.empty(); }
+    // Single-selection only: the Inspector Size slider retargets one chip.
+    int selectedTextIndex() const {
+        return sel_.size() == 1 && sel_[0].kind == SelText ? sel_[0].idx : -1;
+    }
     QRectF contentBoundsNorm() const;
     bool hasOverflow() const;
 
@@ -163,6 +166,11 @@ signals:
     // A finished mutation (stroke committed / erased / moved / deleted) — the
     // stroke JSON in the engine's schema. QML commits it to the block model.
     void edited(const QString &strokesJson);
+    // A group gesture (multi-select move/delete) is about to commit through
+    // MORE THAN ONE of the signals below. QML brackets the model calls with
+    // blockModel.beginGroup/endGroup so the whole gesture is ONE undo step.
+    void groupCommitBegan();
+    void groupCommitEnded();
     // Image-element edits are index-based so the portable (doc-relative) src is
     // never round-tripped through the canvas. QML commits via the block model.
     void imageRectChanged(int index, qreal x, qreal y, qreal w, qreal h);
@@ -212,19 +220,29 @@ private:
     void refreshTextHeights();                 // recompute hNorm (font/size deps)
     const QImage &imageFor(const QString &src);   // cached load (src = resolved URL/path)
 
-    // --- Selection / move (select mode = selectable_ && no tool armed) ---
+    // --- Selection / move (select mode = selectable_ && no tool armed).
+    // The selection is a SET (M1 of the page-width plan): marquee on empty
+    // canvas, shift-click toggles membership, drag moves the whole group,
+    // Delete removes it. Single-item selections keep the resize handles /
+    // wrap grips / chip-slider targeting; groups move and delete only. ---
     enum SelKind { SelNone, SelStroke, SelImage, SelText };
+    struct SelItem { SelKind kind = SelNone; int idx = -1; };
     // Select mode = selectable and not holding a placing tool — so the explicit
     // "select" tool AND a bare disarm ("") both land here.
     bool inSelectMode() const { return selectable_ && !drawToolActive_ && !textToolArmed_; }
     void applyAcceptedButtons();               // accept mouse iff drawing or selecting
-    void selectPress(QPointF pos);
+    void selectPress(QPointF pos, Qt::KeyboardModifiers mods);
     void selectMove(QPointF pos);
     void selectRelease();
+    bool selContains(SelKind k, int idx) const;
+    void toggleSel(SelKind k, int idx);        // shift-click membership toggle
+    void pruneSelection();                     // drop items whose index no longer resolves
     int  hitTest(QPointF norm, SelKind &kindOut) const;   // topmost element, or SelNone
     QRectF strokeBoundsNorm(int idx) const;    // normalized bbox of a stroke
-    QRectF selBoundsNorm() const;              // normalized bbox of the current selection
-    QRectF selDisplayRect() const;             // px rect for outline + handles
+    QRectF itemBoundsNorm(const SelItem &it) const;   // normalized bbox of one element
+    QRectF selBoundsNorm() const;              // union bbox of the selection set
+    QRectF itemDisplayRect(const SelItem &it) const;  // px rect for one element's outline
+    QRectF selDisplayRect() const;             // px rect for outline + handles (single sel)
     // Handle under px: 0=TL 1=TR 2=BL 3=BR corners; 4=left-mid 5=right-mid
     // (SelText only — the wrap-width grips); -1 = none.
     int  handleAtPx(QPointF px) const;
@@ -276,8 +294,10 @@ private:
     QHash<QString, QImage> imgCache_;          // src → decoded image
     mutable std::optional<QRectF> contentBounds_;   // lazy signed bbox cache
 
-    SelKind selKind_ = SelNone;                // current selection
-    int     selIdx_ = -1;
+    std::vector<SelItem> sel_;                 // the selection set (ordered, unique)
+    bool    marquee_ = false;                  // rubber-band drag in progress
+    QPointF marqueeAnchor_;                    // marquee origin (normalized)
+    QRectF  marqueeRect_;                      // live marquee (normalized)
     bool    moving_ = false;                   // move-drag in progress
     bool    resizing_ = false;                 // handle-drag in progress
     bool    moveDirty_ = false;                // the drag actually changed something

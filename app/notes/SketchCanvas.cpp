@@ -39,12 +39,9 @@ void SketchCanvas::setData(const QString &data)
     parseImages(data_);
     parseTexts(data_);
     invalidateBounds();
-    // Keep the selection only if its index still resolves (sizes shift on
-    // undo / external edits); otherwise drop it.
-    if ((selKind_ == SelStroke && selIdx_ >= int(strokes_.size()))
-        || (selKind_ == SelImage && selIdx_ >= int(images_.size()))
-        || (selKind_ == SelText && selIdx_ >= int(texts_.size())))
-        clearSelection();
+    // Keep selected items only while their indices still resolve (sizes
+    // shift on undo / external edits); drop the rest.
+    pruneSelection();
     emit dataChanged();
     update();
 }
@@ -396,14 +393,17 @@ void SketchCanvas::paint(QPainter *p)
         p->drawEllipse(hoverPos_, r, r);
     }
 
-    // Selection affordance. An image gets a translucent accent wash + solid
-    // border (a thin outline is lost against the picture); a stroke gets a
-    // dashed box just outside its bounds. Both get corner resize handles.
-    if (selKind_ != SelNone) {
-        const QRectF r = selDisplayRect();
-        if (r.isValid()) {
-            const QColor accent(0x01, 0x89, 0xf1);   // family accent
-            if (selKind_ == SelImage) {
+    // Selection affordance. EVERY selected item gets its outline (image =
+    // translucent accent wash + solid border, a thin outline is lost against
+    // the picture; stroke/text = dashed box just outside the bounds). Resize
+    // handles + wrap grips appear only for a SINGLE selection — groups move
+    // and delete as one, no group scale.
+    if (!sel_.empty()) {
+        const QColor accent(0x01, 0x89, 0xf1);   // family accent
+        for (const SelItem &it : sel_) {
+            const QRectF r = itemDisplayRect(it);
+            if (!r.isValid()) continue;
+            if (it.kind == SelImage) {
                 p->fillRect(r, QColor(accent.red(), accent.green(), accent.blue(), 60));
                 QPen pen(accent, 2.0); pen.setCosmetic(true);
                 p->setBrush(Qt::NoBrush); p->setPen(pen);
@@ -413,19 +413,36 @@ void SketchCanvas::paint(QPainter *p)
                 p->setBrush(Qt::NoBrush); p->setPen(pen);
                 p->drawRect(r);
             }
+        }
+        const QRectF r = selDisplayRect();   // valid only for a single selection
+        if (r.isValid()) {
             const double hs = 4.5;   // handle half-size
             const QPointF cs[4] = { r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight() };
             p->setBrush(accent);
             p->setPen(QPen(QColor(255, 255, 255), 1.0));
             for (const QPointF &c : cs)
                 p->drawRect(QRectF(c.x() - hs, c.y() - hs, hs * 2, hs * 2));
-            if (selKind_ == SelText) {   // wrap-width grips at the mid-edges
+            if (sel_[0].kind == SelText) {   // wrap-width grips at the mid-edges
                 const QPointF ms[2] = { QPointF(r.left(),  r.center().y()),
                                         QPointF(r.right(), r.center().y()) };
                 for (const QPointF &c : ms)
                     p->drawRect(QRectF(c.x() - hs, c.y() - hs, hs * 2, hs * 2));
             }
         }
+    }
+
+    // Live marquee: accent hairline + whisper fill (the drag-ghost language).
+    if (marquee_ && marqueeRect_.isValid()) {
+        const QRectF f2 = frameScreenRect();
+        const QRectF mr(f2.x() + marqueeRect_.x() * f2.width(),
+                        f2.y() + marqueeRect_.y() * f2.height(),
+                        marqueeRect_.width() * f2.width(),
+                        marqueeRect_.height() * f2.height());
+        const QColor accent(0x01, 0x89, 0xf1);
+        p->fillRect(mr, QColor(accent.red(), accent.green(), accent.blue(), 20));
+        QPen pen(accent, 1.0, Qt::DashLine); pen.setCosmetic(true);
+        p->setBrush(Qt::NoBrush); p->setPen(pen);
+        p->drawRect(mr);
     }
 }
 
@@ -449,7 +466,7 @@ void SketchCanvas::mousePressEvent(QMouseEvent *e)
         e->accept();
         return;
     }
-    if (inSelectMode()) { selectPress(e->position()); e->accept(); return; }
+    if (inSelectMode()) { selectPress(e->position(), e->modifiers()); e->accept(); return; }
     route(qcv::PointerPhase::Press, e->position(), qint64(e->timestamp()));
     e->accept();
 }
@@ -464,8 +481,10 @@ void SketchCanvas::mouseDoubleClickEvent(QMouseEvent *e)
             // a 1px jitter between clicks commits a phantom move txn.
             moving_ = false;
             moveDirty_ = false;
-            if (k != selKind_ || idx != selIdx_) {
-                selKind_ = k; selIdx_ = idx;
+            marquee_ = false;
+            if (sel_.size() != 1 || sel_[0].kind != SelText || sel_[0].idx != idx) {
+                sel_.clear();
+                sel_.push_back({SelText, idx});
                 emit selectionChanged();
                 update();
             }
@@ -654,7 +673,7 @@ void SketchCanvas::eraseAt(QPointF norm)
     eraseDirty_ = true;
     strokes_ = eraseStrokes_;   // live paint feedback; the model commits on release
     invalidateBounds();
-    if (selKind_ == SelStroke && selIdx_ >= int(strokes_.size())) clearSelection();
+    pruneSelection();
     update();
 }
 
@@ -670,10 +689,49 @@ void SketchCanvas::setDrawing(bool d)
 void SketchCanvas::clearSelection()
 {
     moving_ = false;
-    if (selKind_ == SelNone) return;
-    selKind_ = SelNone; selIdx_ = -1;
+    marquee_ = false;
+    if (sel_.empty()) return;
+    sel_.clear();
     emit selectionChanged();
     update();
+}
+
+bool SketchCanvas::selContains(SelKind k, int idx) const
+{
+    for (const SelItem &it : sel_)
+        if (it.kind == k && it.idx == idx) return true;
+    return false;
+}
+
+void SketchCanvas::toggleSel(SelKind k, int idx)
+{
+    for (auto it = sel_.begin(); it != sel_.end(); ++it) {
+        if (it->kind == k && it->idx == idx) {
+            sel_.erase(it);
+            emit selectionChanged();
+            update();
+            return;
+        }
+    }
+    sel_.push_back({k, idx});
+    emit selectionChanged();
+    update();
+}
+
+void SketchCanvas::pruneSelection()
+{
+    const size_t before = sel_.size();
+    sel_.erase(std::remove_if(sel_.begin(), sel_.end(), [this](const SelItem &it) {
+        return (it.kind == SelStroke && it.idx >= int(strokes_.size()))
+            || (it.kind == SelImage  && it.idx >= int(images_.size()))
+            || (it.kind == SelText   && it.idx >= int(texts_.size()))
+            || it.idx < 0;
+    }), sel_.end());
+    if (sel_.size() != before) {
+        if (sel_.empty()) moving_ = false;
+        emit selectionChanged();
+        update();
+    }
 }
 
 QRectF SketchCanvas::strokeBoundsNorm(int idx) const
@@ -682,16 +740,27 @@ QRectF SketchCanvas::strokeBoundsNorm(int idx) const
     return qcv::strokeBoundsNorm(strokes_[size_t(idx)]);   // oval-aware (shared)
 }
 
-QRectF SketchCanvas::selBoundsNorm() const
+QRectF SketchCanvas::itemBoundsNorm(const SelItem &it) const
 {
-    if (selKind_ == SelStroke) return strokeBoundsNorm(selIdx_);
-    if (selKind_ == SelImage && selIdx_ >= 0 && selIdx_ < int(images_.size()))
-        return images_[size_t(selIdx_)].rect;
-    if (selKind_ == SelText && selIdx_ >= 0 && selIdx_ < int(texts_.size())) {
-        const SketchText &t = texts_[size_t(selIdx_)];
+    if (it.kind == SelStroke) return strokeBoundsNorm(it.idx);
+    if (it.kind == SelImage && it.idx >= 0 && it.idx < int(images_.size()))
+        return images_[size_t(it.idx)].rect;
+    if (it.kind == SelText && it.idx >= 0 && it.idx < int(texts_.size())) {
+        const SketchText &t = texts_[size_t(it.idx)];
         return QRectF(t.spec.x, t.spec.y, t.spec.w, t.hNorm);
     }
     return {};
+}
+
+QRectF SketchCanvas::selBoundsNorm() const
+{
+    QRectF u;
+    for (const SelItem &it : sel_) {
+        const QRectF b = itemBoundsNorm(it);
+        if (!b.isValid()) continue;
+        u = u.isValid() ? u.united(b) : b;
+    }
+    return u;
 }
 
 int SketchCanvas::hitTest(QPointF norm, SelKind &kindOut) const
@@ -718,19 +787,38 @@ int SketchCanvas::hitTest(QPointF norm, SelKind &kindOut) const
     return -1;
 }
 
-void SketchCanvas::selectPress(QPointF pos)
+void SketchCanvas::selectPress(QPointF pos, Qt::KeyboardModifiers mods)
 {
     if (width() <= 0 || height() <= 0) return;
-    // A press on the current selection's corner handle starts a resize.
-    if (selKind_ != SelNone) {
+    const bool shift = mods.testFlag(Qt::ShiftModifier);
+    // A press on the single selection's corner handle starts a resize
+    // (groups move/delete only — no group scale in M1).
+    if (sel_.size() == 1 && !shift) {
         const int h = handleAtPx(pos);
         if (h >= 0) { beginResize(h); return; }
     }
     const QPointF norm = screenToNorm(pos);
     SelKind k = SelNone;
     const int idx = hitTest(norm, k);
-    if (k == SelNone) { clearSelection(); return; }
-    if (k != selKind_ || idx != selIdx_) { selKind_ = k; selIdx_ = idx; emit selectionChanged(); }
+    if (k == SelNone) {
+        // Empty canvas: a plain press clears and starts a marquee; a shift
+        // press keeps the set (additive marquee). A no-drag release makes
+        // the tiny marquee select nothing, so click-to-deselect survives.
+        if (!shift) clearSelection();
+        marquee_ = true;
+        marqueeAnchor_ = norm;
+        marqueeRect_ = QRectF(norm, norm);
+        update();
+        return;
+    }
+    if (shift) { toggleSel(k, idx); return; }   // membership toggle, no move
+    if (!selContains(k, idx)) {
+        // Not in the set → this press replaces the selection. In the set →
+        // keep the group and drag it as one.
+        sel_.clear();
+        sel_.push_back({k, idx});
+        emit selectionChanged();
+    }
     moving_ = true;
     moveDirty_ = false;
     lastNorm_ = norm;
@@ -739,26 +827,26 @@ void SketchCanvas::selectPress(QPointF pos)
 
 void SketchCanvas::translateSelection(QPointF dNorm)
 {
-    if (selKind_ == SelNone) return;
-    const QRectF b = selBoundsNorm();
-    if (!b.isValid()) return;
+    if (sel_.empty()) return;
     // No bounds clamp: overflow is legal (capture-and-hide) — the frame clips
     // display in the embed/exports; the tab ghosts it.
     const double dx = dNorm.x(), dy = dNorm.y();
     if (dx == 0.0 && dy == 0.0) return;
-    if (selKind_ == SelStroke) {
-        qcv::ActiveStroke &s = strokes_[size_t(selIdx_)];
-        // Oval stores {center, radii}: move the centre only (translating the
-        // radii vector would resize it).
-        if (s.tool == qcv::DrawingTool::Oval && !s.points.empty())
-            s.points[0] += QPointF(dx, dy);
-        else
-            for (QPointF &pt : s.points) pt += QPointF(dx, dy);
-    } else if (selKind_ == SelText) {
-        texts_[size_t(selIdx_)].spec.x += dx;
-        texts_[size_t(selIdx_)].spec.y += dy;
-    } else {
-        images_[size_t(selIdx_)].rect.translate(dx, dy);
+    for (const SelItem &it : sel_) {
+        if (it.kind == SelStroke && it.idx < int(strokes_.size())) {
+            qcv::ActiveStroke &s = strokes_[size_t(it.idx)];
+            // Oval stores {center, radii}: move the centre only (translating
+            // the radii vector would resize it).
+            if (s.tool == qcv::DrawingTool::Oval && !s.points.empty())
+                s.points[0] += QPointF(dx, dy);
+            else
+                for (QPointF &pt : s.points) pt += QPointF(dx, dy);
+        } else if (it.kind == SelText && it.idx < int(texts_.size())) {
+            texts_[size_t(it.idx)].spec.x += dx;
+            texts_[size_t(it.idx)].spec.y += dy;
+        } else if (it.kind == SelImage && it.idx < int(images_.size())) {
+            images_[size_t(it.idx)].rect.translate(dx, dy);
+        }
     }
     moveDirty_ = true;
     invalidateBounds();
@@ -769,6 +857,11 @@ void SketchCanvas::selectMove(QPointF pos)
 {
     if (width() <= 0 || height() <= 0) return;
     const QPointF norm = screenToNorm(pos);
+    if (marquee_) {
+        marqueeRect_ = QRectF(marqueeAnchor_, norm).normalized();
+        update();
+        return;
+    }
     if (resizing_) { resizeTo(norm); return; }
     if (!moving_) return;
     translateSelection(norm - lastNorm_);
@@ -777,50 +870,104 @@ void SketchCanvas::selectMove(QPointF pos)
 
 void SketchCanvas::selectRelease()
 {
+    if (marquee_) {
+        // Finalize the rubber band: everything intersecting joins the set.
+        // (A tiny no-drag marquee selects nothing — that's the deselect click.)
+        marquee_ = false;
+        bool changed = false;
+        const double minSpan = hitTolNorm() * 0.5;
+        if (marqueeRect_.width() > minSpan || marqueeRect_.height() > minSpan) {
+            auto addHits = [&](SelKind k, int count) {
+                for (int i = 0; i < count; ++i) {
+                    if (selContains(k, i)) continue;
+                    const QRectF b = itemBoundsNorm({k, i});
+                    if (b.isValid() && b.intersects(marqueeRect_)) {
+                        sel_.push_back({k, i});
+                        changed = true;
+                    }
+                }
+            };
+            addHits(SelStroke, int(strokes_.size()));
+            addHits(SelText,   int(texts_.size()));
+            addHits(SelImage,  int(images_.size()));
+        }
+        if (changed) emit selectionChanged();
+        update();
+        return;
+    }
     if (!moving_ && !resizing_) return;
     moving_ = false; resizing_ = false; grabCorner_ = -1;
     if (!moveDirty_) return;   // a click-to-select must not commit a no-op undo step
     moveDirty_ = false;
-    if (selKind_ == SelStroke) {
-        emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes_));
-    } else if (selKind_ == SelImage && selIdx_ < int(images_.size())) {
-        const QRectF r = images_[size_t(selIdx_)].rect;
-        emit imageRectChanged(selIdx_, r.x(), r.y(), r.width(), r.height());
-    } else if (selKind_ == SelText && selIdx_ < int(texts_.size())) {
-        const mn::SketchTextSpec &t = texts_[size_t(selIdx_)].spec;
-        emit textBoxChanged(selIdx_, t.x, t.y, t.w, t.size);
+    // Commit the gesture. Strokes are one whole-blob edited(); images/texts
+    // are per-index signals. When more than one signal fires (a group), the
+    // bracket signals let QML fold the model calls into ONE undo step.
+    bool anyStroke = false;
+    std::vector<int> imgIdx, txtIdx;
+    for (const SelItem &it : sel_) {
+        if (it.kind == SelStroke) anyStroke = true;
+        else if (it.kind == SelImage && it.idx < int(images_.size())) imgIdx.push_back(it.idx);
+        else if (it.kind == SelText && it.idx < int(texts_.size()))  txtIdx.push_back(it.idx);
     }
+    const int signalCount = (anyStroke ? 1 : 0) + int(imgIdx.size()) + int(txtIdx.size());
+    if (signalCount > 1) emit groupCommitBegan();
+    if (anyStroke)
+        emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes_));
+    for (int i : imgIdx) {
+        const QRectF r = images_[size_t(i)].rect;
+        emit imageRectChanged(i, r.x(), r.y(), r.width(), r.height());
+    }
+    for (int i : txtIdx) {
+        const mn::SketchTextSpec &t = texts_[size_t(i)].spec;
+        emit textBoxChanged(i, t.x, t.y, t.w, t.size);
+    }
+    if (signalCount > 1) emit groupCommitEnded();
 }
 
 void SketchCanvas::deleteSelection()
 {
-    if (selKind_ == SelStroke && selIdx_ < int(strokes_.size())) {
-        strokes_.erase(strokes_.begin() + selIdx_);
-        invalidateBounds();
-        const int wasIdx = selIdx_;
-        clearSelection();
-        Q_UNUSED(wasIdx);
-        emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes_));
-    } else if (selKind_ == SelImage && selIdx_ < int(images_.size())) {
-        const int idx = selIdx_;
-        clearSelection();
-        emit imageRemoved(idx);
-    } else if (selKind_ == SelText && selIdx_ < int(texts_.size())) {
-        const int idx = selIdx_;
-        clearSelection();
-        emit textRemoved(idx);
+    if (sel_.empty()) return;
+    // Partition, then delete: strokes fold into one edited(); images/texts
+    // emit per-index removals in DESCENDING order so the model's shifting
+    // arrays never invalidate a pending index.
+    std::vector<int> strokeIdx, imgIdx, txtIdx;
+    for (const SelItem &it : sel_) {
+        if (it.kind == SelStroke && it.idx < int(strokes_.size())) strokeIdx.push_back(it.idx);
+        else if (it.kind == SelImage && it.idx < int(images_.size())) imgIdx.push_back(it.idx);
+        else if (it.kind == SelText && it.idx < int(texts_.size()))  txtIdx.push_back(it.idx);
     }
+    std::sort(strokeIdx.rbegin(), strokeIdx.rend());
+    std::sort(imgIdx.rbegin(), imgIdx.rend());
+    std::sort(txtIdx.rbegin(), txtIdx.rend());
+    const int signalCount = (strokeIdx.empty() ? 0 : 1) + int(imgIdx.size()) + int(txtIdx.size());
+    if (signalCount == 0) return;
+    clearSelection();
+    if (signalCount > 1) emit groupCommitBegan();
+    if (!strokeIdx.empty()) {
+        for (int i : strokeIdx) strokes_.erase(strokes_.begin() + i);
+        invalidateBounds();
+        emit edited(qcv::AnnotationSerializer::strokesToJsonString(strokes_));
+    }
+    for (int i : imgIdx) emit imageRemoved(i);
+    for (int i : txtIdx) emit textRemoved(i);
+    if (signalCount > 1) emit groupCommitEnded();
 }
 
-QRectF SketchCanvas::selDisplayRect() const
+QRectF SketchCanvas::itemDisplayRect(const SelItem &it) const
 {
-    const QRectF b = selBoundsNorm();
+    const QRectF b = itemBoundsNorm(it);
     if (!b.isValid() || width() <= 0 || height() <= 0) return {};
     const QRectF f = frameScreenRect();
     QRectF r(f.x() + b.x() * f.width(), f.y() + b.y() * f.height(),
              b.width() * f.width(), b.height() * f.height());
-    if (selKind_ == SelStroke) r = r.adjusted(-3, -3, 3, 3);   // breathing room around ink
+    if (it.kind == SelStroke) r = r.adjusted(-3, -3, 3, 3);   // breathing room around ink
     return r;
+}
+
+QRectF SketchCanvas::selDisplayRect() const
+{
+    // Handles target the SINGLE selection; groups have per-item outlines only.
+    return sel_.size() == 1 ? itemDisplayRect(sel_[0]) : QRectF();
 }
 
 int SketchCanvas::handleAtPx(QPointF px) const
@@ -831,7 +978,7 @@ int SketchCanvas::handleAtPx(QPointF px) const
     const QPointF cs[4] = { r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight() };
     for (int i = 0; i < 4; ++i)
         if (QLineF(px, cs[i]).length() <= tol) return i;
-    if (selKind_ == SelText) {   // wrap-width grips (corners win ties)
+    if (sel_.size() == 1 && sel_[0].kind == SelText) {   // wrap-width grips (corners win ties)
         const QPointF ms[2] = { QPointF(r.left(),  r.center().y()),
                                 QPointF(r.right(), r.center().y()) };
         for (int i = 0; i < 2; ++i)
@@ -842,13 +989,16 @@ int SketchCanvas::handleAtPx(QPointF px) const
 
 void SketchCanvas::beginResize(int corner)
 {
+    // Only reachable with a single selection (handleAtPx gates on it).
+    if (sel_.size() != 1) return;
+    const SelItem it = sel_[0];
     grabCorner_ = corner;
-    origBounds_ = selBoundsNorm();
-    if (selKind_ == SelStroke && selIdx_ >= 0 && selIdx_ < int(strokes_.size()))
-        origPoints_ = strokes_[size_t(selIdx_)].points;   // absolute base (no drift)
-    if (selKind_ == SelText && selIdx_ >= 0 && selIdx_ < int(texts_.size())) {
-        origTextW_    = texts_[size_t(selIdx_)].spec.w;
-        origTextSize_ = texts_[size_t(selIdx_)].spec.size;
+    origBounds_ = itemBoundsNorm(it);
+    if (it.kind == SelStroke && it.idx >= 0 && it.idx < int(strokes_.size()))
+        origPoints_ = strokes_[size_t(it.idx)].points;   // absolute base (no drift)
+    if (it.kind == SelText && it.idx >= 0 && it.idx < int(texts_.size())) {
+        origTextW_    = texts_[size_t(it.idx)].spec.w;
+        origTextSize_ = texts_[size_t(it.idx)].spec.size;
     }
     resizing_ = true;
     moving_ = false;
@@ -857,12 +1007,14 @@ void SketchCanvas::beginResize(int corner)
 
 void SketchCanvas::resizeTo(QPointF norm)
 {
-    if (!origBounds_.isValid()) return;
+    if (!origBounds_.isValid() || sel_.size() != 1) return;
+    const SelKind selKind = sel_[0].kind;
+    const int selIdx = sel_[0].idx;
     // Wrap-width drag (SelText mid-edge grips): the opposite edge stays
     // fixed, the text reflows live and its height re-derives.
-    if (grabCorner_ >= 4 && selKind_ == SelText
-        && selIdx_ >= 0 && selIdx_ < int(texts_.size())) {
-        SketchText &t = texts_[size_t(selIdx_)];
+    if (grabCorner_ >= 4 && selKind == SelText
+        && selIdx >= 0 && selIdx < int(texts_.size())) {
+        SketchText &t = texts_[size_t(selIdx)];
         const double srcW = sourceWidth_  > 0 ? sourceWidth_  : 480.0;
         const double srcH = sourceHeight_ > 0 ? sourceHeight_ : srcW;
         const double minW = 2.0 * t.spec.size / srcW;   // 2em floor
@@ -900,8 +1052,9 @@ void SketchCanvas::resizeTo(QPointF norm)
     if (s <= 0) return;
     moveDirty_ = true;
     invalidateBounds();
-    if (selKind_ == SelStroke && origPoints_.size() == strokes_[size_t(selIdx_)].points.size()) {
-        qcv::ActiveStroke &st = strokes_[size_t(selIdx_)];
+    if (selKind == SelStroke && selIdx < int(strokes_.size())
+        && origPoints_.size() == strokes_[size_t(selIdx)].points.size()) {
+        qcv::ActiveStroke &st = strokes_[size_t(selIdx)];
         std::vector<QPointF> &pts = st.points;
         if (st.tool == qcv::DrawingTool::Oval && pts.size() >= 2) {
             pts[0] = pivot + (origPoints_[0] - pivot) * s;   // centre scales about pivot
@@ -910,10 +1063,10 @@ void SketchCanvas::resizeTo(QPointF norm)
             for (size_t i = 0; i < pts.size(); ++i)
                 pts[i] = pivot + (origPoints_[i] - pivot) * s;
         }
-    } else if (selKind_ == SelText && selIdx_ < int(texts_.size())) {
+    } else if (selKind == SelText && selIdx < int(texts_.size())) {
         // Corner scale: w AND size scale together (w/size ratio constant ⇒
         // identical wrap points), position scales about the pivot.
-        SketchText &t = texts_[size_t(selIdx_)];
+        SketchText &t = texts_[size_t(selIdx)];
         t.spec.x = pivot.x() + (origBounds_.left() - pivot.x()) * s;
         t.spec.y = pivot.y() + (origBounds_.top()  - pivot.y()) * s;
         t.spec.w = origTextW_ * s;
@@ -922,9 +1075,9 @@ void SketchCanvas::resizeTo(QPointF norm)
         const double srcH = sourceHeight_ > 0 ? sourceHeight_ : srcW;
         t.hNorm = mn::sketchTextHeightSrc(t.spec, srcW) / srcH;
         invalidateBounds();
-    } else if (selKind_ == SelImage) {
+    } else if (selKind == SelImage && selIdx < int(images_.size())) {
         const QPointF far = pivot + QPointF(dxs, dys) * s;
-        images_[size_t(selIdx_)].rect =
+        images_[size_t(selIdx)].rect =
             QRectF(QPointF(std::min(pivot.x(), far.x()), std::min(pivot.y(), far.y())),
                    QPointF(std::max(pivot.x(), far.x()), std::max(pivot.y(), far.y())));
     }
@@ -947,7 +1100,7 @@ QVariantMap SketchCanvas::textElementAt(int idx) const
 
 void SketchCanvas::hoverMoveEvent(QHoverEvent *e)
 {
-    if (inSelectMode() && selKind_ != SelNone && !panMode_) {
+    if (inSelectMode() && sel_.size() == 1 && !panMode_) {
         const int h = handleAtPx(e->position());
         if (h == 0 || h == 3)      setCursor(QCursor(Qt::SizeFDiagCursor));   // TL / BR
         else if (h == 1 || h == 2) setCursor(QCursor(Qt::SizeBDiagCursor));   // TR / BL

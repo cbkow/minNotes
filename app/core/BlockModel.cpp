@@ -2,6 +2,8 @@
 #include "Importer.h"
 #include "PathMap.h"
 #include "../notes/sketch_text.h"
+#include "../notes/doc_ink.h"               // page-width ink migration (setPageWidth)
+#include "../notes/annotation_thumbnail.h"  // qcv::strokeBoundsNorm (oval-aware bbox)
 #include <QStringBuilder>
 #include <QStandardPaths>
 #include <QDir>
@@ -114,6 +116,7 @@ void BlockModel::closeDocument() {
     endResetModel();
     clearUndo();
     if (!inkByBlock_.isEmpty()) { inkByBlock_.clear(); ++inkRevision_; emit inkChanged(); }
+    if (!qFuzzyCompare(pageWidth_, 760.0)) { pageWidth_ = 760; emit pageWidthChanged(); }
     emit documentChanged();
     emit dirtyChanged();
 }
@@ -607,6 +610,9 @@ void BlockModel::loadFromStore() {
     endResetModel();
     ++layoutRevision_;
     clearUndo();
+    // The document's page measure (v3; 760 for pre-v3 docs).
+    const qreal docW = doc_.pageWidth();
+    if (!qFuzzyCompare(pageWidth_, docW)) { pageWidth_ = docW; emit pageWidthChanged(); }
     emit modelReset();
     emit layoutChangedSpike();
 }
@@ -1147,7 +1153,10 @@ void BlockModel::undo() {
     if (undoCur_ < 0) return;
     awaitingAfter_ = false;
     const UndoEntry e = undo_[undoCur_];          // copy (applySnapshot won't touch undo_, but be safe)
-    applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
+    // Pure width entries carry no snaps — skip the (view-resetting) apply.
+    if (!e.before.empty() || !e.after.empty())
+        applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
+    applyUndoWidth(e.widthBefore);
     undoCur_ = e.parent;
     markDirty();                                  // undo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowB, e.cColB, e.aRowB, e.aColB);
@@ -1161,11 +1170,98 @@ void BlockModel::redo() {
         if (undo_[i].parent == undoCur_) { child = i; break; }
     if (child < 0) return;
     const UndoEntry e = undo_[child];
-    applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
+    if (!e.before.empty() || !e.after.empty())
+        applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
+    applyUndoWidth(e.widthAfter);
     undoCur_ = child;
     markDirty();                                  // redo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowA, e.cColA, e.aRowA, e.aColA);
     emit undoStackChanged();
+}
+
+// Restore the page width an undo/redo entry recorded (0 = the entry carried
+// no width change). Persists to doc_meta so save-after-undo keeps the file
+// consistent with what's on screen.
+void BlockModel::applyUndoWidth(qreal w) {
+    if (w <= 0 || qFuzzyCompare(w, pageWidth_)) return;
+    pageWidth_ = w;
+    doc_.setPageWidth(int(std::lround(w)));
+    emit pageWidthChanged();
+}
+
+void BlockModel::setPageWidth(qreal w) {
+    if (!documentOpen()) return;
+    w = std::clamp<qreal>(w, 400.0, 4000.0);   // sanity; the UI offers detents
+    if (qFuzzyCompare(w, pageWidth_)) return;
+    const qreal oldW = pageWidth_;
+    const qreal halfOld = oldW / 2.0;
+    const qreal dxEdge = (w - oldW) / 2.0;
+
+    // Edge-affinity migration (PLAN-page-width, affinity DERIVED not stored):
+    // a px-space element fully in a margin keeps its CONTENT position — the
+    // left page edge never moves, so left-margin X (center-relative) shifts
+    // by -Δw/2 and right-margin by +Δw/2; anything overlapping the column
+    // stays center-relative. Frame (media) anchors are width-immune.
+    struct Mig { int row; QString json; };
+    std::vector<Mig> migs;
+    for (auto it = inkByBlock_.constBegin(); it != inkByBlock_.constEnd(); ++it) {
+        const int row = rowForId(it.key());
+        if (row < 0) continue;
+        mn::DocInkAnchor a;
+        if (!mn::docInkFromJson(it.value(), a)) continue;
+        if (a.space != mn::DocInkAnchor::Px) continue;
+        bool changed = false;
+        for (qcv::ActiveStroke& s : a.strokes) {
+            const QRectF b = qcv::strokeBoundsNorm(s);   // local px, oval-aware
+            qreal shift = 0;
+            if (b.right() < -halfOld)     shift = -dxEdge;   // left marginalia
+            else if (b.left() > halfOld)  shift = dxEdge;    // right marginalia
+            if (shift == 0.0) continue;
+            const bool oval = (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2);
+            for (size_t i = 0; i < s.points.size(); ++i) {
+                if (oval && i == 1) continue;   // radii vector: never translated
+                s.points[i].rx() += shift;
+            }
+            changed = true;
+        }
+        for (mn::SketchTextSpec& t : a.texts) {
+            qreal shift = 0;
+            if (t.x + t.w < -halfOld)  shift = -dxEdge;
+            else if (t.x > halfOld)    shift = dxEdge;
+            if (shift != 0.0) { t.x += shift; changed = true; }
+        }
+        if (changed) migs.push_back({row, mn::docInkToJson(a)});
+    }
+
+    // Ink rewrites (if any) fold into one txn; the width stamps onto that
+    // entry so ⌘Z restores blobs + width atomically. With no ink to migrate,
+    // a pure width entry is pushed by hand (endTxn drops empty snapshots).
+    const size_t stackBefore = undo_.size();
+    if (!migs.empty()) {
+        int lo = INT_MAX, hi = -1;
+        for (const Mig& m : migs) { lo = std::min(lo, m.row); hi = std::max(hi, m.row); }
+        beginTxn(lo, hi);
+        for (const Mig& m : migs) setBlockInk(m.row, m.json);
+        endTxn();
+    }
+    pageWidth_ = w;
+    doc_.setPageWidth(int(std::lround(w)));
+    markDirty();
+    if (undo_.size() > stackBefore && undoCur_ == static_cast<int>(undo_.size()) - 1) {
+        undo_.back().widthBefore = oldW;
+        undo_.back().widthAfter = w;
+    } else {
+        UndoEntry e;
+        e.cRowB = cRow_; e.cColB = cCol_; e.aRowB = aRow_; e.aColB = aCol_;
+        e.cRowA = cRow_; e.cColA = cCol_; e.aRowA = aRow_; e.aColA = aCol_;
+        e.parent = undoCur_;
+        e.widthBefore = oldW;
+        e.widthAfter = w;
+        undo_.push_back(std::move(e));
+        undoCur_ = static_cast<int>(undo_.size()) - 1;
+        emit undoStackChanged();
+    }
+    emit pageWidthChanged();
 }
 
 void BlockModel::noteCaret(int row, int col, int anchorRow, int anchorCol) {

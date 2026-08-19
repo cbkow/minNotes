@@ -1459,6 +1459,10 @@ color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:
 QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     if (!model_) return {};
     const BlockModel* m = model_;
+    // The document's page measure (v3; 760 for pre-v3 docs) — every 760-era
+    // geometry constant below derives from it so exports match the app's
+    // live layout at any width.
+    const int pw = int(std::lround(m->pageWidth()));
     FootnoteCtx fn;
     QString body;
     int inkLayers = 0;                // stacked ink layers emitted (gates the toggle)
@@ -1481,13 +1485,14 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     auto bnum = [](int row) {
         return QStringLiteral("<span class=\"bnum\">%1</span>").arg(row + 1);
     };
-    auto bnumLi = [](int row, int depth) {
+    auto bnumLi = [pw](int row, int depth) {
         return QStringLiteral("<span class=\"bnum\" style=\"left:%1px\">%2</span>")
-            .arg(772 - 24 * (depth + 1)).arg(row + 1);
+            .arg((pw + 12) - 24 * (depth + 1)).arg(row + 1);
     };
     // Page ink rides INSIDE its block element (the positioned ancestor):
     // injected before the block's final closing tag. X anchors to the page
-    // center (380 in the 760 frame), minus the element's own indent.
+    // center (pw/2 — 380 in the classic 760 frame), minus the element's
+    // own indent.
     auto injectInk = [&](QString blk, int row, double indent) -> QString {
         const TextInk ti = renderTextInk(m, row);
         if (ti.img.isNull()) return blk;
@@ -1499,7 +1504,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         const QString tag = QStringLiteral(
             "<img class=\"ink\" style=\"position:absolute;left:%1px;top:%2px;"
             "width:%3px;height:%4px;max-width:none;z-index:2\" src=\"%5\" alt=\"\">")
-            .arg(380.0 + ti.box.left() - indent)
+            .arg(pw / 2.0 + ti.box.left() - indent)
             .arg(ti.box.top())
             .arg(ti.box.width())
             .arg(ti.box.height())
@@ -1641,6 +1646,18 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     if (codeBg.isValid())
         css.replace(QLatin1String("pre{background:var(--recess)"),
                     QStringLiteral("pre{background:%1").arg(codeBg.name()));
+
+    // Per-document page width: patch the 760-era geometry — the column
+    // (w+240 incl. the two 120px gutters) and the block-number ledger
+    // (left = w+12; viewport reserve = w+172) — the codeBg pattern.
+    if (pw != 760) {
+        css.replace(QLatin1String("max-width:1000px"),
+                    QStringLiteral("max-width:%1px").arg(pw + 240));
+        css.replace(QLatin1String("left:772px"),
+                    QStringLiteral("left:%1px").arg(pw + 12));
+        css.replace(QLatin1String("100vw - 932px"),
+                    QStringLiteral("100vw - %1px").arg(pw + 172));
+    }
 
     // Lightbox: the page's one script (everything else is CSS-only). Vanilla,
     // self-contained; removes itself when the page has no figure images. The

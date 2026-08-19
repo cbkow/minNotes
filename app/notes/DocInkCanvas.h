@@ -28,6 +28,8 @@
 #include <QSet>
 #include <QVariant>
 
+#include <vector>
+
 class BlockModel;
 
 class DocInkCanvas : public QQuickPaintedItem
@@ -87,7 +89,7 @@ public:
     bool inkMode() const { return inkMode_; }
     void setInkMode(bool on);
     bool isDrawing() const { return drawing_; }
-    bool hasSelection() const { return selKind_ != SelNone; }
+    bool hasSelection() const { return !sel_.empty(); }
     int strokeCount() const { return strokeCount_; }
     QString textFamily() const { return textFamily_; }
     void setTextFamily(const QString& f);
@@ -119,15 +121,21 @@ public:
     Q_INVOKABLE qreal inkTextSizeScale(int row) const;
 
     int selectedTextRow() const;
-    int selectedTextIndex() const { return selKind_ == SelText ? selIdx_ : -1; }
+    // Single-selection only: the Inspector Size slider retargets one chip.
+    int selectedTextIndex() const {
+        return sel_.size() == 1 && sel_[0].kind == SelText ? sel_[0].idx : -1;
+    }
 
     Q_INVOKABLE void cancelStroke();      // Esc mid-drag (also aborts an erase gesture)
     Q_INVOKABLE void clearSelection();
     Q_INVOKABLE void deleteSelection();
 
     // --- Selection kinds (chips join strokes). Public so hasSelection's
-    // inline can see it; QML never touches these values. ---
+    // inline can see it; QML never touches these values. The selection is a
+    // SET (M1 of the page-width plan): items carry their anchor's blockId
+    // because doc ink is grouped per anchor — a marquee can span anchors.
     enum SelKind { SelNone, SelStroke, SelText };
+    struct SelItem { QString blockId; SelKind kind = SelNone; int idx = -1; };
 
 signals:
     void modelChanged();
@@ -194,9 +202,15 @@ private:
     // 4=left-mid 5=right-mid, or -1.
     int textHandleAt(QPointF itemPos) const;
     void textResizeTo(QPointF contentPt);
-    void selectPress(QPointF itemPos);
+    void selectPress(QPointF itemPos, Qt::KeyboardModifiers mods);
     void selectMove(QPointF itemPos);
     void selectRelease();
+    bool selContains(const QString& blockId, SelKind k, int idx) const;
+    void toggleSel(const QString& blockId, SelKind k, int idx);
+    void pruneSelection();      // drop items whose anchor/index no longer resolves
+    // One element's bbox in CONTENT px (oval-aware for strokes; chips use the
+    // cached local height). Invalid rect if the item doesn't resolve.
+    QRectF itemContentRect(const SelItem& it) const;
     void flushEraseGesture();
 
     BlockModel* model_ = nullptr;
@@ -231,9 +245,10 @@ private:
     QSet<QString> eraseDirty_;
 
     // Selection / move (select mode = inkMode with no draw tool armed).
-    QString selBlockId_;
-    SelKind selKind_ = SelNone;
-    int selIdx_ = -1;
+    std::vector<SelItem> sel_;             // the selection set (ordered, unique)
+    bool marquee_ = false;                 // rubber-band drag in progress
+    QPointF marqueeAnchor_;                // marquee origin (CONTENT px — scroll-glued)
+    QRectF marqueeRect_;                   // live marquee (content px)
     bool moving_ = false, moveDirty_ = false;
     QPointF lastContentPt_;
     // Chip resize (corner scale / mid-edge wrap drag).

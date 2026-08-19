@@ -98,8 +98,12 @@ bool Document::open(const QString& path) {
     exec(R"(CREATE TABLE IF NOT EXISTS doc_meta (
               id INTEGER PRIMARY KEY CHECK (id = 1),
               title TEXT, schema_version INTEGER, app_version TEXT,
-              created INTEGER, modified INTEGER, last_cursor TEXT
+              created INTEGER, modified INTEGER, last_cursor TEXT,
+              page_width INTEGER
           ))");
+    // v3 column on pre-v3 files: additive, so older builds keep opening the
+    // file untouched (they never read it). Fails harmlessly when present.
+    exec("ALTER TABLE doc_meta ADD COLUMN page_width INTEGER");
 
     // v2: document annotations. block_ink = ONE row per anchored block, the
     // whole serialized stroke blob (block-local coordinate envelope, see
@@ -171,6 +175,34 @@ int Document::schemaVersion() const {
     if (q.exec(QStringLiteral("SELECT schema_version FROM doc_meta WHERE id = 1")) && q.next())
         return q.value(0).toInt();
     return 0;
+}
+
+int Document::pageWidth() const {
+    if (!open_) return 760;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (q.exec(QStringLiteral("SELECT page_width FROM doc_meta WHERE id = 1")) && q.next()) {
+        const int w = q.value(0).toInt();
+        if (w > 0) return w;
+    }
+    return 760;   // absent/0 = the classic measure (every pre-v3 doc)
+}
+
+void Document::setPageWidth(int w) {
+    if (!open_) return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare(QStringLiteral(
+        "INSERT INTO doc_meta (id, schema_version, app_version, created, modified, page_width) "
+        "VALUES (1, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET page_width = excluded.page_width, "
+        "modified = excluded.modified"));
+    q.addBindValue(kSchemaVersion);
+    q.addBindValue(QStringLiteral(MINNOTES_APP_VERSION));
+    q.addBindValue(now);
+    q.addBindValue(now);
+    q.addBindValue(w);
+    if (!q.exec())
+        qWarning() << "Document: page_width write failed:" << q.lastError().text();
 }
 
 int Document::count() const {

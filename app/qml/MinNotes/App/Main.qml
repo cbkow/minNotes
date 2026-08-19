@@ -1072,9 +1072,13 @@ ApplicationWindow {
                 sourceComponent: Column {
                     anchors.fill: parent
                     property alias editorItem: editorInner
+                    // The page-width ruler (Document view only — collapses to 0
+                    // in full-frame tabs). Reserves real space; never overlays.
+                    PageRuler { id: innerRuler; width: parent.width; editor: editorInner }
                     // The validated passive-surface editor (model owns the cursor; blocks
                     // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
-                    Editor { id: editorInner; width: parent.width; height: parent.height - innerTabs.height - innerBottom.height
+                    Editor { id: editorInner; width: parent.width
+                             height: parent.height - innerRuler.height - innerTabs.height - innerBottom.height
                              inspector: inspectorPanel }
                     TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
                     BottomRail { id: innerBottom; width: parent.width; editor: editorInner }

@@ -407,6 +407,91 @@ static void testInkUndoPersist() {
 // Tier-3 annotations: a SpanComment span (payload = thread id) rides the span
 // machinery for free; thread bodies live in comment_* tables, are NOT undoable,
 // and survive orphaning (span deleted) until deleteThread.
+static void testPageWidth() {
+    qInfo("[8b] page width: edge-affinity migration, undo atomicity, persistence");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_pw.mndb");
+    QFile::remove(path);
+
+    // One px anchor with: a LEFT-margin stroke (bbox fully left of the 760
+    // column), an in-COLUMN stroke, and a RIGHT-margin chip.
+    mn::DocInkAnchor a;
+    a.space = mn::DocInkAnchor::Px;
+    qcv::ActiveStroke left;
+    left.tool = qcv::DrawingTool::Freehand;
+    left.points = { QPointF(-460.0, 2.0), QPointF(-420.0, 40.0) };
+    left.strokeWidth = 4;
+    qcv::ActiveStroke center;
+    center.tool = qcv::DrawingTool::Freehand;
+    center.points = { QPointF(-10.0, 2.0), QPointF(10.0, 40.0) };
+    center.strokeWidth = 4;
+    a.strokes.push_back(left);
+    a.strokes.push_back(center);
+    mn::SketchTextSpec chip;
+    chip.text = QStringLiteral("margin note");
+    chip.x = 420.0; chip.y = 10.0; chip.w = 90.0; chip.size = 16.0;
+    chip.color = QColor(QStringLiteral("#FF5768"));
+    a.texts.push_back(chip);
+    const QString kInk = mn::docInkToJson(a);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
+    m.noteCaret(0, 0, 0, 0);
+    m.setBlockInk(0, kInk);
+    CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "fresh doc reads the classic 760");
+
+    // 760 → 1000: Δw/2 = 120. Left marginalia shifts -120 (keeps its content
+    // position against the FIXED left edge), right marginalia +120, the
+    // in-column stroke stays center-relative.
+    m.setPageWidth(1000);
+    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "setPageWidth applied");
+    mn::DocInkAnchor mig;
+    CHECK(mn::docInkFromJson(m.inkForRow(0), mig)
+              && mig.strokes.size() == 2 && mig.texts.size() == 1,
+          "migrated blob keeps every element");
+    CHECK(qFuzzyCompare(mig.strokes[0].points[0].x(), -580.0)
+              && qFuzzyCompare(mig.strokes[0].points[1].x(), -540.0),
+          "left-margin stroke shifted by -dW/2 (content position kept)");
+    CHECK(qFuzzyCompare(mig.strokes[1].points[0].x(), -10.0),
+          "in-column stroke stays center-relative");
+    CHECK(qFuzzyCompare(mig.texts[0].x, 540.0),
+          "right-margin chip shifted by +dW/2");
+
+    // ONE undo restores blobs AND width atomically; redo re-applies both.
+    m.undo();
+    CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "undo restores the width");
+    mn::DocInkAnchor back;
+    CHECK(mn::docInkFromJson(m.inkForRow(0), back)
+              && qFuzzyCompare(back.strokes[0].points[0].x(), -460.0)
+              && qFuzzyCompare(back.texts[0].x, 420.0),
+          "the SAME undo restores the pre-migration ink (atomic)");
+    m.redo();
+    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "redo re-applies the width");
+    mn::DocInkAnchor fwd;
+    CHECK(mn::docInkFromJson(m.inkForRow(0), fwd)
+              && qFuzzyCompare(fwd.strokes[0].points[0].x(), -580.0),
+          "redo re-applies the migrated ink");
+
+    // Pure width change (no ink): still one undoable step.
+    m.setBlockInk(0, QString());
+    m.setPageWidth(1200);
+    CHECK(qFuzzyCompare(m.pageWidth(), 1200.0), "pure width change applied");
+    m.undo();
+    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "pure width change undoes");
+    m.undo();   // restores the ink blob cleared above
+
+    // Persistence: the width travels through save/reopen (doc_meta v3).
+    CHECK(m.saveAs(path), "saveAs() succeeded");
+    m.closeDocument();
+    CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "close resets to 760");
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopen succeeded");
+    CHECK(qFuzzyCompare(m2.pageWidth(), 1000.0), "page width persisted through doc_meta");
+    m2.closeDocument();
+    QFile::remove(path);
+}
+
 static void testComments() {
     qInfo("[9] comments: span anchor, shift, orphan/undo, persistence");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_comments.mndb");
@@ -2383,6 +2468,7 @@ int main(int argc, char** argv) {
     testCanonicalizeAndStamp();
     testListsAndDepth();
     testInkUndoPersist();
+    testPageWidth();
     testComments();
     testExportMarkdown();
     testSketchResizeRenorm();

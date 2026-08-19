@@ -29,7 +29,17 @@ FocusScope {
     // The page is LEFT-ANCHORED at a fixed margin, matching the HTML
     // export's layout language; the space to the right is where wide
     // tables grow.
-    property real pageWidth: Theme.dim.columnWidth
+    // PER-DOCUMENT width (v3, PLAN-page-width): the model owns the measure —
+    // 760 for pre-v3 docs, detents up to 1600 for image-board documents.
+    // Guarded so a transient 0 during document switches never reaches layout.
+    // previewWidth (the PageRuler drives it mid-drag) overrides WITHOUT
+    // committing; release commits via blockModel.setPageWidth then clears it.
+    property real previewWidth: 0
+    property bool widthDragging: false   // the ruler's drag → gutter tints below
+    property real pageWidth: previewWidth > 0 ? previewWidth
+                           : (blockModel.pageWidth > 0 ? blockModel.pageWidth
+                                                       : Theme.dim.columnWidth)
+    readonly property real viewContentX: flick.contentX   // the ruler rides the pan
     // Media is known-geometry: tell the model the width it derives media heights
     // from, and re-tell it on resize so reserved height stays exact (no jump).
     onPageWidthChanged: blockModel.setContentWidth(pageWidth)
@@ -2328,6 +2338,23 @@ FocusScope {
             function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta }
         }
 
+        // Gutter tints while the PageRuler drags a width: the marginalia
+        // zones travel visibly with the edge (transient drag feedback).
+        Rectangle {
+            visible: root.widthDragging
+            z: -1
+            x: 0; width: root.leftEdge
+            y: flick.contentY; height: flick.height
+            color: Theme.colors.bgAlt2
+        }
+        Rectangle {
+            visible: root.widthDragging
+            z: -1
+            x: root.leftEdge + root.pageWidth; width: root.inkGutter
+            y: flick.contentY; height: flick.height
+            color: Theme.colors.bgAlt2
+        }
+
         Rectangle {   // "you are here" — the FOCUSED block's full row, page and
                       // margins alike. The one fill on the field, and it MEANS
                       // something (the zebra's parity flipped on every insert;
@@ -3674,6 +3701,11 @@ FocusScope {
                                 color: root.inspector ? root.inspector.drawColor : "#FF0000"
                                 strokeWidth: root.inspector ? root.inspector.drawWidth : 6
                                 selectable: true
+                                // Group gestures: PDF pages carry only strokes
+                                // (one edited() = one txn), so the brackets are
+                                // future-proofing at zero cost.
+                                onGroupCommitBegan: blockModel.beginGroup(root.activePdfRow, root.activePdfRow)
+                                onGroupCommitEnded: blockModel.endGroup()
                                 onEdited: (json) => blockModel.pdfSetPageInk(root.activePdfRow, index, json)
                                 // One page's canvas at a time owns Esc/Delete.
                                 onDrawingChanged: if (drawing) root._setPdfActiveInk(pageInk)
@@ -4120,6 +4152,10 @@ FocusScope {
                 color: root.inspector ? root.inspector.drawColor : "#FF0000"
                 strokeWidth: root.inspector ? root.inspector.drawWidth : 6
                 selectable: true   // no tool armed → click-select / drag-move / Delete
+                // Multi-select group gestures span several model calls — the
+                // brackets fold them into ONE undo step.
+                onGroupCommitBegan: blockModel.beginGroup(sketchFrame.r, sketchFrame.r)
+                onGroupCommitEnded: blockModel.endGroup()
                 onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
                 onImageRectChanged: (i, x, y, w, h) => blockModel.sketchSetImageRect(sketchFrame.r, i, x, y, w, h)
                 onImageRemoved: (i) => blockModel.sketchRemoveImage(sketchFrame.r, i)
