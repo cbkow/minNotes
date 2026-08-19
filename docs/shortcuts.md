@@ -39,6 +39,17 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Highlight | ⌘⇧H |
 | Clear formatting | ⌘\ |
 
+## Drawing
+
+| Action | Shortcut |
+|---|---|
+| Back to typing (drop the tool) | Esc |
+| Cancel an in-flight stroke | Esc |
+| Add/remove one item from a selection | ⇧Click |
+| Select several (rubber band) | Drag on empty canvas |
+| Delete the selected annotation(s) | Delete / Backspace |
+| Pan pages while a tool is armed (PDF tab) | hold Space |
+
 ## Tables
 
 | Action | Shortcut |
