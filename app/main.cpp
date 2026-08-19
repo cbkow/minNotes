@@ -188,6 +188,14 @@ int main(int argc, char *argv[])
         packageExporter.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("packageExporter", &packageExporter);
+    // Collect Media (Document ▸ Collect Media…). Same model-following.
+    MediaCollector mediaCollector;
+    mediaCollector.setModel(docs.activeModel());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &mediaCollector,
+                     [&mediaCollector, &docs] {
+        mediaCollector.setModel(docs.activeModel());
+    });
+    engine.rootContext()->setContextProperty("mediaCollector", &mediaCollector);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.

@@ -17,6 +17,10 @@
 #include <QCryptographicHash>
 #include <QBuffer>
 #include <QPdfDocument>
+#include <QStorageInfo>
+#if defined(Q_OS_WIN)
+#include <qt_windows.h>
+#endif
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -140,21 +144,34 @@ QString MediaStore::assetsDir() const {
 // export then finds nothing and emits a dead file:// link (the
 // "unreachable source" fallback — bit a real export 2026-08-13).
 static bool isVolatileSource(const QString& path) {
-    const QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    const QFileInfo fi(path);
+    const QString abs = QDir::cleanPath(fi.absoluteFilePath());
+    // Match the canonical form too: /tmp is a symlink to /private/tmp on
+    // macOS, and absoluteFilePath() does NOT resolve symlinks — a capture
+    // app handing file:///tmp/… would otherwise sail past every root.
+    const QString canon = QDir::cleanPath(fi.canonicalFilePath());   // "" if gone
     QStringList roots;
-    roots << QDir::tempPath();
+    roots << QDir::tempPath()
+          << QStringLiteral("/tmp") << QStringLiteral("/var/tmp");
     // The app's own scratch root (staged imports, working copies) is
     // reclaimed across sessions — always volatile, on every platform.
     // On macOS it happens to sit under ~/Library; on Windows it's under
-    // AppData/Roaming, which no generic rule below covers.
+    // AppData/Roaming, which the env roots below also cover.
     roots << QDir::cleanPath(BlockModel::scratchDir());
 #if defined(Q_OS_MACOS)
     roots << QDir::homePath() + QStringLiteral("/Library")
           << QStringLiteral("/private/var/folders")
-          << QStringLiteral("/var/folders");
+          << QStringLiteral("/var/folders")
+          << QStringLiteral("/private/tmp")
+          << QStringLiteral("/private/var/tmp");
 #elif defined(Q_OS_WIN)
-    const QString localTemp = qEnvironmentVariable("TEMP");
-    if (!localTemp.isEmpty()) roots << QDir::cleanPath(localTemp);
+    // TEMP/TMP catch the classic temp dirs; LOCALAPPDATA/APPDATA catch
+    // capture apps' own media caches (the CleanShot-class rot, Windows
+    // edition).
+    for (const char* var : { "TEMP", "TMP", "LOCALAPPDATA", "APPDATA" }) {
+        const QString v = qEnvironmentVariable(var);
+        if (!v.isEmpty()) roots << QDir::cleanPath(v);
+    }
 #endif
     const Qt::CaseSensitivity cs =
 #if defined(Q_OS_WIN)
@@ -164,13 +181,43 @@ static bool isVolatileSource(const QString& path) {
 #endif
     for (const QString& root : roots) {
         if (root.isEmpty()) continue;
-        if (p.startsWith(root + QLatin1Char('/'), cs) || p.compare(root, cs) == 0)
-            return true;
+        for (const QString& p : { abs, canon }) {
+            if (p.isEmpty()) continue;
+            if (p.startsWith(root + QLatin1Char('/'), cs) || p.compare(root, cs) == 0)
+                return true;
+        }
     }
     return false;
 }
 
-MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath) const {
+// True when `path` lives on a network share (SMB/AFP/NFS/WebDAV mount, or a
+// Windows UNC path / mapped network drive). Those are the ONLY sources still
+// referenced in place (ruling 2026-08-19): shares are the shared source of
+// truth, can be huge, and travel cross-OS via {vol,rel} path mapping. When
+// the probe can't tell (unmounted, vanished file), it says "not a share" —
+// the safe side is copying.
+static bool isNetworkSource(const QString& path) {
+    const QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+#if defined(Q_OS_WIN)
+    if (p.startsWith(QLatin1String("//")) || p.startsWith(QLatin1String("\\\\")))
+        return true;                                       // UNC
+    if (p.length() >= 2 && p.at(1) == QLatin1Char(':')) {  // mapped drive letter
+        const QString root = p.left(2) + QLatin1Char('\\');
+        return GetDriveTypeW(reinterpret_cast<const wchar_t*>(root.utf16()))
+               == DRIVE_REMOTE;
+    }
+    return false;
+#else
+    const QStorageInfo si(QFileInfo(p).absolutePath());
+    if (!si.isValid()) return false;
+    const QByteArray fs = si.fileSystemType().toLower();
+    for (const char* t : { "smb", "afp", "nfs", "cifs", "dav", "sshfs", "ftp" })
+        if (fs.contains(t)) return true;
+    return false;
+#endif
+}
+
+MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath, bool forceCopy) const {
     QString path = fileUrlOrPath;
     if (path.startsWith(QLatin1String("file:")))
         path = QUrl(path).toLocalFile();
@@ -178,12 +225,15 @@ MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath) const 
     const QSize sz = r.size();            // header-only probe; no full decode
     if (!sz.isValid() || sz.isEmpty()) return {};
 
-    // Volatile sources get copied into .minnotes/ (content-addressed on
-    // the RAW file bytes — no re-encode, so JPEG stays JPEG and the copy
-    // dedups). Stable locations (job folders, NAS) stay referenced in
-    // place as before — that's deliberate; media there is the shared
-    // source of truth and can be huge.
-    if (isVolatileSource(path)) {
+    // Copy policy (ruling 2026-08-19, supersedes volatile-only): every LOCAL
+    // source copies into .minnotes/ (content-addressed on the RAW file bytes —
+    // no re-encode, so JPEG stays JPEG and the copy dedups). Only network
+    // shares stay referenced in place — the shared source of truth, can be
+    // huge, travels cross-OS via {vol,rel}. Even a share copies if it's a
+    // temp-ish root, or when the paster says the URL smells ephemeral
+    // (forceCopy: clipboard carried BOTH a file URL and raster bytes — the
+    // capture-app signature).
+    if (forceCopy || !isNetworkSource(path) || isVolatileSource(path)) {
         QFile f(path);
         if (f.open(QIODevice::ReadOnly)) {
             const QByteArray bytes = f.readAll();

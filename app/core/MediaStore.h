@@ -39,8 +39,13 @@ public:
     // Reference an existing PDF: probe page count + page-0 size via QPdfDocument.
     PdfRef importPdfFile(const QString& fileUrlOrPath) const;
 
-    // Reference an existing file (a drag-drop). src = absolute path; probes dims.
-    ImageRef importFile(const QString& fileUrlOrPath) const;
+    // Import an image file (drag-drop / paste / import walker). Probes dims,
+    // then copies into .minnotes/ (content-addressed, raw bytes) unless the
+    // source is a non-volatile network share — those stay referenced in
+    // place (src = absolute path). forceCopy copies even a share: paste sets
+    // it when the clipboard carried BOTH a file URL and raster bytes (the
+    // screen-capture-app signature; the URL is a temp file).
+    ImageRef importFile(const QString& fileUrlOrPath, bool forceCopy = false) const;
     // Reference an existing video file. Probes dims + duration/fps/frames via
     // libavformat (header-only: open + find_stream_info; no decode, no threads).
     VideoRef importVideoFile(const QString& fileUrlOrPath) const;

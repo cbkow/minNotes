@@ -492,6 +492,62 @@ static void testPageWidth() {
     QFile::remove(path);
 }
 
+static void testUndoHistory() {
+    qInfo("[8c] undo history: active path, labels, jump time-travel");
+    mn::DocInkAnchor a;
+    a.space = mn::DocInkAnchor::Px;
+    qcv::ActiveStroke st;
+    st.tool = qcv::DrawingTool::Freehand;
+    st.points = { QPointF(-450.0, 2.0), QPointF(-420.0, 30.0) };
+    st.strokeWidth = 4;
+    a.strokes.push_back(st);
+    const QString kInk = mn::docInkToJson(a);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
+    m.noteCaret(0, 0, 0, 0);
+    QObject::connect(&m, &BlockModel::caretRestoreRequested, &m,
+                     [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
+
+    const int rev0 = m.undoRevision();
+    m.setBlockInk(0, kInk);      // → "Ink"
+    m.setPageWidth(1000);        // → "Page width 1000" (grouped w/ migration)
+    m.insertBlock(1);            // → "Insert block"
+    CHECK(m.undoRevision() > rev0, "undoRevision advances with the stack");
+
+    const QVariantList h = m.undoHistory();
+    CHECK(h.size() >= 4, "history has baseline + the three entries");
+    CHECK(h.first().toMap().value("label").toString() == QStringLiteral("Opened"),
+          "baseline row leads");
+    QStringList labels;
+    for (const QVariant& v : h) labels << v.toMap().value("label").toString();
+    CHECK(labels.contains(QStringLiteral("Ink")), "ink entry labeled");
+    CHECK(labels.contains(QStringLiteral("Page width 1000")), "width entry labeled");
+    CHECK(labels.contains(QStringLiteral("Insert block")), "insert entry labeled");
+    CHECK(h.last().toMap().value("current").toBool(), "current = the newest state");
+
+    // Time-travel to the baseline: one call unwinds ink + width + insert.
+    m.undoJumpTo(-1);
+    CHECK(qFuzzyCompare(m.pageWidth(), 760.0) && m.inkForRow(0).isEmpty()
+              && m.rowCountQml() == 1,
+          "jump to baseline undoes everything");
+    const QVariantList h2 = m.undoHistory();
+    CHECK(h2.first().toMap().value("current").toBool(), "baseline is now current");
+    CHECK(h2.last().toMap().value("future").toBool(), "the leaf reads as future");
+
+    // And forward again to the leaf in one jump.
+    const int leaf = h2.last().toMap().value("idx").toInt();
+    m.undoJumpTo(leaf);
+    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0) && m.rowCountQml() == 2
+              && !m.inkForRow(0).isEmpty(),
+          "jump forward replays to the leaf");
+    // A stale/off-path target is a safe no-op.
+    m.undoJumpTo(9999);
+    CHECK(m.rowCountQml() == 2, "off-path jump target is a no-op");
+}
+
 static void testComments() {
     qInfo("[9] comments: span anchor, shift, orphan/undo, persistence");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_comments.mndb");
@@ -1689,9 +1745,11 @@ static void testPackageFormat() {
 
 static void testPackageExporter() {
     qInfo("[22] packer: descriptor-walk plan, rewrite-on-copy, sidecar carry");
-    // NOT under temp/~Library: those are VOLATILE roots (2d9e45b) and
-    // importFile would copy-not-reference, hiding the absolute-src rewrite
-    // and collision paths this test exists to cover. The build dir is stable.
+    // The packer must keep rewriting ABSOLUTE-src descriptors (network-share
+    // refs, legacy docs). importFile can no longer author those from local
+    // fixtures — every local source copies into .minnotes since the
+    // paste-copy ruling (2026-08-19) — so this test hand-builds them below,
+    // like the video descriptor always was.
     QDir dir(QCoreApplication::applicationDirPath()
              + QStringLiteral("/mn_pack_src"));
     dir.removeRecursively();
@@ -1722,13 +1780,25 @@ static void testPackageExporter() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0);
     m.setContent(0, QStringLiteral("hello"));
-    const int img1 = m.insertImageFromUrl(0, QUrl::fromLocalFile(picB).toString());
-    const int img2 = m.insertImageFromUrl(img1, QUrl::fromLocalFile(picC).toString());
-    CHECK(img1 > 0 && img2 > img1, "fixture images inserted");
+    const auto absImageJson = [](const QString& p) {
+        return QStringLiteral("{\"src\":\"%1\",\"w\":12,\"h\":10}").arg(p);
+    };
+    const auto absImageSpec = [&](const QString& p) {
+        BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+        sp.mediaJson = absImageJson(p);
+        return sp;
+    };
+    m.insertSpecs(0, {absImageSpec(picB)}, false);
+    m.insertSpecs(1, {absImageSpec(picC)}, false);
+    const int img1 = 1, img2 = 2;
+    CHECK(m.mediaKind(img1) == QLatin1String("image")
+              && m.mediaKind(img2) == QLatin1String("image"),
+          "fixture images inserted (abs-src descriptors)");
     const int tRow = m.insertTable(img2, 2, 2);
-    CHECK(tRow > 0 && m.tableSetCellImageFromUrl(tRow, 1, 0,
-              QUrl::fromLocalFile(picB).toString()),
-          "table cell image set");
+    CHECK(tRow > 0, "table inserted");
+    m.tableSetCellMedia(tRow, 1, 0, absImageJson(picB));
+    CHECK(m.tableCellMedia(tRow, 1, 0).contains(QStringLiteral("pic.png")),
+          "table cell abs-src descriptor set");
     // Hand-built video descriptor (absolute src — the referenced-in-place shape).
     {
         BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
@@ -2445,6 +2515,132 @@ static int runOpenProbe(const QString& base) {
     return 0;
 }
 
+// --- Test 30: importFile copy policy — local sources copy into .minnotes ---
+// The 2026-08-19 ruling (the capture-app temp-path rot): every LOCAL image
+// source copies into the doc's .minnotes (content-addressed raw bytes); only
+// network shares stay referenced in place. Network mounts can't be conjured
+// in a test, so this covers the local side: copy happens, is byte-exact
+// (no re-encode), and dedups.
+static void testImportCopyPolicy() {
+    qInfo("[30] importFile copy policy: local sources copy into .minnotes");
+    QDir dir(QCoreApplication::applicationDirPath()
+             + QStringLiteral("/mn_copy_policy"));   // stable-LOCAL, not temp
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString src = dir.filePath(QStringLiteral("shot.png"));
+    { QImage img(9, 7, QImage::Format_RGB32); img.fill(Qt::magenta);
+      img.save(src, "PNG"); }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("anchor"));   // non-empty, or the insert consumes row 0
+    const int r = m.insertImageFromUrl(0, QUrl::fromLocalFile(src).toString());
+    CHECK(r == 1, "local image inserted");
+    const QString p = m.mediaLocalPath(r);
+    CHECK(!p.isEmpty() && QFileInfo::exists(p)
+              && p.contains(QStringLiteral("/.minnotes/"))
+              && QFileInfo(p).absoluteFilePath() != QFileInfo(src).absoluteFilePath(),
+          "stable-LOCAL source COPIED into .minnotes (not referenced)");
+    {   // raw-byte copy: JPEG-stays-JPEG class guarantee
+        QFile a(src), b(p);
+        CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
+                  && a.readAll() == b.readAll(),
+              "copy is byte-exact (raw bytes, no re-encode)");
+    }
+    const int r2 = m.insertImageFromUrl(r, QUrl::fromLocalFile(src).toString());
+    CHECK(r2 == r + 1 && m.mediaLocalPath(r2) == p,
+          "re-import of the same file dedups to the same asset");
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
+// --- Test 31: Collect Media — external sources copy in, descriptors follow ---
+// The collector rides the packer's walker: external abs-src media (doc image,
+// table cell, video + .qcview sidecar) copies into .minnotes with readable
+// names, descriptors rewrite as ONE undo entry, and a second collect finds
+// nothing left to do.
+static void testCollectMedia() {
+    qInfo("[31] Collect Media: copy external refs into .minnotes, one undo entry");
+    QDir dir(QCoreApplication::applicationDirPath()
+             + QStringLiteral("/mn_collect_src"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString pic = dir.filePath(QStringLiteral("board.png"));
+    { QImage img(12, 10, QImage::Format_RGB32); img.fill(Qt::yellow);
+      img.save(pic, "PNG"); }
+    const QString clip = dir.filePath(QStringLiteral("take.mp4"));
+    { QFile f(clip); if (f.open(QIODevice::WriteOnly)) f.write(QByteArray(256, 'V')); }
+    QDir().mkpath(dir.filePath(QStringLiteral(".qcview/take.mp4")));
+    { QFile f(dir.filePath(QStringLiteral(".qcview/take.mp4/notes.json")));
+      if (f.open(QIODevice::WriteOnly)) f.write("{\"notes\":[]}"); }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("hello"));
+    {   // abs-src fixtures (the referenced-in-place shape collect exists for)
+        BlockModel::BlockSpec img; img.type = BlockModel::Media;
+        img.mediaJson = QStringLiteral("{\"src\":\"%1\",\"w\":12,\"h\":10}").arg(pic);
+        m.insertSpecs(0, {img}, false);
+        BlockModel::BlockSpec vid; vid.type = BlockModel::Media;
+        vid.mediaJson = QStringLiteral(
+            "{\"src\":\"%1\",\"w\":320,\"h\":240,\"kind\":\"video\","
+            "\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(clip);
+        m.insertSpecs(1, {vid}, false);
+    }
+    const int imgRow = 1, vidRow = 2;
+    const int tRow = m.insertTable(vidRow, 2, 2);
+    m.tableSetCellMedia(tRow, 0, 0,
+        QStringLiteral("{\"src\":\"%1\",\"w\":12,\"h\":10}").arg(pic));
+    CHECK(m.mediaKind(imgRow) == QLatin1String("image")
+              && m.mediaKind(vidRow) == QLatin1String("video") && tRow > 0,
+          "collect fixtures in place");
+
+    int copied = 0; QString err;
+    CHECK(MediaCollector::collectDocument(&m, /*includeVideos*/true, &copied, &err),
+          "collect succeeded (%s)", qPrintable(err));
+    CHECK(copied == 2, "two external files collected (image deduped by source)");
+    // The doc's scratch .minnotes persists across suite runs, so a re-run
+    // legitimately lands board-2.png etc. — assert the readable STEM, not an
+    // exact basename.
+    const QString root = QDir::cleanPath(m.mediaStore()->docDir());
+    const QString ip = m.mediaLocalPath(imgRow);
+    const QString vp = m.mediaLocalPath(vidRow);
+    CHECK(ip.startsWith(root + QStringLiteral("/.minnotes/board"))
+              && ip.endsWith(QStringLiteral(".png")) && QFileInfo::exists(ip),
+          "image collected under a readable name (%s)", qPrintable(ip));
+    CHECK(vp.startsWith(root + QStringLiteral("/.minnotes/take"))
+              && vp.endsWith(QStringLiteral(".mp4")) && QFileInfo::exists(vp)
+              && QFileInfo::exists(root + QStringLiteral("/.minnotes/.qcview/")
+                                   + QFileInfo(vp).fileName()
+                                   + QStringLiteral("/notes.json")),
+          "video + .qcview sidecar collected (%s)", qPrintable(vp));
+    CHECK(m.tableCellMedia(tRow, 0, 0).contains(
+              QStringLiteral(".minnotes/") + QFileInfo(ip).fileName()),
+          "table cell descriptor followed the copy");
+    {   // byte-exact, no re-encode
+        QFile a(pic), b(ip);
+        CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
+                  && a.readAll() == b.readAll(), "collected copy byte-exact");
+    }
+    // ONE undo entry restores every source; redo re-applies (copies stay).
+    m.undo();
+    CHECK(m.mediaLocalPath(imgRow) == QFileInfo(pic).absoluteFilePath()
+              && m.tableCellMedia(tRow, 0, 0).contains(pic),
+          "one undo restores all original refs");
+    m.redo();
+    CHECK(m.mediaLocalPath(imgRow) == ip, "redo re-applies the collected refs");
+    // Idempotent: nothing external remains.
+    copied = -1;
+    CHECK(MediaCollector::collectDocument(&m, true, &copied, &err) && copied == 0,
+          "second collect finds nothing to do");
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -2469,6 +2665,7 @@ int main(int argc, char** argv) {
     testListsAndDepth();
     testInkUndoPersist();
     testPageWidth();
+    testUndoHistory();
     testComments();
     testExportMarkdown();
     testSketchResizeRenorm();
@@ -2490,6 +2687,8 @@ int main(int argc, char** argv) {
     testNotionImport();
     testDocxRoundTrip();
     testRtfImport();
+    testImportCopyPolicy();
+    testCollectMedia();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

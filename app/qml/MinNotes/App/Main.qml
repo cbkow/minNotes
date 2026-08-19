@@ -422,6 +422,155 @@ ApplicationWindow {
         }
     }
 
+    // --- Collect Media (Document menu): copy every externally referenced
+    // file into .minnotes and re-point the descriptors (one undo step).
+    // Scan-first like export: nothing external → a toast, no dialog. ---
+    property var _collectScan: ({})
+    property bool _collectVideos: false
+    function startCollectMedia() {
+        _collectScan = mediaCollector.scan()
+        if (_collectScan.package) {
+            Toasts.show(qsTr("Packages are sealed — use Save As to make an editable copy"), 2)
+            return
+        }
+        if ((_collectScan.files || 0) + (_collectScan.videos || 0) === 0) {
+            Toasts.show(qsTr("All media already lives with this document"))
+            return
+        }
+        _collectVideos = false
+        collectOptionsDialog.open()
+    }
+    Connections {
+        target: mediaCollector
+        function onCollectFinished(ok, copied, error) {
+            if (ok && copied > 0) {
+                Toasts.show(qsTr("Collected %1 %2").arg(copied)
+                            .arg(copied === 1 ? qsTr("file") : qsTr("files")))
+                // Auto-save (ruling 2026-08-19): the copies are already on
+                // disk, so an unsaved rewrite is the worst half-state — the
+                // user reads "document stays whole", deletes the originals,
+                // and an unsaved close reverts the refs to deleted files.
+                // Saving closes the promise. Untitled docs skip (no home
+                // yet — Save As re-homes the scratch .minnotes anyway);
+                // _saveOrSaveAs brings the conflict/failure dialogs along.
+                if (blockModel.documentOpen && !blockModel.untitled)
+                    win._saveOrSaveAs()
+            }
+            else if (ok) Toasts.show(qsTr("Nothing to collect"))
+            else if (error === "Cancelled") Toasts.show(qsTr("Collect cancelled"))
+            else Toasts.show(qsTr("Collect failed — ") + error, 2)
+        }
+    }
+    Dialog {
+        id: collectOptionsDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: qsTr("Collect Media")
+                   color: Theme.colors.textBright; font.family: Theme.font.family
+                   font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text {
+                width: 400; wrapMode: Text.Wrap
+                text: {
+                    var n = win._collectScan.files || 0
+                    return qsTr("Copies %1 %2 (%3) referenced outside the document into its media folder, so the document stays whole if the originals move.")
+                        .arg(n).arg(n === 1 ? qsTr("file") : qsTr("files"))
+                        .arg(win.fmtBytes(win._collectScan.fileBytes || 0))
+                }
+                color: Theme.colors.text
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+            }
+            Row {   // detection-driven videos opt-in (default off — size)
+                visible: (win._collectScan.videos || 0) > 0
+                spacing: 8
+                Rectangle {   // squared family checkbox (export-dialog pattern)
+                    width: 16; height: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: win._collectVideos ? Theme.colors.divider : "transparent"
+                    border.width: 1
+                    border.color: win._collectVideos ? Theme.colors.textBright : Theme.colors.border
+                    Text { anchors.centerIn: parent; visible: win._collectVideos
+                           text: "✓"; color: Theme.colors.textBright; font.pixelSize: 11 }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: win._collectVideos = !win._collectVideos }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: {
+                        var n = win._collectScan.videos || 0
+                        return qsTr("Include videos (%1, %2)")
+                            .arg(n).arg(win.fmtBytes(win._collectScan.videoBytes || 0))
+                    }
+                    color: Theme.colors.text
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: win._collectVideos = !win._collectVideos }
+                }
+            }
+            Text {
+                visible: (win._collectScan.videos || 0) > 0
+                width: 400; wrapMode: Text.Wrap
+                text: qsTr("Videos left out stay as references to their original locations.")
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: qsTr("Cancel"); padding: 12
+                             onClicked: collectOptionsDialog.close() }
+                FlatButton { text: qsTr("Collect"); variant: "primary"; padding: 12
+                             enabled: (win._collectScan.files || 0) > 0 || win._collectVideos
+                             onClicked: { collectOptionsDialog.close()
+                                          mediaCollector.startCollect(win._collectVideos) } }
+            }
+        }
+    }
+    Popup {
+        id: collectProgressDialog
+        visible: mediaCollector.running
+        modal: true
+        closePolicy: Popup.NoAutoClose   // cancel is the only way out
+        anchors.centerIn: Overlay.overlay
+        width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text {
+                text: qsTr("Collecting media…")
+                color: Theme.colors.textBright; font.family: Theme.font.family
+                font.pixelSize: Theme.font.sizeBody; font.bold: true
+            }
+            Text {
+                width: 400; elide: Text.ElideMiddle
+                text: mediaCollector.currentItem
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Rectangle {   // FlatSlider-background recipe: recessed track + fill
+                width: 400; height: 6
+                color: Theme.colors.surfaceRecess
+                border.width: 1; border.color: Theme.colors.border
+                Rectangle {
+                    width: Math.round((parent.width - 2) * Math.min(1, mediaCollector.progress))
+                    height: parent.height - 2
+                    x: 1; y: 1
+                    color: Theme.colors.divider
+                }
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton {
+                    text: qsTr("Cancel"); padding: 12
+                    onClicked: mediaCollector.cancel()
+                }
+            }
+        }
+    }
+
     // Mirrors BlockModel::SaveState (the enum isn't registered as a QML type — the
     // model is a context-property instance — so compare the int saveState here).
     readonly property int _saveClean: 0
@@ -691,17 +840,28 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 Platform.MenuSeparator {}
-                Platform.MenuItem { text: qsTr("Export as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
-                Platform.MenuItem { text: qsTr("Export as HTML…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
-                Platform.MenuItem { text: qsTr("Export as Word Document…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
-                Platform.MenuItem { text: qsTr("Export as Package…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
-                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
+            }
+            // Menu split (2026-08-19): File / Export / Document / Help — one
+            // File menu had grown every command in the app. NoRole everywhere
+            // a non-standard title could trip macOS TextHeuristicRole
+            // relocation (see the updater note on the Help menu).
+            Platform.Menu {
+                title: qsTr("Export")
+                Platform.MenuItem { text: qsTr("as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
+                Platform.MenuItem { text: qsTr("as HTML…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
+                Platform.MenuItem { text: qsTr("as Word Document…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Platform.MenuItem { text: qsTr("as Package…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
+            }
+            Platform.Menu {
+                title: qsTr("Document")
+                Platform.MenuItem { text: qsTr("Collect Media…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
+                Platform.MenuItem { text: qsTr("Reveal Media Folder"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
                 Platform.MenuSeparator {}
-                // NoRole keeps it in File (reliably visible); see the updater note below.
                 Platform.MenuItem { text: qsTr("Path Mappings…"); role: Platform.MenuItem.NoRole; onTriggered: pathMappingsDialog.open2() }
-                Platform.MenuSeparator {}
-                // Keep it in the File menu (NoRole), matching the Windows menu.
+            }
+            Platform.Menu {
+                title: qsTr("Help")
                 // NB: the default TextHeuristicRole — and ApplicationSpecificRole —
                 // RELOCATE immediate-menubar items into the macOS application menu
                 // (Qt docs); when that relocation doesn't land it vanishes from
@@ -769,15 +929,26 @@ ApplicationWindow {
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Export as Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
-                Action { text: qsTr("Export as &HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
-                Action { text: qsTr("Export as &Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
-                Action { text: qsTr("Export as &Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
-                ThemedMenuSeparator {}
                 Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
+            }
+            // Menu split (2026-08-19): File / Export / Document / Help — the
+            // exact macOS structure above.
+            ThemedMenu {
+                title: qsTr("&Export")
+                Action { text: qsTr("as &Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
+                Action { text: qsTr("as &HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
+                Action { text: qsTr("as &Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Action { text: qsTr("as &Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
+            }
+            ThemedMenu {
+                title: qsTr("&Document")
+                Action { text: qsTr("&Collect Media…"); enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
+                Action { text: qsTr("&Reveal Media Folder"); enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("Path &Mappings…"); onTriggered: pathMappingsDialog.open2() }
-                ThemedMenuSeparator {}
+            }
+            ThemedMenu {
+                title: qsTr("&Help")
                 Action { text: qsTr("Check for &Updates…"); onTriggered: appUpdater.checkForUpdates() }
             }
         }

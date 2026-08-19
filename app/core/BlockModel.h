@@ -40,6 +40,9 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(qreal maxContentWidth READ maxContentWidth NOTIFY maxContentWidthChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
+    // Bumped on EVERY stack mutation (push, coalesce, undo, redo, clear) —
+    // the History panel's reactivity key (canUndo/canRedo alone miss most).
+    Q_PROPERTY(int undoRevision READ undoRevision NOTIFY undoStackChanged)
     // The open document. `documentPath` is the file; `documentName` is its display
     // basename; `untitled` = a scratch doc with no chosen path yet (Save → Save As).
     Q_PROPERTY(QString documentPath READ documentPath NOTIFY documentChanged)
@@ -393,8 +396,13 @@ public:
     // imported through MediaStore exactly like a media block. Setting one widens a
     // narrow column to a sensible default so the image is visible.
     Q_INVOKABLE bool tableSetCellImageFromClipboard(int row, int r, int c);
-    Q_INVOKABLE bool tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl);
+    Q_INVOKABLE bool tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl,
+                                              bool forceCopy = false);
     Q_INVOKABLE void tableClearCellMedia(int row, int r, int c);
+    // Set the raw cell descriptor directly (no import): the seam for
+    // referenced-in-place fixtures (packer tests) — UI paths go through the
+    // FromUrl/FromClipboard importers above.
+    Q_INVOKABLE void tableSetCellMedia(int row, int r, int c, const QString& json);
     Q_INVOKABLE QString tableCellMedia(int row, int r, int c) const;     // raw descriptor ("" = none)
     Q_INVOKABLE QString tableCellMediaUrl(int row, int r, int c) const;  // resolved loadable URL
     Q_INVOKABLE int tableCellMediaW(int row, int r, int c) const;        // intrinsic width
@@ -471,7 +479,8 @@ public:
     // One undo step; the canvas meta + strokes are preserved. Accepts clipboard
     // bytes or a file URL (image only).
     Q_INVOKABLE bool sketchAddImageFromClipboard(int row);
-    Q_INVOKABLE bool sketchAddImageFromUrl(int row, const QString& fileUrl);
+    Q_INVOKABLE bool sketchAddImageFromUrl(int row, const QString& fileUrl,
+                                           bool forceCopy = false);
     // Move/resize a sketch image element by index (normalized rect); one undo step.
     Q_INVOKABLE void sketchSetImageRect(int row, int index,
                                         qreal x, qreal y, qreal w, qreal h);
@@ -512,7 +521,8 @@ public:
     // --- Media (images + video). The media descriptor lives as JSON in the
     // block's content ({src,w,h,kind,...}) so undo/persistence reuse the
     // chokepoint; bytes are never in the DB (see MediaStore). ---
-    Q_INVOKABLE int insertImageFromUrl(int afterRow, const QString& fileUrl);   // new row, -1 fail
+    Q_INVOKABLE int insertImageFromUrl(int afterRow, const QString& fileUrl,
+                                       bool forceCopy = false);   // new row, -1 fail
     Q_INVOKABLE int insertImageFromClipboard(int afterRow);
     Q_INVOKABLE int insertVideoFromUrl(int afterRow, const QString& fileUrl);
     // PDF → inline page view (kind:"pdf", referenced in place).
@@ -528,7 +538,17 @@ public:
     // Unsupported file → a generic attachment chip (referenced in place, no copy).
     Q_INVOKABLE int insertFileFromUrl(int afterRow, const QString& fileUrl);
     // Route a dropped/pasted file: video → pdf → image → file-attachment fallback.
-    Q_INVOKABLE int insertMediaFromUrl(int afterRow, const QString& fileUrl);
+    // forceCopy (paste only): the clipboard carried raster bytes alongside
+    // this URL — a capture-app temp file; copy it into .minnotes even if it
+    // looks stable. Applies to the image branch (video/PDF still reference).
+    Q_INVOKABLE int insertMediaFromUrl(int afterRow, const QString& fileUrl,
+                                       bool forceCopy = false);
+    // Collect Media apply step: swap every descriptor whose src RESOLVES to a
+    // key of `absToRel` (clean absolute local paths) for the mapped relative
+    // src — media rows, sketch image layers, table cell media — as ONE undo
+    // entry. Returns the number of descriptors rewritten. C++ callers
+    // (MediaCollector, tests); the copies must already exist on disk.
+    int rewriteMediaSrcs(const QHash<QString, QString>& absToRel);
     Q_INVOKABLE QString mediaUrl(int row) const;   // display URL, NON-blocking ("" while a packaged file extracts)
     Q_INVOKABLE QString mediaViewPath(int row) const;  // display local path (posters/PDF providers), NON-blocking
     Q_INVOKABLE bool mediaExtracting(int row) const;   // background extraction in flight → "loading…", not "unavailable"
@@ -552,6 +572,10 @@ public:
     Q_INVOKABLE int     mediaFrames(int row) const;  // video frame count (0 if image)
     Q_INVOKABLE qreal   mediaDurationMs(int row) const; // video duration ms (0 if image)
     Q_INVOKABLE void    revealMedia(int row) const;  // show the media file in Finder/Explorer
+    // Open the document's .minnotes folder (Document ▸ Reveal Media Folder —
+    // it's dot-hidden, so Finder never shows it unprompted). No folder yet →
+    // select the document; package views select the .mnpkg.
+    Q_INVOKABLE void    revealMediaFolder() const;
     // Path mappings changed → re-resolve every media src (bumps contentRevision,
     // which every media-url binding depends on). No model/layout reset.
     Q_INVOKABLE void    refreshMedia();
@@ -569,8 +593,21 @@ public:
     // tree-ready (each entry stores its parent; redo = newest child).
     bool canUndo() const;
     bool canRedo() const;
+    int undoRevision() const { return undoRev_; }
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
+    // --- Undo HISTORY (the Inspector's History panel). The stack is a tree
+    // (parent links; redo follows the newest child); the panel shows the
+    // ACTIVE PATH — root → … → current → newest-child descendants, exactly
+    // the states ⌘Z/⌘⇧Z walk. Rows: {idx, label, ts, current, future}
+    // oldest-first, with a baseline "Opened" row at idx -1. Labels are
+    // derived read-time heuristics over the entry's snapshots — no mutator
+    // was touched to get them.
+    Q_INVOKABLE QVariantList undoHistory() const;
+    // Jump to a state on the active path by entry idx (-1 = baseline):
+    // repeated undo()/redo() steps — every side effect (caret restore, ink,
+    // width) rides the existing machinery. Off-path/stale idx = safe no-op.
+    Q_INVOKABLE void undoJumpTo(int target);
     // The editor mirrors its (QML-owned) caret here so transactions can snapshot
     // it; undo/redo emit caretRestoreRequested to put it back.
     Q_INVOKABLE void noteCaret(int row, int col, int anchorRow, int anchorCol);
@@ -647,6 +684,7 @@ private:
         // the width atomically with the migrated ink blobs. The one
         // undo-architecture extension of the page-width program.
         qreal widthBefore = 0, widthAfter = 0;
+        qint64 ts = 0;      // wall-clock at push (coalesce keeps the first)
     };
 
     static uint8_t spanKindFromString(const QString& s);
@@ -686,6 +724,8 @@ private:
     void endTxn(const QString& coalesce = {});  // snapshot `after`, push (or coalesce)
     void clearUndo();
     void applyUndoWidth(qreal w);               // restore an entry's page width (0 = none)
+    QString entryLabel(const UndoEntry& e) const;   // History-panel label heuristic
+    int undoRev_ = 0;                           // see undoRevision
 
     // Rule table: does `content` start with a markdown trigger? Fills type/
     // level and the prefix length to strip. The single source of truth that

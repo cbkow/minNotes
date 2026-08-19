@@ -1069,7 +1069,7 @@ void BlockModel::endTxn(const QString& coalesce) {
             && prev.cRowA == cRow_ && prev.cColA == cCol_) {
             prev.after = std::move(after);
             awaitingAfter_ = true;     // next noteCaret stamps prev's caret-after
-            emit undoStackChanged();
+            ++undoRev_; emit undoStackChanged();
             return;
         }
     }
@@ -1081,15 +1081,16 @@ void BlockModel::endTxn(const QString& coalesce) {
     e.cRowA = cRow_; e.cColA = cCol_; e.aRowA = aRow_; e.aColA = aCol_;   // until noteCaret stamps
     e.parent = undoCur_;
     e.coalesce = coalesce;
+    e.ts = QDateTime::currentMSecsSinceEpoch();
     undo_.push_back(std::move(e));
     undoCur_ = static_cast<int>(undo_.size()) - 1;
     awaitingAfter_ = true;
-    emit undoStackChanged();
+    ++undoRev_; emit undoStackChanged();
 }
 
 void BlockModel::clearUndo() {
     undo_.clear(); undoCur_ = -1; txnDepth_ = 0; awaitingAfter_ = false;
-    emit undoStackChanged();
+    ++undoRev_; emit undoStackChanged();
 }
 
 void BlockModel::beginGroup(int loRow, int hiRow) { beginTxn(loRow, hiRow); }
@@ -1160,7 +1161,7 @@ void BlockModel::undo() {
     undoCur_ = e.parent;
     markDirty();                                  // undo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowB, e.cColB, e.aRowB, e.aColB);
-    emit undoStackChanged();
+    ++undoRev_; emit undoStackChanged();
 }
 
 void BlockModel::redo() {
@@ -1176,7 +1177,7 @@ void BlockModel::redo() {
     undoCur_ = child;
     markDirty();                                  // redo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowA, e.cColA, e.aRowA, e.aColA);
-    emit undoStackChanged();
+    ++undoRev_; emit undoStackChanged();
 }
 
 // Restore the page width an undo/redo entry recorded (0 = the entry carried
@@ -1257,11 +1258,144 @@ void BlockModel::setPageWidth(qreal w) {
         e.parent = undoCur_;
         e.widthBefore = oldW;
         e.widthAfter = w;
+        e.ts = QDateTime::currentMSecsSinceEpoch();
         undo_.push_back(std::move(e));
         undoCur_ = static_cast<int>(undo_.size()) - 1;
-        emit undoStackChanged();
+        ++undoRev_; emit undoStackChanged();
     }
     emit pageWidthChanged();
+}
+
+// History-panel label: a read-time heuristic over the entry's snapshots —
+// honest, cheap, and no mutator had to learn to describe itself. Order
+// matters: width > count change > single-facet diffs > fallbacks.
+QString BlockModel::entryLabel(const UndoEntry& e) const {
+    if (e.widthBefore > 0)
+        return tr("Page width %1").arg(int(std::lround(e.widthAfter)));
+    const auto& b = e.before;
+    const auto& a = e.after;
+    if (a.size() > b.size()) {
+        const int n = int(a.size() - b.size());
+        return n == 1 ? tr("Insert block") : tr("Insert %1 blocks").arg(n);
+    }
+    if (a.size() < b.size()) {
+        const int n = int(b.size() - a.size());
+        return n == 1 ? tr("Delete block") : tr("Delete %1 blocks").arg(n);
+    }
+    bool contentDiff = false, inkDiff = false, spanDiff = false;
+    bool metaDiff = false, rankDiff = false, commentAdded = false;
+    bool mediaContent = false;
+    int contentRows = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const BlockSnap& x = b[i];
+        const BlockSnap& y = a[i];
+        if (x.content != y.content) {
+            contentDiff = true;
+            ++contentRows;
+            if (y.type == Media) mediaContent = true;
+        }
+        if (x.ink != y.ink) inkDiff = true;
+        if (x.rank != y.rank) rankDiff = true;
+        if (x.type != y.type || x.level != y.level
+            || x.taskState != y.taskState || x.depth != y.depth) metaDiff = true;
+        if (x.spans.size() != y.spans.size()) {
+            spanDiff = true;
+            // A comment span appearing is worth its own name.
+            for (const Span& sp : y.spans)
+                if (sp.kind == SpanComment) {
+                    bool had = false;
+                    for (const Span& sb : x.spans)
+                        if (sb.kind == SpanComment && sb.href == sp.href) { had = true; break; }
+                    if (!had) { commentAdded = true; break; }
+                }
+        } else {
+            for (size_t j = 0; j < x.spans.size(); ++j)
+                if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
+                    || x.spans[j].kind != y.spans[j].kind) { spanDiff = true; break; }
+        }
+    }
+    if (inkDiff && !contentDiff && !spanDiff && !metaDiff) return tr("Ink");
+    if (commentAdded) return tr("Comment");
+    if (spanDiff && !contentDiff && !metaDiff) return tr("Formatting");
+    if (rankDiff && !contentDiff && !metaDiff) return tr("Move block");
+    if (metaDiff && !contentDiff) return tr("Block type");
+    if (mediaContent && contentRows == 1) return tr("Media");   // sketch/PDF-ink/resize
+    if (!e.coalesce.isEmpty()) {
+        if (e.coalesce == QLatin1String("del")) return tr("Delete text");
+        return tr("Typing");
+    }
+    return tr("Edit");
+}
+
+QVariantList BlockModel::undoHistory() const {
+    // The active path: ancestors of the current node, then newest-child
+    // descendants — the exact states ⌘Z/⌘⇧Z walk.
+    std::vector<int> path;
+    for (int n = undoCur_; n >= 0; n = undo_[size_t(n)].parent) path.push_back(n);
+    std::reverse(path.begin(), path.end());
+    for (int n = undoCur_;;) {
+        int child = -1;
+        for (int i = int(undo_.size()) - 1; i >= 0; --i)
+            if (undo_[size_t(i)].parent == n) { child = i; break; }
+        if (child < 0) break;
+        path.push_back(child);
+        n = child;
+    }
+    QVariantList out;
+    // Cap the render: keep the newest 200 states; a leading marker row
+    // reports what was elided (never silently truncate).
+    constexpr size_t kMax = 200;
+    size_t first = 0;
+    if (path.size() > kMax) {
+        first = path.size() - kMax;
+        QVariantMap m;
+        m.insert(QStringLiteral("idx"), -2);   // marker, not clickable
+        m.insert(QStringLiteral("label"), tr("… %1 earlier steps").arg(qint64(first)));
+        m.insert(QStringLiteral("ts"), 0);
+        m.insert(QStringLiteral("current"), false);
+        m.insert(QStringLiteral("future"), false);
+        out.push_back(m);
+    } else {
+        QVariantMap m;   // the baseline state, before every entry
+        m.insert(QStringLiteral("idx"), -1);
+        m.insert(QStringLiteral("label"), tr("Opened"));
+        m.insert(QStringLiteral("ts"), 0);
+        m.insert(QStringLiteral("current"), undoCur_ == -1);
+        m.insert(QStringLiteral("future"), false);
+        out.push_back(m);
+    }
+    // With the baseline current (undoCur_ == -1) every path entry is ahead
+    // of now — start the latch flipped or nothing would read as future.
+    bool past = undoCur_ >= 0;
+    for (size_t i = first; i < path.size(); ++i) {
+        const int idx = path[i];
+        const UndoEntry& e = undo_[size_t(idx)];
+        QVariantMap m;
+        m.insert(QStringLiteral("idx"), idx);
+        m.insert(QStringLiteral("label"), entryLabel(e));
+        m.insert(QStringLiteral("ts"), e.ts);
+        const bool cur = idx == undoCur_;
+        m.insert(QStringLiteral("current"), cur);
+        m.insert(QStringLiteral("future"), !past && !cur);
+        if (cur) past = false;
+        out.push_back(m);
+    }
+    return out;
+}
+
+void BlockModel::undoJumpTo(int target) {
+    if (target == undoCur_ || target < -1 || target >= int(undo_.size())) return;
+    // Ancestor (or the baseline) → step back; else walk redos along the
+    // newest-child chain. A stale/off-path target stalls redo() into a
+    // no-op and the guard exits — never a wrong state, just no jump.
+    int n = undoCur_;
+    while (n >= 0 && n != target) n = undo_[size_t(n)].parent;
+    if (n == target) {
+        while (undoCur_ != target) undo();
+        return;
+    }
+    int prev = -2;
+    while (undoCur_ != target && undoCur_ != prev) { prev = undoCur_; redo(); }
 }
 
 void BlockModel::noteCaret(int row, int col, int anchorRow, int anchorCol) {
@@ -1617,9 +1751,10 @@ bool BlockModel::tableSetCellImageFromClipboard(int row, int r, int c) {
     });
     return true;
 }
-bool BlockModel::tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl) {
+bool BlockModel::tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl,
+                                          bool forceCopy) {
     if (!mediaStore_ || rowAt(row).type != Table) return false;
-    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);
+    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, forceCopy);
     if (!ref.ok()) return false;
     const QString json = mediaJson(ref);
     const int target = std::clamp(ref.w, 140, 360);
@@ -1631,6 +1766,10 @@ bool BlockModel::tableSetCellImageFromUrl(int row, int r, int c, const QString& 
 }
 void BlockModel::tableClearCellMedia(int row, int r, int c) {
     mutateTable(row, [&](TableGrid& g){ g.setCellMedia(r, c, QString()); });
+}
+void BlockModel::tableSetCellMedia(int row, int r, int c, const QString& json) {
+    if (rowAt(row).type != Table) return;
+    mutateTable(row, [&](TableGrid& g){ g.setCellMedia(r, c, json); });
 }
 QString BlockModel::tableCellMedia(int row, int r, int c) const {
     if (rowAt(row).type != Table) return {};
@@ -1958,9 +2097,9 @@ bool BlockModel::sketchAddImageFromClipboard(int row) {
     return sketchAppendImage(row, ref.src, ref.w, ref.h);
 }
 
-bool BlockModel::sketchAddImageFromUrl(int row, const QString& fileUrl) {
+bool BlockModel::sketchAddImageFromUrl(int row, const QString& fileUrl, bool forceCopy) {
     if (!mediaStore_) return false;
-    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);   // image only
+    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, forceCopy);   // image only
     if (!ref.ok()) return false;
     return sketchAppendImage(row, ref.src, ref.w, ref.h);
 }
@@ -2472,9 +2611,9 @@ static uint16_t aspectParam(const MediaStore::ImageRef& ref) {
     return aspectParam(ref.w, ref.h);
 }
 
-int BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl) {
+int BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl, bool forceCopy) {
     if (!mediaStore_) return -1;
-    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl);
+    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, forceCopy);
     if (!ref.ok()) return -1;
     return insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
 }
@@ -2507,7 +2646,7 @@ int BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
     return insertMedia(afterRow, fileMediaJson(path), static_cast<uint16_t>(kFileChip));
 }
 
-int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
+int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl, bool forceCopy) {
     // Video / PDF (by extension + a successful probe), else a loadable image,
     // else a generic file attachment chip — so any dropped/pasted file lands.
     if (MediaStore::isVideoPath(fileUrl)) {
@@ -2518,7 +2657,7 @@ int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
         const int r = insertPdfFromUrl(afterRow, fileUrl);
         if (r >= 0) return r;
     }
-    const int r = insertImageFromUrl(afterRow, fileUrl);
+    const int r = insertImageFromUrl(afterRow, fileUrl, forceCopy);
     if (r >= 0) return r;
     // Importable document formats (md/txt/csv/html/…) and .mnpkg packages
     // never become file chips: hand the path to QML (drop AND url-paste both
@@ -2529,6 +2668,88 @@ int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl) {
         return -1;
     }
     return insertFileFromUrl(afterRow, fileUrl);
+}
+
+int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
+    if (rows_.empty() || !mediaStore_ || absToRel.isEmpty()) return 0;
+    // Match by RESOLVED local path so absolute strings and {vol,rel} refs
+    // both hit; relative .minnotes srcs resolve inside the doc and miss the
+    // map. (Blocking resolveUrl is fine: collect refuses package views, so
+    // nothing here can trigger an extraction.)
+    auto relFor = [&](const QJsonValue& src) -> QString {
+        const QString url = mediaStore_->resolveUrl(src);
+        if (url.isEmpty() || !url.startsWith(QLatin1String("file:"))) return {};
+        const auto it = absToRel.constFind(QDir::cleanPath(QUrl(url).toLocalFile()));
+        return it == absToRel.constEnd() ? QString() : it.value();
+    };
+    // Gather every change first: the group snapshot needs [lo,hi] up front,
+    // and a no-op must not burn an undo entry.
+    struct MediaEdit { int row; QString json; };
+    std::vector<MediaEdit> mediaEdits;
+    struct CellEdit { int row; std::vector<std::tuple<int, int, QString>> cells; };
+    std::vector<CellEdit> cellEdits;
+    int count = 0, lo = -1, hi = -1;
+    const int n = static_cast<int>(rows_.size());
+    for (int r = 0; r < n; ++r) {
+        bool changed = false;
+        if (rows_[r].type == Media) {
+            QJsonObject root = QJsonDocument::fromJson(content_[r].toUtf8()).object();
+            if (root.value(QStringLiteral("kind")).toString() == QLatin1String("sketch")) {
+                QJsonArray images = root.value(QStringLiteral("images")).toArray();
+                for (int i = 0; i < images.size(); ++i) {
+                    QJsonObject o = images.at(i).toObject();
+                    const QString rel = relFor(o.value(QStringLiteral("src")));
+                    if (rel.isEmpty()) continue;
+                    o.insert(QStringLiteral("src"), rel);
+                    images.replace(i, o);
+                    changed = true; ++count;
+                }
+                if (changed) root.insert(QStringLiteral("images"), images);
+            } else {
+                const QString rel = relFor(root.value(QStringLiteral("src")));
+                if (!rel.isEmpty()) {
+                    root.insert(QStringLiteral("src"), rel);
+                    changed = true; ++count;
+                }
+            }
+            if (changed)
+                mediaEdits.push_back({r, QString::fromUtf8(
+                    QJsonDocument(root).toJson(QJsonDocument::Compact))});
+        } else if (rows_[r].type == Table) {
+            const TableGrid g = TableGrid::fromJson(content_[r]);
+            CellEdit ce{r, {}};
+            for (int tr = 0; tr < g.rows(); ++tr)
+                for (int tc = 0; tc < g.cols(); ++tc) {
+                    const QString desc = g.cellMedia(tr, tc);
+                    if (desc.isEmpty()) continue;
+                    QJsonObject o = QJsonDocument::fromJson(desc.toUtf8()).object();
+                    const QString rel = relFor(o.value(QStringLiteral("src")));
+                    if (rel.isEmpty()) continue;
+                    o.insert(QStringLiteral("src"), rel);
+                    ce.cells.emplace_back(tr, tc, QString::fromUtf8(
+                        QJsonDocument(o).toJson(QJsonDocument::Compact)));
+                    ++count;
+                }
+            if (!ce.cells.empty()) { cellEdits.push_back(std::move(ce)); changed = true; }
+        }
+        if (changed) { if (lo < 0) lo = r; hi = r; }
+    }
+    if (count == 0) return 0;
+
+    beginTxn(lo, hi);   // one entry; inner mutators nest
+    for (const MediaEdit& me : mediaEdits) {
+        content_[me.row] = me.json;
+        persistContent(me.row);
+        emit dataChanged(index(me.row), index(me.row), {ContentRole});
+    }
+    for (const CellEdit& ce : cellEdits)
+        mutateTable(ce.row, [&](TableGrid& g) {
+            for (const auto& [tr, tc, json] : ce.cells) g.setCellMedia(tr, tc, json);
+        });
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return count;
 }
 
 // Display URL — NON-BLOCKING: packaged media not yet extracted returns ""
@@ -2593,6 +2814,33 @@ void BlockModel::revealMedia(int row) const {
                             { QStringLiteral("/select,") + QDir::toNativeSeparators(path) });
 #else
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+#endif
+}
+void BlockModel::revealMediaFolder() const {
+    if (!mediaStore_) return;
+    // Package views: the store anchors to the extraction scratch — show the
+    // .mnpkg itself instead. No .minnotes yet (nothing pasted/collected) →
+    // select the document, so the user still lands in the right folder.
+    QString dir = QDir::cleanPath(mediaStore_->docDir()) + QStringLiteral("/.minnotes");
+    const bool pkg = !mediaStore_->packageSource().isEmpty();
+    if (pkg || !QFileInfo::exists(dir)) {
+        if (!QFileInfo::exists(docPath_)) return;
+#if defined(Q_OS_MACOS)
+        QProcess::startDetached(QStringLiteral("open"), { QStringLiteral("-R"), docPath_ });
+#elif defined(Q_OS_WIN)
+        QProcess::startDetached(QStringLiteral("explorer"),
+                                { QStringLiteral("/select,") + QDir::toNativeSeparators(docPath_) });
+#else
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(docPath_).absolutePath()));
+#endif
+        return;
+    }
+#if defined(Q_OS_MACOS)
+    QProcess::startDetached(QStringLiteral("open"), { dir });
+#elif defined(Q_OS_WIN)
+    QProcess::startDetached(QStringLiteral("explorer"), { QDir::toNativeSeparators(dir) });
+#else
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 #endif
 }
 QString BlockModel::mediaFileName(int row) const {

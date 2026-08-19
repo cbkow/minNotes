@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QSet>
 #include <QUrl>
 
@@ -407,5 +408,208 @@ void PackageExporter::startExport(const QString& fileUrlOrPath, bool includeVide
         }
         if (!ok) QFile::remove(tmpZip);
         finishOnGui(ok, err);
+    });
+}
+
+// ============================ MediaCollector ============================
+
+MediaCollector::~MediaCollector() {
+    cancel_ = true;
+    if (worker_.joinable()) worker_.join();
+}
+
+MediaCollector::CollectPlan MediaCollector::buildCollectPlan(BlockModel* m,
+                                                             bool includeVideos) {
+    CollectPlan cp;
+    if (!m || !m->mediaStore()) return cp;
+    MediaStore* store = m->mediaStore();
+    cp.package = !store->packageSource().isEmpty();
+    if (cp.package) return cp;
+    const QString root = QDir::cleanPath(store->docDir());
+
+    // Names must dodge BOTH each other and what .minnotes already holds.
+    QSet<QString> taken;
+    const QDir assets(root + QStringLiteral("/.minnotes"));
+    for (const QString& name : assets.entryList(QDir::Files | QDir::Dirs
+                                                | QDir::NoDotAndDotDot | QDir::Hidden))
+        taken.insert(name.toLower());
+
+    // The pack plan walks every carrier and dedups by source; keep the
+    // EXTERNAL disk items. (No package splice items can appear — guarded.)
+    const PackageExporter::PackPlan plan =
+        PackageExporter::buildPackPlan(m, /*includeVideos*/true);
+    for (const PackageExporter::PackItem& it : plan.items) {
+        if (it.srcPath.isEmpty()) continue;
+        const QString src = QDir::cleanPath(it.srcPath);
+        if (src == root || src.startsWith(root + QLatin1Char('/'))) continue;
+        if (it.isVideo) {
+            cp.videos++; cp.videoBytes += it.bytes;   // counted even when excluded
+            if (!includeVideos) continue;
+        } else {
+            cp.files++; cp.fileBytes += it.bytes;
+        }
+        CollectItem ci;
+        ci.srcPath = src;
+        ci.destName = uniqueName(QFileInfo(src).fileName(), taken);
+        ci.sidecarDir = it.sidecarDir;
+        ci.bytes = it.bytes;
+        ci.isVideo = it.isVideo;
+        cp.totalBytes += it.bytes;
+        cp.items.push_back(std::move(ci));
+    }
+    return cp;
+}
+
+QVariantMap MediaCollector::scan() const {
+    const CollectPlan cp = buildCollectPlan(model_, /*includeVideos*/true);
+    QVariantMap out;
+    out.insert(QStringLiteral("files"), cp.files);
+    out.insert(QStringLiteral("fileBytes"), cp.fileBytes);
+    out.insert(QStringLiteral("videos"), cp.videos);
+    out.insert(QStringLiteral("videoBytes"), cp.videoBytes);
+    out.insert(QStringLiteral("package"), cp.package);
+    return out;
+}
+
+bool MediaCollector::copyAll(const CollectPlan& plan, const QString& assetsDir,
+                             std::atomic<bool>* cancelFlag,
+                             const std::function<void(qint64, qint64, QString)>& progress,
+                             QString* error) {
+    QStringList madeFiles, madeDirs;
+    auto fail = [&](const QString& why) {
+        for (const QString& f : madeFiles) QFile::remove(f);
+        for (const QString& d : madeDirs) QDir(d).removeRecursively();
+        if (error) *error = why;
+        return false;
+    };
+    QDir().mkpath(assetsDir);
+    qint64 done = 0;
+    for (const CollectItem& it : plan.items) {
+        if (cancelFlag && cancelFlag->load()) return fail(QStringLiteral("Cancelled"));
+        if (progress) progress(done, plan.totalBytes, it.destName);
+        const QString dest = assetsDir + QLatin1Char('/') + it.destName;
+        {   // Chunked: multi-GB NAS videos move the bar and honour mid-file cancel.
+            QFile in(it.srcPath), out(dest);
+            if (!in.open(QIODevice::ReadOnly))
+                return fail(QStringLiteral("Unreadable: ")
+                            + QFileInfo(it.srcPath).fileName());
+            if (!out.open(QIODevice::WriteOnly))
+                return fail(QStringLiteral("Write failed: ") + it.destName);
+            madeFiles << dest;
+            qint64 fileDone = 0;
+            while (!in.atEnd()) {
+                if (cancelFlag && cancelFlag->load())
+                    return fail(QStringLiteral("Cancelled"));
+                const QByteArray chunk = in.read(8 << 20);
+                if (chunk.isEmpty() && !in.atEnd())
+                    return fail(QStringLiteral("Read failed: ")
+                                + QFileInfo(it.srcPath).fileName());
+                if (out.write(chunk) != chunk.size())
+                    return fail(QStringLiteral("Write failed: ") + it.destName);
+                fileDone += chunk.size();
+                if (progress) progress(done + fileDone, plan.totalBytes, it.destName);
+            }
+        }
+        if (it.isVideo && !it.sidecarDir.isEmpty()) {
+            // Sidecar tree rides along — content 1:1, association by layout.
+            const QString sdst = assetsDir + QStringLiteral("/.qcview/")
+                + qcv::annotation_io::sanitizeMediaName(it.destName);
+            madeDirs << sdst;
+            QDirIterator sit(it.sidecarDir, QDir::Files | QDir::Hidden,
+                             QDirIterator::Subdirectories);
+            while (sit.hasNext()) {
+                const QString f = sit.next();
+                const QString df = sdst + QLatin1Char('/')
+                    + QDir(it.sidecarDir).relativeFilePath(f);
+                QDir().mkpath(QFileInfo(df).absolutePath());
+                if (!QFile::copy(f, df))
+                    return fail(QStringLiteral("Sidecar copy failed: ") + it.destName);
+            }
+        }
+        done += it.bytes;
+        if (progress) progress(done, plan.totalBytes, it.destName);
+    }
+    return true;
+}
+
+bool MediaCollector::collectDocument(BlockModel* m, bool includeVideos,
+                                     int* copied, QString* error) {
+    auto fail = [&](const QString& why) { if (error) *error = why; return false; };
+    if (!m || !m->mediaStore()) return fail(QStringLiteral("No document"));
+    const CollectPlan cp = buildCollectPlan(m, includeVideos);
+    if (cp.package) return fail(QStringLiteral("Packages are sealed"));
+    if (!cp.items.empty()) {
+        const QString assets = QDir::cleanPath(m->mediaStore()->docDir())
+                             + QStringLiteral("/.minnotes");
+        QString err;
+        if (!copyAll(cp, assets, nullptr, nullptr, &err)) return fail(err);
+        QHash<QString, QString> map;
+        for (const CollectItem& it : cp.items)
+            map.insert(it.srcPath, QStringLiteral(".minnotes/") + it.destName);
+        m->rewriteMediaSrcs(map);
+    }
+    if (copied) *copied = static_cast<int>(cp.items.size());
+    return true;
+}
+
+void MediaCollector::setProgress(double p, const QString& item) {
+    QMetaObject::invokeMethod(this, [this, p, item] {
+        progress_ = p;
+        currentItem_ = item;
+        emit progressChanged();
+    }, Qt::QueuedConnection);
+}
+
+void MediaCollector::startCollect(bool includeVideos) {
+    if (running_ || !model_ || !model_->mediaStore()) return;
+    if (worker_.joinable()) worker_.join();   // reap the previous run
+    cancel_ = false;
+
+    // GUI-thread phase: plan against the live model (fast, no side effects).
+    const CollectPlan plan = buildCollectPlan(model_, includeVideos);
+    if (plan.package) {
+        emit collectFinished(false, 0, QStringLiteral("Packages are sealed"));
+        return;
+    }
+    if (plan.items.empty()) { emit collectFinished(true, 0, QString()); return; }
+    const QString assets = QDir::cleanPath(model_->mediaStore()->docDir())
+                         + QStringLiteral("/.minnotes");
+
+    running_ = true;
+    progress_ = 0.0;
+    currentItem_.clear();
+    emit runningChanged();
+    emit progressChanged();
+
+    // The rewrite must land on the model this plan was built FROM, even if
+    // the user switches tabs mid-copy (setModel re-points at the active doc).
+    QPointer<BlockModel> target(model_);
+    worker_ = std::thread([this, plan, assets, target] {
+        // Worker phase: pure file IO. Throttle progress like the packer.
+        qint64 lastEmit = -1;
+        QString err;
+        const bool ok = copyAll(plan, assets, &cancel_,
+            [this, &lastEmit](qint64 doneB, qint64 totalB, QString name) {
+                const qint64 step = std::max<qint64>(totalB / 200, qint64(1) << 20);
+                if (lastEmit >= 0 && doneB - lastEmit < step && doneB != totalB)
+                    return;
+                lastEmit = doneB;
+                setProgress(totalB > 0 ? double(doneB) / double(totalB) : 1.0, name);
+            }, &err);
+        // Everything lands queued on the GUI thread — the ONLY place the
+        // model may be touched. copyAll already rolled back on failure.
+        QMetaObject::invokeMethod(this, [this, plan, target, ok, err] {
+            int copied = 0;
+            if (ok && target) {
+                QHash<QString, QString> map;
+                for (const CollectItem& it : plan.items)
+                    map.insert(it.srcPath, QStringLiteral(".minnotes/") + it.destName);
+                target->rewriteMediaSrcs(map);
+                copied = static_cast<int>(plan.items.size());
+            }
+            running_ = false;
+            emit runningChanged();
+            emit collectFinished(ok, copied, err);
+        }, Qt::QueuedConnection);
     });
 }

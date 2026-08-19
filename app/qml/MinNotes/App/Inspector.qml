@@ -144,7 +144,8 @@ Rectangle {
         if (drawStore.textSize > 0) drawTextSize = drawStore.textSize
         setPickerValue(targetColor())   // re-seed: the picker completed before the restore above
         open = panelStore.open      // restore last open/closed state (no slide)
-        if (panelStore.view === "comments") view = "comments"
+        if (panelStore.view === "comments" || panelStore.view === "history")
+            view = panelStore.view
         _ready = true               // toggles from here on animate + persist
     }
     function saveSwatches() { swatchStore.user = JSON.stringify(userSlots) }
@@ -208,6 +209,12 @@ Rectangle {
                        font.bold: panel.view === "comments"
                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                    onClicked: panel.view = "comments" } }
+                Text { text: "History"
+                       color: panel.view === "history" ? Theme.colors.textBright : Theme.colors.textMuted
+                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                       font.bold: panel.view === "history"
+                       MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                   onClicked: panel.view = "history" } }
             }
             FlatButton {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
@@ -451,6 +458,76 @@ Rectangle {
             }
         }
 
+        // --- History view: the undo stack's ACTIVE PATH, oldest at the top
+        // (the Photoshop reading). The current state carries the divider
+        // fill; states ahead of now (redoable) dim. Click any row to time-
+        // travel — the jump replays undo()/redo() steps, so carets, ink,
+        // and page width all restore through the existing machinery. ---
+        ListView {
+            id: historyList
+            visible: panel.view === "history"
+            anchors.top: header.bottom; anchors.topMargin: 6
+            anchors.bottom: parent.bottom; anchors.bottomMargin: 8
+            x: 12; width: panel.contentW
+            clip: true
+            spacing: 1
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: MnScrollBar {}
+            model: (blockModel.undoRevision, blockModel.undoHistory())
+            onModelChanged: Qt.callLater(function() {   // keep "now" in view
+                for (var i = 0; i < historyList.count; ++i)
+                    if (historyList.model[i].current) {
+                        historyList.positionViewAtIndex(i, ListView.Center)
+                        return
+                    }
+            })
+            delegate: Rectangle {
+                required property var modelData
+                readonly property bool marker: modelData.idx === -2   // "… N earlier"
+                width: panel.contentW; height: 26
+                color: modelData.current ? Theme.colors.divider
+                     : (histMA.containsMouse && histMA.enabled ? Theme.colors.surfaceHover
+                                                               : "transparent")
+                opacity: modelData.future ? 0.5 : 1
+                Text {
+                    anchors.left: parent.left; anchors.leftMargin: 8
+                    anchors.right: histTime.left; anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: modelData.label
+                    color: modelData.current ? Theme.colors.textBright
+                         : marker ? Theme.colors.textSubtle : Theme.colors.text
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                    font.italic: marker
+                }
+                Text {
+                    id: histTime
+                    anchors.right: parent.right; anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.ts > 0 ? Qt.formatTime(new Date(modelData.ts), "hh:mm") : ""
+                    color: Theme.colors.textSubtle
+                    font.family: Theme.font.mono; font.pixelSize: 10
+                }
+                MouseArea {
+                    id: histMA
+                    anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    enabled: !parent.marker && !parent.modelData.current
+                    onClicked: {
+                        blockModel.undoJumpTo(parent.modelData.idx)
+                        if (panel.editor) panel.editor.forceActiveFocus()
+                    }
+                }
+            }
+            Text {   // empty document, empty history
+                visible: historyList.count <= 1
+                anchors.centerIn: parent
+                text: "Edits will appear here."
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+        }
+
         Column {
             visible: panel.view === "palette"
             anchors.top: header.bottom; anchors.topMargin: 6
@@ -468,8 +545,9 @@ Rectangle {
             // to Type. Ink tools disable in table tabs (no ink surface — user
             // ruling 2026-08-19: no view jumps as a tool side effect);
             // sketch/video tabs interpret them locally, and PDF tabs take
-            // per-page ink (the text-chip tool alone stays disabled there —
-            // no PDF text session yet).
+            // per-page ink. The text-chip tool alone also disables in PDF
+            // tabs (no PDF text session yet) and video tabs (text boxes are
+            // not part of the QCView flow).
             Grid {
                 columns: 5; spacing: 4
                 Repeater {
@@ -497,8 +575,9 @@ Rectangle {
                         tooltip: modelData.tip; tooltipSide: "top"
                         enabled_: !inkTool || !panel.editor
                                   || (panel.editor.activeTableRow < 0
-                                      && (panel.editor.activePdfRow < 0
-                                          || modelData.tool !== "text"))
+                                      && (modelData.tool !== "text"
+                                          || (panel.editor.activePdfRow < 0
+                                              && panel.editor.activeVideoRow < 0)))
                         onClicked: panel.drawTool =
                             (panel.drawTool === modelData.tool && modelData.tool !== "type")
                                 ? "type" : modelData.tool

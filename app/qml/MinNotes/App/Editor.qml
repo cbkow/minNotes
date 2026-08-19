@@ -172,8 +172,9 @@ FocusScope {
         // ink mode); table tabs have no ink surface, so a draw tool would sit
         // armed-but-dead in the grid — disarm it (Select may stay armed);
         // sketch/video/PDF tabs keep the tool and interpret it locally (PDF
-        // pages take per-page ink — only the text-chip tool has no PDF
-        // session yet and drops to Select there).
+        // pages take per-page ink). The text-chip tool alone drops to Select
+        // in PDF tabs (no PDF text session yet) and video tabs (text boxes
+        // are not part of the QCView flow).
         var t = inspector ? inspector.drawTool : "type"
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
@@ -187,7 +188,10 @@ FocusScope {
             var pc = boardPref(id)               // this table's remembered view
             if (pc >= 0) { boardCol = pc; boardMode = true }
         }
-        else if (blockModel.mediaKind(r) === "video") { activeTableId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id }
+        else if (blockModel.mediaKind(r) === "video") {
+            if (t === "text") inspector.drawTool = "select"
+            activeTableId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
+        }
         else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
         else {
             if (t === "text") inspector.drawTool = "select"
@@ -1770,6 +1774,11 @@ FocusScope {
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
     function doPaste() {
+        // URLs + raster bytes on the SAME clipboard = the screen-capture-app
+        // signature (Finder copies carry URLs only). The URL then points at
+        // the app's temp file — force the sidecar copy even if the path
+        // looks stable, in every URL branch below.
+        var ephemeralUrls = clipboard.hasImage()
         // --- Into an active sketch tab: images (copied from our app or outside)
         // drop onto the canvas as an image element; nothing else has a target. ---
         if (root.activeSketchRow >= 0) {
@@ -1777,7 +1786,7 @@ FocusScope {
             if (su.length > 0) {
                 var anyS = false
                 for (var si = 0; si < su.length; ++si)
-                    if (blockModel.sketchAddImageFromUrl(root.activeSketchRow, su[si])) anyS = true
+                    if (blockModel.sketchAddImageFromUrl(root.activeSketchRow, su[si], ephemeralUrls)) anyS = true
                 if (anyS) return
             }
             if (clipboard.hasImage())                  // raster (screenshot / Copy image)
@@ -1789,7 +1798,7 @@ FocusScope {
         // document, not inside a cell). ---
         if (tcur.active) {
             var cu = clipboard.readUrls()              // copied image file (Finder/Preview)
-            if (cu.length > 0 && blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, cu[0])) {
+            if (cu.length > 0 && blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, cu[0], ephemeralUrls)) {
                 cursor.sync(); return
             }
             if (clipboard.hasImage() &&                // raster image (screenshot / Copy Image)
@@ -1827,7 +1836,7 @@ FocusScope {
             blockModel.commitMarkdown(cursor.focusRow)
             var afterRow = cursor.focusRow, anyU = false
             for (var i = 0; i < urls.length; ++i) {
-                var nrU = blockModel.insertMediaFromUrl(afterRow, urls[i])
+                var nrU = blockModel.insertMediaFromUrl(afterRow, urls[i], ephemeralUrls)
                 if (nrU >= 0) { afterRow = nrU; anyU = true }
             }
             if (anyU) { cursor.setCaret(afterRow, 0); root.ensureVisible(afterRow); return }
