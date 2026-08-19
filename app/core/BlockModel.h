@@ -513,6 +513,14 @@ public:
     Q_INVOKABLE int insertVideoFromUrl(int afterRow, const QString& fileUrl);
     // PDF → inline page view (kind:"pdf", referenced in place).
     Q_INVOKABLE int insertPdfFromUrl(int afterRow, const QString& fileUrl);
+    // PDF page ink (2026-08-19): per-PAGE stroke overlays for kind:"pdf"
+    // media, stored in the block's content JSON under "ink" keyed by page
+    // index (the sketch storage precedent — document-owned, txn undo,
+    // cascades with the block, travels in .mndb/.mnpkg; the PDF file itself
+    // is never modified). Envelope per page = the engine's QCView schema
+    // {version, coordinate_system, shapes} exactly as sketchSetShapes keeps it.
+    Q_INVOKABLE QString pdfPageInk(int row, int page) const;   // "" = no ink on that page
+    Q_INVOKABLE void pdfSetPageInk(int row, int page, const QString& strokesJson);
     // Unsupported file → a generic attachment chip (referenced in place, no copy).
     Q_INVOKABLE int insertFileFromUrl(int afterRow, const QString& fileUrl);
     // Route a dropped/pasted file: video → pdf → image → file-attachment fallback.

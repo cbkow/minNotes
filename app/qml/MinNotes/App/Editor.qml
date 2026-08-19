@@ -60,10 +60,15 @@ FocusScope {
     property var inspector: null
 
     // --- Annotation (ink) mode: draw block-pinned margin ink over the whole
-    // document. Page locks to 760 + horizontal pan (see pageWidth/contentSpan
-    // above); the Inspector FLOATS instead of pushing the column (Main.qml);
-    // the ink canvas takes the mouse. Mutually exclusive with full-frame tabs.
-    property bool inkMode: false
+    // document. DERIVED, never stored (2026-08-19 redesign): the armed tool IS
+    // the mode. Any non-Type tool in the Document view engages the ink surface;
+    // Type — the resting tool — is regular editing. Page locks to 760 +
+    // horizontal pan (see pageWidth/contentSpan above); the Inspector FLOATS
+    // instead of pushing the column (Main.qml); the ink canvas takes the mouse.
+    // Full-frame tabs are their own worlds: sketch/video interpret the tools
+    // locally, table/PDF disarm to Type (setActiveTab).
+    readonly property bool inkMode: activeFrameId === "" && !!inspector
+                                    && inspector.drawTool !== "type"
     // Show/hide the ink layer (data untouched — a reading-mode switch,
     // mirroring the video studio's annotations toggle). Persisted app-wide;
     // entering annotation mode forces it visible (drawing on a hidden layer
@@ -71,24 +76,15 @@ FocusScope {
     property alias inkLayerVisible: inkPrefs.layerVisible
     Settings { id: inkPrefs; category: "annotations"; property bool layerVisible: true }
     readonly property int inkStrokeCount: inkCanvas.strokeCount   // rail toggle enablement
-    function setInkMode(on) {
-        if (inkMode === !!on) return
-        inkTextSession.commit()   // leaving (or re-entering) ink mode COMMITS
-        if (on) {
-            if (activeTableId !== "" || activePdfId !== "" || activeVideoId !== ""
-                || activeSketchId !== "") setActiveTab("")   // back to the Document view
-            inkMode = true
+    // Mode-edge side effects (the old setInkMode body, minus the tool writes —
+    // the tool now drives, so writing it from here would loop).
+    onInkModeChanged: {
+        inkTextSession.commit()   // an open chip session never straddles the mode edge
+        if (inkMode) {
             inkLayerVisible = true
-            if (inspector) {
-                inspector.open = true
-                inspector.view = "palette"   // the Draw tools live here, not in Comments
-                inspector.target = "draw"
-                if (inspector.drawTool === "") inspector.drawTool = "freehand"
-            }
         } else {
-            inkMode = false
-            if (inspector && inspector.drawTool !== "") inspector.drawTool = ""
-            flick.contentX = 0
+            inkCanvas.clearSelection()
+            flick.contentX = 0    // the pan gutter is an ink-mode affordance
         }
     }
 
@@ -111,7 +107,24 @@ FocusScope {
     property string activePdfId: ""
     readonly property int activePdfRow: (blockModel.layoutRevision, blockModel.contentRevision,
         activePdfId === "" ? -1 : blockModel.rowForId(activePdfId))
-    onActivePdfRowChanged: if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
+    onActivePdfRowChanged: {
+        if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
+        if (activePdfRow < 0) pdfSpaceHeld = false   // never leave the hand stuck across a tab switch
+    }
+    // Space-hand panning in the PDF tab (the sketch-tab convention): while
+    // held, the page canvases refuse mouse so drags fall through to the
+    // ListView and scroll it. With a tool armed, a plain drag DRAWS — the
+    // canvas keeps the grab (SketchCanvas::mousePressEvent) so the list can
+    // never steal a stroke; wheel scrolling works throughout.
+    property bool pdfSpaceHeld: false
+    // The PDF tab's page canvas that currently owns Esc/Delete (one SketchCanvas
+    // per page delegate — the last one to draw or select wins; switching pages
+    // clears the previous page's selection so two pages never both show one).
+    property var pdfActiveInk: null
+    function _setPdfActiveInk(c) {
+        if (pdfActiveInk && pdfActiveInk !== c) pdfActiveInk.clearSelection()
+        pdfActiveInk = c
+    }
     // Active video tab (the studio: surface + transport + notes panel); "" = not
     // in a video tab. Opening it activates the video PAUSED at its remembered
     // playhead so the studio comes up showing a frame, not a void.
@@ -144,17 +157,32 @@ FocusScope {
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
-        if (id !== "" && inkMode) setInkMode(false)   // full-frame tabs and ink mode are exclusive
-        if (id === "") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return }
+        // Tool rules on view changes (2026-08-19): landing on the Document view
+        // always lands TYPING (a leftover armed tool would silently re-engage
+        // ink mode); table tabs have no ink surface, so a draw tool would sit
+        // armed-but-dead in the grid — disarm it (Select may stay armed);
+        // sketch/video/PDF tabs keep the tool and interpret it locally (PDF
+        // pages take per-page ink — only the text-chip tool has no PDF
+        // session yet and drops to Select there).
+        var t = inspector ? inspector.drawTool : "type"
+        if (id === "") {
+            if (inspector && t !== "type") inspector.drawTool = "type"
+            activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
+        }
+        var isDrawTool = (t !== "type" && t !== "select")
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) {
+            if (isDrawTool) inspector.drawTool = "type"
             activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeTableId = id
             var pc = boardPref(id)               // this table's remembered view
             if (pc >= 0) { boardCol = pc; boardMode = true }
         }
         else if (blockModel.mediaKind(r) === "video") { activeTableId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id }
         else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
-        else { activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
+        else {
+            if (t === "text") inspector.drawTool = "select"
+            activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id
+        }
     }
     // Switching documents (new/open/save-as) resets the model; drop all per-doc
     // UI state so nothing points at the old doc's blocks (closes frame tabs /
@@ -1933,6 +1961,11 @@ FocusScope {
             sketchEditCanvas.panMode = false
             event.accepted = true
         }
+        else if (root.activePdfRow >= 0
+                 && event.key === Qt.Key_Space && !event.isAutoRepeat) {
+            root.pdfSpaceHeld = false
+            event.accepted = true
+        }
     }
 
     Keys.onPressed: (event) => {
@@ -1956,17 +1989,19 @@ FocusScope {
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
             // Studio first: drop an in-flight stroke, then disarm the tool.
-            // Ink mode mirrors the sketch chain: cancel → disarm → deselect → exit.
+            // Ink mode: drop an in-flight stroke, else ONE press back to Type —
+            // the exit clears the selection itself (onInkModeChanged).
             if (root.inkMode && inkCanvas.drawing) { inkCanvas.cancelStroke() }
-            else if (root.inkMode && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
-            else if (root.inkMode && inkCanvas.hasSelection) { inkCanvas.clearSelection() }
-            else if (root.inkMode) { root.setInkMode(false) }
+            else if (root.inkMode) { root.inspector.drawTool = "type" }
             else if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.drawing) { sketchEditCanvas.cancelStroke() }
-            else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0)
-                     && root.inspector && root.inspector.drawTool !== "") { root.inspector.drawTool = "" }
+            else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.drawing) { root.pdfActiveInk.cancelStroke() }
+            else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0 || root.activePdfRow >= 0)
+                     && root.inspector && root.inspector.drawTool !== "type"
+                     && root.inspector.drawTool !== "select") { root.inspector.drawTool = "select" }
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.hasSelection) { sketchEditCanvas.clearSelection() }
             else if (root.activeVideoRow >= 0 && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
+            else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.hasSelection) { root.pdfActiveInk.clearSelection() }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
@@ -1982,12 +2017,21 @@ FocusScope {
             if (k === Qt.Key_Y || shift) studioAnnotator.redo(); else studioAnnotator.undo()
             event.accepted = true
         }
-        // PDF tab: a pure viewer — swallow EVERYTHING (undo/clipboard/typing
-        // included) so keys can't invisibly edit the hidden document underneath.
-        // Must sit above the generic ⌘Z/⌘V branches; video/sketch have their own
-        // swallow branches below (sketch deliberately keeps doc ⌘Z — strokes are
-        // document content).
-        else if (root.activePdfRow >= 0) { event.accepted = true }
+        // PDF tab: page ink is document content (the sketch precedent) — doc
+        // ⌘Z/redo and Delete-selected-stroke pass through; everything else is
+        // still swallowed so typing can't invisibly edit the hidden document.
+        // Must sit above the generic ⌘Z/⌘V branches.
+        else if (root.activePdfRow >= 0) {
+            if (cmd && k === Qt.Key_Z && shift) blockModel.redo()
+            else if (cmd && k === Qt.Key_Z) blockModel.undo()
+            else if (cmd && k === Qt.Key_Y) blockModel.redo()
+            else if ((k === Qt.Key_Delete || k === Qt.Key_Backspace)
+                     && root.pdfActiveInk && root.pdfActiveInk.hasSelection)
+                root.pdfActiveInk.deleteSelection()
+            else if (k === Qt.Key_Space && !event.isAutoRepeat)
+                root.pdfSpaceHeld = true            // hold the hand (list pan)
+            event.accepted = true
+        }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
         // annotation-covered) document — gate ⌘V/⌘X (silent document edits);
         // ⌘C copies an invisible selection, swallow it too.
@@ -2569,19 +2613,12 @@ FocusScope {
                     isActivePlayer: cell.logicalRow === root.videoPlayingRow && root._videoSurfaceReady
                 }
 
-                // Media is opaque (no caret, no text selection rects), so its
-                // selected state needs its own affordance: a translucent accent
-                // tint over the frame when it's the focus (clicked) or inside a
-                // multi-block range. (During playback the live surface covers it.)
-                Rectangle {
-                    visible: cell.active && cell.isMedia && (cell.isFocus || cell.inSel)
-                    x: mediaHost.x; y: mediaHost.y
-                    width: mediaHost.width; height: mediaHost.height
-                    radius: Theme.dim.radius
-                    z: 2
-                    color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g,
-                                   Theme.colors.accent.b, 0.22)
-                }
+                // Media carries NO selection affordance of its own (ruling
+                // 2026-08-19, superseding the accent wash AND the outline that
+                // briefly replaced it): the full-row focus fill already says
+                // "you are here", and media frames are annotated/interactive
+                // surfaces whose content must render untinted. Range
+                // membership shows through the row fill + dimmed media bars.
 
                 BlockTable {  // table block — passive grid (interaction lands in later phases)
                     id: tableHost
@@ -2650,12 +2687,14 @@ FocusScope {
                     activeFocusOnPress: false
                     selectByMouse: false
                     // quote/list get a left indent; the decoration sits in it.
-                    // Ordered items reserve a hair more for two-digit numbers;
+                    // Ordered items reserve a 28px number slot + 6px gap —
+                    // right-aligned numbers up to "999." fit without touching
+                    // the text (the old 20px slot overflowed from item 10);
                     // list nesting adds 24px per depth level.
                     readonly property int bdepth: (blockModel.contentRevision,
                                                    cell.active && (btype === 5 || btype === 8 || btype === 9)
                                                        ? blockModel.depthForRow(cell.logicalRow) : 0)
-                    readonly property real deco: btype === 9 ? 26 + bdepth * 24
+                    readonly property real deco: btype === 9 ? 34 + bdepth * 24
                                                : (btype === 5 || btype === 8) ? 22 + bdepth * 24
                                                : btype === 4 ? 22 : 0
                     // task items (type 8): tri-state status 0 todo / 1 doing / 2 done
@@ -2787,7 +2826,7 @@ FocusScope {
                 }
                 Text {  // ordered list: computed number, right-aligned before the text
                     visible: cell.active && te.btype === 9
-                    x: cell.colLeft + te.bdepth * 24; width: 20
+                    x: cell.colLeft + te.bdepth * 24; width: 28
                     y: te.y
                     horizontalAlignment: Text.AlignRight
                     text: (blockModel.contentRevision,
@@ -3584,6 +3623,11 @@ FocusScope {
                     cacheBuffer: Math.max(0, Math.round(height * 1.5))   // height is transiently <0 during layout
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: MnScrollBar {}
+                    // Space-hand affordance: the open hand says "drag scrolls now".
+                    HoverHandler {
+                        enabled: root.pdfSpaceHeld
+                        cursorShape: Qt.OpenHandCursor
+                    }
                     delegate: Item {
                         required property int index
                         readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
@@ -3605,6 +3649,36 @@ FocusScope {
                                 fillMode: Image.PreserveAspectFit
                                 asynchronous: true
                                 sourceSize.width: Math.round(parent.width * Screen.devicePixelRatio)
+                            }
+                            // Per-PAGE ink overlay (2026-08-19): the sketch canvas in
+                            // its inline-embed shape (frame = the page rect), storing
+                            // normalized page coords + source-unit widths via the
+                            // block's content JSON (pdfSetPageInk → document undo).
+                            // The "text" chip tool has no PDF session yet — the grid
+                            // disables it in PDF tabs, so it can never arm here.
+                            SketchCanvas {
+                                id: pageInk
+                                anchors.fill: parent
+                                // Space-hand: the canvas yields the mouse so drags
+                                // fall through to the list and scroll it.
+                                enabled: !root.pdfSpaceHeld
+                                data: (blockModel.contentRevision,
+                                       root.activePdfRow >= 0
+                                       ? blockModel.pdfPageInk(root.activePdfRow, index) : "")
+                                sourceWidth: Math.max(1, blockModel.mediaW(root.activePdfRow))
+                                sourceHeight: Math.max(1, blockModel.mediaH(root.activePdfRow))
+                                fontFamily: Theme.font.body
+                                tool: (root.activePdfRow >= 0 && root.inspector
+                                       && root.inspector.drawTool !== "type")
+                                          ? root.inspector.drawTool : ""
+                                color: root.inspector ? root.inspector.drawColor : "#FF0000"
+                                strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+                                selectable: true
+                                onEdited: (json) => blockModel.pdfSetPageInk(root.activePdfRow, index, json)
+                                // One page's canvas at a time owns Esc/Delete.
+                                onDrawingChanged: if (drawing) root._setPdfActiveInk(pageInk)
+                                onSelectionChanged: if (hasSelection) root._setPdfActiveInk(pageInk)
+                                Component.onDestruction: if (root.pdfActiveInk === pageInk) root.pdfActiveInk = null
                             }
                         }
                     }
@@ -3705,7 +3779,8 @@ FocusScope {
                     frame: root.videoPlayingRow === studioFrame.r
                         ? videoDec.currentFrame
                         : (root.videoPlayheadRev >= 0 ? root.videoPlayheadFor(studioFrame.r) : 0)
-                    tool: (root.activeVideoRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
+                    tool: (root.activeVideoRow >= 0 && root.inspector
+                           && root.inspector.drawTool !== "type") ? root.inspector.drawTool : ""
                     color: root.inspector ? root.inspector.drawColor : "#FF0000"
                     strokeWidth: root.inspector ? root.inspector.drawWidth : 6
                     // Strokes pin to a frame — drawing on a moving target
@@ -4040,7 +4115,8 @@ FocusScope {
                     ? blockModel.sketchResolvedJson(sketchFrame.r) : ""
                 sourceWidth: sketchStage.vw
                 sourceHeight: sketchStage.vh
-                tool: (root.activeSketchRow >= 0 && root.inspector) ? root.inspector.drawTool : ""
+                tool: (root.activeSketchRow >= 0 && root.inspector
+                       && root.inspector.drawTool !== "type") ? root.inspector.drawTool : ""
                 color: root.inspector ? root.inspector.drawColor : "#FF0000"
                 strokeWidth: root.inspector ? root.inspector.drawWidth : 6
                 selectable: true   // no tool armed → click-select / drag-move / Delete
@@ -4494,6 +4570,10 @@ FocusScope {
             required property var modelData
             readonly property int prow: modelData
             visible: flick.visible && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+            // Pins stay VISIBLE in ink mode (they mark content) but go
+            // pass-through — they sit in the right margin, which is exactly
+            // where margin ink lands, and must not steal the pen.
+            enabled: !root.inkMode
             z: 56
             width: 24; height: 24
             x: root.leftEdge + root.pageWidth + 12 - flick.contentX
@@ -4546,7 +4626,9 @@ FocusScope {
                 return null
             }
             readonly property int arow: info ? info.row : -1
-            visible: info !== null && arow >= 0
+            // Hidden in ink mode: a card left open would swallow pen strokes
+            // over a 300px patch of the margin (pins are pass-through there).
+            visible: info !== null && arow >= 0 && !root.inkMode
             // Beside the bubble; clamped into the viewport when the window is
             // narrower than the margin (the card may float over the page edge).
             x: Math.min(root.leftEdge + root.pageWidth + 12 - flick.contentX,
@@ -4678,6 +4760,17 @@ FocusScope {
         anchors { top: parent.top; bottom: parent.bottom; right: parent.right
                   rightMargin: Theme.dim.scrollBarWidth }
         width: 34
+        // YIELDS TO THE PAGE: in a narrow window this viewport-anchored rail
+        // slides over the left-anchored text column and prints numbers on the
+        // prose. When its slot would cross the page's right edge (viewport
+        // coords — panning right re-clears it), fade out and release the
+        // mouse so the invisible drag handles can't eat clicks on text.
+        // (Riding over the DESK and wide tables' paper stays by design.)
+        readonly property bool clearOfPage:
+            x >= root.leftEdge + root.pageWidth - flick.contentX + 8
+        opacity: clearOfPage ? 1 : 0
+        enabled: clearOfPage
+        Behavior on opacity { NumberAnimation { duration: 150 } }
         // (No backing, no own stripes: the rail rides transparently on the
         // desk's zebra — wide tables passing beneath carry their own paper.)
         Repeater {
@@ -4929,7 +5022,11 @@ FocusScope {
                 ? (row >= cursor.loRow && row <= cursor.hiRow)
                 : (row === cursor.focusRow))
                 || (blockMenu.visible && row === root.menuRow)
-            opacity: (blockSelected && !live) ? 0.35 : 1.0
+            // Ink mode: the bar stays VISIBLE (it sits under the canvas, so
+            // the pen can't hit it — z handles the routing) but is disabled
+            // and dimmed: no playback/scrub state changes mid-annotation.
+            opacity: root.inkMode ? 0.5 : ((blockSelected && !live) ? 0.35 : 1.0)
+            enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
@@ -4940,7 +5037,11 @@ FocusScope {
             readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
                                                              : Math.round(dispW * 0.5)
 
-            z: 56
+            // BELOW the ink canvas (45): committed strokes render over the bar
+            // in regular mode too, so ink never shifts or vanishes between
+            // modes (and matches the HTML export, which has no bars). Clicks
+            // still reach the bar — the disarmed canvas refuses mouse.
+            z: 44
             x: root.leftEdge - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: dispW
@@ -4967,7 +5068,11 @@ FocusScope {
                 ? (row >= cursor.loRow && row <= cursor.hiRow)
                 : (row === cursor.focusRow))
                 || (blockMenu.visible && row === root.menuRow)
-            opacity: blockSelected ? 0.35 : 1.0
+            // Ink mode: visible-but-disabled like the video bars (z routes the
+            // pen to the canvas above) — Prev/Next must not flip the page
+            // UNDER a block-pinned annotation mid-draw; the dim says "paused".
+            opacity: root.inkMode ? 0.5 : (blockSelected ? 0.35 : 1.0)
+            enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
@@ -4979,7 +5084,9 @@ FocusScope {
             readonly property int pages: (blockModel.contentRevision, blockModel.mediaPdfPages(row))
             readonly property int page: (root.pdfPageRev, root.pdfPageFor(row))
 
-            z: 56
+            // z:44 like the video bars — ink paints over the strip in regular
+            // mode (never occluded, matches export); the bar stays clickable.
+            z: 44
             x: root.leftEdge - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: measure
@@ -5015,7 +5122,10 @@ FocusScope {
         readonly property int row: root.imageResizing ? root.imageResizeRow
             : (root.imgHandleRow >= 0 ? root.imgHandleRow
                : (root._isResizableMediaRow(cursor.focusRow) ? cursor.focusRow : -1))
-        visible: row >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+        // Also hidden in ink mode: a still-selected image's handles would sit
+        // above the canvas and let the pen RESIZE the layout under the ink.
+        visible: row >= 0 && !root.inkMode
+                 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         readonly property real imgX: root.leftEdge - flick.contentX
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0

@@ -30,7 +30,13 @@ Rectangle {
         property bool open: true
         property string view: "palette"
     }
-    onOpenChanged: if (_ready) panelStore.open = open
+    onOpenChanged: if (_ready) {
+        panelStore.open = open
+        // Closing the panel drops back to Type (user ruling 2026-08-19):
+        // drawing implies the tools are on screen — with the panel gone there
+        // would be no visible indicator that typing is disabled.
+        if (!open && drawTool !== "type") drawTool = "type"
+    }
 
     // Which interface the panel shows: the colour/drawing palette or the
     // comment threads. Persisted like `open`.
@@ -47,12 +53,21 @@ Rectangle {
     // Colour state (the I/O the editor's apply functions read).
     property color fgColor: Theme.colors.text         // default type colour (E4E3E2)
     property color bgColor: "#FFEC59"                 // highlight colour (classic bright yellow)
-    property string target: "fg"                       // which colour the picker edits
+    // Draw is the default target (user ruling 2026-08-19): annotation colour
+    // is what the panel is aimed at most — Text/Highlight are a tab away.
+    property string target: "draw"                     // which colour the picker edits
 
     // Drawing state (the video studio's annotator reads these; QSettings-
-    // backed like QCView's annotation/colorHex). drawTool "" = disarmed.
+    // backed like QCView's annotation/colorHex). The armed tool IS the mode
+    // (2026-08-19 redesign): "type" = regular text editing (the resting tool,
+    // never persisted — the app always launches typing); anything else engages
+    // the surface's ink — the Document view's margin-ink canvas, or a sketch/
+    // video tab's local canvas. "select" moves existing ink.
     property color drawColor: "#FF0000"                // QCView's default stroke red
-    property string drawTool: ""                       // freehand|rect|oval|arrow|line|eraser
+    property string drawTool: "type"                   // type|select|freehand|rect|oval|arrow|line|text|eraser
+    // Arming a draw tool points the colour tabs at Draw — that's the colour
+    // the next stroke uses, so the picker should already be aimed at it.
+    onDrawToolChanged: if (drawTool !== "type" && drawTool !== "select") target = "draw"
     property real drawWidth: 6                         // source-pixel stroke width (1..64)
     property real drawTextSize: 16                     // sketch text-box font px (source px)
     Settings {
@@ -127,6 +142,7 @@ Rectangle {
         if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
         if (drawStore.width > 0) drawWidth = drawStore.width
         if (drawStore.textSize > 0) drawTextSize = drawStore.textSize
+        setPickerValue(targetColor())   // re-seed: the picker completed before the restore above
         open = panelStore.open      // restore last open/closed state (no slide)
         if (panelStore.view === "comments") view = "comments"
         _ready = true               // toggles from here on animate + persist
@@ -446,53 +462,46 @@ Rectangle {
                    color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
 
-            // Select / move — in a sketch tab or the video studio. Active whenever
-            // no draw tool is armed.
-            Rectangle {
-                visible: !!panel.editor && (panel.editor.activeSketchRow >= 0
-                                            || panel.editor.activeVideoRow >= 0
-                                            || panel.editor.inkMode)
-                width: panel.contentW; height: 28
-                readonly property bool sel: panel.drawTool === "" || panel.drawTool === "select"
-                color: sel ? Theme.colors.divider
-                     : (selMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-                Row {
-                    anchors.centerIn: parent; spacing: 6
-                    Icon { name: "cursor"; size: 15
-                           color: parent.parent.sel ? Theme.colors.textBright : Theme.colors.textMuted
-                           anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: "Select / Move"
-                           color: parent.parent.sel ? Theme.colors.textBright : Theme.colors.textMuted
-                           font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                           anchors.verticalCenter: parent.verticalCenter }
-                }
-                MouseArea { id: selMA; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: panel.drawTool = "select" }
-            }
+            // The tool grid — Photoshop-style uniform rows, one selection
+            // language for every tool. Type (regular editing) and Select/Move
+            // lead; the ink tools follow. Clicking the armed tool drops back
+            // to Type. Ink tools disable in table tabs (no ink surface — user
+            // ruling 2026-08-19: no view jumps as a tool side effect);
+            // sketch/video tabs interpret them locally, and PDF tabs take
+            // per-page ink (the text-chip tool alone stays disabled there —
+            // no PDF text session yet).
             Grid {
-                columns: 7; spacing: 4
+                columns: 5; spacing: 4
                 Repeater {
                     model: [
+                        { tool: "type",     icon: "cursor-text",   tip: qsTr("Type — regular editing") },
+                        { tool: "select",   icon: "cursor",        tip: qsTr("Select / Move") },
                         { tool: "freehand", icon: "scribble",      tip: qsTr("Freehand") },
+                        { tool: "line",     icon: "line-segment",  tip: qsTr("Line") },
+                        { tool: "arrow",    icon: "arrow-up-right",tip: qsTr("Arrow") },
                         { tool: "rect",     icon: "rectangle",     tip: qsTr("Rectangle") },
                         { tool: "oval",     icon: "circle",        tip: qsTr("Oval") },
-                        { tool: "arrow",    icon: "arrow-up-right",tip: qsTr("Arrow") },
-                        { tool: "line",     icon: "line-segment",  tip: qsTr("Line") },
-                        { tool: "text",     icon: "text-t",        tip: qsTr("Text") },
+                        { tool: "text",     icon: "textbox",       tip: qsTr("Text box") },
                         { tool: "eraser",   icon: "eraser",        tip: qsTr("Eraser") }
                     ]
                     delegate: FlatButton {
                         required property var modelData
-                        width: (panel.contentW - 24) / 7; height: width
+                        readonly property bool inkTool: modelData.tool !== "type"
+                                                        && modelData.tool !== "select"
+                        width: (panel.contentW - 16) / 5; height: width
                         iconName: modelData.icon
                         iconSize: 18
                         checked: panel.drawTool === modelData.tool
                         checkedColor: Theme.colors.divider   // grey — family selection language
                         iconColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
                         tooltip: modelData.tip; tooltipSide: "top"
+                        enabled_: !inkTool || !panel.editor
+                                  || (panel.editor.activeTableRow < 0
+                                      && (panel.editor.activePdfRow < 0
+                                          || modelData.tool !== "text"))
                         onClicked: panel.drawTool =
-                            (panel.drawTool === modelData.tool) ? "" : modelData.tool
+                            (panel.drawTool === modelData.tool && modelData.tool !== "type")
+                                ? "type" : modelData.tool
                     }
                 }
             }
@@ -651,11 +660,12 @@ Rectangle {
                    color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
 
+            // Draw leads (and is the default target) — see `target` up top.
             Row {
                 spacing: 4
+                Tab { label: "Draw"; t: "draw" }
                 Tab { label: "Text"; t: "fg" }
                 Tab { label: "Highlight"; t: "bg" }
-                Tab { label: "Draw"; t: "draw" }
             }
 
             ColorPickerInline {
@@ -673,7 +683,7 @@ Rectangle {
                         else if (panel.target === "bg") panel.editor.pickHighlight("" + value)
                     }
                 }
-                Component.onCompleted: panel.setPickerValue(panel.fgColor)   // init: no apply/arm
+                Component.onCompleted: panel.setPickerValue(panel.targetColor())   // init: no apply/arm
             }
 
             // (Apply lives on the left rail's bottom swatches — pick here, apply there.)

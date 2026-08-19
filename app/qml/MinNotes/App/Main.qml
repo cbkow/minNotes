@@ -1002,32 +1002,16 @@ ApplicationWindow {
                             cursorShape: Qt.PointingHandCursor; onClicked: docs.newTab() }
             }
 
-            // Annotation controls at the strip's right edge (right of "+"):
-            // document-level chrome lives on the tab row — no z-order fights
-            // with the editor's overlays. Draw toggles annotation mode (and
-            // opens the Inspector on its Palette view); the eye shows/hides
-            // the ink layer and only appears when the document has ink.
+            // Document chrome at the strip's right edge (right of "+"): the
+            // ink-layer eye (only when the document has ink) and the Inspector
+            // toggle. The pen-nib mode button is GONE (2026-08-19 redesign,
+            // overturning the 2026-07-05 accent ruling with it): annotation
+            // mode is now driven by the armed tool in the Inspector's Tools
+            // grid — there is no separate mode toggle.
             Row {
                 id: annotCluster
                 anchors.right: parent.right; anchors.top: parent.top
                 readonly property var ed: contentRow.editor
-                Rectangle {
-                    visible: !!annotCluster.ed
-                    width: 36; height: docTabBar.height
-                    readonly property bool on: !!annotCluster.ed && annotCluster.ed.inkMode
-                    // Accent-on-toggle is a DELIBERATE exception here (user
-                    // ruling 2026-07-05): mode state earned the accent.
-                    color: on ? Theme.colors.accent
-                              : (annMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-                    Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                                color: Theme.colors.border }
-                    Icon { anchors.centerIn: parent; name: "pen-nib"; size: 15
-                           color: parent.on || annMA.containsMouse ? Theme.colors.textBright
-                                                                   : Theme.colors.textMuted }
-                    MouseArea { id: annMA; anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: annotCluster.ed.setInkMode(!annotCluster.ed.inkMode) }
-                }
                 Rectangle {
                     visible: !!annotCluster.ed && annotCluster.ed.inkStrokeCount > 0
                     width: 36; height: docTabBar.height
@@ -1038,6 +1022,7 @@ ApplicationWindow {
                                 color: Theme.colors.border }
                     Icon { anchors.centerIn: parent
                            name: parent.hidden ? "eye-slash" : "eye"; size: 15
+                           opacity: eyeMA.enabled ? 1 : 0.4   // read as OFF while a tool is armed
                            color: parent.hidden || eyeMA.containsMouse ? Theme.colors.textBright
                                                                        : Theme.colors.textMuted }
                     MouseArea { id: eyeMA; anchors.fill: parent; hoverEnabled: true

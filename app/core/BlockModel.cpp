@@ -2520,6 +2520,44 @@ int BlockModel::mediaPdfPages(int row) const {
     return QJsonDocument::fromJson(content_[row].toUtf8())
                .object().value(QStringLiteral("pages")).toInt();
 }
+
+QString BlockModel::pdfPageInk(int row, int page) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return {};
+    const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QJsonValue pageV = root.value(QStringLiteral("ink"))
+                                 .toObject().value(QString::number(page));
+    if (!pageV.isObject()) return {};
+    return QString::fromUtf8(QJsonDocument(pageV.toObject()).toJson(QJsonDocument::Compact));
+}
+
+void BlockModel::pdfSetPageInk(int row, int page, const QString& strokesJson) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    QJsonObject ink = root.value(QStringLiteral("ink")).toObject();
+    const QJsonObject in = QJsonDocument::fromJson(strokesJson.toUtf8()).object();
+    const QJsonArray shapes = in.value(QStringLiteral("shapes")).toArray();
+    if (shapes.isEmpty()) {
+        ink.remove(QString::number(page));   // last stroke erased → drop the key
+    } else {
+        QJsonObject env;
+        env.insert(QStringLiteral("version"),
+                   in.value(QStringLiteral("version")).toString(QStringLiteral("2.0")));
+        env.insert(QStringLiteral("coordinate_system"),
+                   in.value(QStringLiteral("coordinate_system")).toString(QStringLiteral("normalized")));
+        env.insert(QStringLiteral("shapes"), shapes);
+        ink.insert(QString::number(page), env);
+    }
+    if (ink.isEmpty()) root.remove(QStringLiteral("ink"));
+    else root.insert(QStringLiteral("ink"), ink);
+
+    beginTxn(row, row);
+    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();   // no coalesce — one undo step per gesture (sketch ruling 2026-06-11)
+}
 // Open the media's file in the sibling ufb browser via its deep-link scheme:
 // ufb:///{os}/{percent-encoded path} (slashes kept literal, matching ufb's
 // build_path_uri). No-op if ufb isn't installed (no handler registered).

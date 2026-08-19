@@ -172,9 +172,10 @@ Rectangle {
             }
         }
 
-        // (The palette/Inspector toggle + Annotate + show/hide all live on the
-        // document TAB STRIP's right edge now — the rail is block-tool
-        // territory and was getting cramped.)
+        // (The Inspector toggle + ink-layer eye live on the document TAB
+        // STRIP's right edge — the rail is block-tool territory and was
+        // getting cramped. Annotation mode has no toggle at all any more:
+        // it follows the armed tool in the Inspector's Tools grid.)
         // Comment the current text selection (single row); opens the thread
         // in the Inspector's Comments view.
         RailBtn {

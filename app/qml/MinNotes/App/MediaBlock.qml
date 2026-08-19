@@ -153,6 +153,17 @@ Item {
             sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
             smooth: true
         }
+        // The shown page's ink overlay (read-only — drawing lives in the PDF
+        // tab, the inline-sketch pattern). Same source units as the tab's
+        // canvases (mediaW/H), so stroke weights match across surfaces.
+        SketchCanvas {
+            anchors.fill: parent
+            data: (mb._rev, (mb.isPdf && mb.logicalRow >= 0)
+                   ? blockModel.pdfPageInk(mb.logicalRow, mb.pdfPage) : "")
+            sourceWidth: Math.max(1, mb.iw)
+            sourceHeight: Math.max(1, mb.ih)
+            fontFamily: Theme.font.body
+        }
     }
 
     // --- Sketch branch: transparent canvas (ruling 2026-06-11), divider

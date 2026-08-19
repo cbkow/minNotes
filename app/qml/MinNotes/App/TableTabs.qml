@@ -61,6 +61,14 @@ Rectangle {
         signal clicked()
         width: tabLabel.implicitWidth + 36
         height: tabs.rowH
+        // Whole tabs only: a tab that doesn't fully fit left of the menu
+        // button hides completely (opacity keeps its Row slot — visible:false
+        // would re-flow the Row and un-hide it, a loop). A sliced label
+        // colliding with the menu button read as overlapping text. Hidden
+        // tabs stay reachable through the navigator menu, which lights up.
+        readonly property bool fullyVisible: x + width <= rowClip.width + 0.5
+        opacity: fullyVisible ? 1 : 0
+        enabled: fullyVisible
         // active fill matches the table toolbar's checked Table/Board segment
         color: active ? Theme.colors.divider : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
         Rectangle {   // active underline (white — accent stays reserved for real highlights)
@@ -157,6 +165,13 @@ Rectangle {
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.border }
         Icon { anchors.centerIn: parent; name: "list"; size: 16
                color: tabMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
+        // Overflow underline (white, the tab language): some tabs are hidden —
+        // the full list lives in this menu.
+        Rectangle {
+            visible: row.width > rowClip.width
+            anchors.bottom: parent.bottom; width: parent.width; height: 2
+            color: Theme.colors.textBright
+        }
         MouseArea { id: menuMA; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: tabMenu.visible ? tabMenu.close() : tabMenu.open() }

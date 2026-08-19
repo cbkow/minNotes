@@ -431,6 +431,11 @@ void SketchCanvas::paint(QPainter *p)
 
 void SketchCanvas::mousePressEvent(QMouseEvent *e)
 {
+    // Hold the grab: hosted inside a Flickable (the PDF tab's page list) the
+    // parent would otherwise steal the drag at its flick threshold and turn a
+    // half-drawn stroke into a scroll. Only reached while armed/selectable —
+    // disarmed embeds accept NoButton and never see the press.
+    setKeepMouseGrab(true);
     if (panMode_) {
         panning_ = true;
         lastPanPos_ = e->position();
