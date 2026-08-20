@@ -28,7 +28,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QAbstractTextDocumentLayout>
+#include <QGuiApplication>
 #include <QLocale>
+#include <QScreen>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -2684,6 +2686,13 @@ struct PdfCtx {
     FootnoteCtx fn;
     int imgSeq = 0;
     qreal contentW = 0, contentH = 0;   // page paint rect, 96-dpi units
+    // QTextDocumentLayout scales INLINE OBJECT sizes (images — not text) by
+    // deviceDpi / platform-default-dpi, and macOS's default is 72 — so a
+    // format set to N units drew at N×1.33 (the "full-size images offpage"
+    // bug, 2026-08-20). Every QTextImageFormat size is pre-multiplied by
+    // this factor (defaultDpi/96) so the DRAWN size equals the intended
+    // device units on every platform.
+    qreal imgFmt = 1.0;
     bool first = true;                  // reuse the document's initial block once
 
     // Every structure appends; normalizing to the root frame's end keeps the
@@ -2716,7 +2725,7 @@ void pdfInsertImage(PdfCtx& c, const QImage& img, qreal displayW) {
     c.newBlock(bf);
     QTextImageFormat f;
     f.setName(pdfAddImage(c, img));
-    f.setWidth(w); f.setHeight(h);
+    f.setWidth(w * c.imgFmt); f.setHeight(h * c.imgFmt);
     c.cur.insertImage(f);
 }
 
@@ -2751,7 +2760,7 @@ QImage taskGlyphImage(int state) {
 void pdfInsertTaskGlyph(PdfCtx& c, int state) {
     QTextImageFormat f;
     f.setName(pdfAddImage(c, taskGlyphImage(state)));
-    f.setWidth(11); f.setHeight(11);
+    f.setWidth(11 * c.imgFmt); f.setHeight(11 * c.imgFmt);
     c.cur.insertImage(f);
     c.cur.insertText(QStringLiteral(" "));
 }
@@ -2934,7 +2943,7 @@ void pdfTable(PdfCtx& c, int row) {
                 QTextImageFormat gf;
                 QImage g = taskGlyphImage(m->tableCellCheck(row, r, cix));
                 gf.setName(pdfAddImage(c, g));
-                gf.setWidth(11); gf.setHeight(11);
+                gf.setWidth(11 * c.imgFmt); gf.setHeight(11 * c.imgFmt);
                 cc.insertImage(gf);
             } else if (kind == 1) {
                 cc.insertText(m->tableCellChoiceLabel(row, r, cix), rf);
@@ -3197,7 +3206,7 @@ void buildPdfDoc(PdfCtx& c) {
             c.newBlock(bf);
             QTextImageFormat f;
             f.setName(pdfAddImage(c, line));
-            f.setWidth(c.contentW); f.setHeight(1);
+            f.setWidth(c.contentW * c.imgFmt); f.setHeight(1 * c.imgFmt);
             c.cur.insertImage(f);
             break;
         }
@@ -3254,6 +3263,12 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     const QRectF paint = writer.pageLayout().paintRectPixels(96);
     c.contentW = paint.width();
     c.contentH = paint.height();
+    // The inline-object dpi factor (see PdfCtx::imgFmt): the layout draws
+    // image formats at deviceDpi/defaultDpi, where defaultDpi is the primary
+    // screen's logical dpi (72 on macOS, 96 on Windows; 96 headless).
+    const QScreen* screen = QGuiApplication::primaryScreen();
+    const qreal defaultDpi = screen ? screen->logicalDotsPerInchY() : 96.0;
+    c.imgFmt = defaultDpi / 96.0;
     {   // Document header (ruling 2026-08-20): the name leads every export.
         QTextBlockFormat bf; bf.setBottomMargin(6);
         QTextCharFormat f;
@@ -3268,7 +3283,7 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
         c.newBlock(rb);
         QTextImageFormat rf;
         rf.setName(pdfAddImage(c, line));
-        rf.setWidth(c.contentW); rf.setHeight(1);
+        rf.setWidth(c.contentW * c.imgFmt); rf.setHeight(1 * c.imgFmt);
         c.cur.insertImage(rf);
     }
     buildPdfDoc(c);

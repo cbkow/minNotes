@@ -3004,7 +3004,7 @@ static void testExportPdf() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     int r = 0;
     m.insertBlock(r); m.setContent(r, QStringLiteral("Export Title"));
-    m.setBlockType(r, BlockModel::Heading);
+    m.setHeading(r, 1);
     m.insertBlock(++r); m.setContent(r, QStringLiteral("plain bolditalic linked"));
     m.setFormat(r, 6, 16, QStringLiteral("bold"), true);
     m.setFormat(r, 6, 16, QStringLiteral("italic"), true);
@@ -3012,7 +3012,7 @@ static void testExportPdf() {
     m.insertBlock(++r); m.setContent(r, QStringLiteral("item one"));
     m.setBlockType(r, BlockModel::ListItem);
     m.insertBlock(++r); m.setContent(r, QStringLiteral("int x = 1;"));
-    m.setBlockType(r, BlockModel::Code);
+    m.makeCodeBlock(r, QStringLiteral("cpp"));
     const int tRow = m.insertTable(r, 2, 2);
     m.tableSetCell(tRow, 0, 0, QStringLiteral("H1"));
     m.tableSetCell(tRow, 1, 0, QStringLiteral("cell body"));
@@ -3067,6 +3067,8 @@ static void testExportPdf() {
         const QSizeF pts = pdoc.pagePointSize(pg);
         const QImage pgImg = pdoc.render(pg, QSize(int(pts.width()), int(pts.height())));
         if (pgImg.isNull()) continue;
+        pgImg.save(QDir::tempPath()   // per-page inspection artifacts
+                   + QStringLiteral("/mn_export_probe_page%1.png").arg(pg + 1));
         bool clean = true;
         int worstX = -1, worstY = -1;
         for (int yy = 0; yy < pgImg.height() && clean; yy += 2)
@@ -3079,6 +3081,30 @@ static void testExportPdf() {
             }
         CHECK(clean, "page %d right margin is clean (dirty at %d,%d)",
               pg + 1, worstX, worstY);
+    }
+    // The inline-image dpi-scale bug (2026-08-20): the annotated fixture
+    // page is inserted at 480 units, so its red stroke (ending at 0.7 of
+    // the image) must stay in the LEFT HALF-ish of the page — the 96/72
+    // scale drew it at ~0.63 of the page width. White-on-white overflow is
+    // invisible to the margin sweep; the stroke pins the geometry.
+    {
+        int maxRedX = -1, redPageW = 1;
+        for (int pg = 0; pg < pdoc.pageCount(); ++pg) {
+            const QSizeF pts = pdoc.pagePointSize(pg);
+            const QImage pgImg = pdoc.render(pg, QSize(int(pts.width()), int(pts.height())));
+            if (pgImg.isNull()) continue;
+            for (int yy = 0; yy < pgImg.height(); yy += 2)
+                for (int xx = 0; xx < pgImg.width(); xx += 2) {
+                    const QRgb px = pgImg.pixel(xx, yy);
+                    if (qAlpha(px) != 0 && qRed(px) > 180 && qGreen(px) < 90
+                        && qBlue(px) < 90 && xx > maxRedX) {
+                        maxRedX = xx; redPageW = pgImg.width();
+                    }
+                }
+        }
+        CHECK(maxRedX > 0 && maxRedX < int(redPageW * 0.55),
+              "annotated-page image drawn at its INTENDED size (red ends %d/%d)",
+              maxRedX, redPageW);
     }
     // Soft checks (byte-level; engine details, not contracts):
     if (!buf.data().contains("Aspekta"))
