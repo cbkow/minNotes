@@ -17,6 +17,7 @@ Quick surface that owns the document model directly.
 | Import | Markdown, txt, CSV/TSV, HTML, DOCX, Excel `.xlsx`, OpenDocument `.odt`/`.ods`, source-code files, RTF (macOS), Evernote `.enex`, Notion exports |
 | Export | Markdown (+`.assets/`), self-contained HTML (annotation layers + toggle, hover comment threads, lightbox, block ruler), DOCX with native Word review comments, `.mnpkg` sealed packages (media inside, video streams from the archive) |
 | Cross-OS | OS-neutral path mappings for referenced media, multi-document tabs, `.mndb`/`.mnpkg` file associations |
+| Tab merge | drag a tab onto another tab, drop between blocks — the whole document copies in as one undo entry (assets follow, comments keep their history) |
 | Updates | Sparkle (macOS) / WinSparkle (Windows), EdDSA-signed appcasts |
 
 ## Requirements
