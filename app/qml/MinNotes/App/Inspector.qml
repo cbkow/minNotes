@@ -588,8 +588,9 @@ Rectangle {
                         // enabled_ derives from this, so the grey and its
                         // tooltip can never drift apart. Table tabs keep only
                         // Type (ruling 2026-08-20: Select is inert there —
-                        // cells have their own cursor); PDF/video tabs grey
-                        // the text-chip tool alone.
+                        // cells have their own cursor); video tabs grey the
+                        // text-chip tool alone (PDF pages take chips since
+                        // the 2026-08-20 session landed).
                         readonly property string offReason: {
                             if (!panel.editor || modelData.tool === "type") return ""
                             if (panel.editor.activeTableRow >= 0)
@@ -597,8 +598,6 @@ Rectangle {
                                     ? qsTr("tables select with the cell cursor")
                                     : qsTr("tables have no ink surface")
                             if (modelData.tool !== "text") return ""
-                            if (panel.editor.activePdfRow >= 0)
-                                return qsTr("no text boxes on PDF pages yet")
                             if (panel.editor.activeVideoRow >= 0)
                                 return qsTr("text boxes aren't part of video notes")
                             return ""

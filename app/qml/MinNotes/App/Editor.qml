@@ -172,10 +172,9 @@ FocusScope {
         // tool would silently re-engage ink mode); table tabs have no ink
         // surface AND select there is the cell cursor's job, so EVERY
         // non-Type tool drops to Type; sketch/video/PDF tabs keep the tool
-        // and interpret it locally (PDF pages take per-page ink). The
-        // text-chip tool alone drops to Select in PDF tabs (no PDF text
-        // session yet) and video tabs (text boxes are not part of the
-        // QCView flow).
+        // and interpret it locally (PDF pages take per-page ink AND text
+        // chips since 2026-08-20). The text-chip tool alone drops to Select
+        // in video tabs (text boxes are not part of the QCView flow).
         var t = inspector ? inspector.drawTool : "type"
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
@@ -196,10 +195,7 @@ FocusScope {
             activeTableId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
         }
         else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
-        else {
-            if (t === "text") inspector.drawTool = "select"
-            activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id
-        }
+        else { activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
     }
     // Switching documents (new/open/save-as) resets the model; drop all per-doc
     // UI state so nothing points at the old doc's blocks (closes frame tabs /
@@ -265,6 +261,11 @@ FocusScope {
                      inkCanvas.inkTextAt(r, inkCanvas.selectedTextIndex))
             return u.size !== undefined ? u.size * inkCanvas.inkTextSizeScale(r) : -1
         }
+        if (activePdfRow >= 0 && pdfActiveInk && pdfActiveInk.selectedTextIndex >= 0) {
+            var p = (blockModel.contentRevision,
+                     pdfActiveInk.textElementAt(pdfActiveInk.selectedTextIndex))
+            return p.size !== undefined ? p.size : -1
+        }
         return -1
     }
     function applyChipSize(v) {
@@ -281,6 +282,12 @@ FocusScope {
             var lv = sc > 0 ? v / sc : v
             if (u.size !== undefined && Math.abs(u.size - lv) > 0.01)
                 inkCanvas.inkSetTextBox(r, j, u.x, u.y, u.w, lv)
+        } else if (activePdfRow >= 0 && pdfActiveInk && pdfActiveInk.selectedTextIndex >= 0) {
+            var pi = pdfActiveInk.selectedTextIndex
+            var pt = pdfActiveInk.textElementAt(pi)
+            if (pt.size !== undefined && Math.abs(pt.size - v) > 0.01)
+                blockModel.pdfSetPageTextBox(activePdfRow, pdfActiveInk.pdfPage,
+                                             pi, pt.x, pt.y, pt.w, v)
         }
     }
 
@@ -1146,7 +1153,11 @@ FocusScope {
             cursor.anchorRow = ar; cursor.anchorCol = Math.max(0, Math.min(ac, blockModel.contentForRow(ar).length))
             cursor.focusRow = r;   cursor.focusCol = Math.max(0, Math.min(c, blockModel.contentForRow(r).length))
             cursor.goalX = -1
-            root.ensureVisible(r)
+            // Full-frame tabs (PDF/video/sketch/table) hide the document —
+            // scrolling it for a caret nobody can see just moves the hidden
+            // view (undoing page ink from a PDF tab, the banked nit). The
+            // caret state itself still restores for when the doc returns.
+            if (flick.visible) root.ensureVisible(r)
             cursor.sync()
         }
     }
@@ -2004,6 +2015,11 @@ FocusScope {
         // Same island rule for the ink text overlay.
         else if (root.inkMode && inkTextSession.active) {
             if (k === Qt.Key_Escape) inkTextSession.commit()
+            event.accepted = true
+        }
+        // And for the PDF page-chip overlay (must sit above the pdf branch).
+        else if (root.activePdfRow >= 0 && pdfTextSession.active) {
+            if (k === Qt.Key_Escape) pdfTextSession.commit()
             event.accepted = true
         }
         else if (k === Qt.Key_Escape) {
@@ -3693,10 +3709,12 @@ FocusScope {
                             // its inline-embed shape (frame = the page rect), storing
                             // normalized page coords + source-unit widths via the
                             // block's content JSON (pdfSetPageInk → document undo).
-                            // The "text" chip tool has no PDF session yet — the grid
-                            // disables it in PDF tabs, so it can never arm here.
+                            // Text chips (2026-08-20): the canvas paints/selects/
+                            // erases them natively; create/edit route to the
+                            // ROOT-level pdfTextSession (this delegate recycles).
                             SketchCanvas {
                                 id: pageInk
+                                readonly property int pdfPage: index
                                 anchors.fill: parent
                                 // Space-hand: the canvas yields the mouse so drags
                                 // fall through to the list and scroll it.
@@ -3719,15 +3737,168 @@ FocusScope {
                                 onGroupCommitBegan: blockModel.beginGroup(root.activePdfRow, root.activePdfRow)
                                 onGroupCommitEnded: blockModel.endGroup()
                                 onEdited: (json) => blockModel.pdfSetPageInk(root.activePdfRow, index, json)
+                                // Text-chip session routing (the sketch contract).
+                                editingTextIndex: pdfTextSession.mode === "edit"
+                                                  && pdfTextSession.canvas === pageInk
+                                                      ? pdfTextSession.index : -1
+                                onTextCreateRequested: (nx, ny) => pdfTextSession.beginCreate(pageInk, index, nx, ny)
+                                onTextEditRequested: (i) => pdfTextSession.beginEdit(pageInk, index, i)
+                                onTextBoxChanged: (i, x, y, w, s) => blockModel.pdfSetPageTextBox(root.activePdfRow, index, i, x, y, w, s)
+                                onTextRemoved: (i) => blockModel.pdfRemovePageText(root.activePdfRow, index, i)
                                 // One page's canvas at a time owns Esc/Delete.
                                 onDrawingChanged: if (drawing) root._setPdfActiveInk(pageInk)
                                 onSelectionChanged: if (hasSelection) root._setPdfActiveInk(pageInk)
-                                Component.onDestruction: if (root.pdfActiveInk === pageInk) root.pdfActiveInk = null
+                                Component.onDestruction: {
+                                    // A recycled delegate mid-session commits: the
+                                    // session's buffer is self-contained, so the
+                                    // model write survives this canvas dying.
+                                    if (pdfTextSession.canvas === pageInk) pdfTextSession.commit()
+                                    if (root.pdfActiveInk === pageInk) root.pdfActiveInk = null
+                                }
                             }
                         }
                     }
                 }
+                // --- Text-chip edit overlay (2026-08-20): hosted BESIDE the
+                // list — delegates recycle, so it can't live in one. Position
+                // maps from the session's canvas; the contentY/width reads
+                // are LOAD-BEARING deps (reactivity rule 1e — mapToItem is
+                // not reactive by itself).
+                Item {
+                    id: pdfChipOverlay
+                    anchors.fill: parent
+                    visible: pdfTextSession.active && !!pdfTextSession.canvas
+                    readonly property real pxPerSrc:
+                        pdfTextSession.canvas
+                            ? pdfTextSession.canvas.width
+                              / Math.max(1, blockModel.mediaW(root.activePdfRow))
+                            : 1
+                    readonly property real sizePx: pdfTextSession.esize * pxPerSrc
+                    readonly property real padPx: 0.4 * sizePx   // the 0.4em chip pad rule
+                    readonly property point origin: {
+                        pdfList.contentY; pdfList.width      // re-map on scroll/resize
+                        if (!pdfTextSession.canvas) return Qt.point(0, 0)
+                        return pdfTextSession.canvas.mapToItem(
+                            pdfChipOverlay,
+                            pdfTextSession.ex * pdfTextSession.canvas.width,
+                            pdfTextSession.ey * pdfTextSession.canvas.height)
+                    }
+                    readonly property real chipW: pdfTextSession.canvas
+                        ? pdfTextSession.ew * pdfTextSession.canvas.width : 0
+                    Rectangle {   // the live CHIP: fill = element color, accent border = session
+                        visible: pdfTextEditor.visible
+                        x: pdfChipOverlay.origin.x; y: pdfChipOverlay.origin.y
+                        width: pdfChipOverlay.chipW
+                        height: pdfTextEditor.height + 2 * pdfChipOverlay.padPx
+                        color: pdfTextSession.ecolor
+                        border.width: 1; border.color: Theme.colors.accent
+                    }
+                    TextEdit {
+                        id: pdfTextEditor
+                        visible: pdfTextSession.active
+                        x: pdfChipOverlay.origin.x + pdfChipOverlay.padPx
+                        y: pdfChipOverlay.origin.y + pdfChipOverlay.padPx
+                        width: Math.max(4, pdfChipOverlay.chipW - 2 * pdfChipOverlay.padPx)
+                        // Height implicit: the chip grows downward while typing.
+                        wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+                        textMargin: 0
+                        font.family: Theme.font.body   // == the canvas's fontFamily
+                        font.pixelSize: Math.max(1, pdfChipOverlay.sizePx)
+                        color: pdfTextSession.canvas
+                                   ? pdfTextSession.canvas.textInkFor(pdfTextSession.ecolor)
+                                   : Theme.colors.text
+                        selectByMouse: true
+                        selectionColor: Theme.colors.divider
+                        // Session-owned buffer: the commit must survive this
+                        // editor dying with the Loader/delegate.
+                        onTextChanged: pdfTextSession.buf = text
+                        onVisibleChanged: if (visible) {
+                            text = pdfTextSession.mode === "edit" ? pdfTextSession.origText : ""
+                            cursorPosition = text.length
+                            forceActiveFocus()
+                        }
+                        onActiveFocusChanged: if (!activeFocus && visible) pdfTextSession.commit()
+                        // Escape COMMITS (the sketch-session precedent; blanking deletes).
+                        Keys.onEscapePressed: pdfTextSession.commit()
+                    }
+                }
             }
+        }
+    }
+
+    // --- PDF text-chip session (2026-08-20): the sketchTextSession contract
+    // with a SELF-CONTAINED text buffer — the overlay and the hosting canvas
+    // can both die mid-session (delegate recycling, tab exit) and the commit
+    // still lands, because row/page/coords/buf are all captured here. ---
+    QtObject {
+        id: pdfTextSession
+        property string mode: ""        // "" | "create" | "edit"
+        property int row: -1            // captured at begin — commit may land later
+        property int page: -1
+        property var canvas: null       // the hosting pageInk (may die first)
+        property int index: -1          // edit mode: element index
+        property real ex: 0; property real ey: 0; property real ew: 0
+        property real esize: 16
+        property color ecolor: "#E4E3E2"
+        property string origText: ""
+        property string buf: ""         // mirrored from the overlay TextEdit
+        readonly property bool active: mode !== ""
+        function beginCreate(c, pg, nx, ny) {
+            commit()                    // a canvas press can race focus-out
+            row = root.activePdfRow; page = pg; canvas = c
+            esize = root.inspector ? root.inspector.drawTextSize : 16
+            ecolor = root.inspector ? root.inspector.drawColor : "#E4E3E2"
+            ex = nx; ey = ny
+            ew = Math.min(0.5, Math.max(240, 2 * esize)
+                          / Math.max(1, blockModel.mediaW(root.activePdfRow)))
+            index = -1; origText = ""; buf = ""
+            mode = "create"
+        }
+        function beginEdit(c, pg, i) {
+            commit()
+            row = root.activePdfRow; page = pg; canvas = c
+            var t = c.textElementAt(i)
+            if (t.text === undefined) return
+            index = i
+            ex = t.x; ey = t.y; ew = t.w
+            esize = t.size; ecolor = t.color
+            origText = t.text; buf = t.text
+            mode = "edit"
+        }
+        function commit() {
+            if (mode === "") return
+            // Close the session BEFORE the model call so the data round-trip
+            // can't re-enter it (Connections below).
+            var m = mode, r = row, p = page, i = index, orig = origText, txt = buf
+            mode = ""; canvas = null
+            if (m === "create" && txt.trim() !== "")
+                blockModel.pdfAddPageText(r, p, ex, ey, ew, txt, esize, "" + ecolor)
+            else if (m === "edit" && txt !== orig)
+                blockModel.pdfSetPageText(r, p, i, txt)   // blank ⇒ model deletes
+            root.forceActiveFocus()
+        }
+        function cancel() {
+            if (mode === "") return
+            mode = ""; canvas = null
+            root.forceActiveFocus()
+        }
+    }
+    Connections {
+        // External data change mid-EDIT (undo, another surface) → the element
+        // under the overlay is stale: cancel. Create sessions just continue.
+        target: pdfTextSession.canvas
+        function onDataChanged() {
+            if (pdfTextSession.mode === "edit") pdfTextSession.cancel()
+        }
+    }
+    Connections {   // any tool change commits (the sketch-session rationale)
+        target: root.inspector
+        function onDrawToolChanged() { pdfTextSession.commit() }
+    }
+    Connections {   // leaving the PDF tab commits (captured row survives)
+        target: root
+        function onActivePdfRowChanged() {
+            if (root.activePdfRow < 0) pdfTextSession.commit()
         }
     }
 
