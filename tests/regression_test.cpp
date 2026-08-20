@@ -686,6 +686,21 @@ static void testExportMarkdown() {
         CHECK(ex.copyMarkdown(1, 1).contains(QStringLiteral("[^1]")),
               "range copy still numbers its footnotes");
     }
+    // Absolute image destinations become encoded file:// URLs (2026-08-20,
+    // user-caught: a bare "</Volumes/… with spaces>" is the least portable
+    // CommonMark destination form).
+    {
+        const QString imgPng = QDir::temp().filePath(QStringLiteral("mn_md_dest.png"));
+        { QImage probe(6, 4, QImage::Format_RGB32); probe.fill(Qt::darkYellow);
+          probe.save(imgPng, "PNG"); }
+        const int ir = m.insertImageFromUrl(m.rowCountQml() - 1,
+                                            QUrl::fromLocalFile(imgPng).toString());
+        CHECK(ir > 0, "dest-check image inserted");
+        const QString one = ex.copyMarkdown(ir, ir);
+        CHECK(one.contains(QStringLiteral("](file://"))
+                  && !one.contains(QStringLiteral("](</")),
+              "clipboard image dest is an encoded file:// URL");
+    }
     CHECK(md.contains(QStringLiteral("## Title")), "heading level maps to ##");
     CHECK(md.contains(QStringLiteral(
               "plain[^1] **bold *bolditalic*** *italic* [link](https://example.com)")),

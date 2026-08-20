@@ -88,6 +88,18 @@ QString mdDest(const QString& target) {
     return target;
 }
 
+// Markdown destination for a LOCAL file: absolute paths become
+// percent-encoded file:// URLs — "<{/Volumes/… with spaces}>" is legal
+// CommonMark but the least portable destination form (user-caught
+// 2026-08-20 on a NAS-referenced paste); encoded URLs render AND click in
+// strictly more consumers, and need no angle brackets. Relative asset
+// paths pass through untouched.
+QString mdFileDest(const QString& pathOrRel) {
+    if (QDir::isAbsolutePath(pathOrRel))
+        return QString::fromUtf8(QUrl::fromLocalFile(pathOrRel).toEncoded());
+    return mdDest(pathOrRel);
+}
+
 QString humanSize(qint64 bytes) {
     const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     double v = static_cast<double>(bytes);
@@ -597,7 +609,7 @@ QString emitMedia(const BlockModel* m, int row, const Exporter::Options& opt,
         // absolute path only when the source file is unreachable.
         const QString rel = sink.addFile(path, QFileInfo(path).completeBaseName());
         return QStringLiteral("![%1](%2)").arg(escapeMd(name),
-                                               mdDest(rel.isEmpty() ? path : rel));
+                                               mdFileDest(rel.isEmpty() ? path : rel));
     }
 
     // video / pdf / file → poster (when we can make one) + a kind-labeled
