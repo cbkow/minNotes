@@ -670,6 +670,8 @@ static void testExportMarkdown() {
     RecordingSink sink;
     const QString md = ex.toMarkdown(Exporter::Options{}, sink);
 
+    CHECK(md.startsWith(QStringLiteral("# Untitled\n\n")),
+          "document-name header leads the markdown (ruling 2026-08-20)");
     CHECK(md.contains(QStringLiteral("## Title")), "heading level maps to ##");
     CHECK(md.contains(QStringLiteral(
               "plain[^1] **bold *bolditalic*** *italic* [link](https://example.com)")),
@@ -2385,19 +2387,24 @@ static void testDocxRoundTrip() {
     m2.insertBlock(0);
     CHECK(Importer::importDocxFile(docx, &m2), "docx imported");
 
-    CHECK(m2.typeForRow(0) == BlockModel::Heading && m2.levelForRow(0) == 2
-              && m2.contentForRow(0) == QStringLiteral("Section title"),
+    // The export leads with a document-title header (ruling 2026-08-20) —
+    // anchor the structural checks on the section heading, not row 0.
+    int base = -1;
+    for (int r2 = 0; r2 < m2.rowCountQml(); ++r2)
+        if (m2.contentForRow(r2) == QStringLiteral("Section title")) { base = r2; break; }
+    CHECK(base >= 1, "title header precedes the content (base=%d)", base);
+    CHECK(m2.typeForRow(base) == BlockModel::Heading && m2.levelForRow(base) == 2,
           "direct-formatted heading level survives (size heuristic)");
-    CHECK(m2.contentForRow(1) == QStringLiteral("hello bold world")
-              && m2.hasFormat(1, 6, 10, QStringLiteral("bold")),
+    CHECK(m2.contentForRow(base + 1) == QStringLiteral("hello bold world")
+              && m2.hasFormat(base + 1, 6, 10, QStringLiteral("bold")),
           "paragraph + bold span round-trips");
-    CHECK(m2.typeForRow(2) == BlockModel::ListItem && m2.depthForRow(2) == 1,
+    CHECK(m2.typeForRow(base + 2) == BlockModel::ListItem && m2.depthForRow(base + 2) == 1,
           "nested bullet + depth");
-    CHECK(m2.typeForRow(3) == BlockModel::OrderedListItem,
+    CHECK(m2.typeForRow(base + 3) == BlockModel::OrderedListItem,
           "ordered item (numId 2 → ordered)");
-    CHECK(m2.typeForRow(4) == BlockModel::TaskListItem
-              && m2.taskStateForRow(4) == BlockModel::TaskDoing
-              && m2.contentForRow(4) == QStringLiteral("doing task"),
+    CHECK(m2.typeForRow(base + 4) == BlockModel::TaskListItem
+              && m2.taskStateForRow(base + 4) == BlockModel::TaskDoing
+              && m2.contentForRow(base + 4) == QStringLiteral("doing task"),
           "tri-state task via glyph sniff (DOING survives!)");
     int codeRow = -1, tableRow = -1, mediaRow = -1;
     for (int r2 = 0; r2 < m2.rowCountQml(); ++r2) {
@@ -2951,6 +2958,8 @@ static void testPdfPageInkExport() {
               && html.contains(QStringLiteral("_page3_ink")),
           "page-ink overlays ride the .ink stack (toggle-aware)");
     CHECK(html.contains(QStringLiteral("id=\"mn-ink\"")), "Annotations toggle armed");
+    CHECK(html.contains(QStringLiteral("<header class=\"doctitle\">")),
+          "document-name header leads the HTML");
     bool anyLit = false;
     for (const QImage& im : sink.images)
         if (im.hasAlphaChannel())
@@ -3038,6 +3047,8 @@ static void testExportPdf() {
     QString all;
     for (int pg = 0; pg < pdoc.pageCount(); ++pg)
         all += pdoc.getAllText(pg).text();
+    CHECK(all.contains(QStringLiteral("Untitled")),
+          "document-name header on page 1 (ruling 2026-08-20)");
     CHECK(all.contains(QStringLiteral("Export Title")), "heading text extracts");
     CHECK(all.contains(QStringLiteral("bolditalic")), "span text extracts");
     CHECK(all.contains(QStringLiteral("item one")), "list text extracts");

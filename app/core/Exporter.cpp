@@ -707,7 +707,9 @@ QString Exporter::toMarkdown(const Options& opt, AssetSink& sink) const {
     if (!model_) return {};
     const BlockModel* m = model_;
     FootnoteCtx fn;
-    QString doc;
+    // Document header (ruling 2026-08-20): every export leads with the
+    // document's name — the file you hand someone should say what it is.
+    QString doc = QStringLiteral("# %1\n\n").arg(escapeMd(m->documentName()));
     bool prevWasList = false;
 
     const int count = m->rowCountQml();
@@ -1438,6 +1440,9 @@ font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-ser
 main{max-width:1000px;margin:0;padding:48px 120px 96px}  /* content = the app's true 760
    measure, flanked by the app's 120px ink gutters so margin annotations render
    instead of cropping at the viewport's left origin */
+/* Document header: the export leads with the document's name (2026-08-20). */
+header.doctitle{font-size:26px;font-weight:700;color:var(--bright);
+padding-bottom:14px;margin-bottom:28px;border-bottom:1px solid var(--divider)}
 /* The BLOCK RULER: every block's number in the right margin (the app's
    rail). Elements host the span; all numbers align on one ledger line.
    No rule line: the app made its rules focus-reactive, so a static export
@@ -1825,7 +1830,8 @@ e.preventDefault();});
                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
                "<meta name=\"generator\" content=\"minNotes\">\n"
-               "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n%4</main>\n"
+               "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n"
+               "<header class=\"doctitle\">%1</header>\n%4</main>\n"
                "%5</body>\n</html>\n")
         .arg(htmlEscape(m->documentName()), css, toggle, body,
              QLatin1String(kLightbox));
@@ -2379,6 +2385,22 @@ QByteArray docxDocumentXml(DocxCtx& c) {
             QStringLiteral("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"));
         w.writeStartElement(QStringLiteral("w:body"));
 
+        {   // Document header (ruling 2026-08-20): the name leads every export.
+            DocxRunProps title;
+            title.b = true;
+            title.halfPtSize = 48;   // 24pt
+            docxPlainPara(w, m->documentName(), title, [](QXmlStreamWriter& pw) {
+                pw.writeStartElement(QStringLiteral("w:pBdr"));
+                pw.writeStartElement(QStringLiteral("w:bottom"));
+                pw.writeAttribute(QStringLiteral("w:val"), QStringLiteral("single"));
+                pw.writeAttribute(QStringLiteral("w:sz"), QStringLiteral("6"));
+                pw.writeAttribute(QStringLiteral("w:color"), QStringLiteral("BBBBBB"));
+                pw.writeEndElement();
+                pw.writeEndElement();
+            });
+            docxPlainPara(w, QString(), {});   // breathing room under the rule
+        }
+
         const int count = m->rowCountQml();
         for (int row = 0; row < count; ++row) {
             const int type = m->typeForRow(row);
@@ -2684,7 +2706,10 @@ void pdfInsertImage(PdfCtx& c, const QImage& img, qreal displayW) {
     if (img.isNull() || displayW <= 0 || img.width() <= 0) return;
     qreal w = std::min(displayW, c.contentW);
     qreal h = w * img.height() / double(img.width());
-    const qreal maxH = c.contentH - 24;
+    // Fit ONE page with certainty (ruling 2026-08-20): leave room for the
+    // block's own margins AND a caption line, so an image at the cap can
+    // never tip its block past the page and clip.
+    const qreal maxH = c.contentH - 48;
     if (maxH > 0 && h > maxH) { w *= maxH / h; h = maxH; }
     QTextBlockFormat bf; bf.setTopMargin(6); bf.setBottomMargin(6);
     c.newBlock(bf);
@@ -3211,11 +3236,8 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     writer.setPageSize(QPageSize(metric ? QPageSize::A4 : QPageSize::Letter));
     writer.setPageMargins(QMarginsF(18, 15, 18, 18), QPageLayout::Millimeter);
     writer.setCreator(QStringLiteral("minNotes"));
-    QString title;
-    for (int row = 0; row < model_->rowCountQml() && title.isEmpty(); ++row)
-        if (model_->typeForRow(row) == BlockModel::Heading)
-            title = model_->contentForRow(row);
-    writer.setTitle(title.isEmpty() ? QStringLiteral("minNotes document") : title);
+    const QString docName = model_->documentName();
+    writer.setTitle(docName.isEmpty() ? QStringLiteral("minNotes document") : docName);
 
     QTextDocument doc;
     doc.setDocumentMargin(0);   // margins live on the WRITER only (double-apply risk)
@@ -3231,6 +3253,23 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     const QRectF paint = writer.pageLayout().paintRectPixels(96);
     c.contentW = paint.width();
     c.contentH = paint.height();
+    {   // Document header (ruling 2026-08-20): the name leads every export.
+        QTextBlockFormat bf; bf.setBottomMargin(6);
+        QTextCharFormat f;
+        f.setFontWeight(QFont::Bold);
+        f.setFontPointSize(22);
+        f.setForeground(QColor(0x10, 0x10, 0x10));
+        c.newBlock(bf, f);
+        c.cur.insertText(writer.title(), f);
+        QImage line(8, 1, QImage::Format_ARGB32_Premultiplied);
+        line.fill(kPdfBorder);
+        QTextBlockFormat rb; rb.setBottomMargin(18);
+        c.newBlock(rb);
+        QTextImageFormat rf;
+        rf.setName(pdfAddImage(c, line));
+        rf.setWidth(c.contentW); rf.setHeight(1);
+        c.cur.insertImage(rf);
+    }
     buildPdfDoc(c);
     pdfComments(c);
 
