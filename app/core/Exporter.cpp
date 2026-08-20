@@ -481,6 +481,42 @@ QImage renderSketch(const BlockModel* m, int row) {
     return img;
 }
 
+// --- Per-page PDF ink (strokes + text chips), 2026-08-20. The page envelope
+// is the sketch schema (coordinate_system "normalized"; strokeWidth/size in
+// SOURCE px = the descriptor's page-point width). The overlay variant is
+// transparent (the HTML .ink stack / Annotations toggle); the annotated
+// variant bakes onto the rendered page (flowed formats).
+QImage renderPdfPageInkOverlay(const BlockModel* m, int row, int page, QSize pageSize) {
+    const QString env = m->pdfPageInk(row, page);
+    if (env.isEmpty() || pageSize.isEmpty()) return {};
+    const int srcW = std::max(1, m->mediaW(row));
+    const int srcH = std::max(1, m->mediaH(row));
+    QImage img(pageSize, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QJsonObject obj = QJsonDocument::fromJson(env.toUtf8()).object();
+    const double ws = double(pageSize.width()) / double(srcW);
+    // Chips under strokes — the sketch z-order (ink can circle labels).
+    for (mn::SketchTextSpec t : mn::parseSketchTexts(obj)) {
+        t.family = mn::sketchTextFamily();
+        mn::paintSketchText(p, t, srcW, srcH, ws);
+    }
+    for (const qcv::ActiveStroke& s : qcv::AnnotationSerializer::jsonStringToStrokes(env))
+        qcv::paintStroke(p, s, pageSize.width(), pageSize.height(), ws);
+    p.end();
+    return img;
+}
+QImage renderPdfPageAnnotated(const BlockModel* m, int row, int page,
+                              const QString& path, int maxW) {
+    QImage pg = MediaStore::renderPdfPage(path, page, maxW);
+    if (pg.isNull()) return pg;
+    const QImage ov = renderPdfPageInkOverlay(m, row, page, pg.size());
+    if (!ov.isNull()) { QPainter p(&pg); p.drawImage(0, 0, ov); p.end(); }
+    return pg;
+}
+
 QString emitVideoNotes(const QString& mediaPath, Exporter::AssetSink& sink) {
     std::vector<qcv::AnnotationNote> notes;
     if (!qcv::annotation_io::loadNotes(notes, mediaPath) || notes.empty())
@@ -571,7 +607,9 @@ QString emitMedia(const BlockModel* m, int row, const Exporter::Options& opt,
                    .arg(humanDuration(m->mediaDurationMs(row)))
                    .arg(m->mediaFrames(row));
     } else if (kind == QLatin1String("pdf")) {
-        const QImage poster = MediaStore::renderPdfPage(path, 0, 1280);
+        // Page ink/chips are CONTENT (the sketch precedent), so the poster
+        // carries page 1's baked in; margin ink stays dropped as ever.
+        const QImage poster = renderPdfPageAnnotated(m, row, 0, path, 1280);
         if (!poster.isNull()) {
             const QString rel = sink.addImage(poster, sanitizedBase(path) + QStringLiteral("_page1"));
             if (!rel.isEmpty())
@@ -583,6 +621,22 @@ QString emitMedia(const BlockModel* m, int row, const Exporter::Options& opt,
         meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
     }
     out += QStringLiteral("```%1\n%2\n%3\n%4\n```").arg(kind, name, path, meta);
+
+    if (kind == QLatin1String("pdf")) {
+        // Poster + annotated pages (ruling 2026-08-20): every OTHER page
+        // carrying ink/chips joins the export as its own baked image.
+        const int pages = m->mediaPdfPages(row);
+        for (int pg = 1; pg < pages; ++pg) {
+            if (m->pdfPageInk(row, pg).isEmpty()) continue;
+            const QImage img = renderPdfPageAnnotated(m, row, pg, path, 1280);
+            if (img.isNull()) continue;
+            const QString rel = sink.addImage(img,
+                sanitizedBase(path) + QStringLiteral("_page%1").arg(pg + 1));
+            if (!rel.isEmpty())
+                out += QStringLiteral("\n\n![%1 — page %2](%3)")
+                           .arg(escapeMd(name)).arg(pg + 1).arg(mdDest(rel));
+        }
+    }
 
     if (kind == QLatin1String("video") && opt.includeVideoNotes) {
         const QString notes = emitVideoNotes(path, sink);
@@ -767,12 +821,19 @@ QString Exporter::toMarkdown(const Options& opt, AssetSink& sink) const {
 QVariantMap Exporter::scan() const {
     QVariantMap out;
     int videos = 0, videosWithNotes = 0, videoNotes = 0, sketches = 0;
+    int pdfInkPages = 0;
     if (model_) {
         const int count = model_->rowCountQml();
         for (int row = 0; row < count; ++row) {
             if (model_->typeForRow(row) != BlockModel::Media) continue;
             const QString kind = model_->mediaKind(row);
             if (kind == QLatin1String("sketch")) { ++sketches; continue; }
+            if (kind == QLatin1String("pdf")) {
+                const int pages = model_->mediaPdfPages(row);
+                for (int pg = 0; pg < pages; ++pg)
+                    if (!model_->pdfPageInk(row, pg).isEmpty()) ++pdfInkPages;
+                continue;
+            }
             if (kind != QLatin1String("video")) continue;
             ++videos;
             std::vector<qcv::AnnotationNote> notes;
@@ -789,6 +850,7 @@ QVariantMap Exporter::scan() const {
     out.insert(QStringLiteral("inkBlocks"),
                model_ ? model_->inkBlockIds().size() : 0);
     out.insert(QStringLiteral("sketches"), sketches);
+    out.insert(QStringLiteral("pdfInkPages"), pdfInkPages);   // annotated PDF pages
     return out;
 }
 
@@ -1182,7 +1244,7 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
             .arg(htmlEscape(src), htmlEscape(name), wstyle);
     }
 
-    QString poster, posterInk, posterInkStyle, meta;
+    QString poster, posterInk, posterInkStyle, pageInk0, meta;
     QSize posterSize;
     if (kind == QLatin1String("video")) {
         const QImage p = MediaStore::extractFrame(path, 0, 1280);
@@ -1200,6 +1262,11 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
         if (!p.isNull()) {
             poster = sink.addImage(p, sanitizedBase(path) + QStringLiteral("_page1"));
             posterSize = p.size();
+            // Page 1's PAGE ink (strokes + chips) rides the same .ink stack
+            // as margin ink — toggle-aware, lightbox-aware (2026-08-20).
+            const QImage ov = renderPdfPageInkOverlay(m, row, 0, p.size());
+            if (!ov.isNull())
+                pageInk0 = sink.addImage(ov, sanitizedBase(path) + QStringLiteral("_page1_ink"));
         }
         meta = QStringLiteral("%1 pages").arg(m->mediaPdfPages(row));
     } else {
@@ -1215,11 +1282,19 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
     }
 
     QString out = QStringLiteral("<figure class=\"ref\">");
-    if (!poster.isEmpty() && !posterInk.isEmpty()) {
-        ++inkLayers;
-        out += QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\">"
-                              "<img class=\"ink\" src=\"%3\" alt=\"\"%4></div>")
-                   .arg(poster, htmlEscape(name), posterInk, posterInkStyle);
+    if (!poster.isEmpty() && (!posterInk.isEmpty() || !pageInk0.isEmpty())) {
+        out += QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\">")
+                   .arg(poster, htmlEscape(name));
+        if (!pageInk0.isEmpty()) {   // page ink UNDER margin ink (content vs annotation)
+            ++inkLayers;
+            out += QStringLiteral("<img class=\"ink\" src=\"%1\" alt=\"\">").arg(pageInk0);
+        }
+        if (!posterInk.isEmpty()) {
+            ++inkLayers;
+            out += QStringLiteral("<img class=\"ink\" src=\"%1\" alt=\"\"%2>")
+                       .arg(posterInk, posterInkStyle);
+        }
+        out += QStringLiteral("</div>");
     } else if (!poster.isEmpty()) {
         out += QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(poster, htmlEscape(name));
     }
@@ -1227,6 +1302,38 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
                           "<div class=\"fpath\">%2</div>"
                           "<div class=\"fmeta\">%3 · %4</div></figcaption></figure>")
                .arg(htmlEscape(name), htmlEscape(path), htmlEscape(kind), htmlEscape(meta));
+
+    if (kind == QLatin1String("pdf")) {
+        // Poster + annotated pages (ruling 2026-08-20): one figure per OTHER
+        // page carrying ink/chips — clean page base + toggleable overlay.
+        const int pages = m->mediaPdfPages(row);
+        for (int pg = 1; pg < pages; ++pg) {
+            if (m->pdfPageInk(row, pg).isEmpty()) continue;
+            const QImage base = MediaStore::renderPdfPage(path, pg, 1280);
+            if (base.isNull()) continue;
+            const QString baseUrl = sink.addImage(base,
+                sanitizedBase(path) + QStringLiteral("_page%1").arg(pg + 1));
+            if (baseUrl.isEmpty()) continue;
+            const QImage ov = renderPdfPageInkOverlay(m, row, pg, base.size());
+            QString ovUrl;
+            if (!ov.isNull())
+                ovUrl = sink.addImage(ov,
+                    sanitizedBase(path) + QStringLiteral("_page%1_ink").arg(pg + 1));
+            out += QStringLiteral("<figure class=\"ref\">");
+            if (!ovUrl.isEmpty()) {
+                ++inkLayers;
+                out += QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\">"
+                                      "<img class=\"ink\" src=\"%3\" alt=\"\"></div>")
+                           .arg(baseUrl, htmlEscape(name), ovUrl);
+            } else {
+                out += QStringLiteral("<img src=\"%1\" alt=\"%2\">")
+                           .arg(baseUrl, htmlEscape(name));
+            }
+            out += QStringLiteral("<figcaption><div class=\"fmeta\">%1 · page %2 of %3</div>"
+                                  "</figcaption></figure>")
+                       .arg(htmlEscape(name)).arg(pg + 1).arg(pages);
+        }
+    }
 
     if (kind == QLatin1String("video") && opt.includeVideoNotes)
         out += emitVideoNotesHtml(path, sink, inkLayers);
@@ -1679,14 +1786,14 @@ var wrap=document.createElement('div');
 var b=document.createElement('img');b.src=im.src;wrap.appendChild(b);
 var tgl=document.getElementById('mn-ink');
 var p=im.parentElement;
-var ink=(p&&(p.className.indexOf('inkwrap')>=0||p.className.indexOf('thumb')>=0))
-?p.querySelector('img.ink'):null;
-if(ink&&(!tgl||tgl.checked)){
+var inks=(p&&(p.className.indexOf('inkwrap')>=0||p.className.indexOf('thumb')>=0))
+?p.querySelectorAll('img.ink'):[];
+if(!tgl||tgl.checked)[].forEach.call(inks,function(ink){
 var o=document.createElement('img');o.src=ink.src;
 var st=ink.getAttribute('style');
 o.setAttribute('style',st||'left:0;top:0;width:100%;max-width:none');
 o.style.position='absolute';
-wrap.appendChild(o);}
+wrap.appendChild(o);});
 stage.appendChild(wrap);
 cnt.textContent=(cur+1)+' / '+imgs.length;
 lb.classList.add('open');}
@@ -2190,7 +2297,9 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
                    .arg(humanDuration(m->mediaDurationMs(row)))
                    .arg(m->mediaFrames(row));
     } else if (kind == QLatin1String("pdf")) {
-        poster = MediaStore::renderPdfPage(path, 0, 1280);
+        // Page 1's PAGE ink/chips bake into the poster (content, like sketch
+        // strokes); margin ink bakes after, via the generic path below.
+        poster = renderPdfPageAnnotated(m, row, 0, path, 1280);
         meta = QStringLiteral("%1 pages").arg(m->mediaPdfPages(row));
     } else {
         const QFileInfo fi(path);
@@ -2204,6 +2313,20 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
     docxPlainPara(w, name, bold);
     docxPlainPara(w, path, mono);
     docxPlainPara(w, kind + QStringLiteral(" · ") + meta, mono);
+
+    if (kind == QLatin1String("pdf")) {
+        // Poster + annotated pages (ruling 2026-08-20): one baked image +
+        // caption per OTHER page carrying ink/chips.
+        const int pages = m->mediaPdfPages(row);
+        for (int pg = 1; pg < pages; ++pg) {
+            if (m->pdfPageInk(row, pg).isEmpty()) continue;
+            const QImage img = renderPdfPageAnnotated(m, row, pg, path, 1280);
+            if (img.isNull()) continue;
+            docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());
+            docxPlainPara(w, QStringLiteral("%1 · page %2 of %3")
+                                 .arg(name).arg(pg + 1).arg(pages), mono);
+        }
+    }
 
     if (kind == QLatin1String("video") && c.opt.includeVideoNotes) {
         std::vector<qcv::AnnotationNote> notes;

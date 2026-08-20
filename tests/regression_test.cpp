@@ -33,6 +33,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QUrl>
 #include <QtGlobal>
 
@@ -2886,6 +2888,86 @@ static void testPdfPageInkUndo() {
     m.closeDocument();
 }
 
+// --- Test 35: export of PDF page ink + chips ------------------------------
+// Poster + annotated pages (ruling 2026-08-20): page 1's page ink rides the
+// HTML .ink stack; every OTHER page with ink/chips exports as its own
+// captioned figure; clean pages stay out. Fixture generated headless with
+// QPdfWriter itself.
+static void testPdfPageInkExport() {
+    qInfo("[35] export: PDF page ink + chips → overlays + annotated pages");
+    QDir dir(QCoreApplication::applicationDirPath()
+             + QStringLiteral("/mn_pdfink_export"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString pdf = dir.filePath(QStringLiteral("spec.pdf"));
+    {   // 3-page fixture
+        QPdfWriter w(pdf);
+        w.setResolution(96);
+        QPainter p(&w);
+        p.drawText(100, 100, QStringLiteral("page one"));
+        w.newPage(); p.drawText(100, 100, QStringLiteral("page two"));
+        w.newPage(); p.drawText(100, 100, QStringLiteral("page three"));
+        p.end();
+    }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    {
+        BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+        sp.mediaJson = QStringLiteral(
+            "{\"src\":\"%1\",\"w\":595,\"h\":842,\"kind\":\"pdf\",\"pages\":3}").arg(pdf);
+        m.insertSpecs(0, {sp}, false);
+    }
+    const int row = 1;
+    CHECK(m.mediaKind(row) == QLatin1String("pdf") && m.mediaPdfPages(row) == 3,
+          "pdf fixture block landed");
+    // Page 1: strokes. Page 3: chip ONLY (the chips-keep-page contract).
+    m.pdfSetPageInk(row, 0, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"e1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.6,0.6]]}]}"));
+    CHECK(m.pdfAddPageText(row, 2, 0.2, 0.2, 0.3, QStringLiteral("chip on 3"),
+                           24, QStringLiteral("#FF8800")) == 0, "chip on page 3");
+
+    class NameSink : public Exporter::AssetSink {
+    public:
+        QStringList names; QList<QImage> images;
+        QString addFile(const QString&, const QString& b) override {
+            names << b; return QStringLiteral("assets/") + b; }
+        QString addImage(const QImage& img, const QString& b) override {
+            names << b; images << img;
+            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
+    };
+    Exporter ex;
+    ex.setModel(&m);
+    NameSink sink;
+    const QString html = ex.toHtml(Exporter::Options{}, sink);
+    CHECK(html.contains(QStringLiteral("page 3 of 3")), "annotated page 3 figure emitted");
+    CHECK(!html.contains(QStringLiteral("page 2 of 3")), "clean page 2 NOT exported");
+    CHECK(html.contains(QStringLiteral("_page1_ink"))
+              && html.contains(QStringLiteral("_page3_ink")),
+          "page-ink overlays ride the .ink stack (toggle-aware)");
+    CHECK(html.contains(QStringLiteral("id=\"mn-ink\"")), "Annotations toggle armed");
+    bool anyLit = false;
+    for (const QImage& im : sink.images)
+        if (im.hasAlphaChannel())
+            for (int yy = 0; yy < im.height() && !anyLit; yy += 3)
+                for (int xx = 0; xx < im.width() && !anyLit; xx += 3)
+                    if (qAlpha(im.pixel(xx, yy)) != 0) anyLit = true;
+    CHECK(anyLit, "overlay rasters carry visible ink");
+    CHECK(ex.scan().value(QStringLiteral("pdfInkPages")).toInt() == 2,
+          "scan counts both annotated pages");
+
+    NameSink mdSink;
+    const QString md = ex.toMarkdown(Exporter::Options{}, mdSink);
+    CHECK(md.contains(QStringLiteral("page 3")) && md.contains(QStringLiteral("_page3")),
+          "markdown embeds the baked annotated page");
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -2937,6 +3019,7 @@ int main(int argc, char** argv) {
     testDocInkGroupMove();
     testSketchGroupDelete();
     testPdfPageInkUndo();
+    testPdfPageInkExport();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
