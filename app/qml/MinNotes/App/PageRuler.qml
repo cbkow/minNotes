@@ -19,8 +19,12 @@ Rectangle {
     readonly property var detents: [760, 880, 1000, 1200, 1400, 1600]
 
     visible: !!editor && editor.activeFrameId === ""   // Document view only
-    height: visible ? 14 : 0
-    color: Theme.colors.surfaceRaised   // chrome tone, like the strips
+    // 14px instrument + breathing room (ruling 2026-08-20: the flush strip
+    // felt cramped) — pad above the numbers and between ticks and baseline.
+    // Height is the SHARED token: the Inspector's top bar mirrors this band.
+    readonly property int pad: 4
+    height: visible ? Theme.dim.rulerHeight : 0
+    color: Theme.colors.surface   // match the LeftRail (ruling 2026-08-20)
     readonly property bool inked: !!editor && editor.inkMode
     opacity: inked ? 0.4 : 1
     enabled: !inked && blockModel.documentOpen
@@ -67,13 +71,14 @@ Rectangle {
             width: 1; height: ruler.height
             Rectangle {   // the tick — taller when it's the resting/target width
                 anchors.bottom: parent.bottom
+                anchors.bottomMargin: ruler.pad - 1   // lifted just off the baseline
                 width: 1; height: parent.target || parent.current ? 9 : 5
                 color: parent.target ? Theme.colors.accent
                      : parent.current ? Theme.colors.textMuted : Theme.colors.divider
             }
             Text {   // number left of its tick — always up (it names the UI)
                 anchors.right: parent.left; anchors.rightMargin: 3
-                y: 0
+                y: ruler.pad
                 text: parent.modelData
                 color: parent.target ? Theme.colors.accent
                      : parent.current ? Theme.colors.textMuted : Theme.colors.textSubtle
@@ -84,7 +89,7 @@ Rectangle {
 
     Item {   // the width handle: a bracket hugging the page's right edge
         x: ruler.xFor(ruler.dragging ? ruler.dragW : ruler.curW)
-        y: 0; width: 7; height: ruler.height
+        y: ruler.pad; width: 7; height: ruler.height - 2 * ruler.pad
         Rectangle {   // vertical bar ON the edge
             x: 0; width: 2; height: parent.height
             color: ruler.dragging ? Theme.colors.accent : Theme.colors.textMuted

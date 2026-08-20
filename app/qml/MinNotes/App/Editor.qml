@@ -480,6 +480,20 @@ FocusScope {
     // The whole editor field is ONE tone now (user ruling 2026-07-12): the
     // page shares the desk grey and the desk RULES alone carry structure.
     Rectangle { anchors.fill: parent; color: Theme.colors.bgAlt }
+    // AMENDED 2026-08-20 (user ruling): the SHEET — the page plus EQUAL
+    // left/right margins (leftEdge each side) — keeps the field tone; the
+    // area beyond it drops to the window-shell tone, so the document reads
+    // as a constrained shape that follows the width setting. Tracks the pan
+    // and the ruler's live width preview (pageWidth includes previewWidth).
+    Rectangle {
+        readonly property real sheetRight:
+            2 * root.leftEdge + root.pageWidth - flick.contentX
+        visible: flick.visible && width > 0
+        x: sheetRight
+        width: Math.max(0, parent.width - sheetRight)
+        height: parent.height
+        color: Theme.colors.bg
+    }
     MouseArea { anchors.fill: parent; onClicked: root.forceActiveFocus() }  // reclaim focus on bg click
 
     // --- Inline video player. ONE decoder, root-owned (a pooled MediaBlock

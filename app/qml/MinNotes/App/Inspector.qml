@@ -190,10 +190,32 @@ Rectangle {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
 
-        // Header: view toggle (Palette | Comments) + close.
+        // Top bar (ruling 2026-08-20): reserves the PageRuler's band inside
+        // the panel — same height, same tone, same baseline hairline — so
+        // the ruler line reads as carrying across when the rail is open.
+        // The close X lives here now (was in the header row).
+        Rectangle {
+            id: topBar
+            width: parent.width; height: Theme.dim.rulerHeight
+            color: Theme.colors.surface
+            Rectangle {   // the ruler's baseline hairline, carried across
+                anchors.bottom: parent.bottom
+                width: parent.width; height: 1
+                color: Theme.colors.border
+            }
+            FlatButton {
+                anchors.right: parent.right; anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                width: 18; height: 18; radius: 0; iconName: "x"; iconSize: 12
+                tooltip: "Close"; tooltipSide: "left"
+                onClicked: panel.open = false
+            }
+        }
+
+        // Header: view toggle (Palette | Comments | History).
         Item {
             id: header
-            x: 12; width: parent.width - 24; height: 30; y: 6
+            x: 12; width: parent.width - 24; height: 30; y: topBar.height + 6
             Row {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 14
@@ -215,11 +237,6 @@ Rectangle {
                        font.bold: panel.view === "history"
                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                    onClicked: panel.view = "history" } }
-            }
-            FlatButton {
-                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                width: 24; height: 24; radius: 0; iconName: "x"; iconSize: 13
-                tooltip: "Close"; onClicked: panel.open = false
             }
         }
 

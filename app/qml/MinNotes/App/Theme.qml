@@ -55,6 +55,8 @@ QtObject {
         readonly property int pageMargin:     48     // LEFT-ANCHORED page: fixed left margin (grip gutter lives in it)
         readonly property int docTopPad:      28     // breathing room above block 0
         readonly property int toolStripHeight: 34    // flat-button row height / rail width
+        readonly property int rulerHeight: 22        // PageRuler strip (14px instrument + 2×4 pad);
+                                                     // the Inspector's top bar matches it (2026-08-20)
     }
 
     // ── Fonts (bundled, loaded via FontLoader so the family resolves the same
