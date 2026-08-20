@@ -384,6 +384,35 @@ void Document::createThread(const QString& id) {
         qWarning() << "Document createThread failed:" << q.lastError().text();
 }
 
+// Timestamp-preserving writers (2026-08-20, the tab-merge program): a
+// thread migrated from another document keeps its history honest.
+void Document::createThreadAt(const QString& id, qint64 created, bool resolved) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("INSERT OR IGNORE INTO comment_threads (id, created, resolved) VALUES (?, ?, ?)");
+    q.addBindValue(id);
+    q.addBindValue(created > 0 ? created : QDateTime::currentMSecsSinceEpoch());
+    q.addBindValue(resolved ? 1 : 0);
+    if (!q.exec())
+        qWarning() << "Document createThreadAt failed:" << q.lastError().text();
+}
+
+void Document::insertMessageAt(const QString& id, const QString& threadId,
+                               const QString& body, qint64 created, qint64 modified) {
+    if (!open_) return;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("INSERT INTO comment_messages (id, thread_id, body, created, modified) "
+              "VALUES (?, ?, ?, ?, ?)");
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    q.addBindValue(id);
+    q.addBindValue(threadId);
+    q.addBindValue(body);
+    q.addBindValue(created > 0 ? created : now);
+    q.addBindValue(modified > 0 ? modified : now);
+    if (!q.exec())
+        qWarning() << "Document insertMessageAt failed:" << q.lastError().text();
+}
+
 void Document::deleteThread(const QString& id) {
     if (!open_) return;
     QSqlQuery q(QSqlDatabase::database(conn_));

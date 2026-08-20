@@ -90,6 +90,10 @@ public:
     std::vector<CommentThread> commentThreads() const;
     std::vector<CommentMessage> commentMessages(const QString& threadId) const;
     void createThread(const QString& id);
+    // Timestamp-preserving variants (merge migration, 2026-08-20).
+    void createThreadAt(const QString& id, qint64 created, bool resolved);
+    void insertMessageAt(const QString& id, const QString& threadId,
+                         const QString& body, qint64 created, qint64 modified);
     void deleteThread(const QString& id);                      // cascades messages
     void setThreadResolved(const QString& id, bool resolved);
     void insertMessage(const QString& id, const QString& threadId, const QString& body);

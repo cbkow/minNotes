@@ -20,7 +20,9 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonValue>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariantMap>
 #include <atomic>
@@ -29,6 +31,7 @@
 #include <vector>
 
 class BlockModel;
+class MediaStore;
 
 class PackageExporter : public QObject {
     Q_OBJECT
@@ -77,6 +80,23 @@ public:
     // Walk the model's media carriers into a plan WITHOUT extracting
     // anything. Missing/remote sources are skipped (descriptors stay as-is).
     static PackPlan buildPackPlan(BlockModel* m, bool includeVideos);
+
+    // --- Shared plan primitives (public statics since the tab-merge
+    // program — DocumentMerger plans with the same rules). ---
+    // NO-SIDE-EFFECT resolution of one descriptor src: where the bytes are
+    // (a local file, or an entry still inside a lazily-opened source
+    // package), keyed by the path the file WOULD occupy on disk.
+    struct Resolved {
+        QString absPath;       // the (possibly not-yet-existing) local path — the map key
+        QString packageEntry;  // "media/<rel>" when the bytes live in the source archive
+        qint64 bytes = 0;
+        bool ok = false;
+    };
+    static Resolved resolveNoExtract(MediaStore* store, const QJsonValue& src,
+                                     const QHash<QString, qint64>& pkgEntries);
+    // FileSink::unique pattern: keep the readable basename, suffix -2/-3/…
+    // on collision. Case-folded (case-insensitive filesystems).
+    static QString uniqueName(const QString& fileName, QSet<QString>& taken);
 
     // Synchronous core: plan → snapshot+rewrite → zip → atomic replace.
     static bool packDocument(BlockModel* m, const QString& destPath,

@@ -12,6 +12,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
     ${CMAKE_SOURCE_DIR}/app/core/PackageExporter.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/DocumentMerger.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Document.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp

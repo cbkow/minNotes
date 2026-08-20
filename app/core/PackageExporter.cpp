@@ -18,20 +18,13 @@
 #include <QSet>
 #include <QUrl>
 
-namespace {
+// NO-SIDE-EFFECT plan resolution for one descriptor src (public static since
+// the tab-merge program — DocumentMerger plans with the same rules). Never
+// extracts.
+using Resolved = PackageExporter::Resolved;
 
-// NO-SIDE-EFFECT plan resolution for one descriptor src: where the bytes are
-// (a local file, or an entry still inside the lazily-opened source package),
-// keyed by the path the file WOULD occupy on disk. Never extracts.
-struct Resolved {
-    QString absPath;       // the (possibly not-yet-existing) local path — the map key
-    QString packageEntry;  // "media/<rel>" when the bytes live in the source archive
-    qint64 bytes = 0;
-    bool ok = false;
-};
-
-Resolved resolveNoExtract(MediaStore* store, const QJsonValue& src,
-                          const QHash<QString, qint64>& pkgEntries) {
+Resolved PackageExporter::resolveNoExtract(MediaStore* store, const QJsonValue& src,
+                                           const QHash<QString, qint64>& pkgEntries) {
     Resolved r;
     if (!store) return r;
     const QString s = src.isObject() ? QString() : src.toString();
@@ -70,7 +63,7 @@ Resolved resolveNoExtract(MediaStore* store, const QJsonValue& src,
 
 // FileSink::unique pattern: keep the readable basename, suffix -2/-3/… on
 // collision. Case-folded (zip consumers on case-insensitive filesystems).
-QString uniqueName(const QString& fileName, QSet<QString>& taken) {
+QString PackageExporter::uniqueName(const QString& fileName, QSet<QString>& taken) {
     const QFileInfo fi(fileName);
     const QString stem = fi.completeBaseName().isEmpty()
                              ? QStringLiteral("media") : fi.completeBaseName();
@@ -83,6 +76,8 @@ QString uniqueName(const QString& fileName, QSet<QString>& taken) {
     return name;
 }
 
+namespace {
+
 // One media source joins the plan (deduped by its would-be local path).
 void planItem(PackageExporter::PackPlan& plan, QSet<QString>& taken,
               const Resolved& res, bool isVideo, bool includeVideos) {
@@ -93,7 +88,7 @@ void planItem(PackageExporter::PackPlan& plan, QSet<QString>& taken,
     PackageExporter::PackItem it;
     it.srcPath = res.packageEntry.isEmpty() ? res.absPath : QString();
     it.packageEntry = res.packageEntry;
-    it.packedName = uniqueName(QFileInfo(res.absPath).fileName(), taken);
+    it.packedName = PackageExporter::uniqueName(QFileInfo(res.absPath).fileName(), taken);
     it.bytes = res.bytes;
     it.isVideo = isVideo;
     if (isVideo && it.packageEntry.isEmpty()) {
@@ -114,8 +109,8 @@ void planItem(PackageExporter::PackPlan& plan, QSet<QString>& taken,
 bool rewriteSrc(QJsonObject& o, MediaStore* store,
                 const PackageExporter::PackPlan& plan,
                 const QHash<QString, qint64>& pkgEntries) {
-    const Resolved res = resolveNoExtract(store, o.value(QStringLiteral("src")),
-                                          pkgEntries);
+    const Resolved res = PackageExporter::resolveNoExtract(
+        store, o.value(QStringLiteral("src")), pkgEntries);
     if (!res.ok) return false;
     const auto it = plan.packedBySrc.constFind(res.absPath);
     if (it == plan.packedBySrc.constEnd()) return false;
@@ -450,7 +445,7 @@ MediaCollector::CollectPlan MediaCollector::buildCollectPlan(BlockModel* m,
         }
         CollectItem ci;
         ci.srcPath = src;
-        ci.destName = uniqueName(QFileInfo(src).fileName(), taken);
+        ci.destName = PackageExporter::uniqueName(QFileInfo(src).fileName(), taken);
         ci.sidecarDir = it.sidecarDir;
         ci.bytes = it.bytes;
         ci.isVideo = it.isVideo;

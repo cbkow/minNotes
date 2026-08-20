@@ -261,6 +261,23 @@ public:
     // C++ importer seam (QML goes through paste/import invokables).
     std::pair<int,int> insertSpecs(int row, const std::vector<BlockSpec>& specs,
                                    bool allowReuseBlankRow = true);
+    // Gap-addressed core (the tab-merge program): gap g = between rows g-1
+    // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
+    std::pair<int,int> spliceSpecsAt(int gap, const std::vector<BlockSpec>& specs,
+                                     bool allowReuseAnchorAbove = true);
+    // Inverse of the spec sink: one row → a BlockSpec that insertSpecs /
+    // spliceSpecsAt reproduces faithfully (spans carry ALL payloads —
+    // links, colors, choice chips, comment hrefs). The merge snapshot walker.
+    BlockSpec specForRow(int row) const;
+    // Replay a comment thread from another document with its history intact.
+    // NOT undoable, by the same design as createThread: thread rows are
+    // doc-local side tables; span edits are what the undo stack tracks.
+    struct ThreadMessage { QString id, body; qint64 created = 0, modified = 0; };
+    struct ThreadImport {
+        QString id; qint64 created = 0; bool resolved = false;
+        std::vector<ThreadMessage> messages;
+    };
+    void importCommentThread(const ThreadImport& t);
     // Localize remote http(s) media descriptors in [lo,hi] (async, best
     // effort) — the importer's post-insert pass.
     void localizeRemoteMedia(int loRow, int hiRow) { fetchRemoteMediaIn(loRow, hiRow); }
@@ -613,6 +630,11 @@ public:
     // and lands as ONE undo step (ink blobs + the width flip, atomic).
     qreal pageWidth() const { return pageWidth_; }
     Q_INVOKABLE void setPageWidth(qreal w);
+    // Edge-affinity ink migration for a width change: px-space strokes/texts
+    // fully inside a margin keep their content-relative position. Returns the
+    // migrated JSON, or an empty string when nothing moved. THE one home of
+    // the affinity math — setPageWidth and DocumentMerger both call it.
+    static QString migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW);
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).

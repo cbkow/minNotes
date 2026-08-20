@@ -21,6 +21,7 @@
 #include "core/Exporter.h"
 #include "core/Importer.h"
 #include "core/PackageExporter.h"
+#include "core/DocumentMerger.h"
 #include "core/PathMapController.h"
 #include "core/Clipboard.h"
 #include "core/VideoFrameProvider.h"
@@ -196,6 +197,10 @@ int main(int argc, char *argv[])
         mediaCollector.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("mediaCollector", &mediaCollector);
+    // Tab merge (drag a tab onto another tab). Models are passed per call —
+    // no model-following; the merger is stateless between merges.
+    DocumentMerger merger;
+    engine.rootContext()->setContextProperty("merger", &merger);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.

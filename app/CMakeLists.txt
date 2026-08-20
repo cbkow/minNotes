@@ -18,6 +18,7 @@ qt_add_executable(minnotesapp
     core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c
     core/PackageExporter.cpp
+    core/DocumentMerger.cpp
     core/DocumentManager.h
     core/DocumentManager.cpp
     core/PathMap.h

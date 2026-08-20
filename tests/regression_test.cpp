@@ -15,6 +15,7 @@
 #include "../app/notes/sketch_text.h"
 #include "PackageFormat.h"
 #include "PackageExporter.h"
+#include "DocumentMerger.h"
 #include "RtfConvert.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
@@ -3488,6 +3489,326 @@ static void testNewImportFormats() {
     dir.removeRecursively();
 }
 
+// --- Test 40: tab-merge engine — fidelity, ONE undo entry, thread re-mint --
+// Two live models, whole-document copy at a gap: every block type + spans
+// with payloads + margin ink + a comment thread with history must arrive
+// intact, as exactly one destination undo entry. Source untouched.
+static void testMergeEngine() {
+    qInfo("[40] merge engine: full fidelity, ONE undo entry, thread re-mint");
+    mn::DocInkAnchor a;
+    a.space = mn::DocInkAnchor::Px;
+    qcv::ActiveStroke st;
+    st.tool = qcv::DrawingTool::Freehand;
+    st.points = { QPointF(-450.0, 2.0), QPointF(-420.0, 30.0) };
+    st.strokeWidth = 4;
+    a.strokes.push_back(st);
+    const QString kInk = mn::docInkToJson(a);
+    const QString kChoice = QStringLiteral(
+        "{\"o\":[{\"id\":\"a\",\"l\":\"To do\"},{\"id\":\"b\",\"l\":\"Doing\"}],\"v\":\"b\"}");
+
+    BlockModel src;
+    src.newDocument();
+    while (src.rowCountQml() > 0) src.removeBlock(0);
+    src.insertBlock(0); src.setContent(0, QStringLiteral("Title"));
+    src.setHeading(0, 2);
+    src.insertBlock(1); src.setContent(1, QStringLiteral("hello world"));
+    src.setFormat(1, 0, 5, QStringLiteral("bold"), true);
+    src.insertBlock(2); src.makeCodeBlock(2, QStringLiteral("py"));
+    src.setContent(2, QStringLiteral("x = 1\ny = 2"));
+    const int tRow = src.insertTable(2, 2, 2);           // row 3
+    src.tableSetCell(tRow, 0, 0, QStringLiteral("c00"));
+    {   // choice chip: text == selected label, payload in the span
+        BlockModel::BlockSpec ch;
+        ch.type = BlockModel::Paragraph;
+        ch.text = QStringLiteral("Doing");
+        ch.spans.push_back({0, 5, BlockModel::SpanChoice, kChoice});
+        src.insertSpecs(tRow, {ch}, false);              // row 4
+    }
+    src.insertBlock(5); src.setContent(5, QStringLiteral("note me"));
+    const QString tid = src.addComment(5, 0, 4);
+    src.addCommentMessage(tid, QStringLiteral("first"));
+    src.addCommentMessage(tid, QStringLiteral("second"));
+    src.insertBlock(6); src.setContent(6, QStringLiteral("inked"));
+    src.setBlockInk(6, kInk);
+    const int srcN = src.rowCountQml();
+    CHECK(srcN == 7 && !tid.isEmpty(), "source fixture: 7 blocks + a thread");
+
+    BlockModel dest;
+    dest.newDocument();
+    while (dest.rowCountQml() > 0) dest.removeBlock(0);
+    dest.insertBlock(0); dest.setContent(0, QStringLiteral("top"));
+    dest.insertBlock(1); dest.setContent(1, QStringLiteral("bottom"));
+    const int entriesBefore = dest.undoHistory().size();
+
+    int first = -1, last = -1; QString err;
+    CHECK(DocumentMerger::mergeDocuments(&src, &dest, 1, &first, &last, &err),
+          "merge succeeded (%s)", qPrintable(err));
+    CHECK(first == 1 && last == 7 && dest.rowCountQml() == 2 + srcN,
+          "gap-1 merge landed between top and bottom (%d..%d)", first, last);
+
+    // Fidelity, row by row.
+    CHECK(dest.typeForRow(1) == BlockModel::Heading && dest.levelForRow(1) == 2
+              && dest.contentForRow(1) == QStringLiteral("Title"),
+          "heading level rode along");
+    CHECK(dest.contentForRow(2) == QStringLiteral("hello world")
+              && dest.hasFormat(2, 0, 5, QStringLiteral("bold")),
+          "bold span rode along");
+    CHECK(dest.typeForRow(3) == BlockModel::Code
+              && dest.languageForRow(3) == QStringLiteral("py")
+              && dest.contentForRow(3) == QStringLiteral("x = 1\ny = 2"),
+          "code block + language rode along");
+    CHECK(dest.typeForRow(4) == BlockModel::Table
+              && TableGrid::fromJson(dest.contentForRow(4)).cellText(0, 0)
+                     == QStringLiteral("c00"),
+          "table content rode along");
+    {
+        bool choiceOk = false;
+        for (const QVariant& v : dest.spansForRow(5)) {
+            const QVariantMap m = v.toMap();
+            if (m.value(QStringLiteral("k")).toInt() == int(BlockModel::SpanChoice)
+                && m.value(QStringLiteral("u")).toString() == kChoice)
+                choiceOk = true;
+        }
+        CHECK(choiceOk && dest.contentForRow(5) == QStringLiteral("Doing"),
+              "choice chip payload rode along");
+    }
+    const QString newTid = dest.commentAt(6, 1);
+    CHECK(!newTid.isEmpty() && newTid != tid,
+          "comment anchor arrived under a NEW thread id");
+    {
+        const QVariantList sm = src.commentMessages(tid);
+        const QVariantList dm = dest.commentMessages(newTid);
+        CHECK(dm.size() == 2
+                  && dm[0].toMap().value("body") == sm[0].toMap().value("body")
+                  && dm[1].toMap().value("body") == QStringLiteral("second")
+                  && dm[0].toMap().value("created") == sm[0].toMap().value("created"),
+              "thread history preserved (bodies + timestamps)");
+    }
+    CHECK(dest.inkForRow(7) == kInk && dest.contentForRow(7) == QStringLiteral("inked"),
+          "margin ink rode along (same width: byte-equal)");
+
+    // Exactly ONE undo entry; undo restores the destination wholesale.
+    CHECK(dest.undoHistory().size() == entriesBefore + 1, "merge = ONE undo entry");
+    dest.undo();
+    CHECK(dest.rowCountQml() == 2 && dest.contentForRow(0) == QStringLiteral("top")
+              && dest.contentForRow(1) == QStringLiteral("bottom"),
+          "one undo removes the whole merge");
+    dest.redo();
+    CHECK(dest.rowCountQml() == 2 + srcN && dest.inkForRow(7) == kInk
+              && dest.commentAt(6, 1) == newTid,
+          "redo brings it back with ink + comment anchor");
+
+    // The source was never touched; refusals + the pristine no-op.
+    CHECK(src.rowCountQml() == srcN && src.commentAt(5, 1) == tid,
+          "source untouched (copy semantics)");
+    CHECK(!DocumentMerger::mergeDocuments(&src, &src, 0, nullptr, nullptr, &err),
+          "self-merge refused (%s)", qPrintable(err));
+    {
+        BlockModel blank;
+        blank.newDocument();   // pristine: one empty paragraph, no ink
+        const int before = dest.rowCountQml();
+        int f = -2, l = -2;
+        CHECK(DocumentMerger::mergeDocuments(&blank, &dest, 0, &f, &l, &err)
+                  && f == -1 && l == -1 && dest.rowCountQml() == before,
+              "pristine-empty source is a success no-op");
+        blank.closeDocument();
+    }
+    src.closeDocument();
+    dest.closeDocument();
+}
+
+// --- Test 41: tab-merge assets, package sources, width migration, edges ----
+// Asset DISPOSITION: rel .minnotes sources copy into the destination sidecar
+// (collision-renamed, videos with their .qcview tree, identical same-name
+// files reused without copy); absolute refs pass through. Package views
+// splice entries out of the archive. Ink width-migrates between page
+// measures. Gap 0, the blank-anchor fold, and save/reopen persistence.
+static void testMergeAssetsAndEdges() {
+    qInfo("[41] merge assets: disposition, collisions, .qcview, packages, width");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_merge"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.filePath(QStringLiteral("s")));
+    QDir().mkpath(dir.filePath(QStringLiteral("d")));
+    const QString srcD = dir.filePath(QStringLiteral("s"));
+    const QString destD = dir.filePath(QStringLiteral("d"));
+    // saveAs copies the shared untitled-scratch .minnotes into the fixture
+    // dirs (junk from prior suite runs included) — unique basenames keep the
+    // collision/reuse assertions deterministic.
+    const QString uniq = makeUlid().right(6).toLower();
+    const QString picN = QStringLiteral("mp-") + uniq + QStringLiteral(".png");
+    const QString vidN = QStringLiteral("mv-") + uniq + QStringLiteral(".mp4");
+    const QString pic2 = QStringLiteral("mp-") + uniq + QStringLiteral("-2.png");
+    const QString pic3 = QStringLiteral("mp-") + uniq + QStringLiteral("-3.png");
+    const QString extPic = dir.filePath(QStringLiteral("ext.png"));
+    { QImage img(8, 8, QImage::Format_RGB32); img.fill(Qt::green);
+      img.save(extPic, "PNG"); }
+
+    BlockModel src;
+    src.newDocument();
+    while (src.rowCountQml() > 0) src.removeBlock(0);
+    src.insertBlock(0); src.setContent(0, QStringLiteral("assets"));
+    CHECK(src.saveAs(srcD + QStringLiteral("/src.mndb")), "source doc anchored");
+    QDir().mkpath(srcD + QStringLiteral("/.minnotes/.qcview/") + vidN);
+    { QImage img(12, 10, QImage::Format_RGB32); img.fill(Qt::yellow);
+      img.save(srcD + QStringLiteral("/.minnotes/") + picN, "PNG"); }
+    { QFile f(srcD + QStringLiteral("/.minnotes/") + vidN);
+      f.open(QIODevice::WriteOnly); f.write(QByteArray(256, 'V')); }
+    { QFile f(srcD + QStringLiteral("/.minnotes/.qcview/") + vidN
+              + QStringLiteral("/notes.json"));
+      f.open(QIODevice::WriteOnly); f.write("{\"notes\":[]}"); }
+    {
+        BlockModel::BlockSpec img; img.type = BlockModel::Media;
+        img.mediaJson = QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN);
+        src.insertSpecs(0, {img}, false);                                  // row 1
+        BlockModel::BlockSpec vid; vid.type = BlockModel::Media;
+        vid.mediaJson = QStringLiteral(
+            "{\"src\":\".minnotes/%1\",\"w\":320,\"h\":240,\"kind\":\"video\","
+            "\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(vidN);
+        src.insertSpecs(1, {vid}, false);                                  // row 2
+        BlockModel::BlockSpec ext; ext.type = BlockModel::Media;
+        ext.mediaJson = QStringLiteral("{\"src\":\"%1\",\"w\":8,\"h\":8}").arg(extPic);
+        src.insertSpecs(2, {ext}, false);                                  // row 3
+    }
+    const int tRow = src.insertTable(3, 2, 2);                             // row 4
+    src.tableSetCellMedia(tRow, 0, 0,
+        QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN));
+    const int srcN = src.rowCountQml();
+
+    BlockModel dest;
+    dest.newDocument();
+    while (dest.rowCountQml() > 0) dest.removeBlock(0);
+    dest.insertBlock(0); dest.setContent(0, QStringLiteral("d"));
+    CHECK(dest.saveAs(destD + QStringLiteral("/dest.mndb")), "dest doc anchored");
+    QDir().mkpath(destD + QStringLiteral("/.minnotes"));
+    { QFile f(destD + QStringLiteral("/.minnotes/") + picN);   // name collision
+      f.open(QIODevice::WriteOnly); f.write(QByteArray(7, 'x')); }
+
+    int f = -1, l = -1; QString err;
+    CHECK(DocumentMerger::mergeDocuments(&src, &dest, dest.rowCountQml(), &f, &l, &err),
+          "asset merge succeeded (%s)", qPrintable(err));
+    CHECK(f == 1 && l == srcN && dest.rowCountQml() == 1 + srcN,
+          "merged at the end (%d..%d)", f, l);
+    CHECK(dest.contentForRow(2).contains(QStringLiteral(".minnotes/") + pic2),
+          "collided image renamed -2 in the descriptor");
+    {
+        QFile a(srcD + QStringLiteral("/.minnotes/") + picN);
+        QFile b(destD + QStringLiteral("/.minnotes/") + pic2);
+        CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
+                  && a.readAll() == b.readAll(), "copied image byte-exact");
+    }
+    CHECK(dest.contentForRow(3).contains(QStringLiteral(".minnotes/") + vidN)
+              && QFileInfo::exists(destD + QStringLiteral("/.minnotes/") + vidN)
+              && QFileInfo::exists(destD + QStringLiteral("/.minnotes/.qcview/")
+                     + vidN + QStringLiteral("/notes.json")),
+          "video copied with its .qcview sidecar tree");
+    CHECK(dest.contentForRow(4).contains(extPic),
+          "absolute (linked) ref passed through untouched");
+    CHECK(dest.tableCellMedia(5, 0, 0).contains(QStringLiteral(".minnotes/") + pic2),
+          "table cell descriptor followed the copy");
+
+    // Package-view source: entries splice straight out of the archive; the
+    // byte-identical same-name video is REUSED without a second copy.
+    const QString pkg = dir.filePath(QStringLiteral("src.mnpkg"));
+    CHECK(PackageExporter::packDocument(&src, pkg, true, &err),
+          "source packed (%s)", qPrintable(err));
+    {
+        BlockModel pv;
+        CHECK(pv.openDocument(pkg), "package view opens");
+        const int before = dest.rowCountQml();
+        CHECK(DocumentMerger::mergeDocuments(&pv, &dest, before, &f, &l, &err),
+              "package merge succeeded (%s)", qPrintable(err));
+        CHECK(dest.contentForRow(f + 1).contains(QStringLiteral(".minnotes/") + pic3)
+                  && QFileInfo::exists(destD + QStringLiteral("/.minnotes/") + pic3),
+              "package image spliced out under the -3 name");
+        {
+            QFile a(srcD + QStringLiteral("/.minnotes/") + picN);
+            QFile b(destD + QStringLiteral("/.minnotes/") + pic3);
+            CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
+                      && a.readAll() == b.readAll(), "spliced image byte-exact");
+        }
+        CHECK(dest.contentForRow(f + 2).contains(QStringLiteral(".minnotes/") + vidN)
+                  && !QFileInfo::exists(destD + QStringLiteral("/.minnotes/mv-")
+                                        + uniq + QStringLiteral("-2.mp4")),
+              "identical same-name video REUSED (no second copy)");
+        pv.closeDocument();
+    }
+
+    // Save → reopen: the merged blocks + rewritten descriptors persist.
+    CHECK(dest.save(), "destination saves");
+    const int destCount = dest.rowCountQml();
+    dest.closeDocument();
+    {
+        BlockModel m2;
+        CHECK(m2.openDocument(destD + QStringLiteral("/dest.mndb")), "dest reopens");
+        CHECK(m2.rowCountQml() == destCount
+                  && m2.contentForRow(2).contains(QStringLiteral(".minnotes/") + pic2),
+              "merged rows + rewritten descriptors persisted");
+        m2.closeDocument();
+    }
+    src.closeDocument();
+
+    // Width migration: right-margin ink on a 1600 page lands edge-anchored
+    // on a 760 page — the exact migrateInkForWidth ground truth.
+    {
+        mn::DocInkAnchor a;
+        a.space = mn::DocInkAnchor::Px;
+        qcv::ActiveStroke st;
+        st.tool = qcv::DrawingTool::Freehand;
+        st.points = { QPointF(900.0, 10.0), QPointF(950.0, 40.0) };
+        st.strokeWidth = 4;
+        a.strokes.push_back(st);
+        const QString wideInk = mn::docInkToJson(a);
+
+        BlockModel wsrc;
+        wsrc.newDocument();
+        while (wsrc.rowCountQml() > 0) wsrc.removeBlock(0);
+        wsrc.insertBlock(0); wsrc.setContent(0, QStringLiteral("wide"));
+        wsrc.setPageWidth(1600);
+        wsrc.setBlockInk(0, wideInk);
+        BlockModel wdest;
+        wdest.newDocument();
+        while (wdest.rowCountQml() > 0) wdest.removeBlock(0);
+        wdest.insertBlock(0); wdest.setContent(0, QStringLiteral("n"));
+
+        CHECK(DocumentMerger::mergeDocuments(&wsrc, &wdest, 1, &f, &l, &err),
+              "width merge succeeded (%s)", qPrintable(err));
+        // Stroke ids regenerate on every serialization — compare the geometry
+        // (the migration's actual output), not the JSON bytes.
+        const QString expect = BlockModel::migrateInkForWidth(wideInk, 1600, 760);
+        mn::DocInkAnchor got, exp;
+        CHECK(!expect.isEmpty()
+                  && mn::docInkFromJson(wdest.inkForRow(1), got)
+                  && mn::docInkFromJson(expect, exp)
+                  && got.strokes.size() == 1 && exp.strokes.size() == 1
+                  && got.strokes[0].points == exp.strokes[0].points
+                  && got.strokes[0].points[0] == QPointF(480.0, 10.0),
+              "ink width-migrated 1600 -> 760 (edge affinity ground truth)");
+
+        // Gap 0: the merge lands at the very top.
+        CHECK(DocumentMerger::mergeDocuments(&wsrc, &wdest, 0, &f, &l, &err)
+                  && f == 0 && wdest.contentForRow(0) == QStringLiteral("wide"),
+              "gap 0 merges at the top of the document");
+        wdest.closeDocument();
+
+        // Blank-anchor consume fold: merging into a pristine doc replaces
+        // the placeholder row instead of leaving a leading blank.
+        BlockModel fdest;
+        fdest.newDocument();
+        const int hBefore = fdest.undoHistory().size();
+        CHECK(DocumentMerger::mergeDocuments(&wsrc, &fdest, 1, &f, &l, &err)
+                  && f == 0 && l == 0 && fdest.rowCountQml() == 1
+                  && fdest.contentForRow(0) == QStringLiteral("wide"),
+              "blank anchor consumed by the fold");
+        CHECK(fdest.undoHistory().size() == hBefore + 1, "fold merge = ONE entry");
+        fdest.undo();
+        CHECK(fdest.rowCountQml() == 1 && fdest.contentForRow(0).isEmpty(),
+              "undo restores the pristine blank row");
+        fdest.closeDocument();
+        wsrc.closeDocument();
+    }
+    if (qEnvironmentVariable("MN_MERGE_KEEP").isEmpty()) dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -3544,6 +3865,8 @@ int main(int argc, char** argv) {
     testInlineChoice();
     testUndoHeightSeeding();
     testNewImportFormats();
+    testMergeEngine();
+    testMergeAssetsAndEdges();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

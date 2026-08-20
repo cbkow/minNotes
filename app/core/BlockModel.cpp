@@ -1267,48 +1267,54 @@ void BlockModel::applyUndoWidth(qreal w) {
     emit pageWidthChanged();
 }
 
+// Edge-affinity migration (PLAN-page-width, affinity DERIVED not stored):
+// a px-space element fully in a margin keeps its CONTENT position — the
+// left page edge never moves, so left-margin X (center-relative) shifts
+// by -Δw/2 and right-margin by +Δw/2; anything overlapping the column
+// stays center-relative. Frame (media) anchors are width-immune.
+QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW) {
+    if (qFuzzyCompare(oldW, newW)) return {};
+    const qreal halfOld = oldW / 2.0;
+    const qreal dxEdge = (newW - oldW) / 2.0;
+    mn::DocInkAnchor a;
+    if (!mn::docInkFromJson(inkJson, a)) return {};
+    if (a.space != mn::DocInkAnchor::Px) return {};
+    bool changed = false;
+    for (qcv::ActiveStroke& s : a.strokes) {
+        const QRectF b = qcv::strokeBoundsNorm(s);   // local px, oval-aware
+        qreal shift = 0;
+        if (b.right() < -halfOld)     shift = -dxEdge;   // left marginalia
+        else if (b.left() > halfOld)  shift = dxEdge;    // right marginalia
+        if (shift == 0.0) continue;
+        const bool oval = (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2);
+        for (size_t i = 0; i < s.points.size(); ++i) {
+            if (oval && i == 1) continue;   // radii vector: never translated
+            s.points[i].rx() += shift;
+        }
+        changed = true;
+    }
+    for (mn::SketchTextSpec& t : a.texts) {
+        qreal shift = 0;
+        if (t.x + t.w < -halfOld)  shift = -dxEdge;
+        else if (t.x > halfOld)    shift = dxEdge;
+        if (shift != 0.0) { t.x += shift; changed = true; }
+    }
+    return changed ? mn::docInkToJson(a) : QString();
+}
+
 void BlockModel::setPageWidth(qreal w) {
     if (!documentOpen()) return;
     w = std::clamp<qreal>(w, 400.0, 4000.0);   // sanity; the UI offers detents
     if (qFuzzyCompare(w, pageWidth_)) return;
     const qreal oldW = pageWidth_;
-    const qreal halfOld = oldW / 2.0;
-    const qreal dxEdge = (w - oldW) / 2.0;
 
-    // Edge-affinity migration (PLAN-page-width, affinity DERIVED not stored):
-    // a px-space element fully in a margin keeps its CONTENT position — the
-    // left page edge never moves, so left-margin X (center-relative) shifts
-    // by -Δw/2 and right-margin by +Δw/2; anything overlapping the column
-    // stays center-relative. Frame (media) anchors are width-immune.
     struct Mig { int row; QString json; };
     std::vector<Mig> migs;
     for (auto it = inkByBlock_.constBegin(); it != inkByBlock_.constEnd(); ++it) {
         const int row = rowForId(it.key());
         if (row < 0) continue;
-        mn::DocInkAnchor a;
-        if (!mn::docInkFromJson(it.value(), a)) continue;
-        if (a.space != mn::DocInkAnchor::Px) continue;
-        bool changed = false;
-        for (qcv::ActiveStroke& s : a.strokes) {
-            const QRectF b = qcv::strokeBoundsNorm(s);   // local px, oval-aware
-            qreal shift = 0;
-            if (b.right() < -halfOld)     shift = -dxEdge;   // left marginalia
-            else if (b.left() > halfOld)  shift = dxEdge;    // right marginalia
-            if (shift == 0.0) continue;
-            const bool oval = (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2);
-            for (size_t i = 0; i < s.points.size(); ++i) {
-                if (oval && i == 1) continue;   // radii vector: never translated
-                s.points[i].rx() += shift;
-            }
-            changed = true;
-        }
-        for (mn::SketchTextSpec& t : a.texts) {
-            qreal shift = 0;
-            if (t.x + t.w < -halfOld)  shift = -dxEdge;
-            else if (t.x > halfOld)    shift = dxEdge;
-            if (shift != 0.0) { t.x += shift; changed = true; }
-        }
-        if (changed) migs.push_back({row, mn::docInkToJson(a)});
+        const QString json = migrateInkForWidth(it.value(), oldW, w);
+        if (!json.isEmpty()) migs.push_back({row, json});
     }
 
     // Ink rewrites (if any) fold into one txn; the width stamps onto that
@@ -4383,10 +4389,62 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     return QVariantList{ caretRow, caretCol };
 }
 
+// Inverse of the spec sink (2026-08-20, the tab-merge program): one row →
+// the BlockSpec spliceSpecsAt reproduces faithfully. Media/Table ride their
+// content JSON whole (PDF page ink + chips live inside the descriptor, so
+// they travel free); everything else carries text + spans WITH payloads.
+BlockModel::BlockSpec BlockModel::specForRow(int row) const {
+    BlockSpec sp;
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return sp;
+    const Row& r = rows_[row];
+    if (r.type == Media) {
+        sp.type = Media;
+        sp.mediaJson = content_[row];
+        return sp;
+    }
+    if (r.type == Table) {
+        sp.type = Table;
+        sp.tableJson = content_[row];
+        return sp;
+    }
+    sp.type = r.type;
+    sp.level = r.level;
+    sp.taskState = r.taskState;
+    sp.depth = r.depth;
+    sp.lang = r.lang;
+    sp.text = content_[row];
+    sp.spans = r.spans;
+    return sp;
+}
+
+// Replay a migrated comment thread with its history intact. NOT undoable,
+// by the same design as createThread — thread rows are doc-local side
+// tables; the SpanComment anchors are what the undo stack tracks.
+void BlockModel::importCommentThread(const ThreadImport& t) {
+    if (!doc_.isOpen() || t.id.isEmpty()) return;
+    doc_.createThreadAt(t.id, t.created, t.resolved);
+    for (const ThreadMessage& m : t.messages)
+        doc_.insertMessageAt(m.id, t.id, m.body, m.created, m.modified);
+    ++commentsRevision_;
+    emit commentsChanged();
+}
+
 std::pair<int,int> BlockModel::insertSpecs(int row, const std::vector<BlockSpec>& specs,
                                            bool allowReuseBlankRow) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || specs.empty())
         return { std::max(0, row), 0 };
+    return spliceSpecsAt(row + 1, specs, allowReuseBlankRow);
+}
+
+// Gap-addressed core (2026-08-20, the tab-merge program): gap g = between
+// rows g-1 and g, so 0 = top of document and count = the end — addresses
+// insertSpecs (gap = row+1) never could. The blank-anchor fold only ever
+// looks ABOVE the gap, matching the paste convention.
+std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpec>& specs,
+                                             bool allowReuseAnchorAbove) {
+    const int n = static_cast<int>(rows_.size());
+    if (specs.empty()) return { std::clamp(gap - 1, 0, std::max(0, n - 1)), 0 };
+    gap = std::clamp(gap, 0, n);
 
     // Turn a spec into (Row, content). depth/lang carry through (their former
     // silent drop at appendBlock was the latent paste bug this extraction
@@ -4412,32 +4470,40 @@ std::pair<int,int> BlockModel::insertSpecs(int row, const std::vector<BlockSpec>
         }
     };
 
-    const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
-                         || rows_[row].type == Divider);
-    const bool reuse = allowReuseBlankRow && !opaque && content_[row].isEmpty()
-        && (rows_[row].type == Paragraph || rows_[row].type == Heading
-            || rows_[row].type == Quote || rows_[row].type == ListItem);
+    const int anchor = gap - 1;   // the row above the gap, if any
+    bool reuse = false;
+    if (allowReuseAnchorAbove && anchor >= 0) {
+        const bool opaque = (rows_[anchor].type == Media || rows_[anchor].type == Table
+                             || rows_[anchor].type == Divider);
+        reuse = !opaque && content_[anchor].isEmpty()
+            && (rows_[anchor].type == Paragraph || rows_[anchor].type == Heading
+                || rows_[anchor].type == Quote || rows_[anchor].type == ListItem);
+    }
 
-    beginTxn(row, row);
-    int caretRow = row, caretCol = 0;
+    // Band: the anchor when folding into it; empty (lo > hi) for a pure
+    // insertion — endTxn's delta math turns that into an after-band of
+    // exactly the inserted rows.
+    if (reuse) beginTxn(anchor, anchor);
+    else       beginTxn(gap, gap - 1);
+    int caretRow = std::max(0, anchor), caretCol = 0;
     int startSpec = 0;
 
     if (reuse) {                                          // fold the 1st block into the blank row
         Row r; QString content; specRow(specs[0], r, content);
-        rows_[row] = r;
-        content_[row] = content;
-        persistContent(row);
-        persistMeta(row);
-        emit dataChanged(index(row), index(row), {ContentRole});
-        caretRow = row; caretCol = (specs[0].type == Table) ? 0 : content.size();
+        rows_[anchor] = r;
+        content_[anchor] = content;
+        persistContent(anchor);
+        persistMeta(anchor);
+        emit dataChanged(index(anchor), index(anchor), {ContentRole});
+        caretRow = anchor; caretCol = (specs[0].type == Table) ? 0 : content.size();
         startSpec = 1;
     }
 
     const int cnt = static_cast<int>(specs.size()) - startSpec;
     if (cnt > 0) {
-        const int first = row + 1, last = row + cnt;
-        QString prevRank = ranks_[row];
-        const QString nextRank = (first < static_cast<int>(ranks_.size())) ? ranks_[first] : QString();
+        const int first = gap, last = gap + cnt - 1;
+        QString prevRank = (gap > 0) ? ranks_[gap - 1] : QString();
+        const QString nextRank = (gap < n) ? ranks_[gap] : QString();
         struct NewBlk { QString id, rank, content; Row r; };
         std::vector<NewBlk> made;
         beginInsertRows({}, first, last);
