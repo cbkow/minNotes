@@ -3321,6 +3321,173 @@ static void testUndoHeightSeeding() {
     m.closeDocument();
 }
 
+// --- Test 39: new import formats — xlsx / ods / odt / source code ----------
+// Fixtures are hand-authored OOXML/ODF parts via PackageWriter (the Notion
+// test's pattern — no exporter exists for these formats).
+static void testNewImportFormats() {
+    qInfo("[39] import: xlsx sheets, ods repeats, odt styles, code files");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_imp_new"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+
+    // Classifier: office containers beat the Notion zip sniff; code maps.
+    CHECK(Importer::formatForPath(QStringLiteral("a.xlsx")) == QLatin1String("xlsx")
+              && Importer::formatForPath(QStringLiteral("a.ods")) == QLatin1String("ods")
+              && Importer::formatForPath(QStringLiteral("a.odt")) == QLatin1String("odt")
+              && Importer::formatForPath(QStringLiteral("a.py")) == QLatin1String("code"),
+          "classifier maps the new formats");
+
+    // --- xlsx: 2 sheets, shared + inline strings, sparse row ---
+    const QString xlsx = dir.filePath(QStringLiteral("book.xlsx"));
+    {
+        mnpkg::PackageWriter w(xlsx);
+        w.addCompressed(QStringLiteral("xl/workbook.xml"), QByteArray(
+            "<workbook xmlns:r=\"r\"><sheets>"
+            "<sheet name=\"Alpha\" sheetId=\"1\" r:id=\"rId1\"/>"
+            "<sheet name=\"Beta\" sheetId=\"2\" r:id=\"rId2\"/>"
+            "</sheets></workbook>"));
+        w.addCompressed(QStringLiteral("xl/_rels/workbook.xml.rels"), QByteArray(
+            "<Relationships>"
+            "<Relationship Id=\"rId1\" Target=\"worksheets/sheet1.xml\"/>"
+            "<Relationship Id=\"rId2\" Target=\"worksheets/sheet2.xml\"/>"
+            "</Relationships>"));
+        w.addCompressed(QStringLiteral("xl/sharedStrings.xml"), QByteArray(
+            "<sst><si><t>Name</t></si><si><t>Qty</t></si>"
+            "<si><r><t>rich </t></r><r><t>run</t></r></si></sst>"));
+        w.addCompressed(QStringLiteral("xl/worksheets/sheet1.xml"), QByteArray(
+            "<worksheet><sheetData>"
+            "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c></row>"
+            "<row r=\"3\"><c r=\"A3\" t=\"s\"><v>2</v></c><c r=\"C3\"><v>42</v></c></row>"
+            "</sheetData></worksheet>"));
+        w.addCompressed(QStringLiteral("xl/worksheets/sheet2.xml"), QByteArray(
+            "<worksheet><sheetData>"
+            "<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>solo</t></is></c></row>"
+            "</sheetData></worksheet>"));
+        CHECK(w.finish(), "xlsx fixture wrote");
+    }
+    {
+        BlockModel m; m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importXlsxFile(xlsx, &m), "xlsx imported");
+        int tables = 0, headings = 0, tRow = -1;
+        for (int r = 0; r < m.rowCountQml(); ++r) {
+            if (m.typeForRow(r) == BlockModel::Table) { ++tables; if (tRow < 0) tRow = r; }
+            if (m.typeForRow(r) == BlockModel::Heading) ++headings;
+        }
+        CHECK(tables == 2 && headings == 2, "two sheets → two headed tables");
+        CHECK(m.tableCell(tRow, 0, 0) == QStringLiteral("Name")
+                  && m.tableCell(tRow, 0, 1) == QStringLiteral("Qty"),
+              "shared strings resolved");
+        CHECK(m.tableCell(tRow, 2, 0) == QStringLiteral("rich run")
+                  && m.tableCell(tRow, 2, 2) == QStringLiteral("42")
+                  && m.tableCell(tRow, 1, 0).isEmpty(),
+              "rich-run si, numeric cell, sparse row gap");
+        m.closeDocument();
+    }
+
+    // --- ods: repeated columns expand, sheet-edge padding trimmed ---
+    const QString ods = dir.filePath(QStringLiteral("calc.ods"));
+    {
+        mnpkg::PackageWriter w(ods);
+        w.addCompressed(QStringLiteral("content.xml"), QByteArray(
+            "<office:document-content xmlns:office=\"o\" xmlns:table=\"t\" xmlns:text=\"x\">"
+            "<office:body><office:spreadsheet>"
+            "<table:table table:name=\"Only\">"
+            "<table:table-row>"
+            "<table:table-cell table:number-columns-repeated=\"2\"><text:p>dup</text:p></table:table-cell>"
+            "<table:table-cell><text:p>end</text:p></table:table-cell>"
+            "<table:table-cell table:number-columns-repeated=\"1013\"/>"
+            "</table:table-row>"
+            "<table:table-row table:number-rows-repeated=\"500\"/>"
+            "</table:table></office:spreadsheet></office:body>"
+            "</office:document-content>"));
+        CHECK(w.finish(), "ods fixture wrote");
+    }
+    {
+        BlockModel m; m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importOdsFile(ods, &m), "ods imported");
+        int tRow = -1, headings = 0;
+        for (int r = 0; r < m.rowCountQml(); ++r) {
+            if (m.typeForRow(r) == BlockModel::Table && tRow < 0) tRow = r;
+            if (m.typeForRow(r) == BlockModel::Heading) ++headings;
+        }
+        CHECK(tRow >= 0 && headings == 0, "single sheet → table, NO heading");
+        CHECK(m.tableColumns(tRow) == 3 && m.tableRows(tRow) == 1,
+              "repeats expanded, sheet-edge padding trimmed (%dx%d)",
+              m.tableRows(tRow), m.tableColumns(tRow));
+        CHECK(m.tableCell(tRow, 0, 0) == QStringLiteral("dup")
+                  && m.tableCell(tRow, 0, 1) == QStringLiteral("dup")
+                  && m.tableCell(tRow, 0, 2) == QStringLiteral("end"),
+              "column repeat duplicated the value");
+        m.closeDocument();
+    }
+
+    // --- odt: heading, styled spans via automatic-styles, list nesting ---
+    const QString odt = dir.filePath(QStringLiteral("doc.odt"));
+    {
+        mnpkg::PackageWriter w(odt);
+        w.addCompressed(QStringLiteral("content.xml"), QByteArray(
+            "<office:document-content xmlns:office=\"o\" xmlns:text=\"x\" xmlns:style=\"s\" xmlns:fo=\"f\">"
+            "<office:automatic-styles>"
+            "<style:style style:name=\"T1\" style:family=\"text\">"
+            "<style:text-properties fo:font-weight=\"bold\"/></style:style>"
+            "<text:list-style style:name=\"L1\">"
+            "<text:list-level-style-number text:level=\"1\"/></text:list-style>"
+            "</office:automatic-styles>"
+            "<office:body><office:text>"
+            "<text:h text:outline-level=\"2\">Section</text:h>"
+            "<text:p>plain <text:span text:style-name=\"T1\">bolded</text:span> tail</text:p>"
+            "<text:list text:style-name=\"L1\"><text:list-item>"
+            "<text:p>first item</text:p></text:list-item></text:list>"
+            "</office:text></office:body></office:document-content>"));
+        CHECK(w.finish(), "odt fixture wrote");
+    }
+    {
+        BlockModel m; m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importOdtFile(odt, &m), "odt imported");
+        int h = -1, p = -1, li = -1;
+        for (int r = 0; r < m.rowCountQml(); ++r) {
+            if (m.typeForRow(r) == BlockModel::Heading && h < 0) h = r;
+            if (m.typeForRow(r) == BlockModel::Paragraph
+                && m.contentForRow(r).startsWith(QStringLiteral("plain"))) p = r;
+            if (m.typeForRow(r) == BlockModel::OrderedListItem) li = r;
+        }
+        CHECK(h >= 0 && m.levelForRow(h) == 2
+                  && m.contentForRow(h) == QStringLiteral("Section"),
+              "text:h → level-2 heading");
+        CHECK(p >= 0 && m.contentForRow(p) == QStringLiteral("plain bolded tail")
+                  && m.hasFormat(p, 6, 12, QStringLiteral("bold")),
+              "automatic-style span resolved to bold");
+        CHECK(li >= 0 && m.contentForRow(li) == QStringLiteral("first item"),
+              "numbered list style → ordered item");
+        m.closeDocument();
+    }
+
+    // --- source code file → one Code block with the extension as lang ---
+    const QString py = dir.filePath(QStringLiteral("tool.py"));
+    { QFile f(py); CHECK(f.open(QIODevice::WriteOnly), "py fixture writable");
+      f.write("def main():\n    return 42\n"); }
+    {
+        BlockModel m; m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importCodeFile(py, &m), "code file imported");
+        int c = -1;
+        for (int r = 0; r < m.rowCountQml(); ++r)
+            if (m.typeForRow(r) == BlockModel::Code) { c = r; break; }
+        CHECK(c >= 0 && m.languageForRow(c) == QStringLiteral("py")
+                  && m.contentForRow(c) == QStringLiteral("def main():\n    return 42"),
+              "one Code block, lang=py, trailing newline trimmed");
+        m.closeDocument();
+    }
+    dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -3376,6 +3543,7 @@ int main(int argc, char** argv) {
     testExportPdf();
     testInlineChoice();
     testUndoHeightSeeding();
+    testNewImportFormats();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

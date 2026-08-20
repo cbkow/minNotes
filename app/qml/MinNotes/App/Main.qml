@@ -106,7 +106,11 @@ ApplicationWindow {
         // when RtfConvert_win lands) rather than hard-coding platforms.
         nameFilters: {
             var rtfOk = importer.formatFor("probe.rtf") !== ""
-            var all = "*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm *.docx *.enex *.zip"
+            var code = "*.py *.js *.ts *.jsx *.tsx *.c *.cc *.cpp *.cxx *.h *.hpp *.m *.mm"
+                     + " *.cs *.java *.kt *.swift *.go *.rs *.rb *.php *.sh *.bash *.zsh"
+                     + " *.sql *.json *.yaml *.yml *.toml *.xml *.ini *.css *.scss *.lua *.pl *.r *.cmake *.ps1"
+            var all = "*.md *.markdown *.mdown *.txt *.text *.log *.csv *.tsv *.tab *.html *.htm"
+                    + " *.docx *.xlsx *.odt *.ods *.enex *.zip " + code
             var f = []
             if (rtfOk) all += " *.rtf"
             f.push("Importable documents (" + all + ")")
@@ -115,6 +119,9 @@ ApplicationWindow {
                           "CSV / TSV (*.csv *.tsv *.tab)",
                           "HTML (*.html *.htm)",
                           "Word document (*.docx)",
+                          "Excel workbook (*.xlsx)",
+                          "OpenDocument (*.odt *.ods)",
+                          "Source code (" + code + ")",
                           "Evernote export (*.enex)",
                           "Notion export (*.zip)"])
             if (rtfOk) f.push("RTF (*.rtf)")

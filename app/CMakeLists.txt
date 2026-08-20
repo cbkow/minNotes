@@ -12,6 +12,8 @@ qt_add_executable(minnotesapp
     core/BlockModel.cpp
     core/Importer.cpp
     core/DocxReader.cpp
+    core/XlsxReader.cpp
+    core/OdfReader.cpp
     $<IF:$<PLATFORM_ID:Darwin>,core/RtfConvert_mac.mm,$<IF:$<PLATFORM_ID:Windows>,core/RtfConvert_win.cpp,core/RtfConvert_stub.cpp>>
     core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c

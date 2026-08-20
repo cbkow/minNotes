@@ -1,5 +1,7 @@
 #include "Importer.h"
 #include "DocxReader.h"
+#include "XlsxReader.h"
+#include "OdfReader.h"
 #include "MediaStore.h"
 #include "RtfConvert.h"
 #include "TableGrid.h"
@@ -51,6 +53,28 @@ static QString readTextFile(const QString& path, bool* ok) {
 // private-use char before setMarkdown, then restored on the spec.
 static const QChar kDoingSentinel(0xE0D0);
 
+// Source-code import (2026-08-20): the extension IS the stored lang —
+// resolveCodeDefinition's definitionForFileName("f."+lang) path resolves
+// bare extensions, so no name mapping is needed here.
+static bool isCodeExtension(const QString& ext) {
+    static const QSet<QString> exts = {
+        QStringLiteral("py"),   QStringLiteral("js"),    QStringLiteral("ts"),
+        QStringLiteral("jsx"),  QStringLiteral("tsx"),   QStringLiteral("c"),
+        QStringLiteral("cc"),   QStringLiteral("cpp"),   QStringLiteral("cxx"),
+        QStringLiteral("h"),    QStringLiteral("hpp"),   QStringLiteral("m"),
+        QStringLiteral("mm"),   QStringLiteral("cs"),    QStringLiteral("java"),
+        QStringLiteral("kt"),   QStringLiteral("swift"), QStringLiteral("go"),
+        QStringLiteral("rs"),   QStringLiteral("rb"),    QStringLiteral("php"),
+        QStringLiteral("sh"),   QStringLiteral("bash"),  QStringLiteral("zsh"),
+        QStringLiteral("sql"),  QStringLiteral("json"),  QStringLiteral("yaml"),
+        QStringLiteral("yml"),  QStringLiteral("toml"),  QStringLiteral("xml"),
+        QStringLiteral("ini"),  QStringLiteral("css"),   QStringLiteral("scss"),
+        QStringLiteral("lua"),  QStringLiteral("pl"),    QStringLiteral("r"),
+        QStringLiteral("cmake"), QStringLiteral("ps1"),
+    };
+    return exts.contains(ext);
+}
+
 QString Importer::formatForPath(const QString& fileUrlOrPath) {
     const QString path = localPath(fileUrlOrPath);
     const QString ext = QFileInfo(path).suffix().toLower();
@@ -64,6 +88,15 @@ QString Importer::formatForPath(const QString& fileUrlOrPath) {
     if (ext == QLatin1String("docx"))                                     return QStringLiteral("docx");
     if (ext == QLatin1String("rtf") && mn::rtfImportSupported())          return QStringLiteral("rtf");
     if (ext == QLatin1String("enex"))                                     return QStringLiteral("enex");
+    // Office containers (2026-08-20). These are ZIPs — they MUST match
+    // before the Notion zip sniff below, which would happily claim any
+    // archive containing a .csv entry.
+    if (ext == QLatin1String("xlsx"))                                     return QStringLiteral("xlsx");
+    if (ext == QLatin1String("ods"))                                      return QStringLiteral("ods");
+    if (ext == QLatin1String("odt"))                                      return QStringLiteral("odt");
+    // Source-code files → one syntax-colored Code block (ruling 2026-08-20;
+    // they landed as file chips before).
+    if (isCodeExtension(ext))                                             return QStringLiteral("code");
     if (ext == QLatin1String("zip")) {
         // Only NOTION-shaped zips import (md/csv entries in the central
         // directory — one cheap read); any other zip stays a file chip.
@@ -113,6 +146,10 @@ bool Importer::importFile(const QString& fileUrlOrPath) {
     if (fmt == QLatin1String("html")) return importHtmlFile(path, model_);
     if (fmt == QLatin1String("docx")) return importDocxFile(path, model_);
     if (fmt == QLatin1String("rtf"))  return importRtfFile(path, model_);
+    if (fmt == QLatin1String("xlsx")) return importXlsxFile(path, model_);
+    if (fmt == QLatin1String("ods"))  return importOdsFile(path, model_);
+    if (fmt == QLatin1String("odt"))  return importOdtFile(path, model_);
+    if (fmt == QLatin1String("code")) return importCodeFile(path, model_);
     return false;
 }
 
@@ -195,8 +232,49 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
             }
         }
         out.ok = true;
+    } else if (fmt == QLatin1String("code")) {
+        // Source file → ONE Code block; the lang is the bare extension
+        // (resolveCodeDefinition's extension path handles it).
+        bool ok = false;
+        QString text = readTextFile(path, &ok);
+        if (!ok) return out;
+        text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"))
+            .replace(QLatin1Char('\r'), QLatin1Char('\n'));
+        while (text.endsWith(QLatin1Char('\n'))) text.chop(1);
+        BlockModel::BlockSpec sp;
+        sp.type = BlockModel::Code;
+        sp.lang = QFileInfo(path).suffix().toLower();
+        sp.text = text;
+        out.specs.push_back(std::move(sp));
+        out.ok = true;
+    } else if (fmt == QLatin1String("xlsx")) {
+        out.specs = XlsxReader::read(path);
+        out.ok = !out.specs.empty();
+    } else if (fmt == QLatin1String("ods")) {
+        out.specs = OdfReader::readOds(path);
+        out.ok = !out.specs.empty();
+    } else if (fmt == QLatin1String("odt")) {
+        out.specs = OdfReader::readOdt(path, store);
+        out.ok = !out.specs.empty();
     }
     return out;
+}
+
+bool Importer::importCodeFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("code"), m->mediaStore()));
+}
+bool Importer::importXlsxFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("xlsx"), m->mediaStore()));
+}
+bool Importer::importOdsFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("ods"), m->mediaStore()));
+}
+bool Importer::importOdtFile(const QString& path, BlockModel* m) {
+    if (!m || m->rowCountQml() < 1) return false;
+    return applySpecs(m, buildFileSpecs(path, QStringLiteral("odt"), m->mediaStore()));
 }
 
 // GUI-thread half: land the specs + comments + async remote localize.

@@ -6,6 +6,8 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/BlockModel.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Importer.cpp
     ${CMAKE_SOURCE_DIR}/app/core/DocxReader.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/XlsxReader.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/OdfReader.cpp
     $<IF:$<PLATFORM_ID:Darwin>,${CMAKE_SOURCE_DIR}/app/core/RtfConvert_mac.mm,$<IF:$<PLATFORM_ID:Windows>,${CMAKE_SOURCE_DIR}/app/core/RtfConvert_win.cpp,${CMAKE_SOURCE_DIR}/app/core/RtfConvert_stub.cpp>>
     ${CMAKE_SOURCE_DIR}/app/core/PackageFormat.cpp
     ${CMAKE_SOURCE_DIR}/external/miniz/miniz.c

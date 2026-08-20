@@ -120,6 +120,12 @@ public:
     // RTF via the OS-native converter (macOS; elsewhere the classifier
     // hides RTF entirely) → HTML → walker.
     static bool importRtfFile(const QString& path, BlockModel* m);
+    // 2026-08-20 formats: office containers (hand-rolled zip+XML readers,
+    // the DocxReader lane) + source-code files → one Code block.
+    static bool importXlsxFile(const QString& path, BlockModel* m);
+    static bool importOdsFile(const QString& path, BlockModel* m);
+    static bool importOdtFile(const QString& path, BlockModel* m);
+    static bool importCodeFile(const QString& path, BlockModel* m);
 
     // Walk `doc`'s frame tree into BlockSpecs (BlockModel::insertSpecs's IR).
     // `store` receives embedded/local images (null = skip images). `baseDir`
