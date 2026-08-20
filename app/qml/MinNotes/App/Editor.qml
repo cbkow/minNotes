@@ -552,7 +552,15 @@ FocusScope {
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     // Scrolled away / entered a table or PDF tab → tear the player down. NOT
     // when the studio owns the decoder (its surface replaces the inline one).
-    onVideoVisibleChanged: if (!videoVisible && videoPlayingRow >= 0 && activeVideoRow < 0) stopVideo()
+    // Deferred (2026-08-20): stopVideo mutates videoPlayingRow, which this
+    // binding reads — tearing down INSIDE the change handler re-entered the
+    // binding and logged the (benign) videoVisible binding-loop warning.
+    // callLater re-checks the condition at fire time, so a state that
+    // changed back in the same tick doesn't tear down a live player.
+    onVideoVisibleChanged: if (!videoVisible) Qt.callLater(root._maybeStopVideo)
+    function _maybeStopVideo() {
+        if (!videoVisible && videoPlayingRow >= 0 && activeVideoRow < 0) stopVideo()
+    }
 
     // Per-video playhead memory (keyed by file path) so a torn-down video shows
     // its last frame as the poster and resumes there. videoPlayheadRev makes the
