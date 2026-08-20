@@ -2491,10 +2491,15 @@ FocusScope {
             color: Theme.colors.bgAlt2
         }
 
-        Rectangle {   // "you are here" — the FOCUSED block's full row, page and
+        Item {        // "you are here" — the FOCUSED block's full row, page and
                       // margins alike. The one fill on the field, and it MEANS
                       // something (the zebra's parity flipped on every insert;
-                      // this doesn't).
+                      // this doesn't). DUAL TONE since the sheet tint (ruling
+                      // 2026-08-20): the highlight steps ONE rung above
+                      // whatever ground it crosses — bgAlt2 over the sheet,
+                      // bgAlt over the desk beyond it — so the row still runs
+                      // the full field but the sheet shape stays legible
+                      // through it. Same token ladder, no new colour.
             visible: cursor.focusRow >= 0 && cursor.focusRow < blockModel.count
             z: -1
             x: 0
@@ -2504,7 +2509,18 @@ FocusScope {
             // on focusRow change — a "# " conversion's height settle wouldn't
             // reach it until Return moved the caret.
             height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(cursor.focusRow)))
-            color: Theme.colors.bgAlt2
+            readonly property real sheetW: 2 * root.leftEdge + root.pageWidth
+            Rectangle {
+                x: 0; width: Math.min(parent.width, parent.sheetW)
+                height: parent.height
+                color: Theme.colors.bgAlt2
+            }
+            Rectangle {
+                x: parent.sheetW
+                width: Math.max(0, parent.width - parent.sheetW)
+                height: parent.height
+                color: Theme.colors.bgAlt
+            }
         }
         Repeater {   // RULES: a faint hairline at each block's top across the
                      // whole field, text column included — a line that INFORMS
