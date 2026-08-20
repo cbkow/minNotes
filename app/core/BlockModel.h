@@ -670,12 +670,20 @@ private:
         uint8_t type = 0, level = 0, taskState = 0, depth = 0;
         std::vector<Span> spans;
     };
-    // One undoable step: the touched row-region [lo, lo+before.size()) replaced
-    // before↔after, plus the caret on each side. `parent` makes it tree-ready
-    // (redo follows the newest child); `coalesce` merges runs of typing.
+    // A sparse per-row change: this row's snap swapped before↔after in place.
+    // Only born from non-structural bands (same ids, same count) — see endTxn.
+    struct UndoPatch { int row = 0; BlockSnap before, after; };
+    // One undoable step: EITHER the touched row-region [lo, lo+before.size())
+    // replaced before↔after (structural / single-row entries), OR a sparse
+    // `patches` list holding just the rows a scattered gesture actually
+    // changed (2026-08-20: a group move touching rows 2 and 80 stops storing
+    // the 77 untouched blocks between them). Plus the caret on each side.
+    // `parent` makes it tree-ready (redo follows the newest child);
+    // `coalesce` merges runs of typing (single-row bands only, by design).
     struct UndoEntry {
         int lo = 0;
         std::vector<BlockSnap> before, after;
+        std::vector<UndoPatch> patches;
         int cRowB = 0, cColB = 0, aRowB = 0, aColB = 0;   // caret before
         int cRowA = 0, cColA = 0, aRowA = 0, aColA = 0;   // caret after
         int parent = -1;
@@ -720,6 +728,11 @@ private:
     // Replace the current rows [lo, lo+oldCount) with `snaps` (in-memory + DB +
     // fenwick), then reset the view. The generic undo/redo apply.
     void applySnapshot(int lo, int oldCount, const std::vector<BlockSnap>& snaps);
+    // Sparse-entry apply: restore each patch's before/after side IN PLACE —
+    // the per-row-mutator shape (update + persist + dataChanged + bumps), no
+    // model reset. Precondition (guaranteed at compression): same id at the
+    // same row on both sides.
+    void applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide);
     void beginTxn(int lo, int hi);              // snapshot `before` for [lo,hi]
     void endTxn(const QString& coalesce = {});  // snapshot `after`, push (or coalesce)
     void clearUndo();

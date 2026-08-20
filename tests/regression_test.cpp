@@ -2702,6 +2702,30 @@ static void testDocInkGroupMove() {
     m.undo();
     CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1,
           "one undo restores both deleted blobs");
+
+    // SCATTERED anchors (sparse-entry path, 2026-08-20): blobs on the band's
+    // ends with untouched blocks between — the entry stores patches for the
+    // two touched rows only; undo/redo must restore them and leave the
+    // middle rows alone.
+    m.insertBlock(2); m.setContent(2, QStringLiteral("gamma"));
+    m.insertBlock(3); m.setContent(3, QStringLiteral("delta"));
+    m.insertBlock(4); m.setContent(4, QStringLiteral("epsilon"));
+    m.setBlockInk(4, b0);
+    const int entries2 = m.undoHistory().size();
+    m.beginGroup(0, 4);
+    m.setBlockInk(0, a0);
+    m.setBlockInk(4, b1);
+    m.endGroup();
+    CHECK(m.undoHistory().size() == entries2 + 1,
+          "scattered-anchor group is ONE undo entry");
+    m.undo();
+    CHECK(m.inkForRow(0) == a1 && m.inkForRow(4) == b0
+              && m.contentForRow(2) == QStringLiteral("gamma")
+              && m.contentForRow(3) == QStringLiteral("delta"),
+          "sparse undo restores the ends, middle rows untouched");
+    m.redo();
+    CHECK(m.inkForRow(0) == a0 && m.inkForRow(4) == b1,
+          "sparse redo re-applies both ends");
     m.closeDocument();
 }
 

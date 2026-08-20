@@ -1016,6 +1016,44 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     applying_ = false;
 }
 
+void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide) {
+    applying_ = true;
+    bool inkTouched = false;
+    for (const UndoPatch& p : ps) {
+        const BlockSnap& s = beforeSide ? p.before : p.after;
+        if (p.row < 0 || p.row >= static_cast<int>(rows_.size())
+            || ids_[p.row] != s.id) continue;   // safety net — never expected
+        Row& r = rows_[p.row];
+        r.type = s.type; r.level = s.level; r.lang = s.lang;
+        r.taskState = s.taskState; r.depth = s.depth; r.spans = s.spans;
+        r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
+        fillMediaMeta(r, s.content);   // media: dims/video/param from descriptor
+        r.measured = false;            // estimate now, delegate re-reports on render
+        content_[p.row] = s.content;
+        ranks_[p.row] = s.rank;
+        fenwick_.setHeight(static_cast<size_t>(p.row), estimatedHeight(r));
+        if (doc_.isOpen()) {
+            doc_.updateContent(s.id, s.content);
+            doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),
+                            attrsJson(s.type, s.level, s.lang, s.spans, s.taskState),
+                            s.depth);
+            doc_.updateRank(s.id, s.rank);
+        }
+        if (s.ink != inkByBlock_.value(s.id)) {
+            inkTouched = true;
+            if (s.ink.isEmpty()) { inkByBlock_.remove(s.id); if (doc_.isOpen()) doc_.deleteInk(s.id); }
+            else { inkByBlock_.insert(s.id, s.ink); if (doc_.isOpen()) doc_.upsertInk(s.id, s.ink); }
+        }
+        emit dataChanged(index(p.row), index(p.row));   // all roles — type/spans/content may differ
+    }
+    tableCacheRow_ = -1;               // a patched row may be a table — drop the parse cache
+    ++contentRevision_;
+    if (inkTouched) { ++inkRevision_; emit inkChanged(); }
+    bumpLayout();
+    emit contentChangedSpike();
+    applying_ = false;
+}
+
 void BlockModel::beginTxn(int lo, int hi) {
     if (applying_) return;                      // no recording during undo/redo apply
     if (txnDepth_ == 0) {                        // outermost: capture `before`
@@ -1035,19 +1073,21 @@ void BlockModel::endTxn(const QString& coalesce) {
     std::vector<BlockSnap> after = snapshotRange(txnLo_, txnHi_ + delta);
 
     // No-op group (e.g. "clear" on an already-plain paragraph) → no undo entry.
-    auto sameSnaps = [](const std::vector<BlockSnap>& a, const std::vector<BlockSnap>& b) {
+    auto snapEq = [](const BlockSnap& x, const BlockSnap& y) {
+        if (x.id != y.id || x.rank != y.rank || x.type != y.type
+            || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
+            || x.content != y.content
+            || x.spans.size() != y.spans.size()
+            || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
+        for (size_t j = 0; j < x.spans.size(); ++j)
+            if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
+                || x.spans[j].kind != y.spans[j].kind) return false;
+        return true;
+    };
+    auto sameSnaps = [&](const std::vector<BlockSnap>& a, const std::vector<BlockSnap>& b) {
         if (a.size() != b.size()) return false;
-        for (size_t i = 0; i < a.size(); ++i) {
-            const BlockSnap& x = a[i]; const BlockSnap& y = b[i];
-            if (x.id != y.id || x.rank != y.rank || x.type != y.type
-                || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
-                || x.content != y.content
-                || x.spans.size() != y.spans.size()
-                || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
-            for (size_t j = 0; j < x.spans.size(); ++j)
-                if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
-                    || x.spans[j].kind != y.spans[j].kind) return false;
-        }
+        for (size_t i = 0; i < a.size(); ++i)
+            if (!snapEq(a[i], b[i])) return false;
         return true;
     };
     if (sameSnaps(txnBefore_, after)) return;
@@ -1075,8 +1115,27 @@ void BlockModel::endTxn(const QString& coalesce) {
     }
     UndoEntry e;
     e.lo = txnLo_;
-    e.before = std::move(txnBefore_);
-    e.after = std::move(after);
+    // Sparse compression (2026-08-20): a multi-row band whose ids line up on
+    // both sides is a NON-STRUCTURAL gesture (cross-anchor ink commit,
+    // collect rewrite, formatting sweep) — store only the rows that actually
+    // changed, as in-place patches. A group move touching rows 2 and 80
+    // stops storing the 77 untouched blocks between them, and its apply
+    // skips the model reset. Structural bands (counts differ) and
+    // single-row entries (the coalesce path) keep the band form.
+    bool sparse = txnBefore_.size() == after.size() && txnBefore_.size() > 1;
+    if (sparse)
+        for (size_t i = 0; i < after.size(); ++i)
+            if (txnBefore_[i].id != after[i].id) { sparse = false; break; }
+    if (sparse) {
+        for (size_t i = 0; i < after.size(); ++i) {
+            if (snapEq(txnBefore_[i], after[i])) continue;
+            e.patches.push_back({txnLo_ + static_cast<int>(i),
+                                 std::move(txnBefore_[i]), std::move(after[i])});
+        }
+    } else {
+        e.before = std::move(txnBefore_);
+        e.after = std::move(after);
+    }
     e.cRowB = cRow_; e.cColB = cCol_; e.aRowB = aRow_; e.aColB = aCol_;
     e.cRowA = cRow_; e.cColA = cCol_; e.aRowA = aRow_; e.aColA = aCol_;   // until noteCaret stamps
     e.parent = undoCur_;
@@ -1157,6 +1216,8 @@ void BlockModel::undo() {
     // Pure width entries carry no snaps — skip the (view-resetting) apply.
     if (!e.before.empty() || !e.after.empty())
         applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
+    else if (!e.patches.empty())
+        applyPatches(e.patches, /*beforeSide=*/true);
     applyUndoWidth(e.widthBefore);
     undoCur_ = e.parent;
     markDirty();                                  // undo mutates the doc → unsaved
@@ -1173,6 +1234,8 @@ void BlockModel::redo() {
     const UndoEntry e = undo_[child];
     if (!e.before.empty() || !e.after.empty())
         applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
+    else if (!e.patches.empty())
+        applyPatches(e.patches, /*beforeSide=*/false);
     applyUndoWidth(e.widthAfter);
     undoCur_ = child;
     markDirty();                                  // redo mutates the doc → unsaved
@@ -1286,9 +1349,12 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
     bool metaDiff = false, rankDiff = false, commentAdded = false;
     bool mediaContent = false;
     int contentRows = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
-        const BlockSnap& x = b[i];
-        const BlockSnap& y = a[i];
+    // Sparse entries carry pairs in `patches`; bands carry them in b/a
+    // (equal sizes here — the insert/delete cases returned above).
+    const size_t pairs = e.patches.empty() ? a.size() : e.patches.size();
+    for (size_t i = 0; i < pairs; ++i) {
+        const BlockSnap& x = e.patches.empty() ? b[i] : e.patches[i].before;
+        const BlockSnap& y = e.patches.empty() ? a[i] : e.patches[i].after;
         if (x.content != y.content) {
             contentDiff = true;
             ++contentRows;
