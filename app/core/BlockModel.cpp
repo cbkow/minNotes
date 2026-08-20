@@ -2940,22 +2940,24 @@ QString BlockModel::pdfPageInk(int row, int page) const {
     return QString::fromUtf8(QJsonDocument(pageV.toObject()).toJson(QJsonDocument::Compact));
 }
 
-void BlockModel::pdfSetPageInk(int row, int page, const QString& strokesJson) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+// Write one page's envelope back into the block, applying the shared drop
+// rules: a page with no shapes AND no texts loses its key; an empty "ink"
+// map leaves the root. One txn (no coalesce — one undo step per gesture,
+// sketch ruling 2026-06-11).
+void BlockModel::writePdfPageObject(int row, int page, QJsonObject pageObj) {
     QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     QJsonObject ink = root.value(QStringLiteral("ink")).toObject();
-    const QJsonObject in = QJsonDocument::fromJson(strokesJson.toUtf8()).object();
-    const QJsonArray shapes = in.value(QStringLiteral("shapes")).toArray();
-    if (shapes.isEmpty()) {
-        ink.remove(QString::number(page));   // last stroke erased → drop the key
+    const bool empty = pageObj.value(QStringLiteral("shapes")).toArray().isEmpty()
+                    && pageObj.value(QStringLiteral("texts")).toArray().isEmpty();
+    if (empty) {
+        ink.remove(QString::number(page));
     } else {
-        QJsonObject env;
-        env.insert(QStringLiteral("version"),
-                   in.value(QStringLiteral("version")).toString(QStringLiteral("2.0")));
-        env.insert(QStringLiteral("coordinate_system"),
-                   in.value(QStringLiteral("coordinate_system")).toString(QStringLiteral("normalized")));
-        env.insert(QStringLiteral("shapes"), shapes);
-        ink.insert(QString::number(page), env);
+        // Pages born from a chip-only edit still carry the full envelope.
+        if (!pageObj.contains(QStringLiteral("version")))
+            pageObj.insert(QStringLiteral("version"), QStringLiteral("2.0"));
+        if (!pageObj.contains(QStringLiteral("coordinate_system")))
+            pageObj.insert(QStringLiteral("coordinate_system"), QStringLiteral("normalized"));
+        ink.insert(QString::number(page), pageObj);
     }
     if (ink.isEmpty()) root.remove(QStringLiteral("ink"));
     else root.insert(QStringLiteral("ink"), ink);
@@ -2966,7 +2968,108 @@ void BlockModel::pdfSetPageInk(int row, int page, const QString& strokesJson) {
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
-    endTxn();   // no coalesce — one undo step per gesture (sketch ruling 2026-06-11)
+    endTxn();
+}
+
+void BlockModel::pdfSetPageInk(int row, int page, const QString& strokesJson) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const QJsonObject prior = root.value(QStringLiteral("ink")).toObject()
+                                  .value(QString::number(page)).toObject();
+    const QJsonObject in = QJsonDocument::fromJson(strokesJson.toUtf8()).object();
+    const QJsonArray shapes = in.value(QStringLiteral("shapes")).toArray();
+    QJsonObject env;
+    env.insert(QStringLiteral("version"),
+               in.value(QStringLiteral("version")).toString(QStringLiteral("2.0")));
+    env.insert(QStringLiteral("coordinate_system"),
+               in.value(QStringLiteral("coordinate_system")).toString(QStringLiteral("normalized")));
+    if (!shapes.isEmpty()) env.insert(QStringLiteral("shapes"), shapes);
+    // Preserve the page's text chips: the canvas's edited() carries STROKES
+    // only, so rebuilding the envelope from it would erase texts (the
+    // 2026-08-20 chips blocker). writePdfPageObject drops the page only
+    // when both arrays are empty.
+    const QJsonArray texts = prior.value(QStringLiteral("texts")).toArray();
+    if (!texts.isEmpty()) env.insert(QStringLiteral("texts"), texts);
+    writePdfPageObject(row, page, env);
+}
+
+// --- PDF page text chips (2026-08-20): the sketch text contract applied to
+// one page's envelope ("ink" → page → "texts"). Same element schema
+// {x,y,w,text,size,color} — x/y/w normalized to the page, size in SOURCE px
+// (PDF points), height never stored. Same rules: 2em width floor, blank
+// text deletes, unchanged text is a no-op; every call = one undo step.
+int BlockModel::pdfAddPageText(int row, int page, qreal x, qreal y, qreal w,
+                               const QString& text, qreal size,
+                               const QString& colorHex) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return -1;
+    if (page < 0 || text.trimmed().isEmpty() || size <= 0) return -1;
+    const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const double srcW = root.value(QStringLiteral("w")).toInt(612);
+    QJsonObject pageObj = root.value(QStringLiteral("ink")).toObject()
+                              .value(QString::number(page)).toObject();
+    QJsonObject t;
+    t.insert(QStringLiteral("text"), text);
+    t.insert(QStringLiteral("x"), x);
+    t.insert(QStringLiteral("y"), y);
+    t.insert(QStringLiteral("w"), std::max(w, (2.0 * size) / srcW));   // 2em floor
+    t.insert(QStringLiteral("size"), size);
+    t.insert(QStringLiteral("color"), colorHex);
+    QJsonArray texts = pageObj.value(QStringLiteral("texts")).toArray();
+    texts.append(t);
+    pageObj.insert(QStringLiteral("texts"), texts);
+    writePdfPageObject(row, page, pageObj);
+    return texts.size() - 1;
+}
+
+void BlockModel::pdfSetPageText(int row, int page, int idx, const QString& text) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    QJsonObject pageObj = QJsonDocument::fromJson(content_[row].toUtf8()).object()
+                              .value(QStringLiteral("ink")).toObject()
+                              .value(QString::number(page)).toObject();
+    QJsonArray texts = pageObj.value(QStringLiteral("texts")).toArray();
+    if (idx < 0 || idx >= texts.size()) return;
+    QJsonObject o = texts.at(idx).toObject();
+    if (o.value(QStringLiteral("text")).toString() == text) return;   // no txn
+    if (text.trimmed().isEmpty()) {
+        texts.removeAt(idx);            // blank commit = delete (overlay contract)
+    } else {
+        o.insert(QStringLiteral("text"), text);
+        texts.replace(idx, o);
+    }
+    pageObj.insert(QStringLiteral("texts"), texts);
+    writePdfPageObject(row, page, pageObj);
+}
+
+void BlockModel::pdfSetPageTextBox(int row, int page, int idx, qreal x, qreal y,
+                                   qreal w, qreal size) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    if (size <= 0) return;
+    const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    const double srcW = root.value(QStringLiteral("w")).toInt(612);
+    QJsonObject pageObj = root.value(QStringLiteral("ink")).toObject()
+                              .value(QString::number(page)).toObject();
+    QJsonArray texts = pageObj.value(QStringLiteral("texts")).toArray();
+    if (idx < 0 || idx >= texts.size()) return;
+    QJsonObject o = texts.at(idx).toObject();
+    o.insert(QStringLiteral("x"), x);
+    o.insert(QStringLiteral("y"), y);
+    o.insert(QStringLiteral("w"), std::max(w, (2.0 * size) / srcW));
+    o.insert(QStringLiteral("size"), size);
+    texts.replace(idx, o);
+    pageObj.insert(QStringLiteral("texts"), texts);
+    writePdfPageObject(row, page, pageObj);
+}
+
+void BlockModel::pdfRemovePageText(int row, int page, int idx) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    QJsonObject pageObj = QJsonDocument::fromJson(content_[row].toUtf8()).object()
+                              .value(QStringLiteral("ink")).toObject()
+                              .value(QString::number(page)).toObject();
+    QJsonArray texts = pageObj.value(QStringLiteral("texts")).toArray();
+    if (idx < 0 || idx >= texts.size()) return;
+    texts.removeAt(idx);
+    pageObj.insert(QStringLiteral("texts"), texts);
+    writePdfPageObject(row, page, pageObj);
 }
 // Open the media's file in the sibling ufb browser via its deep-link scheme:
 // ufb:///{os}/{percent-encoded path} (slashes kept literal, matching ufb's

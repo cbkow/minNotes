@@ -2840,6 +2840,49 @@ static void testPdfPageInkUndo() {
               && shapeCount(m.pdfPageInk(row, 0)) == 1
               && shapeCount(m.pdfPageInk(row, 2)) == 1,
           "undo of removeBlock restores the block AND both pages' ink");
+
+    // --- Text chips on pages (2026-08-20) ---
+    auto textCount = [](const QString& env) {
+        return QJsonDocument::fromJson(env.toUtf8()).object()
+            .value(QStringLiteral("texts")).toArray().size();
+    };
+    auto textAt = [](const QString& env, int i, const char* key) {
+        return QJsonDocument::fromJson(env.toUtf8()).object()
+            .value(QStringLiteral("texts")).toArray().at(i).toObject()
+            .value(QLatin1String(key));
+    };
+    const int ti = m.pdfAddPageText(row, 0, 0.2, 0.3, 0.25,
+                                    QStringLiteral("page note"), 18,
+                                    QStringLiteral("#FF8800"));
+    CHECK(ti == 0 && textCount(m.pdfPageInk(row, 0)) == 1,
+          "chip added to page 0");
+    // THE BLOCKER REGRESSION: a stroke commit must PRESERVE the page's chips
+    // (edited() carries strokes only — the old rebuild erased texts).
+    m.pdfSetPageInk(row, 0, shapes("p0b"));
+    CHECK(shapeCount(m.pdfPageInk(row, 0)) == 1
+              && textCount(m.pdfPageInk(row, 0)) == 1,
+          "stroke commit preserves the page's chips");
+    m.pdfSetPageText(row, 0, 0, QStringLiteral("edited note"));
+    CHECK(textAt(m.pdfPageInk(row, 0), 0, "text").toString()
+              == QStringLiteral("edited note"), "chip text edited");
+    m.pdfSetPageTextBox(row, 0, 0, 0.5, 0.6, 0.001, 18);   // width → 2em floor
+    CHECK(textAt(m.pdfPageInk(row, 0), 0, "w").toDouble() >= (2.0 * 18) / 612.0,
+          "box move applies the 2em width floor");
+    m.undo();   // box move
+    m.undo();   // text edit
+    CHECK(textAt(m.pdfPageInk(row, 0), 0, "text").toString()
+              == QStringLiteral("page note"), "undo walks the chip edits back");
+    m.redo(); m.redo();
+    // Blank commit deletes; chips alone keep the page key alive.
+    m.pdfSetPageInk(row, 0, QStringLiteral("{\"shapes\":[]}"));
+    CHECK(shapeCount(m.pdfPageInk(row, 0)) == 0
+              && textCount(m.pdfPageInk(row, 0)) == 1,
+          "erasing all strokes keeps a chip-only page");
+    m.pdfSetPageText(row, 0, 0, QStringLiteral("   "));
+    CHECK(m.pdfPageInk(row, 0).isEmpty(),
+          "blank commit deletes the last chip → page key drops");
+    m.undo();
+    CHECK(textCount(m.pdfPageInk(row, 0)) == 1, "undo restores the deleted chip");
     m.closeDocument();
 }
 

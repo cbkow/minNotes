@@ -1,6 +1,7 @@
 #pragma once
 #include <QAbstractListModel>
 #include <QHash>
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
@@ -535,6 +536,18 @@ public:
     // {version, coordinate_system, shapes} exactly as sketchSetShapes keeps it.
     Q_INVOKABLE QString pdfPageInk(int row, int page) const;   // "" = no ink on that page
     Q_INVOKABLE void pdfSetPageInk(int row, int page, const QString& strokesJson);
+    // PDF page text chips (2026-08-20): the sketch text quartet applied to
+    // one page's envelope ("ink" → page → "texts"). Same schema/rules —
+    // 2em width floor, blank text deletes, unchanged text = no-op, one undo
+    // step per call. pdfSetPageInk preserves the page's texts (its input
+    // carries strokes only).
+    Q_INVOKABLE int  pdfAddPageText(int row, int page, qreal x, qreal y, qreal w,
+                                    const QString& text, qreal size,
+                                    const QString& colorHex);
+    Q_INVOKABLE void pdfSetPageText(int row, int page, int idx, const QString& text);
+    Q_INVOKABLE void pdfSetPageTextBox(int row, int page, int idx,
+                                       qreal x, qreal y, qreal w, qreal size);
+    Q_INVOKABLE void pdfRemovePageText(int row, int page, int idx);
     // Unsupported file → a generic attachment chip (referenced in place, no copy).
     Q_INVOKABLE int insertFileFromUrl(int afterRow, const QString& fileUrl);
     // Route a dropped/pasted file: video → pdf → image → file-attachment fallback.
@@ -737,6 +750,9 @@ private:
     void endTxn(const QString& coalesce = {});  // snapshot `after`, push (or coalesce)
     void clearUndo();
     void applyUndoWidth(qreal w);               // restore an entry's page width (0 = none)
+    // PDF page-envelope write-back: shared drop rules (page key gone when
+    // shapes AND texts are empty; empty "ink" leaves the root) + the txn.
+    void writePdfPageObject(int row, int page, QJsonObject pageObj);
     QString entryLabel(const UndoEntry& e) const;   // History-panel label heuristic
     int undoRev_ = 0;                           // see undoRevision
 

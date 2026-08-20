@@ -167,23 +167,26 @@ FocusScope {
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
-        // Tool rules on view changes (2026-08-19): landing on the Document view
-        // always lands TYPING (a leftover armed tool would silently re-engage
-        // ink mode); table tabs have no ink surface, so a draw tool would sit
-        // armed-but-dead in the grid — disarm it (Select may stay armed);
-        // sketch/video/PDF tabs keep the tool and interpret it locally (PDF
-        // pages take per-page ink). The text-chip tool alone drops to Select
-        // in PDF tabs (no PDF text session yet) and video tabs (text boxes
-        // are not part of the QCView flow).
+        // Tool rules on view changes (2026-08-19, tightened 2026-08-20):
+        // landing on the Document view always lands TYPING (a leftover armed
+        // tool would silently re-engage ink mode); table tabs have no ink
+        // surface AND select there is the cell cursor's job, so EVERY
+        // non-Type tool drops to Type; sketch/video/PDF tabs keep the tool
+        // and interpret it locally (PDF pages take per-page ink). The
+        // text-chip tool alone drops to Select in PDF tabs (no PDF text
+        // session yet) and video tabs (text boxes are not part of the
+        // QCView flow).
         var t = inspector ? inspector.drawTool : "type"
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
             activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
         }
-        var isDrawTool = (t !== "type" && t !== "select")
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) {
-            if (isDrawTool) inspector.drawTool = "type"
+            // Any non-Type tool drops here (2026-08-20, overturns the
+            // "Select may stay armed" parenthetical): tables select with
+            // the cell cursor, so Select is as dead as the draw tools.
+            if (t !== "type") inspector.drawTool = "type"
             activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeTableId = id
             var pc = boardPref(id)               // this table's remembered view
             if (pc >= 0) { boardCol = pc; boardMode = true }

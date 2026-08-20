@@ -564,20 +564,56 @@ Rectangle {
                     ]
                     delegate: FlatButton {
                         required property var modelData
-                        readonly property bool inkTool: modelData.tool !== "type"
-                                                        && modelData.tool !== "select"
+                        // The Type slot is the RESTING MODE, not a text tool
+                        // (drawTool "type" = nothing armed) — in tabs where
+                        // resting means browsing rather than typing, its icon
+                        // and tip say so (ruling 2026-08-20).
+                        readonly property bool typeSlot: modelData.tool === "type"
+                        readonly property string ctxIcon:
+                            typeSlot && panel.editor
+                                && (panel.editor.activePdfRow >= 0
+                                    || panel.editor.activeVideoRow >= 0)
+                                ? "hand-pointing" : modelData.icon
+                        readonly property string ctxTip: {
+                            if (!typeSlot || !panel.editor) return modelData.tip
+                            if (panel.editor.activePdfRow >= 0)
+                                return qsTr("Browse — scroll & pan pages")
+                            if (panel.editor.activeVideoRow >= 0)
+                                return qsTr("Browse — playback & note cards")
+                            if (panel.editor.activeTableRow >= 0)
+                                return qsTr("Type — edit cells")
+                            return modelData.tip
+                        }
+                        // Why this tool is off in the current tab ("" = live);
+                        // enabled_ derives from this, so the grey and its
+                        // tooltip can never drift apart. Table tabs keep only
+                        // Type (ruling 2026-08-20: Select is inert there —
+                        // cells have their own cursor); PDF/video tabs grey
+                        // the text-chip tool alone.
+                        readonly property string offReason: {
+                            if (!panel.editor || modelData.tool === "type") return ""
+                            if (panel.editor.activeTableRow >= 0)
+                                return modelData.tool === "select"
+                                    ? qsTr("tables select with the cell cursor")
+                                    : qsTr("tables have no ink surface")
+                            if (modelData.tool !== "text") return ""
+                            if (panel.editor.activePdfRow >= 0)
+                                return qsTr("no text boxes on PDF pages yet")
+                            if (panel.editor.activeVideoRow >= 0)
+                                return qsTr("text boxes aren't part of video notes")
+                            return ""
+                        }
                         width: (panel.contentW - 16) / 5; height: width
-                        iconName: modelData.icon
+                        iconName: ctxIcon
                         iconSize: 18
                         checked: panel.drawTool === modelData.tool
                         checkedColor: Theme.colors.divider   // grey — family selection language
                         iconColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
-                        tooltip: modelData.tip; tooltipSide: "top"
-                        enabled_: !inkTool || !panel.editor
-                                  || (panel.editor.activeTableRow < 0
-                                      && (modelData.tool !== "text"
-                                          || (panel.editor.activePdfRow < 0
-                                              && panel.editor.activeVideoRow < 0)))
+                        tooltip: offReason.length > 0
+                                     ? ctxTip + qsTr(" — ") + offReason
+                                     : ctxTip
+                        tooltipSide: "top"
+                        enabled_: offReason.length === 0
                         onClicked: panel.drawTool =
                             (panel.drawTool === modelData.tool && modelData.tool !== "type")
                                 ? "type" : modelData.tool

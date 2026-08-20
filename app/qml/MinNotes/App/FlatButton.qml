@@ -88,8 +88,11 @@ Rectangle {
         if (checked) return Qt.lighter(checkedColor.a > 0 ? checkedColor : Theme.colors.divider, 1.25)
         return Theme.colors.surfaceHover
     }
+    // Disabled is expressed by the content Row's OPACITY, not a color swap:
+    // consumers routinely override iconColor/labelColor (the Inspector tool
+    // grid), and a color-based disabled state silently loses to those
+    // overrides — the 2026-08-20 "disabled tools look enabled" bug.
     readonly property color _fg: {
-        if (!enabled_) return Theme.colors.textSubtle
         if (variant === "primary" || variant === "danger") return Theme.colors.textBright
         return checked ? Theme.colors.textBright : Theme.colors.text
     }
@@ -105,6 +108,7 @@ Rectangle {
         id: rowContent
         anchors.centerIn: parent
         spacing: 6
+        opacity: root.enabled_ ? 1.0 : 0.4   // survives any icon/label color override
 
         Icon {
             visible: root.iconName.length > 0
