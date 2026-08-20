@@ -25,6 +25,12 @@ int DocumentManager::tabIdAt(int i) const {
     return (i >= 0 && i < tabs_.size()) ? tabs_[i].id : -1;
 }
 
+BlockModel* DocumentManager::modelForTabId(int tabId) const {
+    for (const Tab& t : tabs_)
+        if (t.id == tabId) return t.model;
+    return nullptr;
+}
+
 int DocumentManager::dirtyCount() const {
     int n = 0;
     for (const Tab& t : tabs_) if (t.model->dirty()) ++n;

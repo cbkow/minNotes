@@ -48,6 +48,9 @@ public:
     // Stable tab id at index `i` (survives index shifts when other tabs close),
     // or -1 if out of range. The per-tab view state is keyed by this id.
     Q_INVOKABLE int tabIdAt(int i) const;
+    // The tab's model by stable id (nullptr if the tab closed) — the merge
+    // drag holds ids, not indices, so it survives tabs closing mid-drag.
+    Q_INVOKABLE BlockModel* modelForTabId(int tabId) const;
 
     // Re-resolve media in every open tab (path mappings changed).
     Q_INVOKABLE void refreshMedia();

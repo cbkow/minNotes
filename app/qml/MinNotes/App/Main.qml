@@ -827,6 +827,168 @@ ApplicationWindow {
         if (wasActive) Qt.callLater(win._restoreActiveView)
     }
 
+    // --- Tab-merge drag (0.4.0): drag a tab onto another tab — the
+    // destination reveals after a beat (spring-load) — then down into the
+    // document to pick the exact gap; the whole source document COPIES in
+    // there as one undo entry (the source tab stays open). Release directly
+    // on a tab merges at the END. The drag holds the STABLE tab id, so it
+    // survives index shifts if a tab closes mid-drag. Hand-rolled MouseArea
+    // drag — the house style; no QML Drag anywhere in the app. ---
+    property int tabDragSourceId: -1
+    property int tabDragHoverIndex: -1
+    readonly property bool tabDragging: tabDragSourceId >= 0
+    property string _mergeSrcName: ""
+    property real _mergeBytes: 0
+    function startTabDrag(index, label) {
+        tabDragSourceId = docs.tabIdAt(index)
+        tabDragGhost.label = label
+    }
+    function updateTabDrag(p) {   // p = point in win.contentItem coords
+        tabDragGhost.x = p.x + 12
+        tabDragGhost.y = p.y + 10
+        // Strip: hovering a DIFFERENT tab arms the spring-load reveal.
+        var hi = -1
+        var rp = tabRow.mapFromItem(win.contentItem, p.x, p.y)
+        if (rp.y >= 0 && rp.y <= tabRow.height && rp.x >= 0 && rp.x <= tabRow.width) {
+            var it = tabRow.childAt(rp.x, Math.min(rp.y, tabRow.height - 1))
+            if (it && it.index !== undefined) hi = it.index
+        }
+        tabDragHoverIndex = hi
+        if (hi >= 0 && docs.tabIdAt(hi) !== tabDragSourceId && hi !== docs.activeIndex) {
+            if (tabSpringTimer.targetIndex !== hi) {
+                tabSpringTimer.targetIndex = hi
+                tabSpringTimer.restart()
+            }
+        } else {
+            tabSpringTimer.stop(); tabSpringTimer.targetIndex = -1
+        }
+        // Document area: aim the drop gap (no-op over full-frame tabs).
+        var ed = win._editor()
+        if (ed) {
+            var ep = ed.mapFromItem(win.contentItem, p.x, p.y)
+            ed.aimMergeDrop(ep.x, ep.y)
+        }
+    }
+    function finishTabDrag() {
+        var srcId = tabDragSourceId
+        var hi = tabDragHoverIndex
+        var ed = win._editor()
+        var overEditor = ed && ed.mergeDragActive
+        var gap = ed ? ed.mergeDropGap : -1
+        cancelTabDrag()
+        var srcModel = docs.modelForTabId(srcId)
+        if (!srcModel) return
+        if (hi >= 0 && docs.tabIdAt(hi) !== srcId) {
+            var destModel = docs.models[hi]
+            if (destModel === srcModel) return
+            win._startMerge(srcModel, destModel, destModel.count)   // on a tab = at the end
+        } else if (overEditor && gap >= 0) {
+            var dm = docs.models[docs.activeIndex]
+            if (!dm || dm === srcModel) return
+            win._startMerge(srcModel, dm, gap)
+        }
+    }
+    function cancelTabDrag() {
+        tabDragSourceId = -1
+        tabDragHoverIndex = -1
+        tabSpringTimer.stop(); tabSpringTimer.targetIndex = -1
+        var ed = win._editor()
+        if (ed) ed.endMergeDrop()
+    }
+    function _startMerge(srcModel, destModel, gap) {
+        win._mergeSrcName = srcModel.documentName
+        var s = merger.scan(srcModel, destModel)   // popup gate: worth a bar?
+        win._mergeBytes = (s.fileBytes || 0) + (s.videoBytes || 0)
+        merger.startMerge(srcModel, destModel, gap)
+    }
+    Timer {
+        id: tabSpringTimer
+        interval: 350
+        property int targetIndex: -1
+        onTriggered: {
+            if (!win.tabDragging || targetIndex < 0 || targetIndex === docs.activeIndex) return
+            win.switchToTab(targetIndex)
+            // v1 rule: the merge drop needs the Document view — a restored
+            // full-frame tab has no gap surface.
+            Qt.callLater(function() { var ed = win._editor(); if (ed) ed.setActiveTab("") })
+        }
+    }
+    Connections {
+        target: merger
+        function onMergeFinished(ok, first, last, error) {
+            if (!ok) {
+                Toasts.show(error === "Cancelled" ? qsTr("Merge cancelled")
+                                                  : qsTr("Merge failed — ") + error, 2)
+                return
+            }
+            if (first < 0) { Toasts.show(qsTr("Nothing to merge")); return }
+            var ed = win._editor()
+            if (ed) ed.ensureVisible(first)
+            var undoKey = Qt.platform.os === "osx" ? "⌘Z" : "Ctrl+Z"
+            Toasts.show(qsTr("Merged “%1” — %2 %3 (%4 undoes)")
+                        .arg(win._mergeSrcName).arg(last - first + 1)
+                        .arg(last === first ? qsTr("block") : qsTr("blocks"))
+                        .arg(undoKey))
+        }
+    }
+    Popup {   // merge copy progress — the collect chrome; only for real copies
+        visible: merger.running && win._mergeBytes > 16 * 1024 * 1024
+        modal: true
+        closePolicy: Popup.NoAutoClose   // cancel is the only way out
+        anchors.centerIn: Overlay.overlay
+        width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text {
+                text: qsTr("Merging “%1”…").arg(win._mergeSrcName)
+                color: Theme.colors.textBright; font.family: Theme.font.family
+                font.pixelSize: Theme.font.sizeBody; font.bold: true
+            }
+            Text {
+                width: 400; elide: Text.ElideMiddle
+                text: merger.currentItem
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Rectangle {   // FlatSlider-background recipe: recessed track + fill
+                width: 400; height: 6
+                color: Theme.colors.surfaceRecess
+                border.width: 1; border.color: Theme.colors.border
+                Rectangle {
+                    width: Math.round((parent.width - 2) * Math.min(1, merger.progress))
+                    height: parent.height - 2
+                    x: 1; y: 1
+                    color: Theme.colors.divider
+                }
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: qsTr("Cancel"); padding: 12
+                             onClicked: merger.cancel() }
+            }
+        }
+    }
+    Rectangle {   // the drag's ghost: a tab-shaped chip following the cursor
+        id: tabDragGhost
+        visible: win.tabDragging
+        z: 1000
+        property string label: ""
+        width: Math.min(220, tabGhostLabel.implicitWidth + 24); height: 28
+        color: Theme.colors.surfaceRaised
+        border.width: 1; border.color: Theme.colors.accent
+        opacity: 0.88
+        Text {
+            id: tabGhostLabel
+            anchors.centerIn: parent
+            text: tabDragGhost.label
+            elide: Text.ElideMiddle
+            color: Theme.colors.textBright
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+        }
+    }
+
     // --- Menu bar. macOS uses the native Qt.labs.platform system menu bar
     // (a Component created on macOS only). Windows/Linux use an in-window Qt
     // Quick Controls MenuBar themed via Fusion `palette` + the ThemedMenu
@@ -1061,6 +1223,7 @@ ApplicationWindow {
             // the page separates on its own; border diet, product pass 2)
 
             Row {
+                id: tabRow
                 anchors.left: parent.left; anchors.top: parent.top
                 anchors.right: navBtn.left
                 height: parent.height
@@ -1095,12 +1258,37 @@ ApplicationWindow {
                             color: tab.active ? Theme.colors.textBright : Theme.colors.textMuted
                             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
                         }
+                        Rectangle {   // merge-drop affordance (sanctioned drag-feedback accent)
+                            visible: win.tabDragging && win.tabDragHoverIndex === tab.index
+                                     && docs.tabIdAt(tab.index) !== win.tabDragSourceId
+                            anchors.bottom: parent.bottom; width: parent.width; height: 2
+                            color: Theme.colors.accent
+                        }
                         MouseArea {
                             id: tabMA
                             anchors.fill: parent; hoverEnabled: true
                             acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: (m) => { if (m.button === Qt.MiddleButton) win.requestCloseTab(tab.index)
+                            // 4px threshold separates click from merge drag
+                            // (the ruler-handle precedent).
+                            property real pressX: 0
+                            property real pressY: 0
+                            property bool didDrag: false
+                            onPressed: (m) => { pressX = m.x; pressY = m.y; didDrag = false }
+                            onPositionChanged: (m) => {
+                                if (!pressed || !(m.buttons & Qt.LeftButton)) return
+                                if (!win.tabDragging) {
+                                    if (docs.count < 2) return   // nowhere to merge into
+                                    if (Math.abs(m.x - pressX) < 4 && Math.abs(m.y - pressY) < 4) return
+                                    didDrag = true
+                                    win.startTabDrag(tab.index, tab.modelData.documentName)
+                                }
+                                win.updateTabDrag(tabMA.mapToItem(win.contentItem, m.x, m.y))
+                            }
+                            onReleased: if (win.tabDragging) win.finishTabDrag()
+                            onCanceled: win.cancelTabDrag()
+                            onClicked: (m) => { if (didDrag) return
+                                                if (m.button === Qt.MiddleButton) win.requestCloseTab(tab.index)
                                                 else win.switchToTab(tab.index) }
                         }
                         Rectangle {   // close affordance (declared after tabMA so its MouseArea wins)

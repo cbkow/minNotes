@@ -815,6 +815,26 @@ FocusScope {
     // external drags; doesn't touch the normal mouse interaction.)
     property bool imageDropActive: false
     property int  imageDropGap: -1
+    // Tab-merge drag (0.4.0): driven from Main.qml's strip drag. Shares the
+    // image-drop pulsing indicator (the dropIndicator* pair below) and the
+    // edge auto-scroll timer with the other drags.
+    property bool mergeDragActive: false
+    property int  mergeDropGap: -1
+    property real mergeDragViewY: 0
+    readonly property bool dropIndicatorActive: imageDropActive || mergeDragActive
+    readonly property int  dropIndicatorGap: imageDropActive ? imageDropGap : mergeDropGap
+    // Aim the merge drag at an editor-local point. Full-frame tabs (table/
+    // pdf/video/sketch) have no document surface — no gap there, so a
+    // release over them is a no-op rather than a blind insert.
+    function aimMergeDrop(ex, ey) {
+        if (activeFrameId !== "" || ex < 0 || ex > width || ey < 0 || ey > height) {
+            mergeDragActive = false; mergeDropGap = -1; return
+        }
+        mergeDragActive = true
+        mergeDragViewY = ey
+        mergeDropGap = gapForY(ey + flick.contentY)
+    }
+    function endMergeDrop() { mergeDragActive = false; mergeDropGap = -1 }
     // Drop-onto-a-cell target (an image dragged over a table cell); −1 = none. When
     // set, the block-insertion gap line is suppressed and the cell is highlighted.
     property int dropTableRow: -1
@@ -3309,15 +3329,18 @@ FocusScope {
         // Edge auto-scroll while drag-selecting OR drag-reordering near the
         // top/bottom (the persistent `mouse` area keeps its grab through scroll).
         Timer {
-            interval: 16; repeat: true; running: root.dragging || root.blockDragging
+            interval: 16; repeat: true
+            running: root.dragging || root.blockDragging || root.mergeDragActive
             onTriggered: {
                 var margin = 44, sp = 0
-                var viewY = root.blockDragging ? root.blockDragViewY : root.dragViewY
+                var viewY = root.mergeDragActive ? root.mergeDragViewY
+                          : root.blockDragging ? root.blockDragViewY : root.dragViewY
                 if (viewY < margin) sp = -Math.max(6, margin - viewY)
                 else if (viewY > flick.height - margin) sp = Math.max(6, viewY - (flick.height - margin))
                 if (sp === 0) return
                 flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, flick.contentY + sp))
                 var cy = viewY + flick.contentY               // content point under the held cursor
+                if (root.mergeDragActive) { root.mergeDropGap = root.gapForY(cy); return }
                 if (root.blockDragging) { root.dropGap = root.gapForY(cy); return }
                 var h = root.hitTest(root.dragX, cy)
                 cursor.move(h.row, h.col, true)
@@ -5290,9 +5313,9 @@ FocusScope {
     // with an expanding ring on a solid dot, so it's obvious where a dragged image
     // will land. Follows the cursor between blocks as you drag.
     Item {
-        visible: root.imageDropActive && root.imageDropGap >= 0
+        visible: root.dropIndicatorActive && root.dropIndicatorGap >= 0
         z: 55
-        readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.imageDropGap)) - flick.contentY
+        readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.dropIndicatorGap)) - flick.contentY
 
         Rectangle {   // insertion line
             // (was `root.textWidth` — an undefined property; the line had no
@@ -5302,7 +5325,7 @@ FocusScope {
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: Theme.colors.accent
             SequentialAnimation on opacity {
-                running: root.imageDropActive; loops: Animation.Infinite
+                running: root.dropIndicatorActive; loops: Animation.Infinite
                 NumberAnimation { from: 1.0; to: 0.45; duration: 550; easing.type: Easing.InOutQuad }
                 NumberAnimation { from: 0.45; to: 1.0; duration: 550; easing.type: Easing.InOutQuad }
             }
@@ -5319,11 +5342,11 @@ FocusScope {
             color: "transparent"; border.width: 2; border.color: Theme.colors.accent
             transformOrigin: Item.Center
             SequentialAnimation on scale {
-                running: root.imageDropActive; loops: Animation.Infinite
+                running: root.dropIndicatorActive; loops: Animation.Infinite
                 NumberAnimation { from: 0.7; to: 2.6; duration: 900; easing.type: Easing.OutQuad }
             }
             SequentialAnimation on opacity {
-                running: root.imageDropActive; loops: Animation.Infinite
+                running: root.dropIndicatorActive; loops: Animation.Infinite
                 NumberAnimation { from: 0.8; to: 0.0; duration: 900; easing.type: Easing.OutQuad }
             }
         }
