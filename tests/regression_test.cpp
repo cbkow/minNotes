@@ -672,6 +672,20 @@ static void testExportMarkdown() {
 
     CHECK(md.startsWith(QStringLiteral("# Untitled\n\n")),
           "document-name header leads the markdown (ruling 2026-08-20)");
+    // Copy as Markdown (2026-08-20): whole doc keeps the header; an explicit
+    // range omits it and carries only its rows (asset-free clipboard form).
+    {
+        const QString all = ex.copyMarkdown(-1, -1);
+        CHECK(all.startsWith(QStringLiteral("# Untitled")),
+              "copyMarkdown whole-doc keeps the header");
+        const QString range = ex.copyMarkdown(2, 3);
+        CHECK(!range.contains(QStringLiteral("# Untitled"))
+                  && !range.contains(QStringLiteral("## Title"))
+                  && range.contains(QStringLiteral("- item one")),
+              "copyMarkdown range: no header, no out-of-range rows");
+        CHECK(ex.copyMarkdown(1, 1).contains(QStringLiteral("[^1]")),
+              "range copy still numbers its footnotes");
+    }
     CHECK(md.contains(QStringLiteral("## Title")), "heading level maps to ##");
     CHECK(md.contains(QStringLiteral(
               "plain[^1] **bold *bolditalic*** *italic* [link](https://example.com)")),

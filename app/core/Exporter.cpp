@@ -708,15 +708,24 @@ Exporter::Exporter(QObject* parent) : QObject(parent) {}
 
 QString Exporter::toMarkdown(const Options& opt, AssetSink& sink) const {
     if (!model_) return {};
+    return markdownRange(0, model_->rowCountQml() - 1, opt, sink, /*withHeader=*/true);
+}
+
+// The markdown walker over rows [lo, hi] — toMarkdown is the whole document
+// with the document-name header; Copy as Markdown reuses it for ranges
+// (no header — a pasted fragment shouldn't restate the doc's name).
+QString Exporter::markdownRange(int lo, int hi, const Options& opt,
+                                AssetSink& sink, bool withHeader) const {
     const BlockModel* m = model_;
     FootnoteCtx fn;
     // Document header (ruling 2026-08-20): every export leads with the
     // document's name — the file you hand someone should say what it is.
-    QString doc = QStringLiteral("# %1\n\n").arg(escapeMd(m->documentName()));
+    QString doc = withHeader
+        ? QStringLiteral("# %1\n\n").arg(escapeMd(m->documentName()))
+        : QString();
     bool prevWasList = false;
 
-    const int count = m->rowCountQml();
-    for (int row = 0; row < count; ++row) {
+    for (int row = lo; row <= hi; ++row) {
         const int type = m->typeForRow(row);
         const bool isList = BlockModel::isListType(static_cast<uint8_t>(type));
         QString block;
@@ -828,6 +837,25 @@ QString Exporter::toMarkdown(const Options& opt, AssetSink& sink) const {
 
     if (!doc.endsWith(QLatin1Char('\n'))) doc += QLatin1Char('\n');
     return doc;
+}
+
+QString Exporter::copyMarkdown(int loRow, int hiRow) const {
+    if (!model_) return {};
+    const int n = model_->rowCountQml();
+    if (n <= 0) return {};
+    // No asset folder exists for a clipboard payload: files/images reference
+    // their absolute source paths (the emitMedia fallback); generated
+    // rasters (sketches, posters) degrade to their honest fallbacks.
+    class NullSink : public AssetSink {
+    public:
+        QString addFile(const QString&, const QString&) override { return {}; }
+        QString addImage(const QImage&, const QString&) override { return {}; }
+    };
+    NullSink sink;
+    const bool whole = loRow < 0;
+    const int lo = whole ? 0 : std::clamp(loRow, 0, n - 1);
+    const int hi = whole ? n - 1 : std::clamp(hiRow < 0 ? loRow : hiRow, lo, n - 1);
+    return markdownRange(lo, hi, Options{}, sink, /*withHeader=*/whole);
 }
 
 QVariantMap Exporter::scan() const {

@@ -1814,6 +1814,21 @@ FocusScope {
         }
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
+    // Copy as Markdown (⇧⌘C, 2026-08-20): the selected block range as
+    // clipboard markdown — whole blocks, the block-model grain. No selection
+    // → the whole document (with its name header; fragments omit it).
+    function copyAsMarkdown() {
+        if (!blockModel.documentOpen) return
+        var whole = !cursor.hasSel
+        var md = whole ? exporter.copyMarkdown(-1, -1)
+                       : exporter.copyMarkdown(cursor.loRow, cursor.hiRow)
+        if (md.length === 0) return
+        clipboard.writeText(md)
+        var n = cursor.hiRow - cursor.loRow + 1
+        Toasts.show(whole ? qsTr("Copied document as Markdown")
+                  : n === 1 ? qsTr("Copied block as Markdown")
+                            : qsTr("Copied %1 blocks as Markdown").arg(n))
+    }
     function doPaste() {
         // URLs + raster bytes on the SAME clipboard = the screen-capture-app
         // signature (Finder copies carry URLs only). The URL then points at
@@ -2101,6 +2116,13 @@ FocusScope {
             else if (cmd && k === Qt.Key_Minus) root.pdfZoomStep(-1)
             else if (cmd && k === Qt.Key_0) root.pdfZoom100()
             else if (cmd && k === Qt.Key_1) root.pdfZoomFit()
+            event.accepted = true
+        }
+        // Copy as Markdown — document view only (full-frame tabs and ink
+        // mode have their own clipboard rules below).
+        else if (cmd && shift && k === Qt.Key_C && root.activeFrameId === ""
+                 && !root.inkMode) {
+            root.copyAsMarkdown()
             event.accepted = true
         }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or

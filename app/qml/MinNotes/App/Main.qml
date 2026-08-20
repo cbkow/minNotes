@@ -872,6 +872,9 @@ ApplicationWindow {
             }
             Platform.Menu {
                 title: qsTr("Document")
+                Platform.MenuItem { text: qsTr("Copy as Markdown"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen
+                                    onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
+                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Collect Media…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
                 Platform.MenuItem { text: qsTr("Reveal Media Folder"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
                 Platform.MenuSeparator {}
@@ -960,6 +963,9 @@ ApplicationWindow {
             }
             ThemedMenu {
                 title: qsTr("&Document")
+                Action { text: qsTr("Copy as &Markdown"); enabled: blockModel.documentOpen
+                         onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
+                ThemedMenuSeparator {}
                 Action { text: qsTr("&Collect Media…"); enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
                 Action { text: qsTr("&Reveal Media Folder"); enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
                 ThemedMenuSeparator {}

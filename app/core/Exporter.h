@@ -54,6 +54,11 @@ public:
     // Pure generation (testable): the whole document as markdown, assets
     // routed through `sink`.
     QString toMarkdown(const Options& opt, AssetSink& sink) const;
+    // Copy as Markdown (2026-08-20): rows [loRow, hiRow] as clipboard-ready
+    // markdown — no asset folder (images/files reference absolute paths).
+    // loRow < 0 = the whole document, WITH the document-name header;
+    // explicit ranges omit it (a pasted fragment shouldn't restate it).
+    Q_INVOKABLE QString copyMarkdown(int loRow = -1, int hiRow = -1) const;
 
     // The fidelity ceiling: color/highlight spans survive, comments render
     // as tinted ranges + a linked comments section, tables keep their
@@ -95,5 +100,7 @@ public:
                                bool includeVideoNotes);
 
 private:
+    QString markdownRange(int lo, int hi, const Options& opt, AssetSink& sink,
+                          bool withHeader) const;
     BlockModel* model_ = nullptr;
 };
