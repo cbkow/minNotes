@@ -938,6 +938,14 @@ FocusScope {
             if (hasSel) { deleteSelection(); return }
             if (opaqueHere()) { root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
             if (focusCol > 0) {
+                // A choice chip is atomic (DT-2): a backspace touching ANY of
+                // its text removes the WHOLE chip, label and all.
+                var cbr = blockModel.choiceRangeAt(focusRow, focusCol - 1)
+                if (cbr.length === 2) {
+                    blockModel.removeChoiceAt(focusRow, cbr[0])
+                    setCaret(focusRow, cbr[0])
+                    return
+                }
                 blockModel.deleteRange(focusRow, focusCol - 1, focusRow, focusCol)
                 setCaret(focusRow, focusCol - 1)
             } else if (focusRow > 0) {
@@ -962,6 +970,14 @@ FocusScope {
             if (opaqueHere()) { root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
             var len = blockModel.contentForRow(focusRow).length
             if (focusCol < len) {
+                // Chip atomicity, forward direction: deleting at its left
+                // edge (or inside) removes the whole chip.
+                var cfr = blockModel.choiceRangeAt(focusRow, focusCol)
+                if (cfr.length === 2) {
+                    blockModel.removeChoiceAt(focusRow, cfr[0])
+                    setCaret(focusRow, cfr[0])
+                    return
+                }
                 blockModel.deleteRange(focusRow, focusCol, focusRow, focusCol + 1)
             } else if (focusRow < blockModel.count - 1) {
                 var nt = blockModel.typeForRow(focusRow + 1)
@@ -977,6 +993,10 @@ FocusScope {
                 blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0)
             }
             if (hasSel) deleteSelection()
+            {   // never type INTO a chip: a caret strictly inside hops to its end
+                var cir = blockModel.choiceRangeAt(focusRow, focusCol)
+                if (cir.length === 2 && focusCol > cir[0]) setCaret(focusRow, cir[1])
+            }
             blockModel.insertText(focusRow, focusCol, ch, activeMarks, armedFg, armedBg)   // armed attrs + pens → span the run
             setCaret(focusRow, focusCol + ch.length)
             // Markdown autoformat fires on the space that completes a prefix
@@ -1318,7 +1338,12 @@ FocusScope {
     function navRight(shift) {
         cursor.resetGoalX(); cursor.clearMarks()
         var fb = root.focusBlockItem, n = blockModel.count
-        if (fb && cursor.focusCol < fb.length) cursor.move(cursor.focusRow, cursor.focusCol + 1, shift)
+        if (fb && cursor.focusCol < fb.length) {
+            // Chips are atomic (DT-2): stepping INTO one hops to its far edge.
+            var cr = blockModel.choiceRangeAt(cursor.focusRow, cursor.focusCol)
+            cursor.move(cursor.focusRow,
+                        cr.length === 2 ? cr[1] : cursor.focusCol + 1, shift)
+        }
         else if (cursor.focusRow < n - 1) {
             if (blockModel.typeForRow(cursor.focusRow + 1) === 7) root.enterTable(cursor.focusRow + 1, true)
             else cursor.move(cursor.focusRow + 1, 0, shift)
@@ -1326,7 +1351,11 @@ FocusScope {
     }
     function navLeft(shift) {
         cursor.resetGoalX(); cursor.clearMarks()
-        if (cursor.focusCol > 0) cursor.move(cursor.focusRow, cursor.focusCol - 1, shift)
+        if (cursor.focusCol > 0) {
+            var cl = blockModel.choiceRangeAt(cursor.focusRow, cursor.focusCol - 1)
+            cursor.move(cursor.focusRow,
+                        cl.length === 2 ? cl[0] : cursor.focusCol - 1, shift)
+        }
         else if (cursor.focusRow > 0) {
             if (blockModel.typeForRow(cursor.focusRow - 1) === 7) root.enterTable(cursor.focusRow - 1, false)
             else cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
@@ -1814,6 +1843,24 @@ FocusScope {
         }
         clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
     }
+    // Insert an inline choice chip at the caret (DT-2, ⌥⌘C 2026-08-20):
+    // default tri-state set, picker opens immediately at the new chip
+    // (the applyLink insert-mode shape).
+    function insertChoiceChip() {
+        if (!blockModel.documentOpen || root.activeFrameId !== "" || root.inkMode) return
+        if (cursor.hasSel) cursor.deleteSelection()
+        var row = cursor.focusRow
+        var s = blockModel.insertChoiceAt(row, cursor.focusCol)
+        if (s < 0) return
+        var range = blockModel.choiceRangeAt(row, s)
+        if (range.length === 2) cursor.setCaret(row, range[1])   // park after the chip
+        var cell = root.cellForRow(row)
+        if (cell && cell.teItem) {
+            var rr = cell.teItem.positionToRectangle(s)
+            var pt = cell.teItem.mapToItem(root, rr.x, rr.y + rr.height + 4)
+            root.openInlineChoicePicker(row, s, pt.x, pt.y)
+        }
+    }
     // Copy as Markdown (⇧⌘C, 2026-08-20): the selected block range as
     // clipboard markdown — whole blocks, the block-model grain. No selection
     // → the whole document (with its name header; fragments omit it).
@@ -2123,6 +2170,12 @@ FocusScope {
         else if (cmd && shift && k === Qt.Key_C && root.activeFrameId === ""
                  && !root.inkMode) {
             root.copyAsMarkdown()
+            event.accepted = true
+        }
+        // Insert an inline choice chip (DT-2, ⌥⌘C) — same document-view gate.
+        else if (cmd && (event.modifiers & Qt.AltModifier) && k === Qt.Key_C
+                 && root.activeFrameId === "" && !root.inkMode) {
+            root.insertChoiceChip()
             event.accepted = true
         }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
@@ -2674,6 +2727,42 @@ FocusScope {
                     }
                 }
 
+                // Inline choice chips (DT-2, 2026-08-20): the table chip's
+                // language — option colour at 0.28 fill, 0.55 border — drawn
+                // as overlay rects with the code-chip pad (overlays can't
+                // reserve layout width; snug is the precedent). The label is
+                // the block's own text; this is only the pill behind it.
+                property var choiceRects: {
+                    var dep = blockModel.contentRevision + blockModel.layoutRevision
+                    if (!cell.active || cell.isMedia) return []
+                    var ranges = blockModel.choiceRangesForRow(cell.logicalRow)
+                    var out = []
+                    for (var i = 0; i < ranges.length; ++i) {
+                        var rs = root.selectionRects(te, ranges[i].s, ranges[i].e)
+                        for (var j = 0; j < rs.length; ++j)
+                            out.push({ r: rs[j], color: ranges[i].color })
+                    }
+                    return out
+                }
+                Repeater {
+                    model: cell.choiceRects
+                    delegate: Rectangle {
+                        required property int index
+                        readonly property var cr: cell.choiceRects[index]
+                        readonly property color oc: cr.color !== ""
+                            ? cr.color : Theme.colors.textMuted
+                        color: Qt.rgba(oc.r, oc.g, oc.b, 0.28)
+                        border.width: 1
+                        border.color: Qt.rgba(oc.r, oc.g, oc.b, 0.55)
+                        radius: 0
+                        z: 0
+                        x: te.x + cr.r.x - 2
+                        y: te.y + cr.r.y
+                        width: cr.r.width + 4
+                        height: cr.r.height
+                    }
+                }
+
                 // selection highlight (behind text), one rect per visual line.
                 property var selRects: {
                     var dep = blockModel.contentRevision + blockModel.layoutRevision   // re-eval triggers
@@ -3049,6 +3138,17 @@ FocusScope {
                 var tcb = root.taskCheckboxAt(m.x, m.y)
                 if (tcb >= 0) { blockModel.toggleTask(tcb); return }
                 var h = root.hitTest(m.x, m.y)
+                // Inline choice chip (DT-2) → picker; the press never places
+                // the caret (chips are atomic — the caret parks after it).
+                {
+                    var crange = blockModel.choiceRangeAt(h.row, h.col)
+                    if (crange.length === 2) {
+                        cursor.setCaret(h.row, crange[1])
+                        root.openInlineChoicePicker(h.row, crange[0],
+                            m.x - flick.contentX, m.y - flick.contentY)
+                        return
+                    }
+                }
                 // Caret takes priority over links: a click always edits. Opening a
                 // link is via the hover tooltip / context menu (never steals the press).
                 root.hoverLinkUrl = ""; linkTipHide.stop()
@@ -3087,9 +3187,14 @@ FocusScope {
                     if (hbt) { var hlp = hbt.mapFromItem(mouse, m.x, m.y); overBorder = hbt.columnBorderAt(hlp.x) >= 0 }
                 }
                 root.tableOverBorder = overBorder
-                // Over an interactive widget (block task checkbox, or a table check /
-                // choice body cell) → a pointing-hand cursor instead of the I-beam.
+                // Over an interactive widget (block task checkbox, an inline
+                // choice chip, or a table check/choice body cell) → a
+                // pointing-hand cursor instead of the I-beam.
                 var clk = root.taskCheckboxAt(m.x, m.y) >= 0
+                if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) !== 7) {
+                    var chh = root.hitTest(m.x, m.y)
+                    clk = blockModel.choiceAt(chh.row, chh.col) !== ""
+                }
                 if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) === 7) {
                     var ch = root.tableHitAt(m.x, m.y)
                     if (ch) {
@@ -5808,7 +5913,15 @@ FocusScope {
 
     // --- Choice-cell option picker (root overlay above the mouse layer) ---
     function openChoicePicker(trow, r, c, vx, vy) {
+        choicePicker.srow = -1; choicePicker.sstart = -1
         choicePicker.row = trow; choicePicker.r = r; choicePicker.c = c
+        root.choiceX = vx; root.choiceY = vy
+        choicePicker.open()
+    }
+    // Inline chip variant (DT-2): span address instead of the cell triple.
+    function openInlineChoicePicker(brow, s, vx, vy) {
+        choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
+        choicePicker.srow = brow; choicePicker.sstart = s
         root.choiceX = vx; root.choiceY = vy
         choicePicker.open()
     }
@@ -5818,7 +5931,9 @@ FocusScope {
         x: Math.max(8, Math.min(root.choiceX, root.width - width - 8))
         y: Math.max(8, Math.min(root.choiceY, root.height - height - 8))
         onClosed: root.forceActiveFocus()
-        onEditOptions: root.openChoiceEditor(choicePicker.row, choicePicker.c)
+        onEditOptions: choicePicker.spanMode
+                           ? choiceEditor.open2Span(choicePicker.srow, choicePicker.sstart)
+                           : root.openChoiceEditor(choicePicker.row, choicePicker.c)
     }
     // Modal editor for a choice column's option set (opened from the column menu or
     // the picker's "Edit options…"). Centres itself in the editor.
@@ -5886,6 +6001,9 @@ FocusScope {
                 MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.isTable
+                          text: "Insert choice chip"
+                          onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }

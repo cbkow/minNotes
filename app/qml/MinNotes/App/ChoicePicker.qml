@@ -12,6 +12,13 @@ Popup {
     property int row: -1     // table block row
     property int r: -1       // cell row
     property int c: -1       // column
+    // SPAN MODE (DT-2, 2026-08-20): the same control surface over an inline
+    // choice chip — the option set lives in the span's payload, writes go
+    // through the choice* invokables. sstart = the chip's range start (its
+    // stable address; label swaps keep it).
+    property int srow: -1
+    property int sstart: -1
+    readonly property bool spanMode: sstart >= 0
 
     padding: 4
     focus: true   // the Popup must hold focus or its TextInput can't receive keystrokes
@@ -23,10 +30,20 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     onOpened: if (picker.options.length === 0) addField.forceActiveFocus()
 
-    readonly property var options: (row >= 0)
-        ? (blockModel.contentRevision, blockModel.tableColumnOptions(row, c)) : []
-    readonly property string selectedId: (row >= 0)
-        ? (blockModel.contentRevision, blockModel.tableCellChoice(row, r, c)) : ""
+    readonly property var spanPayload: spanMode
+        ? (blockModel.contentRevision,
+           JSON.parse(blockModel.choiceAt(srow, sstart) || "{}")) : null
+    readonly property var options: spanMode
+        ? ((spanPayload && spanPayload.o)
+               ? spanPayload.o.map(function(o) {
+                     return { id: o.id, label: o.l, color: o.c || "" } })
+               : [])
+        : ((row >= 0)
+               ? (blockModel.contentRevision, blockModel.tableColumnOptions(row, c)) : [])
+    readonly property string selectedId: spanMode
+        ? ((spanPayload && spanPayload.v) ? spanPayload.v : "")
+        : ((row >= 0)
+               ? (blockModel.contentRevision, blockModel.tableCellChoice(row, r, c)) : "")
     // Auto colour for a new option — rotates through a small palette by position.
     readonly property var palette: ["#c0563f", "#c08a3e", "#5a8f4e", "#3f7fa6",
                                     "#7b5ea7", "#a64f7e", "#6a737d"]
@@ -71,25 +88,38 @@ Popup {
                 MouseArea {   // select the option
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: { blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, optRow.modelData.id); picker.close() }
+                    onClicked: {
+                        if (picker.spanMode)
+                            blockModel.setChoiceSelected(picker.srow, picker.sstart, optRow.modelData.id)
+                        else
+                            blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, optRow.modelData.id)
+                        picker.close()
+                    }
                 }
             }
         }
 
-        Rectangle { visible: picker.selectedId !== ""; width: parent.width; height: 1; color: Theme.colors.divider }
-        Rectangle {   // clear the cell's selection
-            visible: picker.selectedId !== ""
+        Rectangle { visible: picker.spanMode || picker.selectedId !== ""; width: parent.width; height: 1; color: Theme.colors.divider }
+        Rectangle {   // clear the cell's selection / remove the inline chip
+            visible: picker.spanMode || picker.selectedId !== ""
             width: parent.width; height: 24; radius: 0
             color: clearMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {
                 anchors.verticalCenter: parent.verticalCenter; x: 24
-                text: "Clear"; color: Theme.colors.textMuted
+                // Inline chips have no empty state (text == label), so the
+                // action is REMOVAL (ruling 2026-08-20), and says so.
+                text: picker.spanMode ? qsTr("Remove") : qsTr("Clear")
+                color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
             }
             MouseArea {
                 id: clearMA; anchors.fill: parent; hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: { blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, ""); picker.close() }
+                onClicked: {
+                    if (picker.spanMode) blockModel.removeChoiceAt(picker.srow, picker.sstart)
+                    else blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, "")
+                    picker.close()
+                }
             }
         }
 
@@ -108,8 +138,16 @@ Popup {
                     var name = text.trim()
                     if (name.length === 0) return
                     var col = picker.palette[picker.options.length % picker.palette.length]
-                    blockModel.tableAddOption(picker.row, picker.c, name, col)
-                    text = ""
+                    if (picker.spanMode) {
+                        // Quick-add SELECTS on an inline chip (the label
+                        // follows) — the pick is made, close.
+                        blockModel.choiceAddOption(picker.srow, picker.sstart, name, col)
+                        text = ""
+                        picker.close()
+                    } else {
+                        blockModel.tableAddOption(picker.row, picker.c, name, col)
+                        text = ""
+                    }
                 }
                 Text {   // placeholder
                     visible: addField.text.length === 0 && !addField.activeFocus

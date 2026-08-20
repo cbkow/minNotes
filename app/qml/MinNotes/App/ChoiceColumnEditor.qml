@@ -44,12 +44,30 @@ Popup {
 
     ListModel { id: draft }
 
+    // SPAN MODE (DT-2, 2026-08-20): the draft editor between open and commit
+    // is pure {id,label,color} — only the seed and the sink differ.
+    property int srow: -1
+    property int sstart: -1
+    readonly property bool spanMode: sstart >= 0
+
     function open2(trow, col) {
         editor.row = trow; editor.c = col
+        editor.srow = -1; editor.sstart = -1
         draft.clear()
         var opts = blockModel.tableColumnOptions(trow, col)
         for (var i = 0; i < opts.length; ++i)
             draft.append({ oid: opts[i].id, label: opts[i].label, color: opts[i].color })
+        editor.editingColor = -1; editor.customOpen = false
+        editor.open()
+    }
+    function open2Span(brow, s) {
+        editor.srow = brow; editor.sstart = s
+        editor.row = -1; editor.c = -1
+        draft.clear()
+        var p = JSON.parse(blockModel.choiceAt(brow, s) || "{}")
+        var opts = p.o || []
+        for (var i = 0; i < opts.length; ++i)
+            draft.append({ oid: opts[i].id, label: opts[i].l, color: opts[i].c || "" })
         editor.editingColor = -1; editor.customOpen = false
         editor.open()
     }
@@ -65,7 +83,8 @@ Popup {
             if (o.label.trim().length === 0) continue   // drop blank-labelled options
             arr.push({ id: o.oid, label: o.label, color: o.color })
         }
-        blockModel.tableSetColumnOptions(editor.row, editor.c, arr)
+        if (editor.spanMode) blockModel.setChoiceOptions(editor.srow, editor.sstart, arr)
+        else blockModel.tableSetColumnOptions(editor.row, editor.c, arr)
         editor.close()
     }
 
