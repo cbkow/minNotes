@@ -27,6 +27,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QAbstractTextDocumentLayout>
 #include <QLocale>
 #include <QPageSize>
 #include <QPainter>
@@ -3273,8 +3274,31 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     buildPdfDoc(c);
     pdfComments(c);
 
+    // Manual page loop (2026-08-20): QTextDocument::print() force-adds its
+    // own hardcoded 2cm root-frame margin to a non-paginated document — ON
+    // TOP of the writer margins — silently narrowing the text column ~150
+    // units below the contentW every image was capped against (full-width
+    // images cropped at the right edge). Pre-paginate at the writer's paint
+    // rect and drive the pages ourselves: every margin lives on the writer,
+    // exactly once. (Also the future seam for keep-with-next.)
     const qint64 before = out.pos();
-    doc.print(&writer);
+    doc.documentLayout()->setPaintDevice(&writer);
+    doc.setPageSize(QSizeF(c.contentW, c.contentH));
+    const int pages = std::max(1, doc.pageCount());
+    QPainter p(&writer);
+    if (!p.isActive()) return false;
+    for (int pg = 0; pg < pages; ++pg) {
+        if (pg > 0) writer.newPage();
+        p.save();
+        p.translate(0, -qreal(pg) * c.contentH);
+        const QRectF view(0, qreal(pg) * c.contentH, c.contentW, c.contentH);
+        p.setClipRect(view);
+        QAbstractTextDocumentLayout::PaintContext ctx;
+        ctx.clip = view;
+        doc.documentLayout()->draw(&p, ctx);
+        p.restore();
+    }
+    p.end();
     return out.pos() > before;
 }
 

@@ -231,7 +231,7 @@ ApplicationWindow {
             // Package pre-scan: the only option is detection-driven videos.
             _exportScan = packageExporter.scan()
             if ((_exportScan.videos || 0) > 0) exportOptionsDialog.open()
-            else exportSaveDialog.open()
+            else _openExportSave()
             return
         }
         _exportScan = exporter.scan()
@@ -240,7 +240,16 @@ ApplicationWindow {
         if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0)
             exportOptionsDialog.open()
         else
-            exportSaveDialog.open()
+            _openExportSave()
+    }
+    // Seed the save dialog's filename on EVERY open: the dialog remembers
+    // the last saved file, so "test.pdf" followed by a markdown export
+    // offered "test.pdf.md" (bug 2026-08-20). Name = the document, suffix =
+    // the current format; the remembered FOLDER is kept.
+    function _openExportSave() {
+        var name = (blockModel.documentName || "Untitled") + "." + _exportFormat
+        exportSaveDialog.selectedFile = exportSaveDialog.currentFolder + "/" + name
+        exportSaveDialog.open()
     }
     FileDialog {
         id: exportSaveDialog
@@ -424,7 +433,7 @@ ApplicationWindow {
                 FlatButton { text: qsTr("Cancel"); padding: 12
                              onClicked: exportOptionsDialog.close() }
                 FlatButton { text: qsTr("Export…"); variant: "primary"; padding: 12
-                             onClicked: { exportOptionsDialog.close(); exportSaveDialog.open() } }
+                             onClicked: { exportOptionsDialog.close(); win._openExportSave() } }
             }
         }
     }

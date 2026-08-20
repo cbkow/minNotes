@@ -3030,6 +3030,13 @@ static void testExportPdf() {
         "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
         "{\"id\":\"k1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,"
         "\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.7,0.7]]}]}"));
+    // Oversized image: MUST scale into the column, never crop at the right
+    // (the QTextDocument::print 2cm-margin bug, 2026-08-20).
+    const QString bigPng = dir.filePath(QStringLiteral("big.png"));
+    { QImage big(2400, 1200, QImage::Format_RGB32); big.fill(Qt::darkMagenta);
+      big.save(bigPng, "PNG"); }
+    CHECK(m.insertImageFromUrl(pdfRow, QUrl::fromLocalFile(bigPng).toString()) > 0,
+          "oversized image inserted");
 
     Exporter ex;
     ex.setModel(&m);
@@ -3054,6 +3061,25 @@ static void testExportPdf() {
     CHECK(all.contains(QStringLiteral("item one")), "list text extracts");
     CHECK(all.contains(QStringLiteral("cell body")), "table text extracts");
     CHECK(all.contains(QStringLiteral("page 3 of 3")), "annotated page caption present");
+    // Nothing may paint into the right margin: render every page and demand
+    // the rightmost 5% band (well inside the ~8.6% margin) stays paper-white.
+    for (int pg = 0; pg < pdoc.pageCount(); ++pg) {
+        const QSizeF pts = pdoc.pagePointSize(pg);
+        const QImage pgImg = pdoc.render(pg, QSize(int(pts.width()), int(pts.height())));
+        if (pgImg.isNull()) continue;
+        bool clean = true;
+        int worstX = -1, worstY = -1;
+        for (int yy = 0; yy < pgImg.height() && clean; yy += 2)
+            for (int xx = int(pgImg.width() * 0.95); xx < pgImg.width(); xx += 2) {
+                const QRgb px = pgImg.pixel(xx, yy);
+                if (qAlpha(px) != 0 && (qRed(px) < 245 || qGreen(px) < 245
+                                        || qBlue(px) < 245)) {
+                    clean = false; worstX = xx; worstY = yy; break;
+                }
+            }
+        CHECK(clean, "page %d right margin is clean (dirty at %d,%d)",
+              pg + 1, worstX, worstY);
+    }
     // Soft checks (byte-level; engine details, not contracts):
     if (!buf.data().contains("Aspekta"))
         qInfo("  (note: body font descriptor not found — synthesized fallback?)");
