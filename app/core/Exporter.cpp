@@ -2082,6 +2082,61 @@ void docxTextRun(QXmlStreamWriter& w, const QString& text, const DocxRunProps& r
     w.writeEndElement();
 }
 
+void docxPlainPara(QXmlStreamWriter& w, const QString& text, const DocxRunProps& rp,
+                   const std::function<void(QXmlStreamWriter&)>& pPr);   // defined below
+
+// Code blocks as COLORED runs (2026-08-20 — the last format without
+// syntax colors): KSyntaxHighlighting LightTheme segments, each run
+// keeping the Courier + EFEFEF shading so the DOCX importer's code sniff
+// (font + shd) still coalesces the block on round-trip. No definition for
+// the language → the old plain paragraph, verbatim.
+class DocxCodeEmitter : public KSyntaxHighlighting::AbstractHighlighter {
+public:
+    DocxCodeEmitter() {
+        setTheme(codeHighlightRepo().defaultTheme(
+            KSyntaxHighlighting::Repository::LightTheme));
+    }
+    void emitPara(QXmlStreamWriter& w, const QString& lang, const QString& code) {
+        DocxRunProps base;
+        base.code = true;
+        base.halfPtSize = 18;   // 9pt — the existing code-paragraph size
+        const KSyntaxHighlighting::Definition def = resolveCodeDefinition(lang);
+        if (!def.isValid()) { docxPlainPara(w, code, base, nullptr); return; }
+        setDefinition(def);
+        w_ = &w;
+        base_ = base;
+        w.writeStartElement(QStringLiteral("w:p"));
+        KSyntaxHighlighting::State st;
+        const QStringList lines = code.split(QLatin1Char('\n'));
+        for (int i = 0; i < lines.size(); ++i) {
+            if (i > 0) {   // line-break run keeps the shading continuous
+                w.writeStartElement(QStringLiteral("w:r"));
+                docxRunProps(w, base_);
+                w.writeEmptyElement(QStringLiteral("w:br"));
+                w.writeEndElement();
+            }
+            line_ = lines.at(i);
+            st = highlightLine(line_, st);
+        }
+        w.writeEndElement();
+        w_ = nullptr;
+    }
+protected:
+    void applyFormat(int offset, int length,
+                     const KSyntaxHighlighting::Format& f) override {
+        DocxRunProps rp = base_;
+        if (f.hasTextColor(theme())) rp.color = f.textColor(theme()).name();
+        if (f.isBold(theme()))       rp.b = true;
+        if (f.isItalic(theme()))     rp.i = true;
+        if (f.isUnderline(theme()))  rp.u = true;
+        docxTextRun(*w_, line_.mid(offset, length), rp);
+    }
+private:
+    QXmlStreamWriter* w_ = nullptr;
+    DocxRunProps base_;
+    QString line_;
+};
+
 // One block's text + spans → OOXML runs. Every run carries its FULL
 // properties, so overlapping spans need no nesting stack — only comment
 // range markers and hyperlink wrappers have element structure.
@@ -2419,6 +2474,7 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
 QByteArray docxDocumentXml(DocxCtx& c) {
     return docxXml([&](QXmlStreamWriter& w) {
         const BlockModel* m = c.m;
+        DocxCodeEmitter codeEmitter;   // one theme/definition resolver per export
         w.writeStartElement(QStringLiteral("w:document"));
         w.writeAttribute(QStringLiteral("xmlns:w"),
             QStringLiteral("http://schemas.openxmlformats.org/wordprocessingml/2006/main"));
@@ -2460,11 +2516,9 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 });
                 break;
             }
-            case BlockModel::Code: {
-                DocxRunProps rp; rp.code = true; rp.halfPtSize = 18;
-                docxPlainPara(w, m->contentForRow(row), rp);
+            case BlockModel::Code:
+                codeEmitter.emitPara(w, m->languageForRow(row), m->contentForRow(row));
                 break;
-            }
             case BlockModel::ListItem:
             case BlockModel::TaskListItem:
             case BlockModel::OrderedListItem: {

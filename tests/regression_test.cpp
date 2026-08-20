@@ -779,6 +779,13 @@ static void testExportMarkdown() {
         CHECK(cmts.contains("note body"), "comments.xml carries the thread body");
         CHECK(!nums.isEmpty() && doc.contains("w:numPr"),
               "numbering part present and lists reference it");
+        // Code colors (2026-08-20): the cpp block emits COLORED runs that
+        // still carry the Courier + EFEFEF code identity (the round-trip
+        // sniff). This doc has no colored spans, so any w:color inside a
+        // Courier run is the syntax highlighter's.
+        CHECK(doc.contains("Courier New") && doc.contains("w:color")
+                  && doc.contains("EFEFEF"),
+              "code block exports as colored runs with the code identity");
         CHECK(doc.contains("w:tbl") && doc.contains("w:gridCol"),
               "table exports with a grid");
         CHECK(!zr.fileData(QStringLiteral("word/media/image1.png")).isEmpty()
