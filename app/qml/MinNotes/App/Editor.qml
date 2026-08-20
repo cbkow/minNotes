@@ -121,6 +121,19 @@ FocusScope {
         if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
         if (activePdfRow < 0) pdfSpaceHeld = false   // never leave the hand stuck across a tab switch
     }
+    // PDF tab zoom (2026-08-20): 1.0 = fit-width; the ListView grows a
+    // horizontal content axis when zoomed past it (space-hand pans both).
+    // Reset per tab — keyed on the ID, not the row (row shifts on inserts).
+    property real pdfZoom: 1.0
+    onActivePdfIdChanged: pdfZoom = 1.0
+    property real pdfFitPageW: 0            // pushed by the list (viewport-derived)
+    function pdfZoomTo(z) { pdfZoom = Math.max(0.25, Math.min(4, z)) }
+    function pdfZoomStep(dir) { pdfZoomTo(pdfZoom * (dir > 0 ? Math.SQRT2 : 1 / Math.SQRT2)) }
+    function pdfZoomFit() { pdfZoomTo(1.0) }
+    function pdfZoom100() {   // page at its POINT size (1 unit per pt)
+        if (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0)
+            pdfZoomTo(blockModel.mediaW(activePdfRow) / pdfFitPageW)
+    }
     // Space-hand panning in the PDF tab (the sketch-tab convention): while
     // held, the page canvases refuse mouse so drags fall through to the
     // ListView and scroll it. With a tool armed, a plain drag DRAWS — the
@@ -2068,6 +2081,12 @@ FocusScope {
                 root.pdfActiveInk.deleteSelection()
             else if (k === Qt.Key_Space && !event.isAutoRepeat)
                 root.pdfSpaceHeld = true            // hold the hand (list pan)
+            // Zoom keys (2026-08-20) — the ZoomBadge menu's advertised pair
+            // (Fit ⌘1 / 100% ⌘0) plus ⌘±, previously swallowed unhandled.
+            else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) root.pdfZoomStep(1)
+            else if (cmd && k === Qt.Key_Minus) root.pdfZoomStep(-1)
+            else if (cmd && k === Qt.Key_0) root.pdfZoom100()
+            else if (cmd && k === Qt.Key_1) root.pdfZoomFit()
             event.accepted = true
         }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
@@ -3678,10 +3697,25 @@ FocusScope {
                     cacheBuffer: Math.max(0, Math.round(height * 1.5))   // height is transiently <0 during layout
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: MnScrollBar {}
+                    // Zoom (2026-08-20): a ListView IS a Flickable — past
+                    // fit-width the content grows a horizontal axis and
+                    // flicking/space-hand pan work on both.
+                    readonly property real fitPageW:
+                        Math.max(1, width - 2 * Theme.dim.scrollBarWidth - 8)
+                    contentWidth: Math.max(width,
+                        fitPageW * root.pdfZoom + 2 * Theme.dim.scrollBarWidth + 8)
+                    flickableDirection: Flickable.AutoFlickIfNeeded
+                    onFitPageWChanged: root.pdfFitPageW = fitPageW   // ⌘0 needs it at root
+                    Component.onCompleted: root.pdfFitPageW = fitPageW
                     // Space-hand affordance: the open hand says "drag scrolls now".
                     HoverHandler {
                         enabled: root.pdfSpaceHeld
                         cursorShape: Qt.OpenHandCursor
+                    }
+                    // ⌘-wheel zoom (the sketch-canvas convention), √2 steps.
+                    WheelHandler {
+                        acceptedModifiers: Qt.ControlModifier
+                        onWheel: (event) => root.pdfZoomStep(event.angleDelta.y > 0 ? 1 : -1)
                     }
                     delegate: Item {
                         required property int index
@@ -3689,8 +3723,8 @@ FocusScope {
                             ? pdfFrameDoc.pagePointSize(index) : Qt.size(8.5, 11)
                         // Reserve a full scrollbar width on each side of the centered page
                         // so the (right-edge) vertical bar never overlaps it.
-                        readonly property real pageW: pdfList.width - 2 * Theme.dim.scrollBarWidth - 8
-                        width: pdfList.width
+                        readonly property real pageW: pdfList.fitPageW * root.pdfZoom
+                        width: pdfList.contentWidth
                         height: pts.width > 0 ? Math.round(pageW * pts.height / pts.width)
                                               : Math.round(pageW * 1.294)
                         Rectangle {   // white page with a hairline edge on the dark backdrop
@@ -3821,6 +3855,20 @@ FocusScope {
                         // Escape COMMITS (the sketch-session precedent; blanking deletes).
                         Keys.onEscapePressed: pdfTextSession.commit()
                     }
+                }
+                ZoomBadge {   // the tab's only zoom chrome (the sketch-tab pattern)
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: 10 + Theme.dim.scrollBarWidth
+                    anchors.bottomMargin: 10
+                    // Readout is TRUE page scale: 100% = one unit per PDF point,
+                    // whatever the fit ratio happens to be.
+                    zoomValue: root.pdfFitPageW > 0 && blockModel.mediaW(root.activePdfRow) > 0
+                               ? root.pdfZoom * root.pdfFitPageW / blockModel.mediaW(root.activePdfRow)
+                               : 1
+                    showFitInk: false
+                    onFitRequested: root.pdfZoomFit()
+                    onHundredRequested: root.pdfZoom100()
                 }
             }
         }
