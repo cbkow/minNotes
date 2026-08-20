@@ -34,6 +34,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPainter>
+#include <QPdfDocument>
 #include <QPdfWriter>
 #include <QUrl>
 #include <QtGlobal>
@@ -2968,6 +2969,94 @@ static void testPdfPageInkExport() {
     dir.removeRecursively();
 }
 
+// --- Test 36: Export as PDF (QTextDocument → QPdfWriter) -------------------
+// Headless assertions: %PDF magic, QPdfDocument round-trip (page count +
+// extractable text — Qt writes ToUnicode cmaps), soft checks for the
+// embedded body font and a link URI, and the annotated-PDF-pages leg over a
+// QPdfWriter-generated fixture. Visual placement is the manual pass.
+static void testExportPdf() {
+    qInfo("[36] export as PDF: round-trip, text, font, links, annotated pages");
+    QDir dir(QCoreApplication::applicationDirPath()
+             + QStringLiteral("/mn_pdf_out"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString fixture = dir.filePath(QStringLiteral("ref.pdf"));
+    {   // 3-page reference PDF for the media block
+        QPdfWriter w(fixture);
+        w.setResolution(96);
+        QPainter p(&w);
+        p.drawText(100, 100, QStringLiteral("fixture page"));
+        w.newPage(); w.newPage();
+        p.end();
+    }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    int r = 0;
+    m.insertBlock(r); m.setContent(r, QStringLiteral("Export Title"));
+    m.setBlockType(r, BlockModel::Heading);
+    m.insertBlock(++r); m.setContent(r, QStringLiteral("plain bolditalic linked"));
+    m.setFormat(r, 6, 16, QStringLiteral("bold"), true);
+    m.setFormat(r, 6, 16, QStringLiteral("italic"), true);
+    m.setLink(r, 17, 23, QStringLiteral("https://example.com/spec"));
+    m.insertBlock(++r); m.setContent(r, QStringLiteral("item one"));
+    m.setBlockType(r, BlockModel::ListItem);
+    m.insertBlock(++r); m.setContent(r, QStringLiteral("int x = 1;"));
+    m.setBlockType(r, BlockModel::Code);
+    const int tRow = m.insertTable(r, 2, 2);
+    m.tableSetCell(tRow, 0, 0, QStringLiteral("H1"));
+    m.tableSetCell(tRow, 1, 0, QStringLiteral("cell body"));
+    r = tRow;
+    {   // pdf media block with ink on page 3
+        BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+        sp.mediaJson = QStringLiteral(
+            "{\"src\":\"%1\",\"w\":595,\"h\":842,\"kind\":\"pdf\",\"pages\":3}")
+            .arg(fixture);
+        m.insertSpecs(r, {sp}, false);
+    }
+    const int pdfRow = r + 1;
+    CHECK(m.mediaKind(pdfRow) == QLatin1String("pdf"), "pdf block landed");
+    m.pdfSetPageInk(pdfRow, 2, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"k1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.7,0.7]]}]}"));
+
+    Exporter ex;
+    ex.setModel(&m);
+    QBuffer buf;
+    buf.open(QIODevice::ReadWrite);
+    CHECK(ex.toPdf(Exporter::Options{}, buf), "toPdf produced bytes");
+    CHECK(buf.data().startsWith("%PDF-"), "PDF magic present");
+
+    const QString outPdf = dir.filePath(QStringLiteral("out.pdf"));
+    { QFile pf(outPdf); CHECK(pf.open(QIODevice::WriteOnly), "out.pdf writable");
+      pf.write(buf.data()); }
+    QPdfDocument pdoc;
+    CHECK(pdoc.load(outPdf) == QPdfDocument::Error::None, "QPdfDocument re-reads it");
+    CHECK(pdoc.pageCount() >= 1, "at least one page (%d)", pdoc.pageCount());
+    QString all;
+    for (int pg = 0; pg < pdoc.pageCount(); ++pg)
+        all += pdoc.getAllText(pg).text();
+    CHECK(all.contains(QStringLiteral("Export Title")), "heading text extracts");
+    CHECK(all.contains(QStringLiteral("bolditalic")), "span text extracts");
+    CHECK(all.contains(QStringLiteral("item one")), "list text extracts");
+    CHECK(all.contains(QStringLiteral("cell body")), "table text extracts");
+    CHECK(all.contains(QStringLiteral("page 3 of 3")), "annotated page caption present");
+    // Soft checks (byte-level; engine details, not contracts):
+    if (!buf.data().contains("Aspekta"))
+        qInfo("  (note: body font descriptor not found — synthesized fallback?)");
+    if (!buf.data().contains("https://example.com/spec"))
+        qInfo("  (note: link URI not found raw — anchors may not emit annotations)");
+    {   // Inspection artifact for the manual visual pass.
+        QFile pf(QDir::tempPath() + QStringLiteral("/mn_export_probe.pdf"));
+        if (pf.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            pf.write(buf.data());
+    }
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -3020,6 +3109,7 @@ int main(int argc, char** argv) {
     testSketchGroupDelete();
     testPdfPageInkUndo();
     testPdfPageInkExport();
+    testExportPdf();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

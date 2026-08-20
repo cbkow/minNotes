@@ -28,6 +28,7 @@
 #include <QVariantMap>
 
 class BlockModel;
+class QIODevice;
 
 class Exporter : public QObject {
     Q_OBJECT
@@ -78,6 +79,20 @@ public:
     // document styling, content-faithful rather than dark-theme-faithful.
     Q_INVOKABLE bool exportDocx(const QString& fileUrlOrPath,
                                 bool includeVideoNotes);
+
+    // Pure generation (testable): the whole document as a PDF written to
+    // `out` (already open for writing). No AssetSink — images embed in the
+    // PDF as document resources. QTextDocument → QPdfWriter pipeline
+    // (2026-08-20): white-paper print styling (the DOCX ruling), 96-dpi
+    // layout units, A4/Letter by locale, media ink BAKED, per-page PDF ink
+    // as one image per annotated page, comments as footnotes + end section.
+    // v1 print lossiness (documented like markdown's): text-block px-space
+    // page ink is skipped; no heading keep-with-next; wide tables/code wrap
+    // inside the fixed measure instead of escaping it.
+    bool toPdf(const Options& opt, QIODevice& out) const;
+    // Write a single `<path>.pdf`. False on any write failure.
+    Q_INVOKABLE bool exportPdf(const QString& fileUrlOrPath,
+                               bool includeVideoNotes);
 
 private:
     BlockModel* model_ = nullptr;

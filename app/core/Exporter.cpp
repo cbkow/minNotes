@@ -27,10 +27,17 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
+#include <QPageSize>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextList>
+#include <QTextTable>
 #include <QTime>
 #include <QUrl>
 
@@ -2624,4 +2631,624 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes) 
                     c.images.at(i).first);
     zip.close();
     return zip.status() == QZipWriter::NoError;
+}
+
+// ============================ PDF export ============================
+// QTextDocument built programmatically via QTextCursor, printed to a
+// QPdfWriter (design 2026-08-20; ruling: this pipeline over a hand-rolled
+// painter). White-paper print styling (the DOCX ruling); 96-dpi layout
+// units so numbers stay CSS-px-meaningful; ink pre-baked into images —
+// QTextDocument has no overlay primitive. See Exporter.h for the v1
+// print-lossiness list.
+
+namespace {
+
+const QColor kPdfText(0x20, 0x20, 0x20);
+const QColor kPdfMuted(0x77, 0x77, 0x77);
+const QColor kPdfAccent(0x01, 0x66, 0xc0);   // print-legible accent
+const QColor kPdfBorder(0xC8, 0xC8, 0xC8);
+
+QStringList pdfMonoFamilies() {
+    return {QStringLiteral("JetBrains Mono"), QStringLiteral("Menlo"),
+            QStringLiteral("Consolas"), QStringLiteral("Courier New")};
+}
+
+struct PdfCtx {
+    const BlockModel* m = nullptr;
+    Exporter::Options opt;
+    QTextDocument* doc = nullptr;
+    QTextCursor cur;
+    FootnoteCtx fn;
+    int imgSeq = 0;
+    qreal contentW = 0, contentH = 0;   // page paint rect, 96-dpi units
+    bool first = true;                  // reuse the document's initial block once
+
+    // Every structure appends; normalizing to the root frame's end keeps the
+    // cursor sane after frames/tables (which capture it).
+    void toEnd() { cur = doc->rootFrame()->lastCursorPosition(); }
+    void newBlock(const QTextBlockFormat& bf, const QTextCharFormat& cf = {}) {
+        if (first) { cur.setBlockFormat(bf); cur.setBlockCharFormat(cf); first = false; }
+        else cur.insertBlock(bf, cf);
+    }
+};
+
+QString pdfAddImage(PdfCtx& c, const QImage& img) {
+    const QString name = QStringLiteral("mnimg:%1").arg(++c.imgSeq);
+    c.doc->addResource(QTextDocument::ImageResource, QUrl(name), img);
+    return name;
+}
+
+// Insert an image block, display size capped to the content rect (an image
+// must fit ONE page — it is a single line to the layout).
+void pdfInsertImage(PdfCtx& c, const QImage& img, qreal displayW) {
+    if (img.isNull() || displayW <= 0 || img.width() <= 0) return;
+    qreal w = std::min(displayW, c.contentW);
+    qreal h = w * img.height() / double(img.width());
+    const qreal maxH = c.contentH - 24;
+    if (maxH > 0 && h > maxH) { w *= maxH / h; h = maxH; }
+    QTextBlockFormat bf; bf.setTopMargin(6); bf.setBottomMargin(6);
+    c.newBlock(bf);
+    QTextImageFormat f;
+    f.setName(pdfAddImage(c, img));
+    f.setWidth(w); f.setHeight(h);
+    c.cur.insertImage(f);
+}
+
+// Tri-state checkbox as an IMAGE (the app's .cb recipe) — font fallback for
+// ☐/◐/☑ is unreliable headless, painted pixels are not. 2× raster, shown
+// at `display` units.
+QImage taskGlyphImage(int state) {
+    const int px = 26;
+    QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF r(2, 2, px - 4, px - 4);
+    if (state == 2) {                        // done: accent fill + white check
+        p.fillRect(r, kPdfAccent);
+        QPen pen(Qt::white, 2.6); pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen);
+        p.drawLine(QPointF(7, 13.5), QPointF(11, 18));
+        p.drawLine(QPointF(11, 18), QPointF(19, 8));
+    } else {
+        p.setPen(QPen(QColor(0x99, 0x99, 0x99), 2.0));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(r);
+        if (state == 1)                      // doing: half fill
+            p.fillRect(QRectF(r.left() + 1, r.top() + 1,
+                              r.width() / 2 - 1, r.height() - 2), kPdfAccent);
+    }
+    p.end();
+    return img;
+}
+
+void pdfInsertTaskGlyph(PdfCtx& c, int state) {
+    QTextImageFormat f;
+    f.setName(pdfAddImage(c, taskGlyphImage(state)));
+    f.setWidth(11); f.setHeight(11);
+    c.cur.insertImage(f);
+    c.cur.insertText(QStringLiteral(" "));
+}
+
+// One block's text + spans as merged char formats — per segment, every
+// covering span's attributes merge (no nesting order to manage, unlike the
+// marker emitters). Comment spans record footnote numbers and drop a
+// superscript [n] at the span end.
+void pdfInline(PdfCtx& c, int row, const QTextCharFormat& base) {
+    const QString text = c.m->contentForRow(row);
+    const int len = text.size();
+    struct Run { int s, e; uint8_t kind; QString u; };
+    std::vector<Run> runs;
+    std::set<int> bounds{0, len};
+    std::vector<std::pair<int, int>> notes;   // (end pos, footnote number)
+    for (const QVariant& v : c.m->spansForRow(row)) {
+        const QVariantMap sp = v.toMap();
+        const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
+        const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
+        const int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
+        if (s >= e) continue;
+        const QString u = sp.value(QStringLiteral("u")).toString();
+        if (k == BlockModel::SpanComment) notes.push_back({e, c.fn.numberFor(u)});
+        runs.push_back({s, e, k, u});
+        bounds.insert(s); bounds.insert(e);
+    }
+    std::sort(notes.begin(), notes.end());
+    size_t ni = 0;
+    auto emitNotesAt = [&](int pos) {
+        for (; ni < notes.size() && notes[ni].first == pos; ++ni) {
+            QTextCharFormat nf = base;
+            nf.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
+            nf.setForeground(kPdfAccent);
+            c.cur.insertText(QStringLiteral("[%1]").arg(notes[ni].second), nf);
+        }
+    };
+    emitNotesAt(0);
+    for (auto it = bounds.begin(); std::next(it) != bounds.end(); ++it) {
+        const int s = *it, e = *std::next(it);
+        QTextCharFormat f = base;
+        for (const Run& r : runs) {
+            if (r.s > s || e > r.e) continue;
+            switch (r.kind) {
+            case BlockModel::SpanBold:      f.setFontWeight(QFont::Bold); break;
+            case BlockModel::SpanItalic:    f.setFontItalic(true); break;
+            case BlockModel::SpanUnderline: f.setFontUnderline(true); break;
+            case BlockModel::SpanStrike:    f.setFontStrikeOut(true); break;
+            case BlockModel::SpanCode:
+                f.setFontFamilies(pdfMonoFamilies());
+                f.setFontPointSize(std::max(6.0, base.fontPointSize() > 0
+                                                     ? base.fontPointSize() - 1.5 : 9.0));
+                f.setBackground(QColor(0xEF, 0xEF, 0xEF));
+                break;
+            case BlockModel::SpanLink:      // engine emits URI annotations for anchors
+                f.setAnchor(true);
+                f.setAnchorHref(r.u);
+                f.setForeground(kPdfAccent);
+                f.setFontUnderline(true);
+                break;
+            case BlockModel::SpanFgColor:   f.setForeground(QColor(r.u)); break;
+            case BlockModel::SpanHighlight:
+                f.setBackground(QColor(r.u));
+                f.setForeground(QColor(contrastOn(r.u)));
+                break;
+            case BlockModel::SpanComment:   // light tint — the print take on .cmt
+                f.setBackground(QColor(0xDC, 0xEA, 0xFB));
+                break;
+            }
+        }
+        c.cur.insertText(text.mid(s, e - s), f);
+        emitNotesAt(e);
+    }
+}
+
+// KSyntaxHighlighting → cursor runs, LightTheme (white paper).
+class PdfCodeEmitter : public KSyntaxHighlighting::AbstractHighlighter {
+public:
+    PdfCodeEmitter() {
+        setTheme(codeHighlightRepo().defaultTheme(
+            KSyntaxHighlighting::Repository::LightTheme));
+    }
+    QColor themeBackground() const {
+        return QColor(theme().editorColor(KSyntaxHighlighting::Theme::BackgroundColor));
+    }
+    void emitTo(QTextCursor& cur, const QTextCharFormat& base,
+                const QString& lang, const QString& code) {
+        cur_ = &cur; base_ = base;
+        const KSyntaxHighlighting::Definition def = resolveCodeDefinition(lang);
+        const QStringList lines = code.split(QLatin1Char('\n'));
+        if (!def.isValid()) {
+            for (int i = 0; i < lines.size(); ++i) {
+                cur.insertText(lines.at(i), base);
+                if (i + 1 < lines.size())
+                    cur.insertText(QString(QChar::LineSeparator), base);
+            }
+            return;
+        }
+        setDefinition(def);
+        KSyntaxHighlighting::State st;
+        for (int i = 0; i < lines.size(); ++i) {
+            line_ = lines.at(i);
+            st = highlightLine(line_, st);
+            if (i + 1 < lines.size())
+                cur.insertText(QString(QChar::LineSeparator), base);
+        }
+    }
+protected:
+    void applyFormat(int offset, int length,
+                     const KSyntaxHighlighting::Format& f) override {
+        QTextCharFormat cf = base_;
+        if (f.hasTextColor(theme())) cf.setForeground(f.textColor(theme()));
+        if (f.isBold(theme()))       cf.setFontWeight(QFont::Bold);
+        if (f.isItalic(theme()))     cf.setFontItalic(true);
+        if (f.isUnderline(theme()))  cf.setFontUnderline(true);
+        cur_->insertText(line_.mid(offset, length), cf);
+    }
+private:
+    QTextCursor* cur_ = nullptr;
+    QTextCharFormat base_;
+    QString line_;
+};
+
+// Code block: themed frame (LightTheme editor background), mono runs,
+// wrap-anywhere — a fixed page has no horizontal scrollbar.
+void pdfCode(PdfCtx& c, int row, PdfCodeEmitter& ce) {
+    QTextFrameFormat ff;
+    ff.setBackground(ce.themeBackground());
+    ff.setBorder(0.5);
+    ff.setBorderBrush(kPdfBorder);
+    ff.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+    ff.setPadding(8);
+    ff.setTopMargin(6); ff.setBottomMargin(6);
+    QTextFrame* fr = c.cur.insertFrame(ff);
+    c.first = false;
+    QTextCursor ic = fr->firstCursorPosition();
+    QTextBlockFormat bf; bf.setNonBreakableLines(false);
+    ic.setBlockFormat(bf);
+    QTextCharFormat mono;
+    mono.setFontFamilies(pdfMonoFamilies());
+    mono.setFontPointSize(8.5);
+    mono.setForeground(kPdfText);
+    ce.emitTo(ic, mono, c.m->languageForRow(row), c.m->contentForRow(row));
+    c.toEnd();
+}
+
+void pdfTable(PdfCtx& c, int row) {
+    const BlockModel* m = c.m;
+    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    if (rows <= 0 || cols <= 0) return;
+    QTextTableFormat tf;
+    tf.setBorder(0.5);
+    tf.setBorderBrush(kPdfBorder);
+    tf.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+    tf.setBorderCollapse(true);
+    tf.setCellPadding(4);
+    tf.setCellSpacing(0);
+    tf.setHeaderRowCount(m->tableHeaderRows(row));   // repeats across page splits
+    tf.setTopMargin(6); tf.setBottomMargin(6);
+    if (c.first) { c.first = false; }
+    QTextTable* t = c.cur.insertTable(rows, cols, tf);
+    const int hdr = m->tableHeaderRows(row);
+    for (int r = 0; r < rows; ++r) {
+        for (int cix = 0; cix < cols; ++cix) {
+            QTextTableCell cell = t->cellAt(r, cix);
+            const QString bg = m->tableCellBg(row, r, cix);
+            if (!bg.isEmpty() || r < hdr) {
+                QTextCharFormat cf = cell.format();
+                cf.setBackground(QColor(bg.isEmpty() ? QStringLiteral("#EDEDED") : bg));
+                cell.setFormat(cf);
+            }
+            QTextCursor cc = cell.firstCursorPosition();
+            const int kind = m->tableColumnKind(row, cix);
+            QTextCharFormat rf;
+            rf.setForeground(kPdfText);
+            rf.setFontPointSize(9.5);
+            if (r < hdr) rf.setFontWeight(QFont::Bold);
+            const QString fg = m->tableCellFg(row, r, cix);
+            if (!fg.isEmpty()) rf.setForeground(QColor(fg));
+            if (kind == 2) {   // check column → painted glyph (font-fallback-proof)
+                QTextImageFormat gf;
+                QImage g = taskGlyphImage(m->tableCellCheck(row, r, cix));
+                gf.setName(pdfAddImage(c, g));
+                gf.setWidth(11); gf.setHeight(11);
+                cc.insertImage(gf);
+            } else if (kind == 1) {
+                cc.insertText(m->tableCellChoiceLabel(row, r, cix), rf);
+            } else {
+                cc.insertText(m->tableCell(row, r, cix), rf);
+            }
+        }
+    }
+    c.toEnd();
+}
+
+// Reference lines under posters (the DOCX typography: bold name, mono path,
+// mono kind·meta).
+void pdfRefLines(PdfCtx& c, const QString& name, const QString& path,
+                 const QString& kindMeta) {
+    QTextBlockFormat bf; bf.setBottomMargin(0); bf.setTopMargin(2);
+    QTextCharFormat b; b.setFontWeight(QFont::Bold); b.setForeground(kPdfText);
+    c.newBlock(bf, b); c.cur.insertText(name, b);
+    QTextCharFormat mono;
+    mono.setFontFamilies(pdfMonoFamilies());
+    mono.setFontPointSize(8.0);
+    mono.setForeground(kPdfMuted);
+    c.newBlock(bf, mono); c.cur.insertText(path, mono);
+    c.newBlock(bf, mono); c.cur.insertText(kindMeta, mono);
+}
+
+void pdfVideoNotes(PdfCtx& c, const QString& mediaPath) {
+    std::vector<qcv::AnnotationNote> notes;
+    if (!qcv::annotation_io::loadNotes(notes, mediaPath) || notes.empty()) return;
+    const QString imagesDir = qcv::annotation_io::getImagesFolder(mediaPath);
+    QTextBlockFormat bf; bf.setTopMargin(8);
+    QTextCharFormat h; h.setFontWeight(QFont::Bold); h.setForeground(kPdfText);
+    c.newBlock(bf, h);
+    c.cur.insertText(QStringLiteral("Notes (%1)").arg(notes.size()), h);
+    for (const qcv::AnnotationNote& n : notes) {
+        // The emitVideoNotes thumb rule: annotated sibling, else recomposite
+        // from the clean frame when strokes exist (inked notes never export
+        // ink-less).
+        const QString cleanName = qcv::annotation_io::generateImageFilename(n.timecode);
+        QString annName = cleanName;
+        annName.replace(QStringLiteral(".png"), QStringLiteral("_annotated.png"));
+        QImage thumb(imagesDir + QLatin1Char('/') + annName);
+        if (thumb.isNull()) {
+            const QImage clean(imagesDir + QLatin1Char('/') + cleanName);
+            if (!clean.isNull() && qcv::AnnotationSerializer::hasStrokes(n.annotation_data))
+                thumb = qcv::renderNoteThumbnail(
+                    clean, qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data), 1, 1);
+            if (thumb.isNull()) thumb = clean;
+        }
+        if (!thumb.isNull()) pdfInsertImage(c, thumb, 240);
+        QTextBlockFormat nb; nb.setBottomMargin(4);
+        QTextCharFormat mono;
+        mono.setFontFamilies(pdfMonoFamilies());
+        mono.setFontPointSize(8.5);
+        mono.setForeground(n.addressed ? kPdfMuted : kPdfText);
+        c.newBlock(nb, mono);
+        QString line = n.timecode;
+        if (!n.text.isEmpty()) line += QStringLiteral(" — ") + n.text;
+        if (n.addressed) line += QStringLiteral(" — ✓ addressed");
+        c.cur.insertText(line, mono);
+    }
+}
+
+void pdfMedia(PdfCtx& c, int row) {
+    const BlockModel* m = c.m;
+    const QString kind = m->mediaKind(row);
+    const QString path = m->mediaLocalPath(row);
+    const QString name = QFileInfo(path).fileName();
+
+    auto bakeInk = [&](QImage img) {   // the DOCX bake — composited, clipped
+        const MediaInk ink = renderMediaInk(m, row, img.size());
+        if (!ink.img.isNull()) {
+            QPainter p(&img);
+            p.drawImage(QPointF(ink.boxNorm.left() * img.width(),
+                                ink.boxNorm.top() * img.height()), ink.img);
+            p.end();
+        }
+        return img;
+    };
+
+    if (kind == QLatin1String("sketch")) {
+        const QImage img = renderSketch(m, row);
+        if (!img.isNull()) {
+            const int srcW = m->mediaW(row);   // size by SOURCE px, not the 2× raster
+            pdfInsertImage(c, img, srcW > 0 ? srcW : img.width());
+        }
+        return;
+    }
+    if (kind == QLatin1String("image")) {
+        QImage img(path);
+        if (!img.isNull()) {
+            if (mn::docInkHasContent(m->inkForRow(row))) img = bakeInk(img);
+            pdfInsertImage(c, img, img.width() / (img.devicePixelRatio() > 0
+                                                      ? img.devicePixelRatio() : 1.0));
+        }
+        return;
+    }
+
+    QImage poster;
+    QString meta;
+    if (kind == QLatin1String("video")) {
+        poster = MediaStore::extractFrame(path, 0, 1280);
+        meta = QStringLiteral("%1×%2 · %3 fps · %4 · %5 frames")
+                   .arg(m->mediaW(row)).arg(m->mediaH(row))
+                   .arg(m->mediaFps(row), 0, 'g', 5)
+                   .arg(humanDuration(m->mediaDurationMs(row)))
+                   .arg(m->mediaFrames(row));
+    } else if (kind == QLatin1String("pdf")) {
+        poster = renderPdfPageAnnotated(m, row, 0, path, 1280);   // page ink baked
+        meta = QStringLiteral("%1 pages").arg(m->mediaPdfPages(row));
+    } else {
+        const QFileInfo fi(path);
+        meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
+    }
+    if (!poster.isNull()) {
+        poster = bakeInk(poster);
+        pdfInsertImage(c, poster, 480);
+    }
+    pdfRefLines(c, name, path, kind + QStringLiteral(" · ") + meta);
+
+    if (kind == QLatin1String("pdf")) {
+        // Poster + annotated pages (ruling 2026-08-20).
+        const int pages = m->mediaPdfPages(row);
+        for (int pg = 1; pg < pages; ++pg) {
+            if (m->pdfPageInk(row, pg).isEmpty()) continue;
+            const QImage img = renderPdfPageAnnotated(m, row, pg, path, 1280);
+            if (img.isNull()) continue;
+            pdfInsertImage(c, img, 480);
+            QTextBlockFormat bf; bf.setTopMargin(0);
+            QTextCharFormat mono;
+            mono.setFontFamilies(pdfMonoFamilies());
+            mono.setFontPointSize(8.0);
+            mono.setForeground(kPdfMuted);
+            c.newBlock(bf, mono);
+            c.cur.insertText(QStringLiteral("%1 · page %2 of %3")
+                                 .arg(name).arg(pg + 1).arg(pages), mono);
+        }
+    }
+    if (kind == QLatin1String("video") && c.opt.includeVideoNotes)
+        pdfVideoNotes(c, path);
+}
+
+void pdfComments(PdfCtx& c) {
+    if (c.fn.threadIds.isEmpty()) return;
+    QTextBlockFormat hb; hb.setTopMargin(20);
+    QTextCharFormat h; h.setFontWeight(QFont::Bold); h.setFontPointSize(14);
+    h.setForeground(kPdfText);
+    c.newBlock(hb, h);
+    c.cur.insertText(QStringLiteral("Comments"), h);
+    const QVariantList threads = c.m->commentThreads();
+    for (int i = 0; i < c.fn.threadIds.size(); ++i) {
+        const QString id = c.fn.threadIds.at(i);
+        bool resolved = false;
+        for (const QVariant& tv : threads) {
+            const QVariantMap t = tv.toMap();
+            if (t.value(QStringLiteral("id")).toString() == id) {
+                resolved = t.value(QStringLiteral("resolved")).toBool();
+                break;
+            }
+        }
+        QTextBlockFormat bf; bf.setTopMargin(6);
+        QTextCharFormat mk; mk.setForeground(kPdfAccent); mk.setFontWeight(QFont::Bold);
+        c.newBlock(bf, mk);
+        c.cur.insertText(QStringLiteral("[%1]").arg(i + 1), mk);
+        if (resolved) {
+            QTextCharFormat rz; rz.setForeground(kPdfMuted); rz.setFontItalic(true);
+            c.cur.insertText(QStringLiteral(" (resolved)"), rz);
+        }
+        for (const QVariant& mv : c.m->commentMessages(id)) {
+            const QVariantMap msg = mv.toMap();
+            QTextBlockFormat mb; mb.setLeftMargin(14); mb.setBottomMargin(1);
+            QTextCharFormat body; body.setForeground(resolved ? kPdfMuted : kPdfText);
+            c.newBlock(mb, body);
+            c.cur.insertText(msg.value(QStringLiteral("body")).toString(), body);
+            const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
+            if (created > 0) {
+                QTextCharFormat st; st.setForeground(kPdfMuted); st.setFontPointSize(8.0);
+                c.cur.insertText(QStringLiteral("  ")
+                    + QDateTime::fromMSecsSinceEpoch(created)
+                          .toString(QStringLiteral("yyyy-MM-dd hh:mm")), st);
+            }
+        }
+    }
+}
+
+void buildPdfDoc(PdfCtx& c) {
+    const BlockModel* m = c.m;
+    PdfCodeEmitter ce;
+    QTextList* curList = nullptr;
+    int curListDepth = -1;
+    bool curListOrdered = false;
+    auto endList = [&] { curList = nullptr; curListDepth = -1; };
+
+    const int count = m->rowCountQml();
+    for (int row = 0; row < count; ++row) {
+        const int type = m->typeForRow(row);
+        switch (type) {
+        case BlockModel::Heading: {
+            endList();
+            const int lvl = std::clamp(m->levelForRow(row), 1, 6);
+            static const qreal pts[6] = {20, 16, 13.5, 12, 11, 10.5};
+            QTextBlockFormat bf;
+            bf.setTopMargin(lvl <= 2 ? 16 : 12);
+            bf.setBottomMargin(4);
+            QTextCharFormat f;
+            f.setFontWeight(QFont::Bold);
+            f.setFontPointSize(pts[lvl - 1]);
+            f.setForeground(QColor(0x10, 0x10, 0x10));
+            c.newBlock(bf, f);
+            pdfInline(c, row, f);
+            break;
+        }
+        case BlockModel::Quote: {
+            endList();
+            QTextBlockFormat bf;
+            bf.setLeftMargin(24);
+            bf.setTopMargin(4); bf.setBottomMargin(4);
+            QTextCharFormat f;
+            f.setFontItalic(true);
+            f.setForeground(QColor(0x55, 0x55, 0x55));
+            c.newBlock(bf, f);
+            pdfInline(c, row, f);
+            break;
+        }
+        case BlockModel::Code:
+            endList();
+            pdfCode(c, row, ce);
+            break;
+        case BlockModel::ListItem:
+        case BlockModel::TaskListItem:
+        case BlockModel::OrderedListItem: {
+            const int depth = std::clamp(m->depthForRow(row), 0, BlockModel::kMaxListDepth);
+            const bool ordered = (type == BlockModel::OrderedListItem);
+            QTextBlockFormat bf;
+            bf.setTopMargin(1); bf.setBottomMargin(1);
+            QTextCharFormat f; f.setForeground(kPdfText);
+            c.newBlock(bf, f);
+            if (curList && curListDepth == depth && curListOrdered == ordered) {
+                curList->add(c.cur.block());
+            } else {
+                QTextListFormat lf;
+                lf.setStyle(ordered ? QTextListFormat::ListDecimal
+                                    : QTextListFormat::ListDisc);
+                lf.setIndent(depth + 1);
+                if (ordered) lf.setStart(m->orderedNumberForRow(row));
+                curList = c.cur.createList(lf);
+                curListDepth = depth;
+                curListOrdered = ordered;
+            }
+            if (type == BlockModel::TaskListItem)
+                pdfInsertTaskGlyph(c, m->taskStateForRow(row));
+            pdfInline(c, row, f);
+            break;
+        }
+        case BlockModel::Divider: {
+            endList();
+            QImage line(8, 1, QImage::Format_ARGB32_Premultiplied);
+            line.fill(kPdfBorder);
+            QTextBlockFormat bf; bf.setTopMargin(10); bf.setBottomMargin(10);
+            c.newBlock(bf);
+            QTextImageFormat f;
+            f.setName(pdfAddImage(c, line));
+            f.setWidth(c.contentW); f.setHeight(1);
+            c.cur.insertImage(f);
+            break;
+        }
+        case BlockModel::Table:
+            endList();
+            pdfTable(c, row);
+            break;
+        case BlockModel::Media:
+            endList();
+            pdfMedia(c, row);
+            break;
+        case BlockModel::Paragraph:
+        default: {
+            endList();
+            QTextBlockFormat bf;
+            bf.setTopMargin(2); bf.setBottomMargin(2);
+            QTextCharFormat f; f.setForeground(kPdfText);
+            c.newBlock(bf, f);
+            pdfInline(c, row, f);
+            break;
+        }
+        }
+    }
+}
+
+} // namespace
+
+bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
+    if (!model_) return false;
+    QPdfWriter writer(&out);
+    // 96 dpi = layout units ≈ CSS px (A4 content ≈ 750 units — the numbers in
+    // this codebase stay meaningful). Output is vector text + embedded images
+    // regardless; resolution only sets the coordinate unit.
+    writer.setResolution(96);
+    const bool metric =
+        QLocale::system().measurementSystem() == QLocale::MetricSystem;
+    writer.setPageSize(QPageSize(metric ? QPageSize::A4 : QPageSize::Letter));
+    writer.setPageMargins(QMarginsF(18, 15, 18, 18), QPageLayout::Millimeter);
+    writer.setCreator(QStringLiteral("minNotes"));
+    QString title;
+    for (int row = 0; row < model_->rowCountQml() && title.isEmpty(); ++row)
+        if (model_->typeForRow(row) == BlockModel::Heading)
+            title = model_->contentForRow(row);
+    writer.setTitle(title.isEmpty() ? QStringLiteral("minNotes document") : title);
+
+    QTextDocument doc;
+    doc.setDocumentMargin(0);   // margins live on the WRITER only (double-apply risk)
+    QFont body(QStringLiteral("Aspekta"));
+    body.setPointSizeF(10.5);   // the app's 14px body at 96 dpi
+    doc.setDefaultFont(body);
+
+    PdfCtx c;
+    c.m = model_;
+    c.opt = opt;
+    c.doc = &doc;
+    c.cur = QTextCursor(&doc);
+    const QRectF paint = writer.pageLayout().paintRectPixels(96);
+    c.contentW = paint.width();
+    c.contentH = paint.height();
+    buildPdfDoc(c);
+    pdfComments(c);
+
+    const qint64 before = out.pos();
+    doc.print(&writer);
+    return out.pos() > before;
+}
+
+bool Exporter::exportPdf(const QString& fileUrlOrPath, bool includeVideoNotes) {
+    QString outPath = localPathOf(fileUrlOrPath);
+    if (outPath.isEmpty() || !model_) return false;
+    if (!outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive))
+        outPath += QStringLiteral(".pdf");
+    QFile f(outPath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    Options opt;
+    opt.includeVideoNotes = includeVideoNotes;
+    const bool ok = toPdf(opt, f);
+    f.close();
+    return ok && f.error() == QFile::NoError && f.size() > 0;
 }

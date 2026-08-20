@@ -216,7 +216,7 @@ ApplicationWindow {
     property bool _exportVideos: true     // mnpkg: videos default IN (copy, never
                                           // transcode — user ruling 2026-08-18;
                                           // the checkbox opts OUT for size)
-    property string _exportFormat: "md"   // "md" | "html" | "docx" | "mnpkg"
+    property string _exportFormat: "md"   // "md" | "html" | "docx" | "pdf" | "mnpkg"
     function fmtBytes(b) {
         b = b || 0
         if (b >= 1e9) return (b / 1e9).toFixed(1) + " GB"
@@ -246,12 +246,14 @@ ApplicationWindow {
         id: exportSaveDialog
         title: win._exportFormat === "html" ? "Export as HTML"
              : win._exportFormat === "docx" ? "Export as Word document"
+             : win._exportFormat === "pdf" ? "Export as PDF"
              : win._exportFormat === "mnpkg" ? "Export as Package"
              : "Export as Markdown"
         fileMode: FileDialog.SaveFile
         defaultSuffix: win._exportFormat
         nameFilters: win._exportFormat === "html" ? ["HTML (*.html)"]
                    : win._exportFormat === "docx" ? ["Word document (*.docx)"]
+                   : win._exportFormat === "pdf" ? ["PDF (*.pdf)"]
                    : win._exportFormat === "mnpkg" ? ["minNotes package (*.mnpkg)"]
                    : ["Markdown (*.md)"]
         onAccepted: {
@@ -267,6 +269,8 @@ ApplicationWindow {
                 ? exporter.exportHtml(f, win._exportNotes)
                 : win._exportFormat === "docx"
                 ? exporter.exportDocx(f, win._exportNotes)
+                : win._exportFormat === "pdf"
+                ? exporter.exportPdf(f, win._exportNotes)
                 : exporter.exportMarkdown(f, win._exportNotes)
             if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f))
             else    Toasts.show(qsTr("Export failed"), 2)
@@ -334,6 +338,7 @@ ApplicationWindow {
             Text { width: 400; wrapMode: Text.Wrap
                    text: win._exportFormat === "html" ? qsTr("Export as HTML")
                        : win._exportFormat === "docx" ? qsTr("Export as Word document")
+                       : win._exportFormat === "pdf" ? qsTr("Export as PDF")
                        : win._exportFormat === "mnpkg" ? qsTr("Export as Package")
                        : qsTr("Export as Markdown")
                    color: Theme.colors.textBright; font.family: Theme.font.family
@@ -408,6 +413,8 @@ ApplicationWindow {
                       ? qsTr("Page ink exports as toggleable overlays (ink over text is position-approximate).")
                       : win._exportFormat === "docx"
                       ? qsTr("Ink on media is baked into the images; ink over text isn't included.")
+                      : win._exportFormat === "pdf"
+                      ? qsTr("Ink on media and PDF pages is baked into the images; ink over text isn't included.")
                       : qsTr("Page ink isn't included in Markdown export.")
                 color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
@@ -851,6 +858,7 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("as Markdown…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
                 Platform.MenuItem { text: qsTr("as HTML…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
                 Platform.MenuItem { text: qsTr("as Word Document…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Platform.MenuItem { text: qsTr("as PDF…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("pdf") }
                 Platform.MenuItem { text: qsTr("as Package…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
             }
             Platform.Menu {
@@ -938,6 +946,7 @@ ApplicationWindow {
                 Action { text: qsTr("as &Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
                 Action { text: qsTr("as &HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
                 Action { text: qsTr("as &Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Action { text: qsTr("as P&DF…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("pdf") }
                 Action { text: qsTr("as &Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
             }
             ThemedMenu {
