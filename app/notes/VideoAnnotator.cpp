@@ -9,6 +9,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 
+#include <algorithm>
+
 VideoAnnotator::VideoAnnotator(QQuickItem *parent)
     : QQuickPaintedItem(parent)
 {
@@ -130,14 +132,19 @@ void VideoAnnotator::paint(QPainter *p)
     if (annot_.snapshotActiveStroke(live))
         qcv::paintStroke(*p, live, width(), height(), scale);
 
-    // Selection: dashed box + corner resize handles around the selected stroke.
-    if (selIdx_ >= 0) {
-        const QRectF r = selDisplayRect();
+    // Selection affordance (the SketchCanvas language): EVERY selected stroke
+    // gets its dashed outline; corner resize handles appear only for a SINGLE
+    // selection — groups move and delete as one, no group scale.
+    if (!sel_.empty()) {
+        const QColor accent(0x01, 0x89, 0xf1);
+        QPen pen(accent, 1.5, Qt::DashLine); pen.setCosmetic(true);
+        p->setBrush(Qt::NoBrush); p->setPen(pen);
+        for (int idx : sel_) {
+            const QRectF r = itemDisplayRect(idx);
+            if (r.isValid()) p->drawRect(r);
+        }
+        const QRectF r = selDisplayRect();   // valid only for a single selection
         if (r.isValid()) {
-            const QColor accent(0x01, 0x89, 0xf1);
-            QPen pen(accent, 1.5, Qt::DashLine); pen.setCosmetic(true);
-            p->setBrush(Qt::NoBrush); p->setPen(pen);
-            p->drawRect(r);
             const double hs = 4.5;
             const QPointF cs[4] = { r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight() };
             p->setBrush(accent);
@@ -146,11 +153,22 @@ void VideoAnnotator::paint(QPainter *p)
                 p->drawRect(QRectF(c.x() - hs, c.y() - hs, hs * 2, hs * 2));
         }
     }
+
+    // Live marquee: accent hairline + whisper fill (the drag-ghost language).
+    if (marquee_ && marqueeRect_.isValid()) {
+        const QRectF mr(marqueeRect_.x() * width(), marqueeRect_.y() * height(),
+                        marqueeRect_.width() * width(), marqueeRect_.height() * height());
+        const QColor accent(0x01, 0x89, 0xf1);
+        p->fillRect(mr, QColor(accent.red(), accent.green(), accent.blue(), 20));
+        QPen pen(accent, 1.0, Qt::DashLine); pen.setCosmetic(true);
+        p->setBrush(Qt::NoBrush); p->setPen(pen);
+        p->drawRect(mr);
+    }
 }
 
 void VideoAnnotator::mousePressEvent(QMouseEvent *e)
 {
-    if (inSelectMode()) { selectPress(e->position()); e->accept(); return; }
+    if (inSelectMode()) { selectPress(e->position(), e->modifiers()); e->accept(); return; }
     route(qcv::PointerPhase::Press, e->position(), qint64(e->timestamp()));
     e->accept();
 }
@@ -341,7 +359,7 @@ void VideoAnnotator::refreshStrokes()
         if (!data.isEmpty())
             strokes_ = qcv::AnnotationSerializer::jsonStringToStrokes(data);
     }
-    if (selIdx_ >= int(strokes_.size())) clearSelection();   // frame change / external edit
+    pruneSelection();   // frame change / external edit
     update();
 }
 
@@ -362,11 +380,38 @@ void VideoAnnotator::setDrawing(bool d)
 
 void VideoAnnotator::clearSelection()
 {
-    moving_ = false; resizing_ = false; grabCorner_ = -1;
-    if (selIdx_ < 0) return;
-    selIdx_ = -1;
+    moving_ = false; resizing_ = false; marquee_ = false; grabCorner_ = -1;
+    if (sel_.empty()) return;
+    sel_.clear();
     emit selectionChanged();
     update();
+}
+
+bool VideoAnnotator::selContains(int idx) const
+{
+    return std::find(sel_.begin(), sel_.end(), idx) != sel_.end();
+}
+
+void VideoAnnotator::toggleSel(int idx)
+{
+    const auto it = std::find(sel_.begin(), sel_.end(), idx);
+    if (it != sel_.end()) sel_.erase(it);
+    else                  sel_.push_back(idx);
+    emit selectionChanged();
+    update();
+}
+
+void VideoAnnotator::pruneSelection()
+{
+    const size_t before = sel_.size();
+    sel_.erase(std::remove_if(sel_.begin(), sel_.end(), [this](int idx) {
+        return idx < 0 || idx >= int(strokes_.size());
+    }), sel_.end());
+    if (sel_.size() != before) {
+        if (sel_.empty()) { moving_ = false; resizing_ = false; }
+        emit selectionChanged();
+        update();
+    }
 }
 
 QRectF VideoAnnotator::strokeBoundsNorm(int idx) const
@@ -375,14 +420,29 @@ QRectF VideoAnnotator::strokeBoundsNorm(int idx) const
     return qcv::strokeBoundsNorm(strokes_[size_t(idx)]);   // oval-aware (shared)
 }
 
-QRectF VideoAnnotator::selBoundsNorm() const { return strokeBoundsNorm(selIdx_); }
-
-QRectF VideoAnnotator::selDisplayRect() const
+QRectF VideoAnnotator::selBoundsNorm() const
 {
-    const QRectF b = selBoundsNorm();
+    QRectF u;
+    for (int idx : sel_) {
+        const QRectF b = strokeBoundsNorm(idx);
+        if (!b.isValid()) continue;
+        u = u.isValid() ? u.united(b) : b;
+    }
+    return u;
+}
+
+QRectF VideoAnnotator::itemDisplayRect(int idx) const
+{
+    const QRectF b = strokeBoundsNorm(idx);
     if (!b.isValid() || width() <= 0 || height() <= 0) return {};
     return QRectF(b.x() * width(), b.y() * height(),
                   b.width() * width(), b.height() * height()).adjusted(-3, -3, 3, 3);
+}
+
+QRectF VideoAnnotator::selDisplayRect() const
+{
+    // Handles target — SINGLE selection only (groups move/delete, no scale).
+    return sel_.size() == 1 ? itemDisplayRect(sel_[0]) : QRectF();
 }
 
 int VideoAnnotator::handleAtPx(QPointF px) const
@@ -408,17 +468,38 @@ int VideoAnnotator::hitTest(QPointF norm) const
     return -1;
 }
 
-void VideoAnnotator::selectPress(QPointF pos)
+void VideoAnnotator::selectPress(QPointF pos, Qt::KeyboardModifiers mods)
 {
     if (width() <= 0 || height() <= 0) return;
-    if (selIdx_ >= 0) {
+    const bool shift = mods.testFlag(Qt::ShiftModifier);
+    // A press on the single selection's corner handle starts a resize
+    // (groups move/delete only — no group scale, the M1 rule).
+    if (sel_.size() == 1 && !shift) {
         const int h = handleAtPx(pos);
         if (h >= 0) { beginResize(h); return; }
     }
     const QPointF norm(pos.x() / width(), pos.y() / height());
     const int idx = hitTest(norm);
-    if (idx < 0) { clearSelection(); return; }
-    if (idx != selIdx_) { selIdx_ = idx; emit selectionChanged(); }
+    if (idx < 0) {
+        // Empty stage: a plain press clears and starts a marquee; a shift
+        // press keeps the set (additive marquee). A no-drag release makes
+        // the tiny marquee select nothing, so click-to-deselect survives.
+        // No playback pause here — a bare click must not stop the video.
+        if (!shift) clearSelection();
+        marquee_ = true;
+        marqueeAnchor_ = norm;
+        marqueeRect_ = QRectF(norm, norm);
+        update();
+        return;
+    }
+    if (shift) { toggleSel(idx); return; }   // membership toggle, no move
+    if (!selContains(idx)) {
+        // Not in the set → this press replaces the selection. In the set →
+        // keep the group and drag it as one.
+        sel_.clear();
+        sel_.push_back(idx);
+        emit selectionChanged();
+    }
     moving_ = true; moveDirty_ = false; lastNorm_ = norm;
     emit strokeStarted();   // pause playback so the frame is stable during the drag
     update();
@@ -426,27 +507,34 @@ void VideoAnnotator::selectPress(QPointF pos)
 
 void VideoAnnotator::translateSelection(QPointF dNorm)
 {
-    if (selIdx_ < 0) return;
+    if (sel_.empty()) return;
+    // Clamp by the UNION bounds — the group moves as one and stops when its
+    // edge hits the frame (QCView's frame is a hard canvas, unlike the
+    // sketch's legal overflow).
     const QRectF b = selBoundsNorm();
     if (!b.isValid()) return;
     const double dx = std::clamp(dNorm.x(), -b.left(), 1.0 - b.right());
     const double dy = std::clamp(dNorm.y(), -b.top(),  1.0 - b.bottom());
     if (dx == 0.0 && dy == 0.0) return;
-    qcv::ActiveStroke &s = strokes_[size_t(selIdx_)];
-    if (s.tool == qcv::DrawingTool::Oval && !s.points.empty())
-        s.points[0] += QPointF(dx, dy);   // oval = {center, radii}: move centre only
-    else
-        for (QPointF &pt : s.points) pt += QPointF(dx, dy);
+    for (int idx : sel_) {
+        if (idx < 0 || idx >= int(strokes_.size())) continue;
+        qcv::ActiveStroke &s = strokes_[size_t(idx)];
+        if (s.tool == qcv::DrawingTool::Oval && !s.points.empty())
+            s.points[0] += QPointF(dx, dy);   // oval = {center, radii}: move centre only
+        else
+            for (QPointF &pt : s.points) pt += QPointF(dx, dy);
+    }
     moveDirty_ = true;
     update();
 }
 
 void VideoAnnotator::beginResize(int corner)
 {
+    if (sel_.size() != 1) return;   // handles only exist for a single selection
     grabCorner_ = corner;
     origBounds_ = selBoundsNorm();
-    if (selIdx_ >= 0 && selIdx_ < int(strokes_.size()))
-        origPoints_ = strokes_[size_t(selIdx_)].points;
+    if (sel_[0] >= 0 && sel_[0] < int(strokes_.size()))
+        origPoints_ = strokes_[size_t(sel_[0])].points;
     resizing_ = true; moving_ = false; moveDirty_ = false;
     emit strokeStarted();   // pause playback during the resize drag
 }
@@ -474,8 +562,9 @@ void VideoAnnotator::resizeTo(QPointF norm)
     const double sMaxY = dys > 0 ? (1.0 - pivot.y()) / dys : (dys < 0 ? -pivot.y() / dys : 1e9);
     s = std::min(s, std::min(sMaxX, sMaxY));
     if (s <= 0) return;
-    if (origPoints_.size() != strokes_[size_t(selIdx_)].points.size()) return;
-    qcv::ActiveStroke &st = strokes_[size_t(selIdx_)];
+    if (sel_.size() != 1 || sel_[0] < 0 || sel_[0] >= int(strokes_.size())) return;
+    if (origPoints_.size() != strokes_[size_t(sel_[0])].points.size()) return;
+    qcv::ActiveStroke &st = strokes_[size_t(sel_[0])];
     std::vector<QPointF> &pts = st.points;
     if (st.tool == qcv::DrawingTool::Oval && pts.size() >= 2) {
         pts[0] = pivot + (origPoints_[0] - pivot) * s;   // centre scales about pivot
@@ -491,6 +580,11 @@ void VideoAnnotator::selectMove(QPointF pos)
 {
     if (width() <= 0 || height() <= 0) return;
     const QPointF norm(pos.x() / width(), pos.y() / height());
+    if (marquee_) {
+        marqueeRect_ = QRectF(marqueeAnchor_, norm).normalized();
+        update();
+        return;
+    }
     if (resizing_) { resizeTo(norm); return; }
     if (!moving_) return;
     translateSelection(norm - lastNorm_);
@@ -499,6 +593,26 @@ void VideoAnnotator::selectMove(QPointF pos)
 
 void VideoAnnotator::selectRelease()
 {
+    if (marquee_) {
+        // Finalize the rubber band: every intersecting stroke joins the set.
+        // (A tiny no-drag marquee selects nothing — that's the deselect click.)
+        marquee_ = false;
+        bool changed = false;
+        const double minSpan = 0.006;   // half the hit tolerance
+        if (marqueeRect_.width() > minSpan || marqueeRect_.height() > minSpan) {
+            for (int i = 0; i < int(strokes_.size()); ++i) {
+                if (selContains(i)) continue;
+                const QRectF b = strokeBoundsNorm(i);
+                if (b.isValid() && b.intersects(marqueeRect_)) {
+                    sel_.push_back(i);
+                    changed = true;
+                }
+            }
+        }
+        if (changed) emit selectionChanged();
+        update();
+        return;
+    }
     if (!moving_ && !resizing_) return;
     moving_ = false; resizing_ = false; grabCorner_ = -1;
     if (!moveDirty_) return;
@@ -508,10 +622,19 @@ void VideoAnnotator::selectRelease()
 
 void VideoAnnotator::deleteSelection()
 {
-    if (selIdx_ < 0 || selIdx_ >= int(strokes_.size())) return;
-    strokes_.erase(strokes_.begin() + selIdx_);
+    if (sel_.empty()) return;
+    // Descending erase so the shifting vector never invalidates a pending
+    // index; the whole-frame commit makes the group delete ONE undo entry.
+    std::vector<int> idx(sel_.begin(), sel_.end());
+    std::sort(idx.rbegin(), idx.rend());
+    bool any = false;
+    for (int i : idx) {
+        if (i < 0 || i >= int(strokes_.size())) continue;
+        strokes_.erase(strokes_.begin() + i);
+        any = true;
+    }
     clearSelection();
-    commitStrokes();
+    if (any) commitStrokes();
 }
 
 void VideoAnnotator::commitStrokes()
@@ -532,7 +655,7 @@ void VideoAnnotator::commitStrokes()
 
 void VideoAnnotator::hoverMoveEvent(QHoverEvent *e)
 {
-    if (inSelectMode() && selIdx_ >= 0) {
+    if (inSelectMode() && sel_.size() == 1) {   // handles exist only for singles
         const int h = handleAtPx(e->position());
         if (h == 0 || h == 3)      setCursor(QCursor(Qt::SizeFDiagCursor));
         else if (h == 1 || h == 2) setCursor(QCursor(Qt::SizeBDiagCursor));

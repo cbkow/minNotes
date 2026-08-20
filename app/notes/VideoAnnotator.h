@@ -45,7 +45,10 @@ class VideoAnnotator : public QQuickPaintedItem
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStacksChanged FINAL)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStacksChanged FINAL)
     // Select/move/resize the current frame's strokes (engaged when no draw tool
-    // is armed) — mirrors SketchCanvas, sans images.
+    // is armed) — mirrors SketchCanvas, sans images/texts. The selection is a
+    // SET (M1 parity, 2026-08-20): marquee on empty stage, shift-click toggles
+    // membership, drag moves the whole group, Delete removes it. Single
+    // selections keep the resize handles — groups move and delete only.
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
     QML_ELEMENT
 
@@ -71,7 +74,7 @@ public:
     bool isDrawing() const { return drawing_; }
     bool canUndo() const { return !undo_.isEmpty(); }
     bool canRedo() const { return !redo_.isEmpty(); }
-    bool hasSelection() const { return selIdx_ >= 0; }
+    bool hasSelection() const { return !sel_.empty(); }
 
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
@@ -119,19 +122,25 @@ private:
     void scheduleThumb(const QString &timecode);
     void setDrawing(bool d);
 
-    // --- Selection / move / resize (select mode = no draw tool armed) ---
+    // --- Selection / move / resize (select mode = no draw tool armed).
+    // Whole-frame JSON commit means a group move/delete is ONE undo entry
+    // for free (no bracket machinery — the sidecar stack stays QCV-simple). ---
     bool inSelectMode() const { return !drawToolActive_; }
     void applyAcceptedButtons();
-    void selectPress(QPointF pos);
+    void selectPress(QPointF pos, Qt::KeyboardModifiers mods);
     void selectMove(QPointF pos);
     void selectRelease();
+    bool selContains(int idx) const;
+    void toggleSel(int idx);                   // shift-click membership toggle
+    void pruneSelection();                     // drop indices past the refreshed frame
     int  hitTest(QPointF norm) const;          // topmost stroke index, or -1
     QRectF strokeBoundsNorm(int idx) const;
-    QRectF selBoundsNorm() const;
-    QRectF selDisplayRect() const;
+    QRectF selBoundsNorm() const;              // union bbox of the selection set
+    QRectF itemDisplayRect(int idx) const;     // px outline rect for one stroke
+    QRectF selDisplayRect() const;             // handles rect — SINGLE selection only
     int  handleAtPx(QPointF px) const;         // 0=TL 1=TR 2=BL 3=BR, or -1
-    void translateSelection(QPointF dNorm);
-    void beginResize(int corner);
+    void translateSelection(QPointF dNorm);    // move the group, clamped to the frame
+    void beginResize(int corner);              // single selection only
     void resizeTo(QPointF norm);
     void commitStrokes();                      // write strokes_ to the frame + undo entry
 
@@ -153,7 +162,10 @@ private:
     QString erasePrior_;             // annotation_data at gesture start
 
     bool drawToolActive_ = false;              // a real draw tool is armed (not select)
-    int  selIdx_ = -1;                         // selected stroke (current frame), or -1
+    std::vector<int> sel_;                     // selected strokes (current frame), ordered/unique
+    bool    marquee_ = false;                  // rubber-band drag in progress
+    QPointF marqueeAnchor_;                    // marquee origin (normalized)
+    QRectF  marqueeRect_;                      // live marquee (normalized)
     bool moving_ = false, resizing_ = false, moveDirty_ = false;
     QPointF lastNorm_;
     int  grabCorner_ = -1;

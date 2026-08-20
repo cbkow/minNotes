@@ -2641,6 +2641,184 @@ static void testCollectMedia() {
     dir.removeRecursively();
 }
 
+// --- Test 32: DocInk multi-anchor group-move undo -------------------------
+// The canvas commits a cross-anchor gesture (departures/arrivals resolved
+// internally) as beginGroup + one setBlockInk per touched blob + endGroup —
+// drive the model in exactly that shape and prove ONE entry restores ALL
+// touched blobs.
+static void testDocInkGroupMove() {
+    qInfo("[32] doc-ink group move: multi-anchor commit = ONE undo entry");
+    auto env = [](const QString& shapes) {
+        return QStringLiteral(
+            "{\"version\":\"2.0\",\"coordinate_system\":\"block-local\","
+            "\"space\":\"px\",\"shapes\":[%1]}").arg(shapes);
+    };
+    const QString sh1 = QStringLiteral(
+        "{\"id\":\"s1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[-390.0,2.0],[10.0,44.0]]}");
+    const QString sh2 = QStringLiteral(
+        "{\"id\":\"s2\",\"type\":\"freehand\",\"color\":[0,1,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.0,0.0],[20.0,20.0]]}");
+    const QString sh3 = QStringLiteral(
+        "{\"id\":\"s3\",\"type\":\"freehand\",\"color\":[0,0,1,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[5.0,5.0],[30.0,10.0]]}");
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("beta"));
+
+    // Blob A carries s1+s2, blob B carries s3.
+    const QString a0 = env(sh1 + QStringLiteral(",") + sh2);
+    const QString b0 = env(sh3);
+    m.setBlockInk(0, a0);
+    m.setBlockInk(1, b0);
+
+    // Group move: s2 departs A and arrives in B (both blobs change).
+    const QString a1 = env(sh1);
+    const QString b1 = env(sh3 + QStringLiteral(",") + sh2);
+    const int entries = m.undoHistory().size();
+    m.beginGroup(0, 1);
+    m.setBlockInk(0, a1);
+    m.setBlockInk(1, b1);
+    m.endGroup();
+    CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1, "group move landed");
+    CHECK(m.undoHistory().size() == entries + 1,
+          "cross-anchor move is ONE undo entry");
+    m.undo();
+    CHECK(m.inkForRow(0) == a0 && m.inkForRow(1) == b0,
+          "one undo restores BOTH blobs");
+    m.redo();
+    CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1,
+          "one redo re-applies BOTH blobs");
+
+    // Cross-anchor DELETE commits the same shape (empty blob = clear).
+    m.beginGroup(0, 1);
+    m.setBlockInk(0, QString());
+    m.setBlockInk(1, QString());
+    m.endGroup();
+    CHECK(m.inkBlockIds().isEmpty(), "group delete cleared both blobs");
+    m.undo();
+    CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1,
+          "one undo restores both deleted blobs");
+    m.closeDocument();
+}
+
+// --- Test 33: mixed-kind sketch group DELETE undo -------------------------
+// The canvas's group delete emits ONE edited() for strokes plus per-index
+// image/text removals in DESCENDING order, bracketed — drive the mutators in
+// that exact shape (brackets are QML-wired, so this is the model driver).
+static void testSketchGroupDelete() {
+    qInfo("[33] sketch group delete: strokes+image+text bracketed = ONE undo entry");
+    const QString probePng = QDir::temp().filePath(QStringLiteral("mn_group_del.png"));
+    { QImage probe(32, 24, QImage::Format_RGB32); probe.fill(Qt::darkCyan);
+      probe.save(probePng, "PNG"); }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    const int row = m.insertSketch(0);
+    CHECK(row == 1 && m.mediaKind(row) == QLatin1String("sketch"), "sketch inserted");
+    m.sketchSetShapes(row, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.2,0.2],[0.4,0.4]]},"
+        "{\"id\":\"f2\",\"type\":\"freehand\",\"color\":[0,1,0,1],\"stroke_width\":4,"
+        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.6,0.6],[0.8,0.8]]}]}"));
+    CHECK(m.sketchAddImageFromUrl(row, QUrl::fromLocalFile(probePng).toString()),
+          "image element placed");
+    CHECK(m.sketchAddText(row, 0.5, 0.5, 0.3, QStringLiteral("label"), 20,
+                          QStringLiteral("#FF8800")) == 0, "text element placed");
+    const QString pre = m.contentForRow(row);
+
+    // Group delete of everything: strokes fold to one empty edited(), then
+    // image/text removals (descending — single elements here).
+    const int entries = m.undoHistory().size();
+    m.beginGroup(row, row);
+    m.sketchSetShapes(row, QStringLiteral(
+        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[]}"));
+    m.sketchRemoveImage(row, 0);
+    m.sketchRemoveText(row, 0);
+    m.endGroup();
+    {
+        const QJsonObject o = QJsonDocument::fromJson(
+            m.contentForRow(row).toUtf8()).object();
+        CHECK(o.value(QStringLiteral("images")).toArray().isEmpty()
+                  && o.value(QStringLiteral("texts")).toArray().isEmpty(),
+              "all three kinds deleted");
+    }
+    CHECK(m.undoHistory().size() == entries + 1,
+          "bracketed mixed delete is ONE undo entry");
+    const QString post = m.contentForRow(row);
+    m.undo();
+    CHECK(m.contentForRow(row) == pre,
+          "one undo restores strokes + image + text verbatim");
+    m.redo();
+    CHECK(m.contentForRow(row) == post, "redo re-applies the group delete");
+    m.closeDocument();
+}
+
+// --- Test 34: PDF page-ink undo cycle --------------------------------------
+// Per-page ink rides the block's content JSON (BlockSnap.content), so txn
+// undo, erase-to-empty key drops, and block-delete restore all come from the
+// standard machinery — prove each leg.
+static void testPdfPageInkUndo() {
+    qInfo("[34] PDF page ink: set/undo/redo, key drop, block-delete restore");
+    auto shapes = [](const char* id) {
+        return QStringLiteral(
+            "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+            "{\"id\":\"%1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+            "\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.3,0.3]]}]}")
+            .arg(QLatin1String(id));
+    };
+    auto shapeCount = [](const QString& env) {
+        return QJsonDocument::fromJson(env.toUtf8()).object()
+            .value(QStringLiteral("shapes")).toArray().size();
+    };
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    {   // hand-built PDF descriptor: isPdf derives from kind (no file probe)
+        BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
+        sp.mediaJson = QStringLiteral(
+            "{\"src\":\"/nowhere/spec.pdf\",\"w\":612,\"h\":792,"
+            "\"kind\":\"pdf\",\"pages\":3}");
+        m.insertSpecs(0, {sp}, false);
+    }
+    const int row = 1;
+    CHECK(m.mediaKind(row) == QLatin1String("pdf"), "pdf row landed");
+
+    // Set → undo → redo on page 0.
+    m.pdfSetPageInk(row, 0, shapes("p0"));
+    CHECK(shapeCount(m.pdfPageInk(row, 0)) == 1, "page-0 ink stored");
+    m.undo();
+    CHECK(m.pdfPageInk(row, 0).isEmpty(), "undo clears page-0 ink");
+    m.redo();
+    CHECK(shapeCount(m.pdfPageInk(row, 0)) == 1, "redo restores page-0 ink");
+
+    // Second page is independent; erase-to-empty drops page 0's key only.
+    m.pdfSetPageInk(row, 2, shapes("p2"));
+    m.pdfSetPageInk(row, 0, QStringLiteral("{\"shapes\":[]}"));
+    CHECK(m.pdfPageInk(row, 0).isEmpty() && shapeCount(m.pdfPageInk(row, 2)) == 1,
+          "erase-to-empty drops page 0, page 2 untouched");
+    m.undo();
+    CHECK(shapeCount(m.pdfPageInk(row, 0)) == 1, "undo restores the dropped page key");
+
+    // Block delete → undo: ink on BOTH pages rides BlockSnap.content back.
+    m.removeBlock(row);
+    CHECK(m.rowCountQml() == 1, "pdf block removed");
+    m.undo();
+    CHECK(m.mediaKind(row) == QLatin1String("pdf")
+              && shapeCount(m.pdfPageInk(row, 0)) == 1
+              && shapeCount(m.pdfPageInk(row, 2)) == 1,
+          "undo of removeBlock restores the block AND both pages' ink");
+    m.closeDocument();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -2689,6 +2867,9 @@ int main(int argc, char** argv) {
     testRtfImport();
     testImportCopyPolicy();
     testCollectMedia();
+    testDocInkGroupMove();
+    testSketchGroupDelete();
+    testPdfPageInkUndo();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
