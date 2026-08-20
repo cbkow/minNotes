@@ -59,7 +59,8 @@ constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline 
 // whole (never merged by kind).
 static inline bool spanHasPayload(uint8_t k) {
     return k == BlockModel::SpanLink || k == BlockModel::SpanFgColor
-        || k == BlockModel::SpanHighlight || k == BlockModel::SpanComment;
+        || k == BlockModel::SpanHighlight || k == BlockModel::SpanComment
+        || k == BlockModel::SpanChoice;
 }
                                      // (keep in sync with Editor.qml videoTransportH)
 
@@ -3259,6 +3260,7 @@ uint8_t BlockModel::spanKindFromString(const QString& s) {
     if (s == QLatin1String("color"))     return SpanFgColor;
     if (s == QLatin1String("highlight")) return SpanHighlight;
     if (s == QLatin1String("comment"))   return SpanComment;
+    if (s == QLatin1String("choice"))    return SpanChoice;
     return 0;
 }
 const char* BlockModel::spanKindToString(uint8_t k) {
@@ -3272,6 +3274,7 @@ const char* BlockModel::spanKindToString(uint8_t k) {
     case SpanFgColor:   return "color";
     case SpanHighlight: return "highlight";
     case SpanComment:   return "comment";
+    case SpanChoice:    return "choice";
     default:            return "";
     }
 }
@@ -3410,6 +3413,223 @@ void BlockModel::setTextColor(int row, int start, int end, const QString& color,
 void BlockModel::setHighlight(int row, int start, int end, const QString& color,
                               const QString& coalesce) {
     setPayloadSpan(row, start, end, SpanHighlight, color, coalesce);
+}
+
+// --- DT-2: inline choice chips (2026-08-20) -----------------------------
+// Payload = {"o":[{"id","l","c"}...],"v":selectedId} (the table option
+// shape, short keys); the span's TEXT is the selected LABEL — exporters
+// flatten to the selected value with no cases, copy-as-text and search
+// just work. Every mutator = one txn.
+
+// Labels are stored as BLOCK TEXT, and convertMarkdown scans raw text with
+// no span awareness (load canonicalization + commitMarkdown) — an
+// unescapable marker char in a label would be eaten and shift the chip.
+// Strip the markdown-active set (inline-only rule; table options never
+// meet convertMarkdown).
+static QString sanitizeChoiceLabel(QString s) {
+    static const QString bad = QStringLiteral("`*_~[]\\\n\r");
+    QString out;
+    out.reserve(s.size());
+    for (const QChar ch : s)
+        if (!bad.contains(ch)) out += ch;
+    out = out.trimmed();
+    return out.isEmpty() ? QStringLiteral("Option") : out;
+}
+static QString choiceLabelFor(const QJsonObject& payload, const QString& id) {
+    for (const QJsonValue& v : payload.value(QStringLiteral("o")).toArray()) {
+        const QJsonObject o = v.toObject();
+        if (o.value(QStringLiteral("id")).toString() == id)
+            return o.value(QStringLiteral("l")).toString();
+    }
+    return {};
+}
+static QString choiceColorFor(const QJsonObject& payload, const QString& id) {
+    for (const QJsonValue& v : payload.value(QStringLiteral("o")).toArray()) {
+        const QJsonObject o = v.toObject();
+        if (o.value(QStringLiteral("id")).toString() == id)
+            return o.value(QStringLiteral("c")).toString();
+    }
+    return {};
+}
+
+// The chip span whose range starts at `spanStart` (the span address the
+// picker holds), or nullptr.
+BlockModel::Span* BlockModel::choiceSpanAt(int row, int spanStart) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return nullptr;
+    for (Span& sp : rows_[row].spans)
+        if (sp.kind == SpanChoice && sp.s == spanStart) return &sp;
+    return nullptr;
+}
+
+int BlockModel::insertChoiceAt(int row, int col) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return -1;
+    const uint8_t t = rows_[row].type;
+    if (t == Media || t == Table || t == Divider || t == Code) return -1;
+    const int len = content_[row].size();
+    col = std::clamp(col, 0, len);
+    for (const Span& sp : rows_[row].spans)   // never inside another chip
+        if (sp.kind == SpanChoice && col > sp.s && col < sp.e) col = sp.e;
+    // The default set (ruling 2026-08-20): the app's tri-state culture.
+    QJsonArray opts;
+    const char* defs[3][2] = { {"To do", "#8A8A8A"},
+                               {"Doing", "#0189F1"},
+                               {"Done",  "#58A65C"} };
+    QString firstId;
+    for (int i = 0; i < 3; ++i) {
+        QJsonObject o;
+        const QString id = makeUlid();
+        if (i == 0) firstId = id;
+        o.insert(QStringLiteral("id"), id);
+        o.insert(QStringLiteral("l"), QLatin1String(defs[i][0]));
+        o.insert(QStringLiteral("c"), QLatin1String(defs[i][1]));
+        opts.append(o);
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("o"), opts);
+    payload.insert(QStringLiteral("v"), firstId);
+    const QString label = QStringLiteral("To do");
+
+    beginTxn(row, row);
+    shiftSpansInsert(rows_[row].spans, col, label.size());
+    content_[row].insert(col, label);
+    rows_[row].spans.push_back({col, col + int(label.size()), SpanChoice,
+                                QString::fromUtf8(QJsonDocument(payload)
+                                    .toJson(QJsonDocument::Compact))});
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return col;
+}
+
+QString BlockModel::choiceAt(int row, int col) const {
+    if (rows_.empty()) return {};
+    for (const Span& sp : rowAt(row).spans)
+        if (sp.kind == SpanChoice && col >= sp.s && col < sp.e) return sp.href;
+    return {};
+}
+QVariantList BlockModel::choiceRangeAt(int row, int col) const {
+    if (rows_.empty()) return {};
+    for (const Span& sp : rowAt(row).spans)
+        if (sp.kind == SpanChoice && col >= sp.s && col < sp.e)
+            return QVariantList{ sp.s, sp.e };
+    return {};
+}
+
+// Swap the selected option: replace the label TEXT and the payload's "v" in
+// ONE txn. Other spans on the row shift as if [s,e) was retyped.
+void BlockModel::setChoiceSelected(int row, int spanStart, const QString& optionId) {
+    Span* sp = choiceSpanAt(row, spanStart);
+    if (!sp) return;
+    QJsonObject payload = QJsonDocument::fromJson(sp->href.toUtf8()).object();
+    if (payload.value(QStringLiteral("v")).toString() == optionId) return;   // no-op
+    const QString label = choiceLabelFor(payload, optionId);
+    if (label.isEmpty()) return;                            // unknown id
+    payload.insert(QStringLiteral("v"), optionId);
+    replaceChoiceText(row, spanStart, label, payload);
+}
+
+// Shared tail for label/payload rewrites: swap [s,e) text for `label`,
+// shift every OTHER span, restore the chip span with its new bounds.
+void BlockModel::replaceChoiceText(int row, int spanStart, const QString& label,
+                                   const QJsonObject& payload) {
+    Span* spp = choiceSpanAt(row, spanStart);
+    if (!spp) return;
+    const Span chip = *spp;
+    beginTxn(row, row);
+    std::vector<Span>& v = rows_[row].spans;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const Span& s) {
+        return s.kind == SpanChoice && s.s == chip.s;
+    }), v.end());
+    shiftSpansDelete(v, chip.s, chip.e);
+    shiftSpansInsert(v, chip.s, label.size());
+    content_[row] = content_[row].left(chip.s) + label + content_[row].mid(chip.e);
+    v.push_back({chip.s, chip.s + int(label.size()), SpanChoice,
+                 QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact))});
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+QString BlockModel::choiceAddOption(int row, int spanStart, const QString& label,
+                                    const QString& colorHex) {
+    Span* sp = choiceSpanAt(row, spanStart);
+    if (!sp) return {};
+    const QString clean = sanitizeChoiceLabel(label);
+    QJsonObject payload = QJsonDocument::fromJson(sp->href.toUtf8()).object();
+    QJsonArray opts = payload.value(QStringLiteral("o")).toArray();
+    QJsonObject o;
+    const QString id = makeUlid();
+    o.insert(QStringLiteral("id"), id);
+    o.insert(QStringLiteral("l"), clean);
+    if (!colorHex.isEmpty()) o.insert(QStringLiteral("c"), colorHex);
+    opts.append(o);
+    payload.insert(QStringLiteral("o"), opts);
+    payload.insert(QStringLiteral("v"), id);   // quick-add implies intent
+    replaceChoiceText(row, spanStart, clean, payload);
+    return id;
+}
+
+// The options-editor commit: preserve ids, mint empty ones, sanitize labels;
+// a deleted selected id falls back to the FIRST option (text follows —
+// the text==label invariant); an empty set removes the chip.
+void BlockModel::setChoiceOptions(int row, int spanStart, const QVariantList& options) {
+    Span* sp = choiceSpanAt(row, spanStart);
+    if (!sp) return;
+    if (options.isEmpty()) { removeChoiceAt(row, spanStart); return; }
+    QJsonObject payload = QJsonDocument::fromJson(sp->href.toUtf8()).object();
+    QJsonArray opts;
+    for (const QVariant& v : options) {
+        const QVariantMap m = v.toMap();
+        const QString label = sanitizeChoiceLabel(m.value(QStringLiteral("label")).toString());
+        QString id = m.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) id = makeUlid();
+        QJsonObject o;
+        o.insert(QStringLiteral("id"), id);
+        o.insert(QStringLiteral("l"), label);
+        const QString c = m.value(QStringLiteral("color")).toString();
+        if (!c.isEmpty()) o.insert(QStringLiteral("c"), c);
+        opts.append(o);
+    }
+    QString sel = payload.value(QStringLiteral("v")).toString();
+    payload.insert(QStringLiteral("o"), opts);
+    QString label = choiceLabelFor(payload, sel);
+    if (label.isEmpty()) {   // selected option was deleted → first option
+        sel = opts.first().toObject().value(QStringLiteral("id")).toString();
+        label = opts.first().toObject().value(QStringLiteral("l")).toString();
+    }
+    payload.insert(QStringLiteral("v"), sel);
+    replaceChoiceText(row, spanStart, label, payload);
+}
+
+void BlockModel::removeChoiceAt(int row, int spanStart) {
+    Span* sp = choiceSpanAt(row, spanStart);
+    if (!sp) return;
+    deleteRange(row, sp->s, row, sp->e);   // full cover — the span dies with it
+}
+
+QVariantList BlockModel::choiceRangesForRow(int row) const {
+    QVariantList out;
+    if (rows_.empty()) return out;
+    row = clampRow(row);
+    for (const Span& sp : rows_[row].spans) {
+        if (sp.kind != SpanChoice || sp.e <= sp.s) continue;
+        const QJsonObject payload = QJsonDocument::fromJson(sp.href.toUtf8()).object();
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("color"),
+                 choiceColorFor(payload, payload.value(QStringLiteral("v")).toString()));
+        out.append(m);
+    }
+    return out;
 }
 
 QString BlockModel::linkAt(int row, int col) const {
@@ -4289,6 +4509,11 @@ void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& js
 
 void BlockModel::splitBlock(int row, int col) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    // A split strictly inside a choice chip would clone it into two chips
+    // sharing one payload (the straddle path below copies href to both
+    // halves) — snap to the chip's end instead (DT-2, 2026-08-20).
+    for (const Span& sp : rows_[row].spans)
+        if (sp.kind == SpanChoice && col > sp.s && col < sp.e) { col = sp.e; break; }
     beginTxn(row, row);                          // after grows to [row, row+1]
     const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));

@@ -289,6 +289,18 @@ public:
     // link spans there; an empty url removes them. linkAt returns the URL of a link
     // covering `col` (for Cmd/Ctrl-click open + hover), or "" if none.
     Q_INVOKABLE void setLink(int row, int start, int end, const QString& url);
+    // --- DT-2 inline choice chips (2026-08-20): span TEXT == selected
+    // label; payload = {"o":[{id,l,c}...],"v":id}. spanStart is the chip's
+    // address (its range start). One undo step per call.
+    Q_INVOKABLE int insertChoiceAt(int row, int col);          // → span start, -1 fail
+    Q_INVOKABLE QString choiceAt(int row, int col) const;      // payload JSON, "" = none
+    Q_INVOKABLE QVariantList choiceRangeAt(int row, int col) const;   // [s,e] or []
+    Q_INVOKABLE void setChoiceSelected(int row, int spanStart, const QString& optionId);
+    Q_INVOKABLE QString choiceAddOption(int row, int spanStart, const QString& label,
+                                        const QString& colorHex);     // mints + SELECTS
+    Q_INVOKABLE void setChoiceOptions(int row, int spanStart, const QVariantList& options);
+    Q_INVOKABLE void removeChoiceAt(int row, int spanStart);   // chip + label text (Clear)
+    Q_INVOKABLE QVariantList choiceRangesForRow(int row) const;   // [{s,e,color}] overlay feed
     Q_INVOKABLE QString linkAt(int row, int col) const;
 
     // --- Comments (tier 3 annotations). A SpanComment span (payload = thread
@@ -650,7 +662,12 @@ public:
     enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
                               SpanStrike = 4, SpanUnderline = 5, SpanLink = 6,
                               SpanFgColor = 7, SpanHighlight = 8,   // href holds the color hex
-                              SpanComment = 9 };                    // href holds the thread id
+                              SpanComment = 9,                      // href holds the thread id
+                              // DT-2 (2026-08-20): inline choice chip. href
+                              // holds {"o":[{"id","l","c"}...],"v":selectedId}
+                              // (the table option shape); the span's TEXT is
+                              // the selected label — exporters flatten free.
+                              SpanChoice = 10 };
 
 private:
     struct Row {
@@ -715,6 +732,9 @@ private:
     static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind);
     void setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload,
                         const QString& coalesce = QString());
+    Span* choiceSpanAt(int row, int spanStart);   // the chip addressed by its range start
+    void replaceChoiceText(int row, int spanStart, const QString& label,
+                           const QJsonObject& payload);   // label-swap txn core
     static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     // Like addSpan but for a payload span (colour): clears same-kind coverage in

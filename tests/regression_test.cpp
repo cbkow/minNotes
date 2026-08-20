@@ -3156,6 +3156,122 @@ static void testExportPdf() {
     dir.removeRecursively();
 }
 
+// --- Test 37: DT-2 inline choice chips --------------------------------------
+// The span's TEXT is the selected LABEL (the load-bearing invariant): swaps
+// are one-txn text+payload rewrites, neighbours shift, exporters flatten
+// bare, and the chip survives save/reopen via the "choice" kind string.
+static void testInlineChoice() {
+    qInfo("[37] DT-2 inline choice: insert/select/options/remove, text==label");
+    auto payloadOf = [](const QString& j) {
+        return QJsonDocument::fromJson(j.toUtf8()).object();
+    };
+    auto idFor = [&](const QString& j, const QString& label) {
+        for (const QJsonValue& v : payloadOf(j).value(QStringLiteral("o")).toArray())
+            if (v.toObject().value(QStringLiteral("l")).toString() == label)
+                return v.toObject().value(QStringLiteral("id")).toString();
+        return QString();
+    };
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("status: here"));
+
+    const int s = m.insertChoiceAt(0, 8);
+    CHECK(s == 8, "chip inserted at the caret (start=%d)", s);
+    CHECK(m.contentForRow(0) == QStringLiteral("status: To dohere"),
+          "default label spliced into the text");
+    const QString pj = m.choiceAt(0, 9);
+    CHECK(!pj.isEmpty()
+              && payloadOf(pj).value(QStringLiteral("o")).toArray().size() == 3
+              && payloadOf(pj).value(QStringLiteral("v")).toString()
+                     == idFor(pj, QStringLiteral("To do")),
+          "payload carries the tri-state set, To do selected");
+    CHECK(m.choiceRangeAt(0, 9) == (QVariantList{8, 13}), "range covers the label");
+
+    // A neighbour span must shift when the label swaps.
+    m.setFormat(0, 13, 17, QStringLiteral("bold"), true);   // "here"
+    m.setChoiceSelected(0, 8, idFor(pj, QStringLiteral("Done")));
+    CHECK(m.contentForRow(0) == QStringLiteral("status: Donehere"),
+          "selecting swaps the label text");
+    CHECK(m.choiceRangeAt(0, 9) == (QVariantList{8, 12}), "span follows the new label");
+    CHECK(m.hasFormat(0, 12, 16, QStringLiteral("bold")),
+          "neighbour span shifted with the swap");
+    CHECK(m.choiceRangesForRow(0).first().toMap()
+              .value(QStringLiteral("color")).toString()
+              == QStringLiteral("#58A65C"),
+          "overlay feed reports the selected option's color");
+    m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("status: To dohere")
+              && m.hasFormat(0, 13, 17, QStringLiteral("bold")),
+          "one undo restores text, payload AND the neighbour");
+    m.redo();
+
+    // Quick-add selects, labels sanitize (markdown-active chars stripped).
+    const QString nid = m.choiceAddOption(0, 8, QStringLiteral("Blo*ck*ed"),
+                                          QStringLiteral("#FF0000"));
+    CHECK(!nid.isEmpty()
+              && m.contentForRow(0) == QStringLiteral("status: Blockedhere"),
+          "quick-add selects; label sanitized of markdown chars");
+
+    // Options commit: drop the selected option → falls back to the first.
+    {
+        const QString cur = m.choiceAt(0, 9);
+        QVariantList arr;
+        for (const QJsonValue& v : payloadOf(cur).value(QStringLiteral("o")).toArray()) {
+            const QJsonObject o = v.toObject();
+            if (o.value(QStringLiteral("id")).toString() == nid) continue;   // delete it
+            QVariantMap e;
+            e.insert(QStringLiteral("id"), o.value(QStringLiteral("id")).toString());
+            e.insert(QStringLiteral("label"), o.value(QStringLiteral("l")).toString());
+            e.insert(QStringLiteral("color"), o.value(QStringLiteral("c")).toString());
+            arr.append(e);
+        }
+        m.setChoiceOptions(0, 8, arr);
+        CHECK(m.contentForRow(0) == QStringLiteral("status: To dohere"),
+              "deleted-selected falls back to the first option");
+    }
+
+    // Save/reopen: the "choice" kind string must round-trip.
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_choice_rt.mndb");
+    QFile::remove(path);
+    CHECK(m.saveAs(path), "doc saved");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "doc reopened");
+    CHECK(!m2.choiceAt(0, 9).isEmpty()
+              && m2.contentForRow(0) == QStringLiteral("status: To dohere"),
+          "chip survives save/reopen (kind string + label intact)");
+
+    // Split inside the chip snaps to its end (no payload-sharing clones).
+    m2.splitBlock(0, 10);
+    CHECK(m2.contentForRow(0) == QStringLiteral("status: To do")
+              && m2.contentForRow(1) == QStringLiteral("here")
+              && !m2.choiceAt(0, 9).isEmpty() && m2.choiceAt(1, 0).isEmpty(),
+          "split inside the chip snapped to its end");
+    m2.undo();
+
+    // Exporters flatten to the bare label (the text==label payoff).
+    Exporter ex;
+    ex.setModel(&m2);
+    // The bold on "here" (set above) must emit normally while the chip
+    // flattens to its bare label — the two coexist on one line.
+    const QString mdout = ex.copyMarkdown(0, 0);
+    CHECK(mdout.contains(QStringLiteral("status: To do**here**")),
+          "markdown: chip flattens bare, neighbour bold emits (got '%s')",
+          qPrintable(mdout.left(80)));
+
+    // Clear = remove chip + label; one undo restores both.
+    m2.removeChoiceAt(0, 8);
+    CHECK(m2.contentForRow(0) == QStringLiteral("status: here")
+              && m2.choiceRangesForRow(0).isEmpty(),
+          "remove kills chip and label text");
+    m2.undo();
+    CHECK(!m2.choiceAt(0, 9).isEmpty(), "undo restores the chip whole");
+    m2.closeDocument();
+    QFile::remove(path);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -3209,6 +3325,7 @@ int main(int argc, char** argv) {
     testPdfPageInkUndo();
     testPdfPageInkExport();
     testExportPdf();
+    testInlineChoice();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
