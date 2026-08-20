@@ -3272,6 +3272,55 @@ static void testInlineChoice() {
     QFile::remove(path);
 }
 
+// --- Test 38: undo restores keep MEASURED heights (the History-toggle bug) --
+// applySnapshot used to drop restored rows to estimatedHeight — blind to a
+// table's cell media — and the delegate correction only fires on an ACTUAL
+// height change, so a jump landing at the already-rendered height left the
+// estimate standing (rows didn't resize around pasted images). Restored rows
+// now SEED from their pre-reset height; sparse patches keep theirs.
+static void testUndoHeightSeeding() {
+    qInfo("[38] undo height seeding: band + sparse restores keep real heights");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
+    const int tRow = m.insertTable(0, 2, 2);
+    CHECK(tRow == 1, "table inserted");
+    auto rowH = [&](int r) {
+        return (r + 1 < m.rowCountQml() ? m.yForRow(r + 1) : m.totalHeight())
+               - m.yForRow(r);
+    };
+
+    // Band path: a cell edit + undo/redo must keep the measured 333, not
+    // drop to the (media-blind) estimate.
+    m.setMeasuredHeight(tRow, 333);
+    m.tableSetCell(tRow, 1, 1, QStringLiteral("edited"));
+    m.undo();
+    CHECK(qAbs(rowH(tRow) - 333.0) < 0.5,
+          "undo keeps the table's measured height (got %f)", rowH(tRow));
+    CHECK(!m.rowMeasured(tRow), "restored row still re-measures (flag cleared)");
+    m.redo();
+    CHECK(qAbs(rowH(tRow) - 333.0) < 0.5, "redo keeps it too");
+
+    // Sparse path: a grouped formatting sweep over scattered rows patches
+    // in place — heights must survive there as well.
+    m.insertBlock(2); m.setContent(2, QStringLiteral("beta"));
+    m.insertBlock(3); m.setContent(3, QStringLiteral("gamma"));
+    m.setMeasuredHeight(0, 101);
+    m.setMeasuredHeight(2, 102);
+    m.setMeasuredHeight(3, 103);
+    m.beginGroup(0, 3);
+    m.setFormat(0, 0, 5, QStringLiteral("bold"), true);
+    m.setFormat(3, 0, 5, QStringLiteral("bold"), true);
+    m.endGroup();
+    m.undo();
+    CHECK(qAbs(rowH(0) - 101.0) < 0.5 && qAbs(rowH(3) - 103.0) < 0.5,
+          "sparse undo keeps patched rows' heights");
+    CHECK(qAbs(rowH(2) - 102.0) < 0.5 && m.rowMeasured(2),
+          "untouched row keeps height AND its measured flag");
+    m.closeDocument();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -3326,6 +3375,7 @@ int main(int argc, char** argv) {
     testPdfPageInkExport();
     testExportPdf();
     testInlineChoice();
+    testUndoHeightSeeding();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

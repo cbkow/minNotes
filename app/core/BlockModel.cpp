@@ -939,17 +939,24 @@ std::vector<BlockModel::BlockSnap> BlockModel::snapshotRange(int lo, int hi) con
 void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap>& snaps) {
     applying_ = true;
     beginResetModel();
-    // Preserve MEASURED heights across the reset. The Fenwick is rebuilt below, so
-    // first capture each currently-measured row's real height keyed by id. Rows
-    // OUTSIDE the replaced region [lo, lo+snaps) are untouched by this snapshot —
-    // restoring their measured height (instead of a fresh estimate) avoids BOTH
-    // the table-overlap corruption (reportHeight skips re-measuring a row whose
-    // `measured` flag is still set) AND the scroll jump from above-viewport rows
-    // snapping to estimates. Replaced rows re-measure (their flag is cleared below).
-    QHash<QString, double> measuredById;
+    // Preserve heights across the reset — for EVERY row, keyed by id (was
+    // measured-only until 2026-08-20). Untouched rows keep their real
+    // heights as before; RESTORED rows now SEED from their pre-reset height
+    // too, instead of dropping to estimatedHeight: an estimate can't see a
+    // table's cell media, and the delegate correction only fires on an
+    // ACTUAL height change — so a history jump landing on a state that
+    // renders at the height already shown left the stale estimate standing
+    // (the "rows don't resize to fit the pasted image" bug). Seeded rows
+    // still clear `measured`, so any real height difference re-reports
+    // through the normal chain.
+    QHash<QString, double> heightById;
+    heightById.reserve(static_cast<int>(rows_.size()));
+    QHash<QString, double> measuredById;   // untouched rows: keep flag semantics
     measuredById.reserve(static_cast<int>(rows_.size()));
-    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
+        heightById.insert(ids_[i], fenwick_.height(i));
         if (rows_[i].measured) measuredById.insert(ids_[i], fenwick_.height(i));
+    }
     const int last = std::min(lo + oldCount, static_cast<int>(rows_.size()));
     QSet<QString> newIds, oldIds;
     bool inkTouched = false;
@@ -1005,8 +1012,11 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         if (!replaced && rows_[i].measured && it != measuredById.constEnd()) {
             heights.push_back(it.value());                       // untouched → keep its real height
         } else {
-            rows_[i].measured = false;                           // changed/new → estimate + re-measure
-            heights.push_back(estimatedHeight(rows_[i]));
+            rows_[i].measured = false;                           // changed/new → re-measure
+            auto hit = heightById.constFind(ids_[i]);
+            heights.push_back(hit != heightById.constEnd()
+                                  ? hit.value()                  // seed: pre-reset height beats a
+                                  : estimatedHeight(rows_[i]));  // media-blind estimate; re-born → estimate
         }
     }
     fenwick_.reset(std::move(heights));
@@ -1032,7 +1042,10 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         r.measured = false;            // estimate now, delegate re-reports on render
         content_[p.row] = s.content;
         ranks_[p.row] = s.rank;
-        fenwick_.setHeight(static_cast<size_t>(p.row), estimatedHeight(r));
+        // Keep the CURRENT fenwick height (2026-08-20): same id, in-place
+        // content swap — the standing height is a far better guess than a
+        // media-blind estimate, and `measured=false` above lets any real
+        // height change re-report through the normal chain.
         if (doc_.isOpen()) {
             doc_.updateContent(s.id, s.content);
             doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),
