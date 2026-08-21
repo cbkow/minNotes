@@ -3960,6 +3960,9 @@ static void testCellMediaExports() {
                   "--sheetw:calc(min(1200px,max(760px,100vw - 152px)) + 240px)"))
                   && html.contains(QStringLiteral("--desk:#121211")),
               "dual-tone ground: sheet band follows the widest table");
+        CHECK(html.contains(QStringLiteral("main td img"))
+                  && html.contains(QStringLiteral("mn-underlay")),
+              "cell images join the lightbox; block-select underlay shipped");
     }
     m.tableSetColWidth(tRow, 0, 0);
     m.tableSetColWidth(tRow, 1, 0);
