@@ -1740,7 +1740,11 @@ FocusScope {
     // A cell range is coloured if one is selected, otherwise just the focused cell.
     function applyTableColor(isFg, hex) {
         var fr = cursor.focusRow
-        if (tcur.rangeR0 >= 0)
+        if (tcur.selRows.length)
+            blockModel.tableSetRowsColor(fr, tcur.selRows, isFg, hex)
+        else if (tcur.selCols.length)
+            blockModel.tableSetColsColor(fr, tcur.selCols, isFg, hex)
+        else if (tcur.rangeR0 >= 0)
             blockModel.tableSetCellColor(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1, isFg, hex)
         else
             blockModel.tableSetCellColor(fr, tcur.cr, tcur.cc, tcur.cr, tcur.cc, isFg, hex)
@@ -1871,8 +1875,38 @@ FocusScope {
     function tblInsRowBelow() { blockModel.tableInsertRow(menuRow, menuCellR + 1) }
     function tblInsColLeft()  { blockModel.tableInsertColumn(menuRow, menuCellC) }
     function tblInsColRight() { blockModel.tableInsertColumn(menuRow, menuCellC + 1) }
-    function tblDelRow()      { blockModel.tableDeleteRow(menuRow, menuCellR) }
-    function tblDelCol()      { blockModel.tableDeleteColumn(menuRow, menuCellC) }
+    // Menu op targeting (multi-select 2026-08-21): the SELECTION when the
+    // right-clicked cell sits inside a multi-member set, else null (single).
+    function menuSelRows() {
+        return (tcur.selRows.length > 1 && tcur.selRows.indexOf(menuCellR) >= 0)
+               ? tcur.selRows : null
+    }
+    function menuSelCols() {
+        return (tcur.selCols.length > 1 && tcur.selCols.indexOf(menuCellC) >= 0)
+               ? tcur.selCols : null
+    }
+    function tblDelRow() {
+        var s = menuSelRows()
+        if (s) { tcur.clearAll(); blockModel.tableDeleteRows(menuRow, s) }
+        else blockModel.tableDeleteRow(menuRow, menuCellR)
+    }
+    function tblDelCol() {
+        var s = menuSelCols()
+        if (s) { tcur.clearAll(); blockModel.tableDeleteColumns(menuRow, s) }
+        else blockModel.tableDeleteColumn(menuRow, menuCellC)
+    }
+    function tblClearRows() { var s = menuSelRows(); if (s) blockModel.tableClearRows(menuRow, s) }
+    function tblClearCols() { var s = menuSelCols(); if (s) blockModel.tableClearColumns(menuRow, s) }
+    function tblCopyRows() {
+        var s = menuSelRows(); if (!s) return
+        clipboard.writeTable(blockModel.tableRowsTSV(menuRow, s),
+                             blockModel.tableRowsHtml(menuRow, s))
+    }
+    function tblCopyCols() {
+        var s = menuSelCols(); if (!s) return
+        clipboard.writeTable(blockModel.tableColsTSV(menuRow, s),
+                             blockModel.tableColsHtml(menuRow, s))
+    }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblMoveRow(d)    { blockModel.tableMoveRow(menuRow, menuCellR, menuCellR + d) }
     function tblMoveCol(d)    { blockModel.tableMoveColumn(menuRow, menuCellC, menuCellC + d) }
@@ -1968,12 +2002,22 @@ FocusScope {
         blockModel.tableSortByColumn(row, c, asc)
         lastSortRow = row; lastSortCol = c; lastSortAsc = asc
     }
-    function tblAlign(a)      { blockModel.tableSetColAlign(menuRow, menuCellC, a) }
+    function tblAlign(a) {
+        var s = menuSelCols()
+        if (s) blockModel.tableSetColsAlign(menuRow, s, a)
+        else blockModel.tableSetColAlign(menuRow, menuCellC, a)
+    }
     function tblColKind()      { return (blockModel.contentRevision, blockModel.tableColumnKind(menuRow, menuCellC)) }
-    function tblMakeChoiceCol(){ blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
+    function tblMakeChoiceCol(){ var s = menuSelCols()
+                                 if (s) { blockModel.tableSetColumnsKind(menuRow, s, 1); return }   // options edited per column
+                                 blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
                                  Qt.callLater(root.openChoiceEditor, menuRow, menuCellC) }   // set options right away
-    function tblMakeCheckCol() { blockModel.tableSetColumnKind(menuRow, menuCellC, 2) }
-    function tblMakeTextCol()  { blockModel.tableSetColumnKind(menuRow, menuCellC, 0) }
+    function tblMakeCheckCol() { var s = menuSelCols()
+                                 if (s) blockModel.tableSetColumnsKind(menuRow, s, 2)
+                                 else blockModel.tableSetColumnKind(menuRow, menuCellC, 2) }
+    function tblMakeTextCol()  { var s = menuSelCols()
+                                 if (s) blockModel.tableSetColumnsKind(menuRow, s, 0)
+                                 else blockModel.tableSetColumnKind(menuRow, menuCellC, 0) }
     function tblRemoveImage() { blockModel.tableClearCellMedia(menuRow, menuCellR, menuCellC) }
     readonly property bool menuCellHasImage: blockMenu.isTable
         && blockModel.tableCellMedia(menuRow, menuCellR, menuCellC) !== ""
@@ -6254,6 +6298,23 @@ FocusScope {
         readonly property int tCols: isTable ? (blockModel.contentRevision, blockModel.tableColumns(root.menuRow)) : 0
         readonly property bool bodyRow: isTable && root.menuCellR >= tHdr
         readonly property bool sortable: isTable && tRows - tHdr > 1
+        // Multi-select targeting (2026-08-21): the menu operates on the
+        // SELECTION when the right-clicked cell sits inside it (right-click
+        // preserves the selection by construction), else single-target.
+        readonly property bool selRowsHit: isTable && (tcur.selRev, tcur.selRows.length > 1
+            && tcur.selRows.indexOf(root.menuCellR) >= 0)
+        readonly property bool selColsHit: isTable && (tcur.selRev, tcur.selCols.length > 1
+            && tcur.selCols.indexOf(root.menuCellC) >= 0)
+        readonly property int selRowCount: (tcur.selRev, tcur.selRows.length)
+        readonly property int selColCount: (tcur.selRev, tcur.selCols.length)
+        // A live multi-cell rect containing the clicked cell (rect corners are
+        // plain int props — they notify on their own, no selRev needed).
+        readonly property bool selRectHit: isTable && tcur.rangeR0 >= 0
+            && !(tcur.rangeR0 === tcur.rangeR1 && tcur.rangeC0 === tcur.rangeC1)
+            && root.menuCellR >= Math.min(tcur.rangeR0, tcur.rangeR1)
+            && root.menuCellR <= Math.max(tcur.rangeR0, tcur.rangeR1)
+            && root.menuCellC >= Math.min(tcur.rangeC0, tcur.rangeC1)
+            && root.menuCellC <= Math.max(tcur.rangeC0, tcur.rangeC1)
         // Tallest of the visible columns — the inter-column dividers stretch to it.
         readonly property real bodyH: isTable
             ? Math.max(blockColMenu.implicitHeight, colColMenu.implicitHeight, rowColMenu.implicitHeight)
@@ -6326,6 +6387,9 @@ FocusScope {
                           onActivated: { clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC))
                                          Toasts.show(qsTr("Image copied")) } }
                 MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
+                MenuRow { visible: blockMenu.selRectHit; text: "Clear cells"
+                          onActivated: { blockModel.tableClearRange(root.menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
+                                         tcur.clearAll(); cursor.sync() } }
                 Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
             }
@@ -6338,12 +6402,20 @@ FocusScope {
                 visible: blockMenu.isTable
                 spacing: 1
                 MenuHeader { text: "Column" }
-                MenuRow { scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
-                MenuRow { scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
-                MenuRow { scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
-                MenuRow { visible: root.menuCellC > 0; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
-                MenuRow { visible: root.menuCellC < blockMenu.tCols - 1; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
-                MenuRow { scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
+                // Single-target rows hide when the menu targets a multi-column
+                // selection (the clicked column is inside a >1 set).
+                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
+                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
+                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
+                MenuRow { visible: !blockMenu.selColsHit && root.menuCellC > 0; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
+                MenuRow { visible: !blockMenu.selColsHit && root.menuCellC < blockMenu.tCols - 1; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
+                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"
+                          text: "Copy " + blockMenu.selColCount + " columns as table"
+                          onActivated: root.tblCopyCols() }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"
+                          text: "Clear " + blockMenu.selColCount + " columns"
+                          onActivated: root.tblClearCols() }
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuSegRow {
                     label: "Align"
@@ -6353,9 +6425,9 @@ FocusScope {
                     MenuIconBtn { icon: "text-align-right";  on: parent._a === 2; onActivated: root.tblAlign(2) }
                 }
                 // One-shot sort of the body rows by this column (header stays pinned).
-                Rectangle { visible: blockMenu.sortable; width: parent.width; height: 1; color: Theme.colors.divider }
+                Rectangle { visible: blockMenu.sortable && !blockMenu.selColsHit; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuSegRow {
-                    visible: blockMenu.sortable
+                    visible: blockMenu.sortable && !blockMenu.selColsHit
                     label: "Sort"
                     MenuIconBtn { icon: "sort-ascending";  onActivated: root.tblSort(true) }
                     MenuIconBtn { icon: "sort-descending"; onActivated: root.tblSort(false) }
@@ -6364,11 +6436,15 @@ FocusScope {
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
                 MenuRow { visible: root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
-                MenuRow { visible: root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
-                MenuRow { visible: root.tblColKind() !== 0 && !root.boardMode; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
-                MenuRow { visible: root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
+                MenuRow { visible: root.tblColKind() === 1 && !blockMenu.selColsHit; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
+                MenuRow { visible: root.tblColKind() !== 0 && !root.boardMode && !blockMenu.selColsHit; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
+                MenuRow { visible: root.tblColKind() !== 0; scope: "column"
+                          text: blockMenu.selColsHit ? "Make " + blockMenu.selColCount + " text columns" : "Make text column"
+                          danger: true; onActivated: root.tblMakeTextCol() }
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
+                MenuRow { scope: "column"
+                          text: blockMenu.selColsHit ? "Delete " + blockMenu.selColCount + " columns" : "Delete column"
+                          danger: true; onActivated: root.tblDelCol() }
             }
 
             Rectangle { visible: blockMenu.isTable; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
@@ -6379,15 +6455,23 @@ FocusScope {
                 visible: blockMenu.isTable
                 spacing: 1
                 MenuHeader { text: "Row" }
-                MenuRow { scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
-                MenuRow { scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
-                MenuRow { scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
+                MenuRow { visible: !blockMenu.selRowsHit; scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
+                MenuRow { visible: !blockMenu.selRowsHit; scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
+                MenuRow { visible: !blockMenu.selRowsHit; scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
                 // Reorder/duplicate: body rows only (a header row's place is structural).
-                MenuRow { visible: root.menuCellR > blockMenu.tHdr; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
-                MenuRow { visible: blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
-                MenuRow { visible: blockMenu.bodyRow; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
+                MenuRow { visible: !blockMenu.selRowsHit && root.menuCellR > blockMenu.tHdr; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
+                MenuRow { visible: !blockMenu.selRowsHit && blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
+                MenuRow { visible: !blockMenu.selRowsHit && blockMenu.bodyRow; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
+                MenuRow { visible: blockMenu.selRowsHit; scope: "row"
+                          text: "Copy " + blockMenu.selRowCount + " rows as table"
+                          onActivated: root.tblCopyRows() }
+                MenuRow { visible: blockMenu.selRowsHit; scope: "row"
+                          text: "Clear " + blockMenu.selRowCount + " rows"
+                          onActivated: root.tblClearRows() }
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
+                MenuRow { scope: "row"
+                          text: blockMenu.selRowsHit ? "Delete " + blockMenu.selRowCount + " rows" : "Delete row"
+                          danger: true; onActivated: root.tblDelRow() }
             }
         }
     }
