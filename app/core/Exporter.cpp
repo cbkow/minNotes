@@ -1235,9 +1235,13 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
             colTags += QStringLiteral("<col style=\"width:%1%\">")
                            .arg(exportColWidth(m, row, c) / total * 100.0, 0, 'f', 2);
         // 152 = main's 120px left padding + 32px right breathing room.
+        // Floor at the page measure (user ruling 2026-08-20): the viewport
+        // cap never squeezes a table below the page column — geometry stays
+        // put on narrow windows (scroll, don't reflow) so ink aligns.
         out = QStringLiteral(
-            "<table style=\"table-layout:fixed;width:min(%1px,calc(100vw - 152px))\">")
-                  .arg(int(total));
+            "<table style=\"table-layout:fixed;"
+            "width:min(%1px,max(%2px,calc(100vw - 152px)))\">")
+                  .arg(int(total)).arg(int(pw));
         out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
     } else {
         out = (authored == cols && authored > 0)
@@ -1576,9 +1580,12 @@ font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-ser
 /* Left-anchored page (user ruling): the prose measure hugs the left edge
    rather than centering, so wide tables growing rightward read as one
    left-aligned system instead of breaking a centered frame. */
-main{max-width:1000px;margin:0;padding:48px 120px 96px}  /* content = the app's true 760
-   measure, flanked by the app's 120px ink gutters so margin annotations render
-   instead of cropping at the viewport's left origin */
+main{max-width:1000px;min-width:1000px;margin:0;padding:48px 120px 96px}
+/* content = the app's true 760 measure, flanked by the app's 120px ink
+   gutters so margin annotations render instead of cropping at the
+   viewport's left origin. min-width == max-width (user ruling 2026-08-20):
+   the page NEVER shrinks under the document width — narrow windows scroll
+   instead of reflowing, so ink/annotation geometry always aligns. */
 /* Document header: the export leads with the document's name (2026-08-20). */
 header.doctitle{font-size:26px;font-weight:700;color:var(--bright);
 padding-bottom:14px;margin-bottom:28px;border-bottom:1px solid var(--divider)}
@@ -1911,6 +1918,8 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     if (pw != 760) {
         css.replace(QLatin1String("max-width:1000px"),
                     QStringLiteral("max-width:%1px").arg(pw + 240));
+        css.replace(QLatin1String("min-width:1000px"),
+                    QStringLiteral("min-width:%1px").arg(pw + 240));
         css.replace(QLatin1String("left:772px"),
                     QStringLiteral("left:%1px").arg(pw + 12));
         css.replace(QLatin1String("100vw - 932px"),
