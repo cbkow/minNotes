@@ -3877,6 +3877,30 @@ static void testMergeAssetsAndEdges() {
     if (qEnvironmentVariable("MN_MERGE_KEEP").isEmpty()) dir.removeRecursively();
 }
 
+// --- Test 42b: verbatim multi-line insert into a code block -----------------
+// The paste-into-code path (doPaste's code branch) rides insertText: newlines
+// and blank lines land verbatim, the line-count param recounts, and one undo
+// removes the whole insert.
+static void testCodeBlockInsert() {
+    qInfo("[42b] code block: multi-line insertText verbatim + param recount");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.makeCodeBlock(0, QStringLiteral("py"));
+    m.setContent(0, QStringLiteral("def a():"));
+    const QString pasted = QStringLiteral("\n    x = 1\n\n# not a heading\n\ty = 2");
+    m.insertText(0, 8, pasted);
+    CHECK(m.contentForRow(0) == QStringLiteral("def a():") + pasted,
+          "newlines, blank lines, '#', and tabs land verbatim");
+    CHECK(m.typeForRow(0) == BlockModel::Code && m.rowCountQml() == 1,
+          "still ONE code block (no markdown/table hijack)");
+    m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("def a():"),
+          "one undo removes the whole paste");
+    m.closeDocument();
+}
+
 // --- Test 42: table CELL images in md / DOCX / PDF exports ------------------
 // Cell media must ride every exporter like block images do: md collects into
 // .assets (absolute-path fallback when unreachable), DOCX embeds a drawing
@@ -4225,6 +4249,7 @@ int main(int argc, char** argv) {
     testNewImportFormats();
     testMergeEngine();
     testMergeAssetsAndEdges();
+    testCodeBlockInsert();
     testCellMediaExports();
     testTableBulkOps();
 

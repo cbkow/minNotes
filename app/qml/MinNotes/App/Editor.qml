@@ -2183,6 +2183,26 @@ FocusScope {
             else tcur.type(ct)
             return
         }
+        // --- Into a CODE block: paste VERBATIM (user-caught 2026-08-21).
+        // No HTML flavoring (editors put HTML on the clipboard), no markdown
+        // prefix parsing (a "# comment" is not a heading), no TSV table
+        // detection (tab-indented code is not a table); newlines and blank
+        // lines land in the block exactly as copied. ---
+        // (A selection spanning several blocks keeps the normal flow.)
+        if (blockModel.typeForRow(cursor.focusRow) === 2
+            && (!cursor.hasSel || cursor.loRow === cursor.hiRow)) {
+            var codeTxt = clipboard.readText()
+            if (codeTxt.length > 0) {
+                if (cursor.hasSel) cursor.deleteSelection()
+                codeTxt = codeTxt.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                var ccol = cursor.focusCol
+                blockModel.insertText(cursor.focusRow, ccol, codeTxt)
+                cursor.setCaret(cursor.focusRow, ccol + codeTxt.length)
+                root.ensureVisible(cursor.focusRow)
+                return
+            }
+            // nothing textual on the clipboard → the media branches below
+        }
         // --- Rich HTML (Word / Google Docs / Excel / web) → structured blocks:
         // headings/lists/paragraphs + bold/italic/underline/strike/links, tables
         // → Table blocks. Falls through if the HTML yields nothing usable (e.g. a

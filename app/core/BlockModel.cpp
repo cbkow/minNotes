@@ -4361,6 +4361,11 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks,
     col = std::clamp(col, 0, static_cast<int>(s.size()));
     content_[row] = s.left(col) + text + s.mid(col);
     persistContent(row);
+    // Code blocks are multi-line: keep the line-count param honest when the
+    // insert carries newlines (verbatim paste; single Enter presses too).
+    if (rows_[row].type == Code && text.contains(QLatin1Char('\n')))
+        rows_[row].param = static_cast<uint16_t>(
+            std::clamp<int>(content_[row].count(QLatin1Char('\n')) + 1, 1, 65535));
     std::vector<Span>& spans = rows_[row].spans;
     if (!spans.empty())                              // keep existing span offsets aligned
         shiftSpansInsert(spans, col, text.size());
