@@ -80,6 +80,42 @@ int exportCols(const BlockModel* m, int row) {
     return cols;
 }
 
+// The app's column-width rule, mirrored for export (user ruling 2026-08-20:
+// exports give copy the room the app does). Manual widths pass through; an
+// auto column is CONTENT-MEASURED — the widest cell line plus padding —
+// clamped [48, 360] exactly like BlockTable.recomputeAutoW. Falls back to
+// the app's 160 default only for a column with nothing measurable.
+int exportColWidth(const BlockModel* m, int row, int c) {
+    const int manual = m->tableColWidth(row, c);
+    if (manual > 0) return manual;
+    static const QFontMetricsF fm = [] {
+        QFont f(QStringLiteral("Aspekta"));
+        f.setPixelSize(14);                    // the app's body size
+        return QFontMetricsF(f);
+    }();
+    const int rows = m->tableRows(row);
+    const int hdr = m->tableHeaderRows(row);
+    const int kind = m->tableColumnKind(row, c);
+    qreal mw = 0;
+    // Header rows stay text in every column kind; body cells only carry
+    // measurable text in a text column. Row 0 reserves the sort-glyph slot.
+    const int textRows = (kind == 0) ? rows : hdr;
+    for (int r = 0; r < textRows; ++r) {
+        const qreal pad = (r == 0 && hdr > 0) ? 18 : 0;
+        const QStringList lines = m->tableCell(row, r, c).split(QLatin1Char('\n'));
+        for (const QString& ln : lines)
+            mw = std::max(mw, fm.horizontalAdvance(ln) + pad);
+    }
+    if (kind == 1) {   // choice: fit the widest option chip
+        for (const QVariant& ov : m->tableColumnOptions(row, c)) {
+            const QString label = ov.toMap().value(QStringLiteral("label")).toString();
+            mw = std::max(mw, fm.horizontalAdvance(label) + 10);
+        }
+    }
+    if (mw <= 0) return 160;                   // nothing measurable: app default
+    return int(std::lround(std::clamp(mw + 2 * 8 + 6, 48.0, 360.0)));
+}
+
 // Escape markdown punctuation in plain prose. NOT applied inside code spans
 // or code blocks. Line-start-only hazards ('#'/'>' openers) are left alone:
 // the autoformat triggers already convert such content to real blocks, so
@@ -1183,7 +1219,7 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
     double total = 0;
     for (int c = 0; c < cols; ++c) {
         const int w = m->tableColWidth(row, c);
-        total += w > 0 ? w : 160.0;
+        total += exportColWidth(m, row, c);   // app-measured, not a flat 160
         if (w > 0) {
             colTags += QStringLiteral("<col style=\"width:%1px\">").arg(w);
             ++authored;
@@ -1195,11 +1231,9 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
     const double pw = std::max<double>(400.0, m->pageWidth());
     if (total > pw) {
         colTags.clear();
-        for (int c = 0; c < cols; ++c) {
-            const int w = m->tableColWidth(row, c);
+        for (int c = 0; c < cols; ++c)
             colTags += QStringLiteral("<col style=\"width:%1%\">")
-                           .arg((w > 0 ? w : 160.0) / total * 100.0, 0, 'f', 2);
-        }
+                           .arg(exportColWidth(m, row, c) / total * 100.0, 0, 'f', 2);
         // 152 = main's 120px left padding + 32px right breathing room.
         out = QStringLiteral(
             "<table style=\"table-layout:fixed;width:min(%1px,calc(100vw - 152px))\">")
@@ -2352,8 +2386,7 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
     {
         double total = 0;
         for (int cix = 0; cix < cols; ++cix) {
-            const int px = m->tableColWidth(row, cix);
-            colDxa[size_t(cix)] = px > 0 ? px * 15.0 : 2000.0;
+            colDxa[size_t(cix)] = exportColWidth(m, row, cix) * 15.0;   // app-measured
             total += colDxa[size_t(cix)];
         }
         constexpr double kPageDxa = 9360.0;
@@ -3117,8 +3150,7 @@ void pdfTable(PdfCtx& c, int row) {
     {
         qreal total = 0;
         for (int cix = 0; cix < cols; ++cix) {
-            const int px = m->tableColWidth(row, cix);
-            colWpt[size_t(cix)] = px > 0 ? px : 160.0;
+            colWpt[size_t(cix)] = exportColWidth(m, row, cix);   // app-measured
             total += colWpt[size_t(cix)];
         }
         const qreal scale = (total > c.contentW) ? c.contentW / total : 1.0;
