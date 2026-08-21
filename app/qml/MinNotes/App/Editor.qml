@@ -1684,7 +1684,10 @@ FocusScope {
     // the document so typing continues immediately without re-clicking.
     function pickTextColor(hex) {
         cursor.armedFg = "" + hex
-        if (cursor.hasSel) applyColorToSelection(true, "" + hex, true)
+        // In a table the DOC cursor is always collapsed (cursor.hasSel is
+        // never true there) — tcur.active is the table's "has a target":
+        // the selection when live, else the focused cell.
+        if (cursor.hasSel || tcur.active) applyColorToSelection(true, "" + hex, true)
         forceActiveFocus()
     }
     // Highlight mirrors the text pen, plus a rail toggle. pickHighlight arms +
@@ -1693,12 +1696,12 @@ FocusScope {
     readonly property bool highlightArmed: cursor.armedBg !== ""
     function pickHighlight(hex) {
         cursor.armedBg = "" + hex
-        if (cursor.hasSel) applyColorToSelection(false, "" + hex, true)
+        if (cursor.hasSel || tcur.active) applyColorToSelection(false, "" + hex, true)
         forceActiveFocus()
     }
     function toggleHighlight(hex) {
         if (cursor.armedBg !== "") {                       // currently on → off
-            if (cursor.hasSel) applyColorToSelection(false, "", false)   // "" removes the span
+            if (cursor.hasSel || tcur.active) applyColorToSelection(false, "", false)   // "" removes it
             cursor.armedBg = ""
             forceActiveFocus()
         } else {
