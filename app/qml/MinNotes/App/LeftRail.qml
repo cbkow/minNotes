@@ -212,7 +212,7 @@ Rectangle {
         // Highlight toggle — applies/removes the palette's highlight colour on the
         // selection (or arms it for typing); the underbar shows the colour.
         ColorTool {
-            iconName: "highlighter"; tooltip: "Highlight"
+            iconName: "highlighter"; tooltip: "Background"
             enabled_: !!rail.editor
             checked: !!rail.editor && rail.editor.highlightArmed
             underColor: rail.inspector ? rail.inspector.bgColor : "#FFEC59"

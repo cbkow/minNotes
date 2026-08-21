@@ -1417,12 +1417,20 @@ FocusScope {
             root.resizeW = bt.widthForDrag(bc, lx)
             return
         }
-        // Shift+click: extend the cell rect from the anchor (spreadsheet
-        // standard). Return WITHOUT arming tableDragging — a same-cell
-        // jitter in updateTableInteraction would collapse the rect.
+        // Shift+click: SAME cell with no live rect → extend the in-cell TEXT
+        // selection to the click point (the multi-word gesture); any other
+        // cell (or a live rect) → extend the cell rect from the anchor
+        // (spreadsheet standard). Return WITHOUT arming tableDragging — a
+        // same-cell jitter in updateTableInteraction would collapse the rect.
         if ((mods & Qt.ShiftModifier) && tcur.active && row === cursor.focusRow) {
             var sh = bt.cellAtPoint(lx, ly)
-            tcur.extendTo(sh.r, sh.c)
+            if (sh.r === tcur.cr && sh.c === tcur.cc && tcur.rangeR0 < 0
+                && !tcur.selRows.length && !tcur.selCols.length) {
+                tcur.pos = sh.pos; tcur.clampPos()   // anchorPos stays — text extend
+                cursor.sync()
+            } else {
+                tcur.extendTo(sh.r, sh.c)
+            }
             return
         }
         var hit = bt.cellAtPoint(lx, ly)
@@ -1931,6 +1939,20 @@ FocusScope {
     function tblClearRect() {
         blockModel.tableClearRange(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
         tcur.clearAll(); cursor.sync()
+    }
+    // Double-click in a table cell: select the word under the pointer (the
+    // document word-select, spoken in cell coordinates).
+    function tableWordSelect(bt, row, lx, ly) {
+        var hit = bt.cellAtPoint(lx, ly)
+        if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
+        cursor.setCaret(row, 0)
+        tcur.place(hit.r, hit.c, hit.pos)
+        var t = tcur.text()
+        var s = hit.pos, e = hit.pos
+        while (s > 0 && /\w/.test(t.charAt(s - 1))) s--
+        while (e < t.length && /\w/.test(t.charAt(e))) e++
+        tcur.anchorPos = s; tcur.pos = e
+        cursor.sync()
     }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblMoveRow(d)    { blockModel.tableMoveRow(menuRow, menuCellR, menuCellR + d) }
@@ -3599,7 +3621,9 @@ FocusScope {
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
                     blockModel.revealMedia(mrow); return
                 }
-                // Double-click a table column border → reset that column to auto.
+                // Double-click a table column border → reset that column to auto;
+                // otherwise word-select INSIDE the cell (multi-select pass
+                // 2026-08-21 — cells now speak the same double-click language).
                 var drow = blockModel.rowForY(m.y)
                 if (blockModel.typeForRow(drow) === 7) {
                     var dd = root.cellForRow(drow), dbt = dd ? dd.tableItem : null
@@ -3607,8 +3631,10 @@ FocusScope {
                         var dlp = dbt.mapFromItem(mouse, m.x, m.y)
                         var dbc = dbt.columnBorderAt(dlp.x)
                         if (dbc >= 0) { blockModel.tableSetColWidth(drow, dbc, 0); return }
+                        if (dlp.x >= 0 && dlp.y >= 0 && dlp.y <= dbt.height)
+                            root.tableWordSelect(dbt, drow, dlp.x, dlp.y)
                     }
-                    return   // don't word-select inside a table
+                    return
                 }
                 // select the word under the cursor
                 var h = root.hitTest(m.x, m.y)

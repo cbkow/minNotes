@@ -384,16 +384,39 @@ Item {
                                 border.width: 2; border.color: Theme.colors.accent
                             }
 
-                            // in-cell selection highlight (behind glyphs); single
-                            // visual line — fine for short cell text.
-                            Rectangle {
+                            // In-cell selection highlight (behind glyphs). Cells WRAP,
+                            // so this is the classic three-rect selection: the single
+                            // -line rect was invisible the moment a selection crossed
+                            // a wrap (b.x < a.x → 2px sliver; user-caught 2026-08-21).
+                            Item {
                                 visible: cellRect.isFocusedCell && tv.selFrom !== tv.selTo
-                                z: -1; color: Theme.colors.selectionBg
+                                z: -1
                                 readonly property rect a: cellText.positionToRectangle(Math.min(tv.selFrom, cellText.length))
                                 readonly property rect b: cellText.positionToRectangle(Math.min(tv.selTo, cellText.length))
-                                x: cellText.x + a.x; y: cellText.y + a.y
-                                width: Math.max(2, b.x - a.x)
-                                height: a.height > 0 ? a.height : 18
+                                readonly property bool oneLine: Math.abs(a.y - b.y) < 1
+                                readonly property real lineH: a.height > 0 ? a.height : 18
+                                Rectangle {   // first (or only) line: a.x → line end
+                                    x: cellText.x + parent.a.x; y: cellText.y + parent.a.y
+                                    width: parent.oneLine ? Math.max(2, parent.b.x - parent.a.x)
+                                                          : Math.max(2, cellText.width - parent.a.x)
+                                    height: parent.lineH
+                                    color: Theme.colors.selectionBg
+                                }
+                                Rectangle {   // middle block: the fully-covered lines
+                                    visible: !parent.oneLine
+                                             && parent.b.y - (parent.a.y + parent.lineH) > 1
+                                    x: cellText.x; y: cellText.y + parent.a.y + parent.lineH
+                                    width: cellText.width
+                                    height: Math.max(0, parent.b.y - (parent.a.y + parent.lineH))
+                                    color: Theme.colors.selectionBg
+                                }
+                                Rectangle {   // last line: line start → b.x
+                                    visible: !parent.oneLine
+                                    x: cellText.x; y: cellText.y + parent.b.y
+                                    width: Math.max(2, parent.b.x)
+                                    height: parent.b.height > 0 ? parent.b.height : parent.lineH
+                                    color: Theme.colors.selectionBg
+                                }
                             }
                             Rectangle {   // resize placeholder for the cell image
                                 visible: tv.suspended && cellRect.cmedia !== ""

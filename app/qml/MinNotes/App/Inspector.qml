@@ -796,7 +796,7 @@ Rectangle {
                 spacing: 4
                 Tab { label: "Draw"; t: "draw" }
                 Tab { label: "Text"; t: "fg" }
-                Tab { label: "Highlight"; t: "bg" }
+                Tab { label: "Background"; t: "bg" }
             }
 
             ColorPickerInline {
