@@ -5499,6 +5499,18 @@ FocusScope {
                         selectByMouse: true
                         font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
                         Keys.onEscapePressed: root.closeThreadCard()
+                        // Enter submits; Shift+Enter = newline (user ruling
+                        // 2026-08-21 — the chat-composer convention).
+                        Keys.onPressed: (e) => {
+                            if ((e.key === Qt.Key_Return || e.key === Qt.Key_Enter)
+                                && !(e.modifiers & Qt.ShiftModifier)) {
+                                if (replyEdit.text.trim().length > 0) {
+                                    blockModel.addCommentMessage(root.openThreadId, replyEdit.text.trim())
+                                    replyEdit.text = ""
+                                }
+                                e.accepted = true
+                            }
+                        }
                         Text {
                             visible: replyEdit.text.length === 0 && !replyEdit.activeFocus
                             text: qsTr("Reply…")
@@ -5519,7 +5531,7 @@ FocusScope {
                                        !(threadCard.info && threadCard.info.resolved))
                     }
                     FlatButton {
-                        text: qsTr("Reply"); variant: "primary"
+                        text: qsTr("Submit"); variant: "primary"
                         padding: 8; labelSize: Theme.font.sizeSmall
                         enabled_: replyEdit.text.trim().length > 0
                         onClicked: {

@@ -443,13 +443,25 @@ Rectangle {
                                         font.family: Theme.font.family
                                         font.pixelSize: Theme.font.sizeSmall
                                         selectByMouse: true
+                                        // Enter submits; Shift+Enter = newline.
+                                        Keys.onPressed: (e) => {
+                                            if ((e.key === Qt.Key_Return || e.key === Qt.Key_Enter)
+                                                && !(e.modifiers & Qt.ShiftModifier)) {
+                                                var b = replyEdit.text.trim()
+                                                if (b.length > 0) {
+                                                    blockModel.addCommentMessage(modelData.id, b)
+                                                    replyEdit.text = ""
+                                                }
+                                                e.accepted = true
+                                            }
+                                        }
                                     }
                                 }
                                 Row {
                                     spacing: 6
                                     FlatButton {
                                         visible: !modelData.resolved
-                                        text: qsTr("Reply"); padding: 8
+                                        text: qsTr("Submit"); padding: 8
                                         onClicked: {
                                             var b = replyEdit.text.trim()
                                             if (b.length > 0) {
@@ -796,7 +808,7 @@ Rectangle {
                 spacing: 4
                 Tab { label: "Draw"; t: "draw" }
                 Tab { label: "Text"; t: "fg" }
-                Tab { label: "Background"; t: "bg" }
+                Tab { label: "Back"; t: "bg" }
             }
 
             ColorPickerInline {
