@@ -3075,7 +3075,10 @@ void pdfTable(PdfCtx& c, int row) {
     tf.setBorderCollapse(true);
     tf.setCellPadding(4);
     tf.setCellSpacing(0);
-    tf.setHeaderRowCount(m->tableHeaderRows(row));   // repeats across page splits
+    // NO setHeaderRowCount (user ruling 2026-08-20): Qt re-renders the header
+    // row — shading, bold and all — at the top of EVERY page a long table
+    // spans, and a sheet-import's "header" is often just its first data row.
+    // The header keeps its shading once, where it actually is.
     tf.setTopMargin(6); tf.setBottomMargin(6);
     // Real column constraints: authored widths (160 when auto), normalized
     // to the content width. Without them Qt distributes by content whim AND
