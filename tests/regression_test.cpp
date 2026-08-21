@@ -3961,8 +3961,8 @@ static void testCellMediaExports() {
                   && html.contains(QStringLiteral("--desk:#121211")),
               "dual-tone ground: sheet band follows the widest table");
         CHECK(html.contains(QStringLiteral("main td img"))
-                  && html.contains(QStringLiteral("mn-underlay")),
-              "cell images join the lightbox; block-select underlay shipped");
+                  && !html.contains(QStringLiteral("mn-underlay")),
+              "cell images join the lightbox; block-select stays removed");
     }
     m.tableSetColWidth(tRow, 0, 0);
     m.tableSetColWidth(tRow, 1, 0);

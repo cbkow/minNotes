@@ -1612,16 +1612,9 @@ main li,main figure,main .tablewrap,main .blkw{position:relative}
    ledger constant + the 96px the wider left gutter shifted every block */
 min-width:48px;padding-top:3px;
 text-align:right;font-family:ui-monospace,Menlo,Consolas,monospace;
-font-size:11px;color:var(--subtle);user-select:none;cursor:pointer}
-/* Block select (user request 2026-08-20): click a block's ledger number to
-   toggle its highlight — the app's focus-row fill (bgAlt2 band the full
-   sheet width, hairline-ruled) painted by JS-positioned underlay bands.
-   Hover = a quiet brighten only (underline affordance vetoed as messy). */
-.bnum:hover{color:var(--bright)}
-.bnum.mn-on{color:var(--bright)}
-#mn-underlay{position:absolute;left:0;top:0;z-index:-1}
-#mn-underlay .band{position:absolute;left:0;width:var(--sheetw);background:#1d1d1c;
-border-top:1px solid rgba(42,42,42,.9);border-bottom:1px solid rgba(42,42,42,.9)}
+font-size:11px;color:var(--subtle);user-select:none;pointer-events:none}
+/* (Block click-select was built then removed 2026-08-20 — user veto; the
+   ledger stays a passive reference like the app's rail at rest.) */
 /* Media-ink z-stack: frame-normalized margin ink rides its media exactly;
    the Annotations toggle governs it like the note-thumb layers. */
 img.ink{pointer-events:none}
@@ -2013,26 +2006,6 @@ else if(e.key==='ArrowLeft')show(cur-1);
 else if(e.key==='ArrowRight')show(cur+1);
 else return;
 e.preventDefault();});
-})();
-(function(){
-var lay=document.createElement('div');lay.id='mn-underlay';document.body.appendChild(lay);
-var sel=[];
-function place(e){
-var r=e.el.getBoundingClientRect();
-e.band.style.top=(r.top+window.scrollY)+'px';
-e.band.style.height=r.height+'px';}
-function relayout(){sel.forEach(place)}
-[].forEach.call(document.querySelectorAll('main .bnum'),function(n){
-n.addEventListener('click',function(ev){
-ev.preventDefault();ev.stopPropagation();
-var el=n.parentElement;
-for(var i=0;i<sel.length;i++)if(sel[i].el===el){
-lay.removeChild(sel[i].band);n.classList.remove('mn-on');sel.splice(i,1);return;}
-var band=document.createElement('div');band.className='band';
-lay.appendChild(band);n.classList.add('mn-on');
-var e={el:el,band:band};sel.push(e);place(e);});});
-window.addEventListener('resize',relayout);
-window.addEventListener('load',relayout);
 })();
 </script>
 )MNLB";
