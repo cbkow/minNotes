@@ -6,8 +6,7 @@ nav_order: 7
 
 # Drawing & Ink
 
-There's no annotate mode to switch on — **the tool in your hand is the
-mode**. The Tools grid at the top of the Inspector holds the Type tool
+The Tools grid at the top of the Inspector holds the Type tool
 (regular editing, where you always start), Select/Move, and the drawing
 tools: freehand, line, arrow, rectangle, oval, text box, eraser.
 
@@ -35,6 +34,12 @@ With **Select/Move**: click an annotation to grab it, drag a rubber band
 over several (`Shift+Click` adds or removes one), then drag the group or
 press `Delete`. Each gesture is a single undo step.
 
+## Media Block Tabs
+
+Below each note lives a tabbed interface for each media block in your document. **Clicking on a tab** opens the media block in a studio setup where you can annotate and edit special blocks like PDFs, videos, sketches, and tables.
+
+![Drawing on a PDF page](images/mn019b.png)
+
 ## PDF Pages
 
 Open a PDF full-frame and the drawing tools mark up **the page under the
@@ -61,6 +66,8 @@ made in either app open in the other.
 | Reset speed | `⇧R` |
 
 ## Sketches
+
+![A sketch block](images/mn021b.png)
 
 Insert a **sketch** block for a blank canvas with a pressure-smoothed pen.
 Sketches edit full-frame with pan and zoom, the canvas is resizable in
