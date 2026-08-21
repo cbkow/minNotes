@@ -88,7 +88,14 @@ ApplicationWindow {
         nameFilters: ["minNotes documents (*.mndb)"]
         onAccepted: {
             var f = "" + selectedFile
-            if (blockModel.saveAs(f)) Toasts.show(qsTr("Saved as ") + win.baseName(f))
+            if (blockModel.saveAs(f)) {
+                Toasts.show(qsTr("Saved as ") + win.baseName(f))
+                // Save As is the "make this doc self-contained" moment (user
+                // request 2026-08-21): if externally referenced media remains
+                // (NAS/absolute refs — the sidecar itself already copied),
+                // offer the collect dialog. Silent when there's nothing.
+                win.startCollectMedia(true)
+            }
             else saveFailedDialog.open()   // was silently ignored before the toast pass
         }
     }
@@ -450,14 +457,16 @@ ApplicationWindow {
     // Scan-first like export: nothing external → a toast, no dialog. ---
     property var _collectScan: ({})
     property bool _collectVideos: false
-    function startCollectMedia() {
+    // `quiet`: the post-Save-As offer — no toasts when there's nothing to
+    // collect (or the doc is a package); only a real offer surfaces.
+    function startCollectMedia(quiet) {
         _collectScan = mediaCollector.scan()
         if (_collectScan.package) {
-            Toasts.show(qsTr("Packages are sealed — use Save As to make an editable copy"), 2)
+            if (!quiet) Toasts.show(qsTr("Packages are sealed — use Save As to make an editable copy"), 2)
             return
         }
         if ((_collectScan.files || 0) + (_collectScan.videos || 0) === 0) {
-            Toasts.show(qsTr("All media already lives with this document"))
+            if (!quiet) Toasts.show(qsTr("All media already lives with this document"))
             return
         }
         _collectVideos = false
