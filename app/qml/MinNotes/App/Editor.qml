@@ -1245,12 +1245,24 @@ FocusScope {
         }
         function type(ch) {
             if (pos !== anchorPos) delSel()
+            // Never type INSIDE a chip (atomic, DT-2) — snap to its far edge.
+            var tr = blockModel.tableChoiceRangeAt(row, cr, cc, pos)
+            if (tr.length === 2 && pos > tr[0]) { pos = tr[1]; anchorPos = pos }
             blockModel.tableCellInsert(row, cr, cc, pos, ch)
             pos += ch.length; anchorPos = pos; cursor.sync()
         }
         function backspace() {
             if (pos !== anchorPos) { delSel(); cursor.sync(); return }
-            if (pos > 0) { blockModel.tableCellDelete(row, cr, cc, pos - 1, pos); pos--; anchorPos = pos }
+            if (pos > 0) {
+                // A chip is atomic: a backspace touching ANY of it removes the
+                // whole chip (label + span) — the block-chip rule.
+                var br = blockModel.tableChoiceRangeAt(row, cr, cc, pos - 1)
+                if (br.length === 2) {
+                    blockModel.tableRemoveChoiceAt(row, cr, cc, br[0])
+                    pos = br[0]; anchorPos = pos; cursor.sync(); return
+                }
+                blockModel.tableCellDelete(row, cr, cc, pos - 1, pos); pos--; anchorPos = pos
+            }
             // At the cell start, Backspace removes the cell's image (it sits above
             // the text), mirroring backspace-at-block-start.
             else if (blockModel.tableCellMedia(row, cr, cc) !== "") blockModel.tableClearCellMedia(row, cr, cc)
@@ -1258,21 +1270,35 @@ FocusScope {
         }
         function forwardDelete() {
             if (pos !== anchorPos) { delSel(); cursor.sync(); return }
-            if (pos < text().length) blockModel.tableCellDelete(row, cr, cc, pos, pos + 1)
+            if (pos < text().length) {
+                var fr = blockModel.tableChoiceRangeAt(row, cr, cc, pos)
+                if (fr.length === 2) {
+                    blockModel.tableRemoveChoiceAt(row, cr, cc, fr[0])
+                    pos = fr[0]; anchorPos = pos; cursor.sync(); return
+                }
+                blockModel.tableCellDelete(row, cr, cc, pos, pos + 1)
+            }
             // Forward-delete in an empty cell also clears its image.
             else if (text().length === 0 && blockModel.tableCellMedia(row, cr, cc) !== "")
                 blockModel.tableClearCellMedia(row, cr, cc)
             cursor.sync()
         }
         function left(shift) {
-            if (pos > 0) pos--
+            if (pos > 0) {
+                // Stepping INTO a chip hops to its near edge (atomic).
+                var lr = blockModel.tableChoiceRangeAt(row, cr, cc, pos - 1)
+                pos = (lr.length === 2) ? lr[0] : pos - 1
+            }
             else if (cc > 0) { cc--; pos = text().length }
             else if (cr > 0) { cr--; cc = cols() - 1; pos = text().length }
             if (!shift) anchorPos = pos
             cursor.sync()
         }
         function right(shift) {
-            if (pos < text().length) pos++
+            if (pos < text().length) {
+                var rr = blockModel.tableChoiceRangeAt(row, cr, cc, pos)
+                pos = (rr.length === 2) ? rr[1] : pos + 1
+            }
             else if (cc < cols() - 1) { cc++; pos = 0 }
             else if (cr < rows() - 1) { cr++; cc = 0; pos = 0 }
             if (!shift) anchorPos = pos
@@ -1455,6 +1481,17 @@ FocusScope {
             return
         }
         var hit = bt.cellAtPoint(lx, ly)
+        // Inline chip in a text cell (2026-08-21) → the picker, not a caret
+        // placement; the press never arms dragging (the block-chip rule).
+        var chipRng = blockModel.tableChoiceRangeAt(row, hit.r, hit.c, hit.pos)
+        if (chipRng.length === 2) {
+            if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
+            cursor.setCaret(row, 0)
+            tcur.place(hit.r, hit.c, chipRng[1])   // park after the chip
+            var cpt = bt.mapToItem(root, lx, ly + 14)
+            root.openCellChoicePicker(row, hit.r, hit.c, chipRng[0], cpt.x, cpt.y)
+            return
+        }
         if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
         cursor.setCaret(row, 0)
         tcur.place(hit.r, hit.c, hit.pos)
@@ -2136,7 +2173,29 @@ FocusScope {
     // default tri-state set, picker opens immediately at the new chip
     // (the applyLink insert-mode shape).
     function insertChoiceChip() {
-        if (!blockModel.documentOpen || root.activeFrameId !== "" || root.inkMode) return
+        if (!blockModel.documentOpen || root.inkMode) return
+        // Frame tabs refuse — except the full-frame TABLE studio, whose cells
+        // are text and take chips like the inline view (2026-08-21).
+        if (root.activeFrameId !== "" && root.activeTableRow < 0) return
+        // Table cell (inline or full-frame): the cell-span variant.
+        if (tcur.active) {
+            var trow = tcur.row
+            if (tcur.pos !== tcur.anchorPos) tcur.delSel()
+            tcur.clearAll()
+            var ts = blockModel.tableInsertChoiceAt(trow, tcur.cr, tcur.cc, tcur.pos)
+            if (ts < 0) return
+            var trng = blockModel.tableChoiceRangeAt(trow, tcur.cr, tcur.cc, ts)
+            if (trng.length === 2) { tcur.pos = trng[1]; tcur.anchorPos = tcur.pos; cursor.sync() }
+            var bt = (root.activeTableRow >= 0) ? frameTable
+                   : (root.cellForRow(trow) ? root.cellForRow(trow).tableItem : null)
+            if (bt) {
+                var o = bt.cellOriginInView(tcur.cr, tcur.cc)
+                var bpt = bt.mapToItem(root, o.x + 8, o.y + bt.rowHeightAt(tcur.cr))
+                root.openCellChoicePicker(trow, tcur.cr, tcur.cc, ts, bpt.x, bpt.y)
+            }
+            return
+        }
+        if (root.activeFrameId !== "") return   // table studio but no cell focus
         if (cursor.hasSel) cursor.deleteSelection()
         var row = cursor.focusRow
         var s = blockModel.insertChoiceAt(row, cursor.focusCol)
@@ -2496,8 +2555,9 @@ FocusScope {
         // ("ç") on many layouts — so match both.
         else if (cmd && (event.modifiers & Qt.AltModifier)
                  && (k === Qt.Key_C || k === Qt.Key_Ccedilla)
-                 && root.activeFrameId === "" && !root.inkMode) {
-            root.insertChoiceChip()
+                 && (root.activeFrameId === "" || root.activeTableRow >= 0)
+                 && !root.inkMode) {
+            root.insertChoiceChip()   // doc view OR the full-frame table studio
             event.accepted = true
         }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
@@ -3619,6 +3679,13 @@ FocusScope {
                                 var hd2 = root.cellForRow(ch.row), hbt2 = hd2 ? hd2.tableItem : null
                                 var hlp2 = hbt2 ? hbt2.mapFromItem(mouse, m.x, m.y) : null
                                 clk = hbt2 ? hbt2.widgetHit(hlp2.x, hlp2.y) : false
+                            } else {   // plain text cell: over an inline chip?
+                                var hd3 = root.cellForRow(ch.row), hbt3 = hd3 ? hd3.tableItem : null
+                                if (hbt3) {
+                                    var hlp3 = hbt3.mapFromItem(mouse, m.x, m.y)
+                                    var chit = hbt3.cellAtPoint(hlp3.x, hlp3.y)
+                                    clk = blockModel.tableChoiceAt(ch.row, chit.r, chit.c, chit.pos) !== ""
+                                }
                             }
                         } else {   // header: pointer over the sort zone
                             var chd = root.cellForRow(ch.row), cbt = chd ? chd.tableItem : null
@@ -3922,6 +3989,8 @@ FocusScope {
                     if (fh && fh.r >= blockModel.tableHeaderRows(root.activeTableRow)) {
                         var fk = blockModel.tableColumnKind(root.activeTableRow, fh.c)
                         clk = (fk === 1 || fk === 2) && frameTable.widgetHit(m.x, m.y)
+                        if (!clk && fk === 0)   // inline chip in a plain text cell
+                            clk = blockModel.tableChoiceAt(root.activeTableRow, fh.r, fh.c, fh.pos) !== ""
                     } else if (fh) {
                         clk = root.headerSortHit(frameTable, root.activeTableRow, fh.r, fh.c, m.x)
                     }
@@ -6378,6 +6447,7 @@ FocusScope {
     // --- Choice-cell option picker (root overlay above the mouse layer) ---
     function openChoicePicker(trow, r, c, vx, vy) {
         choicePicker.srow = -1; choicePicker.sstart = -1
+        choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.row = trow; choicePicker.r = r; choicePicker.c = c
         root.choiceX = vx; root.choiceY = vy
         choicePicker.open()
@@ -6385,7 +6455,17 @@ FocusScope {
     // Inline chip variant (DT-2): span address instead of the cell triple.
     function openInlineChoicePicker(brow, s, vx, vy) {
         choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
+        choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.srow = brow; choicePicker.sstart = s
+        root.choiceX = vx; root.choiceY = vy
+        choicePicker.open()
+    }
+    // Cell-chip variant (2026-08-21): a chip span INSIDE a table text cell —
+    // span address plus the cell coords.
+    function openCellChoicePicker(trow, r, c, s, vx, vy) {
+        choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
+        choicePicker.srow = trow; choicePicker.sstart = s
+        choicePicker.sr = r; choicePicker.sc = c
         root.choiceX = vx; root.choiceY = vy
         choicePicker.open()
     }
@@ -6395,7 +6475,10 @@ FocusScope {
         x: Math.max(8, Math.min(root.choiceX, root.width - width - 8))
         y: Math.max(8, Math.min(root.choiceY, root.height - height - 8))
         onClosed: root.forceActiveFocus()
-        onEditOptions: choicePicker.spanMode
+        onEditOptions: choicePicker.cellSpanMode
+                           ? choiceEditor.open2CellSpan(choicePicker.srow, choicePicker.sr,
+                                                        choicePicker.sc, choicePicker.sstart)
+                       : choicePicker.spanMode
                            ? choiceEditor.open2Span(choicePicker.srow, choicePicker.sstart)
                            : root.openChoiceEditor(choicePicker.row, choicePicker.c)
     }

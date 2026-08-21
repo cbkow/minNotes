@@ -19,6 +19,12 @@ Popup {
     property int srow: -1
     property int sstart: -1
     readonly property bool spanMode: sstart >= 0
+    // CELL-SPAN MODE (2026-08-21): the chip lives inside a table text cell —
+    // srow = the table block row, (sr,sc) = the cell, sstart as usual. Reads
+    // and writes route to the tableChoice* invokables.
+    property int sr: -1
+    property int sc: -1
+    readonly property bool cellSpanMode: spanMode && sr >= 0
 
     padding: 4
     focus: true   // the Popup must hold focus or its TextInput can't receive keystrokes
@@ -32,7 +38,8 @@ Popup {
 
     readonly property var spanPayload: spanMode
         ? (blockModel.contentRevision,
-           JSON.parse(blockModel.choiceAt(srow, sstart) || "{}")) : null
+           JSON.parse((cellSpanMode ? blockModel.tableChoiceAt(srow, sr, sc, sstart)
+                                    : blockModel.choiceAt(srow, sstart)) || "{}")) : null
     readonly property var options: spanMode
         ? ((spanPayload && spanPayload.o)
                ? spanPayload.o.map(function(o) {
@@ -89,7 +96,10 @@ Popup {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        if (picker.spanMode)
+                        if (picker.cellSpanMode)
+                            blockModel.tableSetChoiceSelected(picker.srow, picker.sr, picker.sc,
+                                                              picker.sstart, optRow.modelData.id)
+                        else if (picker.spanMode)
                             blockModel.setChoiceSelected(picker.srow, picker.sstart, optRow.modelData.id)
                         else
                             blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, optRow.modelData.id)
@@ -116,7 +126,9 @@ Popup {
                 id: clearMA; anchors.fill: parent; hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (picker.spanMode) blockModel.removeChoiceAt(picker.srow, picker.sstart)
+                    if (picker.cellSpanMode)
+                        blockModel.tableRemoveChoiceAt(picker.srow, picker.sr, picker.sc, picker.sstart)
+                    else if (picker.spanMode) blockModel.removeChoiceAt(picker.srow, picker.sstart)
                     else blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, "")
                     picker.close()
                 }
@@ -141,7 +153,11 @@ Popup {
                     if (picker.spanMode) {
                         // Quick-add SELECTS on an inline chip (the label
                         // follows) — the pick is made, close.
-                        blockModel.choiceAddOption(picker.srow, picker.sstart, name, col)
+                        if (picker.cellSpanMode)
+                            blockModel.tableChoiceAddOption(picker.srow, picker.sr, picker.sc,
+                                                            picker.sstart, name, col)
+                        else
+                            blockModel.choiceAddOption(picker.srow, picker.sstart, name, col)
                         text = ""
                         picker.close()
                     } else {

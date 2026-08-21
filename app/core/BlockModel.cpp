@@ -3644,6 +3644,28 @@ static QString choiceColorFor(const QJsonObject& payload, const QString& id) {
     }
     return {};
 }
+// The default set (ruling 2026-08-20): the app's tri-state culture. "v"
+// preselects the first option; the label to insert is choiceLabelFor(v).
+static QJsonObject defaultChoicePayload() {
+    QJsonArray opts;
+    const char* defs[3][2] = { {"To do", "#8A8A8A"},
+                               {"Doing", "#0189F1"},
+                               {"Done",  "#58A65C"} };
+    QString firstId;
+    for (int i = 0; i < 3; ++i) {
+        QJsonObject o;
+        const QString id = makeUlid();
+        if (i == 0) firstId = id;
+        o.insert(QStringLiteral("id"), id);
+        o.insert(QStringLiteral("l"), QLatin1String(defs[i][0]));
+        o.insert(QStringLiteral("c"), QLatin1String(defs[i][1]));
+        opts.append(o);
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("o"), opts);
+    payload.insert(QStringLiteral("v"), firstId);
+    return payload;
+}
 
 // The chip span whose range starts at `spanStart` (the span address the
 // picker holds), or nullptr.
@@ -3662,25 +3684,9 @@ int BlockModel::insertChoiceAt(int row, int col) {
     col = std::clamp(col, 0, len);
     for (const Span& sp : rows_[row].spans)   // never inside another chip
         if (sp.kind == SpanChoice && col > sp.s && col < sp.e) col = sp.e;
-    // The default set (ruling 2026-08-20): the app's tri-state culture.
-    QJsonArray opts;
-    const char* defs[3][2] = { {"To do", "#8A8A8A"},
-                               {"Doing", "#0189F1"},
-                               {"Done",  "#58A65C"} };
-    QString firstId;
-    for (int i = 0; i < 3; ++i) {
-        QJsonObject o;
-        const QString id = makeUlid();
-        if (i == 0) firstId = id;
-        o.insert(QStringLiteral("id"), id);
-        o.insert(QStringLiteral("l"), QLatin1String(defs[i][0]));
-        o.insert(QStringLiteral("c"), QLatin1String(defs[i][1]));
-        opts.append(o);
-    }
-    QJsonObject payload;
-    payload.insert(QStringLiteral("o"), opts);
-    payload.insert(QStringLiteral("v"), firstId);
-    const QString label = QStringLiteral("To do");
+    const QJsonObject payload = defaultChoicePayload();
+    const QString label = choiceLabelFor(payload,
+                              payload.value(QStringLiteral("v")).toString());
 
     beginTxn(row, row);
     shiftSpansInsert(rows_[row].spans, col, label.size());
@@ -3813,6 +3819,174 @@ QVariantList BlockModel::choiceRangesForRow(int row) const {
     if (rows_.empty()) return out;
     row = clampRow(row);
     for (const Span& sp : rows_[row].spans) {
+        if (sp.kind != SpanChoice || sp.e <= sp.s) continue;
+        const QJsonObject payload = QJsonDocument::fromJson(sp.href.toUtf8()).object();
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("color"),
+                 choiceColorFor(payload, payload.value(QStringLiteral("v")).toString()));
+        out.append(m);
+    }
+    return out;
+}
+
+// --- Cell chips (2026-08-21): the same DT-2 chip inside a table TEXT cell.
+// The chip span rides the cell's span list (cellSpans JSON) and every rule
+// carries over: text == label, payload = {"o":[...],"v":id}, spanStart is
+// the address. Typed (choice/check) BODY cells refuse — they render a
+// widget, not text; headers of typed columns are still text and accept.
+// Each op is one mutateTable (one undo entry). Exports need nothing: cell
+// span emitters already pass unknown kinds through as plain label text.
+
+int BlockModel::tableInsertChoiceAt(int row, int r, int c, int col) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())
+        || rows_[row].type != Table || r < 0 || c < 0) return -1;
+    if (tableColumnKind(row, c) != 0 && r >= tableHeaderRows(row)) return -1;
+    int out = -1;
+    mutateTable(row, [&](TableGrid& g){
+        if (r >= g.rows() || c >= g.cols()) return;
+        QString t = g.cellText(r, c);
+        int p = std::clamp(col, 0, int(t.size()));
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        for (const Span& sp : v)   // never inside another chip
+            if (sp.kind == SpanChoice && p > sp.s && p < sp.e) p = sp.e;
+        const QJsonObject payload = defaultChoicePayload();
+        const QString label = choiceLabelFor(payload,
+                                  payload.value(QStringLiteral("v")).toString());
+        shiftSpansInsert(v, p, label.size());
+        g.setCellText(r, c, t.left(p) + label + t.mid(p));
+        v.push_back({p, p + int(label.size()), SpanChoice,
+                     QString::fromUtf8(QJsonDocument(payload)
+                         .toJson(QJsonDocument::Compact))});
+        g.setCellSpans(r, c, cellSpansToJson(v));
+        out = p;
+    });
+    return out;
+}
+
+QString BlockModel::tableChoiceAt(int row, int r, int c, int col) const {
+    if (rows_.empty() || rowAt(row).type != Table) return {};
+    for (const Span& sp : cellSpansFromJson(gridFor(row).cellSpans(r, c)))
+        if (sp.kind == SpanChoice && col >= sp.s && col < sp.e) return sp.href;
+    return {};
+}
+
+QVariantList BlockModel::tableChoiceRangeAt(int row, int r, int c, int col) const {
+    if (rows_.empty() || rowAt(row).type != Table) return {};
+    for (const Span& sp : cellSpansFromJson(gridFor(row).cellSpans(r, c)))
+        if (sp.kind == SpanChoice && col >= sp.s && col < sp.e)
+            return QVariantList{ sp.s, sp.e };
+    return {};
+}
+
+QJsonObject BlockModel::cellChoicePayload(int row, int r, int c, int spanStart) const {
+    if (rows_.empty() || rowAt(row).type != Table) return {};
+    for (const Span& sp : cellSpansFromJson(gridFor(row).cellSpans(r, c)))
+        if (sp.kind == SpanChoice && sp.s == spanStart)
+            return QJsonDocument::fromJson(sp.href.toUtf8()).object();
+    return {};
+}
+
+void BlockModel::replaceCellChoiceText(int row, int r, int c, int spanStart,
+                                       const QString& label, const QJsonObject& payload) {
+    if (cellChoicePayload(row, r, c, spanStart).isEmpty()) return;   // no phantom entries
+    mutateTable(row, [&](TableGrid& g){
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        auto it = std::find_if(v.begin(), v.end(), [&](const Span& s) {
+            return s.kind == SpanChoice && s.s == spanStart;
+        });
+        if (it == v.end()) return;
+        const Span chip = *it;
+        v.erase(it);
+        shiftSpansDelete(v, chip.s, chip.e);
+        shiftSpansInsert(v, chip.s, label.size());
+        const QString t = g.cellText(r, c);
+        g.setCellText(r, c, t.left(chip.s) + label + t.mid(chip.e));
+        v.push_back({chip.s, chip.s + int(label.size()), SpanChoice,
+                     QString::fromUtf8(QJsonDocument(payload)
+                         .toJson(QJsonDocument::Compact))});
+        g.setCellSpans(r, c, cellSpansToJson(v));
+    });
+}
+
+void BlockModel::tableSetChoiceSelected(int row, int r, int c, int spanStart,
+                                        const QString& optionId) {
+    QJsonObject payload = cellChoicePayload(row, r, c, spanStart);
+    if (payload.isEmpty()) return;
+    if (payload.value(QStringLiteral("v")).toString() == optionId) return;   // no-op
+    const QString label = choiceLabelFor(payload, optionId);
+    if (label.isEmpty()) return;                            // unknown id
+    payload.insert(QStringLiteral("v"), optionId);
+    replaceCellChoiceText(row, r, c, spanStart, label, payload);
+}
+
+QString BlockModel::tableChoiceAddOption(int row, int r, int c, int spanStart,
+                                         const QString& label, const QString& colorHex) {
+    QJsonObject payload = cellChoicePayload(row, r, c, spanStart);
+    if (payload.isEmpty()) return {};
+    const QString clean = sanitizeChoiceLabel(label);
+    QJsonArray opts = payload.value(QStringLiteral("o")).toArray();
+    QJsonObject o;
+    const QString id = makeUlid();
+    o.insert(QStringLiteral("id"), id);
+    o.insert(QStringLiteral("l"), clean);
+    if (!colorHex.isEmpty()) o.insert(QStringLiteral("c"), colorHex);
+    opts.append(o);
+    payload.insert(QStringLiteral("o"), opts);
+    payload.insert(QStringLiteral("v"), id);   // quick-add implies intent
+    replaceCellChoiceText(row, r, c, spanStart, clean, payload);
+    return id;
+}
+
+void BlockModel::tableSetChoiceOptions(int row, int r, int c, int spanStart,
+                                       const QVariantList& options) {
+    QJsonObject payload = cellChoicePayload(row, r, c, spanStart);
+    if (payload.isEmpty()) return;
+    if (options.isEmpty()) { tableRemoveChoiceAt(row, r, c, spanStart); return; }
+    QJsonArray opts;
+    for (const QVariant& v : options) {
+        const QVariantMap m = v.toMap();
+        const QString label = sanitizeChoiceLabel(m.value(QStringLiteral("label")).toString());
+        QString id = m.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) id = makeUlid();
+        QJsonObject o;
+        o.insert(QStringLiteral("id"), id);
+        o.insert(QStringLiteral("l"), label);
+        const QString col = m.value(QStringLiteral("color")).toString();
+        if (!col.isEmpty()) o.insert(QStringLiteral("c"), col);
+        opts.append(o);
+    }
+    QString sel = payload.value(QStringLiteral("v")).toString();
+    payload.insert(QStringLiteral("o"), opts);
+    QString label = choiceLabelFor(payload, sel);
+    if (label.isEmpty()) {   // selected option was deleted → first option
+        sel = opts.first().toObject().value(QStringLiteral("id")).toString();
+        label = opts.first().toObject().value(QStringLiteral("l")).toString();
+    }
+    payload.insert(QStringLiteral("v"), sel);
+    replaceCellChoiceText(row, r, c, spanStart, label, payload);
+}
+
+void BlockModel::tableRemoveChoiceAt(int row, int r, int c, int spanStart) {
+    const QVariantList rng = tableChoiceRangeAt(row, r, c, spanStart);
+    if (rng.size() != 2) return;
+    const int s = rng[0].toInt(), e = rng[1].toInt();
+    // Own mutateTable (no coalesce key): removal must not merge into a
+    // typing run's undo entry. Full-cover delete — the span dies with it.
+    mutateTable(row, [&](TableGrid& g){
+        const QString t = g.cellText(r, c);
+        g.setCellText(r, c, t.left(s) + t.mid(e));
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        shiftSpansDelete(v, s, e);
+        g.setCellSpans(r, c, cellSpansToJson(v));
+    });
+}
+
+QVariantList BlockModel::tableChoiceRangesForCell(int row, int r, int c) const {
+    QVariantList out;
+    if (rows_.empty() || rowAt(row).type != Table) return out;
+    for (const Span& sp : cellSpansFromJson(gridFor(row).cellSpans(r, c))) {
         if (sp.kind != SpanChoice || sp.e <= sp.s) continue;
         const QJsonObject payload = QJsonDocument::fromJson(sp.href.toUtf8()).object();
         QVariantMap m;

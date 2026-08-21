@@ -318,6 +318,21 @@ public:
     Q_INVOKABLE void setChoiceOptions(int row, int spanStart, const QVariantList& options);
     Q_INVOKABLE void removeChoiceAt(int row, int spanStart);   // chip + label text (Clear)
     Q_INVOKABLE QVariantList choiceRangesForRow(int row) const;   // [{s,e,color}] overlay feed
+    // Cell variants (2026-08-21): the same chips inside table TEXT cells —
+    // the chip span lives in the cell's span list, addressed (row, r, c,
+    // spanStart). Typed (choice/check) body cells refuse (they render a
+    // widget, not text). One undo step per call, via mutateTable.
+    Q_INVOKABLE int tableInsertChoiceAt(int row, int r, int c, int col);
+    Q_INVOKABLE QString tableChoiceAt(int row, int r, int c, int col) const;
+    Q_INVOKABLE QVariantList tableChoiceRangeAt(int row, int r, int c, int col) const;
+    Q_INVOKABLE void tableSetChoiceSelected(int row, int r, int c, int spanStart,
+                                            const QString& optionId);
+    Q_INVOKABLE QString tableChoiceAddOption(int row, int r, int c, int spanStart,
+                                             const QString& label, const QString& colorHex);
+    Q_INVOKABLE void tableSetChoiceOptions(int row, int r, int c, int spanStart,
+                                           const QVariantList& options);
+    Q_INVOKABLE void tableRemoveChoiceAt(int row, int r, int c, int spanStart);
+    Q_INVOKABLE QVariantList tableChoiceRangesForCell(int row, int r, int c) const;
     Q_INVOKABLE QString linkAt(int row, int col) const;
 
     // --- Comments (tier 3 annotations). A SpanComment span (payload = thread
@@ -778,6 +793,11 @@ private:
     Span* choiceSpanAt(int row, int spanStart);   // the chip addressed by its range start
     void replaceChoiceText(int row, int spanStart, const QString& label,
                            const QJsonObject& payload);   // label-swap txn core
+    // Cell-chip core: the cell-span mirror of replaceChoiceText (one
+    // mutateTable). Returns the chip's payload, {} if none at spanStart.
+    QJsonObject cellChoicePayload(int row, int r, int c, int spanStart) const;
+    void replaceCellChoiceText(int row, int r, int c, int spanStart,
+                               const QString& label, const QJsonObject& payload);
     static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
     // Like addSpan but for a payload span (colour): clears same-kind coverage in

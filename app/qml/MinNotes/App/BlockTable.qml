@@ -214,6 +214,12 @@ Item {
         return Qt.rect(x, y, w, h)
     }
 
+    // Cell origin in THIS item's coords (accounts for h-scroll) — anchors the
+    // choice picker under a chip inserted by keyboard.
+    function cellOriginInView(r, c) {
+        return Qt.point(columnLeftX(c) - hflick.contentX, rowTopY(r))
+    }
+
     // Column-resize geometry (px in this item's coords; accounts for scroll).
     function columnLeftX(c) { var x = 0; for (var i = 0; i < c; ++i) x += tv.colW(i); return x }
     function rowTopY(r) { var y = 0; for (var j = 0; j < r; ++j) { var it = rowRep.itemAt(j); y += it ? it.rowHeight : 24 } return y }
@@ -382,6 +388,53 @@ Item {
                                 anchors.fill: parent; z: 3
                                 color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.16)
                                 border.width: 2; border.color: Theme.colors.accent
+                            }
+
+                            // Inline choice chips inside a TEXT cell (2026-08-21): the
+                            // same pill language as the doc canvas — option colour at
+                            // 0.28 fill, 0.55 border, 4px side pad — drawn under the
+                            // glyphs, one rect per visual line (cells wrap).
+                            readonly property var chipRects: {
+                                var dep = blockModel.contentRevision
+                                var dep2 = cellText.text, dep3 = cellText.width   // relayout triggers
+                                if (isChoice || isCheck) return []
+                                var ranges = blockModel.tableChoiceRangesForCell(tv.logicalRow, gridRow.r, c)
+                                var out = []
+                                for (var i = 0; i < ranges.length; ++i) {
+                                    var sp = Math.min(ranges[i].s, cellText.length)
+                                    var ep = Math.min(ranges[i].e, cellText.length)
+                                    if (sp >= ep) continue
+                                    var a = cellText.positionToRectangle(sp)
+                                    var b = cellText.positionToRectangle(ep)
+                                    var lh = a.height > 0 ? a.height : 18
+                                    if (Math.abs(a.y - b.y) < lh * 0.5)
+                                        out.push({ x: a.x, y: a.y, w: Math.max(2, b.x - a.x), h: lh, color: ranges[i].color })
+                                    else {
+                                        out.push({ x: a.x, y: a.y, w: Math.max(2, cellText.width - a.x), h: lh, color: ranges[i].color })
+                                        for (var yy = a.y + lh; yy < b.y - lh * 0.5; yy += lh)
+                                            out.push({ x: 0, y: yy, w: cellText.width, h: lh, color: ranges[i].color })
+                                        out.push({ x: 0, y: b.y, w: Math.max(2, b.x), h: lh, color: ranges[i].color })
+                                    }
+                                }
+                                return out
+                            }
+                            Repeater {
+                                model: cellRect.chipRects
+                                delegate: Rectangle {
+                                    required property int index
+                                    readonly property var crr: cellRect.chipRects[index]
+                                    readonly property color oc: crr.color !== ""
+                                        ? crr.color : Theme.colors.textMuted
+                                    z: -1
+                                    color: Qt.rgba(oc.r, oc.g, oc.b, 0.28)
+                                    border.width: 1
+                                    border.color: Qt.rgba(oc.r, oc.g, oc.b, 0.55)
+                                    radius: 0
+                                    x: cellText.x + crr.x - 4
+                                    y: cellText.y + crr.y
+                                    width: crr.w + 8
+                                    height: crr.h
+                                }
                             }
 
                             // In-cell selection highlight (behind glyphs). Cells WRAP,

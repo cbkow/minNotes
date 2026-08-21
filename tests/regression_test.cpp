@@ -4197,6 +4197,107 @@ static void testTableBulkOps() {
     m.closeDocument();
 }
 
+// --- Test 44: choice chips inside table TEXT cells ---------------------------
+// The DT-2 chip in a cell's span list: same text==label invariant, same
+// payload; ops are one mutateTable each; typed (choice/check) BODY cells
+// refuse while typed columns' header cells (still text) accept.
+static void testCellChoiceChips() {
+    qInfo("[44] cell choice chips: insert/select/options/remove in cell spans");
+    auto payloadOf = [](const QString& j) {
+        return QJsonDocument::fromJson(j.toUtf8()).object();
+    };
+    auto idFor = [&](const QString& j, const QString& label) {
+        for (const QJsonValue& v : payloadOf(j).value(QStringLiteral("o")).toArray())
+            if (v.toObject().value(QStringLiteral("l")).toString() == label)
+                return v.toObject().value(QStringLiteral("id")).toString();
+        return QString();
+    };
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    const int t = m.insertTable(0, 3, 2);
+    m.tableSetCell(t, 1, 0, QStringLiteral("status: here"));
+
+    const int s = m.tableInsertChoiceAt(t, 1, 0, 8);
+    CHECK(s == 8, "cell chip inserted at the caret (start=%d)", s);
+    CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere"),
+          "default label spliced into the cell text");
+    const QString pj = m.tableChoiceAt(t, 1, 0, 9);
+    CHECK(!pj.isEmpty()
+              && payloadOf(pj).value(QStringLiteral("o")).toArray().size() == 3
+              && payloadOf(pj).value(QStringLiteral("v")).toString()
+                     == idFor(pj, QStringLiteral("To do")),
+          "payload carries the tri-state set, To do selected");
+    CHECK(m.tableChoiceRangeAt(t, 1, 0, 9) == (QVariantList{8, 13}),
+          "range covers the label");
+
+    // A neighbour cell span must shift when the label swaps.
+    m.tableSetCellFormat(t, 1, 0, 13, 17, QStringLiteral("bold"), true);   // "here"
+    m.tableSetChoiceSelected(t, 1, 0, 8, idFor(pj, QStringLiteral("Done")));
+    CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: Donehere"),
+          "selecting swaps the label text");
+    CHECK(m.tableCellHasFormat(t, 1, 0, 12, 16, QStringLiteral("bold")),
+          "neighbour cell span shifted with the swap");
+    CHECK(m.tableChoiceRangesForCell(t, 1, 0).first().toMap()
+              .value(QStringLiteral("color")).toString()
+              == QStringLiteral("#58A65C"),
+          "overlay feed reports the selected option's color");
+    m.undo();
+    CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere")
+              && m.tableCellHasFormat(t, 1, 0, 13, 17, QStringLiteral("bold")),
+          "one undo restores text, payload AND the neighbour");
+    m.redo();
+
+    // Quick-add selects, labels sanitize; options commit falls back to first
+    // when the selected option is deleted (the block-chip rules verbatim).
+    const QString nid = m.tableChoiceAddOption(t, 1, 0, 8,
+        QStringLiteral("Blo*ck*ed"), QStringLiteral("#FF0000"));
+    CHECK(!nid.isEmpty()
+              && m.tableCell(t, 1, 0) == QStringLiteral("status: Blockedhere"),
+          "quick-add selects; label sanitized");
+    {
+        const QString cur = m.tableChoiceAt(t, 1, 0, 9);
+        QVariantList arr;
+        for (const QJsonValue& v : payloadOf(cur).value(QStringLiteral("o")).toArray()) {
+            const QJsonObject o = v.toObject();
+            if (o.value(QStringLiteral("id")).toString() == nid) continue;   // delete it
+            QVariantMap e;
+            e.insert(QStringLiteral("id"), o.value(QStringLiteral("id")).toString());
+            e.insert(QStringLiteral("label"), o.value(QStringLiteral("l")).toString());
+            e.insert(QStringLiteral("color"), o.value(QStringLiteral("c")).toString());
+            arr.append(e);
+        }
+        m.tableSetChoiceOptions(t, 1, 0, 8, arr);
+        CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere"),
+              "deleted-selected falls back to the first option");
+    }
+
+    // Remove: ONE clean entry; the label text dies with the span.
+    {
+        const int entries = m.undoHistory().size();
+        m.tableRemoveChoiceAt(t, 1, 0, 8);
+        CHECK(m.undoHistory().size() == entries + 1
+                  && m.tableCell(t, 1, 0) == QStringLiteral("status: here")
+                  && m.tableChoiceRangesForCell(t, 1, 0).isEmpty(),
+              "remove: one entry, chip and label gone");
+        m.undo();
+        CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere")
+                  && !m.tableChoiceRangesForCell(t, 1, 0).isEmpty(),
+              "one undo revives the chip");
+    }
+
+    // Typed columns: body cells refuse (they render a widget); their header
+    // cells are still text and accept.
+    m.tableSetColumnsKind(t, {1}, 1);
+    CHECK(m.tableInsertChoiceAt(t, 1, 1, 0) == -1,
+          "choice-column body cell refuses a chip");
+    CHECK(m.tableInsertChoiceAt(t, 0, 1, 0) >= 0,
+          "typed column's header cell still takes one");
+    m.closeDocument();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -4258,6 +4359,7 @@ int main(int argc, char** argv) {
     testCodeBlockInsert();
     testCellMediaExports();
     testTableBulkOps();
+    testCellChoiceChips();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
