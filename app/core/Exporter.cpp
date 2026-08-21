@@ -1570,12 +1570,18 @@ private:
 // the dark page, the 760px measure, squared corners, rationed accent, the
 // QCView-note violet. System font stacks (no bundled fonts in v1).
 const char* kHtmlCss = R"CSS(
-:root{--bg:#181817;--text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
+:root{--bg:#181817;--desk:#121211;--sheetw:1000px;
+--text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
 --border:#2a2a2a;--divider:#333333;--accent:#0189f1;--recess:#0e0e0e;
 --chipbg:#1d2733;--chiptext:#4aa8ff;--codetext:#d4d4e8;--violet:#b48ef0;--sel:#2a568c;--quote:#3a5e86}
-/* One-tone field (#181817 — the app's ruled worksheet), left-anchored. */
+/* The app's dual-tone ground (user ruling 2026-08-20): the SHEET — page +
+   equal gutters, stretched to the widest table (--sheetw = the Editor's
+   sheetSpan) — keeps the field tone; beyond it the ground drops to the
+   window-shell desk tone, so the document reads as the same constrained
+   shape as in the app. Hard-stop gradient on html = the one paint. */
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--text);margin:0;
+html{background:linear-gradient(90deg,var(--bg) var(--sheetw),var(--desk) var(--sheetw))}
+body{background:transparent;color:var(--text);margin:0;
 font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 /* Left-anchored page (user ruling): the prose measure hugs the left edge
    rather than centering, so wide tables growing rightward read as one
@@ -1924,6 +1930,27 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
                     QStringLiteral("left:%1px").arg(pw + 12));
         css.replace(QLatin1String("100vw - 932px"),
                     QStringLiteral("100vw - %1px").arg(pw + 172));
+    }
+
+    // The sheet band follows the widest table (the Editor's sheetSpan rule):
+    // its right edge = the widest table's RENDERED width (same min/max
+    // expression the table itself carries) + the trailing gutter.
+    {
+        qreal widest = 0;
+        for (int r = 0; r < m->rowCountQml(); ++r) {
+            if (m->typeForRow(r) != BlockModel::Table) continue;
+            const int tc = exportCols(m, r);
+            qreal t = 0;
+            for (int c = 0; c < tc; ++c) t += exportColWidth(m, r, c);
+            widest = std::max(widest, t);
+        }
+        if (widest > pw)
+            css.replace(QLatin1String("--sheetw:1000px"),
+                QStringLiteral("--sheetw:calc(min(%1px,max(%2px,100vw - 152px)) + 240px)")
+                    .arg(int(widest)).arg(pw));
+        else if (pw != 760)
+            css.replace(QLatin1String("--sheetw:1000px"),
+                        QStringLiteral("--sheetw:%1px").arg(pw + 240));
     }
 
     // Lightbox: the page's one script (everything else is CSS-only). Vanilla,

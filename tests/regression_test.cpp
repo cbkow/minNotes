@@ -3956,6 +3956,10 @@ static void testCellMediaExports() {
               "over-wide table: full width, viewport cap floored at the page");
         CHECK(html.contains(QStringLiteral("min-width:1000px")),
               "page never shrinks under the document width (ink stays aligned)");
+        CHECK(html.contains(QStringLiteral(
+                  "--sheetw:calc(min(1200px,max(760px,100vw - 152px)) + 240px)"))
+                  && html.contains(QStringLiteral("--desk:#121211")),
+              "dual-tone ground: sheet band follows the widest table");
     }
     m.tableSetColWidth(tRow, 0, 0);
     m.tableSetColWidth(tRow, 1, 0);
