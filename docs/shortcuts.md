@@ -29,6 +29,7 @@ Shift, **⌥** is Alt/Option.
 | Copy as Markdown | ⌘⇧C |
 | Insert a choice chip (To do / Doing / Done) | ⌥⌘C |
 | Indent / outdent list item | Tab / ⇧Tab |
+| New line in a code block (Enter on a blank last line exits) | ⇧Enter |
 
 ## Inline Formatting
 

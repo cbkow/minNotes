@@ -1057,7 +1057,7 @@ FocusScope {
                 if (strip > 0) setCaret(focusRow, Math.max(0, focusCol - strip))
             }
         }
-        function splitLine() {
+        function splitLine(shift) {
             if (hasSel) deleteSelection()
             if (opaqueHere()) {   // Enter on a media/divider → a fresh paragraph below it
                 blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0); root.ensureVisible(focusRow + 1); return
@@ -1065,11 +1065,13 @@ FocusScope {
             // "```" / "```lang" + Enter → an (empty) code block; caret stays inside.
             if (blockModel.makeCodeBlockIfFence(focusRow)) { setCaret(focusRow, 0); return }
             // Inside a code block, Enter adds a newline; pressing it on an empty
-            // trailing line exits to a fresh paragraph below.
+            // trailing line exits to a fresh paragraph below. Shift+Enter is
+            // ALWAYS a newline (user ruling 2026-08-21) — the deliberate way
+            // to add trailing blank lines without tripping the exit rule.
             if (blockModel.typeForRow(focusRow) === 2) {
                 var c = blockModel.contentForRow(focusRow)
                 var atEnd = focusCol >= c.length
-                if (atEnd && (c.length === 0 || c.charAt(c.length - 1) === "\n")) {
+                if (!shift && atEnd && (c.length === 0 || c.charAt(c.length - 1) === "\n")) {
                     if (c.length > 0) blockModel.deleteRange(focusRow, c.length - 1, focusRow, c.length)
                     blockModel.splitBlock(focusRow, blockModel.contentForRow(focusRow).length)
                     setCaret(focusRow + 1, 0); root.ensureVisible(focusRow + 1)
@@ -2631,7 +2633,7 @@ FocusScope {
                                     k === Qt.Key_Backtab ? -1 : 1)
             event.accepted = true
         }
-        else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(); event.accepted = true }
+        else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(shift); event.accepted = true }
         else if (event.text.length === 1 && event.text >= " ") { cursor.insertChar(event.text); event.accepted = true }
     }
 
