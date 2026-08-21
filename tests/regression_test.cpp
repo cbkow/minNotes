@@ -3856,6 +3856,88 @@ static void testMergeAssetsAndEdges() {
     if (qEnvironmentVariable("MN_MERGE_KEEP").isEmpty()) dir.removeRecursively();
 }
 
+// --- Test 42: table CELL images in md / DOCX / PDF exports ------------------
+// Cell media must ride every exporter like block images do: md collects into
+// .assets (absolute-path fallback when unreachable), DOCX embeds a drawing
+// run in the cell, PDF paints the image in the cell.
+static void testCellMediaExports() {
+    qInfo("[42] exports: table cell images (md assets/fallback, DOCX, PDF)");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_cellexp"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString extPic = dir.filePath(QStringLiteral("cellpic.png"));
+    { QImage img(24, 16, QImage::Format_RGB32); img.fill(QColor(255, 0, 200));
+      img.save(extPic, "PNG"); }
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("cells"));
+    const int tRow = m.insertTable(0, 2, 2);
+    m.tableSetCell(tRow, 0, 0, QStringLiteral("head"));
+    m.tableSetCellMedia(tRow, 1, 0,
+        QStringLiteral("{\"src\":\"%1\",\"w\":24,\"h\":16}").arg(extPic));
+    m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
+    Exporter ex;
+    ex.setModel(&m);
+
+    // Markdown: the cell image is collected into .assets like a block image.
+    const QString mdPath = dir.filePath(QStringLiteral("out.md"));
+    CHECK(ex.exportMarkdown(mdPath, false), "md exported");
+    QString md;
+    { QFile f(mdPath); f.open(QIODevice::ReadOnly); md = QString::fromUtf8(f.readAll()); }
+    CHECK(md.contains(QStringLiteral("![](out.assets/cellpic.png)")),
+          "cell image collected into .assets");
+    CHECK(QFileInfo::exists(dir.filePath(QStringLiteral("out.assets/cellpic.png"))),
+          ".assets copy exists");
+
+    // Markdown fallback: an unreachable source keeps an absolute link (the
+    // block-image rule) instead of silently dropping the image.
+    m.tableSetCellMedia(tRow, 1, 1,
+        QStringLiteral("{\"src\":\"%1\",\"w\":8,\"h\":8}")
+            .arg(dir.filePath(QStringLiteral("missing dir/gone.png"))));
+    const QString md2Path = dir.filePath(QStringLiteral("out2.md"));
+    CHECK(ex.exportMarkdown(md2Path, false), "md re-exported");
+    QString md2;
+    { QFile f(md2Path); f.open(QIODevice::ReadOnly); md2 = QString::fromUtf8(f.readAll()); }
+    CHECK(md2.contains(QStringLiteral("![](file://"))
+              && md2.contains(QStringLiteral("gone.png")),
+          "unreachable cell image falls back to the absolute file URL");
+    m.tableSetCellMedia(tRow, 1, 1, QString());
+    m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
+
+    // DOCX: a drawing run lands inside the table cell; media part shipped.
+    const QString docx = dir.filePath(QStringLiteral("out.docx"));
+    CHECK(ex.exportDocx(docx, false), "docx exported");
+    const QByteArray docXml = mnpkg::readEntry(docx, QStringLiteral("word/document.xml"));
+    const int tblAt = docXml.indexOf("<w:tbl>");
+    const int tblEnd = docXml.indexOf("</w:tbl>");
+    CHECK(tblAt >= 0 && tblEnd > tblAt
+              && docXml.mid(tblAt, tblEnd - tblAt).contains("<w:drawing>"),
+          "DOCX cell carries a drawing run inside w:tbl");
+    CHECK(!mnpkg::readEntry(docx, QStringLiteral("word/media/image1.png")).isEmpty(),
+          "DOCX media part shipped");
+
+    // PDF: the magenta cell image paints (scan page 1 for the fixture color).
+    const QString pdf = dir.filePath(QStringLiteral("out.pdf"));
+    CHECK(ex.exportPdf(pdf, false), "pdf exported");
+    {
+        QPdfDocument pd;
+        CHECK(pd.load(pdf) == QPdfDocument::Error::None && pd.pageCount() >= 1,
+              "pdf loads");
+        const QImage page = pd.render(0, QSize(1000, 1414));
+        int hits = 0;
+        for (int y = 0; y < page.height() && hits < 20; ++y)
+            for (int x = 0; x < page.width() && hits < 20; ++x) {
+                const QColor px = page.pixelColor(x, y);
+                if (px.red() > 200 && px.green() < 80 && px.blue() > 120) ++hits;
+            }
+        CHECK(hits >= 20, "cell image pixels present on the PDF page");
+    }
+    m.closeDocument();
+    dir.removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -3914,6 +3996,7 @@ int main(int argc, char** argv) {
     testNewImportFormats();
     testMergeEngine();
     testMergeAssetsAndEdges();
+    testCellMediaExports();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

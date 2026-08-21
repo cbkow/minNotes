@@ -307,9 +307,14 @@ QString cellMd(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& 
     } else {
         if (!m->tableCellMedia(row, r, c).isEmpty()) {
             const QString p = localPathOf(m->tableCellMediaUrl(row, r, c));
-            const QString rel = sink.addFile(p, QFileInfo(p).completeBaseName());
-            if (!rel.isEmpty())
-                out += QStringLiteral("![](%1) ").arg(mdDest(rel));
+            if (!p.isEmpty()) {
+                // The block-image rule (emitMedia): collect into .assets;
+                // an unreachable source keeps its mapped absolute link
+                // instead of silently dropping the image.
+                const QString rel = sink.addFile(p, QFileInfo(p).completeBaseName());
+                out += QStringLiteral("![](%1) ")
+                           .arg(mdFileDest(rel.isEmpty() ? p : rel));
+            }
         }
         out += escapeMd(m->tableCell(row, r, c));
     }
@@ -2321,6 +2326,21 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
             } else {
                 cell = m->tableCell(row, r, cix);
             }
+            // Cell image (plain columns only, like the other emitters):
+            // its own paragraph above the text, capped to the column width.
+            if (kind == 0 && !m->tableCellMedia(row, r, cix).isEmpty()) {
+                const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
+                if (!img.isNull() && img.width() > 0) {
+                    const int colW = m->tableColWidth(row, cix);
+                    const int dwOv = m->tableCellMediaDw(row, r, cix);
+                    double dispW = dwOv > 0 ? dwOv : img.width();
+                    dispW = std::min(dispW,
+                                     colW > 0 ? std::max(40.0, colW - 12.0) : 220.0);
+                    docxImagePara(c, w, docxAddImage(c, img),
+                                  int(dispW),
+                                  int(dispW * img.height() / double(img.width())));
+                }
+            }
             DocxRunProps rp;
             rp.b = (r < hdr);
             const QString fg = m->tableCellFg(row, r, cix);
@@ -3042,6 +3062,30 @@ void pdfTable(PdfCtx& c, int row) {
             } else if (kind == 1) {
                 cc.insertText(m->tableCellChoiceLabel(row, r, cix), rf);
             } else {
+                if (!m->tableCellMedia(row, r, cix).isEmpty()) {
+                    const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
+                    if (!img.isNull() && img.width() > 0) {
+                        const int colW = m->tableColWidth(row, cix);
+                        const int dwOv = m->tableCellMediaDw(row, r, cix);
+                        qreal dispW = dwOv > 0 ? dwOv : img.width();
+                        dispW = std::min<qreal>(dispW,
+                            colW > 0 ? std::max(40.0, colW - 12.0) : 200.0);
+                        qreal dispH = dispW * img.height() / qreal(img.width());
+                        // A cell is a single layout line — keep the image
+                        // safely inside one page (the pdfInsertImage rule).
+                        const qreal maxH = c.contentH - 80;
+                        if (maxH > 0 && dispH > maxH) {
+                            dispW *= maxH / dispH; dispH = maxH;
+                        }
+                        QTextImageFormat f;
+                        f.setName(pdfAddImage(c, img));
+                        f.setWidth(dispW * c.imgFmt);
+                        f.setHeight(dispH * c.imgFmt);
+                        cc.insertImage(f);
+                        if (!m->tableCell(row, r, cix).isEmpty())
+                            cc.insertBlock();   // text under the image
+                    }
+                }
                 cc.insertText(m->tableCell(row, r, cix), rf);
             }
         }
