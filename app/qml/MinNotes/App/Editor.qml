@@ -1907,6 +1907,28 @@ FocusScope {
         clipboard.writeTable(blockModel.tableColsTSV(menuRow, s),
                              blockModel.tableColsHtml(menuRow, s))
     }
+    // Cell-rect ops + promotion to whole-row/column sets ("grab a couple of
+    // cells, then Select columns" — the rect's span becomes the set).
+    function tblSelectRectRows() {
+        var lo = Math.min(tcur.rangeR0, tcur.rangeR1), hi = Math.max(tcur.rangeR0, tcur.rangeR1)
+        var hdr = blockModel.tableHeaderRows(menuRow), a = []
+        for (var r = Math.max(lo, hdr); r <= hi; ++r) a.push(r)
+        if (a.length) tcur.setRowSel(a, a[0])
+    }
+    function tblSelectRectCols() {
+        var lo = Math.min(tcur.rangeC0, tcur.rangeC1), hi = Math.max(tcur.rangeC0, tcur.rangeC1)
+        var a = []
+        for (var c = lo; c <= hi; ++c) a.push(c)
+        tcur.setColSel(a, lo)
+    }
+    function tblCopyRect() {
+        clipboard.writeTable(blockModel.tableRangeTSV(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1),
+                             blockModel.tableRangeHtml(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1))
+    }
+    function tblClearRect() {
+        blockModel.tableClearRange(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
+        tcur.clearAll(); cursor.sync()
+    }
     function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
     function tblMoveRow(d)    { blockModel.tableMoveRow(menuRow, menuCellR, menuCellR + d) }
     function tblMoveCol(d)    { blockModel.tableMoveColumn(menuRow, menuCellC, menuCellC + d) }
@@ -6315,8 +6337,17 @@ FocusScope {
             && root.menuCellR <= Math.max(tcur.rangeR0, tcur.rangeR1)
             && root.menuCellC >= Math.min(tcur.rangeC0, tcur.rangeC1)
             && root.menuCellC <= Math.max(tcur.rangeC0, tcur.rangeC1)
+        // Multi-selection → ONE compact menu column (user ruling 2026-08-21:
+        // the full three-column menu is noise when the target is the
+        // selection); the three regular columns hide entirely.
+        readonly property bool bulkMode: selRowsHit || selColsHit || selRectHit
+        readonly property int rectRows: selRectHit
+            ? Math.abs(tcur.rangeR1 - tcur.rangeR0) + 1 : 0
+        readonly property int rectCols: selRectHit
+            ? Math.abs(tcur.rangeC1 - tcur.rangeC0) + 1 : 0
         // Tallest of the visible columns — the inter-column dividers stretch to it.
-        readonly property real bodyH: isTable
+        readonly property real bodyH: bulkMode ? bulkColMenu.implicitHeight
+            : isTable
             ? Math.max(blockColMenu.implicitHeight, colColMenu.implicitHeight, rowColMenu.implicitHeight)
             : blockColMenu.implicitHeight
         padding: 4; z: 60
@@ -6336,6 +6367,7 @@ FocusScope {
             // --- Block column (the right-clicked block as a whole) ---
             Column {
                 id: blockColMenu
+                visible: !blockMenu.bulkMode
                 spacing: 1
                 MenuHeader { visible: blockMenu.isTable; text: "Block" }
                 MenuRow { visible: root.menuLinkUrl.length > 0
@@ -6387,35 +6419,24 @@ FocusScope {
                           onActivated: { clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC))
                                          Toasts.show(qsTr("Image copied")) } }
                 MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
-                MenuRow { visible: blockMenu.selRectHit; text: "Clear cells"
-                          onActivated: { blockModel.tableClearRange(root.menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
-                                         tcur.clearAll(); cursor.sync() } }
                 Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
             }
 
-            Rectangle { visible: blockMenu.isTable; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
+            Rectangle { visible: blockMenu.isTable && !blockMenu.bulkMode; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
 
             // --- Column column (the right-clicked table column) ---
             Column {
                 id: colColMenu
-                visible: blockMenu.isTable
+                visible: blockMenu.isTable && !blockMenu.bulkMode
                 spacing: 1
                 MenuHeader { text: "Column" }
-                // Single-target rows hide when the menu targets a multi-column
-                // selection (the clicked column is inside a >1 set).
-                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
-                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
-                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
-                MenuRow { visible: !blockMenu.selColsHit && root.menuCellC > 0; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
-                MenuRow { visible: !blockMenu.selColsHit && root.menuCellC < blockMenu.tCols - 1; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
-                MenuRow { visible: !blockMenu.selColsHit; scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"
-                          text: "Copy " + blockMenu.selColCount + " columns as table"
-                          onActivated: root.tblCopyCols() }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"
-                          text: "Clear " + blockMenu.selColCount + " columns"
-                          onActivated: root.tblClearCols() }
+                MenuRow { scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
+                MenuRow { scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
+                MenuRow { scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
+                MenuRow { visible: root.menuCellC > 0; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
+                MenuRow { visible: root.menuCellC < blockMenu.tCols - 1; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
+                MenuRow { scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuSegRow {
                     label: "Align"
@@ -6425,9 +6446,9 @@ FocusScope {
                     MenuIconBtn { icon: "text-align-right";  on: parent._a === 2; onActivated: root.tblAlign(2) }
                 }
                 // One-shot sort of the body rows by this column (header stays pinned).
-                Rectangle { visible: blockMenu.sortable && !blockMenu.selColsHit; width: parent.width; height: 1; color: Theme.colors.divider }
+                Rectangle { visible: blockMenu.sortable; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuSegRow {
-                    visible: blockMenu.sortable && !blockMenu.selColsHit
+                    visible: blockMenu.sortable
                     label: "Sort"
                     MenuIconBtn { icon: "sort-ascending";  onActivated: root.tblSort(true) }
                     MenuIconBtn { icon: "sort-descending"; onActivated: root.tblSort(false) }
@@ -6436,42 +6457,76 @@ FocusScope {
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
                 MenuRow { visible: root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
-                MenuRow { visible: root.tblColKind() === 1 && !blockMenu.selColsHit; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
-                MenuRow { visible: root.tblColKind() !== 0 && !root.boardMode && !blockMenu.selColsHit; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
-                MenuRow { visible: root.tblColKind() !== 0; scope: "column"
-                          text: blockMenu.selColsHit ? "Make " + blockMenu.selColCount + " text columns" : "Make text column"
-                          danger: true; onActivated: root.tblMakeTextCol() }
+                MenuRow { visible: root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
+                MenuRow { visible: root.tblColKind() !== 0 && !root.boardMode; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
+                MenuRow { visible: root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { scope: "column"
-                          text: blockMenu.selColsHit ? "Delete " + blockMenu.selColCount + " columns" : "Delete column"
-                          danger: true; onActivated: root.tblDelCol() }
+                MenuRow { scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
             }
 
-            Rectangle { visible: blockMenu.isTable; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
+            Rectangle { visible: blockMenu.isTable && !blockMenu.bulkMode; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
 
             // --- Row column (the right-clicked table row) ---
             Column {
                 id: rowColMenu
-                visible: blockMenu.isTable
+                visible: blockMenu.isTable && !blockMenu.bulkMode
                 spacing: 1
                 MenuHeader { text: "Row" }
-                MenuRow { visible: !blockMenu.selRowsHit; scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
-                MenuRow { visible: !blockMenu.selRowsHit; scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
-                MenuRow { visible: !blockMenu.selRowsHit; scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
+                MenuRow { scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
+                MenuRow { scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
+                MenuRow { scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
                 // Reorder/duplicate: body rows only (a header row's place is structural).
-                MenuRow { visible: !blockMenu.selRowsHit && root.menuCellR > blockMenu.tHdr; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
-                MenuRow { visible: !blockMenu.selRowsHit && blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
-                MenuRow { visible: !blockMenu.selRowsHit && blockMenu.bodyRow; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
-                MenuRow { visible: blockMenu.selRowsHit; scope: "row"
-                          text: "Copy " + blockMenu.selRowCount + " rows as table"
-                          onActivated: root.tblCopyRows() }
-                MenuRow { visible: blockMenu.selRowsHit; scope: "row"
-                          text: "Clear " + blockMenu.selRowCount + " rows"
-                          onActivated: root.tblClearRows() }
+                MenuRow { visible: root.menuCellR > blockMenu.tHdr; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
+                MenuRow { visible: blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
+                MenuRow { visible: blockMenu.bodyRow; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
                 Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { scope: "row"
-                          text: blockMenu.selRowsHit ? "Delete " + blockMenu.selRowCount + " rows" : "Delete row"
+                MenuRow { scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
+            }
+
+            // --- Bulk column: the ONE compact menu when the right-click
+            // targets a multi-selection (rows set / columns set / cell rect).
+            Column {
+                id: bulkColMenu
+                visible: blockMenu.bulkMode
+                spacing: 1
+                MenuHeader {
+                    text: blockMenu.selRowsHit ? blockMenu.selRowCount + " rows"
+                        : blockMenu.selColsHit ? blockMenu.selColCount + " columns"
+                        : blockMenu.rectRows + "×" + blockMenu.rectCols + " cells"
+                }
+                // Rows set
+                MenuRow { visible: blockMenu.selRowsHit; scope: "row"; text: "Copy as table"; onActivated: root.tblCopyRows() }
+                MenuRow { visible: blockMenu.selRowsHit; scope: "row"; text: "Clear contents"; onActivated: root.tblClearRows() }
+                // Columns set
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Copy as table"; onActivated: root.tblCopyCols() }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Clear contents"; onActivated: root.tblClearCols() }
+                MenuSegRow {
+                    visible: blockMenu.selColsHit
+                    label: "Align"
+                    MenuIconBtn { icon: "text-align-left";   onActivated: root.tblAlign(0) }
+                    MenuIconBtn { icon: "text-align-center"; onActivated: root.tblAlign(1) }
+                    MenuIconBtn { icon: "text-align-right";  onActivated: root.tblAlign(2) }
+                }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Make choice columns"; onActivated: root.tblMakeChoiceCol() }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Make checkmark columns"; onActivated: root.tblMakeCheckCol() }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Make text columns"; onActivated: root.tblMakeTextCol() }
+                // Cell rect: promote to whole rows/columns, or act on the cells.
+                MenuRow { visible: blockMenu.selRectHit
+                          text: "Select " + blockMenu.rectRows + (blockMenu.rectRows === 1 ? " row" : " rows")
+                          onActivated: root.tblSelectRectRows() }
+                MenuRow { visible: blockMenu.selRectHit
+                          text: "Select " + blockMenu.rectCols + (blockMenu.rectCols === 1 ? " column" : " columns")
+                          onActivated: root.tblSelectRectCols() }
+                MenuRow { visible: blockMenu.selRectHit; text: "Copy cells"; onActivated: root.tblCopyRect() }
+                MenuRow { visible: blockMenu.selRectHit; text: "Clear cells"; onActivated: root.tblClearRect() }
+                // Destructive tail (sets only — the rect clears, never deletes)
+                Rectangle { visible: !blockMenu.selRectHit; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: blockMenu.selRowsHit; scope: "row"
+                          text: "Delete " + blockMenu.selRowCount + " rows"
                           danger: true; onActivated: root.tblDelRow() }
+                MenuRow { visible: blockMenu.selColsHit; scope: "column"
+                          text: "Delete " + blockMenu.selColCount + " columns"
+                          danger: true; onActivated: root.tblDelCol() }
             }
         }
     }
