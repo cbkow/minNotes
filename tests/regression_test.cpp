@@ -3940,6 +3940,23 @@ static void testCellMediaExports() {
     m.tableSetCellMedia(tRow, 1, 1, QString());
     m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
 
+    // HTML: authored widths past the page column → percentage shares +
+    // fixed layout (text wraps inside instead of the table running off).
+    m.tableSetColWidth(tRow, 0, 900);
+    m.tableSetColWidth(tRow, 1, 300);
+    const QString htmlPath = dir.filePath(QStringLiteral("out.html"));
+    CHECK(ex.exportHtml(htmlPath, false), "html exported");
+    {
+        QFile f(htmlPath); f.open(QIODevice::ReadOnly);
+        const QString html = QString::fromUtf8(f.readAll());
+        CHECK(html.contains(QStringLiteral("table-layout:fixed;width:100%"))
+                  && html.contains(QStringLiteral("width:75.00%"))
+                  && html.contains(QStringLiteral("width:25.00%")),
+              "over-wide table normalized to percentage shares");
+    }
+    m.tableSetColWidth(tRow, 0, 0);
+    m.tableSetColWidth(tRow, 1, 0);
+
     // DOCX: a drawing run lands inside the table cell; media part shipped.
     const QString docx = dir.filePath(QStringLiteral("out.docx"));
     CHECK(ex.exportDocx(docx, false), "docx exported");

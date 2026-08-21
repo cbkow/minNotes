@@ -1169,10 +1169,18 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
     // keep flexing. When EVERY column is authored the table goes
     // table-layout:fixed so the widths are exact (content wraps inside,
     // matching the app), not just minimums.
+    //
+    // Page-width cap (user ruling 2026-08-20, the PDF/DOCX rule): when the
+    // authored/default widths would overflow the page column, the table
+    // goes width:100% + table-layout:fixed with PERCENTAGE shares — text
+    // wraps inside (td overflow-wrap) and cell images clamp (the global
+    // img max-width) instead of the table running off the page.
     QString colTags;
     int authored = 0;
+    double total = 0;
     for (int c = 0; c < cols; ++c) {
         const int w = m->tableColWidth(row, c);
+        total += w > 0 ? w : 160.0;
         if (w > 0) {
             colTags += QStringLiteral("<col style=\"width:%1px\">").arg(w);
             ++authored;
@@ -1180,11 +1188,24 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
             colTags += QStringLiteral("<col>");
         }
     }
-    QString out = (authored == cols && authored > 0)
-        ? QStringLiteral("<table style=\"table-layout:fixed\">")
-        : QStringLiteral("<table>");
-    if (authored > 0)
+    QString out;
+    const double pw = std::max<double>(400.0, m->pageWidth());
+    if (total > pw) {
+        colTags.clear();
+        for (int c = 0; c < cols; ++c) {
+            const int w = m->tableColWidth(row, c);
+            colTags += QStringLiteral("<col style=\"width:%1%\">")
+                           .arg((w > 0 ? w : 160.0) / total * 100.0, 0, 'f', 2);
+        }
+        out = QStringLiteral("<table style=\"table-layout:fixed;width:100%\">");
         out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
+    } else {
+        out = (authored == cols && authored > 0)
+            ? QStringLiteral("<table style=\"table-layout:fixed\">")
+            : QStringLiteral("<table>");
+        if (authored > 0)
+            out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
+    }
     // Header-AGNOSTIC (user ruling 2026-08-20): the flag can't be trusted on
     // sheet imports (row 0 is often data), so styled exports emit every row
     // as a plain data row — authored cell colours still carry.
