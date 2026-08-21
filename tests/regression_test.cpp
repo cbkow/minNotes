@@ -3967,6 +3967,29 @@ static void testCellMediaExports() {
     m.tableSetColWidth(tRow, 0, 0);
     m.tableSetColWidth(tRow, 1, 0);
 
+    // ufb deep links (2026-08-21, opt-in): a file-path-printing block gains
+    // a <ufb:///os/…> autolink under its path only when the flag is set.
+    {
+        BlockModel::BlockSpec att; att.type = BlockModel::Media;
+        att.mediaJson = QStringLiteral(
+            "{\"src\":\"%1\",\"kind\":\"file\"}").arg(extPic);   // any real file
+        m.insertSpecs(m.rowCountQml() - 1, {att}, false);
+        const QString u1 = dir.filePath(QStringLiteral("ufb1.md"));
+        const QString u2 = dir.filePath(QStringLiteral("ufb2.md"));
+        CHECK(ex.exportMarkdown(u1, false) && ex.exportMarkdown(u2, false, true),
+              "ufb-flag exports written");
+        QFile f1(u1), f2(u2);
+        f1.open(QIODevice::ReadOnly); f2.open(QIODevice::ReadOnly);
+        const QString md1 = QString::fromUtf8(f1.readAll());
+        const QString md2 = QString::fromUtf8(f2.readAll());
+        CHECK(!md1.contains(QStringLiteral("ufb:///")),
+              "default export carries NO ufb links");
+        CHECK(md2.contains(QStringLiteral("<ufb:///mac/"))
+                  && md2.contains(QStringLiteral("cellpic.png>")),
+              "opt-in export carries the ufb autolink under the path");
+        m.removeBlock(m.rowCountQml() - 1);   // the attachment is the LAST row
+    }
+
     // DOCX: a drawing run lands inside the table cell; media part shipped.
     const QString docx = dir.filePath(QStringLiteral("out.docx"));
     CHECK(ex.exportDocx(docx, false), "docx exported");

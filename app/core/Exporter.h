@@ -39,6 +39,10 @@ public:
 
     struct Options {
         bool includeVideoNotes = true;
+        // ufb:///{os}/{path} deep links under every printed file path
+        // (video/pdf/file references). Off by default — they only mean
+        // something to recipients who run ufb (user ruling 2026-08-21).
+        bool ufbLinks = false;
     };
 
     // Where emitted assets go. addFile/addImage return the path to write into
@@ -74,16 +78,19 @@ public:
     // Write `<path>.md` + `<basename>.assets/` beside it. Accepts a file://
     // URL or a plain path. False on any write failure.
     Q_INVOKABLE bool exportMarkdown(const QString& fileUrlOrPath,
-                                    bool includeVideoNotes);
+                                    bool includeVideoNotes,
+                                    bool ufbLinks = false);
     // Write a single self-contained `<path>.html` (images as data URIs).
     Q_INVOKABLE bool exportHtml(const QString& fileUrlOrPath,
-                                bool includeVideoNotes);
+                                bool includeVideoNotes,
+                                bool ufbLinks = false);
     // Write a `.docx` (hand-rolled OOXML via Qt's private QZipWriter — the
     // QCView recipe). Comments become NATIVE Word review comments; media
     // ink bakes into the images (no layer toggle in Word); white-paper
     // document styling, content-faithful rather than dark-theme-faithful.
     Q_INVOKABLE bool exportDocx(const QString& fileUrlOrPath,
-                                bool includeVideoNotes);
+                                bool includeVideoNotes,
+                                bool ufbLinks = false);
 
     // Pure generation (testable): the whole document as a PDF written to
     // `out` (already open for writing). No AssetSink — images embed in the
@@ -97,7 +104,8 @@ public:
     bool toPdf(const Options& opt, QIODevice& out) const;
     // Write a single `<path>.pdf`. False on any write failure.
     Q_INVOKABLE bool exportPdf(const QString& fileUrlOrPath,
-                               bool includeVideoNotes);
+                               bool includeVideoNotes,
+                               bool ufbLinks = false);
 
 private:
     QString markdownRange(int lo, int hi, const Options& opt, AssetSink& sink,

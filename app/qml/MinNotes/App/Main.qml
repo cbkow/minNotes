@@ -251,7 +251,8 @@ ApplicationWindow {
         _exportScan = exporter.scan()
         // Ink only affects markdown (HTML doesn't carry it either yet, but
         // the note is markdown-worded); notes matter to both.
-        if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0)
+        if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0
+            || (_exportScan.refPaths || 0) > 0)
             exportOptionsDialog.open()
         else
             _openExportSave()
@@ -289,12 +290,12 @@ ApplicationWindow {
                 return
             }
             var ok = win._exportFormat === "html"
-                ? exporter.exportHtml(f, win._exportNotes)
+                ? exporter.exportHtml(f, win._exportNotes, exportPrefs.ufbLinks)
                 : win._exportFormat === "docx"
-                ? exporter.exportDocx(f, win._exportNotes)
+                ? exporter.exportDocx(f, win._exportNotes, exportPrefs.ufbLinks)
                 : win._exportFormat === "pdf"
-                ? exporter.exportPdf(f, win._exportNotes)
-                : exporter.exportMarkdown(f, win._exportNotes)
+                ? exporter.exportPdf(f, win._exportNotes, exportPrefs.ufbLinks)
+                : exporter.exportMarkdown(f, win._exportNotes, exportPrefs.ufbLinks)
             if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f))
             else    Toasts.show(qsTr("Export failed"), 2)
         }
@@ -428,6 +429,39 @@ ApplicationWindow {
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                 onClicked: win._exportNotes = !win._exportNotes }
                 }
+            }
+            Row {   // ufb deep links — persisted preference, default OFF
+                visible: win._exportFormat !== "mnpkg" && (win._exportScan.refPaths || 0) > 0
+                spacing: 8
+                Rectangle {   // squared family checkbox (PathMappings pattern)
+                    width: 16; height: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: exportPrefs.ufbLinks ? Theme.colors.divider : "transparent"
+                    border.width: 1
+                    border.color: exportPrefs.ufbLinks ? Theme.colors.textBright : Theme.colors.border
+                    Text { anchors.centerIn: parent; visible: exportPrefs.ufbLinks
+                           text: "\u2713"; color: Theme.colors.textBright; font.pixelSize: 11 }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: exportPrefs.ufbLinks = !exportPrefs.ufbLinks }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("Include ufb links under file paths (%1 %2)")
+                          .arg(win._exportScan.refPaths || 0)
+                          .arg((win._exportScan.refPaths || 0) === 1 ? qsTr("path") : qsTr("paths"))
+                    color: Theme.colors.text
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: exportPrefs.ufbLinks = !exportPrefs.ufbLinks }
+                }
+            }
+            Text {
+                visible: win._exportFormat !== "mnpkg" && (win._exportScan.refPaths || 0) > 0
+                         && exportPrefs.ufbLinks
+                width: 400; wrapMode: Text.Wrap
+                text: qsTr("ufb:/// links open in the ufb browser and resolve across machines through its path mappings.")
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
             Text {
                 visible: win._exportFormat !== "mnpkg" && (win._exportScan.inkBlocks || 0) > 0
@@ -739,6 +773,9 @@ ApplicationWindow {
 
     // --- Recent documents (persisted JSON list, most-recent first, cap 10) ---
     Settings { id: recentsStore; category: "recents"; property string paths: "[]" }
+    // Persisted export preferences (2026-08-21): ufb deep links under file
+    // paths — off by default; they only mean something to ufb users.
+    Settings { id: exportPrefs; category: "export"; property bool ufbLinks: false }
     function recentPaths() { try { var a = JSON.parse(recentsStore.paths); return Array.isArray(a) ? a : [] } catch (e) { return [] } }
     // Re-evaluates when the store changes (ternary, not a comma-tuple — qmlcachegen
     // elides the discarded left operand of a comma).

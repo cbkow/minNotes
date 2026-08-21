@@ -58,6 +58,22 @@ QString localPathOf(const QString& urlOrPath) {
     return u.isLocalFile() ? u.toLocalFile() : urlOrPath;
 }
 
+// ufb deep link for a local path — the openMediaInUfb recipe verbatim:
+// ufb:///{os}/{percent-encoded path, slashes literal}. ufb parses the OS
+// tag, translates through the user's cross-OS path mappings, then reveals
+// the file (navigate to parent + select; directories navigate directly).
+QString ufbLinkFor(const QString& path) {
+    if (path.isEmpty()) return {};
+#if defined(Q_OS_WIN)
+    const QString os = QStringLiteral("win");
+#else
+    const QString os = QStringLiteral("mac");
+#endif
+    const QString norm = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    return QStringLiteral("ufb:///") + os + QLatin1Char('/')
+         + QString::fromLatin1(QUrl::toPercentEncoding(norm, "/"));
+}
+
 // Effective column count for a table export: TRAILING fully-empty plain
 // columns (no text, no media, in any row — header included) drop at export
 // time. Sheet imports formatted to the sheet edge shouldn't ship 20 blank
@@ -706,6 +722,8 @@ QString emitMedia(const BlockModel* m, int row, const Exporter::Options& opt,
         meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
     }
     out += QStringLiteral("```%1\n%2\n%3\n%4\n```").arg(kind, name, path, meta);
+    if (opt.ufbLinks)   // <uri> = a CommonMark autolink; any scheme qualifies
+        out += QStringLiteral("\n<") + ufbLinkFor(path) + QStringLiteral(">");
 
     if (kind == QLatin1String("pdf")) {
         // Poster + annotated pages (ruling 2026-08-20): every OTHER page
@@ -945,6 +963,7 @@ QString Exporter::copyMarkdown(int loRow, int hiRow) const {
 QVariantMap Exporter::scan() const {
     QVariantMap out;
     int videos = 0, videosWithNotes = 0, videoNotes = 0, sketches = 0;
+    int refPaths = 0;   // video/pdf/file rows — they print a path in exports
     int pdfInkPages = 0;
     if (model_) {
         const int count = model_->rowCountQml();
@@ -953,13 +972,15 @@ QVariantMap Exporter::scan() const {
             const QString kind = model_->mediaKind(row);
             if (kind == QLatin1String("sketch")) { ++sketches; continue; }
             if (kind == QLatin1String("pdf")) {
+                ++refPaths;
                 const int pages = model_->mediaPdfPages(row);
                 for (int pg = 0; pg < pages; ++pg)
                     if (!model_->pdfPageInk(row, pg).isEmpty()) ++pdfInkPages;
                 continue;
             }
+            if (kind == QLatin1String("file")) { ++refPaths; continue; }
             if (kind != QLatin1String("video")) continue;
-            ++videos;
+            ++videos; ++refPaths;
             std::vector<qcv::AnnotationNote> notes;
             if (qcv::annotation_io::loadNotes(notes, model_->mediaLocalPath(row))
                 && !notes.empty()) {
@@ -975,10 +996,11 @@ QVariantMap Exporter::scan() const {
                model_ ? model_->inkBlockIds().size() : 0);
     out.insert(QStringLiteral("sketches"), sketches);
     out.insert(QStringLiteral("pdfInkPages"), pdfInkPages);   // annotated PDF pages
+    out.insert(QStringLiteral("refPaths"), refPaths);   // rows that print a file path
     return out;
 }
 
-bool Exporter::exportMarkdown(const QString& fileUrlOrPath, bool includeVideoNotes) {
+bool Exporter::exportMarkdown(const QString& fileUrlOrPath, bool includeVideoNotes, bool ufbLinks) {
     if (!model_) return false;
     const QString path = localPathOf(fileUrlOrPath);
     if (path.isEmpty()) return false;
@@ -986,6 +1008,7 @@ bool Exporter::exportMarkdown(const QString& fileUrlOrPath, bool includeVideoNot
 
     Options opt;
     opt.includeVideoNotes = includeVideoNotes;
+    opt.ufbLinks = ufbLinks;
     FileSink sink(fi.absolutePath(), fi.completeBaseName() + QStringLiteral(".assets"));
     const QString md = toMarkdown(opt, sink);
 
@@ -1464,10 +1487,13 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
     } else if (!poster.isEmpty()) {
         out += QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(poster, htmlEscape(name));
     }
+    const QString ufbLine = opt.ufbLinks
+        ? QStringLiteral("<a class=\"ufblink\" href=\"%1\">%1</a>").arg(htmlEscape(ufbLinkFor(path)))
+        : QString();
     out += QStringLiteral("<figcaption><div class=\"fname\">%1</div>"
-                          "<div class=\"fpath\">%2</div>"
+                          "<div class=\"fpath\">%2</div>%5"
                           "<div class=\"fmeta\">%3 · %4</div></figcaption></figure>")
-               .arg(htmlEscape(name), htmlEscape(path), htmlEscape(kind), htmlEscape(meta));
+               .arg(htmlEscape(name), htmlEscape(path), htmlEscape(kind), htmlEscape(meta), ufbLine);
 
     if (kind == QLatin1String("pdf")) {
         // Poster + annotated pages (ruling 2026-08-20): one figure per OTHER
@@ -1689,6 +1715,9 @@ line-height:1.5;color:var(--text)}
 .ref figcaption{padding:10px 14px}
 .fname{color:var(--bright)}
 .fpath{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+a.ufblink{display:block;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+color:var(--chiptext);word-break:break-all;text-decoration:none}
+a.ufblink:hover{text-decoration:underline}
 .fmeta{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--subtle);margin-top:2px}
 .vnotes h4{color:var(--violet);margin:14px 0 8px}
 .notecard{display:flex;gap:12px;background:transparent;border:1px solid var(--border);
@@ -2037,13 +2066,14 @@ e.preventDefault();});
              QLatin1String(kLightbox));
 }
 
-bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes) {
+bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes, bool ufbLinks) {
     if (!model_) return false;
     const QString path = localPathOf(fileUrlOrPath);
     if (path.isEmpty()) return false;
 
     Options opt;
     opt.includeVideoNotes = includeVideoNotes;
+    opt.ufbLinks = ufbLinks;
     DataUriSink sink;
     const QString html = toHtml(opt, sink);
 
@@ -2608,6 +2638,27 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
     DocxRunProps bold; bold.b = true;
     docxPlainPara(w, name, bold);
     docxPlainPara(w, path, mono);
+    if (c.opt.ufbLinks) {
+        // A real Word hyperlink under the path — the rIdLnk relationship
+        // machinery the inline links already use.
+        const QString uri = ufbLinkFor(path);
+        c.links.append(uri);
+        w.writeStartElement(QStringLiteral("w:p"));
+        w.writeStartElement(QStringLiteral("w:hyperlink"));
+        w.writeAttribute(QStringLiteral("r:id"), QStringLiteral("rIdLnk%1").arg(c.links.size()));
+        w.writeStartElement(QStringLiteral("w:r"));
+        DocxRunProps lp;
+        lp.code = true; lp.u = true; lp.halfPtSize = 16;   // 8pt mono
+        lp.color = QStringLiteral("#1155CC");
+        docxRunProps(w, lp);
+        w.writeStartElement(QStringLiteral("w:t"));
+        w.writeAttribute(QStringLiteral("xml:space"), QStringLiteral("preserve"));
+        w.writeCharacters(uri);
+        w.writeEndElement();   // w:t
+        w.writeEndElement();   // w:r
+        w.writeEndElement();   // w:hyperlink
+        w.writeEndElement();   // w:p
+    }
     docxPlainPara(w, kind + QStringLiteral(" · ") + meta, mono);
 
     if (kind == QLatin1String("pdf")) {
@@ -2839,7 +2890,7 @@ QByteArray docxNumberingXml() {
 
 } // namespace
 
-bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes) {
+bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes, bool ufbLinks) {
     if (!model_) return false;
     const QString outPath = localPathOf(fileUrlOrPath);
     if (outPath.isEmpty()) return false;
@@ -2847,6 +2898,7 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes) 
     DocxCtx c;
     c.m = model_;
     c.opt.includeVideoNotes = includeVideoNotes;
+    c.opt.ufbLinks = ufbLinks;
     const QByteArray documentXml = docxDocumentXml(c);
 
     const QByteArray contentTypes = docxXml([&](QXmlStreamWriter& w) {
@@ -3301,6 +3353,15 @@ void pdfRefLines(PdfCtx& c, const QString& name, const QString& path,
     mono.setFontPointSize(8.0);
     mono.setForeground(kPdfMuted);
     c.newBlock(bf, mono); c.cur.insertText(path, mono);
+    if (c.opt.ufbLinks) {
+        const QString uri = ufbLinkFor(path);
+        QTextCharFormat lf = mono;
+        lf.setForeground(QColor(0x11, 0x55, 0xCC));
+        lf.setFontUnderline(true);
+        lf.setAnchor(true);
+        lf.setAnchorHref(uri);   // clickable in PDF viewers (Qt link annotations)
+        c.newBlock(bf, lf); c.cur.insertText(uri, lf);
+    }
     c.newBlock(bf, mono); c.cur.insertText(kindMeta, mono);
 }
 
@@ -3651,7 +3712,7 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     return out.pos() > before;
 }
 
-bool Exporter::exportPdf(const QString& fileUrlOrPath, bool includeVideoNotes) {
+bool Exporter::exportPdf(const QString& fileUrlOrPath, bool includeVideoNotes, bool ufbLinks) {
     QString outPath = localPathOf(fileUrlOrPath);
     if (outPath.isEmpty() || !model_) return false;
     if (!outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive))
@@ -3660,6 +3721,7 @@ bool Exporter::exportPdf(const QString& fileUrlOrPath, bool includeVideoNotes) {
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
     Options opt;
     opt.includeVideoNotes = includeVideoNotes;
+    opt.ufbLinks = ufbLinks;
     const bool ok = toPdf(opt, f);
     f.close();
     return ok && f.error() == QFile::NoError && f.size() > 0;
