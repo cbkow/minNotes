@@ -832,8 +832,10 @@ static void testExportMarkdown() {
     CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">"))
               && html.contains(QStringLiteral(">int</span> x ")),
           "HTML code block with language class + syntax-coloured spans");
-    CHECK(html.contains(QStringLiteral("<th>H1</th>")) || html.contains(QStringLiteral("<th >H1</th>")),
-          "HTML table header cell");
+    // Header-AGNOSTIC exports (user ruling 2026-08-20): every row is a plain
+    // <td> row — the header flag can't be trusted on sheet imports.
+    CHECK(html.contains(QStringLiteral("<td>H1</td>")) && !html.contains(QStringLiteral("<th")),
+          "HTML table rows are header-agnostic (all <td>)");
     CHECK(html.contains(QStringLiteral("id=\"c1\"")) && html.contains(QStringLiteral("note body")),
           "comments section carries the thread body");
     CHECK(html.startsWith(QStringLiteral("<!doctype html>")), "self-contained document skeleton");

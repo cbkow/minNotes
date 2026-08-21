@@ -1150,7 +1150,6 @@ QString cellHtml(const BlockModel* m, int row, int r, int c, Exporter::AssetSink
 
 QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
     const int rows = m->tableRows(row), cols = exportCols(m, row);
-    const int hdr = m->tableHeaderRows(row);
     if (rows <= 0 || cols <= 0) return {};
     auto cellStyle = [&](int r, int c) {
         QString st;
@@ -1186,13 +1185,14 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
         : QStringLiteral("<table>");
     if (authored > 0)
         out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
+    // Header-AGNOSTIC (user ruling 2026-08-20): the flag can't be trusted on
+    // sheet imports (row 0 is often data), so styled exports emit every row
+    // as a plain data row — authored cell colours still carry.
     for (int r = 0; r < rows; ++r) {
-        const bool isHdr = r < hdr;
         out += QStringLiteral("<tr>");
         for (int c = 0; c < cols; ++c)
-            out += QStringLiteral("<%1%2>%3</%1>")
-                       .arg(isHdr ? QStringLiteral("th") : QStringLiteral("td"),
-                            cellStyle(r, c), cellHtml(m, row, r, c, sink));
+            out += QStringLiteral("<td%1>%2</td>")
+                       .arg(cellStyle(r, c), cellHtml(m, row, r, c, sink));
         out += QStringLiteral("</tr>");
     }
     out += QStringLiteral("</table>");
@@ -2341,19 +2341,20 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
         w.writeEndElement();
     }
     w.writeEndElement();
-    const int hdr = m->tableHeaderRows(row);
     for (int r = 0; r < rows; ++r) {
         w.writeStartElement(QStringLiteral("w:tr"));
         for (int cix = 0; cix < cols; ++cix) {
             w.writeStartElement(QStringLiteral("w:tc"));
             w.writeStartElement(QStringLiteral("w:tcPr"));
+            // Header-AGNOSTIC (user ruling 2026-08-20): only AUTHORED cell
+            // colours shade — the header flag can't be trusted on sheet
+            // imports, so no row gets promoted styling.
             const QString bg = m->tableCellBg(row, r, cix);
-            if (!bg.isEmpty() || r < hdr) {
+            if (!bg.isEmpty()) {
                 w.writeStartElement(QStringLiteral("w:shd"));
                 w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("clear"));
                 w.writeAttribute(QStringLiteral("w:fill"),
-                    bg.isEmpty() ? QStringLiteral("EDEDED")
-                                 : QString(bg).remove(QLatin1Char('#')).toUpper());
+                    QString(bg).remove(QLatin1Char('#')).toUpper());
                 w.writeEndElement();
             }
             w.writeEndElement();
@@ -2386,7 +2387,6 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
                 }
             }
             DocxRunProps rp;
-            rp.b = (r < hdr);
             const QString fg = m->tableCellFg(row, r, cix);
             if (!fg.isEmpty()) rp.color = fg;
             docxPlainPara(w, cell, rp);
@@ -3107,14 +3107,16 @@ void pdfTable(PdfCtx& c, int row) {
     }
     if (c.first) { c.first = false; }
     QTextTable* t = c.cur.insertTable(rows, cols, tf);
-    const int hdr = m->tableHeaderRows(row);
+    // Header-AGNOSTIC (user ruling 2026-08-20): only AUTHORED cell colours
+    // shade; no row gets promoted bold/fill — the header flag can't be
+    // trusted on sheet imports.
     for (int r = 0; r < rows; ++r) {
         for (int cix = 0; cix < cols; ++cix) {
             QTextTableCell cell = t->cellAt(r, cix);
             const QString bg = m->tableCellBg(row, r, cix);
-            if (!bg.isEmpty() || r < hdr) {
+            if (!bg.isEmpty()) {
                 QTextCharFormat cf = cell.format();
-                cf.setBackground(QColor(bg.isEmpty() ? QStringLiteral("#EDEDED") : bg));
+                cf.setBackground(QColor(bg));
                 cell.setFormat(cf);
             }
             QTextCursor cc = cell.firstCursorPosition();
@@ -3122,7 +3124,6 @@ void pdfTable(PdfCtx& c, int row) {
             QTextCharFormat rf;
             rf.setForeground(kPdfText);
             rf.setFontPointSize(9.5);
-            if (r < hdr) rf.setFontWeight(QFont::Bold);
             const QString fg = m->tableCellFg(row, r, cix);
             if (!fg.isEmpty()) rf.setForeground(QColor(fg));
             if (kind == 2) {   // check column → painted glyph (font-fallback-proof)
