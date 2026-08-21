@@ -416,6 +416,23 @@ FocusScope {
     property int  resizeW: 0
     property bool tableOverBorder: false   // hover near a column border → resize cursor
 
+    // Inline table grips (multi-select 2026-08-21): hover bands strictly
+    // OUTSIDE the grid rect (top band in the block's 32px top margin, left
+    // band in the page margin) — click = select row/column (Shift span /
+    // Cmd toggle), drag = reorder, the full-frame grip strips' semantics.
+    // ALL state on root: delegates are pooled and may recycle mid-drag.
+    property int    gripTableRow: -1     // logical row of the table under the grips
+    property string gripKind: ""         // hover: "" | "col" | "row"
+    property int    gripIndex: -1
+    property bool   gripDragging: false
+    property string gripDragKind: ""
+    property int    gripFrom: -1
+    property int    gripDropGap: -1
+    property bool   gripMoved: false
+    property real   gripPressX: 0        // content coords
+    property real   gripPressY: 0
+    property int    gripPressMods: 0
+
     // Image resize: the hovered image row shows corner affordances; dragging the
     // bottom-right handle previews a target size (a ghost frame — the document does
     // NOT reflow during the drag) and commits the new per-block width on release.
@@ -1393,11 +1410,19 @@ FocusScope {
 
     // Shared table mouse interaction (used by both the document central handler and
     // the full-frame tab view). `bt` is the BlockTable; (lx,ly) are bt-local coords.
-    function beginTableInteraction(bt, row, lx, ly) {
+    function beginTableInteraction(bt, row, lx, ly, mods) {
         var bc = bt.columnBorderAt(lx)
         if (bc >= 0) {                                       // near a border → resize
             root.tableResizing = true; root.resizeRow = row; root.resizeColIdx = bc
             root.resizeW = bt.widthForDrag(bc, lx)
+            return
+        }
+        // Shift+click: extend the cell rect from the anchor (spreadsheet
+        // standard). Return WITHOUT arming tableDragging — a same-cell
+        // jitter in updateTableInteraction would collapse the rect.
+        if ((mods & Qt.ShiftModifier) && tcur.active && row === cursor.focusRow) {
+            var sh = bt.cellAtPoint(lx, ly)
+            tcur.extendTo(sh.r, sh.c)
             return
         }
         var hit = bt.cellAtPoint(lx, ly)
@@ -1902,6 +1927,36 @@ FocusScope {
     property int  lastSortRow: -1
     property int  lastSortCol: -1
     property bool lastSortAsc: true
+    // bt-local point → inline grip zone. Bands sit OUTSIDE the table rect, so
+    // they can never collide with the resize border (±5px), the sort zone
+    // (22px) or widget hits — all of which live INSIDE the grid.
+    function tableGripAt(bt, lx, ly) {
+        if (ly >= -18 && ly < -2 && lx >= 0 && lx < bt.width) {
+            var c = bt.colIndexAt(lx)
+            return c >= 0 ? { kind: "col", index: c } : null
+        }
+        if (lx >= -18 && lx < -2 && ly >= 0 && ly < bt.height) {
+            var r = bt.bodyRowAt(ly)                 // headers: no grip
+            return r >= 0 ? { kind: "row", index: r } : null
+        }
+        return null
+    }
+    function commitInlineGripDrag() {
+        var row = root.gripTableRow
+        if (!root.gripMoved && root.gripFrom >= 0) {
+            if (root.gripDragKind === "col") root.gripSelectCol(row, root.gripFrom, root.gripPressMods)
+            else                             root.gripSelectRow(row, root.gripFrom, root.gripPressMods)
+        } else if (root.gripDropGap >= 0 && root.gripFrom >= 0) {
+            var to = root.gripDropGap > root.gripFrom ? root.gripDropGap - 1 : root.gripDropGap
+            if (to !== root.gripFrom) {
+                if (root.gripDragKind === "col") blockModel.tableMoveColumn(row, root.gripFrom, to)
+                else                             blockModel.tableMoveRow(row, root.gripFrom, to)
+            }
+        }
+        root.gripDragging = false; root.gripDragKind = ""; root.gripFrom = -1
+        root.gripDropGap = -1; root.gripKind = ""; root.gripIndex = -1
+        root.gripTableRow = -1; root.gripPressMods = 0
+    }
     function headerSortHit(bt, row, r, c, lx) {     // lx = bt-local x
         if (r !== 0 || blockModel.tableHeaderRows(row) < 1) return false   // glyph lives on the first header row
         var right = bt.columnLeftX(c) + bt.colW(c) - bt.scrollX
@@ -3018,11 +3073,26 @@ FocusScope {
                     // Drag-drop target cell (image dragged over this table).
                     dropR: root.dropTableRow === cell.logicalRow ? root.dropCellR : -1
                     dropC: root.dropTableRow === cell.logicalRow ? root.dropCellC : -1
-                    // Context-menu column/row target highlight (this is the menu's table).
-                    hiScope: (cell.logicalRow === root.menuRow
-                              && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
-                    hiIndex: root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
-                    hiDanger: root.menuHiDanger
+                    // Context-menu column/row target highlight (this is the
+                    // menu's table) — or the grip drag's source highlight
+                    // (kind "col" maps to scope "column", the frame pattern).
+                    hiScope: (root.gripDragging && root.gripTableRow === cell.logicalRow)
+                             ? (root.gripDragKind === "col" ? "column" : "row")
+                             : (cell.logicalRow === root.menuRow
+                                && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
+                    hiIndex: (root.gripDragging && root.gripTableRow === cell.logicalRow)
+                             ? root.gripFrom
+                             : root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
+                    hiDanger: root.gripDragging && root.gripTableRow === cell.logicalRow
+                              ? false : root.menuHiDanger
+                    // Inline grip affordances (pills + drop lines in the margins).
+                    gripScope: root.gripTableRow === cell.logicalRow
+                               ? (root.gripDragging ? root.gripDragKind : root.gripKind) : ""
+                    gripIdx: root.gripDragging ? root.gripFrom : root.gripIndex
+                    gripLive: root.gripDragging && root.gripTableRow === cell.logicalRow
+                    gripGapScope: (root.gripDragging && root.gripTableRow === cell.logicalRow)
+                                  ? root.gripDragKind : ""
+                    gripGap: root.gripDropGap
                 }
 
                 Rectangle {  // code background — matches the syntax theme's fill
@@ -3241,6 +3311,8 @@ FocusScope {
             hoverEnabled: true
             property bool overClickable: false   // over a task checkbox / table check or choice cell
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
+                       : root.gripDragging ? Qt.ClosedHandCursor
+                       : root.gripKind !== "" ? Qt.OpenHandCursor
                        : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
                        : overClickable ? Qt.PointingHandCursor
                        : Qt.IBeamCursor
@@ -3279,6 +3351,17 @@ FocusScope {
                     var tbody = th.r >= blockModel.tableHeaderRows(th.row)
                     var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
                     var lp = bt ? bt.mapFromItem(mouse, m.x, m.y) : null
+                    // Grip bands first — they live outside the grid rect, where
+                    // cellAtPoint's clamp used to drop the caret at row 0.
+                    var g = bt ? root.tableGripAt(bt, lp.x, lp.y) : null
+                    if (g) {
+                        root.gripDragging = true; root.gripDragKind = g.kind
+                        root.gripTableRow = th.row; root.gripFrom = g.index
+                        root.gripPressX = m.x; root.gripPressY = m.y
+                        root.gripPressMods = m.modifiers; root.gripMoved = false
+                        root.gripDropGap = g.kind === "col" ? bt.colGapAt(lp.x) : bt.rowGapAt(lp.y)
+                        return
+                    }
                     if (bt && (tk === 1 || tk === 2) && tbody && bt.widgetHit(lp.x, lp.y)) {
                         if (tk === 1) root.openChoicePicker(th.row, th.r, th.c, m.x - flick.contentX, m.y - flick.contentY)
                         else          blockModel.tableCycleCellCheck(th.row, th.r, th.c)
@@ -3287,7 +3370,7 @@ FocusScope {
                     if (bt) {
                         // Header sort zone (a header cell's right edge) beats the caret.
                         if (root.headerSortHit(bt, th.row, th.r, th.c, lp.x)) { root.headerSort(th.row, th.c); return }
-                        root.beginTableInteraction(bt, th.row, lp.x, lp.y)
+                        root.beginTableInteraction(bt, th.row, lp.x, lp.y, m.modifiers)
                     }
                     return
                 }
@@ -3324,6 +3407,17 @@ FocusScope {
                     root.dropGap = root.gapForY(m.y)
                     return
                 }
+                if (root.gripDragging) {
+                    if (Math.abs(m.x - root.gripPressX) + Math.abs(m.y - root.gripPressY) > 4)
+                        root.gripMoved = true                    // click ≠ drag (the grip threshold)
+                    var gd = root.cellForRow(root.gripTableRow), gbt = gd ? gd.tableItem : null
+                    if (gbt) {
+                        var glp = gbt.mapFromItem(mouse, m.x, m.y)
+                        root.gripDropGap = root.gripDragKind === "col" ? gbt.colGapAt(glp.x)
+                                                                       : gbt.rowGapAt(glp.y)
+                    }
+                    return
+                }
                 if (root.tableResizing || root.tableDragging) {
                     var ddcell = root.cellForRow(root.tableResizing ? root.resizeRow : cursor.focusRow)
                     var dbt = ddcell ? ddcell.tableItem : null
@@ -3336,13 +3430,24 @@ FocusScope {
                     cursor.move(h.row, h.col, true)
                     return
                 }
-                // hover (not pressed): near a table column border → resize cursor.
+                // hover (not pressed): grip band → grip affordance; else near a
+                // table column border → resize cursor (now y-guarded: the old
+                // check showed a stray SplitHCursor in the margin bands).
                 root.hoverRow = blockModel.rowForY(m.y)
                 var overBorder = false
+                var ghit = null
                 if (blockModel.typeForRow(root.hoverRow) === 7) {
                     var hd = root.cellForRow(root.hoverRow), hbt = hd ? hd.tableItem : null
-                    if (hbt) { var hlp = hbt.mapFromItem(mouse, m.x, m.y); overBorder = hbt.columnBorderAt(hlp.x) >= 0 }
+                    if (hbt) {
+                        var hlp = hbt.mapFromItem(mouse, m.x, m.y)
+                        ghit = root.tableGripAt(hbt, hlp.x, hlp.y)
+                        overBorder = !ghit && hlp.y >= 0 && hlp.y <= hbt.height
+                                     && hbt.columnBorderAt(hlp.x) >= 0
+                    }
                 }
+                root.gripKind = ghit ? ghit.kind : ""
+                root.gripIndex = ghit ? ghit.index : -1
+                if (!root.gripDragging) root.gripTableRow = ghit ? root.hoverRow : -1
                 root.tableOverBorder = overBorder
                 // Over an interactive widget (block task checkbox, an inline
                 // choice chip, or a table check/choice body cell) → a
@@ -3398,15 +3503,22 @@ FocusScope {
                 }
             }
             onExited: { root.hoverRow = -1; root.tableOverBorder = false
+                        root.gripKind = ""; root.gripIndex = -1
+                        if (!root.gripDragging) root.gripTableRow = -1
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
                 if (root.blockDragging) root.commitBlockDrag()
+                else if (root.gripDragging) root.commitInlineGripDrag()
                 else if (root.tableResizing || root.tableDragging) root.endTableInteraction()
                 else root.dragging = false
             }
             onCanceled: {
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
-                else { root.dragging = false; root.tableDragging = false; root.tableResizing = false }
+                else {
+                    root.dragging = false; root.tableDragging = false; root.tableResizing = false
+                    root.gripDragging = false; root.gripDragKind = ""; root.gripFrom = -1
+                    root.gripDropGap = -1; root.gripKind = ""; root.gripIndex = -1; root.gripTableRow = -1
+                }
             }
             onDoubleClicked: (m) => {
                 // End the press-drag the 2nd press armed, so a tiny mouse jitter
@@ -3498,6 +3610,8 @@ FocusScope {
         property real gripPressX: 0
         property real gripPressY: 0
         property bool gripMoved: false
+        // Modifiers captured at PRESS (users release Shift before the button).
+        property int  gripPressMods: 0
         readonly property int frameCols: root.activeTableRow >= 0
             ? (blockModel.contentRevision, blockModel.tableColumns(root.activeTableRow)) : 0
         readonly property int frameRows: root.activeTableRow >= 0
@@ -3539,8 +3653,8 @@ FocusScope {
         }
         function commitGripDrag() {
             if (!gripMoved && dragFrom >= 0) {           // click, not drag → select
-                if (colDragging) root.selectTableColumn(root.activeTableRow, dragFrom)
-                else if (rowDragging) root.selectTableRow(root.activeTableRow, dragFrom)
+                if (colDragging) root.gripSelectCol(root.activeTableRow, dragFrom, gripPressMods)
+                else if (rowDragging) root.gripSelectRow(root.activeTableRow, dragFrom, gripPressMods)
             } else if (dropGap >= 0 && dragFrom >= 0) {
                 var to = dropGap > dragFrom ? dropGap - 1 : dropGap
                 if (to !== dragFrom) {
@@ -3552,7 +3666,7 @@ FocusScope {
         }
         function cancelGripDrag() {
             colDragging = false; rowDragging = false
-            dragFrom = -1; dropGap = -1; gripC = -1; gripR = -1
+            dragFrom = -1; dropGap = -1; gripC = -1; gripR = -1; gripPressMods = 0
         }
         ScrollBar.vertical: MnScrollBar {}
         ScrollBar.horizontal: MnScrollBar {}
@@ -3637,7 +3751,7 @@ FocusScope {
                     }
                     return
                 }
-                root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y)
+                root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y, m.modifiers)
             }
             onPositionChanged: (m) => {
                 if (root.tableResizing || root.tableDragging) { root.updateTableInteraction(frameTable, m.x, m.y); return }
@@ -3744,6 +3858,7 @@ FocusScope {
                     if (c >= 0) { tableFrame.colDragging = true; tableFrame.dragFrom = c
                                   tableFrame.gripPressX = m.x; tableFrame.gripPressY = m.y
                                   tableFrame.gripMoved = false
+                                  tableFrame.gripPressMods = m.modifiers
                                   tableFrame.dropGap = tableFrame.colGapAt(m.x) }
                 }
                 onReleased: tableFrame.commitGripDrag()
@@ -3782,6 +3897,7 @@ FocusScope {
                     if (r >= 0) { tableFrame.rowDragging = true; tableFrame.dragFrom = r
                                   tableFrame.gripPressX = m.x; tableFrame.gripPressY = m.y
                                   tableFrame.gripMoved = false
+                                  tableFrame.gripPressMods = m.modifiers
                                   tableFrame.dropGap = tableFrame.rowGapAt(m.y) }
                 }
                 onReleased: tableFrame.commitGripDrag()

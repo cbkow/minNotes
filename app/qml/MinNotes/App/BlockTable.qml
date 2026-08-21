@@ -226,6 +226,42 @@ Item {
     function widthForDrag(c, px) {     // new width as the border is dragged to px
         return Math.round(Math.max(minColW, Math.min(800, (px + hflick.contentX) - columnLeftX(c))))
     }
+    // Grip geometry (multi-select 2026-08-21) — the tableFrame helpers moved
+    // to their natural home so BOTH surfaces share them. All scrollX-aware
+    // (inline scrollX is provably 0 — uncapped width == contentW — but the
+    // term stays for the full-frame caller).
+    function colIndexAt(px) {
+        var cx = px + hflick.contentX, acc = 0
+        for (var c = 0; c < colCount; ++c) { acc += tv.colW(c); if (cx < acc) return c }
+        return -1
+    }
+    function colGapAt(px) {            // insertion gap 0..colCount for a drop
+        var cx = px + hflick.contentX, acc = 0
+        for (var c = 0; c < colCount; ++c) {
+            var w = tv.colW(c)
+            if (cx < acc + w / 2) return c
+            acc += w
+        }
+        return colCount
+    }
+    function bodyRowAt(py) {           // body row under py; −1 for header/outside
+        var acc = 0
+        for (var r = 0; r < rowCount; ++r) {
+            var h = rowHeightAt(r)
+            if (py < acc + h) return r < headerRows ? -1 : r
+            acc += h
+        }
+        return -1
+    }
+    function rowGapAt(py) {            // insertion gap, floored at the header edge
+        var acc = 0
+        for (var r = 0; r < rowCount; ++r) {
+            var h = rowHeightAt(r)
+            if (py < acc + h / 2) return Math.max(headerRows, r)
+            acc += h
+        }
+        return rowCount
+    }
 
     Flickable {
         id: hflick
@@ -539,5 +575,43 @@ Item {
         anchors.right: parent.right
         y: 0; width: 2; height: grid.implicitHeight
         color: Theme.colors.border
+    }
+
+    // --- Inline grip affordances (multi-select 2026-08-21). Painted at
+    // NEGATIVE coords in the block margins — tv doesn't clip (only hflick
+    // does). Geometry mirrors the full-frame grip strips; driven from the
+    // editor's root grip state via the props below.
+    property string gripScope: ""     // "" | "col" | "row" (hover or drag)
+    property int    gripIdx: -1
+    property bool   gripLive: false   // dragging → accent treatment
+    property string gripGapScope: ""  // drop-line during a reorder drag
+    property int    gripGap: -1
+    Rectangle {   // column pill (above the grid, in the block's top margin)
+        visible: tv.gripScope === "col" && tv.gripIdx >= 0 && tv.gripIdx < tv.colCount
+        x: Math.max(0, tv.columnLeftX(tv.gripIdx) - tv.scrollX)
+        width: Math.max(0, Math.min(tv.colW(tv.gripIdx), tv.width - x))
+        y: -13; height: 8; radius: 0; z: 6
+        color: tv.gripLive ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+        border.width: 1; border.color: tv.gripLive ? Theme.colors.accent : Theme.colors.border
+    }
+    Rectangle {   // row pill (left of the grid, in the page margin)
+        visible: tv.gripScope === "row" && tv.gripIdx >= 0 && tv.gripIdx < tv.rowCount
+        x: -13; width: 8
+        y: tv.rowTopY(tv.gripIdx); height: tv.rowHeightAt(tv.gripIdx)
+        radius: 0; z: 6
+        color: tv.gripLive ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+        border.width: 1; border.color: tv.gripLive ? Theme.colors.accent : Theme.colors.border
+    }
+    Rectangle {   // column drop line (reorder drag)
+        visible: tv.gripGapScope === "col" && tv.gripGap >= 0
+        x: Math.max(0, Math.min(tv.width, tv.columnLeftX(tv.gripGap) - tv.scrollX)) - 1
+        y: 0; width: 3; height: tv.height; radius: 0; z: 7
+        color: Theme.colors.accent
+    }
+    Rectangle {   // row drop line
+        visible: tv.gripGapScope === "row" && tv.gripGap >= 0
+        x: 0; y: tv.rowTopY(tv.gripGap) - 1
+        width: tv.width; height: 3; radius: 0; z: 7
+        color: Theme.colors.accent
     }
 }
