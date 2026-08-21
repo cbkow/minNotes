@@ -2979,7 +2979,8 @@ FocusScope {
                     var out = []
                     for (var i = 0; i < ranges.length; ++i) {
                         var rs = root.selectionRects(te, ranges[i].s, ranges[i].e)
-                        for (var j = 0; j < rs.length; ++j) out.push(rs[j])
+                        for (var j = 0; j < rs.length; ++j)
+                            out.push({ r: rs[j], res: ranges[i].resolved === true })
                     }
                     return out
                 }
@@ -2988,12 +2989,15 @@ FocusScope {
                     delegate: Rectangle {
                         required property int index
                         readonly property var cr2: cell.commentRects[index]
-                        color: Qt.rgba(0.004, 0.537, 0.945, 0.14)   // accent, low alpha
+                        // Resolved conversations go quiet: a faint grey wash
+                        // instead of the semantic accent (2026-08-21).
+                        color: cr2.res ? Qt.rgba(0.55, 0.55, 0.55, 0.10)
+                                       : Qt.rgba(0.004, 0.537, 0.945, 0.14)
                         z: 0
-                        x: te.x + cr2.x
-                        y: te.y + cr2.y
-                        width: cr2.width
-                        height: cr2.height
+                        x: te.x + cr2.r.x
+                        y: te.y + cr2.r.y
+                        width: cr2.r.width
+                        height: cr2.r.height
                     }
                 }
 
@@ -5367,10 +5371,21 @@ FocusScope {
             y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY + 2
             // The comment BUBBLE (user ruling 2026-07-12): the margin is real
             // space now, and blue = "a conversation lives here" — one of the
-            // few semantic accent uses.
-            color: pinMA.containsMouse ? Theme.colors.accentHover : Theme.colors.accent
+            // few semantic accent uses. A block whose threads are ALL
+            // resolved goes quiet grey (2026-08-21): the conversation ended.
+            readonly property bool allResolved: {
+                var dep = blockModel.commentsRevision + blockModel.contentRevision
+                var rs = blockModel.commentRangesForRow(prow)
+                if (rs.length === 0) return false
+                for (var i = 0; i < rs.length; ++i)
+                    if (!rs[i].resolved) return false
+                return true
+            }
+            color: allResolved
+                   ? (pinMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.divider)
+                   : (pinMA.containsMouse ? Theme.colors.accentHover : Theme.colors.accent)
             Icon { anchors.centerIn: parent; name: "chat-circle-text"; weight: "fill"; size: 14
-                   color: Theme.colors.textBright }
+                   color: parent.allResolved ? Theme.colors.textMuted : Theme.colors.textBright }
             MouseArea {
                 id: pinMA
                 anchors.fill: parent; hoverEnabled: true

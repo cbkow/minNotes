@@ -3853,12 +3853,20 @@ QVariantList BlockModel::commentRangesForRow(int row) const {
     QVariantList out;
     if (rows_.empty()) return out;
     row = clampRow(row);
+    // Resolved-ness rides along (2026-08-21): the page chip dims for a
+    // settled conversation. One thread fetch per call — the callers are
+    // already gated on commentsRevision, and commented rows are few.
+    QHash<QString, bool> resolvedById;
+    if (doc_.isOpen())
+        for (const auto& t : doc_.commentThreads())
+            resolvedById.insert(t.id, t.resolved);
     for (const Span& sp : rows_[row].spans) {
         if (sp.kind != SpanComment || sp.e <= sp.s) continue;
         QVariantMap m;
         m.insert(QStringLiteral("s"), sp.s);
         m.insert(QStringLiteral("e"), sp.e);
         m.insert(QStringLiteral("id"), sp.href);
+        m.insert(QStringLiteral("resolved"), resolvedById.value(sp.href, false));
         out.append(m);
     }
     return out;
