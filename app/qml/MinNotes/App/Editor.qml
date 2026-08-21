@@ -2749,6 +2749,10 @@ FocusScope {
     readonly property real trueFraction: barFraction
     readonly property int caretRow: cursor.focusRow
     readonly property bool hasSelection: cursor.hasSel
+    // A colour target exists in a table whenever the sub-cursor is live:
+    // the selection when there is one, else the focused cell (the palette's
+    // Apply button reads this).
+    readonly property bool tableFocused: tcur.active
     readonly property string selSummary: cursor.hasSel
         ? ("r" + cursor.loRow + ":" + cursor.loCol + " → r" + cursor.hiRow + ":" + cursor.hiCol
            + "  (" + (cursor.hiRow - cursor.loRow + 1) + " blocks)")

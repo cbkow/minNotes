@@ -829,7 +829,39 @@ Rectangle {
                 Component.onCompleted: panel.setPickerValue(panel.targetColor())   // init: no apply/arm
             }
 
-            // (Apply lives on the left rail's bottom swatches — pick here, apply there.)
+            // Apply: push the picked colour onto the current selection
+            // explicitly (user ruling 2026-08-21). Swatch clicks already
+            // apply live — but a colour picked BEFORE the selection existed
+            // needs this; re-clicking an already-lit swatch reads wrong.
+            // Hidden on the Draw tab (that colour feeds the armed tool).
+            Rectangle {
+                visible: panel.target !== "draw"
+                width: panel.contentW; height: 28
+                readonly property bool canApply: !!panel.editor
+                    && (panel.editor.hasSelection || panel.editor.tableFocused)
+                opacity: canApply ? 1.0 : 0.4          // disabled chrome rule
+                color: applyMA.containsMouse && canApply ? Theme.colors.divider
+                                                         : Theme.colors.surfaceHover
+                Row {
+                    anchors.centerIn: parent; spacing: 6
+                    Rectangle {   // the colour about to land
+                        width: 12; height: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: panel.target === "fg" ? panel.fgColor : panel.bgColor
+                        border.width: 1; border.color: Theme.colors.border
+                    }
+                    Text { text: qsTr("Apply to selection"); color: Theme.colors.text
+                           font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                           anchors.verticalCenter: parent.verticalCenter }
+                }
+                MouseArea { id: applyMA; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: parent.canApply ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: {
+                                if (!parent.canApply) return
+                                if (panel.target === "fg") panel.editor.applyTextColor(panel.fgColor)
+                                else                       panel.editor.applyHighlight(panel.bgColor)
+                            } }
+            }
 
             // Revert: soft grey (brighter than the page, not loud).
             Rectangle {
