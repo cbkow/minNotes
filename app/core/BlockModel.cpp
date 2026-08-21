@@ -694,8 +694,10 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 double BlockModel::mediaDisplayWidth(const Row& r) const {
     if (r.dispW > 0) return r.dispW;
     if (r.isPdf) return contentWidth_;   // fit the page
-    // Sketches ride the image path since the frame became user-sized: natural
-    // (canvas) width up to the page, dw drag-resize honoured like any image.
+    // Sketches FILL the page and TRACK page-width changes (user ruling
+    // 2026-08-21 — illustrations are page furniture, not fixed-px images).
+    // Strokes are normalized, so display scale is exact; dw still overrides.
+    if (r.isSketch) return contentWidth_;
     if (r.mediaW > 0) return std::min<double>(contentWidth_, r.mediaW);
     return contentWidth_;
 }
@@ -2251,12 +2253,14 @@ QStringList BlockModel::sketchBlockIds() const {
 int BlockModel::insertSketch(int afterRow) {
   return insertReplacingEmpty(afterRow, [&](int after) {
     const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
-    // Default canvas: square, 480 source px (ruling 2026-06-11). Strokes are
-    // normalized [0,1] of that square — QCView's exact stroke schema, so the
-    // one engine serializes/renders sketches and video notes alike.
+    // Default canvas: PAGE-width × 480 source px (amends the square-480
+    // ruling, 2026-08-21 — illustrations arrive full width, and exports
+    // rasterize at page resolution). Strokes are normalized [0,1] of the
+    // canvas — QCView's exact stroke schema, so the one engine
+    // serializes/renders sketches and video notes alike.
     QJsonObject root;
     root.insert(QStringLiteral("kind"), QStringLiteral("sketch"));
-    root.insert(QStringLiteral("w"), 480);
+    root.insert(QStringLiteral("w"), std::max(480, int(std::lround(pageWidth_))));
     root.insert(QStringLiteral("h"), 480);
     root.insert(QStringLiteral("version"), QStringLiteral("2.0"));
     root.insert(QStringLiteral("coordinate_system"), QStringLiteral("normalized"));

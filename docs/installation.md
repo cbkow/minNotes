@@ -19,13 +19,11 @@ Download the latest release from the
 Open the `.dmg` and drag **minNotes** to Applications. The app is signed
 and notarized — it launches without warnings, online or off.
 
-![macOS install window](images/mn002.png)
 
 ## Windows
 
 Run the installer and follow the prompts.
 
-![Windows installer](images/mn003.png)
 
 > Windows may show a SmartScreen prompt on first run — the installer is not
 > Authenticode-signed. Choose **More info → Run anyway**.

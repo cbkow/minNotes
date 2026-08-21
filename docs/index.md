@@ -9,10 +9,9 @@ nav_order: 1
 
 ![minNotes main window](images/mn001.png)
 
-**minNotes** is a fast, block-based notes editor for macOS and Windows, built
-for artists and post-production teams. Notes are plain SQLite files
+**minNotes** is a fast, block-based notes editor for macOS and Windows with rich media support (images, PDFS, videos). It supports basic Markdown syntax for input. Notes are plain SQLite files
 (`.mndb`) you can keep anywhere — local disk, a network share, Dropbox,
-LucidLink — and open on either platform.
+LucidLink — and open on either platform and dodge some typical file-locking issues with team usage and shared storage.
 
 ---
 

@@ -856,8 +856,9 @@ static void testSketchResizeRenorm() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0); m.setContent(0, QStringLiteral("para"));
     const int row = m.insertSketch(0);
-    CHECK(row == 1 && m.mediaW(row) == 480 && m.mediaH(row) == 480,
-          "insertSketch seeds a 480x480 canvas at row 1");
+    CHECK(row == 1 && m.mediaW(row) == 760 && m.mediaH(row) == 480,
+          "insertSketch seeds a page-width x 480 canvas (2026-08-21 ruling)");
+    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 0);   // classic 480x480 fixture
 
     // Freehand (positions) + oval (center = position, radii = scale-only).
     m.sketchSetShapes(row, QStringLiteral(
@@ -964,6 +965,7 @@ static void testSketchExportCaps() {
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     const int row = m.insertSketch(-1);
+    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 480 - m.mediaH(row));   // classic 480x480 fixture
     m.sketchSetShapes(row, QStringLiteral(
         "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
         "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
@@ -1003,6 +1005,7 @@ static void testSketchExportCaps() {
         tm.newDocument();
         while (tm.rowCountQml() > 0) tm.removeBlock(0);
         const int trow = tm.insertSketch(-1);
+        tm.sketchResizeCanvas(trow, 0, 0, 480 - tm.mediaW(trow), 480 - tm.mediaH(trow));
         tm.sketchAddText(trow, 0.1, 0.1, 0.5, QStringLiteral("baked label"), 32,
                          QStringLiteral("#FFFFFF"));
         Exporter tex;
@@ -1029,6 +1032,7 @@ static void testSketchFitToInk() {
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     const int row = m.insertSketch(-1);
+    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 480 - m.mediaH(row));   // classic 480x480 fixture
 
     CHECK(!m.sketchFitToInk(row), "empty sketch: fit is a no-op (false)");
 
@@ -1071,6 +1075,7 @@ static void testSketchTextElements() {
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     const int row = m.insertSketch(-1);
+    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 480 - m.mediaH(row));   // classic 480x480 fixture
     auto texts = [&m, row] {
         return QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
             .value(QStringLiteral("texts")).toArray();
@@ -1176,17 +1181,18 @@ static void testSketchEmbedWidth() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     const int row = m.insertSketch(-1);
     m.setContentWidth(760.0);
-    CHECK(m.mediaDispWidth(row) == 480,
-          "480 canvas embeds at natural 480, not page-wide (got %d)",
-          m.mediaDispWidth(row));
-    m.sketchResizeCanvas(row, 0, 0, 1520, 0);   // → 2000 wide
     CHECK(m.mediaDispWidth(row) == 760,
-          "2000 canvas caps at the page measure (got %d)", m.mediaDispWidth(row));
+          "sketches fill the page (2026-08-21 ruling; got %d)",
+          m.mediaDispWidth(row));
+    m.setContentWidth(1200.0);
+    CHECK(m.mediaDispWidth(row) == 1200,
+          "and TRACK page-width changes (got %d)", m.mediaDispWidth(row));
+    m.setContentWidth(760.0);
     m.setMediaWidth(row, 900);
     CHECK(m.mediaDispWidth(row) == 900,
           "dw override honoured past the page (got %d)", m.mediaDispWidth(row));
     m.setMediaWidth(row, 0);
-    CHECK(m.mediaDispWidth(row) == 760, "dw reset returns to the default");
+    CHECK(m.mediaDispWidth(row) == 760, "dw reset returns to page-fill");
 }
 
 // --- Test 16: doc-ink text chips — envelope round-trip + export presence ----
