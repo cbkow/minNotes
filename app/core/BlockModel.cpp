@@ -1011,6 +1011,14 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         auto it = measuredById.constFind(ids_[i]);
         if (!replaced && rows_[i].measured && it != measuredById.constEnd()) {
             heights.push_back(it.value());                       // untouched → keep its real height
+        } else if (rows_[i].type == Media) {
+            // Media heights are ESTIMATE-authoritative — the delegate never
+            // measures them back, so seeding the pre-reset height would
+            // freeze a stale size after an undone resize (dw reverted, row
+            // still at the resized height; user-caught 2026-08-21). The
+            // estimate reflects the restored descriptor via fillMediaMeta.
+            rows_[i].measured = false;
+            heights.push_back(estimatedHeight(rows_[i]));
         } else {
             rows_[i].measured = false;                           // changed/new → re-measure
             auto hit = heightById.constFind(ids_[i]);
@@ -1045,7 +1053,11 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         // Keep the CURRENT fenwick height (2026-08-20): same id, in-place
         // content swap — the standing height is a far better guess than a
         // media-blind estimate, and `measured=false` above lets any real
-        // height change re-report through the normal chain.
+        // height change re-report through the normal chain. EXCEPT media
+        // rows (2026-08-21): they never measure back — the estimate is
+        // authoritative and must re-derive from the restored descriptor.
+        if (r.type == Media)
+            fenwick_.setHeight(static_cast<size_t>(p.row), estimatedHeight(r));
         if (doc_.isOpen()) {
             doc_.updateContent(s.id, s.content);
             doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),

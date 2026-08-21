@@ -4104,6 +4104,7 @@ static void testTableBulkOps() {
         img.mediaJson = QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":40,\"h\":30}");
         m.insertSpecs(0, {img}, false);
         const int mr = 1;
+        const double h0 = m.heightForRow(mr);
         const int entries = m.undoHistory().size();
         m.setMediaWidth(mr, 300);
         m.setMediaWidth(mr, 400);
@@ -4114,9 +4115,21 @@ static void testTableBulkOps() {
         CHECK(m.undoHistory().last().toMap().value("label").toString()
                   == QStringLiteral("Resize"),
               "the run is labeled Resize in the history");
+        const double h500 = m.heightForRow(mr);
+        CHECK(h500 > h0 + 1, "the resize grew the row (estimate-derived)");
         m.undo();
         CHECK(!m.contentForRow(mr).contains(QStringLiteral("\"dw\"")),
               "one undo returns to the pre-run (intrinsic) size");
+        // Media heights are estimate-authoritative (never measured back) —
+        // the undo must RE-DERIVE the height, not seed the stale one
+        // (user-caught 2026-08-21).
+        CHECK(std::abs(m.heightForRow(mr) - h0) < 1.0,
+              "undo re-derives the media row height (%.0f -> %.0f)",
+              h500, m.heightForRow(mr));
+        m.redo();
+        CHECK(std::abs(m.heightForRow(mr) - h500) < 1.0,
+              "redo re-derives it forward again");
+        m.undo();
         // Cell image: same rule through mutateTable's coalesce.
         const int t2 = t + 1;   // the table shifted down by the inserted media row
         m.tableSetCellMedia(t2, 1, 1,
