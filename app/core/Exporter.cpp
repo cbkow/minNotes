@@ -2297,11 +2297,25 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
     w.writeEndElement();
     w.writeEndElement();
     // Authored column widths carry through (px → dxa ≈ ×15); auto = 2000.
+    // Normalized to the printable page (≈9360 dxa, letter with 1" margins)
+    // when they'd overflow — a 26-column sheet import was a 90cm table.
+    std::vector<double> colDxa(size_t(cols), 0.0);
+    {
+        double total = 0;
+        for (int cix = 0; cix < cols; ++cix) {
+            const int px = m->tableColWidth(row, cix);
+            colDxa[size_t(cix)] = px > 0 ? px * 15.0 : 2000.0;
+            total += colDxa[size_t(cix)];
+        }
+        constexpr double kPageDxa = 9360.0;
+        if (total > kPageDxa)
+            for (double& d : colDxa) d *= kPageDxa / total;
+    }
     w.writeStartElement(QStringLiteral("w:tblGrid"));
     for (int cix = 0; cix < cols; ++cix) {
-        const int px = m->tableColWidth(row, cix);
         w.writeStartElement(QStringLiteral("w:gridCol"));
-        w.writeAttribute(QStringLiteral("w:w"), QString::number(px > 0 ? px * 15 : 2000));
+        w.writeAttribute(QStringLiteral("w:w"),
+                         QString::number(int(colDxa[size_t(cix)])));
         w.writeEndElement();
     }
     w.writeEndElement();
@@ -2339,11 +2353,11 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
             if (kind == 0 && !m->tableCellMedia(row, r, cix).isEmpty()) {
                 const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
                 if (!img.isNull() && img.width() > 0) {
-                    const int colW = m->tableColWidth(row, cix);
                     const int dwOv = m->tableCellMediaDw(row, r, cix);
                     double dispW = dwOv > 0 ? dwOv : img.width();
+                    // Cap to the (normalized) cell width, dxa → px.
                     dispW = std::min(dispW,
-                                     colW > 0 ? std::max(40.0, colW - 12.0) : 220.0);
+                                     std::max(8.0, colDxa[size_t(cix)] / 15.0 - 10.0));
                     docxImagePara(c, w, docxAddImage(c, img),
                                   int(dispW),
                                   int(dispW * img.height() / double(img.width())));
