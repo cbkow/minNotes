@@ -2491,7 +2491,11 @@ FocusScope {
             event.accepted = true
         }
         // Insert an inline choice chip (DT-2, ⌥⌘C) — same document-view gate.
-        else if (cmd && (event.modifiers & Qt.AltModifier) && k === Qt.Key_C
+        // macOS trap (user-caught 2026-08-21): with Option held, Qt often
+        // reports the OPTION-LAYER character — ⌥C arrives as Key_Ccedilla
+        // ("ç") on many layouts — so match both.
+        else if (cmd && (event.modifiers & Qt.AltModifier)
+                 && (k === Qt.Key_C || k === Qt.Key_Ccedilla)
                  && root.activeFrameId === "" && !root.inkMode) {
             root.insertChoiceChip()
             event.accepted = true

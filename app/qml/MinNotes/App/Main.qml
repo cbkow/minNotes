@@ -1089,6 +1089,9 @@ ApplicationWindow {
                 title: qsTr("Document")
                 Platform.MenuItem { text: qsTr("Copy as Markdown"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen
                                     onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
+                Platform.MenuItem { text: qsTr("Insert Choice Chip"); role: Platform.MenuItem.NoRole
+                                    shortcut: "Ctrl+Alt+C"; enabled: blockModel.documentOpen
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.insertChoiceChip() } }
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Collect Media…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
                 Platform.MenuItem { text: qsTr("Reveal Media Folder"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
@@ -1180,6 +1183,8 @@ ApplicationWindow {
                 title: qsTr("&Document")
                 Action { text: qsTr("Copy as &Markdown"); enabled: blockModel.documentOpen
                          onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
+                Action { text: qsTr("&Insert Choice Chip"); enabled: blockModel.documentOpen
+                         onTriggered: { var ed = win._editor(); if (ed) ed.insertChoiceChip() } }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Collect Media…"); enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
                 Action { text: qsTr("&Reveal Media Folder"); enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
