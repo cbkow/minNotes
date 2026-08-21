@@ -1170,11 +1170,14 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
     // table-layout:fixed so the widths are exact (content wraps inside,
     // matching the app), not just minimums.
     //
-    // Page-width cap (user ruling 2026-08-20, the PDF/DOCX rule): when the
-    // authored/default widths would overflow the page column, the table
-    // goes width:100% + table-layout:fixed with PERCENTAGE shares — text
-    // wraps inside (td overflow-wrap) and cell images clamp (the global
-    // img max-width) instead of the table running off the page.
+    // Viewport cap (user rulings 2026-08-20): a table wider than the page
+    // column keeps its FULL authored width — the in-app extend-past-the-page
+    // behavior; HTML has a whole viewport to spend, and squeezing 26 columns
+    // into the page measure leaves no room for copy. It only shrinks when
+    // the BROWSER is narrower than the table: width:min(authored, viewport
+    // minus the page's left offset), table-layout:fixed + percentage shares,
+    // so text wraps inside (td overflow-wrap) and cell images clamp (the
+    // global img max-width) instead of the page scrolling sideways.
     QString colTags;
     int authored = 0;
     double total = 0;
@@ -1197,7 +1200,10 @@ QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
             colTags += QStringLiteral("<col style=\"width:%1%\">")
                            .arg((w > 0 ? w : 160.0) / total * 100.0, 0, 'f', 2);
         }
-        out = QStringLiteral("<table style=\"table-layout:fixed;width:100%\">");
+        // 152 = main's 120px left padding + 32px right breathing room.
+        out = QStringLiteral(
+            "<table style=\"table-layout:fixed;width:min(%1px,calc(100vw - 152px))\">")
+                  .arg(int(total));
         out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
     } else {
         out = (authored == cols && authored > 0)

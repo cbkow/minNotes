@@ -3949,10 +3949,11 @@ static void testCellMediaExports() {
     {
         QFile f(htmlPath); f.open(QIODevice::ReadOnly);
         const QString html = QString::fromUtf8(f.readAll());
-        CHECK(html.contains(QStringLiteral("table-layout:fixed;width:100%"))
+        CHECK(html.contains(QStringLiteral(
+                  "table-layout:fixed;width:min(1200px,calc(100vw - 152px))"))
                   && html.contains(QStringLiteral("width:75.00%"))
                   && html.contains(QStringLiteral("width:25.00%")),
-              "over-wide table normalized to percentage shares");
+              "over-wide table keeps its full width, viewport-capped + shares");
     }
     m.tableSetColWidth(tRow, 0, 0);
     m.tableSetColWidth(tRow, 1, 0);
