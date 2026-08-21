@@ -3041,6 +3041,31 @@ void pdfTable(PdfCtx& c, int row) {
     tf.setCellSpacing(0);
     tf.setHeaderRowCount(m->tableHeaderRows(row));   // repeats across page splits
     tf.setTopMargin(6); tf.setBottomMargin(6);
+    // Real column constraints: authored widths (160 when auto), normalized
+    // to the content width. Without them Qt distributes by content whim AND
+    // an image wider than its actual cell gets width-clamped by the layout
+    // while keeping the explicit height — squeezed aspect + paint bleeding
+    // over the rows below (user PDF, 2026-08-20). colWpt below is the true
+    // per-column budget the cell images cap against.
+    std::vector<qreal> colWpt(size_t(cols), 0.0);
+    {
+        qreal total = 0;
+        for (int cix = 0; cix < cols; ++cix) {
+            const int px = m->tableColWidth(row, cix);
+            colWpt[size_t(cix)] = px > 0 ? px : 160.0;
+            total += colWpt[size_t(cix)];
+        }
+        const qreal scale = (total > c.contentW) ? c.contentW / total : 1.0;
+        QList<QTextLength> cons;
+        cons.reserve(cols);
+        for (int cix = 0; cix < cols; ++cix) {
+            colWpt[size_t(cix)] *= scale;
+            // Layout units, NOT image-format units — only QTextImageFormat
+            // sizes carry the imgFmt dpi pre-multiplier.
+            cons.append(QTextLength(QTextLength::FixedLength, colWpt[size_t(cix)]));
+        }
+        tf.setColumnWidthConstraints(cons);
+    }
     if (c.first) { c.first = false; }
     QTextTable* t = c.cur.insertTable(rows, cols, tf);
     const int hdr = m->tableHeaderRows(row);
@@ -3073,11 +3098,14 @@ void pdfTable(PdfCtx& c, int row) {
                 if (!m->tableCellMedia(row, r, cix).isEmpty()) {
                     const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
                     if (!img.isNull() && img.width() > 0) {
-                        const int colW = m->tableColWidth(row, cix);
                         const int dwOv = m->tableCellMediaDw(row, r, cix);
                         qreal dispW = dwOv > 0 ? dwOv : img.width();
-                        dispW = std::min<qreal>(dispW,
-                            colW > 0 ? std::max(40.0, colW - 12.0) : 200.0);
+                        // Cap to the cell's TRUE width (the constraint above,
+                        // minus padding+border) — an image wider than its
+                        // cell gets width-clamped by the layout while the
+                        // explicit height stays → squeezed + overlap.
+                        dispW = std::min(dispW,
+                                         std::max(8.0, colWpt[size_t(cix)] - 10.0));
                         qreal dispH = dispW * img.height() / qreal(img.width());
                         // A cell is a single layout line — keep the image
                         // safely inside one page (the pdfInsertImage rule).

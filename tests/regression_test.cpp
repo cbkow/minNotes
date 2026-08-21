@@ -3868,21 +3868,27 @@ static void testCellMediaExports() {
     QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_cellexp"));
     dir.removeRecursively();
     QDir().mkpath(dir.absolutePath());
+    // A WIDE image (the video-poster shape) — wider than its PDF cell will
+    // be, so the width-clamp/overlap regression (user PDF 2026-08-20) is in
+    // play, in a many-column table with same-cell text + rows below it.
     const QString extPic = dir.filePath(QStringLiteral("cellpic.png"));
-    { QImage img(24, 16, QImage::Format_RGB32); img.fill(QColor(255, 0, 200));
+    { QImage img(1600, 900, QImage::Format_RGB32); img.fill(QColor(255, 0, 200));
       img.save(extPic, "PNG"); }
 
     BlockModel m;
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0); m.setContent(0, QStringLiteral("cells"));
-    const int tRow = m.insertTable(0, 2, 2);
+    const int tRow = m.insertTable(0, 4, 6);
     m.tableSetCell(tRow, 0, 0, QStringLiteral("head"));
     m.tableSetCellMedia(tRow, 1, 0,
-        QStringLiteral("{\"src\":\"%1\",\"w\":24,\"h\":16}").arg(extPic));
+        QStringLiteral("{\"src\":\"%1\",\"w\":1600,\"h\":900}").arg(extPic));
+    m.tableSetCell(tRow, 1, 0, QStringLiteral("caption under the shot"));
     m.tableSetCellMedia(tRow, 0, 1,   // SAME source again → must not duplicate
-        QStringLiteral("{\"src\":\"%1\",\"w\":24,\"h\":16}").arg(extPic));
+        QStringLiteral("{\"src\":\"%1\",\"w\":1600,\"h\":900}").arg(extPic));
     m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
+    m.tableSetCell(tRow, 2, 0, QStringLiteral("row below"));
+    m.tableSetCell(tRow, 3, 0, QStringLiteral("last row"));
     Exporter ex;
     ex.setModel(&m);
 
@@ -3942,7 +3948,7 @@ static void testCellMediaExports() {
         CHECK(hits >= 20, "cell image pixels present on the PDF page");
     }
     m.closeDocument();
-    dir.removeRecursively();
+    if (qEnvironmentVariable("MN_CELL_KEEP").isEmpty()) dir.removeRecursively();
 }
 
 int main(int argc, char** argv) {
