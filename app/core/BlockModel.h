@@ -486,6 +486,27 @@ public:
     Q_INVOKABLE QString tableRangeHtml(int row, int r0, int c0, int r1, int c1) const;
     // Clear every cell in an inclusive range (one undo step).
     Q_INVOKABLE void tableClearRange(int row, int r0, int c0, int r1, int c1);
+    // --- Bulk ops over SELECTION SETS (table multi-select, 2026-08-21).
+    // Each runs as ONE mutateTable lambda = one undo entry, one reserialize;
+    // index lists may arrive in any order with duplicates (normalized inside;
+    // deletes run descending so indices stay valid). "Clear" = contents
+    // (text/spans/media/choice) — colours are formatting and stay.
+    Q_INVOKABLE void tableDeleteRows(int row, const QVariantList& rows);
+    Q_INVOKABLE void tableDeleteColumns(int row, const QVariantList& cols);
+    Q_INVOKABLE void tableClearRows(int row, const QVariantList& rows);
+    Q_INVOKABLE void tableClearColumns(int row, const QVariantList& cols);
+    Q_INVOKABLE void tableSetRowsColor(int row, const QVariantList& rows,
+                                       bool fg, const QString& color);
+    Q_INVOKABLE void tableSetColsColor(int row, const QVariantList& cols,
+                                       bool fg, const QString& color);
+    Q_INVOKABLE void tableSetColsAlign(int row, const QVariantList& cols, int a);
+    Q_INVOKABLE void tableSetColumnsKind(int row, const QVariantList& cols, int kind);
+    // Clipboard readers for row/column sets: members emitted in ASCENDING
+    // index order regardless of selection order.
+    Q_INVOKABLE QString tableRowsTSV(int row, const QVariantList& rows) const;
+    Q_INVOKABLE QString tableRowsHtml(int row, const QVariantList& rows) const;
+    Q_INVOKABLE QString tableColsTSV(int row, const QVariantList& cols) const;
+    Q_INVOKABLE QString tableColsHtml(int row, const QVariantList& cols) const;
     // Ordered block ids of every table in the document (for the table-tab strip).
     Q_INVOKABLE QStringList tableBlockIds() const;
     // Ordered block ids of every inline PDF (for the PDF full-page tab strip).

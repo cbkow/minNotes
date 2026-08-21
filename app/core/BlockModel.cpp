@@ -2050,6 +2050,158 @@ void BlockModel::tableClearRange(int row, int r0, int c0, int r1, int c1) {
     });
 }
 
+// ---- Bulk ops over selection sets (table multi-select, 2026-08-21) --------
+
+namespace {
+// QML index list → sorted unique ints (ascending). Any order, dupes fine.
+std::vector<int> sortedIndexSet(const QVariantList& in) {
+    std::vector<int> v;
+    v.reserve(size_t(in.size()));
+    for (const QVariant& x : in) v.push_back(x.toInt());
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    return v;
+}
+// Contents wipe: text/spans/media/choice go, colours (formatting) stay.
+void clearCellContents(TableGrid& g, int r, int c) {
+    g.setCellText(r, c, QString());
+    g.setCellSpans(r, c, QJsonArray());
+    g.setCellMedia(r, c, QString());
+    g.setCellChoice(r, c, QString());
+}
+} // namespace
+
+void BlockModel::tableDeleteRows(int row, const QVariantList& rows) {
+    const std::vector<int> set = sortedIndexSet(rows);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (auto it = set.rbegin(); it != set.rend(); ++it)   // descending: indices stay valid
+            g.deleteRow(*it);                                   // floors at 1 row
+    });
+}
+void BlockModel::tableDeleteColumns(int row, const QVariantList& cols) {
+    const std::vector<int> set = sortedIndexSet(cols);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (auto it = set.rbegin(); it != set.rend(); ++it)
+            g.deleteCol(*it);                                   // floors at 1 col
+    });
+}
+void BlockModel::tableClearRows(int row, const QVariantList& rows) {
+    const std::vector<int> set = sortedIndexSet(rows);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (int r : set)
+            for (int c = 0; c < g.cols(); ++c) clearCellContents(g, r, c);
+    });
+}
+void BlockModel::tableClearColumns(int row, const QVariantList& cols) {
+    const std::vector<int> set = sortedIndexSet(cols);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (int c : set)
+            for (int r = 0; r < g.rows(); ++r) clearCellContents(g, r, c);
+    });
+}
+void BlockModel::tableSetRowsColor(int row, const QVariantList& rows,
+                                   bool fg, const QString& color) {
+    const std::vector<int> set = sortedIndexSet(rows);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (int r : set) fg ? g.setRowFg(r, color) : g.setRowBg(r, color);
+    });
+}
+void BlockModel::tableSetColsColor(int row, const QVariantList& cols,
+                                   bool fg, const QString& color) {
+    const std::vector<int> set = sortedIndexSet(cols);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (int c : set) fg ? g.setColFg(c, color) : g.setColBg(c, color);
+    });
+}
+void BlockModel::tableSetColsAlign(int row, const QVariantList& cols, int a) {
+    const std::vector<int> set = sortedIndexSet(cols);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (int c : set) g.setColAlign(c, a);
+    });
+}
+void BlockModel::tableSetColumnsKind(int row, const QVariantList& cols, int kind) {
+    const std::vector<int> set = sortedIndexSet(cols);
+    if (set.empty()) return;
+    mutateTable(row, [&](TableGrid& g) {
+        for (int c : set) g.setColKind(c, kind);   // per-column cell wipe, as single-kind does
+    });
+}
+
+QString BlockModel::tableRowsTSV(int row, const QVariantList& rows) const {
+    if (rowAt(row).type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    const std::vector<int> set = sortedIndexSet(rows);
+    QString out;
+    bool firstRow = true;
+    for (int r : set) {
+        if (r < 0 || r >= g.rows()) continue;
+        if (!firstRow) out += QLatin1Char('\n');
+        firstRow = false;
+        for (int c = 0; c < g.cols(); ++c) {
+            if (c > 0) out += QLatin1Char('\t');
+            QString t = g.cellDisplay(r, c);
+            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            out += t;
+        }
+    }
+    return out;
+}
+QString BlockModel::tableRowsHtml(int row, const QVariantList& rows) const {
+    if (rowAt(row).type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    const std::vector<int> set = sortedIndexSet(rows);
+    QString out = QStringLiteral("<table>");
+    for (int r : set) {
+        if (r < 0 || r >= g.rows()) continue;
+        out += QStringLiteral("<tr>");
+        for (int c = 0; c < g.cols(); ++c)
+            out += QStringLiteral("<td>") + g.cellDisplay(r, c).toHtmlEscaped() + QStringLiteral("</td>");
+        out += QStringLiteral("</tr>");
+    }
+    return out + QStringLiteral("</table>");
+}
+QString BlockModel::tableColsTSV(int row, const QVariantList& cols) const {
+    if (rowAt(row).type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    const std::vector<int> set = sortedIndexSet(cols);
+    QString out;
+    for (int r = 0; r < g.rows(); ++r) {
+        if (r > 0) out += QLatin1Char('\n');
+        bool firstCol = true;
+        for (int c : set) {
+            if (c < 0 || c >= g.cols()) continue;
+            if (!firstCol) out += QLatin1Char('\t');
+            firstCol = false;
+            QString t = g.cellDisplay(r, c);
+            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            out += t;
+        }
+    }
+    return out;
+}
+QString BlockModel::tableColsHtml(int row, const QVariantList& cols) const {
+    if (rowAt(row).type != Table) return {};
+    const TableGrid& g = gridFor(row);
+    const std::vector<int> set = sortedIndexSet(cols);
+    QString out = QStringLiteral("<table>");
+    for (int r = 0; r < g.rows(); ++r) {
+        out += QStringLiteral("<tr>");
+        for (int c : set) {
+            if (c < 0 || c >= g.cols()) continue;
+            out += QStringLiteral("<td>") + g.cellDisplay(r, c).toHtmlEscaped() + QStringLiteral("</td>");
+        }
+        out += QStringLiteral("</tr>");
+    }
+    return out + QStringLiteral("</table>");
+}
+
 QStringList BlockModel::tableBlockIds() const {
     QStringList out;
     for (size_t i = 0; i < rows_.size(); ++i)

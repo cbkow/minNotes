@@ -122,10 +122,12 @@ public:
 
     static TableGrid makeEmpty(int rows, int cols);
     bool isValid() const { return cols_ > 0 && !cells_.empty(); }
+    // Flattened text for export/clipboard (resolves choice/check). Public
+    // since the bulk-selection readers (2026-08-21).
+    QString cellDisplay(int r, int c) const;
 
 private:
     void normalize();                       // pad/trim every row to cols_, size meta vectors
-    QString cellDisplay(int r, int c) const;   // flattened text for export (resolves choice/check)
 
     std::vector<std::vector<Cell>> cells_;  // cells_[row][col]
     int cols_ = 0;

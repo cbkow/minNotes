@@ -4001,6 +4001,104 @@ static void testCellMediaExports() {
     if (qEnvironmentVariable("MN_CELL_KEEP").isEmpty()) dir.removeRecursively();
 }
 
+// --- Test 43: table bulk ops over selection sets ---------------------------
+// Every bulk invokable = ONE mutateTable lambda = ONE undo entry; index
+// lists arrive unordered with dupes; deletes run descending; clear = contents
+// only (colours stay); TSV/Html readers emit ascending order.
+static void testTableBulkOps() {
+    qInfo("[43] table bulk ops: sets, one entry each, descending deletes");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    const int t = m.insertTable(0, 5, 3);
+    for (int r = 0; r < 5; ++r)
+        for (int c = 0; c < 3; ++c)
+            m.tableSetCell(t, r, c, QStringLiteral("r%1c%2").arg(r).arg(c));
+
+    // NOTE on entry counting: undoHistory() is the ACTIVE PATH of the undo
+    // tree — pushing after an undo collapses the redoable tail, so the size
+    // is only a push-counter at a clean leaf. Count once there; every other
+    // section proves the real guarantee semantically (ONE undo restores all).
+
+    // Readers first (pristine 5x3): ascending order, column subsets.
+    CHECK(m.tableRowsTSV(t, {4, 0}) ==
+              QStringLiteral("r0c0\tr0c1\tr0c2\nr4c0\tr4c1\tr4c2"),
+          "rowsTSV ascending");
+    CHECK(m.tableColsTSV(t, {2, 0}).startsWith(QStringLiteral("r0c0\tr0c2\n")),
+          "colsTSV column subset per row");
+    CHECK(m.tableRowsHtml(t, {1}).contains(QStringLiteral("<td>r1c1</td>"))
+              && m.tableColsHtml(t, {1}).contains(QStringLiteral("<td>r3c1</td>")),
+          "html readers emit the members");
+
+    // Rows colour: the one clean-leaf entry count + members only.
+    {
+        const int entries = m.undoHistory().size();
+        m.tableSetRowsColor(t, {1, 3}, /*fg*/false, QStringLiteral("#224466"));
+        CHECK(m.undoHistory().size() == entries + 1
+                  && m.tableRowBg(t, 1) == QStringLiteral("#224466")
+                  && m.tableRowBg(t, 3) == QStringLiteral("#224466")
+                  && m.tableRowBg(t, 2).isEmpty(),
+              "rows colour: one entry, members only");
+        m.undo();
+        CHECK(m.tableRowBg(t, 1).isEmpty(), "one undo clears both rows");
+    }
+    // Cols align + cols kind: members only, one undo reverts each fully.
+    {
+        m.tableSetColsAlign(t, {0, 2}, 2);
+        CHECK(m.tableColAlign(t, 0) == 2 && m.tableColAlign(t, 2) == 2
+                  && m.tableColAlign(t, 1) == 0,
+              "cols align: members only");
+        m.undo();
+        CHECK(m.tableColAlign(t, 0) == 0 && m.tableColAlign(t, 2) == 0,
+              "one undo reverts both aligns");
+        m.tableSetColumnsKind(t, {1, 2}, 2);
+        CHECK(m.tableColumnKind(t, 1) == 2 && m.tableColumnKind(t, 2) == 2
+                  && m.tableColumnKind(t, 0) == 0
+                  && m.tableCell(t, 1, 0) == QStringLiteral("r1c0"),
+              "cols kind: members converted, text column's cells untouched");
+        m.undo();
+        CHECK(m.tableColumnKind(t, 1) == 0 && m.tableColumnKind(t, 2) == 0,
+              "one undo reverts both kinds");
+    }
+    // Clear rows: contents (text/media/choice) go, colours stay.
+    {
+        m.tableSetCellColor(t, 1, 1, 1, 1, /*fg*/false, QStringLiteral("#aa3355"));
+        m.tableSetCellMedia(t, 2, 0,
+            QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":4,\"h\":4}"));
+        const QString withFixtures = m.contentForRow(t);
+        m.tableClearRows(t, {1, 2});
+        CHECK(m.tableCell(t, 1, 1).isEmpty() && m.tableCell(t, 2, 0).isEmpty()
+                  && m.tableCellMedia(t, 2, 0).isEmpty()
+                  && m.tableCellBg(t, 1, 1) == QStringLiteral("#aa3355")
+                  && m.tableCell(t, 0, 0) == QStringLiteral("r0c0"),
+              "clearRows: contents cleared, colour stays, non-members untouched");
+        m.undo();
+        CHECK(m.contentForRow(t) == withFixtures,
+              "one undo restores every cleared cell");
+    }
+    // Delete a disjoint, UNORDERED, duped set → survivors keep identity.
+    {
+        const QString pre = m.contentForRow(t);
+        m.tableDeleteRows(t, {3, 1, 3});
+        CHECK(m.tableRows(t) == 3
+                  && m.tableCell(t, 0, 0) == QStringLiteral("r0c0")
+                  && m.tableCell(t, 1, 0) == QStringLiteral("r2c0")
+                  && m.tableCell(t, 2, 0) == QStringLiteral("r4c0"),
+              "descending delete: survivors keep identity");
+        m.undo();
+        CHECK(m.contentForRow(t) == pre, "one undo restores the whole delete");
+    }
+    // Column floor: deleting every column leaves one.
+    {
+        m.tableDeleteColumns(t, {0, 1, 2});
+        CHECK(m.tableColumns(t) == 1, "delete-all-columns floors at 1");
+        m.undo();
+        CHECK(m.tableColumns(t) == 3, "undo restores the columns");
+    }
+    m.closeDocument();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -4060,6 +4158,7 @@ int main(int argc, char** argv) {
     testMergeEngine();
     testMergeAssetsAndEdges();
     testCellMediaExports();
+    testTableBulkOps();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
