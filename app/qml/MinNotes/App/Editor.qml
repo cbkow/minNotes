@@ -3088,9 +3088,9 @@ FocusScope {
 
                 // Inline choice chips (DT-2, 2026-08-20): the table chip's
                 // language — option colour at 0.28 fill, 0.55 border — drawn
-                // as overlay rects with the code-chip pad (overlays can't
-                // reserve layout width; snug is the precedent). The label is
-                // the block's own text; this is only the pill behind it.
+                // as overlay rects (overlays can't reserve layout width).
+                // The label is the block's own text; this is only the pill
+                // behind it.
                 property var choiceRects: {
                     var dep = blockModel.contentRevision + blockModel.layoutRevision
                     if (!cell.active || cell.isMedia) return []
@@ -3115,9 +3115,12 @@ FocusScope {
                         border.color: Qt.rgba(oc.r, oc.g, oc.b, 0.55)
                         radius: 0
                         z: 0
-                        x: te.x + cr.r.x - 2
+                        // 4px pad each side (2026-08-21): the pill can't reserve
+                        // layout width, so this rides under any directly-adjacent
+                        // glyph — acceptable for the breathing room.
+                        x: te.x + cr.r.x - 4
                         y: te.y + cr.r.y
-                        width: cr.r.width + 4
+                        width: cr.r.width + 8
                         height: cr.r.height
                     }
                 }
