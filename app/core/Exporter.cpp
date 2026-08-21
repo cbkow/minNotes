@@ -681,11 +681,18 @@ public:
 
     QString addFile(const QString& srcPath, const QString& baseName) override {
         if (!QFileInfo::exists(srcPath) || !ensureDir()) return {};
+        // One source, one copy: the same image in ten table cells (or a cell
+        // AND a block) must not land ten -2/-3 duplicates in .assets.
+        const QString key = QFileInfo(srcPath).canonicalFilePath();
+        const auto it = bySrc_.constFind(key);
+        if (it != bySrc_.constEnd()) return it.value();
         const QString name = unique(baseName, QFileInfo(srcPath).suffix());
         const QString dst = parent_ + QLatin1Char('/') + dirName_ + QLatin1Char('/') + name;
         QFile::remove(dst);
         if (!QFile::copy(srcPath, dst)) return {};
-        return dirName_ + QLatin1Char('/') + name;
+        const QString rel = dirName_ + QLatin1Char('/') + name;
+        bySrc_.insert(key, rel);
+        return rel;
     }
     QString addImage(const QImage& img, const QString& baseName) override {
         if (img.isNull() || !ensureDir()) return {};
@@ -712,6 +719,7 @@ private:
         used_.insert(name);
         return name;
     }
+    QHash<QString, QString> bySrc_;   // canonical source path → emitted rel
     QString parent_, dirName_;
     QSet<QString> used_;
     bool made_ = false;

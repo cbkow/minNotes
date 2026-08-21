@@ -3358,7 +3358,8 @@ static void testNewImportFormats() {
         w.addCompressed(QStringLiteral("xl/worksheets/sheet1.xml"), QByteArray(
             "<worksheet xmlns:r=\"r\"><sheetData>"
             "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c>"
-            "<c r=\"C1\" t=\"e\" vm=\"1\"><v>#VALUE!</v></c></row>"
+            "<c r=\"C1\" t=\"e\" vm=\"1\"><v>#VALUE!</v></c>"
+            "<c r=\"Z1\" s=\"7\"/></row>"
             "<row r=\"3\"><c r=\"A3\" t=\"s\"><v>2</v></c><c r=\"C3\"><v>42</v></c></row>"
             "</sheetData><drawing r:id=\"rId9\"/></worksheet>"));
         w.addCompressed(QStringLiteral("xl/worksheets/sheet2.xml"), QByteArray(
@@ -3426,6 +3427,8 @@ static void testNewImportFormats() {
                   && m.tableCell(tRow, 2, 2) == QStringLiteral("42")
                   && m.tableCell(tRow, 1, 0).isEmpty(),
               "rich-run si, numeric cell, sparse row gap");
+        CHECK(m.tableColumns(tRow) == 3,
+              "style-only cell (Z1, formatting to the sheet edge) adds no column");
         CHECK(m.tableCellMedia(tRow, 1, 1).contains(QStringLiteral(".minnotes/")),
               "drawing-anchored image landed at its from-cell (B2)");
         CHECK(m.tableCellMedia(tRow, 0, 2).contains(QStringLiteral(".minnotes/"))
@@ -3877,6 +3880,8 @@ static void testCellMediaExports() {
     m.tableSetCell(tRow, 0, 0, QStringLiteral("head"));
     m.tableSetCellMedia(tRow, 1, 0,
         QStringLiteral("{\"src\":\"%1\",\"w\":24,\"h\":16}").arg(extPic));
+    m.tableSetCellMedia(tRow, 0, 1,   // SAME source again → must not duplicate
+        QStringLiteral("{\"src\":\"%1\",\"w\":24,\"h\":16}").arg(extPic));
     m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
     Exporter ex;
     ex.setModel(&m);
@@ -3890,6 +3895,8 @@ static void testCellMediaExports() {
           "cell image collected into .assets");
     CHECK(QFileInfo::exists(dir.filePath(QStringLiteral("out.assets/cellpic.png"))),
           ".assets copy exists");
+    CHECK(!QFileInfo::exists(dir.filePath(QStringLiteral("out.assets/cellpic-2.png"))),
+          "same source in two cells → ONE .assets copy (sink dedups by path)");
 
     // Markdown fallback: an unreachable source keeps an absolute link (the
     // block-image rule) instead of silently dropping the image.

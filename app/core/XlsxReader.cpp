@@ -293,6 +293,10 @@ bool parseSheet(const QString& zipPath, const QString& part, SheetData& sd) {
                 value = (value == QLatin1String("1")) ? QStringLiteral("TRUE")
                                                       : QStringLiteral("FALSE");
             if (sharedIdx) value = QStringLiteral("\x01s:") + value;   // resolved below
+            // Style-only cells (<c r="Z1" s="7"/> — formatting painted to the
+            // sheet edge, no value) must NOT extend the grid: a shot-list
+            // with 4 real columns was importing 26 wide (user file 2026-08-20).
+            if (value.isEmpty() && vm <= 0) continue;
             while (int(cells.size()) <= col) cells.emplace_back();
             cells[size_t(col)] = value;
             maxCols = std::max(maxCols, col + 1);
