@@ -801,10 +801,11 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
                                 AssetSink& sink, bool withHeader) const {
     const BlockModel* m = model_;
     FootnoteCtx fn;
-    // Document header (ruling 2026-08-20): every export leads with the
-    // document's name — the file you hand someone should say what it is.
+    // Document header (rulings 2026-08-20/21): every export leads with the
+    // document's name — as a QUIET code-formatted label, not a shouting
+    // heading (backticks stripped: a code span can't contain its fence).
     QString doc = withHeader
-        ? QStringLiteral("# %1\n\n").arg(escapeMd(m->documentName()))
+        ? QStringLiteral("`%1`\n\n").arg(QString(m->documentName()).remove(QLatin1Char('`')))
         : QString();
     bool prevWasList = false;
 
@@ -1599,9 +1600,10 @@ main{max-width:1000px;min-width:1000px;margin:0;padding:48px 120px 96px}
    viewport's left origin. min-width == max-width (user ruling 2026-08-20):
    the page NEVER shrinks under the document width — narrow windows scroll
    instead of reflowing, so ink/annotation geometry always aligns. */
-/* Document header: the export leads with the document's name (2026-08-20). */
-header.doctitle{font-size:26px;font-weight:700;color:var(--bright);
-padding-bottom:14px;margin-bottom:28px;border-bottom:1px solid var(--divider)}
+/* Document header: the export leads with the document's name — a quiet
+   mono label, not a shouting heading (ruling 2026-08-21). */
+header.doctitle{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
+color:var(--muted);padding-bottom:10px;margin-bottom:24px;border-bottom:1px solid var(--divider)}
 /* The BLOCK RULER: every block's number in the right margin (the app's
    rail). Elements host the span; all numbers align on one ledger line.
    No rule line: the app made its rules focus-reactive, so a static export
@@ -2653,10 +2655,10 @@ QByteArray docxDocumentXml(DocxCtx& c) {
             QStringLiteral("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"));
         w.writeStartElement(QStringLiteral("w:body"));
 
-        {   // Document header (ruling 2026-08-20): the name leads every export.
+        {   // Document header (2026-08-21): a quiet mono label, small type.
             DocxRunProps title;
-            title.b = true;
-            title.halfPtSize = 48;   // 24pt
+            title.code = true;       // Courier — the code chrome
+            title.halfPtSize = 18;   // 9pt
             docxPlainPara(w, m->documentName(), title, [](QXmlStreamWriter& pw) {
                 pw.writeStartElement(QStringLiteral("w:pBdr"));
                 pw.writeStartElement(QStringLiteral("w:bottom"));
@@ -3587,12 +3589,12 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     const QScreen* screen = QGuiApplication::primaryScreen();
     const qreal defaultDpi = screen ? screen->logicalDotsPerInchY() : 96.0;
     c.imgFmt = defaultDpi / 96.0;
-    {   // Document header (ruling 2026-08-20): the name leads every export.
+    {   // Document header (2026-08-21): a quiet mono label, small type.
         QTextBlockFormat bf; bf.setBottomMargin(6);
         QTextCharFormat f;
-        f.setFontWeight(QFont::Bold);
-        f.setFontPointSize(22);
-        f.setForeground(QColor(0x10, 0x10, 0x10));
+        f.setFontFamilies(pdfMonoFamilies());
+        f.setFontPointSize(8.5);
+        f.setForeground(QColor(0x66, 0x66, 0x66));
         c.newBlock(bf, f);
         c.cur.insertText(writer.title(), f);
         QImage line(8, 1, QImage::Format_ARGB32_Premultiplied);

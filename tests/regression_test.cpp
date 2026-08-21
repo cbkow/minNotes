@@ -671,16 +671,16 @@ static void testExportMarkdown() {
     RecordingSink sink;
     const QString md = ex.toMarkdown(Exporter::Options{}, sink);
 
-    CHECK(md.startsWith(QStringLiteral("# Untitled\n\n")),
-          "document-name header leads the markdown (ruling 2026-08-20)");
+    CHECK(md.startsWith(QStringLiteral("`Untitled`\n\n")),
+          "document-name label leads the markdown (code-formatted, 2026-08-21)");
     // Copy as Markdown (2026-08-20): whole doc keeps the header; an explicit
     // range omits it and carries only its rows (asset-free clipboard form).
     {
         const QString all = ex.copyMarkdown(-1, -1);
-        CHECK(all.startsWith(QStringLiteral("# Untitled")),
+        CHECK(all.startsWith(QStringLiteral("`Untitled`")),
               "copyMarkdown whole-doc keeps the header");
         const QString range = ex.copyMarkdown(2, 3);
-        CHECK(!range.contains(QStringLiteral("# Untitled"))
+        CHECK(!range.contains(QStringLiteral("`Untitled`"))
                   && !range.contains(QStringLiteral("## Title"))
                   && range.contains(QStringLiteral("- item one")),
               "copyMarkdown range: no header, no out-of-range rows");
