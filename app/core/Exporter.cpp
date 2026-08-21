@@ -1063,9 +1063,22 @@ QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
     std::set<int> bounds{0, len};
     for (const Run& r : runs) { bounds.insert(r.s); bounds.insert(r.e); }
 
-    auto openTag = [](const Run& r) -> QString {
+    auto openTag = [m](const Run& r) -> QString {
         switch (r.kind) {
-        case BlockModel::SpanComment:   return QStringLiteral("<span class=\"cmt\">");
+        case BlockModel::SpanComment: {
+            // Resolved conversations dim in the export too (the in-app rule,
+            // 2026-08-21): accent = a live conversation, grey = settled.
+            bool res = false;
+            for (const QVariant& tv : m->commentThreads()) {
+                const QVariantMap t = tv.toMap();
+                if (t.value(QStringLiteral("id")).toString() == r.u) {
+                    res = t.value(QStringLiteral("resolved")).toBool();
+                    break;
+                }
+            }
+            return res ? QStringLiteral("<span class=\"cmt resolved\">")
+                       : QStringLiteral("<span class=\"cmt\">");
+        }
         case BlockModel::SpanLink:
             return QStringLiteral("<a href=\"%1\">").arg(htmlEscape(r.u));
         case BlockModel::SpanFgColor:
@@ -1659,6 +1672,7 @@ td,th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-a
 th{background:#252525;color:var(--bright)}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright)}
 .cmt{background:rgba(1,137,241,.13);position:relative}
+.cmt.resolved{background:rgba(140,140,140,.12)}   /* settled conversation */
 /* Hover thread card — the app's margin card, exported. Spans styled as
    blocks (a real <p> inside a span would trip the parser). */
 .cmt .cmtcard{display:none;position:absolute;left:0;top:1.6em;z-index:30;
