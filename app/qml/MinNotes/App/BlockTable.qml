@@ -35,6 +35,18 @@ Item {
         return r >= Math.min(rangeR0, rangeR1) && r <= Math.max(rangeR0, rangeR1)
             && c >= Math.min(rangeC0, rangeC1) && c <= Math.max(rangeC0, rangeC1)
     }
+    // Selection SETS (multi-select 2026-08-21): whole rows OR whole columns,
+    // homogeneous with the rect above. Array contents don't notify — selRev
+    // read first registers the dependency (the _rev pattern below).
+    property var selRows: []
+    property var selCols: []
+    property int selRev: 0
+    function inSel(r, c) {
+        var d = selRev
+        if (selRows.length) return selRows.indexOf(r) >= 0
+        if (selCols.length) return selCols.indexOf(c) >= 0
+        return inRange(r, c)
+    }
 
     readonly property int  defaultColWidth: 160
     readonly property int  cellPadH: 8
@@ -261,7 +273,7 @@ Item {
                             readonly property int c: index
                             readonly property bool isHeader: gridRow.r < tv.headerRows
                             readonly property bool isFocusedCell: tv.focused && gridRow.r === tv.focusR && c === tv.focusC
-                            readonly property bool isSelected: tv.inRange(gridRow.r, c)
+                            readonly property bool isSelected: tv.inSel(gridRow.r, c)
                             // Optional inline image: descriptor + resolved URL + intrinsic
                             // dims (known up front, so the row reserves height with no jump).
                             readonly property string cmedia: (blockModel.contentRevision,

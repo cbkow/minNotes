@@ -1114,10 +1114,70 @@ FocusScope {
         // Shift+arrow: grow/shrink the range by moving its head; the anchor
         // stays at the focused cell (rendering normalises the corners).
         function extendRange(dr, dc) {
+            clearSets()
             if (rangeR0 < 0) { rangeR0 = cr; rangeC0 = cc; rangeR1 = cr; rangeC1 = cc }
             rangeR1 = Math.max(0, Math.min(rows() - 1, rangeR1 + dr))
             rangeC1 = Math.max(0, Math.min(cols() - 1, rangeC1 + dc))
             cursor.sync()
+        }
+        // --- Selection SETS (multi-select, 2026-08-21): homogeneous — a set
+        // of whole rows OR a set of whole columns OR the cell rect above,
+        // never mixed. JS array contents don't notify, so every writer
+        // reassigns a fresh array AND bumps selRev (the BlockTable bindings
+        // key on it). lastSelR/C = the Shift-span anchors (last plain pick).
+        property var selRows: []
+        property var selCols: []
+        property int selRev: 0
+        property int lastSelR: -1
+        property int lastSelC: -1
+        function clearSets() {
+            if (!selRows.length && !selCols.length && lastSelR < 0 && lastSelC < 0) return
+            selRows = []; selCols = []; lastSelR = -1; lastSelC = -1; selRev++
+        }
+        function clearAll() { clearRange(); clearSets() }
+        readonly property bool hasSel: rangeR0 >= 0 || selRows.length > 0 || selCols.length > 0
+        function setRowSel(a, anchor) {
+            clearRange(); selCols = []; lastSelC = -1
+            selRows = a; lastSelR = anchor; selRev++; cursor.sync()
+        }
+        function setColSel(a, anchor) {
+            clearRange(); selRows = []; lastSelR = -1
+            selCols = a; lastSelC = anchor; selRev++; cursor.sync()
+        }
+        function toggleRow(r) {
+            var a = selRows.slice(); var i = a.indexOf(r)
+            i >= 0 ? a.splice(i, 1) : a.push(r)
+            setRowSel(a, r)
+        }
+        function toggleCol(c) {
+            var a = selCols.slice(); var i = a.indexOf(c)
+            i >= 0 ? a.splice(i, 1) : a.push(c)
+            setColSel(a, c)
+        }
+        function extendRowsTo(r) {
+            var a0 = lastSelR >= 0 ? lastSelR : cr, a = []
+            for (var i = Math.min(a0, r); i <= Math.max(a0, r); ++i)
+                if (i >= blockModel.tableHeaderRows(row)) a.push(i)
+            setRowSel(a, a0)   // the anchor stays put across repeated shift-clicks
+        }
+        function extendColsTo(c) {
+            var a0 = lastSelC >= 0 ? lastSelC : cc, a = []
+            for (var i = Math.min(a0, c); i <= Math.max(a0, c); ++i) a.push(i)
+            setColSel(a, a0)
+        }
+        // Shift+click in a CELL: rect from the anchor (spreadsheet standard).
+        function extendTo(r, c) {
+            clearSets()
+            if (rangeR0 < 0) { rangeR0 = cr; rangeC0 = cc }
+            rangeR1 = r; rangeC1 = c
+            cursor.sync()
+        }
+        // The op-targeting switch for menus/keys.
+        function selKind() {
+            if (selRows.length) return "rows"
+            if (selCols.length) return "cols"
+            if (rangeR0 >= 0) return "rect"
+            return "none"
         }
         readonly property int row: cursor.focusRow
         readonly property bool active: (blockModel.layoutRevision, blockModel.contentRevision,
@@ -1134,7 +1194,7 @@ FocusScope {
             cc = Math.max(0, Math.min(c, cols() - 1))
             pos = (p === undefined) ? text().length : p
             clampPos(); anchorPos = pos
-            clearRange()
+            clearAll()
             cursor.sync()
         }
 
@@ -1352,9 +1412,9 @@ FocusScope {
         if (root.tableDragging) {
             var hit = bt.cellAtPoint(lx, ly)
             if (hit.r === root.tableAnchorR && hit.c === root.tableAnchorC) {
-                tcur.clearRange(); tcur.cr = hit.r; tcur.cc = hit.c
+                tcur.clearAll(); tcur.cr = hit.r; tcur.cc = hit.c
                 tcur.anchorPos = root.tableAnchorPos; tcur.pos = hit.pos
-            } else tcur.setRange(root.tableAnchorR, root.tableAnchorC, hit.r, hit.c)
+            } else { tcur.clearSets(); tcur.setRange(root.tableAnchorR, root.tableAnchorC, hit.r, hit.c) }
             cursor.sync()
         }
     }
@@ -1559,11 +1619,22 @@ FocusScope {
     // (cell-level colours) or selected text (colour spans).
     function revertColors() {
         if (tcur.active) {
-            var r0, c0, r1, c1
-            if (tcur.rangeR0 >= 0) { r0 = tcur.rangeR0; c0 = tcur.rangeC0; r1 = tcur.rangeR1; c1 = tcur.rangeC1 }
-            else { r0 = tcur.cr; c0 = tcur.cc; r1 = tcur.cr; c1 = tcur.cc }
-            blockModel.tableSetCellColor(cursor.focusRow, r0, c0, r1, c1, true, "")    // clear fg
-            blockModel.tableSetCellColor(cursor.focusRow, r0, c0, r1, c1, false, "")   // clear bg
+            var fr = cursor.focusRow
+            blockModel.beginGroup(fr, fr)   // fg+bg clear = ONE undo entry (was two)
+            if (tcur.selRows.length) {
+                blockModel.tableSetRowsColor(fr, tcur.selRows, true, "")
+                blockModel.tableSetRowsColor(fr, tcur.selRows, false, "")
+            } else if (tcur.selCols.length) {
+                blockModel.tableSetColsColor(fr, tcur.selCols, true, "")
+                blockModel.tableSetColsColor(fr, tcur.selCols, false, "")
+            } else {
+                var r0, c0, r1, c1
+                if (tcur.rangeR0 >= 0) { r0 = tcur.rangeR0; c0 = tcur.rangeC0; r1 = tcur.rangeR1; c1 = tcur.rangeC1 }
+                else { r0 = tcur.cr; c0 = tcur.cc; r1 = tcur.cr; c1 = tcur.cc }
+                blockModel.tableSetCellColor(fr, r0, c0, r1, c1, true, "")    // clear fg
+                blockModel.tableSetCellColor(fr, r0, c0, r1, c1, false, "")   // clear bg
+            }
+            blockModel.endGroup()
             cursor.sync()
             return
         }
@@ -1803,18 +1874,28 @@ FocusScope {
     }
     // Whole-row / whole-column selection (the tcur rectangular range) — from the
     // context menu, or a click (not a drag) on a full-frame reorder grip.
-    function selectTableRow(row, r) {
+    // Whole-row/column selection is a SET now (multi-select 2026-08-21):
+    // plain = replace, Shift = contiguous span from the last plain pick,
+    // Cmd (Qt.ControlModifier on macOS) = toggle membership. Focus moves to
+    // the picked row/column WITHOUT place() — place() clears the sets.
+    function gripSelectRow(row, r, mods) {
         if (cursor.focusRow !== row) { blockModel.commitMarkdown(cursor.focusRow); cursor.setCaret(row, 0) }
-        tcur.place(r, 0, 0)
-        tcur.setRange(r, 0, r, blockModel.tableColumns(row) - 1)
+        if (mods & Qt.ControlModifier)                            tcur.toggleRow(r)
+        else if ((mods & Qt.ShiftModifier) && tcur.selRows.length) tcur.extendRowsTo(r)
+        else                                                       tcur.setRowSel([r], r)
+        tcur.cr = r; tcur.cc = 0; tcur.pos = 0; tcur.anchorPos = 0
         cursor.sync()
     }
-    function selectTableColumn(row, c) {
+    function gripSelectCol(row, c, mods) {
         if (cursor.focusRow !== row) { blockModel.commitMarkdown(cursor.focusRow); cursor.setCaret(row, 0) }
-        tcur.place(0, c, 0)
-        tcur.setRange(0, c, blockModel.tableRows(row) - 1, c)
+        if (mods & Qt.ControlModifier)                            tcur.toggleCol(c)
+        else if ((mods & Qt.ShiftModifier) && tcur.selCols.length) tcur.extendColsTo(c)
+        else                                                       tcur.setColSel([c], c)
+        tcur.cr = 0; tcur.cc = c; tcur.pos = 0; tcur.anchorPos = 0
         cursor.sync()
     }
+    function selectTableRow(row, r)    { gripSelectRow(row, r, 0) }
+    function selectTableColumn(row, c) { gripSelectCol(row, c, 0) }
     // Header sort: clicking the right edge of a header cell sorts by that column,
     // toggling direction on repeat. Session-visual state only (the sort itself is
     // a one-shot undoable mutation; nothing persists).
@@ -1828,6 +1909,7 @@ FocusScope {
     }
     function headerSort(row, c) {
         var asc = !(lastSortRow === row && lastSortCol === c && lastSortAsc)
+        tcur.clearAll()   // a live selection over re-sorted rows is a lie
         blockModel.tableSortByColumn(row, c, asc)
         lastSortRow = row; lastSortCol = c; lastSortAsc = asc
     }
@@ -1853,7 +1935,13 @@ FocusScope {
     function doCopy() {
         if (tcur.active) {
             var fr = cursor.focusRow
-            if (tcur.rangeR0 >= 0) {
+            if (tcur.selRows.length) {
+                clipboard.writeTable(blockModel.tableRowsTSV(fr, tcur.selRows),
+                                     blockModel.tableRowsHtml(fr, tcur.selRows))
+            } else if (tcur.selCols.length) {
+                clipboard.writeTable(blockModel.tableColsTSV(fr, tcur.selCols),
+                                     blockModel.tableColsHtml(fr, tcur.selCols))
+            } else if (tcur.rangeR0 >= 0) {
                 clipboard.writeTable(blockModel.tableRangeTSV(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1),
                                      blockModel.tableRangeHtml(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1))
             } else {
@@ -2024,7 +2112,9 @@ FocusScope {
     function doCut() {
         doCopy()
         if (tcur.active) {
-            if (tcur.rangeR0 >= 0) { blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1); tcur.clearRange() }
+            if (tcur.selRows.length) { blockModel.tableClearRows(cursor.focusRow, tcur.selRows); tcur.clearAll() }
+            else if (tcur.selCols.length) { blockModel.tableClearColumns(cursor.focusRow, tcur.selCols); tcur.clearAll() }
+            else if (tcur.rangeR0 >= 0) { blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1); tcur.clearRange() }
             else if (tcur.pos !== tcur.anchorPos) tcur.delSel()
             else blockModel.tableSetCell(cursor.focusRow, tcur.cr, tcur.cc, "")
             cursor.sync()
@@ -2166,7 +2256,14 @@ FocusScope {
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
-            else if (inTable) { if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() } else root.exitTable(1) }
+            else if (inTable) {
+                // Escape peels back one layer: in-cell text selection →
+                // cell/row/col selection (pre-existing gap: a live range
+                // used to survive the exit) → leave the table.
+                if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() }
+                else if (tcur.hasSel) { tcur.clearAll(); cursor.sync() }
+                else root.exitTable(1)
+            }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
             else if (cursor.activeMarks !== 0 || cursor.armedFg !== "" || cursor.armedBg !== "") { cursor.clearMarks() }
             event.accepted = true
@@ -2280,6 +2377,7 @@ FocusScope {
         else if (inTable && cmd && k === Qt.Key_D) { tblFill(false); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_R) { tblFill(true); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_A) {   // select every cell
+            tcur.clearSets()
             tcur.setRange(0, 0, tcur.rows() - 1, tcur.cols() - 1)
             cursor.sync(); event.accepted = true
         }
@@ -2312,16 +2410,22 @@ FocusScope {
                 event.accepted = true
                 return
             }
-            if (tcur.rangeR0 >= 0) {
-                // Backspace/Delete over a cell range clears its CONTENTS (one
-                // undo step); any other key just collapses the selection.
+            if (tcur.hasSel) {
+                // Backspace/Delete over a selection clears its CONTENTS (one
+                // undo step; row/col DELETION stays menu-only — destructive);
+                // any other key just collapses the selection.
                 if (k === Qt.Key_Backspace || k === Qt.Key_Delete) {
-                    blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
-                    tcur.clearRange(); cursor.sync()
+                    if (tcur.selRows.length)
+                        blockModel.tableClearRows(cursor.focusRow, tcur.selRows)
+                    else if (tcur.selCols.length)
+                        blockModel.tableClearColumns(cursor.focusRow, tcur.selCols)
+                    else
+                        blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
+                    tcur.clearAll(); cursor.sync()
                     event.accepted = true
                     return
                 }
-                tcur.clearRange()                      // any other key collapses it
+                tcur.clearAll()                        // any other key collapses it
             }
             if (k === Qt.Key_Right) tcur.right(shift)
             else if (k === Qt.Key_Left) tcur.left(shift)
@@ -2902,6 +3006,9 @@ FocusScope {
                     selTo: Math.max(tcur.pos, tcur.anchorPos)
                     rangeR0: focused ? tcur.rangeR0 : -1
                     rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
+                    selRows: focused ? tcur.selRows : []
+                    selCols: focused ? tcur.selCols : []
+                    selRev: tcur.selRev
                     // last-sorted column indicator (session state, per table block)
                     sortCol: root.lastSortRow === cell.logicalRow ? root.lastSortCol : -1
                     sortAsc: root.lastSortAsc
@@ -3464,7 +3571,15 @@ FocusScope {
             caretPos: tcur.pos
             selFrom: Math.min(tcur.pos, tcur.anchorPos)
             selTo: Math.max(tcur.pos, tcur.anchorPos)
-            rangeR0: tcur.rangeR0; rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
+            // Gated on the frame actually holding the sub-cursor — the
+            // pre-existing ungated binding showed a STALE selection when the
+            // document caret had moved off this table (the inline instance
+            // gates on `focused`; inRange/inSel short-circuit on rangeR0/-sets).
+            rangeR0: cursor.focusRow === root.activeTableRow ? tcur.rangeR0 : -1
+            rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
+            selRows: cursor.focusRow === root.activeTableRow ? tcur.selRows : []
+            selCols: cursor.focusRow === root.activeTableRow ? tcur.selCols : []
+            selRev: tcur.selRev
             resizeCol: (root.tableResizing && root.resizeRow === root.activeTableRow) ? root.resizeColIdx : -1
             resizeW: root.resizeW
             sortCol: root.lastSortRow === root.activeTableRow ? root.lastSortCol : -1
