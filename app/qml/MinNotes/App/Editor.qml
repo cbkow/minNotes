@@ -62,6 +62,12 @@ FocusScope {
     // (user ruling 2026-08-18): margin annotations stay visible in writing
     // mode, and the page no longer jumps 72px when annotation mode toggles.
     readonly property real leftEdge: inkGutter
+    // The SHEET's width: page + equal margins — but never narrower than the
+    // widest content plus the same trailing margin (user ruling 2026-08-20:
+    // an uncapped wide table extends the sheet rather than being cropped by
+    // the desk tone at the page boundary).
+    readonly property real sheetSpan:
+        leftEdge * 2 + Math.max(pageWidth, blockModel.maxContentWidth)
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
 
@@ -481,13 +487,13 @@ FocusScope {
     // page shares the desk grey and the desk RULES alone carry structure.
     Rectangle { anchors.fill: parent; color: Theme.colors.bgAlt }
     // AMENDED 2026-08-20 (user ruling): the SHEET — the page plus EQUAL
-    // left/right margins (leftEdge each side) — keeps the field tone; the
-    // area beyond it drops to the window-shell tone, so the document reads
-    // as a constrained shape that follows the width setting. Tracks the pan
-    // and the ruler's live width preview (pageWidth includes previewWidth).
+    // left/right margins (leftEdge each side), stretched by wide content
+    // (sheetSpan) — keeps the field tone; the area beyond it drops to the
+    // window-shell tone, so the document reads as a constrained shape that
+    // follows the width setting. Tracks the pan and the ruler's live width
+    // preview (pageWidth includes previewWidth).
     Rectangle {
-        readonly property real sheetRight:
-            2 * root.leftEdge + root.pageWidth - flick.contentX
+        readonly property real sheetRight: root.sheetSpan - flick.contentX
         visible: flick.visible && width > 0
         x: sheetRight
         width: Math.max(0, parent.width - sheetRight)
@@ -2537,7 +2543,7 @@ FocusScope {
             // on focusRow change — a "# " conversion's height settle wouldn't
             // reach it until Return moved the caret.
             height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(cursor.focusRow)))
-            readonly property real sheetW: 2 * root.leftEdge + root.pageWidth
+            readonly property real sheetW: root.sheetSpan   // matches the sheet tint
             Rectangle {
                 x: 0; width: Math.min(parent.width, parent.sheetW)
                 height: parent.height
