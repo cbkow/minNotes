@@ -248,7 +248,7 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         out.specs.push_back(std::move(sp));
         out.ok = true;
     } else if (fmt == QLatin1String("xlsx")) {
-        out.specs = XlsxReader::read(path);
+        out.specs = XlsxReader::read(path, store);
         out.ok = !out.specs.empty();
     } else if (fmt == QLatin1String("ods")) {
         out.specs = OdfReader::readOds(path);

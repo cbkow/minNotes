@@ -3356,14 +3356,56 @@ static void testNewImportFormats() {
             "<sst><si><t>Name</t></si><si><t>Qty</t></si>"
             "<si><r><t>rich </t></r><r><t>run</t></r></si></sst>"));
         w.addCompressed(QStringLiteral("xl/worksheets/sheet1.xml"), QByteArray(
-            "<worksheet><sheetData>"
-            "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c></row>"
+            "<worksheet xmlns:r=\"r\"><sheetData>"
+            "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c>"
+            "<c r=\"C1\" t=\"e\" vm=\"1\"><v>#VALUE!</v></c></row>"
             "<row r=\"3\"><c r=\"A3\" t=\"s\"><v>2</v></c><c r=\"C3\"><v>42</v></c></row>"
-            "</sheetData></worksheet>"));
+            "</sheetData><drawing r:id=\"rId9\"/></worksheet>"));
         w.addCompressed(QStringLiteral("xl/worksheets/sheet2.xml"), QByteArray(
             "<worksheet><sheetData>"
             "<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>solo</t></is></c></row>"
             "</sheetData></worksheet>"));
+        // Drawing-anchored picture ("place over cells") → lands at B2.
+        w.addCompressed(QStringLiteral("xl/worksheets/_rels/sheet1.xml.rels"), QByteArray(
+            "<Relationships>"
+            "<Relationship Id=\"rId9\" Target=\"../drawings/drawing1.xml\"/>"
+            "</Relationships>"));
+        w.addCompressed(QStringLiteral("xl/drawings/drawing1.xml"), QByteArray(
+            "<xdr:wsDr xmlns:xdr=\"x\" xmlns:a=\"a\" xmlns:r=\"r\">"
+            "<xdr:twoCellAnchor>"
+            "<xdr:from><xdr:col>1</xdr:col><xdr:row>1</xdr:row></xdr:from>"
+            "<xdr:to><xdr:col>2</xdr:col><xdr:row>2</xdr:row></xdr:to>"
+            "<xdr:pic><xdr:blipFill><a:blip r:embed=\"rId1\"/></xdr:blipFill></xdr:pic>"
+            "</xdr:twoCellAnchor></xdr:wsDr>"));
+        w.addCompressed(QStringLiteral("xl/drawings/_rels/drawing1.xml.rels"), QByteArray(
+            "<Relationships>"
+            "<Relationship Id=\"rId1\" Target=\"../media/image1.png\"/>"
+            "</Relationships>"));
+        // Rich-value in-cell image ("place in cell") → C1's vm=1 chain.
+        w.addCompressed(QStringLiteral("xl/metadata.xml"), QByteArray(
+            "<metadata xmlns:xlrd=\"d\">"
+            "<futureMetadata name=\"XLRICHVALUE\" count=\"1\">"
+            "<bk><extLst><ext><xlrd:rvb i=\"0\"/></ext></extLst></bk></futureMetadata>"
+            "<valueMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></valueMetadata>"
+            "</metadata>"));
+        w.addCompressed(QStringLiteral("xl/richData/rdrichvalue.xml"), QByteArray(
+            "<rvData count=\"1\"><rv s=\"0\"><v>0</v><v>5</v></rv></rvData>"));
+        w.addCompressed(QStringLiteral("xl/richData/richValueRel.xml"), QByteArray(
+            "<richValueRels xmlns:r=\"r\"><rel r:id=\"rId1\"/></richValueRels>"));
+        w.addCompressed(QStringLiteral("xl/richData/_rels/richValueRel.xml.rels"), QByteArray(
+            "<Relationships>"
+            "<Relationship Id=\"rId1\" Target=\"../media/image2.png\"/>"
+            "</Relationships>"));
+        {   // real PNG bytes for both images
+            auto png = [](const QColor& col) {
+                QImage img(6, 4, QImage::Format_RGB32); img.fill(col);
+                QByteArray bytes; QBuffer buf(&bytes);
+                buf.open(QIODevice::WriteOnly); img.save(&buf, "PNG");
+                return bytes;
+            };
+            w.addCompressed(QStringLiteral("xl/media/image1.png"), png(Qt::red));
+            w.addCompressed(QStringLiteral("xl/media/image2.png"), png(Qt::blue));
+        }
         CHECK(w.finish(), "xlsx fixture wrote");
     }
     {
@@ -3384,6 +3426,11 @@ static void testNewImportFormats() {
                   && m.tableCell(tRow, 2, 2) == QStringLiteral("42")
                   && m.tableCell(tRow, 1, 0).isEmpty(),
               "rich-run si, numeric cell, sparse row gap");
+        CHECK(m.tableCellMedia(tRow, 1, 1).contains(QStringLiteral(".minnotes/")),
+              "drawing-anchored image landed at its from-cell (B2)");
+        CHECK(m.tableCellMedia(tRow, 0, 2).contains(QStringLiteral(".minnotes/"))
+                  && m.tableCell(tRow, 0, 2).isEmpty(),
+              "rich-value in-cell image resolved; #VALUE! placeholder cleared");
         m.closeDocument();
     }
 
