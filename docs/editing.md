@@ -7,7 +7,7 @@ nav_order: 4
 # Editing
 
 A note is a list of **blocks**. Press `Enter` to start a new block,
-`Backspace` at the start of an empty block to merge it up.
+`Backspace` at the start of an empty block to merge it up. Grab the number to the far right of a block and drag to rearrange blocks.
 
 ![Blocks and the block ruler](images/mn007.png)
 
@@ -53,8 +53,7 @@ selection with `⌘\`.
 
 ### Colors
 
-The Inspector's palette has two tabs: **Text** (text color) and **Back**
-(background). Pick a swatch with text selected to color it; with nothing
+The Inspector's palette has three tabs: **Draw** (annotations) **Text** (text color) and **Back** (background). Pick a swatch with text selected to color it; with nothing
 selected the color arms as a pen for what you type next. The same palette
 colors table selections — whole rows and columns included (see
 [Tables](tables.md)). **Revert** clears both back to default.
@@ -64,8 +63,10 @@ colors table selections — whole rows and columns included (see
 ### Choice Chips
 
 `⌥⌘C` inserts an inline **choice chip** — To do / Doing / Done — anywhere
-in text. Click the chip to change its state; the chip travels with the
-text through exports.
+in text, including inside table cells. Click the chip to change its state;
+the chip travels with the text through exports.
+
+![The color palette](images/mn009b.png)
 
 ## Undo & History
 
