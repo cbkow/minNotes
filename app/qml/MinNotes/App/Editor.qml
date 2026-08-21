@@ -1441,6 +1441,21 @@ FocusScope {
         if (lx >= 0 && lx <= 20 && ly >= -2 && ly <= te.lineH) return row
         return -1
     }
+    // (cx, cy) in CONTENT coordinates → the row index if the click lands on a
+    // code block's language chip (top-right pill), else -1. Same central-layer
+    // hit-testing as the task checkbox — the delegate can't own a MouseArea.
+    property int codeChipHoverRow: -1
+    function codeLangChipAt(cx, cy) {
+        var row = blockModel.rowForY(Math.max(0, cy))
+        if (blockModel.typeForRow(row) !== 2) return -1
+        var cell = cellForRow(row)
+        if (!cell || !cell.langChip || !cell.langChip.visible) return -1
+        var p = cell.langChip.mapFromItem(mouse, cx, cy)
+        var pad = 2
+        if (p.x >= -pad && p.x <= cell.langChip.width + pad
+            && p.y >= -pad && p.y <= cell.langChip.height + pad) return row
+        return -1
+    }
     // (cx, cy) in CONTENT coordinates → {row, r, c, pos} if over a table, else
     // null. Delegates to the table's own BlockTable.cellAtPoint (its delegate
     // can't own a MouseArea — the document mouse layer sits above it).
@@ -2419,11 +2434,14 @@ FocusScope {
         return s.length > 30 ? s.substring(0, 29) + "…" : s
     }
     // Language picker for the code block at `row`, anchored where the menu was.
+    // The field opens EMPTY (it's a filter over the full list; prefilling
+    // would filter the list down to the current language) — the current
+    // pick shows as a check in the list instead.
     function openLangPopupForRow(row) {
         langPopup.targetRow = row
-        langField.text = blockModel.languageForRow(row)
+        langField.text = ""
         langPopup.open()    // x/y are reactive bindings (root.menuX/menuY → clamped)
-        langField.selectAll(); langField.forceActiveFocus()
+        langField.forceActiveFocus()
     }
 
     // Clear ALL formatting → plain paragraph: reset heading/quote/list block
@@ -2979,6 +2997,7 @@ FocusScope {
                 readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
                 readonly property Item teItem: te    // layout oracle, for hit-testing
                 readonly property Item tableItem: tableHost   // BlockTable, for table hit-testing
+                readonly property Item langChip: codeLangChip // code language chip, for hit-testing
                 // Horizontal measure for this block by type (page vs text bound).
                 // Keyed off te.btype (already reactive) — NOT the layout revision,
                 // which the measured height bumps and would form a binding loop.
@@ -3316,6 +3335,39 @@ FocusScope {
                     radius: Theme.dim.radius
                     border.width: 1; border.color: Theme.colors.border
                 }
+                Rectangle {  // code language chip (2026-08-21): the block's language,
+                    // pinned to the PAGE-measure right edge (code can outgrow the
+                    // page; the chip stays where the default scroll shows it).
+                    // Click → the full language picker. No MouseArea — the central
+                    // mouse layer hit-tests it via cell.langChip.
+                    id: codeLangChip
+                    visible: cell.active && !cell.isMedia && te.btype === 2
+                    readonly property string lname: (blockModel.contentRevision,
+                        cell.active && te.btype === 2
+                            ? blockModel.codeLanguageName(cell.logicalRow) : "")
+                    readonly property bool hot: root.codeChipHoverRow === cell.logicalRow
+                    x: cell.colLeft + cell.measure + 8 - width - 6
+                    y: te.y - 8 + 3
+                    width: langChipLbl.implicitWidth + 24
+                    height: 18
+                    radius: 0
+                    z: 2
+                    color: hot ? Theme.colors.surfaceHover : Theme.colors.surface
+                    border.width: 1; border.color: Theme.colors.border
+                    Text {
+                        id: langChipLbl
+                        anchors.verticalCenter: parent.verticalCenter; x: 7
+                        text: codeLangChip.lname !== "" ? codeLangChip.lname : "plain"
+                        color: codeLangChip.lname !== "" ? Theme.colors.textMuted
+                                                         : Theme.colors.textSubtle
+                        font.family: Theme.font.mono; font.pixelSize: 11
+                    }
+                    Icon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right; anchors.rightMargin: 6
+                        name: "caret-down"; size: 9; color: Theme.colors.textSubtle
+                    }
+                }
 
                 readonly property real colLeft: root.leftEdge   // shared left edge for all blocks
 
@@ -3590,6 +3642,16 @@ FocusScope {
                 // Click a task-item checkbox → cycle its status (todo→doing→done).
                 var tcb = root.taskCheckboxAt(m.x, m.y)
                 if (tcb >= 0) { blockModel.toggleTask(tcb); return }
+                // Click a code block's language chip → the language picker,
+                // anchored under the chip.
+                var lcRow = root.codeLangChipAt(m.x, m.y)
+                if (lcRow >= 0) {
+                    var lcCell = root.cellForRow(lcRow)
+                    var lcp = lcCell.langChip.mapToItem(root, 0, lcCell.langChip.height + 4)
+                    root.menuX = lcp.x; root.menuY = lcp.y
+                    root.openLangPopupForRow(lcRow)
+                    return
+                }
                 var h = root.hitTest(m.x, m.y)
                 // Inline choice chip (DT-2) → picker; the press never places
                 // the caret (chips are atomic — the caret parks after it).
@@ -3666,6 +3728,8 @@ FocusScope {
                 // choice chip, or a table check/choice body cell) → a
                 // pointing-hand cursor instead of the I-beam.
                 var clk = root.taskCheckboxAt(m.x, m.y) >= 0
+                root.codeChipHoverRow = root.codeLangChipAt(m.x, m.y)
+                clk = clk || root.codeChipHoverRow >= 0
                 if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) !== 7) {
                     var chh = root.hitTest(m.x, m.y)
                     clk = blockModel.choiceAt(chh.row, chh.col) !== ""
@@ -3724,6 +3788,7 @@ FocusScope {
             }
             onExited: { root.hoverRow = -1; root.tableOverBorder = false
                         root.gripKind = ""; root.gripIndex = -1
+                        root.codeChipHoverRow = -1
                         if (!root.gripDragging) root.gripTableRow = -1
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
@@ -6728,14 +6793,25 @@ FocusScope {
         }
     }
 
-    // --- Code-block language picker (shared; positioned where the menu opened) ---
-    // Type any language (lenient: js, bash, python…; blank = plain) or pick a
-    // common one. Applies to langPopup.targetRow via blockModel.setCodeLanguage.
+    // --- Code-block language picker (shared; positioned where the menu or the
+    // block's language chip opened it). The FULL KSyntax definition list,
+    // filtered by the field as you type; Enter still applies any lenient tag
+    // ("js", "bash"…). "Plain text" heads the list; the current pick carries
+    // a check. Applies to langPopup.targetRow via blockModel.setCodeLanguage.
     Popup {
         id: langPopup
         property int targetRow: -1
-        readonly property var quick: ["javascript", "typescript", "python", "bash", "json",
-                                      "html", "css", "cpp", "c", "go", "rust", "sql", "yaml", "markdown"]
+        readonly property string current: targetRow >= 0
+            ? (blockModel.contentRevision, blockModel.codeLanguageName(targetRow)) : ""
+        readonly property var allLangs: blockModel.documentOpen ? blockModel.codeLanguages() : []
+        readonly property var shown: {
+            var f = langField.text.trim().toLowerCase()
+            var out = []
+            if (f === "" || "plain text".indexOf(f) >= 0) out.push("")   // "" = plain sentinel
+            for (var i = 0; i < allLangs.length; ++i)
+                if (f === "" || allLangs[i].toLowerCase().indexOf(f) >= 0) out.push(allLangs[i])
+            return out
+        }
         width: 250; padding: 8; focus: true; z: 60
         x: Math.max(8, Math.min(root.menuX, root.width - width - 8))
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
@@ -6768,27 +6844,44 @@ FocusScope {
                     Text {
                         anchors.fill: parent; verticalAlignment: Text.AlignVCenter
                         visible: langField.text.length === 0
-                        text: "language — e.g. js, bash (blank = plain)"
+                        text: "filter — or type any tag (js, bash…)"
                         color: Theme.colors.textSubtle; font: langField.font
                         elide: Text.ElideRight
                     }
                 }
             }
-            Flow {
-                width: parent.width; spacing: 4
-                Repeater {
-                    model: langPopup.quick
-                    delegate: Rectangle {
-                        required property string modelData
-                        height: 20; width: chipText.implicitWidth + 14; radius: 0
-                        color: chipMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.codeBg
-                        border.width: 1; border.color: Theme.colors.border
-                        Text { id: chipText; anchors.centerIn: parent; text: modelData
-                               color: Theme.colors.textMuted
-                               font.family: Theme.font.family; font.pixelSize: 11 }
-                        MouseArea { id: chipMA; anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: langPopup.apply(modelData) }
+            ListView {
+                width: parent.width
+                height: Math.min(280, contentHeight)
+                clip: true
+                model: langPopup.shown
+                ScrollBar.vertical: MnScrollBar {}
+                delegate: Rectangle {
+                    required property string modelData
+                    readonly property bool isPlain: modelData === ""
+                    readonly property bool isCurrent: isPlain ? langPopup.current === ""
+                                                              : modelData === langPopup.current
+                    width: ListView.view.width; height: 24; radius: 0
+                    color: langRowHover.hovered ? Theme.colors.surfaceHover : "transparent"
+                    HoverHandler { id: langRowHover }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter; x: 8
+                        width: parent.width - 30; elide: Text.ElideRight
+                        text: parent.isPlain ? "Plain text" : parent.modelData
+                        color: parent.isPlain ? Theme.colors.textMuted : Theme.colors.text
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+                    }
+                    Text {   // check on the current language
+                        visible: parent.isCurrent
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: parent.width - 20
+                        text: "✓"; color: Theme.colors.accent
+                        font.pixelSize: Theme.font.sizeChrome
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: langPopup.apply(parent.modelData)
                     }
                 }
             }

@@ -27,6 +27,10 @@ Type these at the **start** of a block and it converts as you go:
 
 List items nest with `Tab` / `Shift+Tab`.
 
+Every code block carries a small **language chip** in its top-right corner —
+click it to pick the syntax highlighting from the full language list (type to
+filter). The ```` ```lang ```` fence tag still works if you prefer typing it.
+
 ## The Page
 
 The page is a steady reading measure — it never squeezes. A narrow window

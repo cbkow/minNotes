@@ -2,6 +2,7 @@
 #include <KSyntaxHighlighting/Repository>
 #include <KSyntaxHighlighting/Definition>
 #include <QHash>
+#include <algorithm>
 
 using namespace KSyntaxHighlighting;
 
@@ -51,4 +52,23 @@ Definition resolveCodeDefinition(const QString& lang) {
     for (const Definition& def : repo.definitions())                      // case-insensitive name sweep
         if (def.name().toLower() == l) return def;
     return Definition();
+}
+
+// Every visible definition name, case-insensitively sorted — the picker's
+// full option list. Hidden definitions (internal building blocks like
+// "Doxygen"-helpers) stay out.
+QStringList codeLanguageNames() {
+    QStringList out;
+    for (const Definition& def : codeHighlightRepo().definitions())
+        if (!def.isHidden()) out << def.name();
+    std::sort(out.begin(), out.end(), [](const QString& a, const QString& b) {
+        return a.compare(b, Qt::CaseInsensitive) < 0;
+    });
+    out.removeDuplicates();
+    return out;
+}
+
+QString codeLanguageDisplayName(const QString& lang) {
+    const Definition d = resolveCodeDefinition(lang);
+    return d.isValid() ? d.name() : QString();
 }

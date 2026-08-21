@@ -1,6 +1,7 @@
 #include "BlockModel.h"
 #include "Importer.h"
 #include "PathMap.h"
+#include "CodeSyntax.h"                     // the language chip's picker feed
 #include "../notes/sketch_text.h"
 #include "../notes/doc_ink.h"               // page-width ink migration (setPageWidth)
 #include "../notes/annotation_thumbnail.h"  // qcv::strokeBoundsNorm (oval-aware bbox)
@@ -1617,6 +1618,13 @@ void BlockModel::setCodeLanguage(int row, const QString& lang) {
     ++contentRevision_;          // CodeHighlighter.language binding depends on contentRevision
     emit contentChangedSpike();
     endTxn();
+}
+
+QStringList BlockModel::codeLanguages() const { return codeLanguageNames(); }
+
+QString BlockModel::codeLanguageName(int row) const {
+    if (rows_.empty() || rowAt(row).type != Code) return {};
+    return codeLanguageDisplayName(rowAt(row).lang);
 }
 
 bool BlockModel::makeCodeBlockIfFence(int row) {

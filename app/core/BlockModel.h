@@ -400,6 +400,11 @@ public:
     Q_INVOKABLE void makeCodeBlock(int row, const QString& lang);
     // Change an existing code block's syntax language in place (undoable).
     Q_INVOKABLE void setCodeLanguage(int row, const QString& lang);
+    // Language-chip feed (2026-08-21): every visible KSyntax definition name
+    // (sorted, the picker's full list) and a code row's stored tag resolved
+    // to its display name ("js" → "JavaScript"; "" = plain).
+    Q_INVOKABLE QStringList codeLanguages() const;
+    Q_INVOKABLE QString codeLanguageName(int row) const;
     // Enter trigger: if the block's whole content is a "```"/"```lang" fence,
     // turn it into an (empty) code block of that language. Returns true if it did.
     Q_INVOKABLE bool makeCodeBlockIfFence(int row);
