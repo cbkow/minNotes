@@ -58,6 +58,28 @@ QString localPathOf(const QString& urlOrPath) {
     return u.isLocalFile() ? u.toLocalFile() : urlOrPath;
 }
 
+// Effective column count for a table export: TRAILING fully-empty plain
+// columns (no text, no media, in any row — header included) drop at export
+// time. Sheet imports formatted to the sheet edge shouldn't ship 20 blank
+// pipes per row; the document itself is untouched. Interior empty columns
+// and typed (check/choice) columns are deliberate structure and stay.
+int exportCols(const BlockModel* m, int row) {
+    int cols = m->tableColumns(row);
+    const int rows = m->tableRows(row);
+    while (cols > 1) {
+        const int c = cols - 1;
+        if (m->tableColumnKind(row, c) != 0) break;
+        bool empty = true;
+        for (int r = 0; r < rows && empty; ++r)
+            if (!m->tableCell(row, r, c).isEmpty()
+                || !m->tableCellMedia(row, r, c).isEmpty())
+                empty = false;
+        if (!empty) break;
+        --cols;
+    }
+    return cols;
+}
+
 // Escape markdown punctuation in plain prose. NOT applied inside code spans
 // or code blocks. Line-start-only hazards ('#'/'>' openers) are left alone:
 // the autoformat triggers already convert such content to real blocks, so
@@ -324,7 +346,7 @@ QString cellMd(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& 
 }
 
 QString emitTable(const BlockModel* m, int row, Exporter::AssetSink& sink) {
-    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    const int rows = m->tableRows(row), cols = exportCols(m, row);
     const int hdr = m->tableHeaderRows(row);
     if (rows <= 0 || cols <= 0) return {};
     QString out;
@@ -1127,7 +1149,7 @@ QString cellHtml(const BlockModel* m, int row, int r, int c, Exporter::AssetSink
 }
 
 QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
-    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    const int rows = m->tableRows(row), cols = exportCols(m, row);
     const int hdr = m->tableHeaderRows(row);
     if (rows <= 0 || cols <= 0) return {};
     auto cellStyle = [&](int r, int c) {
@@ -2282,7 +2304,7 @@ void docxHeading(DocxCtx& c, QXmlStreamWriter& w, int row, int level) {
 
 void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
     const BlockModel* m = c.m;
-    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    const int rows = m->tableRows(row), cols = exportCols(m, row);
     if (rows <= 0 || cols <= 0) return;
     w.writeStartElement(QStringLiteral("w:tbl"));
     w.writeStartElement(QStringLiteral("w:tblPr"));
@@ -3044,7 +3066,7 @@ void pdfCode(PdfCtx& c, int row, PdfCodeEmitter& ce) {
 
 void pdfTable(PdfCtx& c, int row) {
     const BlockModel* m = c.m;
-    const int rows = m->tableRows(row), cols = m->tableColumns(row);
+    const int rows = m->tableRows(row), cols = exportCols(m, row);
     if (rows <= 0 || cols <= 0) return;
     QTextTableFormat tf;
     tf.setBorder(0.5);

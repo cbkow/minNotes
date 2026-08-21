@@ -194,8 +194,9 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         bool ok = false;
         const QString text = readTextFile(path, &ok);
         if (!ok) return out;
-        const TableGrid g = fmt == QLatin1String("tsv") ? TableGrid::fromTSV(text)
-                                                        : TableGrid::fromCSV(text);
+        TableGrid g = fmt == QLatin1String("tsv") ? TableGrid::fromTSV(text)
+                                                  : TableGrid::fromCSV(text);
+        g.trimTrailingEmpty();   // "a,b,,,," padding never reaches the doc
         if (g.rows() >= 1 && g.cols() >= 1) {
             BlockModel::BlockSpec sp;
             sp.type = BlockModel::Table;

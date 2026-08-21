@@ -3536,6 +3536,22 @@ static void testNewImportFormats() {
               "one Code block, lang=py, trailing newline trimmed");
         m.closeDocument();
     }
+
+    // --- csv: Excel-style trailing padding trims on import ---
+    const QString csv = dir.filePath(QStringLiteral("pad.csv"));
+    { QFile f(csv); f.open(QIODevice::WriteOnly);
+      f.write("a,b,,,\n1,2,,,\n,,,,\n"); }
+    {
+        BlockModel m; m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importCsvFile(csv, &m), "padded csv imported");
+        const int tRow = findRowOfType(m, BlockModel::Table);
+        CHECK(tRow >= 0 && m.tableColumns(tRow) == 2 && m.tableRows(tRow) == 2,
+              "trailing empty cols+rows trimmed (%dx%d)",
+              m.tableRows(tRow), m.tableColumns(tRow));
+        m.closeDocument();
+    }
     dir.removeRecursively();
 }
 
@@ -3903,6 +3919,9 @@ static void testCellMediaExports() {
           ".assets copy exists");
     CHECK(!QFileInfo::exists(dir.filePath(QStringLiteral("out.assets/cellpic-2.png"))),
           "same source in two cells → ONE .assets copy (sink dedups by path)");
+    CHECK(md.contains(QStringLiteral("| --- | --- |\n"))
+              && !md.contains(QStringLiteral("| --- | --- | --- |")),
+          "trailing empty columns dropped at export (6 authored -> 2 shipped)");
 
     // Markdown fallback: an unreachable source keeps an absolute link (the
     // block-image rule) instead of silently dropping the image.
@@ -3930,6 +3949,8 @@ static void testCellMediaExports() {
           "DOCX cell carries a drawing run inside w:tbl");
     CHECK(!mnpkg::readEntry(docx, QStringLiteral("word/media/image1.png")).isEmpty(),
           "DOCX media part shipped");
+    CHECK(docXml.count("<w:gridCol") == 2,
+          "DOCX grid also drops the trailing empty columns");
 
     // PDF: the magenta cell image paints (scan page 1 for the fixture color).
     const QString pdf = dir.filePath(QStringLiteral("out.pdf"));

@@ -105,6 +105,12 @@ public:
     // Fill: copy the range's top row down / left column right (whole cells).
     void fillDown(int r0, int c0, int r1, int c1);
     void fillRight(int r0, int c0, int r1, int c1);
+    // Import janitor: drop TRAILING rows/columns that are fully empty (no
+    // text, no media in any cell). Sheet/CSV exports pad to the sheet edge;
+    // that padding should never reach the document. Typed (non-text)
+    // columns stop the column trim — they're deliberate structure. Keeps
+    // at least 1x1 (the deleteRow/deleteCol floors).
+    void trimTrailingEmpty();
 
     // Serialization / interchange.
     QString toJson() const;

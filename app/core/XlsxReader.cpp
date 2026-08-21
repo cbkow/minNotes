@@ -402,6 +402,10 @@ std::vector<BlockModel::BlockSpec> XlsxReader::read(const QString& xlsxPath,
             grid.setCellMedia(ci.row, ci.col, desc);
             if (ci.clearText) grid.setCellText(ci.row, ci.col, QString());
         }
+        // Post-resolve janitor: a trailing column whose only content was
+        // empty shared strings (or a cleared #VALUE! with no image) is
+        // padding, not data. Image cells survive (cellMedia counts).
+        grid.trimTrailingEmpty();
 
         if (sheets.size() > 1) {   // name each sheet only when there are several
             BlockModel::BlockSpec h;

@@ -345,6 +345,30 @@ void TableGrid::fillRight(int r0, int c0, int r1, int c1) {
     }
 }
 
+// Import janitor (2026-08-20): sheet/CSV exports pad rows and columns to
+// the sheet edge — trailing fully-empty rows/columns never reach the doc.
+void TableGrid::trimTrailingEmpty() {
+    normalize();
+    auto cellEmpty = [&](int r, int c) {
+        return cellText(r, c).isEmpty() && cellMedia(r, c).isEmpty();
+    };
+    while (rows() > 1) {
+        bool empty = true;
+        for (int c = 0; c < cols_ && empty; ++c)
+            if (!cellEmpty(rows() - 1, c)) empty = false;
+        if (!empty) break;
+        deleteRow(rows() - 1);
+    }
+    while (cols_ > 1) {
+        if (colKind(cols_ - 1) != 0) break;   // typed column = deliberate
+        bool empty = true;
+        for (int r = 0; r < rows() && empty; ++r)
+            if (!cellEmpty(r, cols_ - 1)) empty = false;
+        if (!empty) break;
+        deleteCol(cols_ - 1);
+    }
+}
+
 // Flattened export text for a cell: header rows + text columns are literal text;
 // a choice body cell resolves to its selected option's label; a check body cell
 // to a glyph (done ✓ / in-progress ~ / todo blank).

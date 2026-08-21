@@ -221,6 +221,7 @@ bool readOdfTable(QXmlStreamReader& xml, TableGrid& grid) {
         for (int c = 0; c < int(rows[size_t(r)].size()); ++c)
             g.setCellText(r, c, rows[size_t(r)][size_t(c)]);
     g.setHeaderRows(1);
+    g.trimTrailingEmpty();   // shared import janitor, on top of the repeat trims
     grid = g;
     return true;
 }
