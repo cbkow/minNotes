@@ -1405,7 +1405,13 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
     if (spanDiff && !contentDiff && !metaDiff) return tr("Formatting");
     if (rankDiff && !contentDiff && !metaDiff) return tr("Move block");
     if (metaDiff && !contentDiff) return tr("Block type");
-    if (mediaContent && contentRows == 1) return tr("Media");   // sketch/PDF-ink/resize
+    // Resize runs carry their keys (imgw/skrz/tcimgw) — name them before the
+    // generic Media/Typing branches would claim them.
+    if (e.coalesce.startsWith(QLatin1String("imgw:"))
+        || e.coalesce.startsWith(QLatin1String("skrz:"))
+        || e.coalesce.startsWith(QLatin1String("tcimgw:")))
+        return tr("Resize");
+    if (mediaContent && contentRows == 1) return tr("Media");   // sketch/PDF-ink
     if (!e.coalesce.isEmpty()) {
         if (e.coalesce == QLatin1String("del")) return tr("Delete text");
         return tr("Typing");
@@ -1894,7 +1900,7 @@ void BlockModel::tableSetCellImageWidth(int row, int r, int c, int w) {
         if (w <= 0) o.remove(QStringLiteral("dw"));
         else        o.insert(QStringLiteral("dw"), std::clamp(w, 40, 4000));
         g.setCellMedia(r, c, QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
-    });
+    }, QStringLiteral("tcimgw:%1:%2").arg(r).arg(c));   // nudge-runs coalesce
 }
 
 void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
@@ -2560,7 +2566,7 @@ void BlockModel::sketchResizeCanvas(int row, int dl, int dt, int dr, int db) {
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
-    endTxn();
+    endTxn(QStringLiteral("skrz:") + ids_[row]);   // frame nudges coalesce (see setMediaWidth)
 }
 
 bool BlockModel::sketchFitToInk(int row) {
@@ -4235,7 +4241,10 @@ void BlockModel::setMediaWidth(int row, int w) {
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
-    endTxn();
+    // Coalesce a nudge-run (2026-08-21): consecutive resizes of the same
+    // media block merge like a typing run — ⌘Z returns to the pre-run size
+    // instead of replaying every intermediate width.
+    endTxn(QStringLiteral("imgw:") + ids_[row]);
 }
 
 void BlockModel::setContentWidth(qreal w) {

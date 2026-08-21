@@ -4096,6 +4096,38 @@ static void testTableBulkOps() {
         m.undo();
         CHECK(m.tableColumns(t) == 3, "undo restores the columns");
     }
+    // Media resize nudge-runs coalesce (2026-08-21): consecutive resizes of
+    // the same target = ONE entry labeled "Resize"; undo returns to the
+    // pre-run size in one step.
+    {
+        BlockModel::BlockSpec img; img.type = BlockModel::Media;
+        img.mediaJson = QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":40,\"h\":30}");
+        m.insertSpecs(0, {img}, false);
+        const int mr = 1;
+        const int entries = m.undoHistory().size();
+        m.setMediaWidth(mr, 300);
+        m.setMediaWidth(mr, 400);
+        m.setMediaWidth(mr, 500);
+        CHECK(m.undoHistory().size() == entries + 1
+                  && m.contentForRow(mr).contains(QStringLiteral("\"dw\":500")),
+              "three block-image resizes coalesce into ONE entry");
+        CHECK(m.undoHistory().last().toMap().value("label").toString()
+                  == QStringLiteral("Resize"),
+              "the run is labeled Resize in the history");
+        m.undo();
+        CHECK(!m.contentForRow(mr).contains(QStringLiteral("\"dw\"")),
+              "one undo returns to the pre-run (intrinsic) size");
+        // Cell image: same rule through mutateTable's coalesce.
+        const int t2 = t + 1;   // the table shifted down by the inserted media row
+        m.tableSetCellMedia(t2, 1, 1,
+            QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":40,\"h\":30}"));
+        const int entries2 = m.undoHistory().size();
+        m.tableSetCellImageWidth(t2, 1, 1, 200);
+        m.tableSetCellImageWidth(t2, 1, 1, 260);
+        CHECK(m.undoHistory().size() == entries2 + 1
+                  && m.tableCellMedia(t2, 1, 1).contains(QStringLiteral("\"dw\":260")),
+              "cell-image resizes coalesce too");
+    }
     m.closeDocument();
 }
 
