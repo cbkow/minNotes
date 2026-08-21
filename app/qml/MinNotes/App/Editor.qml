@@ -874,13 +874,32 @@ FocusScope {
     DropArea {
         anchors.fill: parent
         keys: ["text/uri-list"]
-        onEntered: (drag) => { root.imageDropActive = true
-                               root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY) }
-        onPositionChanged: (drag) => { root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY) }
+        onEntered: (drag) => {
+            if (root.activeFrameId !== "") return   // frame tab: no doc indicator
+            root.imageDropActive = true
+            root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY)
+        }
+        onPositionChanged: (drag) => {
+            if (root.activeFrameId !== "") return
+            root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY)
+        }
         onExited: { root.imageDropActive = false; root.clearDropState() }
         onDropped: (drop) => {
             root.imageDropActive = false
             if (!drop.hasUrls) { root.clearDropState(); return }
+            // Full-frame tabs cover the document (regression fix 2026-08-21:
+            // drops used to fall THROUGH to the hidden document). A sketch
+            // tab takes the image(s) onto its canvas; the other frame tabs
+            // ignore the drop (the table tab's cells have their own
+            // dedicated DropArea).
+            if (root.activeSketchRow >= 0) {
+                for (var si = 0; si < drop.urls.length; ++si)
+                    blockModel.sketchAddImageFromUrl(root.activeSketchRow, drop.urls[si].toString(), false)
+                root.clearDropState()
+                drop.accept()
+                return
+            }
+            if (root.activeFrameId !== "") { root.clearDropState(); return }
             // A drop lands the caret on the new media (or table cell) → leaving the
             // edited text block, so consume its inline md first (commit doesn't move
             // rows, so the drop-target indices below stay valid).
@@ -2479,10 +2498,16 @@ FocusScope {
         }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
         // annotation-covered) document — gate ⌘V/⌘X (silent document edits);
-        // ⌘C copies an invisible selection, swallow it too.
+        // ⌘C copies an invisible selection, swallow it too. EXCEPT ⌘V in a
+        // SKETCH tab (regression fix 2026-08-21): the canvas is a real paste
+        // target — doPaste's sketch branch drops images onto it and never
+        // touches the document.
         else if (cmd && (k === Qt.Key_C || k === Qt.Key_V || k === Qt.Key_X)
                  && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0
-                     || root.inkMode)) { event.accepted = true }
+                     || root.inkMode)) {
+            if (k === Qt.Key_V && root.activeSketchRow >= 0) root.doPaste()
+            event.accepted = true
+        }
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
