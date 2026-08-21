@@ -1616,9 +1616,8 @@ font-size:11px;color:var(--subtle);user-select:none;cursor:pointer}
 /* Block select (user request 2026-08-20): click a block's ledger number to
    toggle its highlight — the app's focus-row fill (bgAlt2 band the full
    sheet width, hairline-ruled) painted by JS-positioned underlay bands.
-   The number gets the accent underline-gradient hover affordance. */
-.bnum:hover{color:var(--bright);
-background:linear-gradient(90deg,var(--accent),transparent) left bottom/100% 1px no-repeat}
+   Hover = a quiet brighten only (underline affordance vetoed as messy). */
+.bnum:hover{color:var(--bright)}
 .bnum.mn-on{color:var(--bright)}
 #mn-underlay{position:absolute;left:0;top:0;z-index:-1}
 #mn-underlay .band{position:absolute;left:0;width:var(--sheetw);background:#1d1d1c;
