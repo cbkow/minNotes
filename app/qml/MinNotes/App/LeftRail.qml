@@ -80,7 +80,9 @@ Rectangle {
         }
 
         // One option button — shared by the inline list AND the collapsed flyout.
-        // `item`: { icon, tip, isChecked?(caretType, caretLevel), act() }.
+        // `item`: { icon, tip, isChecked?(caretType, caretLevel), act(), noRefocus? }.
+        // noRefocus: skip act()'s editor refocus — for actions that open a
+        // focus-holding popup (the Link-button lesson).
         component RailOptionBtn: RailBtn {
             property var item: ({})
             signal picked()
@@ -92,7 +94,9 @@ Rectangle {
                 var t = rail.editor.caretType, lv = rail.editor.caretLevel   // reactive deps
                 return item.isChecked(t, lv)
             }
-            onClicked: { rail.act(function() { item.act() }); picked() }
+            onClicked: { if (item.noRefocus) item.act()
+                         else rail.act(function() { item.act() })
+                         picked() }
         }
 
         // A rail group that's either EXPANDED (header + options inline) or
@@ -285,6 +289,7 @@ Rectangle {
                 { icon: "list-bullets",  tip: "Bullet list",isChecked: function(t){ return t === 5 }, act: function(){ rail.editor.toggleBlock(5) } },
                 { icon: "list-numbers",  tip: "Numbered list", isChecked: function(t){ return t === 9 }, act: function(){ rail.editor.toggleBlock(9) } },
                 { icon: "check-square",  tip: "Task list",  isChecked: function(t){ return t === 8 }, act: function(){ rail.editor.toggleBlock(8) } },
+                { icon: "caret-circle-down", tip: "Choice chip  (⌥⌘C)", noRefocus: true, act: function(){ rail.editor.insertChoiceChip() } },
                 { icon: "code-block",    tip: "Code block", isChecked: function(t){ return t === 2 }, act: function(){ rail.editor.toggleCodeBlock() } },
                 { icon: "table",         tip: "Table",      act: function(){ rail.editor.insertTableAtCaret() } },
                 { icon: "scribble",      tip: "Sketch",     act: function(){ rail.editor.insertSketchAtCaret() } },
