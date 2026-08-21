@@ -5,51 +5,67 @@ nav_order: 1
 ---
 
 # minNotes
+---
 
-A fast, block-based notes editor for macOS and Windows. Notes are plain
-SQLite files (`.mndb`) you can keep anywhere — local disk, a network share,
-Dropbox, LucidLink — and open on either platform.
+![minNotes main window](images/mn001.png)
 
-## What it does
+**minNotes** is a fast, block-based notes editor for macOS and Windows, built
+for artists and post-production teams. Notes are plain SQLite files
+(`.mndb`) you can keep anywhere — local disk, a network share, Dropbox,
+LucidLink — and open on either platform.
 
-- **Block editor** — paragraphs, headings, quotes, code blocks with syntax
-  highlighting, bullet / numbered / task / choice lists, dividers. A steady
-  reading measure with a block-number ruler down the right side — drag a
-  number to reorder its block. Each note picks its own page width, from a
-  prose measure up to a wide board for image-heavy work.
-- **Tables + kanban** — rich cells, choice/check columns, sort & fill, and a
-  one-click board view grouped by a column.
-- **Media inline** — drop or paste images, video (with a scrub + annotate
-  studio), PDFs (page-by-page), and file attachments.
-- **Ink & comments** — pick a drawing tool and mark up anything: the page
-  and its margins, sketches, video frames (interchangeable with QCView),
-  even PDF pages directly. Comments anchor to text — a blue bubble in the
-  margin opens the thread right there.
-- **Import** — Markdown, plain text, CSV/TSV, HTML, Word, RTF (macOS),
-  Evernote `.enex`, and Notion exports; a multi-note import becomes a
-  folder of notes.
-- **Export** — Markdown (with an assets folder), a self-contained HTML
-  review page (one file: annotations as toggleable layers, comment threads
-  on hover, a click-to-zoom lightbox, block numbers in the margin), a Word
-  document where your comments arrive as native review comments, or a
-  sealed **package** (`.mnpkg`) with every referenced file inside.
-- **Markdown-style input** — type `## `, `- `, `> `, ```` ``` ```` and the
-  block converts as you go.
-- **Multi-document tabs** and **cross-OS path mapping** so referenced media
-  resolves on every machine.
-- **Auto-update** built in (Sparkle on macOS, WinSparkle on Windows).
+---
 
-## Get going
+## Key Features
+
+### Writing
+- Block editor — paragraphs, headings 1–6, quotes, syntax-highlighted code,
+  bullet / numbered / task / choice lists, dividers
+- Markdown-style input: type `## `, `- `, `> `, ` ``` ` and the block
+  converts as you go
+- Inline formatting with text color and background, links, and inline
+  choice chips (To do / Doing / Done anywhere in text)
+- Per-note page width, from a prose measure to a wide board
+- A block-number ruler down the right side — drag a number to reorder,
+  reference "block 14" in a review
+- Full undo history panel: the note's timeline, click to time-travel
+
+### Tables
+- Rich cells with text, formatting, and images; choice and checkmark columns
+- Multi-select rows, columns, or cell ranges for bulk operations —
+  delete, clear, color, retype, copy-as-table — each a single undo
+- Sort, fill down/right, drag-reorder rows and columns
+- One-click kanban board view grouped by any choice or check column
+
+### Media & Review
+- Inline images, video (scrub, skim audio, annotate — interchangeable with
+  [QCView](https://qcview.com)), page-by-page PDFs, file attachments
+- Draw anywhere: the armed tool is the mode — page margins, images,
+  sketches, video frames, and directly on PDF pages
+- Comment threads anchored to text, with margin bubbles and resolve state
+- Local files copy into the note's media folder automatically; network
+  shares stay referenced in place, with cross-OS path mapping
+
+### Documents
+- Multi-document tabs; drag a tab onto another tab to merge whole notes
+- Import: Markdown, text, CSV/TSV, HTML, Word, Excel, OpenDocument,
+  source code, RTF (macOS), Evernote, Notion
+- Export: Markdown + assets, self-contained HTML review page, Word with
+  native review comments, print-ready PDF
+- Sealed `.mnpkg` packages — one file with every referenced asset inside,
+  video plays straight from the archive
+
+---
+
+## Get Going
 
 1. **Download** the latest `.dmg` (macOS) or `.exe` (Windows) from the
-   [releases page](https://github.com/cbkow/minNotes/releases/latest).
-2. Open or create a note, then read the [Editing](editing.md) primer and the
-   [Keyboard shortcuts](shortcuts.md).
+   [releases page](https://github.com/cbkow/minNotes/releases/latest) —
+   see [Installation](installation.md).
+2. Open or create a note, then start with [Documents & Tabs](basics.md)
+   and the [Editing](editing.md) primer.
+3. Keep the [Keyboard shortcuts](shortcuts.md) close.
 
-## Saving
-
-minNotes edits a fast local working copy of your note and writes back to the
-original file when you **Save** (`⌘S` / `Ctrl+S`). A dot on the tab and an
-"Edited" hint in the title show unsaved changes; closing a tab or quitting
-with unsaved work prompts you first. This keeps notes safe even on network
-shares that don't play well with live databases.
+minNotes is free software, licensed
+[GPL-3.0-or-later](https://github.com/cbkow/minNotes/blob/main/LICENSE).
+It runs entirely on your machine — see [Privacy](privacy.md).

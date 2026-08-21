@@ -1,11 +1,13 @@
 ---
-title: Keyboard shortcuts
-nav_order: 3
+title: Keyboard Shortcuts
+permalink: /shortcuts/
+nav_order: 12
 ---
 
-# Keyboard shortcuts
+# Keyboard Shortcuts
 
-macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is Shift.
+macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is
+Shift, **⌥** is Alt/Option.
 
 ## Documents
 
@@ -24,9 +26,11 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Undo | ⌘Z |
 | Redo | ⌘⇧Z &nbsp;or&nbsp; ⌘Y |
 | Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
+| Copy as Markdown | ⌘⇧C |
+| Insert a choice chip (To do / Doing / Done) | ⌥⌘C |
 | Indent / outdent list item | Tab / ⇧Tab |
 
-## Inline formatting
+## Inline Formatting
 
 | Action | Shortcut |
 |---|---|
@@ -36,8 +40,21 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Strikethrough | ⌘⇧X |
 | Inline code | ⌘E |
 | Link | ⌘K |
-| Highlight | ⌘⇧H |
+| Background color (toggle armed swatch) | ⌘⇧H |
 | Clear formatting | ⌘\ |
+
+## Tables
+
+| Action | Shortcut |
+|---|---|
+| Extend the cell selection | ⇧Arrows &nbsp;or&nbsp; ⇧Click |
+| Select all cells | ⌘A |
+| Add / remove a row or column (on a grip) | ⌘Click |
+| Span of rows or columns (on a grip) | ⇧Click |
+| Copy selection as a table | ⌘C |
+| Clear selection contents | Backspace / Delete |
+| Fill selection down / right | ⌘D / ⌘R |
+| Step selection out, then leave the table | Esc |
 
 ## Drawing
 
@@ -50,13 +67,13 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Delete the selected annotation(s) | Delete / Backspace |
 | Pan pages while a tool is armed (PDF tab) | hold Space |
 
-## Tables
+## Comments
 
 | Action | Shortcut |
 |---|---|
-| Fill selection down | ⌘D |
-| Fill selection right | ⌘R |
-| Select all cells | ⌘A |
+| Submit the comment | Enter |
+| New line in a comment | ⇧Enter |
+| Close the thread card | Esc |
 
 ## Video (while a video is active)
 
@@ -67,7 +84,7 @@ macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is S
 | Cycle review speed (0.5×–2×) | R |
 | Reset speed to 1× | ⇧R |
 
-## In the document (markdown-style)
+## In the Document (markdown-style)
 
 Typed at the start of a block — see [Editing](editing.md):
 
