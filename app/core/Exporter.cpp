@@ -1580,7 +1580,14 @@ const char* kHtmlCss = R"CSS(
    window-shell desk tone, so the document reads as the same constrained
    shape as in the app. Hard-stop gradient on html = the one paint. */
 *{box-sizing:border-box}
-html{background:linear-gradient(90deg,var(--bg) var(--sheetw),var(--desk) var(--sheetw))}
+/* Explicit size + no-repeat: the root's background image is sized to its
+   BOX (≈ viewport) and tiles across the scrollable canvas, so a table
+   scrolling past the first viewport-width would repaint the boundary in
+   the wrong place. One oversized image, desk colour beyond it. */
+html{background-color:var(--desk);
+background-image:linear-gradient(90deg,var(--bg) var(--sheetw),var(--desk) var(--sheetw));
+background-size:calc(var(--sheetw) + 100vw) 100%;
+background-repeat:no-repeat}
 body{background:transparent;color:var(--text);margin:0;
 font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 /* Left-anchored page (user ruling): the prose measure hugs the left edge
