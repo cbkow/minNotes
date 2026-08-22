@@ -200,6 +200,7 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
     ParaProps pp;
     QString linkHref;          // inside <w:hyperlink>
     int linkStart = -1;
+    int glyphTask = -1;        // painted task glyph (wp:docPr "mnTask<state>")
     std::vector<BlockModel::BlockSpec> mediaSpecs;
     QHash<QString, int> rangeStarts;   // comment id → start offset (this para)
     std::vector<std::tuple<QString, int, int>> closedRanges;
@@ -268,6 +269,7 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
         } else if (n == QLatin1String("r")) {
             // One run: props then t/br/tab/drawing children.
             RunProps rp;
+            QString docPrName;   // last wp:docPr name seen before a blip
             while (!xml.atEnd()) {
                 const auto rt = xml.readNext();
                 if (rt == QXmlStreamReader::EndElement
@@ -284,6 +286,16 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
                     text += QLatin1Char('\n');
                 } else if (rn == QLatin1String("tab")) {
                     text += QLatin1Char('\t');
+                } else if (rn == QLatin1String("docPr")) {
+                    docPrName = xml.attributes().value(QLatin1String("name")).toString();
+                } else if (rn == QLatin1String("blip")
+                           && docPrName.startsWith(QLatin1String("mnTask"))) {
+                    // OUR painted task checkbox (2026-08-22): the docPr name
+                    // carries the state — reconstruct it, never import the
+                    // raster as media.
+                    glyphTask = std::clamp(
+                        docPrName.mid(6).toInt(), 0, 2);
+                    docPrName.clear();
                 } else if (rn == QLatin1String("blip") && !cellTextMode && c.store) {
                     const QString rid = xml.attributes()
                         .value(QLatin1String("r:embed")).toString();
@@ -353,6 +365,24 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
                 x.e = std::max(0, x.e - 2);
             }
             for (auto& [id, s, e] : closedRanges) { s = std::max(0, s - 2); e = std::max(0, e - 2); }
+        } else if (glyphTask >= 0 && (sp.type == BlockModel::ListItem
+                                      || sp.type == BlockModel::Paragraph)) {
+            // Painted-checkbox emit (2026-08-22): state rode the docPr name.
+            // The glyph run is followed by a one-space spacer run (our
+            // chrome, like the legacy "☐ " prefix) — strip it.
+            sp.type = BlockModel::TaskListItem;
+            sp.taskState = static_cast<uint8_t>(glyphTask);
+            if (sp.text.startsWith(QLatin1Char(' '))) {
+                sp.text.remove(0, 1);
+                for (auto& x : sp.spans) {
+                    x.s = std::max(0, x.s - 1);
+                    x.e = std::max(0, x.e - 1);
+                }
+                for (auto& [id, s, e] : closedRanges) {
+                    s = std::max(0, s - 1);
+                    e = std::max(0, e - 1);
+                }
+            }
         }
         const int specIndex = static_cast<int>(c.specs->size());
         c.specs->push_back(sp);

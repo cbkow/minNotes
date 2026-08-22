@@ -153,6 +153,29 @@ QString escapeMd(const QString& in) {
     return out;
 }
 
+// DT-2 chip payload → the SELECTED option's color hex ("" = none/invalid).
+// u = {"o":[{"id","l","c"}...],"v":selectedId}; the span TEXT is the label.
+QString choiceSpanColor(const QString& u) {
+    const QJsonObject o = QJsonDocument::fromJson(u.toUtf8()).object();
+    const QString sel = o.value(QLatin1String("v")).toString();
+    for (const QJsonValue& v : o.value(QLatin1String("o")).toArray()) {
+        const QJsonObject opt = v.toObject();
+        if (opt.value(QLatin1String("id")).toString() == sel)
+            return opt.value(QLatin1String("c")).toString();
+    }
+    return {};
+}
+
+// Chip ground on the light formats (DOCX/PDF): HTML renders chips as the
+// option color at 0.28 alpha over the page; bake the same mix over white
+// paper. Invalid/absent color → the neutral EFEFEF (the code-span grey).
+QColor chipOnPaper(const QString& hex) {
+    const QColor c(hex);
+    if (!c.isValid()) return QColor(0xEF, 0xEF, 0xEF);
+    auto mix = [](int ch) { return int(std::lround(0.28 * ch + 0.72 * 255)); };
+    return QColor(mix(c.red()), mix(c.green()), mix(c.blue()));
+}
+
 // Link/image destination: angle-bracket when the target carries characters
 // that break the bare () form (spaces, parens — production paths do).
 QString mdDest(const QString& target) {
@@ -262,15 +285,15 @@ struct FootnoteCtx {
     }
 };
 
-// One block's text + spans → markdown with markers, footnote refs recorded.
-QString emitInline(const BlockModel* m, int row, FootnoteCtx& fn) {
-    const QString text = m->contentForRow(row);
+// Text + spans → markdown with markers, footnote refs recorded. Shared by
+// body blocks (spansForRow) and table cells (tableCellSpans, 2026-08-22).
+QString emitInlineSpans(const QString& text, const QVariantList& spans,
+                        FootnoteCtx& fn) {
     const int len = text.size();
 
     std::vector<StyleRun> styles;
     std::map<int, QList<int>> notesAt;   // char pos → footnote numbers
 
-    const QVariantList spans = m->spansForRow(row);
     for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
@@ -282,6 +305,8 @@ QString emitInline(const BlockModel* m, int row, FootnoteCtx& fn) {
         }
         if (k == BlockModel::SpanFgColor || k == BlockModel::SpanHighlight)
             continue;   // dropped in markdown (ruling: HTML carries fidelity)
+        if (k == BlockModel::SpanChoice)
+            continue;   // chip flattens to its label text (color is HTML-only)
         if (s >= e) continue;
         StyleRun r{s, e, k, sp.value(QStringLiteral("u")).toString(), {}, false};
         if (k == BlockModel::SpanCode) {
@@ -365,11 +390,19 @@ QString emitInline(const BlockModel* m, int row, FootnoteCtx& fn) {
     return out;
 }
 
+QString emitInline(const BlockModel* m, int row, FootnoteCtx& fn) {
+    return emitInlineSpans(m->contentForRow(row), m->spansForRow(row), fn);
+}
+
 // ---------- table ----------
 
 QString cellMd(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& sink) {
     QString out;
-    const int kind = m->tableColumnKind(row, c);
+    // Header cells stay TEXT in every column kind (the app's rule —
+    // BlockTable's isCheck/isChoice are !isHeader), so the typed branches
+    // only apply to body rows.
+    const bool header = r < m->tableHeaderRows(row);
+    const int kind = header ? 0 : m->tableColumnKind(row, c);
     if (kind == 2) {
         switch (m->tableCellCheck(row, r, c)) {
         case 1:  out = QStringLiteral("[/]"); break;
@@ -390,7 +423,11 @@ QString cellMd(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& 
                            .arg(mdFileDest(rel.isEmpty() ? p : rel));
             }
         }
-        out += escapeMd(m->tableCell(row, r, c));
+        // Cell spans ride the same walker as body text (cells can't carry
+        // comment spans, so the throwaway footnote ctx never numbers).
+        FootnoteCtx cellFn;
+        out += emitInlineSpans(m->tableCell(row, r, c),
+                               m->tableCellSpans(row, r, c), cellFn);
     }
     out.replace(QStringLiteral("|"), QStringLiteral("\\|"));
     out.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
@@ -1059,19 +1096,23 @@ int htmlRankOf(uint8_t k) {
     case BlockModel::SpanStrike:    return 6;
     case BlockModel::SpanUnderline: return 7;
     case BlockModel::SpanCode:      return 8;
+    case BlockModel::SpanChoice:    return 9;   // atomic pill, innermost
     }
-    return 9;
+    return 10;
 }
 
-QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
-    const QString text = m->contentForRow(row);
+// Text + spans → tagged HTML. Shared by body blocks and table cells
+// (2026-08-22); `m` stays for the comment-thread lookup, which cells
+// never hit (cell spans can't carry comments).
+QString emitInlineHtmlSpans(const BlockModel* m, const QString& text,
+                            const QVariantList& spans, FootnoteCtx& fn) {
     const int len = text.size();
 
     struct Run { int s, e; uint8_t kind; QString u; int note = 0;
                  bool operator==(const Run& o) const {
                      return kind == o.kind && u == o.u && s == o.s && e == o.e; } };
     std::vector<Run> runs;
-    for (const QVariant& v : m->spansForRow(row)) {
+    for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
         const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
@@ -1114,6 +1155,16 @@ QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
         case BlockModel::SpanStrike:    return QStringLiteral("<s>");
         case BlockModel::SpanUnderline: return QStringLiteral("<u>");
         case BlockModel::SpanCode:      return QStringLiteral("<code>");
+        case BlockModel::SpanChoice: {
+            // Inline chip = the choice-column pill, same recipe (cellHtml):
+            // option color at 0.28 alpha, neutral ground when colorless.
+            const QColor cc(choiceSpanColor(r.u));
+            const QString bg = cc.isValid()
+                ? QStringLiteral("rgba(%1,%2,%3,0.28)")
+                      .arg(cc.red()).arg(cc.green()).arg(cc.blue())
+                : QStringLiteral("#333333");
+            return QStringLiteral("<span class=\"chip\" style=\"background:%1\">").arg(bg);
+        }
         }
         return {};
     };
@@ -1142,7 +1193,8 @@ QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
         }
         case BlockModel::SpanLink:      return QStringLiteral("</a>");
         case BlockModel::SpanFgColor:
-        case BlockModel::SpanHighlight: return QStringLiteral("</span>");
+        case BlockModel::SpanHighlight:
+        case BlockModel::SpanChoice:    return QStringLiteral("</span>");
         case BlockModel::SpanBold:      return QStringLiteral("</strong>");
         case BlockModel::SpanItalic:    return QStringLiteral("</em>");
         case BlockModel::SpanStrike:    return QStringLiteral("</s>");
@@ -1184,6 +1236,10 @@ QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
     return out;
 }
 
+QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
+    return emitInlineHtmlSpans(m, m->contentForRow(row), m->spansForRow(row), fn);
+}
+
 // Mirrors the app's tri-state checkbox exactly (Editor.qml task item):
 // todo = muted 1.5px border; doing = accent border + centered accent dash;
 // done = borderless accent fill + white check. Pure CSS (.cb in kHtmlCss).
@@ -1196,7 +1252,10 @@ QString taskGlyphHtml(int state) {
 }
 
 QString cellHtml(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& sink) {
-    const int kind = m->tableColumnKind(row, c);
+    // Header cells stay TEXT in every column kind (the app's rule —
+    // BlockTable's isCheck/isChoice are !isHeader).
+    const bool header = r < m->tableHeaderRows(row);
+    const int kind = header ? 0 : m->tableColumnKind(row, c);
     if (kind == 2) return taskGlyphHtml(m->tableCellCheck(row, r, c));
     if (kind == 1) {
         const QString label = m->tableCellChoiceLabel(row, r, c);
@@ -1216,9 +1275,11 @@ QString cellHtml(const BlockModel* m, int row, int r, int c, Exporter::AssetSink
         if (!src.isEmpty())
             out += QStringLiteral("<img src=\"%1\" alt=\"\"><br>").arg(src);
     }
-    QString t = htmlEscape(m->tableCell(row, r, c));
-    t.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
-    return out + t;
+    // Cell spans (formatting + cell chips) ride the body walker; cells
+    // can't carry comment spans, so the throwaway ctx never numbers.
+    FootnoteCtx cellFn;
+    return out + emitInlineHtmlSpans(m, m->tableCell(row, r, c),
+                                     m->tableCellSpans(row, r, c), cellFn);
 }
 
 QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
@@ -2131,8 +2192,12 @@ int docxAddImage(DocxCtx& c, const QImage& img) {
 }
 
 // Transplanted from QCView: the full inline-drawing XML for one image.
+// `docPrName` overrides the generic "Picture %1" — the task-glyph emitter
+// stamps "mnTask<state>" there so the DOCX reader can round-trip the state
+// instead of importing the checkbox raster as media.
 void docxDrawing(QXmlStreamWriter& w, const QString& relId,
-                 int widthEmu, int heightEmu, int picId) {
+                 int widthEmu, int heightEmu, int picId,
+                 const QString& docPrName = QString()) {
     w.writeStartElement(QStringLiteral("w:drawing"));
     w.writeStartElement(QStringLiteral("wp:inline"));
     for (const char* a : {"distT", "distB", "distL", "distR"})
@@ -2143,7 +2208,8 @@ void docxDrawing(QXmlStreamWriter& w, const QString& relId,
     w.writeEndElement();
     w.writeStartElement(QStringLiteral("wp:docPr"));
     w.writeAttribute(QStringLiteral("id"), QString::number(picId));
-    w.writeAttribute(QStringLiteral("name"), QStringLiteral("Picture %1").arg(picId));
+    w.writeAttribute(QStringLiteral("name"),
+        docPrName.isEmpty() ? QStringLiteral("Picture %1").arg(picId) : docPrName);
     w.writeEndElement();
     w.writeStartElement(QStringLiteral("a:graphic"));
     w.writeAttribute(QStringLiteral("xmlns:a"),
@@ -2206,6 +2272,30 @@ void docxImagePara(DocxCtx& c, QXmlStreamWriter& w, int relIdx,
                 int(dispW * kEmuPerPx), int(dispH * kEmuPerPx), c.picId++);
     w.writeEndElement();
     w.writeEndElement();
+}
+
+// The painted tri-state checkbox (defined with the PDF emitters below) —
+// DOCX embeds the same raster (2026-08-22): Unicode ☐/◐/☑ rendered at the
+// mercy of the reader's font fallback, painted pixels don't.
+QImage taskGlyphImage(int state);
+
+// One inline run holding the task glyph at the app's 11px checkbox size.
+void docxTaskGlyphRun(DocxCtx& c, QXmlStreamWriter& w, int state,
+                      bool trailingSpace) {
+    const int relIdx = docxAddImage(c, taskGlyphImage(state));
+    w.writeStartElement(QStringLiteral("w:r"));
+    docxDrawing(w, QStringLiteral("rIdImg%1").arg(relIdx),
+                int(11 * kEmuPerPx), int(11 * kEmuPerPx), c.picId++,
+                QStringLiteral("mnTask%1").arg(state));   // reader sniffs this
+    w.writeEndElement();
+    if (trailingSpace) {
+        w.writeStartElement(QStringLiteral("w:r"));
+        w.writeStartElement(QStringLiteral("w:t"));
+        w.writeAttribute(QStringLiteral("xml:space"), QStringLiteral("preserve"));
+        w.writeCharacters(QStringLiteral(" "));
+        w.writeEndElement();
+        w.writeEndElement();
+    }
 }
 
 struct DocxRunProps {
@@ -2324,19 +2414,18 @@ private:
     QString line_;
 };
 
-// One block's text + spans → OOXML runs. Every run carries its FULL
-// properties, so overlapping spans need no nesting stack — only comment
-// range markers and hyperlink wrappers have element structure.
-void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
-              const DocxRunProps& base) {
-    const BlockModel* m = c.m;
-    const QString text = m->contentForRow(row);
+// Text + spans → OOXML runs. Every run carries its FULL properties, so
+// overlapping spans need no nesting stack — only comment range markers and
+// hyperlink wrappers have element structure. Shared by body blocks and
+// table cells (2026-08-22; cell spans can't carry comments).
+void docxSpanRuns(DocxCtx& c, QXmlStreamWriter& w, const QString& text,
+                  const QVariantList& spans, const DocxRunProps& base) {
     const int len = text.size();
 
     struct Run { int s, e; uint8_t kind; QString u; };
     std::vector<Run> runs;
     std::map<int, QStringList> cmtStart, cmtEnd;   // pos → thread ids
-    for (const QVariant& v : m->spansForRow(row)) {
+    for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
         const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
@@ -2414,6 +2503,9 @@ void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
             case BlockModel::SpanLink:      link = r.u; rp.color = QStringLiteral("#0563C1"); rp.u = true; break;
             case BlockModel::SpanFgColor:   rp.color = r.u; break;
             case BlockModel::SpanHighlight: rp.highlight = r.u; break;
+            case BlockModel::SpanChoice:    // chip = shaded run on paper
+                rp.highlight = chipOnPaper(choiceSpanColor(r.u)).name();
+                break;
             default: break;
             }
         }
@@ -2422,6 +2514,11 @@ void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
     }
     setLink(QString());
     markers(len);
+}
+
+void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
+              const DocxRunProps& base) {
+    docxSpanRuns(c, w, c.m->contentForRow(row), c.m->spansForRow(row), base);
 }
 
 void docxPara(DocxCtx& c, QXmlStreamWriter& w, int row, const DocxRunProps& base,
@@ -2509,16 +2606,28 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
                 w.writeEndElement();
             }
             w.writeEndElement();
-            const int kind = m->tableColumnKind(row, cix);
+            // Header cells stay TEXT in every column kind (the app's rule —
+            // BlockTable's isCheck/isChoice are !isHeader).
+            const bool header = r < m->tableHeaderRows(row);
+            const int kind = header ? 0 : m->tableColumnKind(row, cix);
             QString cell;
+            DocxRunProps rp;
             if (kind == 2) {
-                switch (m->tableCellCheck(row, r, cix)) {
-                case 1:  cell = QStringLiteral("◐"); break;
-                case 2:  cell = QStringLiteral("☑"); break;
-                default: cell = QStringLiteral("☐"); break;
-                }
-            } else if (kind == 1) {
+                // Painted glyph (2026-08-22) — same raster as the PDF,
+                // instead of font-fallback Unicode.
+                w.writeStartElement(QStringLiteral("w:p"));
+                docxTaskGlyphRun(c, w, m->tableCellCheck(row, r, cix), false);
+                w.writeEndElement();
+                w.writeEndElement();   // w:tc
+                continue;
+            }
+            if (kind == 1) {
                 cell = m->tableCellChoiceLabel(row, r, cix);
+                // The option color carries as run shading (2026-08-22),
+                // the paper take on the app's chip.
+                if (!cell.isEmpty())
+                    rp.highlight =
+                        chipOnPaper(m->tableCellChoiceColor(row, r, cix)).name();
             } else {
                 cell = m->tableCell(row, r, cix);
             }
@@ -2537,10 +2646,18 @@ void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
                                   int(dispW * img.height() / double(img.width())));
                 }
             }
-            DocxRunProps rp;
             const QString fg = m->tableCellFg(row, r, cix);
             if (!fg.isEmpty()) rp.color = fg;
-            docxPlainPara(w, cell, rp);
+            if (kind == 0) {
+                // Cell spans (formatting + cell chips) ride the body run
+                // walker (2026-08-22); header cells of typed columns land
+                // here too and typed cells have no span list to carry.
+                w.writeStartElement(QStringLiteral("w:p"));
+                docxSpanRuns(c, w, cell, m->tableCellSpans(row, r, cix), rp);
+                w.writeEndElement();
+            } else {
+                docxPlainPara(w, cell, rp);
+            }
             w.writeEndElement();   // w:tc
         }
         w.writeEndElement();       // w:tr
@@ -2771,12 +2888,8 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 w.writeEndElement();
                 w.writeEndElement();
                 w.writeEndElement();
-                if (type == BlockModel::TaskListItem) {
-                    QString g = QStringLiteral("☐ ");
-                    if (m->taskStateForRow(row) == BlockModel::TaskDoing) g = QStringLiteral("◐ ");
-                    else if (m->taskStateForRow(row) == BlockModel::TaskDone) g = QStringLiteral("☑ ");
-                    docxTextRun(w, g, {});
-                }
+                if (type == BlockModel::TaskListItem)   // painted, not Unicode
+                    docxTaskGlyphRun(c, w, m->taskStateForRow(row), true);
                 docxRuns(c, w, row, {});
                 w.writeEndElement();
                 break;
@@ -3096,18 +3209,19 @@ void pdfInsertTaskGlyph(PdfCtx& c, int state) {
     c.cur.insertText(QStringLiteral(" "));
 }
 
-// One block's text + spans as merged char formats — per segment, every
-// covering span's attributes merge (no nesting order to manage, unlike the
-// marker emitters). Comment spans record footnote numbers and drop a
-// superscript [n] at the span end.
-void pdfInline(PdfCtx& c, int row, const QTextCharFormat& base) {
-    const QString text = c.m->contentForRow(row);
+// Text + spans as merged char formats — per segment, every covering span's
+// attributes merge (no nesting order to manage, unlike the marker
+// emitters). Comment spans record footnote numbers and drop a superscript
+// [n] at the span end. Shared by body blocks (c.cur) and table cells (the
+// cell's own cursor, 2026-08-22; cell spans can't carry comments).
+void pdfSpanRuns(PdfCtx& c, QTextCursor& cur, const QString& text,
+                 const QVariantList& spans, const QTextCharFormat& base) {
     const int len = text.size();
     struct Run { int s, e; uint8_t kind; QString u; };
     std::vector<Run> runs;
     std::set<int> bounds{0, len};
     std::vector<std::pair<int, int>> notes;   // (end pos, footnote number)
-    for (const QVariant& v : c.m->spansForRow(row)) {
+    for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
         const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
@@ -3125,7 +3239,7 @@ void pdfInline(PdfCtx& c, int row, const QTextCharFormat& base) {
             QTextCharFormat nf = base;
             nf.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
             nf.setForeground(kPdfAccent);
-            c.cur.insertText(QStringLiteral("[%1]").arg(notes[ni].second), nf);
+            cur.insertText(QStringLiteral("[%1]").arg(notes[ni].second), nf);
         }
     };
     emitNotesAt(0);
@@ -3159,11 +3273,18 @@ void pdfInline(PdfCtx& c, int row, const QTextCharFormat& base) {
             case BlockModel::SpanComment:   // light tint — the print take on .cmt
                 f.setBackground(QColor(0xDC, 0xEA, 0xFB));
                 break;
+            case BlockModel::SpanChoice:    // chip = shaded run on paper
+                f.setBackground(chipOnPaper(choiceSpanColor(r.u)));
+                break;
             }
         }
-        c.cur.insertText(text.mid(s, e - s), f);
+        cur.insertText(text.mid(s, e - s), f);
         emitNotesAt(e);
     }
+}
+
+void pdfInline(PdfCtx& c, int row, const QTextCharFormat& base) {
+    pdfSpanRuns(c, c.cur, c.m->contentForRow(row), c.m->spansForRow(row), base);
 }
 
 // KSyntaxHighlighting → cursor runs, LightTheme (white paper).
@@ -3292,7 +3413,10 @@ void pdfTable(PdfCtx& c, int row) {
                 cell.setFormat(cf);
             }
             QTextCursor cc = cell.firstCursorPosition();
-            const int kind = m->tableColumnKind(row, cix);
+            // Header cells stay TEXT in every column kind (the app's rule —
+            // BlockTable's isCheck/isChoice are !isHeader).
+            const bool header = r < m->tableHeaderRows(row);
+            const int kind = header ? 0 : m->tableColumnKind(row, cix);
             QTextCharFormat rf;
             rf.setForeground(kPdfText);
             rf.setFontPointSize(9.5);
@@ -3305,7 +3429,14 @@ void pdfTable(PdfCtx& c, int row) {
                 gf.setWidth(11 * c.imgFmt); gf.setHeight(11 * c.imgFmt);
                 cc.insertImage(gf);
             } else if (kind == 1) {
-                cc.insertText(m->tableCellChoiceLabel(row, r, cix), rf);
+                // The option color carries as run shading (2026-08-22),
+                // the paper take on the app's chip.
+                const QString label = m->tableCellChoiceLabel(row, r, cix);
+                QTextCharFormat chf = rf;
+                if (!label.isEmpty())
+                    chf.setBackground(
+                        chipOnPaper(m->tableCellChoiceColor(row, r, cix)));
+                cc.insertText(label, chf);
             } else {
                 if (!m->tableCellMedia(row, r, cix).isEmpty()) {
                     const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
@@ -3334,7 +3465,10 @@ void pdfTable(PdfCtx& c, int row) {
                             cc.insertBlock();   // text under the image
                     }
                 }
-                cc.insertText(m->tableCell(row, r, cix), rf);
+                // Cell spans (formatting + cell chips) ride the body run
+                // walker (2026-08-22).
+                pdfSpanRuns(c, cc, m->tableCell(row, r, cix),
+                            m->tableCellSpans(row, r, cix), rf);
             }
         }
     }
@@ -3388,7 +3522,10 @@ void pdfVideoNotes(PdfCtx& c, const QString& mediaPath) {
                     clean, qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data), 1, 1);
             if (thumb.isNull()) thumb = clean;
         }
-        if (!thumb.isNull()) pdfInsertImage(c, thumb, 240);
+        // Full content width (user ruling 2026-08-22): annotation frames are
+        // the payload of a video note — print them at page width, not as
+        // thumbnails. pdfInsertImage still one-pages the tall ones.
+        if (!thumb.isNull()) pdfInsertImage(c, thumb, c.contentW);
         QTextBlockFormat nb; nb.setBottomMargin(4);
         QTextCharFormat mono;
         mono.setFontFamilies(pdfMonoFamilies());

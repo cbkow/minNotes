@@ -4298,6 +4298,131 @@ static void testCellChoiceChips() {
     m.closeDocument();
 }
 
+// --- Test 48: exports carry chips + cell spans; typed headers stay text ----
+// The 2026-08-22 gap-close: inline/cell chips render in HTML (the .chip
+// pill) and shade in DOCX/PDF; cell spans reach every emitter; typed
+// (check/choice) columns render their HEADER cells as text (the app's
+// isCheck/isChoice = !isHeader rule); the DOCX task glyph is a painted
+// image whose docPr name ("mnTask<state>") round-trips the state without
+// importing the raster as media.
+static void testExportChipsTasksCells() {
+    qInfo("[48] exports: chips, cell spans, typed-column header text");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+
+    //                                                 0123456789
+    m.insertBlock(0); m.setContent(0, QStringLiteral("status is  today"));
+    const int cs = m.insertChoiceAt(0, 10);            // between the spaces
+    CHECK(cs == 10, "inline chip inserted at col 10");
+    m.choiceAddOption(0, cs, QStringLiteral("Urgent"), QStringLiteral("#804000"));
+
+    m.insertBlock(1); m.setContent(1, QStringLiteral("doing thing"));
+    m.setBlockType(1, BlockModel::TaskListItem);
+    m.toggleTask(1);                                   // todo → doing
+
+    m.insertTable(1, 3, 3);                            // → row 2
+    const int t = 2;
+    m.tableSetHeaderRows(t, 1);
+    m.tableSetColumnKind(t, 0, 2);                     // check
+    m.tableSetColumnKind(t, 1, 1);                     // choice
+    m.tableSetCell(t, 0, 0, QStringLiteral("Done?"));
+    m.tableSetCell(t, 0, 1, QStringLiteral("Status"));
+    m.tableSetCell(t, 0, 2, QStringLiteral("Notes"));
+    m.tableSetCellCheck(t, 1, 0, 1);                   // doing
+    const QString oid = m.tableAddOption(t, 1, QStringLiteral("Ship"),
+                                         QStringLiteral("#804000"));
+    m.tableSetCellChoice(t, 1, 1, oid);
+    m.tableSetCell(t, 1, 2, QStringLiteral("bold note"));
+    m.tableSetCellFormat(t, 1, 2, 0, 4, QStringLiteral("bold"), true);
+    const int ccs = m.tableInsertChoiceAt(t, 2, 2, 0); // cell chip, plain col
+    CHECK(ccs == 0, "cell chip inserted in the plain column");
+    m.tableChoiceAddOption(t, 2, 2, ccs, QStringLiteral("Blocked"),
+                           QStringLiteral("#005080"));
+
+    Exporter ex;
+    ex.setModel(&m);
+
+    // Markdown: chips flatten to their labels; cell bold carries; typed
+    // headers are the header TEXT, not a glyph/label.
+    RecordingSink msink;
+    const QString md = ex.toMarkdown(Exporter::Options{}, msink);
+    CHECK(md.contains(QStringLiteral("status is Urgent today")),
+          "md: inline chip flattens to the selected label");
+    CHECK(md.contains(QStringLiteral("| Done? | Status | Notes |")),
+          "md: typed-column header cells stay text");
+    CHECK(md.contains(QStringLiteral("| [/] | Ship | **bold** note |")),
+          "md: check state + choice label + bold cell span");
+    CHECK(md.contains(QStringLiteral("Blocked")),
+          "md: cell chip flattens to its label");
+
+    // HTML: chips are .chip pills with the option color at 0.28 alpha —
+    // inline, in choice columns, and inside plain cells.
+    RecordingSink hsink;
+    const QString html = ex.toHtml(Exporter::Options{}, hsink);
+    CHECK(html.contains(QStringLiteral(
+              "<span class=\"chip\" style=\"background:rgba(128,64,0,0.28)\">Urgent</span>")),
+          "html: inline chip renders as the colored pill");
+    CHECK(html.contains(QStringLiteral(
+              "<span class=\"chip\" style=\"background:rgba(128,64,0,0.28)\">Ship</span>")),
+          "html: choice-column chip keeps its pill");
+    CHECK(html.contains(QStringLiteral(
+              "<span class=\"chip\" style=\"background:rgba(0,80,128,0.28)\">Blocked</span>")),
+          "html: cell chip renders as a pill too");
+    CHECK(html.contains(QStringLiteral("<td>Done?</td>")),
+          "html: check column's header cell is its text");
+    CHECK(html.contains(QStringLiteral("class=\"cb doing\"")),
+          "html: body check cell renders the tri-state glyph");
+    CHECK(html.contains(QStringLiteral("<strong>bold</strong> note")),
+          "html: cell bold span carries");
+
+    // DOCX: painted task glyphs (docPr-tagged, no Unicode fallback), chip
+    // shading on choice cells, cell spans as real runs.
+    const QString docxPath = QDir::temp().filePath(QStringLiteral("mn_chip_test.docx"));
+    QFile::remove(docxPath);
+    CHECK(ex.exportDocx(docxPath, true), "exportDocx wrote the file");
+    {
+        QZipReader zr(docxPath);
+        const QByteArray doc = zr.fileData(QStringLiteral("word/document.xml"));
+        CHECK(doc.contains("mnTask1"), "docx: task glyphs are docPr-tagged images");
+        CHECK(!doc.contains("\xE2\x97\x90") && !doc.contains("\xE2\x98\x90"),
+              "docx: no Unicode ◐/☐ glyph runs remain");
+        CHECK(doc.contains("Done?"), "docx: check column's header cell is its text");
+        // #804000 chip over paper = 0.28·color + 0.72·white = DBCAB8.
+        CHECK(doc.contains("w:fill=\"DBCAB8\""),
+              "docx: choice cell + inline chip shade with the paper blend");
+        CHECK(doc.contains("<w:b/>"), "docx: cell bold span emits a real run");
+    }
+    // Round-trip: the painted glyph must re-import as task STATE, never as
+    // a media block.
+    {
+        BlockModel m2;
+        m2.newDocument();
+        while (m2.rowCountQml() > 0) m2.removeBlock(0);
+        m2.insertBlock(0);
+        CHECK(Importer::importDocxFile(docxPath, &m2), "docx re-imported");
+        int taskRow = -1, mediaRows = 0;
+        for (int r = 0; r < m2.rowCountQml(); ++r) {
+            if (m2.typeForRow(r) == BlockModel::TaskListItem) taskRow = r;
+            if (m2.typeForRow(r) == BlockModel::Media) ++mediaRows;
+        }
+        CHECK(taskRow >= 0 && m2.taskStateForRow(taskRow) == BlockModel::TaskDoing
+                  && m2.contentForRow(taskRow) == QStringLiteral("doing thing"),
+              "docx round-trip: docPr sniff restores the task, spacer stripped");
+        CHECK(mediaRows == 0, "docx round-trip: glyph rasters never become media");
+        m2.closeDocument();
+    }
+    QFile::remove(docxPath);
+
+    // PDF: the doc (chips + typed columns + cell spans) renders and writes.
+    const QString pdfPath = QDir::temp().filePath(QStringLiteral("mn_chip_test.pdf"));
+    QFile::remove(pdfPath);
+    CHECK(ex.exportPdf(pdfPath, true), "exportPdf wrote the file");
+    CHECK(QFileInfo(pdfPath).size() > 0, "pdf is non-empty");
+    QFile::remove(pdfPath);
+    m.closeDocument();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -4360,6 +4485,7 @@ int main(int argc, char** argv) {
     testCellMediaExports();
     testTableBulkOps();
     testCellChoiceChips();
+    testExportChipsTasksCells();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
