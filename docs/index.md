@@ -45,6 +45,8 @@ LucidLink — and open on either platform and dodge some typical file-locking is
 - Local files copy into the note's media folder automatically; network
   shares stay referenced in place, with cross-OS path mapping
 
+![minNotes main window](images/mn001c.png)
+
 ### Documents
 - Multi-document tabs; drag a tab onto another tab to merge whole notes
 - Import: Markdown, text, CSV/TSV, HTML, Word, Excel, OpenDocument,

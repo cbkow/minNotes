@@ -42,7 +42,6 @@ tells you before overwriting.
    media, comment threads (with their history), and drawn ink all come
    along. The source tab stays open, untouched.
 
-![Dragging a tab into a document to merge](images/mn005.png)
 
 One `⌘Z` undoes the entire merge. Dropping directly on a tab (without
 entering the document) appends at the end. Media that lives with the
