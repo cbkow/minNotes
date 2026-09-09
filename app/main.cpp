@@ -25,6 +25,7 @@
 #include "core/PathMapController.h"
 #include "core/Clipboard.h"
 #include "core/ClipboardPaster.h"
+#include "spell/SpellService.h"
 #include "core/VideoFrameProvider.h"
 #include "core/PdfPageProvider.h"
 
@@ -206,6 +207,14 @@ int main(int argc, char *argv[])
     // shape for a pasted block run; assets travel on a worker when needed.
     ClipboardPaster paster;
     engine.rootContext()->setContextProperty("paster", &paster);
+    // Spell + grammar checking (0.5.0): follows the active model like the
+    // exporter; the engine lives on its own worker thread (joined in the dtor,
+    // which runs before the models go — declared after `docs`).
+    SpellService spell(QStringLiteral(MINNOTES_APP_VERSION));
+    spell.setModel(docs.activeModel());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &spell,
+                     [&spell, &docs] { spell.setModel(docs.activeModel()); });
+    engine.rootContext()->setContextProperty("spell", &spell);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.

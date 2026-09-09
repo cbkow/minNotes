@@ -17,6 +17,14 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/BlockClipboard.cpp
     ${CMAKE_SOURCE_DIR}/app/core/ClipboardPaster.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Clipboard.cpp
+    # Spell + grammar checker (Quick-free by design; the corpus test [62] runs
+    # the real rule file through the real interpreter).
+    ${CMAKE_SOURCE_DIR}/app/spell/SpellTokenizer.cpp
+    ${CMAKE_SOURCE_DIR}/app/spell/GrammarRules.cpp
+    ${CMAKE_SOURCE_DIR}/app/spell/HunspellBridge.cpp
+    ${CMAKE_SOURCE_DIR}/app/spell/SpellEngine.cpp
+    ${CMAKE_SOURCE_DIR}/app/spell/SpellDictionaryFiles.cpp
+    ${CMAKE_SOURCE_DIR}/app/spell/SpellService.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Document.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
@@ -39,20 +47,31 @@ qt_add_executable(mn_regression_test
     # consumed by BlockModel (fit-to-ink) and Exporter (raster bake).
     ${CMAKE_SOURCE_DIR}/app/notes/sketch_text.cpp
 )
+qt_add_resources(mn_regression_test "mn_test_spell"
+    PREFIX "/spell"
+    BASE ${CMAKE_SOURCE_DIR}/app/spell
+    FILES
+        ${CMAKE_SOURCE_DIR}/app/spell/en/en.aff
+        ${CMAKE_SOURCE_DIR}/app/spell/en/en.dic
+        ${CMAKE_SOURCE_DIR}/app/spell/en/grammar-rules.xml
+)
 target_include_directories(mn_regression_test PRIVATE
     ${CMAKE_SOURCE_DIR}/app/core
+    ${CMAKE_SOURCE_DIR}/app/spell
     ${CMAKE_SOURCE_DIR}/external/miniz)
 # The bundled app fonts: the harness registers Inter so sketch-text height
 # derivation matches the app (assertions stay font-relative regardless).
 target_compile_definitions(mn_regression_test PRIVATE
     MN_FONTS_DIR="${CMAKE_SOURCE_DIR}/app/qml/MinNotes/App/fonts"
     # Source root: the streaming test finds the vendored ffmpeg CLI with it.
-    MN_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    MN_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    MN_SPELL_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")
 target_link_libraries(mn_regression_test PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
     KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks
-    minnotes::ffmpeg)              # MediaStore.cpp probes media via FFmpeg
+    minnotes::ffmpeg               # MediaStore.cpp probes media via FFmpeg
+    minnotes::hunspell)            # the spell engine
 if(APPLE)
     # RtfConvert_mac.mm — NSAttributedString RTF→HTML
     target_link_libraries(mn_regression_test PRIVATE "-framework AppKit")

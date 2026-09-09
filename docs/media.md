@@ -1,7 +1,7 @@
 ---
 title: Media & Files
 permalink: /media/
-nav_order: 6
+nav_order: 7
 ---
 
 # Media & Files

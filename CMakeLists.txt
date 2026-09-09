@@ -99,6 +99,33 @@ set(SOUNDTOUCH_DLL  OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(soundtouch)
 message(STATUS "SoundTouch: pinned commit 0047e0b1 (2.4.1)")
 
+# ---- Hunspell (spell checking, LGPL-2.1/GPL-2/MPL-1.1 tri-license, static) --
+# Upstream is autotools-only, so this is the miniz "compile the sources into a
+# target" shape fed by a pinned FetchContent checkout (populate only — no
+# CMakeLists upstream). Always present: no MINNOTES_HAVE_* option, unlike the
+# hand-vendored Sparkle. The dictionary + grammar rules ride as Qt resources.
+FetchContent_Declare(
+    hunspell
+    GIT_REPOSITORY https://github.com/hunspell/hunspell.git
+    GIT_TAG c5f98152a274e25b5107101104bef632b83a0cc9   # tag v1.7.3
+    GIT_SHALLOW FALSE
+)
+FetchContent_MakeAvailable(hunspell)
+set(_hs "${hunspell_SOURCE_DIR}/src/hunspell")
+set(_hs_gen "${CMAKE_BINARY_DIR}/hunspell-gen")
+set(HAVE_VISIBILITY 0)
+configure_file("${_hs}/hunvisapi.h.in" "${_hs_gen}/hunvisapi.h" @ONLY)
+add_library(hunspell STATIC
+    ${_hs}/affentry.cxx ${_hs}/affixmgr.cxx ${_hs}/csutil.cxx ${_hs}/filemgr.cxx
+    ${_hs}/hashmgr.cxx ${_hs}/hunspell.cxx ${_hs}/hunzip.cxx ${_hs}/phonet.cxx
+    ${_hs}/replist.cxx ${_hs}/suggestmgr.cxx)
+target_include_directories(hunspell PUBLIC "${_hs_gen}" "${_hs}")
+target_compile_definitions(hunspell PUBLIC HUNSPELL_STATIC PRIVATE BUILDING_LIBHUNSPELL
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+target_compile_options(hunspell PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/W0,-w>)
+add_library(minnotes::hunspell ALIAS hunspell)
+message(STATUS "Hunspell: pinned commit c5f98152 (1.7.3)")
+
 # ---- ffmpeg (vendored prebuilt) ------------------------------------
 # The ported video engine (app/player/, from ufb) links FFmpeg for demux +
 # hardware-accelerated decode (VideoToolbox on macOS; Vulkan/D3D11 on Windows).

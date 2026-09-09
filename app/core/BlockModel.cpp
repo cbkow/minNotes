@@ -1840,6 +1840,26 @@ void BlockModel::tableCellInsert(int row, int r, int c, int at, const QString& t
     }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
 }
 
+void BlockModel::tableCellReplace(int row, int r, int c, int s, int e, const QString& text) {
+    mutateTable(row, [&](TableGrid& g){
+        QString t = g.cellText(r, c);
+        const int f = std::clamp(s, 0, int(t.size())), en = std::clamp(e, 0, int(t.size()));
+        if (f > en) return;
+        g.setCellText(r, c, t.left(f) + text + t.mid(en));
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        const int delta = text.size() - (en - f);
+        std::vector<Span> kept;
+        for (Span sp : v) {
+            if (sp.e <= f) { kept.push_back(sp); continue; }
+            if (sp.s >= en) { sp.s += delta; sp.e += delta; kept.push_back(sp); continue; }
+            if (sp.s <= f && sp.e >= en) { sp.e += delta; if (sp.e > sp.s) kept.push_back(sp); continue; }
+            if (sp.s < f) { sp.e = f; if (sp.e > sp.s) kept.push_back(sp); continue; }
+            sp.s = f + text.size(); sp.e += delta; if (sp.e > sp.s) kept.push_back(sp);
+        }
+        g.setCellSpans(r, c, cellSpansToJson(kept));
+    });
+}
+
 void BlockModel::tableCellDelete(int row, int r, int c, int from, int to) {
     mutateTable(row, [&](TableGrid& g){
         QString t = g.cellText(r, c);
@@ -5536,6 +5556,40 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
     for (size_t k = 0; k < ink.size(); ++k)
         if (!ink[k].isEmpty()) setBlockInk(hiRow + 1 + static_cast<int>(k), ink[k]);
     bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+// === Spell menu: replace a range as ONE transaction ========================
+void BlockModel::replaceText(int row, int s, int e, const QString& text) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
+    const QString cur = content_[row];
+    s = std::clamp(s, 0, static_cast<int>(cur.size()));
+    e = std::clamp(e, s, static_cast<int>(cur.size()));
+    if (s == e && text.isEmpty()) return;
+    beginTxn(row, row);
+    content_[row] = cur.left(s) + text + cur.mid(e);
+    persistContent(row);
+    // Spans: one covering the replaced range keeps it (a bold or linked word
+    // stays bold/linked after the fix); others shift or clip around it.
+    std::vector<Span>& spans = rows_[row].spans;
+    if (!spans.empty()) {
+        const int delta = text.size() - (e - s);
+        std::vector<Span> kept;
+        for (Span sp : spans) {
+            if (sp.e <= s) { kept.push_back(sp); continue; }                 // before
+            if (sp.s >= e) { sp.s += delta; sp.e += delta; kept.push_back(sp); continue; }   // after
+            if (sp.s <= s && sp.e >= e) { sp.e += delta; if (sp.e > sp.s) kept.push_back(sp); continue; }   // covers
+            if (sp.s < s) { sp.e = s; if (sp.e > sp.s) kept.push_back(sp); continue; }       // overlaps the start
+            sp.s = s + text.size(); sp.e += delta; if (sp.e > sp.s) kept.push_back(sp);       // overlaps the end
+        }
+        spans = kept;
+        persistMeta(row);
+    }
+    if (rows_[row].type == Code)
+        rows_[row].param = static_cast<uint16_t>(std::clamp<int>(content_[row].count(QLatin1Char('\n')) + 1, 1, 65535));
+    emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();

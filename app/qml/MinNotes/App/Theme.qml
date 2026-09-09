@@ -46,6 +46,11 @@ QtObject {
         // Multi-block selection: a faint full-row band under EVERY selected
         // row, so a range that spans blocks reads at block grain.
         readonly property color selectionBand: Qt.rgba(0.165, 0.337, 0.549, 0.16)
+        // Spell / grammar underlines: 4×2 dotted tiles (2 px on, 2 px off) as
+        // embedded PNGs — Image.Tile them under the text baseline. Squared, no
+        // wave (the corner rule). Red = spelling, the quote-bar blue = grammar.
+        readonly property string squiggleSpelling: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAE0lEQVR42mO44OHxGoQZYABdAADAHAktZzCF/wAAAABJRU5ErkJggg=="
+        readonly property string squiggleGrammar:  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAE0lEQVR42mNwy1vwGoQZYABdAAC4jAj928XigAAAAABJRU5ErkJggg=="
         readonly property color quoteBar:    "#3a5e86"
         // QCView note markers — the SAME violet QCView uses on its timeline
         // pins, so "a QCView note" is one color across both apps.

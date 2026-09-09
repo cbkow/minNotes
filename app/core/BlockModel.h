@@ -242,6 +242,11 @@ public:
                                 const QString& fgColor = QString(),
                                 const QString& bgColor = QString());
     Q_INVOKABLE void splitBlock(int row, int col);
+    // Replace [s, e) with `text` as ONE transaction, spans shifted delete-then-
+    // insert (the spell menu's "replace with suggestion"). Refuses opaque rows.
+    Q_INVOKABLE void replaceText(int row, int s, int e, const QString& text);
+    // The table-cell sibling: one mutateTable step, cell spans kept aligned.
+    Q_INVOKABLE void tableCellReplace(int row, int r, int c, int s, int e, const QString& text);
 
     // Smart multi-block paste: split `text` into blocks (blank lines separate;
     // each line gets block-prefix + inline-markdown parsing), splice them at the

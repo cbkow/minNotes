@@ -395,6 +395,8 @@ FocusScope {
     property real choiceX: 0       // anchor for the choice-cell option picker
     property real choiceY: 0
     property string menuLinkUrl: ""  // link URL under the right-click (for "Open …")
+    property var  menuIssue: null      // spell/grammar issue under the right-click ({s,e,kind,…}) or null
+    property bool menuIssueInCell: false
     // Link-hover tooltip: the URL under the pointer + where to anchor the pill.
     property string hoverLinkUrl: ""
     property real   hoverLinkX: 0
@@ -1017,7 +1019,15 @@ FocusScope {
 
         // Mirror the caret into the model so undo transactions can snapshot it
         // (and stamp a just-pushed entry's caret-after). Called after any change.
-        function sync() { active = true; blockModel.noteCaret(focusRow, focusCol, anchorRow, anchorCol) }
+        // sync() is the chokepoint for every caret change — leaving a block is
+        // the checker's "settled" hook (flushRow bypasses its debounce).
+        property int lastSyncRow: -1
+        function sync() {
+            active = true
+            blockModel.noteCaret(focusRow, focusCol, anchorRow, anchorCol)
+            if (lastSyncRow >= 0 && lastSyncRow !== focusRow) spell.flushRow(lastSyncRow)
+            lastSyncRow = focusRow
+        }
 
         function setCaret(r, col) { anchorRow = r; anchorCol = col; focusRow = r; focusCol = col; goalX = -1; sync() }
         function move(r, col, extend) {
@@ -2521,6 +2531,51 @@ FocusScope {
     function copyBlock(row) {
         root.copyRange(row, 0, row, cursor.opaque(row) ? 0 : blockModel.contentForRow(row).length)
     }
+    // Spell menu: the flagged word's text, and "replace with a suggestion" as
+    // ONE undo step (replaceText keeps spans covering the word).
+    function menuIssueWord() {
+        var it = root.menuIssue
+        if (!it) return ""
+        var t = root.menuIssueInCell ? blockModel.tableCell(root.menuRow, root.menuCellR, root.menuCellC)
+                                     : blockModel.contentForRow(root.menuRow)
+        return t.substring(it.s, it.e)
+    }
+    // Fix all: the top suggestion of every issue in the block (or the clicked
+    // cell), applied right-to-left so earlier offsets stay valid — ONE undo.
+    function applyAllSuggestions() {
+        var row = root.menuRow
+        if (row < 0) return
+        var inCell = root.menuIssueInCell
+        var list = inCell ? spell.issuesForCell(row, root.menuCellR, root.menuCellC) : spell.issuesForRow(row)
+        var fixes = []
+        for (var i = 0; i < list.length; ++i) if (list[i].suggestions.length > 0) fixes.push(list[i])
+        if (fixes.length === 0) return
+        fixes.sort(function(a, b) { return b.s - a.s })
+        blockModel.beginGroup(row, row)
+        for (var k = 0; k < fixes.length; ++k) {
+            var f = fixes[k]
+            if (inCell) blockModel.tableCellReplace(row, root.menuCellR, root.menuCellC, f.s, f.e, f.suggestions[0])
+            else blockModel.replaceText(row, f.s, f.e, f.suggestions[0])
+        }
+        blockModel.endGroup()
+        if (!inCell && cursor.focusRow === row)
+            cursor.setCaret(row, Math.min(cursor.focusCol, blockModel.contentForRow(row).length))
+        spell.flushRow(row)
+        root.menuIssue = null
+        Toasts.show(fixes.length === 1 ? qsTr("Fixed 1 issue") : qsTr("Fixed %1 issues").arg(fixes.length))
+    }
+    function applySpellSuggestion(sug) {
+        var it = root.menuIssue
+        if (!it || sug === undefined || sug === "") return
+        if (root.menuIssueInCell) {
+            blockModel.tableCellReplace(root.menuRow, root.menuCellR, root.menuCellC, it.s, it.e, sug)
+        } else {
+            blockModel.replaceText(root.menuRow, it.s, it.e, sug)
+            cursor.setCaret(root.menuRow, it.s + sug.length)
+        }
+        spell.flushRow(root.menuRow)
+        root.menuIssue = null
+    }
     // Replace-selection pastes are ONE undo step: open the group over the
     // selection band (pre-mutation coords), delete, paste, close — and close
     // BEFORE the caret write (the entry's caret-before reads the model's
@@ -2576,7 +2631,9 @@ FocusScope {
 
     // Open the block context menu at viewport (vx,vy) for `row`. (vx,vy) is also
     // reused to anchor the language picker if "Change language…" is chosen.
+    function closeBlockMenu() { blockMenu.close() }
     function openBlockMenu(vx, vy, row) {
+        if (row >= 0) spell.requestSuggestions(row)   // every issue in the block gets suggestions for "Fix all"
         root.menuRow = row; root.menuX = vx; root.menuY = vy
         blockMenu.open()    // x/y are reactive bindings that clamp it on-screen
     }
@@ -3306,6 +3363,36 @@ FocusScope {
                     }
                 }
 
+                // Spell / grammar underlines (0.5.0): dotted tiles under the
+                // baseline of every flagged range, the overlay pattern (one
+                // QSyntaxHighlighter per document is already taken). The issue
+                // under a collapsed caret is withheld while the word is typed.
+                property var spellRects: {
+                    var dep = blockModel.contentRevision + blockModel.layoutRevision + spell.revision
+                    if (!cell.active || cell.isMedia || te.btype === 2 || te.btype === 6 || te.btype === 7) return []
+                    if (!spell.checkSpelling && !spell.checkGrammar) return []
+                    var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
+                    var issues = spell.issuesForRow(cell.logicalRow, caret)
+                    var out = []
+                    for (var i = 0; i < issues.length; ++i) {
+                        var it = issues[i]
+                        var rs = root.selectionRects(te, it.s, Math.min(it.e, te.length))
+                        for (var j = 0; j < rs.length; ++j) out.push({ r: rs[j], k: it.kind })
+                    }
+                    return out
+                }
+                Repeater {
+                    model: cell.spellRects
+                    delegate: Image {
+                        required property int index
+                        readonly property var sr: cell.spellRects[index]
+                        source: sr.k === 0 ? Theme.colors.squiggleSpelling : Theme.colors.squiggleGrammar
+                        fillMode: Image.Tile; smooth: false; z: 0
+                        x: te.x + sr.r.x; y: te.y + sr.r.y + sr.r.height - 3
+                        width: Math.max(4, sr.r.width); height: 2
+                    }
+                }
+
                 // inline-code chips — overlay rects (one per visual line of each
                 // code range), drawn BELOW the selection so selecting code shows
                 // the highlight, and below the glyphs. NOT a char-format
@@ -3797,13 +3884,19 @@ FocusScope {
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
                     var trow = blockModel.rowForY(m.y)
-                    root.menuLinkUrl = ""
+                    root.menuLinkUrl = ""; root.menuIssue = null
                     if (blockModel.typeForRow(trow) === 7) {
                         var th = root.tableHitAt(m.x, m.y)
                         root.menuCellR = th ? th.r : 0; root.menuCellC = th ? th.c : 0
+                        if (th) {                                   // misspelling under the click?
+                            var ci = spell.cellIssueAt(trow, th.r, th.c, th.pos)
+                            root.menuIssue = ci.ruleId !== undefined ? ci : null; root.menuIssueInCell = true
+                        }
                     } else {
-                        var rh = root.hitTest(m.x, m.y)              // link under the click?
+                        var rh = root.hitTest(m.x, m.y)              // link / misspelling under the click?
                         root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
+                        var bi = spell.issueAt(rh.row, rh.col)
+                        root.menuIssue = bi.ruleId !== undefined ? bi : null; root.menuIssueInCell = false
                     }
                     root.openBlockMenu(m.x - flick.contentX, m.y - flick.contentY, trow)
                     return
@@ -4233,6 +4326,8 @@ FocusScope {
                     var hit = frameTable.cellAtPoint(m.x, m.y)
                     root.menuCellR = hit.r; root.menuCellC = hit.c
                     root.menuLinkUrl = ""
+                    var fci = spell.cellIssueAt(root.activeTableRow, hit.r, hit.c, hit.pos)
+                    root.menuIssue = fci.ruleId !== undefined ? fci : null; root.menuIssueInCell = true
                     var p = frameMA.mapToItem(root, m.x, m.y)
                     root.openBlockMenu(p.x, p.y, root.activeTableRow)
                     return
@@ -6671,27 +6766,35 @@ FocusScope {
     component MenuRow: Rectangle {
         property alias text: menuRowLabel.text
         property bool danger: false
+        property bool inert: false       // true = an informational row (dimmed, not clickable)
         property string scope: "block"   // what this item targets: block | column | row
+        property color hoverColor: Theme.colors.surfaceHover   // the spell well hovers in its own tone
+        property bool menuRowLabelBright: false                // filled rows: bright bold label
         signal activated()
         width: 168; height: 24
-        color: menuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+        color: !inert && menuRowMA.containsMouse ? hoverColor : "transparent"
         Text {
             id: menuRowLabel
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 10
             anchors.right: parent.right; anchors.rightMargin: 10
             elide: Text.ElideRight                 // keep long labels (a URL) inside the menu
-            color: parent.danger ? Theme.colors.error : Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            color: parent.inert ? Theme.colors.textMuted : parent.danger ? Theme.colors.error
+                 : parent.menuRowLabelBright ? Theme.colors.textBright : Theme.colors.text
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall; font.bold: parent.menuRowLabelBright
         }
         MouseArea {
             id: menuRowMA
+            enabled: !parent.inert
             anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
             // Hovering an item highlights its target scope on the document/table.
             onContainsMouseChanged: if (containsMouse) {
                 root.menuHiScope = parent.scope; root.menuHiDanger = parent.danger
             }
-            onClicked: { parent.activated(); blockMenu.close() }
+            // Close via root: a row instantiated by a Repeater (the spell
+            // suggestions) can't resolve the popup's id from inside this
+            // inline component, while `root` resolves everywhere.
+            onClicked: { parent.activated(); root.closeBlockMenu() }
         }
     }
 
@@ -6814,6 +6917,15 @@ FocusScope {
                                           && root.menuRow >= cursor.loRow && root.menuRow <= cursor.hiRow
         readonly property int runLo: menuInSel ? cursor.loRow : root.menuRow
         readonly property int runHi: menuInSel ? cursor.hiRow : root.menuRow
+        // The right-clicked issue, re-read live: a background-pass issue has no
+        // suggestions until the worker's follow-up lands (spell.revision bumps).
+        readonly property var liveIssue: {
+            var dep = spell.revision
+            if (!root.menuIssue) return null
+            var it = root.menuIssueInCell ? spell.cellIssueAt(root.menuRow, root.menuCellR, root.menuCellC, root.menuIssue.s)
+                                          : spell.issueAt(root.menuRow, root.menuIssue.s)
+            return it.ruleId !== undefined ? it : root.menuIssue
+        }
         // Table facts the row visibilities share (revision-dep'd once here).
         readonly property int tHdr: isTable ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.menuRow)) : 0
         readonly property int tRows: isTable ? (blockModel.contentRevision, blockModel.tableRows(root.menuRow)) : 0
@@ -6871,6 +6983,71 @@ FocusScope {
                 spacing: 1
                 MenuHeader { visible: blockMenu.menuInSel; text: (blockMenu.runHi - blockMenu.runLo + 1) + " blocks" }
                 MenuHeader { visible: blockMenu.isTable; text: "Block" }
+                // Spell / grammar (0.5.0): the issue under the click as a
+                // tinted WELL in the underline's colour (red = spelling, the
+                // quote-bar blue = grammar) with a 2 px bar on the left — the
+                // menu section reads as the same object as the squiggle. Its
+                // message, up to five suggestions, then the escape hatches.
+                // Withheld in a run menu like every single-block row.
+                Item {
+                    id: spellWell
+                    readonly property var issue: (!blockMenu.menuInSel) ? blockMenu.liveIssue : null
+                    // Every fixable issue in the target (the block, or the clicked
+                    // cell) — the "Fix all" count. Re-read as suggestions land.
+                    readonly property int fixable: {
+                        var dep = spell.revision
+                        if (blockMenu.menuInSel || root.menuRow < 0) return 0
+                        var list = root.menuIssueInCell ? spell.issuesForCell(root.menuRow, root.menuCellR, root.menuCellC)
+                                                        : spell.issuesForRow(root.menuRow)
+                        var n = 0
+                        for (var i = 0; i < list.length; ++i) if (list[i].suggestions.length > 0) ++n
+                        return n
+                    }
+                    readonly property bool showFixAll: fixable >= 2 || (!issue && fixable >= 1)
+                    readonly property color tone: issue && issue.kind === 1 ? Theme.colors.quoteBar : Theme.colors.error
+                    // Hover inside the well steps up in the SAME tone (not the
+                    // neutral surfaceHover): the section stays one object.
+                    readonly property color hover: Qt.rgba(tone.r, tone.g, tone.b, 0.30)
+                    visible: !!issue || showFixAll
+                    width: 168; height: visible ? spellRows.implicitHeight : 0
+                    Rectangle { anchors.fill: parent; radius: 0
+                                color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.12) }
+                    Rectangle { width: 2; height: parent.height; color: spellWell.tone }
+                    Column {
+                        id: spellRows
+                        width: parent.width
+                        MenuHeader { width: 168; elide: Text.ElideRight; color: spellWell.tone
+                                     text: spellWell.issue ? (spellWell.issue.kind === 1 ? spellWell.issue.message : "Spelling") : "" }
+                        Repeater {
+                            model: spellWell.issue ? Math.min(5, spellWell.issue.suggestions.length) : 0
+                            MenuRow { required property int index; hoverColor: spellWell.hover
+                                      text: spellWell.issue ? spellWell.issue.suggestions[index] : ""
+                                      onActivated: root.applySpellSuggestion(spellWell.issue.suggestions[index]) }
+                        }
+                        MenuRow { visible: !!spellWell.issue && spellWell.issue.suggestions.length === 0
+                                  inert: true
+                                  text: (spellWell.issue && !spellWell.issue.suggestionsComputed) ? "Looking up…" : "No suggestions" }
+                        MenuRow { visible: !!spellWell.issue && spellWell.issue.kind === 0; hoverColor: spellWell.hover
+                                  text: "Add to dictionary"; onActivated: spell.addToDictionary(root.menuIssueWord()) }
+                        MenuRow { visible: !!spellWell.issue && spellWell.issue.kind === 0; hoverColor: spellWell.hover
+                                  text: "Ignore"; onActivated: spell.ignoreWord(root.menuIssueWord()) }
+                        MenuRow { visible: !!spellWell.issue && spellWell.issue.kind === 1; hoverColor: spellWell.hover
+                                  text: "Ignore rule: " + (spellWell.issue ? spellWell.issue.ruleName : "")
+                                  onActivated: spell.ignoreRule(spellWell.issue.ruleId) }
+                        // The section's one FILLED row: apply the top suggestion of
+                        // every issue in the block / cell as ONE undo step.
+                        Rectangle { visible: spellWell.showFixAll; width: 168; height: 1
+                                    color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.45) }
+                        MenuRow { visible: spellWell.showFixAll
+                                  hoverColor: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.55)
+                                  text: (root.menuIssueInCell ? "Fix all in cell (" : "Fix all in block (") + spellWell.fixable + ")"
+                                  onActivated: root.applyAllSuggestions()
+                                  Rectangle { anchors.fill: parent; z: -1; radius: 0
+                                              color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.28) }
+                                  Component.onCompleted: { menuRowLabelBright = true } }
+                    }
+                }
+                Rectangle { visible: spellWell.visible; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel
                           text: "Open " + root.truncUrl(root.menuLinkUrl)
                           onActivated: Qt.openUrlExternally(root.menuLinkUrl) }

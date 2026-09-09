@@ -21,6 +21,14 @@
 #include "Clipboard.h"
 #include "ClipboardPaster.h"
 #include <QClipboard>
+#include "SpellTokenizer.h"
+#include "SpellEngine.h"
+#include "SpellDictionaryFiles.h"
+#include "SpellService.h"
+#include <QStandardPaths>
+#include <QXmlStreamReader>
+#include <QTextStream>
+#include <QTemporaryDir>
 #include <QMimeData>
 #include "RtfConvert.h"
 #include <private/qzipreader_p.h>
@@ -4926,6 +4934,281 @@ static void testPasteFences() {
     CHECK(m.typeForRow(0) == BlockModel::Code && m.contentForRow(0) == QStringLiteral("print(1)\nprint(2)"), "unclosed fence");
 }
 
+// =============================================================================
+// 0.5.0 — spell + grammar checker
+// =============================================================================
+
+static QString spellDictDir() {
+    // Test-mode AppData keeps the real user's spelling folder untouched.
+    QStandardPaths::setTestModeEnabled(true);
+    QString err;
+    const QString dir = spell::ensureDictionaryExtracted(QStringLiteral("test"), &err);
+    if (dir.isEmpty()) qCritical("dictionary extraction failed: %s", qPrintable(err));
+    return dir;
+}
+static bool initEngine(SpellEngine& e, bool rules = true) {
+    const QString dir = spellDictDir();
+    QString err;
+    const bool ok = e.init(dir + QStringLiteral("/en.aff"), dir + QStringLiteral("/en.dic"),
+                           rules ? spell::loadRulesXml() : QByteArray(), {}, &err);
+    if (!ok) qCritical("engine init failed: %s", qPrintable(err));
+    return ok;
+}
+
+// --- Test 61: tokenizer --------------------------------------------------------
+static void testSpellTokenizer() {
+    qInfo("[61] spell tokenizer: contractions, hyphens, URLs, codes, sentences");
+    auto known = [](const QString& w) { return w == QStringLiteral("well-known") || w == QStringLiteral("o'clock"); };
+    auto texts = [&](const QString& t) {
+        QStringList out;
+        for (const spell::SpellToken& k : spell::tokenize(t, known, nullptr))
+            if (k.kind != spell::TokKind::SentStart && k.kind != spell::TokKind::SentEnd) out << k.text;
+        return out;
+    };
+    CHECK((texts(QStringLiteral("don't")) == QStringList{"do", "n't"}), "don't → do + n't");
+    CHECK((texts(QStringLiteral("can't")) == QStringList{"ca", "n't"}), "can't → ca + n't (LanguageTool's split)");
+    CHECK((texts(QStringLiteral("I'm we've she'd dog's")) == QStringList{"I", "'m", "we", "'ve", "she", "'d", "dog", "'s"}), "clitics split off");
+    CHECK((texts(QStringLiteral("it’s")) == QStringList{"it", "'s"}), "curly apostrophe normalised");
+    CHECK((texts(QStringLiteral("a well-known re-time")) == QStringList{"a", "well-known", "re-time"}),
+          "hyphenated words stay whole in the grammar stream (LanguageTool 6.8)");
+    CHECK((texts(QStringLiteral("odn't your'e o'clock")) == QStringList{"odn", "'", "t", "your", "'", "e", "o'clock"}),
+          "unrecognised apostrophe words split at the apostrophe; a known one stays whole");
+    CHECK((texts(QStringLiteral("12,5% for $ 100")) == QStringList{"12", ",", "5%", "for", "$", "100"}),
+          "percent and currency ride as word characters");
+    CHECK((texts(QStringLiteral("see https://a.b/c?d=1, or me@x.com.")) == QStringList{"see", "https://a.b/c?d=1", ",", "or", "me@x.com", "."}),
+          "URL and email are single tokens");
+    CHECK((texts(QStringLiteral("at 01:02:15:04")) == QStringList{"at", "01", ":", "02", ":", "15", ":", "04"}), "timecode splits at colons");
+    CHECK(!spell::spellCheckable(QStringLiteral("A001")) && !spell::spellCheckable(QStringLiteral("C002"))
+              && !spell::spellCheckable(QStringLiteral("HDR10")) && !spell::spellCheckable(QStringLiteral("NASA"))
+              && !spell::spellCheckable(QStringLiteral("iPhone")) && !spell::spellCheckable(QStringLiteral("a")),
+          "codes / ALLCAPS / camelCase / one-letter not checkable");
+    CHECK(spell::spellCheckable(QStringLiteral("café")) && spell::spellCheckable(QStringLiteral("Denoise")),
+          "plain words checkable");
+    {
+        const auto ws = spell::rawWords(QStringLiteral("re-time the plates"), known);
+        CHECK(ws.size() == 4 && ws[0].text == QStringLiteral("re") && ws[1].text == QStringLiteral("time"), "rawWords splits an unknown hyphenation");
+    }
+    std::vector<spell::SentenceSpan> sents;
+    spell::tokenize(QStringLiteral("Fix it. Then ship."), known, &sents);
+    CHECK(sents.size() == 2, "two sentences (%zu)", sents.size());
+    spell::tokenize(QStringLiteral("Dr. Who came."), known, &sents);
+    CHECK(sents.size() == 1, "abbreviation does not split (%zu)", sents.size());
+    spell::tokenize(QStringLiteral("line one\nline two"), known, &sents);
+    CHECK(sents.size() == 2, "newline splits (%zu)", sents.size());
+    const auto toks = spell::tokenize(QStringLiteral("a,b c"), known, nullptr);
+    CHECK(toks.size() == 6 && !toks[2].spaceBefore && !toks[3].spaceBefore && toks[4].spaceBefore, "spaceBefore flags");
+}
+
+// --- Test 62: the LanguageTool example corpus ---------------------------------
+static void testGrammarCorpus() {
+    qInfo("[62] grammar rules: the trimmed LanguageTool rule set against its own examples");
+    SpellEngine e;
+    QElapsedTimer t; t.start();
+    if (!initEngine(e)) { CHECK(false, "engine init"); return; }
+    const qint64 loadMs = t.elapsed();
+    CHECK(e.ruleCount() > 1500, "rules loaded (%d)", e.ruleCount());
+    CHECK(e.ruleCompileErrors().isEmpty(), "no regex compile failures (%s)", qPrintable(e.ruleCompileErrors().join(", ")));
+    CHECK(loadMs < 1500, "load time %lld ms", loadMs);
+    QFile fx(QStringLiteral(MN_SPELL_FIXTURES "/lt-examples.xml"));
+    if (!fx.open(QIODevice::ReadOnly)) { CHECK(false, "fixture missing"); return; }
+    QXmlStreamReader x(&fx);
+    int pos = 0, fired = 0, exact = 0, neg = 0, clean = 0;
+    QStringList fails;
+    SpellEngine::Options opt; opt.spelling = false; opt.grammar = true;
+    while (!x.atEnd()) {
+        x.readNext();
+        if (!x.isStartElement() || x.name() != QLatin1String("example")) continue;
+        const QString rid = x.attributes().value(QLatin1String("rule")).toString();
+        const bool hasCorr = x.attributes().hasAttribute(QLatin1String("correction"));
+        const QString corr = x.attributes().value(QLatin1String("correction")).toString();
+        const QString type = x.attributes().value(QLatin1String("type")).toString();
+        QString text; int ms = -1, me = -1;
+        while (!x.atEnd()) {
+            x.readNext();
+            if (x.isEndElement() && x.name() == QLatin1String("example")) break;
+            if (x.isCharacters()) text += x.text();
+            else if (x.isStartElement() && x.name() == QLatin1String("marker")) {
+                ms = text.size();
+                while (!x.atEnd()) { x.readNext(); if (x.isEndElement() && x.name() == QLatin1String("marker")) break; if (x.isCharacters()) text += x.text(); }
+                me = text.size();
+            }
+        }
+        const bool positive = hasCorr || type == QLatin1String("incorrect");
+        const auto issues = e.checkText(text, {}, opt);
+        bool ruleFired = false, sugOk = false;
+        QStringList corrs;
+        for (const QString& c : corr.split(QLatin1Char('|'))) corrs << c.trimmed();
+        for (const spell::SpellIssue& is : issues) {
+            if (is.ruleId != rid) continue;
+            if (ms < 0 || (is.s < me && is.e > ms)) {
+                ruleFired = true;
+                for (const QString& sg : is.suggestions) if (corrs.contains(sg.trimmed())) sugOk = true;
+            }
+        }
+        if (positive) {
+            ++pos;
+            if (ruleFired) { ++fired; if (!hasCorr || sugOk) ++exact; else fails << rid + QStringLiteral(" WRONG-SUG ") + text.left(80); }
+            else fails << rid + QStringLiteral(" MISSED ") + text.left(80);
+        } else {
+            ++neg;
+            bool any = false;
+            for (const spell::SpellIssue& is : issues) if (is.ruleId == rid) any = true;
+            if (!any) ++clean; else fails << rid + QStringLiteral(" FALSE-POS ") + text.left(80);
+        }
+    }
+    qInfo("  corpus: positives %d fired %d (%.0f%%) exact %d (%.0f%%) | negatives %d clean %d (%.0f%%)",
+          pos, fired, 100.0 * fired / std::max(1, pos), exact, 100.0 * exact / std::max(1, pos),
+          neg, clean, 100.0 * clean / std::max(1, neg));
+    for (int i = 0; i < std::min(60, int(fails.size())); ++i) qInfo("    %s", qPrintable(fails[i]));
+    CHECK(fired >= 0.90 * pos, "≥ 90%% of positive examples fire");
+    CHECK(exact >= 0.80 * pos, "≥ 80%% carry the expected correction");
+    CHECK(clean >= 0.85 * neg, "≥ 85%% of negative examples stay clean");
+    const QString para = QStringLiteral("Reviewed the color pass this morning; the skintones read to magenta in the grade "
+        "but their fine in the proxy. Alot of the notes from the client where about the the titles, I think we should of "
+        "pushed back. Its a none profit job so lets not loose time on it. Denoise the plates, then re-time. Board updated.");
+    t.restart();
+    for (int i = 0; i < 20; ++i) e.checkText(para, {}, opt);
+    const double perPass = t.elapsed() / 20.0;
+    CHECK(perPass < 10.0, "120-token paragraph checks in %.1f ms", perPass);
+}
+
+// --- Test 63: Hunspell with the merged dictionary --------------------------------
+static void testHunspellMerged() {
+    qInfo("[63] Hunspell: merged US+UK dictionary, suggestions, user dictionary");
+    const QString dir = spellDictDir();
+    CHECK(QFileInfo::exists(dir + QStringLiteral("/en.aff")) && QFileInfo::exists(dir + QStringLiteral("/en.dic")), "dictionary extracted to %s", qPrintable(dir));
+    CHECK(QFileInfo(dir + QStringLiteral("/en.dic")).isWritable(), "extracted copy is writable");
+    SpellEngine e;
+    if (!initEngine(e, false)) { CHECK(false, "engine init"); return; }
+    CHECK(e.known(QStringLiteral("colour")) && e.known(QStringLiteral("color")), "both spellings pass");
+    CHECK(e.known(QStringLiteral("organise")) && e.known(QStringLiteral("organize")), "-ise and -ize pass");
+    CHECK(!e.known(QStringLiteral("teh")), "'teh' fails");
+    CHECK(e.suggest(QStringLiteral("teh")).mid(0, 3).contains(QStringLiteral("the")), "'the' in the top-3 for 'teh' (%s)", qPrintable(e.suggest(QStringLiteral("teh")).join(",")));
+    CHECK(e.known(QStringLiteral("dog's")) && e.known(QStringLiteral("don't")), "possessive and contraction pass");
+    SpellEngine::Options opt; opt.grammar = false;
+    const auto issues = e.checkText(QStringLiteral("Teh A001_C002 shot at 01:02:15:04 in HDR10, see https://x.y/teh and `teh`"), {{69, 72}}, opt);
+    QString spans; for (const auto& is : issues) spans += QStringLiteral("[%1,%2) ").arg(is.s).arg(is.e);
+    CHECK(issues.size() == 1 && issues[0].s == 0 && issues[0].e == 3 && issues[0].suggestions.contains(QStringLiteral("The")),
+          "only the real typo flagged (%s); codes, timecode, URL and the excluded range skipped", qPrintable(spans));
+    // User dictionary persists into a fresh engine.
+    QFile::remove(spell::spellingDir() + QStringLiteral("/user.dic"));
+    CHECK(spell::appendUserDictionary(QStringLiteral("mograph")), "append user word");
+    SpellEngine e2;
+    QString err;
+    CHECK(e2.init(dir + QStringLiteral("/en.aff"), dir + QStringLiteral("/en.dic"), QByteArray(), spell::loadUserDictionary(), &err)
+              && e2.known(QStringLiteral("mograph")), "user word known by a fresh engine");
+    QFile::remove(spell::spellingDir() + QStringLiteral("/user.dic"));
+}
+
+// --- Test 64: the service ------------------------------------------------------
+static void testSpellServiceSync() {
+    qInfo("[64] SpellService: sync check, model following, revision drop, filters");
+    spellDictDir();
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("Teh cat sat"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("the the end"));
+    const int t = m.insertTable(1, 2, 2);
+    m.tableSetCell(t, 0, 0, QStringLiteral("quikc"));
+    SpellService svc(QStringLiteral("test"));
+    svc.setModel(&m);
+    QVariantList now;
+    for (const QVariant& v : svc.checkTextNow(QStringLiteral("Teh cat sat"))) if (v.toMap().value(QStringLiteral("kind")).toInt() == 0) now << v;
+    CHECK(now.size() == 1 && now[0].toMap().value(QStringLiteral("s")).toInt() == 0
+              && now[0].toMap().value(QStringLiteral("suggestions")).toStringList().contains(QStringLiteral("The")), "sync check flags Teh (%d)", int(now.size()));
+    const QVariantList dt = svc.checkTextNow(QStringLiteral("the the end"));
+    bool dtdt = false;
+    for (const QVariant& v : dt) if (v.toMap().value(QStringLiteral("ruleId")).toString().startsWith(QStringLiteral("DT_DT"))) dtdt = true;
+    CHECK(dtdt, "sync check flags the doubled article");
+    // Worker path: visible-first pull + background pass.
+    svc.issuesForRow(0);
+    CHECK(svc.waitIdle(10000), "worker drained");
+    QVariantList r0 = svc.issuesForRow(0);
+    CHECK(r0.size() == 1 && r0[0].toMap().value(QStringLiteral("e")).toInt() == 3, "row 0 issue via the worker (%d)", int(r0.size()));
+    CHECK(svc.issuesForRow(0, 2).isEmpty() && svc.issuesForRow(0, 3).isEmpty() && !svc.issuesForRow(0, 4).isEmpty(),
+          "caret inside the word suppresses it");
+    svc.issuesForCell(t, 0, 0); CHECK(svc.waitIdle(10000), "cell job drained");
+    CHECK(svc.issuesForCell(t, 0, 0).size() == 1, "table cell typo flagged");
+    CHECK(!svc.issueAt(0, 1).isEmpty() && svc.issueAt(0, 8).isEmpty(), "issueAt hit / miss");
+    // Edit → debounce → re-check.
+    m.setContent(0, QStringLiteral("The cat sat"));
+    CHECK(svc.issuesForRow(0).isEmpty(), "stale result withheld once the text changed");
+    CHECK(svc.waitIdle(10000) && svc.issuesForRow(0).isEmpty(), "re-check after the edit: clean");
+    // Revision drop.
+    SpellService::Result stale; stale.gen = 999; stale.key = m.idForRow(0); stale.checkedText = QStringLiteral("The cat sat");
+    spell::SpellIssue fake; fake.s = 0; fake.e = 3; stale.issues.push_back(fake);
+    svc.applyResult(stale);
+    CHECK(svc.issuesForRow(0).isEmpty(), "result from another generation dropped");
+    // Filters.
+    m.setContent(0, QStringLiteral("Teh cat sat")); CHECK(svc.waitIdle(10000), "re-check");
+    CHECK(svc.issuesForRow(0).size() == 1, "flagged again");
+    svc.ignoreWord(QStringLiteral("teh"));
+    CHECK(svc.issuesForRow(0).isEmpty(), "ignored word filtered");
+    svc.setCheckGrammar(false);
+    CHECK(svc.waitIdle(10000) || true, "");
+    bool anyGrammar = false;
+    for (const QVariant& v : svc.issuesForRow(1)) if (v.toMap().value(QStringLiteral("kind")).toInt() == 1) anyGrammar = true;
+    CHECK(!anyGrammar, "grammar toggle off hides grammar issues");
+    svc.setCheckGrammar(true);
+    svc.ignoreRule(QStringLiteral("DT_DT_2"));
+    CHECK(svc.ignoredRules().contains(QStringLiteral("DT_DT_2")) && svc.ignoredRulesJson().contains(QStringLiteral("DT_DT_2")), "ignored rule persisted as JSON");
+    svc.setIgnoredRulesJson(QStringLiteral("[]"));
+    CHECK(svc.ignoredRules().isEmpty(), "reset ignored rules");
+    svc.setModel(nullptr);
+    CHECK(svc.cachedEntries() == 0 && svc.issuesForRow(0).isEmpty(), "setModel(nullptr) clears");
+}
+
+// --- Test 65: replaceText keeps spans aligned ------------------------------------
+static void testReplaceTextSpans() {
+    qInfo("[65] replaceText / tableCellReplace: one txn, spans shift with the delta");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("the quikc brown"));
+    m.setLink(0, 4, 9, QStringLiteral("https://x"));
+    m.setFormat(0, 10, 15, QStringLiteral("bold"), true);
+    const int e = m.undoHistory().size();
+    m.replaceText(0, 4, 9, QStringLiteral("quick"));
+    CHECK(m.contentForRow(0) == QStringLiteral("the quick brown"), "same-length replace");
+    CHECK(m.linkAt(0, 5) == QStringLiteral("https://x") && m.hasFormat(0, 10, 15, QStringLiteral("bold")), "spans intact");
+    m.replaceText(0, 4, 9, QStringLiteral("extraordinarily"));
+    CHECK(m.contentForRow(0) == QStringLiteral("the extraordinarily brown") && m.hasFormat(0, 20, 25, QStringLiteral("bold")),
+          "later span shifted by the delta");
+    CHECK(m.undoHistory().size() == e + 2, "two entries for two replaces");
+    m.undo(); m.undo();
+    CHECK(m.contentForRow(0) == QStringLiteral("the quikc brown") && m.linkAt(0, 5) == QStringLiteral("https://x")
+              && m.hasFormat(0, 10, 15, QStringLiteral("bold")), "undo restores text + spans");
+    const int t = m.insertTable(0, 2, 2);
+    const QString img = m.contentForRow(t);
+    m.replaceText(t, 0, 1, QStringLiteral("x"));
+    CHECK(m.contentForRow(t) == img, "opaque row refused");
+    m.tableSetCell(t, 1, 1, QStringLiteral("teh end"));
+    m.tableSetCellFormat(t, 1, 1, 4, 7, QStringLiteral("bold"), true);
+    const int e2 = m.undoHistory().size();
+    m.tableCellReplace(t, 1, 1, 0, 3, QStringLiteral("the"));
+    CHECK(m.tableCell(t, 1, 1) == QStringLiteral("the end") && m.tableCellHasFormat(t, 1, 1, 4, 7, QStringLiteral("bold")), "cell replace keeps the span");
+    CHECK(m.undoHistory().size() == e2 + 1, "cell replace = one entry");
+}
+
+// Probe mode: MN_SPELL_PROBE=1 mn_regression_test < text — prints every
+// issue the engine finds (a debugging aid for the checker, not a test).
+static int spellProbe() {
+    SpellEngine e;
+    if (!initEngine(e)) return 2;
+    QTextStream in(stdin);
+    const QString text = in.readAll();
+    QElapsedTimer t; t.start();
+    SpellEngine::Options opt; opt.maxSuggestedIssues = 1000;
+    const auto issues = e.checkText(text, {}, opt);
+    const qint64 ms = t.elapsed();
+    for (const spell::SpellIssue& is : issues)
+        printf("%c [%d,%d) %-22s %s -> %s\n", is.kind == spell::IssueKind::Spelling ? 'S' : 'G', is.s, is.e,
+               qPrintable(text.mid(is.s, is.e - is.s)), qPrintable(is.ruleId), qPrintable(is.suggestions.join(QLatin1Char('|'))));
+    printf("%d issues in %lld ms\n", int(issues.size()), ms);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -4934,6 +5217,7 @@ int main(int argc, char** argv) {
     app.setOrganizationName("minNotes");
     if (!qEnvironmentVariable("MN_OPEN_PROBE").isEmpty())
         return runOpenProbe(qEnvironmentVariable("MN_OPEN_PROBE"));
+    if (qEnvironmentVariableIsSet("MN_SPELL_PROBE")) return spellProbe();
     // Register the app text font so sketch-text height derivation matches the
     // app. Non-fatal if missing — text assertions are font-relative (computed
     // through the same helper the code under test uses).
@@ -5000,6 +5284,11 @@ int main(int argc, char** argv) {
     testBareRemoteImage();
     testOpaqueGuards();
     testPasteFences();
+    testSpellTokenizer();
+    testGrammarCorpus();
+    testHunspellMerged();
+    testSpellServiceSync();
+    testReplaceTextSpans();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

@@ -437,6 +437,39 @@ Item {
                                 }
                             }
 
+                            // Spell / grammar underlines inside a text cell (0.5.0):
+                            // the editor's dotted tiles, one to three rects per issue
+                            // (cells wrap), behind the glyphs. Typed cells never.
+                            Repeater {
+                                model: {
+                                    var dep = blockModel.contentRevision + blockModel.layoutRevision + spell.revision
+                                    if (tv.suspended || cellRect.isChoice || cellRect.isCheck) return []
+                                    if (!spell.checkSpelling && !spell.checkGrammar) return []
+                                    var caret = (cellRect.isFocusedCell && tv.selFrom === tv.selTo) ? tv.selFrom : -1
+                                    var issues = spell.issuesForCell(tv.logicalRow, gridRow.r, c, caret)
+                                    var out = []
+                                    for (var i = 0; i < issues.length; ++i) {
+                                        var it = issues[i]
+                                        var a = cellText.positionToRectangle(Math.min(it.s, cellText.length))
+                                        var b = cellText.positionToRectangle(Math.min(it.e, cellText.length))
+                                        var lh = a.height > 0 ? a.height : 18
+                                        if (Math.abs(a.y - b.y) < 1) out.push({ x: a.x, y: a.y, w: Math.max(4, b.x - a.x), h: lh, k: it.kind })
+                                        else {
+                                            out.push({ x: a.x, y: a.y, w: Math.max(4, cellText.width - a.x), h: lh, k: it.kind })
+                                            for (var yy = a.y + lh; yy < b.y - 1; yy += lh) out.push({ x: 0, y: yy, w: cellText.width, h: lh, k: it.kind })
+                                            out.push({ x: 0, y: b.y, w: Math.max(4, b.x), h: lh, k: it.kind })
+                                        }
+                                    }
+                                    return out
+                                }
+                                delegate: Image {
+                                    required property var modelData
+                                    source: modelData.k === 0 ? Theme.colors.squiggleSpelling : Theme.colors.squiggleGrammar
+                                    fillMode: Image.Tile; smooth: false; z: -1
+                                    x: cellText.x + modelData.x; y: cellText.y + modelData.y + modelData.h - 3
+                                    width: modelData.w; height: 2
+                                }
+                            }
                             // In-cell selection highlight (behind glyphs). Cells WRAP,
                             // so this is the classic three-rect selection: the single
                             // -line rect was invisible the moment a selection crossed

@@ -1,7 +1,7 @@
 ---
 title: Drawing & Ink
 permalink: /drawing/
-nav_order: 7
+nav_order: 8
 ---
 
 # Drawing & Ink

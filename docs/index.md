@@ -24,6 +24,8 @@ LucidLink — and open on either platform and dodge some typical file-locking is
   converts as you go
 - Inline formatting with text color and background, links, and inline
   choice chips (To do / Doing / Done anywhere in text)
+- Spelling and grammar checking as you type — on-device, US and UK English
+  both accepted
 - Per-note page width, from a prose measure to a wide board
 - A block-number ruler down the right side — drag a number to reorder,
   reference "block 14" in a review

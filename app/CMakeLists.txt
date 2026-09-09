@@ -45,6 +45,19 @@ qt_add_executable(minnotesapp
     core/TableGrid.cpp
     core/Clipboard.h
     core/Clipboard.cpp
+    spell/SpellTypes.h
+    spell/SpellTokenizer.h
+    spell/SpellTokenizer.cpp
+    spell/GrammarRules.h
+    spell/GrammarRules.cpp
+    spell/HunspellBridge.h
+    spell/HunspellBridge.cpp
+    spell/SpellEngine.h
+    spell/SpellEngine.cpp
+    spell/SpellDictionaryFiles.h
+    spell/SpellDictionaryFiles.cpp
+    spell/SpellService.h
+    spell/SpellService.cpp
     core/MediaStore.h
     core/MediaStore.cpp
     core/VideoFrameProvider.h
@@ -189,6 +202,7 @@ qt_add_qml_module(minnotesapp
 target_include_directories(minnotesapp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/spell
     ${CMAKE_CURRENT_SOURCE_DIR}/notes
     ${CMAKE_CURRENT_SOURCE_DIR}/player
     ${CMAKE_CURRENT_SOURCE_DIR}/player/d3d11
@@ -209,8 +223,21 @@ qt_add_shaders(minnotesapp "minnotes_player_shaders"
         player/shaders/yuv_to_rgb_ayuv.frag
 )
 
+# Spell + grammar data: the merged US+UK Hunspell dictionary and the parse-free
+# LanguageTool rule subset (see app/spell/en/README-data.md). Read at
+# ":/spell/en/…"; the dictionary is copied to AppData once (Hunspell wants paths).
+qt_add_resources(minnotesapp "minnotes_spell"
+    PREFIX "/spell"
+    BASE spell
+    FILES
+        spell/en/en.aff
+        spell/en/en.dic
+        spell/en/grammar-rules.xml
+)
+
 target_link_libraries(minnotesapp PRIVATE
     Qt6::Core
+    minnotes::hunspell   # spell checking (FetchContent, static, pinned in the root CMakeLists)
     Qt6::CorePrivate  # qzipwriter_p.h — the DOCX exporter's zip (the QCView recipe)
     Qt6::Gui
     Qt6::GuiPrivate   # rhi/qrhi.h for the VideoSurfaceItem QQuickRhiItem

@@ -776,6 +776,21 @@ ApplicationWindow {
     // Persisted export preferences (2026-08-21): ufb deep links under file
     // paths — off by default; they only mean something to ufb users.
     Settings { id: exportPrefs; category: "export"; property bool ufbLinks: false }
+    // Spell / grammar (0.5.0): the two toggles + the ignored-rule list persist
+    // here; the service holds the live values and mirrors them back on change.
+    Settings {
+        id: spellPrefs; category: "spelling"
+        property bool checkSpelling: true
+        property bool checkGrammar: true
+        property string ignoredRules: "[]"
+        Component.onCompleted: { spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ignoredRulesJson = ignoredRules }
+    }
+    Connections {
+        target: spell
+        function onCheckSpellingChanged() { spellPrefs.checkSpelling = spell.checkSpelling }
+        function onCheckGrammarChanged()  { spellPrefs.checkGrammar  = spell.checkGrammar }
+        function onIgnoredRulesChanged()  { spellPrefs.ignoredRules  = spell.ignoredRulesJson }
+    }
     function recentPaths() { try { var a = JSON.parse(recentsStore.paths); return Array.isArray(a) ? a : [] } catch (e) { return [] } }
     // Re-evaluates when the store changes (ternary, not a comma-tuple — qmlcachegen
     // elides the discarded left operand of a comma).
@@ -1096,6 +1111,13 @@ ApplicationWindow {
             }
             Platform.Menu {
                 title: qsTr("Document")
+                Platform.MenuItem { text: qsTr("Check Spelling"); role: Platform.MenuItem.NoRole; checkable: true
+                                    checked: spell.checkSpelling; onTriggered: spell.checkSpelling = !spell.checkSpelling }
+                Platform.MenuItem { text: qsTr("Check Grammar"); role: Platform.MenuItem.NoRole; checkable: true
+                                    checked: spell.checkGrammar; onTriggered: spell.checkGrammar = !spell.checkGrammar }
+                Platform.MenuItem { text: qsTr("Reset Ignored Rules"); role: Platform.MenuItem.NoRole
+                                    enabled: spell.ignoredRulesJson !== "[]"; onTriggered: spell.ignoredRulesJson = "[]" }
+                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Copy as Markdown"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen
                                     onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
                 Platform.MenuItem { text: qsTr("Insert Choice Chip"); role: Platform.MenuItem.NoRole
@@ -1190,6 +1212,13 @@ ApplicationWindow {
             }
             ThemedMenu {
                 title: qsTr("&Document")
+                Action { text: qsTr("Check &Spelling"); checkable: true; checked: spell.checkSpelling
+                         onToggled: spell.checkSpelling = checked }
+                Action { text: qsTr("Check &Grammar"); checkable: true; checked: spell.checkGrammar
+                         onToggled: spell.checkGrammar = checked }
+                Action { text: qsTr("Reset &Ignored Rules"); enabled: spell.ignoredRulesJson !== "[]"
+                         onTriggered: spell.ignoredRulesJson = "[]" }
+                ThemedMenuSeparator {}
                 Action { text: qsTr("Copy as &Markdown"); enabled: blockModel.documentOpen
                          onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
                 Action { text: qsTr("&Insert Choice Chip"); enabled: blockModel.documentOpen

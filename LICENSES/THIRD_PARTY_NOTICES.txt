@@ -112,6 +112,45 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
              compiled into minNotes). The zip backend for .mnpkg packages
              (zip64 + streaming; app/core/PackageFormat.cpp).
 
+12. Hunspell 1.7.3
+    Copyright (C) 2002-2022 Németh László and the Hunspell contributors
+    License: LGPL v2.1 or later (the LGPL leg of the MPL 1.1 / GPL 2.0 /
+             LGPL 2.1 tri-license)
+    File:    Hunspell-LICENSE.txt
+    https://hunspell.github.io/
+    Source:  https://github.com/hunspell/hunspell
+             (pinned commit c5f98152 = release tag v1.7.3)
+    Linkage: static (FetchContent checkout; the eleven src/hunspell sources
+             compiled into minNotes as a static library). The spelling engine
+             behind the squiggles (app/spell/HunspellBridge.cpp).
+    Note: minNotes as a whole is distributed under GPL v3, which satisfies
+          LGPL v2.1 section 3's GPL-conversion option (the tri-license's GPL
+          leg is 2.0-only, so the LGPL leg is the one relied on).
+
+13. SCOWL / English Speller Database — Hunspell dictionaries (release 2026.02.25)
+    Copyright 2000-2026 Kevin Atkinson; affix file Copyright 1993 Geoff Kuenning
+    License: SCOWL permission notice (permissive; notice must be kept) + BSD
+             (affix file)
+    File:    SCOWL-LICENSE.txt
+    https://wordlist.aspell.net/
+    Asset:   en_US + en_GB-ise merged by scripts/build-merged-dictionary.py into
+             app/spell/en/en.aff + en.dic, embedded as a Qt resource and copied
+             once into the user's application-data folder for Hunspell to read.
+
+14. LanguageTool English grammar rules (tag v6.8) — rule DATA only
+    Copyright (C) 2001-2026 Daniel Naber, Marcin Miłkowski and the
+    LanguageTool contributors
+    License: LGPL v2.1 or later
+    File:    LanguageTool-LGPL-2.1.txt
+    https://languagetool.org  /  https://github.com/languagetool-org/languagetool
+    Asset:   the parse-free subset of grammar.xml (1,735 rules), extracted by
+             scripts/trim-lt-rules.py into app/spell/en/grammar-rules.xml and
+             interpreted by minNotes' own code (app/spell/GrammarRules.cpp). No
+             LanguageTool code ships. The rules' example sentences form the
+             regression corpus in tests/fixtures/lt-examples.xml.
+    Note: distributed inside a GPL v3 program under LGPL v2.1 section 3's
+          GPL-conversion option, as for entry 10.
+
 ===============================================================================
 Indirect dependencies — Qt runtime libraries
 ===============================================================================
