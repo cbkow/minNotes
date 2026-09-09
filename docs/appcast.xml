@@ -8,6 +8,22 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 0.5.0</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>0.5.0</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+      <ul><li>See the release notes at https://github.com/cbkow/minNotes/releases/tag/v0.5.0</li></ul>
+      ]]></description>
+      <pubDate>Wed, 09 Sep 2026 17:22:39 -0400</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v0.5.0/minNotes-0.5.0-macOS.dmg"
+        sparkle:edSignature="opE0YP0pQTW5xF7zdbZPlSgxOqRwQUie6Bpp0ED/C7blORKMFU/geRxhvUk4VhMsZfbU6j2Wnk5LXP+AI5AXDQ=="
+        length="98092228"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 0.4.3</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>0.4.3</sparkle:version>
