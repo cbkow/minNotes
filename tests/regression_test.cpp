@@ -4028,7 +4028,12 @@ static void testCellMediaExports() {
         const QString md2 = QString::fromUtf8(f2.readAll());
         CHECK(!md1.contains(QStringLiteral("ufb:///")),
               "default export carries NO ufb links");
-        CHECK(md2.contains(QStringLiteral("<ufb:///mac/"))
+#if defined(Q_OS_WIN)
+        const QString ufbPrefix = QStringLiteral("<ufb:///win/");
+#else
+        const QString ufbPrefix = QStringLiteral("<ufb:///mac/");
+#endif
+        CHECK(md2.contains(ufbPrefix)
                   && md2.contains(QStringLiteral("cellpic.png>")),
               "opt-in export carries the ufb autolink under the path");
         m.removeBlock(m.rowCountQml() - 1);   // the attachment is the LAST row
