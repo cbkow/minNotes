@@ -79,6 +79,8 @@ Source: "{#ReleaseDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; All runtime DLLs flat next to the exe: Qt6*.dll + WinSparkle.dll + the FFmpeg
 ; av*/sw*.dll + KF6SyntaxHighlighting.dll (CMake POST_BUILD staged them all here).
 Source: "{#ReleaseDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Third-party license texts (CMake POST_BUILD staged LICENSES/ + the GPL here).
+Source: "{#ReleaseDir}\Licenses\*"; DestDir: "{app}\Licenses"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; Qt plugin + QML module directories (windeployqt output). The Fusion Quick
 ; Controls style (selected at runtime on Windows) ships under qml\QtQuick\Controls.
 Source: "{#ReleaseDir}\qml\*";                 DestDir: "{app}\qml";                 Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist

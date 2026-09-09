@@ -1141,6 +1141,11 @@ ApplicationWindow {
                     role: Platform.MenuItem.NoRole
                     onTriggered: appUpdater.checkForUpdates()
                 }
+                Platform.MenuItem {
+                    text: qsTr("Third-Party Notices")
+                    role: Platform.MenuItem.NoRole
+                    onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/")
+                }
             }
         }
     }
@@ -1232,6 +1237,7 @@ ApplicationWindow {
             ThemedMenu {
                 title: qsTr("&Help")
                 Action { text: qsTr("Check for &Updates…"); onTriggered: appUpdater.checkForUpdates() }
+                Action { text: qsTr("&Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
             }
         }
     }

@@ -58,4 +58,4 @@ will not tell you a clause is malformed, and it is quiet on the fragment-heavy
 notes people actually write. When it does speak up it is usually right.
 
 The dictionary comes from SCOWL and the rules from the LanguageTool project;
-see the licences shipped with the source.
+see [Licenses & Credits](/licenses/).

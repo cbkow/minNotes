@@ -313,6 +313,16 @@ if(APPLE)
         PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
     target_sources(minnotesapp PRIVATE "${MN_ICNS_FILE}")
 
+    # ---- Third-party license texts ride in the bundle ------------------
+    # LICENSES/*.txt + the GPL → Contents/Resources/Licenses (the SCOWL word
+    # list's notice must accompany copies; the LGPL texts should too). Signed
+    # with the bundle; the scrub step touches only Contents/MacOS.
+    file(GLOB _mn_license_files "${CMAKE_SOURCE_DIR}/LICENSES/*.txt")
+    list(APPEND _mn_license_files "${CMAKE_SOURCE_DIR}/LICENSE")
+    set_source_files_properties(${_mn_license_files}
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/Licenses" HEADER_FILE_ONLY TRUE)
+    target_sources(minnotesapp PRIVATE ${_mn_license_files})
+
     # ---- Tahoe layered app icon (.icon → Assets.car, macOS 26+) -------
     # external/icons/minNotesMacOS.icon is the Icon Composer bundle (a
     # gray-gradient fill layer + the foreground mark). actool compiles it to
@@ -489,6 +499,14 @@ if(WIN32)
     if(EXISTS "${CMAKE_SOURCE_DIR}/external/kf6/bin/KF6SyntaxHighlighting.dll")
         list(APPEND _mn_extra_dlls "${CMAKE_SOURCE_DIR}/external/kf6/bin/KF6SyntaxHighlighting.dll")
     endif()
+    # Third-party license texts beside the exe (Licenses\) — the installer
+    # ships the folder; see the macOS bundle block for why.
+    add_custom_command(TARGET minnotesapp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/LICENSES" "$<TARGET_FILE_DIR:minnotesapp>/Licenses"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/LICENSE" "$<TARGET_FILE_DIR:minnotesapp>/Licenses/LICENSE"
+        COMMENT "Stage third-party license texts" VERBATIM)
     foreach(_dll IN LISTS _mn_extra_dlls)
         get_filename_component(_dn "${_dll}" NAME)
         add_custom_command(TARGET minnotesapp POST_BUILD

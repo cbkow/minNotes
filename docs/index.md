@@ -71,4 +71,6 @@ LucidLink — and open on either platform and dodge some typical file-locking is
 
 minNotes is free software, licensed
 [GPL-3.0-or-later](https://github.com/cbkow/minNotes/blob/main/LICENSE).
+Third-party components and their licenses are listed under
+[Licenses & Credits](/licenses/).
 It runs entirely on your machine — see [Privacy](privacy.md).

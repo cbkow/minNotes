@@ -32,8 +32,12 @@ Quick surface that owns the document model directly.
 - **FFmpeg** — vendored prebuilt under `external/ffmpeg` (gitignored).
 - **Sparkle** (macOS) — vendored once via `scripts/fetch_sparkle.sh` →
   `external/Sparkle/` (auto-update is a no-op shim if absent).
-- **ink-stroke-modeler**, **SoundTouch** — fetched automatically by CMake
-  (FetchContent).
+- **ink-stroke-modeler**, **SoundTouch**, **Hunspell** — fetched automatically
+  by CMake (FetchContent); Hunspell is compiled in as a static library.
+- **Spelling / grammar data** — committed under `app/spell/en/`: a merged
+  US + UK SCOWL dictionary and the parse-free subset of LanguageTool's English
+  rules. Regenerate with `scripts/build-merged-dictionary.py` and
+  `scripts/trim-lt-rules.py` (see `app/spell/en/README-data.md`).
 
 ## Build
 
@@ -72,7 +76,11 @@ helpers in `scripts/` (`sign-and-notarize.sh`, `update_appcast*.sh`).
 minNotes is licensed **GPL-3.0-or-later**. See [`LICENSE`](LICENSE) for the GPL
 text and [`LICENSES/`](LICENSES/) for the third-party license texts minNotes
 redistributes (Qt LGPL-3.0, FFmpeg LGPL-2.1+, KSyntaxHighlighting MIT,
-ink-stroke-modeler Apache-2.0, SoundTouch LGPL-2.1, Sparkle / WinSparkle MIT,
-Phosphor MIT, Aspekta SIL OFL, SQLite public domain).
+ink-stroke-modeler Apache-2.0, SoundTouch LGPL-2.1, Hunspell LGPL-2.1 (of its
+MPL/GPL/LGPL tri-license), SCOWL word lists (permissive SCOWL notice),
+LanguageTool rule data LGPL-2.1, Sparkle / WinSparkle MIT, Phosphor MIT,
+Aspekta SIL OFL, SQLite public domain). The same texts ship inside the app
+(`Contents/Resources/Licenses` on macOS, `Licenses\` beside the exe on
+Windows) and are reproduced at <https://minnotes.app/licenses/>.
 [`LICENSES/THIRD_PARTY_NOTICES.txt`](LICENSES/THIRD_PARTY_NOTICES.txt) is the
 index plus a categorised summary of the Qt-bundled support libraries.
