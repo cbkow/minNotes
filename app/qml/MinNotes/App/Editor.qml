@@ -381,6 +381,7 @@ FocusScope {
     property int  blockDragRow: -1       // logical row being dragged
     property real blockDragViewY: 0       // viewport y of the cursor
     property int  dropGap: -1            // insertion gap 0..count (line at its top)
+    property int  blockDragCount: 1      // run length: the selected range when its number was grabbed
     property int  hoverRow: -1           // row whose grip is lit
     readonly property real gutterX: leftEdge   // drag-feedback overlays (drop line / ghost) align here
 
@@ -492,12 +493,41 @@ FocusScope {
         return (gap >= n) ? blockModel.yForRow(n - 1) + blockModel.heightForRow(n - 1)
                           : blockModel.yForRow(gap)
     }
+    // Gaps inside the dragged run (from..from+count) are no-ops; past it the
+    // destination index shifts by the run's length.
+    function dropGapIsNoop(gap) { return gap >= blockDragRow && gap <= blockDragRow + blockDragCount }
     function commitBlockDrag() {
-        if (blockDragRow >= 0 && dropGap >= 0) {
-            var to = (dropGap > blockDragRow) ? dropGap - 1 : dropGap
-            blockModel.moveBlock(blockDragRow, to)
+        if (blockDragRow >= 0 && dropGap >= 0 && !dropGapIsNoop(dropGap)) {
+            var to = (dropGap > blockDragRow) ? dropGap - blockDragCount : dropGap
+            root.moveRun(blockDragRow, blockDragCount, to)
         }
-        blockDragging = false; blockDragRow = -1; dropGap = -1
+        blockDragging = false; blockDragRow = -1; dropGap = -1; blockDragCount = 1
+    }
+    // Move the run [from, from+count) so it starts at final index `to` — ONE
+    // undo step (the focused row's inline markdown commits inside it), then
+    // the caret and selection follow their blocks (the old code left the caret
+    // on whatever slid into the vacated index).
+    function moveRun(from, count, to) {
+        if (count < 1 || to < 0 || to > blockModel.count - count || to === from) return
+        var lo = Math.min(from, to, cursor.focusRow), hi = Math.max(from, to, cursor.focusRow) + count - 1
+        blockModel.beginGroup(lo, hi)
+        blockModel.commitMarkdown(cursor.focusRow)
+        blockModel.moveBlocks(from, count, to)
+        blockModel.endGroup()                          // BEFORE the caret write
+        cursor.anchorRow = blockModel.rowAfterMove(cursor.anchorRow, from, count, to)
+        cursor.focusRow  = blockModel.rowAfterMove(cursor.focusRow,  from, count, to)
+        cursor.goalX = -1
+        cursor.sync()
+        root.ensureVisible(cursor.focusRow)
+    }
+    // Context-menu Move up/down: the selected run when the menu row lies in
+    // it, else the menu row alone.
+    function moveMenuRow(d) {
+        var r = root.menuRow
+        if (cursor.hasSel && r >= cursor.loRow && r <= cursor.hiRow)
+            root.moveRun(cursor.loRow, cursor.hiRow - cursor.loRow + 1, cursor.loRow + d)
+        else
+            root.moveRun(r, 1, r + d)
     }
 
     // The whole editor field is ONE tone now (user ruling 2026-07-12): the
@@ -928,6 +958,21 @@ FocusScope {
         }
     }
 
+    // Rich paste outcome (the paster applies synchronously unless assets are
+    // being copied across documents, when this lands after the worker).
+    Connections {
+        target: paster
+        function onPasteFinished(ok, cr, cc, error) {
+            if (!ok) {
+                if (error.length > 0)
+                    Toasts.show(error === "Cancelled" ? qsTr("Paste cancelled")
+                                                      : qsTr("Paste failed — ") + error, 2)
+                return
+            }
+            if (cr >= 0) { cursor.setCaret(cr, Math.max(0, cc)); root.ensureVisible(cr) }
+        }
+    }
+
     // --- Logical cursor + editing ops. Sole owner of caret/selection/content.
     QtObject {
         id: cursor
@@ -983,19 +1028,25 @@ FocusScope {
             root.ensureVisible(r)
             sync()
         }
-        function deleteSelection() {
+        // Block-grain selection (2026-09-09): opaque rows (table/media/divider)
+        // are whole-in or whole-out. An opaque LOW end starts at col 0, an
+        // opaque HIGH end ends at its content length. The model's
+        // deleteSelectionRange applies the same rule on delete.
+        function effectiveRange() {
             var lR = loRow, lC = loCol, hR = hiRow, hC = hiCol
-            // Keep a table's JSON (and other opaque content) out of a text merge:
-            // a table at the HI end is included whole (deleteRange removes it); one
-            // at the LO end (or a lone opaque block) bails rather than spill.
-            if (lR !== hR) {
-                if (opaque(lR)) { setCaret(loRow, loCol); return }
-                if (opaque(hR)) hC = blockModel.contentForRow(hR).length
-            } else if (opaque(lR)) { setCaret(loRow, loCol); return }
-            blockModel.deleteRange(lR, lC, hR, hC)
-            anchorRow = lR; anchorCol = lC; focusRow = lR; focusCol = lC
+            if (opaque(lR)) lC = 0
+            if (opaque(hR)) hC = blockModel.contentForRow(hR).length
+            return { lR: lR, lC: lC, hR: hR, hC: hC }
+        }
+        function deleteSelection() {
+            if (!hasSel) return
+            var e = effectiveRange()
+            var land = blockModel.deleteSelectionRange(e.lR, e.lC, e.hR, e.hC)
+            var r = (land && land.length === 2) ? land[0] : e.lR
+            var c = (land && land.length === 2) ? land[1] : 0
+            anchorRow = r; anchorCol = c; focusRow = r; focusCol = c
             goalX = -1
-            root.ensureVisible(lR)
+            root.ensureVisible(r)
             sync()
         }
         // Opaque blocks (table/media/divider) hold non-prose content (a table's is
@@ -1059,10 +1110,10 @@ FocusScope {
             setCaret(focusRow, focusCol)
         }
         function insertChar(ch) {
+            if (hasSel) deleteSelection()                 // FIRST — the caret may land on an opaque row
             if (opaqueHere()) {                           // typing next to a media/divider → fresh paragraph after it
                 blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0)
             }
-            if (hasSel) deleteSelection()
             {   // never type INTO a chip: a caret strictly inside hops to its end
                 var cir = blockModel.choiceRangeAt(focusRow, focusCol)
                 if (cir.length === 2 && focusCol > cir[0]) setCaret(focusRow, cir[1])
@@ -1218,8 +1269,13 @@ FocusScope {
             return "none"
         }
         readonly property int row: cursor.focusRow
+        // Active only when the document selection is COLLAPSED on a table row
+        // (anchor and focus on the same table; cols are always 0 there). A
+        // document range that merely passes through a table stays a document
+        // range — ⌘C/⌘V/arrows keep their document meaning (2026-09-09).
         readonly property bool active: (blockModel.layoutRevision, blockModel.contentRevision,
-                                        blockModel.typeForRow(cursor.focusRow) === 7)
+                                        blockModel.typeForRow(cursor.focusRow) === 7
+                                        && cursor.anchorRow === cursor.focusRow)
 
         function rows() { return Math.max(1, blockModel.tableRows(row)) }
         function cols() { return Math.max(1, blockModel.tableColumns(row)) }
@@ -1616,6 +1672,18 @@ FocusScope {
         return r
     }
     // Home / End: to the beginning / end of the WHOLE document.
+    // ⌘A (2026-09-09): the whole document as one range — anchor at the top,
+    // focus at the end of the last row (col 0 on an opaque row). No scroll.
+    function selectAllDocument() {
+        var n = blockModel.count
+        if (n === 0) return
+        cursor.clearMarks()
+        cursor.anchorRow = 0; cursor.anchorCol = 0
+        cursor.focusRow = n - 1
+        cursor.focusCol = cursor.opaque(n - 1) ? 0 : blockModel.contentForRow(n - 1).length
+        cursor.goalX = -1
+        cursor.sync()
+    }
     function navHome(shift) {
         cursor.resetGoalX(); cursor.clearMarks()
         var r = caretLandRow(0, 1)
@@ -1932,9 +2000,19 @@ FocusScope {
     // already inside); non-text targets (media/table/divider) get a fresh
     // paragraph below first — a caret parked inside their JSON content would
     // corrupt it — and media/table pastes then CONSUME that empty paragraph.
-    function pasteAtBlock(row) {
+    function pasteAtBlock(row, r, c) {
         if (row < 0) return
+        // A run menu: the selection is the target — replace it (⌘V's path).
+        if (blockMenu.menuInSel) { doPaste(); return }
         var t = blockModel.typeForRow(row)
+        // Table: paste INTO the clicked cell (the same thing ⌘V does there).
+        if (t === 7 && r !== undefined && r >= 0) {
+            if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow)
+            cursor.setCaret(row, 0)
+            tcur.place(r, c, 0)
+            doPaste()
+            return
+        }
         var textish = !(t === 3 || t === 6 || t === 7)   // Media / Divider / Table
         if (textish) {
             if (cursor.focusRow !== row)
@@ -1945,6 +2023,20 @@ FocusScope {
         doPaste()
     }
     function duplicateBlock(row) { blockModel.commitMarkdown(cursor.focusRow); blockModel.duplicateBlock(row); cursor.setCaret(row + 1, 0); cursor.sync(); root.ensureVisible(row + 1) }
+    // Duplicate the run [lo, hi] after itself (run menu); the copy becomes the
+    // selection so a second duplicate / move / delete keeps acting on blocks.
+    function duplicateRun(lo, hi) {
+        if (lo === hi) { duplicateBlock(lo); return }
+        blockModel.beginGroup(Math.min(cursor.focusRow, lo), Math.max(cursor.focusRow, hi))
+        blockModel.commitMarkdown(cursor.focusRow)
+        blockModel.duplicateBlocks(lo, hi)
+        blockModel.endGroup()
+        var n = hi - lo + 1
+        cursor.anchorRow = hi + 1; cursor.anchorCol = 0
+        cursor.focusRow = hi + n; cursor.focusCol = cursor.opaque(hi + n) ? 0 : blockModel.contentForRow(hi + n).length
+        cursor.goalX = -1; cursor.sync()
+        root.ensureVisible(hi + n)
+    }
     // Make code: skip the commit when converting the focused row itself, so its
     // markers stay LITERAL as code (don't strip *…* into a span code ignores).
     function makeCodeAt(row)    { if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow); blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
@@ -2143,14 +2235,7 @@ FocusScope {
         && blockModel.tableCellMedia(menuRow, menuCellR, menuCellC) !== ""
 
     // --- Clipboard (copy / cut / paste), table- and text-aware ---
-    function selectedText() {
-        if (!cursor.hasSel) return ""
-        if (cursor.loRow === cursor.hiRow) return blockModel.contentForRow(cursor.loRow).slice(cursor.loCol, cursor.hiCol)
-        var parts = [blockModel.contentForRow(cursor.loRow).slice(cursor.loCol)]
-        for (var r = cursor.loRow + 1; r < cursor.hiRow; ++r) parts.push(blockModel.contentForRow(r))
-        parts.push(blockModel.contentForRow(cursor.hiRow).slice(0, cursor.hiCol))
-        return parts.join("\n")
-    }
+
     function doCopy() {
         if (tcur.active) {
             var fr = cursor.focusRow
@@ -2176,13 +2261,29 @@ FocusScope {
             }
             return
         }
-        // Caret parked on an image block with nothing selected → copy the image.
-        if (!cursor.hasSel && blockModel.typeForRow(cursor.focusRow) === 3
-            && blockModel.mediaKind(cursor.focusRow) === "image") {
-            clipboard.writeImageFromFile(blockModel.mediaUrl(cursor.focusRow))
-            return
+        // Document range (or the whole focus row when nothing is selected):
+        // every flavour at once via copyRange.
+        if (cursor.hasSel) {
+            var e = cursor.effectiveRange()
+            root.copyRange(e.lR, e.lC, e.hR, e.hC)
+        } else {
+            var fr0 = cursor.focusRow
+            root.copyRange(fr0, 0, fr0, cursor.opaque(fr0) ? 0 : blockModel.contentForRow(fr0).length)
         }
-        clipboard.writeText(cursor.hasSel ? selectedText() : blockModel.contentForRow(cursor.focusRow))
+    }
+    // Rich copy (0.5.0): the x-minnotes-blocks payload PLUS the flavours other
+    // apps read — plain text (a table's TSV), a lone table's HTML, a lone image
+    // block's raster. Opaque rows never leak descriptor JSON.
+    function copyRange(lR, lC, hR, hC) {
+        var json = blockModel.clipboardPayloadForRange(lR, lC, hR, hC)
+        var txt  = blockModel.plainTextForRange(lR, lC, hR, hC)
+        var html = "", img = ""
+        if (lR === hR) {
+            var t = blockModel.typeForRow(lR)
+            if (t === 7) html = blockModel.tableRangeHtml(lR, 0, 0, blockModel.tableRows(lR) - 1, blockModel.tableColumns(lR) - 1)
+            else if (t === 3 && blockModel.mediaKind(lR) === "image") img = blockModel.mediaUrl(lR)
+        }
+        clipboard.writeBlocks(json, txt, html, img)
     }
     // Insert an inline choice chip at the caret (DT-2, ⌥⌘C 2026-08-20):
     // default tri-state set, picker opens immediately at the new chip
@@ -2259,23 +2360,48 @@ FocusScope {
                 blockModel.sketchAddImageFromClipboard(root.activeSketchRow)
             return
         }
-        // --- Into a table cell: an image (copied file or raster) drops into the
-        // focused cell; TSV → cells; else plain text (rich paste lands in the
-        // document, not inside a cell). ---
+        // --- Our own blocks flavour (0.5.0): a faithful block run. Not into a
+        // table cell (the plain flavour of the same copy is the right thing
+        // there) and not into a code block (verbatim text wins below). The
+        // paster deletes the selection itself, inside ONE undo entry, and
+        // reports back through onPasteFinished (synchronously unless assets
+        // must be copied across documents). ---
+        if (clipboard.hasBlocks() && !tcur.active
+            && !(blockModel.typeForRow(cursor.focusRow) === 2
+                 && (!cursor.hasSel || cursor.loRow === cursor.hiRow))) {
+            var payload = clipboard.readBlocks()
+            if (payload.length > 0) {
+                if (cursor.hasSel) {
+                    var pe = cursor.effectiveRange()
+                    paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol,
+                                      pe.lR, pe.lC, pe.hR, pe.hC)
+                } else {
+                    paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol)
+                }
+                return
+            }
+        }
+        // --- Into a table cell: a copied file drops into the focused cell; then
+        // TEXT (TSV → cells, else typed) beats a raster — Excel for Mac puts a
+        // picture of the range beside its TSV; a raster only wins when the
+        // clipboard has neither text nor html (screenshot / Copy Image). ---
         if (tcur.active) {
             var cu = clipboard.readUrls()              // copied image file (Finder/Preview)
             if (cu.length > 0 && blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, cu[0], ephemeralUrls)) {
                 cursor.sync(); return
             }
+            var ct = clipboard.readText()
+            if (ct.length > 0) {
+                if (ct.indexOf("\t") >= 0 || ct.indexOf("\n") >= 0)
+                    blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, ct)
+                else tcur.type(ct)
+                return
+            }
+            if (clipboard.hasHtml()) return            // rich text with no plain form: nothing for a cell
             if (clipboard.hasImage() &&                // raster image (screenshot / Copy Image)
                 blockModel.tableSetCellImageFromClipboard(cursor.focusRow, tcur.cr, tcur.cc)) {
                 cursor.sync(); return
             }
-            var ct = clipboard.readText()
-            if (ct.length === 0) return
-            if (ct.indexOf("\t") >= 0 || ct.indexOf("\n") >= 0)
-                blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, ct)
-            else tcur.type(ct)
             return
         }
         // --- Into a CODE block: paste VERBATIM (user-caught 2026-08-21).
@@ -2304,9 +2430,15 @@ FocusScope {
         // bare image wrapper → handled as media below). ---
         if (clipboard.hasHtml()) {
             var html = clipboard.readHtml()
-            if (html && html.length > 0) {
-                if (cursor.hasSel) cursor.deleteSelection()
+            // Browser "Copy Image": the HTML is a bare remote <img> and the
+            // pixels are right here on the clipboard — take the raster below
+            // instead of a background download that may never succeed.
+            var bareImg = html && html.length > 0 && clipboard.hasImage()
+                          && blockModel.htmlIsBareRemoteImage(html)
+            if (html && html.length > 0 && !bareImg) {
+                var hg = root.pasteGroupBegin()
                 var hc = blockModel.pasteHtml(cursor.focusRow, cursor.focusCol, html)
+                root.pasteGroupEnd(hg)
                 if (hc && hc.length === 2) { cursor.setCaret(hc[0], hc[1]); root.ensureVisible(hc[0]); return }
             }
         }
@@ -2339,15 +2471,19 @@ FocusScope {
         // --- Plain text. ---
         var txt = clipboard.readText()
         if (txt.length === 0) return
-        if (cursor.hasSel) cursor.deleteSelection()
+        var tg = root.pasteGroupBegin()
         if (root.looksTabular(txt)) {                       // rectangular TSV → table block
             blockModel.commitMarkdown(cursor.focusRow)      // caret moves to the new table → consume inline md
             var tr = blockModel.insertTableFromTSV(cursor.focusRow, txt)
+            root.pasteGroupEnd(tg)
             if (tr >= 0) { cursor.setCaret(tr, 0); root.ensureVisible(tr); return }
+            tg = false
         }
         // Smart paste: blocks (blank lines separate) + per-line markdown prefixes +
-        // inline **bold**/*italic*/`code`/~~strike~~/[links], all as one undo step.
+        // inline **bold**/*italic*/`code`/~~strike~~/[links] + ``` fences, all as
+        // one undo step.
         var caret = blockModel.pasteText(cursor.focusRow, cursor.focusCol, txt)
+        root.pasteGroupEnd(tg)
         if (caret && caret.length === 2) {
             cursor.setCaret(caret[0], caret[1]); root.ensureVisible(caret[0])
         }
@@ -2380,13 +2516,22 @@ FocusScope {
             else blockModel.tableSetCell(cursor.focusRow, tcur.cr, tcur.cc, "")
             cursor.sync()
         } else if (cursor.hasSel) cursor.deleteSelection()
+        else if (cursor.opaqueHere()) root.deleteBlock(cursor.focusRow)   // ⌘X on media/divider cuts it
     }
     function copyBlock(row) {
-        if (blockModel.typeForRow(row) === 7)
-            clipboard.writeTable(blockModel.tableRangeTSV(row, 0, 0, blockModel.tableRows(row) - 1, blockModel.tableColumns(row) - 1),
-                                 blockModel.tableRangeHtml(row, 0, 0, blockModel.tableRows(row) - 1, blockModel.tableColumns(row) - 1))
-        else clipboard.writeText(blockModel.contentForRow(row))
+        root.copyRange(row, 0, row, cursor.opaque(row) ? 0 : blockModel.contentForRow(row).length)
     }
+    // Replace-selection pastes are ONE undo step: open the group over the
+    // selection band (pre-mutation coords), delete, paste, close — and close
+    // BEFORE the caret write (the entry's caret-before reads the model's
+    // cursor at endTxn time).
+    function pasteGroupBegin() {
+        if (!cursor.hasSel) return false
+        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
+        cursor.deleteSelection()
+        return true
+    }
+    function pasteGroupEnd(opened) { if (opened) blockModel.endGroup() }
     // Comment the current single-row text selection: mint the thread, then
     // open its card in the Inspector's comments view.
     function addCommentOnSelection() {
@@ -2409,15 +2554,23 @@ FocusScope {
             blockModel.beginGroup(Math.min(cursor.focusRow, row), Math.max(cursor.focusRow, row))
             blockModel.commitMarkdown(cursor.focusRow)
         }
-        if (blockModel.count > 1) {
-            blockModel.removeBlock(row)
-            if (grouped) blockModel.endGroup()
-            cursor.setCaret(Math.max(0, row - (row >= blockModel.count ? 1 : 0)), 0)
-        } else {
-            blockModel.setContent(row, "")        // last block: clear rather than leave an empty doc
-            if (grouped) blockModel.endGroup()
-            cursor.setCaret(row, 0)
-        }
+        // removeBlocks refills a would-be-empty document with a fresh paragraph
+        // inside the same txn (the old setContent("") path left a media row
+        // holding empty JSON).
+        blockModel.removeBlocks(row, row)
+        if (grouped) blockModel.endGroup()
+        cursor.setCaret(Math.max(0, Math.min(row, blockModel.count - 1)), 0)
+        cursor.sync()
+    }
+    // Delete the run [lo, hi] (context menu "Delete blocks" on a selected run):
+    // the same one-undo-step shape as deleteBlock, over the whole band.
+    function deleteRun(lo, hi) {
+        if (lo === hi) { deleteBlock(lo); return }
+        blockModel.beginGroup(Math.min(cursor.focusRow, lo), Math.max(cursor.focusRow, hi))
+        if (cursor.focusRow < lo || cursor.focusRow > hi) blockModel.commitMarkdown(cursor.focusRow)
+        blockModel.removeBlocks(lo, hi)
+        blockModel.endGroup()
+        cursor.setCaret(Math.max(0, Math.min(lo, blockModel.count - 1)), 0)
         cursor.sync()
     }
 
@@ -2517,7 +2670,7 @@ FocusScope {
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.hasSelection) { sketchEditCanvas.clearSelection() }
             else if (root.activeVideoRow >= 0 && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
             else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.hasSelection) { root.pdfActiveInk.clearSelection() }
-            else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
+            else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
             else if (inTable) {
@@ -2596,6 +2749,17 @@ FocusScope {
         else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
         else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
+        // ⌥⌘↑ / ⌥⌘↓ (0.5.0): move the focused block — or the whole selected
+        // run — one slot. Document view only. (Arrow keys carry no macOS
+        // option-layer character, unlike the ⌥⌘C trap above.)
+        else if (cmd && (event.modifiers & Qt.AltModifier) !== 0
+                 && (k === Qt.Key_Up || k === Qt.Key_Down)
+                 && root.activeFrameId === "" && !root.inkMode && !root.boardMode) {
+            var mlo = cursor.hasSel ? cursor.loRow : cursor.focusRow
+            var mhi = cursor.hasSel ? cursor.hiRow : cursor.focusRow
+            root.moveRun(mlo, mhi - mlo + 1, k === Qt.Key_Up ? mlo - 1 : mlo + 1)
+            event.accepted = true
+        }
         // Video studio: transport keys, then swallow everything else so typing
         // can't invisibly edit the hidden document underneath.
         else if (root.activeVideoRow >= 0) {
@@ -2651,10 +2815,16 @@ FocusScope {
         else if (inTable && cmd && k === Qt.Key_Backslash) { clearCellFormatting(); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_D) { tblFill(false); event.accepted = true }
         else if (inTable && cmd && k === Qt.Key_R) { tblFill(true); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_A) {   // select every cell
-            tcur.clearSets()
-            tcur.setRange(0, 0, tcur.rows() - 1, tcur.cols() - 1)
-            cursor.sync(); event.accepted = true
+        else if (inTable && cmd && k === Qt.Key_A) {   // ⌘A ladder: cell text → every cell → document
+            var aLen = tcur.text().length
+            var aLo = Math.min(tcur.pos, tcur.anchorPos), aHi = Math.max(tcur.pos, tcur.anchorPos)
+            var cellAll = aLen > 0 && aLo === 0 && aHi === aLen
+            var gridAll = tcur.rangeR0 === 0 && tcur.rangeC0 === 0
+                          && tcur.rangeR1 === tcur.rows() - 1 && tcur.rangeC1 === tcur.cols() - 1
+            if (gridAll || (aLen === 0 && tcur.hasSel)) root.selectAllDocument()
+            else if (aLen > 0 && !cellAll && !tcur.hasSel) { tcur.anchorPos = 0; tcur.pos = aLen; cursor.sync() }
+            else { tcur.clearSets(); tcur.setRange(0, 0, tcur.rows() - 1, tcur.cols() - 1); cursor.sync() }
+            event.accepted = true
         }
         // Page/Home/End leave the table — they move the document caret off it
         // (tcur deactivates as soon as focusRow is no longer a table row).
@@ -2714,6 +2884,7 @@ FocusScope {
             else if (event.text.length === 1 && event.text >= " ") tcur.type(event.text)
             event.accepted = true
         }
+        else if (cmd && k === Qt.Key_A) { root.selectAllDocument(); event.accepted = true }
         else if (cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
         else if (cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
         else if (cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
@@ -3207,7 +3378,9 @@ FocusScope {
                 // selection highlight (behind text), one rect per visual line.
                 property var selRects: {
                     var dep = blockModel.contentRevision + blockModel.layoutRevision   // re-eval triggers
-                    if (!cell.inSel || cell.isMedia) return []
+                    // Opaque rows (media/table/divider) show membership via the
+                    // wash rectangle below, never via text rects over a hidden te.
+                    if (!cell.inSel || cell.isMedia || te.btype === 6 || te.btype === 7) return []
                     var sp = (cell.logicalRow === cursor.loRow) ? Math.min(cursor.loCol, te.length) : 0
                     var ep = (cell.logicalRow === cursor.hiRow) ? Math.min(cursor.hiCol, te.length) : te.length
                     return root.selectionRects(te, sp, ep)
@@ -3557,6 +3730,37 @@ FocusScope {
                     width: cell.measure; height: 1
                     color: Theme.colors.divider
                 }
+                Rectangle {  // multi-block band (user ruling 2026-09-09): when the
+                             // selection spans more than one block, every row in it
+                             // carries a faint full-width band under its content —
+                             // the range reads as BLOCKS (the grain copy, delete and
+                             // the rail drag act on). Single-row selections stay
+                             // text-only; opaque rows add their wash on top.
+                    // Runs the FULL FIELD like the focused block's fill (page
+                    // and margins alike) — one row treatment, not two widths.
+                    visible: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
+                    z: -0.5                                  // above the block rules + focus fill, below text + rects
+                    radius: 0
+                    color: Theme.colors.selectionBand
+                    x: 0
+                    y: 0
+                    width: Math.max(flick.width, root.contentSpan)
+                    height: cell.height
+                }
+                Rectangle {  // opaque-row range wash (2026-09-09): media/table/divider
+                             // inside a document selection show membership with a
+                             // translucent selection wash OVER the block. Never for
+                             // a table's own cell selection (that collapses cursor).
+                    readonly property bool opaqueRow: te.btype === 3 || te.btype === 6 || te.btype === 7
+                    visible: cell.active && cell.inSel && cursor.hasSel && opaqueRow
+                    z: 1
+                    radius: 0
+                    color: Theme.colors.selectionWash
+                    x: cell.colLeft
+                    y: te.btype === 3 ? 6 : te.btype === 7 ? 32 : cell.height / 2 - 8
+                    width: te.btype === 3 ? mediaHost.width : te.btype === 7 ? tableHost.width : cell.measure
+                    height: te.btype === 3 ? mediaHost.height : te.btype === 7 ? tableHost.height : 16
+                }
 
                 // (The left-gutter drag grip is GONE — user ruling 2026-07-12,
                 // "too much like milkdown": block reorder lives on the
@@ -3575,6 +3779,8 @@ FocusScope {
             preventStealing: true
             hoverEnabled: true
             property bool overClickable: false   // over a task checkbox / table check or choice cell
+            property real lastDblClickMs: 0      // triple-click detection (whole-block select)
+            property int  lastDblClickRow: -1
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : root.gripDragging ? Qt.ClosedHandCursor
                        : root.gripKind !== "" ? Qt.OpenHandCursor
@@ -3653,6 +3859,16 @@ FocusScope {
                     return
                 }
                 var h = root.hitTest(m.x, m.y)
+                // Triple-click (2026-09-09): a press right after a double-click
+                // on the same row selects the WHOLE block. No drag arm.
+                if (mouse.lastDblClickMs > 0 && h.row === mouse.lastDblClickRow
+                    && Date.now() - mouse.lastDblClickMs < 500) {
+                    mouse.lastDblClickMs = 0
+                    cursor.setCaret(h.row, 0)
+                    cursor.move(h.row, blockModel.contentForRow(h.row).length, true)
+                    return
+                }
+                mouse.lastDblClickMs = 0
                 // Inline choice chip (DT-2) → picker; the press never places
                 // the caret (chips are atomic — the caret parks after it).
                 {
@@ -3798,7 +4014,7 @@ FocusScope {
                 else root.dragging = false
             }
             onCanceled: {
-                if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1 }
+                if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
                 else {
                     root.dragging = false; root.tableDragging = false; root.tableResizing = false
                     root.gripDragging = false; root.gripDragKind = ""; root.gripFrom = -1
@@ -3837,6 +4053,7 @@ FocusScope {
                 while (s > 0 && /\w/.test(t.charAt(s - 1))) s--
                 while (e < t.length && /\w/.test(t.charAt(e))) e++
                 cursor.setCaret(h.row, s); cursor.move(h.row, e, true)
+                mouse.lastDblClickMs = Date.now(); mouse.lastDblClickRow = h.row
             }
         }
 
@@ -5792,7 +6009,8 @@ FocusScope {
                 height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
                 y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY
                 // Being dragged → the rail chip is the block's body; its slot dims.
-                opacity: root.blockDragging && rnum.prow === root.blockDragRow ? 0.3 : 1
+                opacity: root.blockDragging && rnum.prow >= root.blockDragRow
+                         && rnum.prow < root.blockDragRow + root.blockDragCount ? 0.3 : 1
                 Text {
                     y: 2
                     width: parent.width - 8
@@ -5815,7 +6033,14 @@ FocusScope {
                         var vy = mapToItem(root, m.x, m.y).y
                         if (!root.blockDragging) {
                             if (Math.abs(m.y - pressY) < 4) return   // click ≠ drag
-                            root.blockDragRow = rnum.prow
+                            // A number inside the selection drags the whole run.
+                            if (cursor.hasSel && rnum.prow >= cursor.loRow && rnum.prow <= cursor.hiRow) {
+                                root.blockDragRow = cursor.loRow
+                                root.blockDragCount = cursor.hiRow - cursor.loRow + 1
+                            } else {
+                                root.blockDragRow = rnum.prow
+                                root.blockDragCount = 1
+                            }
                             root.blockDragging = true
                         }
                         root.blockDragViewY = vy
@@ -5836,7 +6061,7 @@ FocusScope {
             border.width: 1; border.color: Theme.colors.accent
             Text {
                 anchors.centerIn: parent
-                text: root.blockDragRow + 1
+                text: root.blockDragCount > 1 ? root.blockDragCount + " blocks" : root.blockDragRow + 1
                 color: Theme.colors.textBright
                 font.family: Theme.font.mono; font.pixelSize: 11
             }
@@ -5848,7 +6073,7 @@ FocusScope {
     // desk to the rail: the insertion is a document-wide event, and the line
     // meets the drag chip riding the ruler.
     Rectangle {
-        visible: root.blockDragging && root.dropGap >= 0
+        visible: root.blockDragging && root.dropGap >= 0 && !root.dropGapIsNoop(root.dropGap)
         x: root.gutterX - flick.contentX
         width: root.width - x
         height: 2; radius: 0
@@ -6311,12 +6536,15 @@ FocusScope {
     // Context-menu target highlight (whole block) — tints the block the hovered
     // menu item will act on (red for destructive). Column/row scopes are drawn
     // inside the table itself. Document view only (the menu opens there).
+    // Full FIELD like the focus fill and the multi-block selection band (one
+    // row treatment); covers the whole selected run when the menu row is in it.
     Rectangle {
         visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-        x: root.leftEdge - flick.contentX
-        y: (blockModel.layoutRevision, blockModel.yForRow(root.menuRow)) - flick.contentY
-        width: root.measureForRow(root.menuRow)
-        height: (blockModel.layoutRevision, blockModel.heightForRow(root.menuRow))
+        x: -flick.contentX
+        y: (blockModel.layoutRevision, blockModel.yForRow(blockMenu.runLo)) - flick.contentY
+        width: Math.max(flick.width, root.contentSpan)
+        height: (blockModel.layoutRevision, blockModel.yForRow(blockMenu.runHi) + blockModel.heightForRow(blockMenu.runHi)
+                 - blockModel.yForRow(blockMenu.runLo))
         z: 45
         readonly property color _c: root.menuHiDanger ? Theme.colors.error : Theme.colors.accent
         color: Qt.rgba(_c.r, _c.g, _c.b, 0.10)
@@ -6561,11 +6789,11 @@ FocusScope {
     // --- Block context menu (right-click a block / its grip) ---
     Popup {
         id: blockMenu
-        readonly property bool isCode: root.menuRow >= 0
+        readonly property bool isCode: !menuInSel && root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 2)
-        readonly property bool isTable: root.menuRow >= 0
+        readonly property bool isTable: !menuInSel && root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 7)
-        readonly property bool isMedia: root.menuRow >= 0
+        readonly property bool isMedia: !menuInSel && root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
         readonly property bool isPdf: isMedia
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
@@ -6576,6 +6804,16 @@ FocusScope {
         // In a full-frame tab (table/PDF/video) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
         readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
+        // The menu row lies inside a multi-block selection → the menu is a RUN
+        // menu: block ops (add above/below, duplicate, copy, paste, move,
+        // insert below, delete) act on the whole run and the target highlight
+        // covers it; single-block rows (open, media, code, chip, link, table
+        // columns) are withheld — the clicked row isn't apparent under a run
+        // highlight (isTable/isMedia/isCode read false here).
+        readonly property bool menuInSel: cursor.hasSel && cursor.loRow !== cursor.hiRow
+                                          && root.menuRow >= cursor.loRow && root.menuRow <= cursor.hiRow
+        readonly property int runLo: menuInSel ? cursor.loRow : root.menuRow
+        readonly property int runHi: menuInSel ? cursor.hiRow : root.menuRow
         // Table facts the row visibilities share (revision-dep'd once here).
         readonly property int tHdr: isTable ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.menuRow)) : 0
         readonly property int tRows: isTable ? (blockModel.contentRevision, blockModel.tableRows(root.menuRow)) : 0
@@ -6631,23 +6869,33 @@ FocusScope {
                 id: blockColMenu
                 visible: !blockMenu.bulkMode
                 spacing: 1
+                MenuHeader { visible: blockMenu.menuInSel; text: (blockMenu.runHi - blockMenu.runLo + 1) + " blocks" }
                 MenuHeader { visible: blockMenu.isTable; text: "Block" }
-                MenuRow { visible: root.menuLinkUrl.length > 0
+                MenuRow { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel
                           text: "Open " + root.truncUrl(root.menuLinkUrl)
                           onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
-                Rectangle { visible: root.menuLinkUrl.length > 0; width: parent.width; height: 1; color: Theme.colors.divider }
+                Rectangle { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.isTable
+                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.isTable && !blockMenu.menuInSel
                           text: "Insert choice chip"
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(root.menuRow) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(root.menuRow) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Duplicate block"; onActivated: root.duplicateBlock(root.menuRow) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.isTable ? "Copy table" : "Copy"; onActivated: root.copyBlock(root.menuRow) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Paste"; onActivated: root.pasteAtBlock(root.menuRow) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(blockMenu.runLo) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Duplicate blocks" : "Duplicate block"
+                          onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.runLo > 0
+                          text: blockMenu.menuInSel ? "Move blocks up" : "Move up"; onActivated: root.moveMenuRow(-1) }
+                MenuRow { visible: !blockMenu.inFrameTab && (blockModel.contentRevision, blockMenu.runHi < blockModel.count - 1)
+                          text: blockMenu.menuInSel ? "Move blocks down" : "Move down"; onActivated: root.moveMenuRow(1) }
+                MenuRow { visible: !blockMenu.inFrameTab
+                          text: blockMenu.menuInSel ? "Copy blocks" : blockMenu.isTable ? "Copy table" : "Copy"
+                          onActivated: { if (blockMenu.menuInSel) { var ce = cursor.effectiveRange(); root.copyRange(ce.lR, ce.lC, ce.hR, ce.hC) }
+                                         else root.copyBlock(root.menuRow) } }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Paste"
+                          onActivated: root.pasteAtBlock(root.menuRow, blockMenu.isTable ? root.menuCellR : -1, root.menuCellC) }
                 MenuRow { visible: blockMenu.isMedia
                                    && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
                           text: "Copy image"
@@ -6658,8 +6906,8 @@ FocusScope {
                           onActivated: blockModel.revealMedia(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch; text: "Open in ufb"
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
-                MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(root.menuRow) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(root.menuRow) }
+                MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(blockMenu.runHi) }
                 MenuRow { visible: blockMenu.isTable; text: blockMenu.tHdr > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
                 // comment on the current (single-row) text selection
                 MenuRow {
@@ -6667,10 +6915,10 @@ FocusScope {
                     text: "Add comment"
                     onActivated: root.addCommentOnSelection()
                 }
-                // text-only transform
-                Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia; width: parent.width; height: 1; color: Theme.colors.divider }
+                // text-only transform (withheld for a run — the clicked row isn't apparent)
+                Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow {
-                    visible: !blockMenu.isTable && !blockMenu.isMedia
+                    visible: !blockMenu.isTable && !blockMenu.isMedia && !blockMenu.menuInSel
                     text: blockMenu.isCode ? "Change language…" : "Make code block"
                     onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
                                                   : root.makeCodeAt(root.menuRow)
@@ -6682,7 +6930,8 @@ FocusScope {
                                          Toasts.show(qsTr("Image copied")) } }
                 MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
                 Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Delete block"; danger: true; onActivated: root.deleteBlock(root.menuRow) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Delete blocks" : "Delete block"; danger: true
+                          onActivated: root.deleteRun(blockMenu.runLo, blockMenu.runHi) }
             }
 
             Rectangle { visible: blockMenu.isTable && !blockMenu.bulkMode; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }

@@ -29,6 +29,15 @@ void TableGrid::setCellText(int r, int c, const QString& t) {
     cells_[r][c].text = t;
 }
 
+void TableGrid::clearCellContents(int r, int c) {
+    if (r < 0 || r >= rows() || c < 0 || c >= cols_) return;
+    Cell& cell = cells_[r][c];
+    cell.text.clear();
+    cell.spans = QJsonArray();
+    cell.media.clear();
+    cell.choice.clear();
+}
+
 static bool inCell(int r, int c, int rows, int cols) { return r >= 0 && r < rows && c >= 0 && c < cols; }
 QString TableGrid::cellBg(int r, int c) const { return inCell(r,c,rows(),cols_) ? cells_[r][c].bg : QString(); }
 void TableGrid::setCellBg(int r, int c, const QString& h) { if (inCell(r,c,rows(),cols_)) cells_[r][c].bg = h; }

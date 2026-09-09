@@ -198,12 +198,34 @@ public:
     Q_INVOKABLE void setContent(int row, const QString& text);
     Q_INVOKABLE void insertBlock(int row);
     Q_INVOKABLE void removeBlock(int row);
+    // Remove the contiguous run [lo, hi] as ONE undo step. A document never
+    // ends up empty: if the run was everything, one fresh paragraph is
+    // inserted inside the same transaction (selection-hardening, 2026-09-09).
+    Q_INVOKABLE void removeBlocks(int loRow, int hiRow);
+    // Delete a logical selection with BLOCK-GRAIN semantics at opaque ends
+    // (media/table/divider are whole-in or whole-out): a text low end merges
+    // like deleteRange; an opaque low end removes whole blocks up to (and, if
+    // opaque, including) the high row. ONE undo step. Returns [row, col] where
+    // the caret lands ([] on an empty model). Callers pass a real selection.
+    Q_INVOKABLE QVariantList deleteSelectionRange(int loRow, int loCol, int hiRow, int hiCol);
     // Insert a copy of `row` (content/type/level/lang/spans) directly below it
     // (undoable). The caret-worthy new row is `row + 1`.
     Q_INVOKABLE void duplicateBlock(int row);
+    // Duplicate the run [lo, hi] directly after itself (content/type/spans/
+    // ink per row), ONE undo step. The copies occupy [hi+1, hi+1+count).
+    Q_INVOKABLE void duplicateBlocks(int loRow, int hiRow);
     // Reorder: move the block at `from` so it ends up at final index `to`. Just a
     // fractional-rank rewrite (no renumbering); undoable. No-op if out of range.
     Q_INVOKABLE void moveBlock(int from, int to);
+    // Move the contiguous run [from, from+count) so its first block lands at
+    // final index `to` (0..count-`count`, an index in the REDUCED list). ONE
+    // undo step; ranks chain between the destination neighbours; measured
+    // heights travel with their rows. moveBlock is the count-1 case.
+    Q_INVOKABLE void moveBlocks(int from, int count, int to);
+    // Where row `r` ends up after moveBlocks(from, count, to) — shared by the
+    // QML caret/selection remap and the tests (one formula, no drift).
+    Q_INVOKABLE static int rowAfterMove(int r, int from, int count, int to);
+
 
     // P8: delete a logical selection spanning (aRow,aCol)..(fRow,fCol). Merges
     // the surviving head of the lo block with the tail of the hi block and
@@ -225,7 +247,7 @@ public:
     // each line gets block-prefix + inline-markdown parsing), splice them at the
     // caret, and record the whole thing as ONE undo step. Returns [caretRow,
     // caretCol] for where the caret should land after the paste ([] on no-op).
-    // Fenced code blocks are not yet reconstructed (``` lines paste literally).
+    // ``` fences become Code blocks (tag = language, body verbatim; 0.5.0).
     Q_INVOKABLE QVariantList pasteText(int row, int col, const QString& text);
 
     // Rich paste: parse clipboard HTML (Word/Google Docs/Excel/web) via QTextDocument
@@ -278,6 +300,29 @@ public:
         std::vector<ThreadMessage> messages;
     };
     void importCommentThread(const ThreadImport& t);
+
+    // --- Rich clipboard (0.5.0). A selection is a contiguous row range with
+    // char columns at its ends; opaque rows (media/table/divider) are always
+    // whole. specsForRange slices the end rows (spans clipped + rebased,
+    // partially-clipped chips dropped); clipboardPayloadForRange wraps that
+    // as the x-minnotes-blocks JSON (ink for whole rows only, comment thread
+    // bodies, asset snapshot); plainTextForRange is the plain flavour every
+    // copy also writes (text rows sliced, tables as TSV, dividers as "---",
+    // media omitted — never descriptor JSON).
+    std::vector<BlockSpec> specsForRange(int loRow, int loCol, int hiRow, int hiCol) const;
+    Q_INVOKABLE QString clipboardPayloadForRange(int loRow, int loCol, int hiRow, int hiCol) const;
+    Q_INVOKABLE QString plainTextForRange(int loRow, int loCol, int hiRow, int hiCol) const;
+    // Paste core (ONE txn): an opaque target takes the specs after it; a text
+    // target is split at `col`, a text-ish first spec merges into the caret
+    // block (adopting its type only at a clean start), the rest splice after,
+    // and the caret block's tail rides the last text-ish spec. `ink` is
+    // parallel to `specs` (width-migrated from srcPageWidth; never overwrites
+    // ink the target row already has). Returns {caretRow, caretCol}.
+    std::pair<int,int> pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
+                                    const std::vector<QString>& ink, qreal srcPageWidth);
+    // Browser "Copy Image" shape: the HTML is nothing but one remote <img>.
+    // The raster on the same clipboard is then the better source (Importer).
+    Q_INVOKABLE bool htmlIsBareRemoteImage(const QString& html) const;
     // Localize remote http(s) media descriptors in [lo,hi] (async, best
     // effort) — the importer's post-insert pass.
     void localizeRemoteMedia(int loRow, int hiRow) { fetchRemoteMediaIn(loRow, hiRow); }
@@ -731,6 +776,18 @@ public:
                               // (the table option shape); the span's TEXT is
                               // the selected label — exporters flatten free.
                               SpanChoice = 10 };
+    static uint8_t spanKindFromString(const QString& s);
+    static const char* spanKindToString(uint8_t k);
+    // Kinds whose `href` carries a payload (URL / colour hex / thread id /
+    // choice JSON) — serialized as "u", pushed whole, never merged by kind.
+    static bool spanHasPayloadKind(uint8_t k) {
+        return k == SpanLink || k == SpanFgColor || k == SpanHighlight
+            || k == SpanComment || k == SpanChoice;
+    }
+    // Where this doc's sidecar media lives: the package extraction dir for
+    // .mnpkg docs, else the original's folder. (Public since the clipboard
+    // program: the payload records it as provenance.)
+    QString mediaAnchorDir() const;
 
 private:
     struct Row {
@@ -788,8 +845,6 @@ private:
         qint64 ts = 0;      // wall-clock at push (coalesce keeps the first)
     };
 
-    static uint8_t spanKindFromString(const QString& s);
-    static const char* spanKindToString(uint8_t k);
     // Interval ops on one row's spans (same-kind): union-cover test, add+merge,
     // and subtract a range. Offsets shift via shiftSpans on edits.
     static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind);
@@ -854,6 +909,12 @@ private:
     double maxContentWidth_ = 0.0;
     qreal pageWidth_ = 760;   // the open doc's page measure (synced on load/close)
     int clampRow(int row) const;
+    // Media / Table / Divider: content is a descriptor, never prose. Text
+    // mutators refuse these rows outright (out of range → false).
+    bool isOpaqueRow(int row) const;
+    // The insertBlock body without its transaction — shared with removeBlocks'
+    // empty-document refill so both land inside ONE undo entry.
+    void insertParagraphRaw(int row);
     // Safe row access: a default (empty paragraph) Row when the model is empty
     // (no document open), so query methods never index an empty vector.
     const Row& rowAt(int row) const;
@@ -919,9 +980,6 @@ private:
     void recordOriginalStat();         // snapshot the original's mtime/size as the conflict baseline
     bool externalChangeDetected() const;
     bool writeBackToOriginal();        // checkpoint → VACUUM INTO temp → atomic replace over the original
-    // Where this doc's sidecar media lives: the package extraction dir for
-    // .mnpkg docs, else the original's folder.
-    QString mediaAnchorDir() const;
     void markDirty();                  // set dirty_ + notify (idempotent)
     // Erase a deleted block's in-memory ink (the DB row cascades via FK).
     // Undo restores it through the BlockSnap.ink payload in applySnapshot.

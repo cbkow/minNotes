@@ -1,5 +1,9 @@
 #include "BlockModel.h"
 #include "Importer.h"
+#include "AssetTransfer.h"
+#include "BlockClipboard.h"
+#include "MediaStore.h"
+#include "TableGrid.h"
 #include "PathMap.h"
 #include "CodeSyntax.h"                     // the language chip's picker feed
 #include "../notes/sketch_text.h"
@@ -1216,7 +1220,7 @@ bool BlockModel::payloadSpanCovers(int row, int start, int end,
 }
 
 void BlockModel::setFormat(int row, int start, int end, const QString& kind, bool on) {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     const uint8_t k = spanKindFromString(kind);
     if (!k) return;
     const int len = content_[row].size();
@@ -2031,8 +2035,10 @@ void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
         while (g.rows() < r + src.rows()) g.insertRow(g.rows());   // grow to fit the paste
         while (g.cols() < c + src.cols()) g.insertCol(g.cols());
         for (int i = 0; i < src.rows(); ++i)
-            for (int j = 0; j < src.cols(); ++j)
+            for (int j = 0; j < src.cols(); ++j) {
+                g.clearCellContents(r + i, c + j);   // nothing stale rides (spans/chip/image)
                 g.setCellText(r + i, c + j, src.cellText(i, j));
+            }
     });
 }
 
@@ -2074,7 +2080,7 @@ void BlockModel::tableClearRange(int row, int r0, int c0, int r1, int c1) {
         const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
         const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
         for (int r = R0; r <= R1; ++r)
-            for (int c = C0; c <= C1; ++c) g.setCellText(r, c, QString());
+            for (int c = C0; c <= C1; ++c) g.clearCellContents(r, c);
     });
 }
 
@@ -2089,13 +2095,6 @@ std::vector<int> sortedIndexSet(const QVariantList& in) {
     std::sort(v.begin(), v.end());
     v.erase(std::unique(v.begin(), v.end()), v.end());
     return v;
-}
-// Contents wipe: text/spans/media/choice go, colours (formatting) stay.
-void clearCellContents(TableGrid& g, int r, int c) {
-    g.setCellText(r, c, QString());
-    g.setCellSpans(r, c, QJsonArray());
-    g.setCellMedia(r, c, QString());
-    g.setCellChoice(r, c, QString());
 }
 } // namespace
 
@@ -2120,7 +2119,7 @@ void BlockModel::tableClearRows(int row, const QVariantList& rows) {
     if (set.empty()) return;
     mutateTable(row, [&](TableGrid& g) {
         for (int r : set)
-            for (int c = 0; c < g.cols(); ++c) clearCellContents(g, r, c);
+            for (int c = 0; c < g.cols(); ++c) g.clearCellContents(r, c);
     });
 }
 void BlockModel::tableClearColumns(int row, const QVariantList& cols) {
@@ -2128,7 +2127,7 @@ void BlockModel::tableClearColumns(int row, const QVariantList& cols) {
     if (set.empty()) return;
     mutateTable(row, [&](TableGrid& g) {
         for (int c : set)
-            for (int r = 0; r < g.rows(); ++r) clearCellContents(g, r, c);
+            for (int r = 0; r < g.rows(); ++r) g.clearCellContents(r, c);
     });
 }
 void BlockModel::tableSetRowsColor(int row, const QVariantList& rows,
@@ -3321,7 +3320,7 @@ qreal BlockModel::mediaDurationMs(int row) const {
 }
 
 void BlockModel::clearFormat(int row, int start, int end) {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     const int len = content_[row].size();
     start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
     if (start >= end || rows_[row].spans.empty()) return;
@@ -3587,7 +3586,7 @@ QVariantList BlockModel::spansForRow(int row) const {
 // add the new one if a payload was given (empty = remove that kind here).
 void BlockModel::setPayloadSpan(int row, int start, int end, uint8_t kind,
                                 const QString& payload, const QString& coalesce) {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     const int len = content_[row].size();
     start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
     if (start >= end) return;
@@ -4017,6 +4016,7 @@ QString BlockModel::linkAt(int row, int col) const {
 // --- Comments (tier 3 annotations) -------------------------------------
 QString BlockModel::addComment(int row, int start, int end) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || !doc_.isOpen()) return {};
+    if (isOpaqueRow(row)) return {};
     const int len = content_[row].size();
     start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
     if (start >= end) return {};
@@ -4339,7 +4339,7 @@ void BlockModel::commitMarkdown(int row) {
 }
 
 void BlockModel::toggleFormat(int row, int start, int end, const QString& kind) {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     const uint8_t k = spanKindFromString(kind);
     if (!k) return;
     const int len = content_[row].size();
@@ -4486,13 +4486,17 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     if (rows_.empty()) return;
     loRow = clampRow(loRow);
     hiRow = clampRow(hiRow);
+    // Block-grain rule at opaque ends: an opaque LOW row can't host the merged
+    // text (deleteSelectionRange removes it whole instead); an opaque HIGH row
+    // is consumed whole — its descriptor is never spliced into prose.
+    if (isOpaqueRow(loRow)) return;
     beginTxn(loRow, hiRow);
 
     // Merge surviving head of lo block with surviving tail of hi block.
     const QString loText = textAt(loRow);
     const QString hiText = textAt(hiRow);
     const int loClip = std::min<int>(loCol, loText.size());
-    const int hiClip = std::min<int>(hiCol, hiText.size());
+    const int hiClip = isOpaqueRow(hiRow) ? hiText.size() : std::min<int>(hiCol, hiText.size());
     const QString merged = loText.left(loClip) + hiText.mid(hiClip);
     content_[loRow] = merged;
     persistContent(loRow);
@@ -4542,6 +4546,7 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
 void BlockModel::insertText(int row, int col, const QString& text, int marks,
                             const QString& fgColor, const QString& bgColor) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (isOpaqueRow(row)) return;                    // never type into a descriptor
     beginTxn(row, row);
     const QString s = content_[row];
     col = std::clamp(col, 0, static_cast<int>(s.size()));
@@ -4580,18 +4585,42 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     QString t = text;
     t.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     t.replace(QLatin1Char('\r'), QLatin1Char('\n'));
-    QStringList segs;
+    // A segment is one block-to-be: a non-blank line, or a whole ``` fence
+    // (0.5.0): the fence's lines travel VERBATIM (blank lines kept, no
+    // markdown parsing), the opener's tag is the language; an unclosed fence
+    // runs to the end of the paste.
+    struct Seg { QString text; bool code = false; QString lang; };
+    std::vector<Seg> segs;
     const QStringList lines = t.split(QLatin1Char('\n'));
-    for (const QString& ln : lines)
-        if (!ln.trimmed().isEmpty()) segs << ln;
-    if (segs.isEmpty()) return {};
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString tr = lines[i].trimmed();
+        if (tr.startsWith(QLatin1String("```"))) {
+            Seg cs; cs.code = true; cs.lang = tr.mid(3).trimmed();
+            QStringList body;
+            int j = i + 1;
+            for (; j < lines.size(); ++j) {
+                if (lines[j].trimmed() == QLatin1String("```")) break;
+                body << lines[j];
+            }
+            cs.text = body.join(QLatin1Char('\n'));
+            segs.push_back(std::move(cs));
+            i = j;                                   // skip the closing fence (or the end)
+            continue;
+        }
+        if (!tr.isEmpty()) segs.push_back({lines[i], false, QString()});
+    }
+    if (segs.empty()) return {};
 
-    // Parse one line → (type, level, clean text, spans): block-prefix then inline
-    // markdown. A "```" line renders literally (fenced code not yet reconstructed).
-    auto parseSeg = [&](const QString& seg, uint8_t& type, uint8_t& level, uint8_t& taskState,
-                        QString& outText, std::vector<Span>& outSpans, bool& hadPrefix) {
-        type = Paragraph; level = 0; taskState = 0; outText = seg; outSpans.clear(); hadPrefix = false;
-        const bool fence = seg.startsWith(QLatin1String("```"));
+    // Parse one segment → (type, level, lang, clean text, spans): block-prefix
+    // then inline markdown; a fence segment is a Code block as-is.
+    auto parseSeg = [&](const Seg& sg, uint8_t& type, uint8_t& level, uint8_t& taskState,
+                        QString& outLang, QString& outText, std::vector<Span>& outSpans,
+                        bool& hadPrefix) {
+        const QString& seg = sg.text;
+        type = Paragraph; level = 0; taskState = 0; outLang.clear();
+        outText = seg; outSpans.clear(); hadPrefix = false;
+        if (sg.code) { type = Code; outLang = sg.lang; hadPrefix = true; return; }
+        const bool fence = false;
         QString body = seg;
         if (!fence) {
             BlockType bt; int lvl = 0, strip = 0;
@@ -4609,7 +4638,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         outText = body;
     };
 
-    const int n = segs.size();
+    const int n = static_cast<int>(segs.size());
     // Opaque targets (media/table/divider) hold non-prose content — never write
     // text into them; leave them intact and splice everything AFTER instead.
     const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
@@ -4648,13 +4677,13 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         const int first = afterRow + 1, last = afterRow + cnt;
         QString prevRank = ranks_[afterRow];
         const QString nextRank = (first < static_cast<int>(ranks_.size())) ? ranks_[first] : QString();
-        struct NewBlk { QString id, rank, content; uint8_t type, level, taskState; std::vector<Span> spans; };
+        struct NewBlk { QString id, rank, content; uint8_t type, level, taskState; QString lang; std::vector<Span> spans; };
         std::vector<NewBlk> made;
         beginInsertRows({}, first, last);
         for (int k = 0; k < cnt; ++k) {
             const int at = first + k;
-            uint8_t tj, lj, tsj; QString textj; std::vector<Span> spj; bool pfxj;
-            parseSeg(segs[startSeg + k], tj, lj, tsj, textj, spj, pfxj);
+            uint8_t tj, lj, tsj; QString langj, textj; std::vector<Span> spj; bool pfxj;
+            parseSeg(segs[static_cast<size_t>(startSeg + k)], tj, lj, tsj, langj, textj, spj, pfxj);
             QString contentj = textj;
             std::vector<Span> spans = spj;
             if (k == cnt - 1) {                        // last block carries the tail
@@ -4663,7 +4692,10 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
                     appendSpan(spans, sp.s + contentj.size(), sp.e + contentj.size(), sp.kind, sp.href);
                 contentj += right;
             }
-            Row r{}; r.type = tj; r.level = lj; r.taskState = tsj; r.param = 1; r.spans = spans;
+            Row r{}; r.type = tj; r.level = lj; r.taskState = tsj; r.lang = langj; r.spans = spans;
+            r.param = (tj == Code)
+                ? static_cast<uint16_t>(std::clamp<int>(contentj.count(QLatin1Char('\n')) + 1, 1, 65535))
+                : 1;
             const QString newId = makeUlid();
             const QString newRank = rankBetween(prevRank, nextRank);
             prevRank = newRank;
@@ -4672,25 +4704,32 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
             ids_.insert(ids_.begin() + at, newId);
             ranks_.insert(ranks_.begin() + at, newRank);
             fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
-            made.push_back({newId, newRank, contentj, tj, lj, tsj, spans});
+            made.push_back({newId, newRank, contentj, tj, lj, tsj, langj, spans});
         }
         endInsertRows();
         if (doc_.isOpen())
             for (const NewBlk& b : made)
                 doc_.appendBlock(b.id, b.rank, 0, QString::fromLatin1(typeToString(b.type)),
-                                 attrsJson(b.type, b.level, QString(), b.spans, b.taskState), b.content);
+                                 attrsJson(b.type, b.level, b.lang, b.spans, b.taskState), b.content);
     };
 
-    if (opaque) {
-        appendBlocksAfter(row, 0);                     // opaque block stays untouched
+    // A leading fence merges only into an EMPTY row (it becomes the code
+    // block); into prose it lands after the row like an opaque target.
+    const bool codeFirstApart = !opaque && segs[0].code && !(left.isEmpty() && right.isEmpty());
+    if (opaque || codeFirstApart) {
+        right.clear(); rightS.clear();                 // the row keeps its tail
+        appendBlocksAfter(row, 0);                     // the block stays untouched
     } else {
         // ---- Block 0: merge seg[0] into the current block at the caret ----
-        uint8_t t0, l0, ts0; QString text0; std::vector<Span> sp0; bool pfx0;
-        parseSeg(segs[0], t0, l0, ts0, text0, sp0, pfx0);
+        uint8_t t0, l0, ts0; QString lang0, text0; std::vector<Span> sp0; bool pfx0;
+        parseSeg(segs[0], t0, l0, ts0, lang0, text0, sp0, pfx0);
         // Adopt the parsed block type only at a clean start (nothing to the left)
         // AND when the line carried a real prefix; else keep the block's type and
         // treat seg[0] as inline-styled text.
-        if (left.isEmpty() && pfx0) { rows_[row].type = t0; rows_[row].level = l0; rows_[row].taskState = ts0; }
+        if (left.isEmpty() && pfx0) {
+            rows_[row].type = t0; rows_[row].level = l0; rows_[row].taskState = ts0;
+            rows_[row].lang = lang0;
+        }
         QString newContent = left + text0;
         std::vector<Span> newSpans = leftS;
         for (const Span& sp : sp0)
@@ -4703,7 +4742,9 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         }
         content_[row] = newContent;
         rows_[row].spans = newSpans;
-        rows_[row].param = 1;
+        rows_[row].param = (rows_[row].type == Code)
+            ? static_cast<uint16_t>(std::clamp<int>(newContent.count(QLatin1Char('\n')) + 1, 1, 65535))
+            : 1;
         persistContent(row);
         persistMeta(row);
         emit dataChanged(index(row), index(row), {ContentRole});
@@ -4960,6 +5001,7 @@ void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& js
 
 void BlockModel::splitBlock(int row, int col) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
+    if (isOpaqueRow(row)) return;                    // descriptors don't split
     // A split strictly inside a choice chip would clone it into two chips
     // sharing one payload (the straddle path below copies href to both
     // halves) — snap to the chip's end instead (DT-2, 2026-08-20).
@@ -5013,9 +5055,14 @@ void BlockModel::splitBlock(int row, int col) {
     endTxn();
 }
 
-void BlockModel::insertBlock(int row) {
+bool BlockModel::isOpaqueRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    const uint8_t t = rows_[row].type;
+    return t == Media || t == Table || t == Divider;
+}
+
+void BlockModel::insertParagraphRaw(int row) {
     row = std::clamp(row, 0, static_cast<int>(rows_.size()));
-    beginTxn(row, row - 1);                      // empty `before`; after = [row,row]
     const QString newId = makeUlid();
     const QString newRank = rankBetween(
         (row > 0) ? ranks_[row - 1] : QString(),
@@ -5032,7 +5079,12 @@ void BlockModel::insertBlock(int row) {
 
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), QString(), QString());
+}
 
+void BlockModel::insertBlock(int row) {
+    row = std::clamp(row, 0, static_cast<int>(rows_.size()));
+    beginTxn(row, row - 1);                      // empty `before`; after = [row,row]
+    insertParagraphRaw(row);
     bumpLayout();
     ++contentRevision_;            // row→content mapping shifted: refresh content bindings
     emit contentChangedSpike();
@@ -5068,6 +5120,65 @@ void BlockModel::duplicateBlock(int row) {
     endTxn();
 }
 
+void BlockModel::removeBlocks(int loRow, int hiRow) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return;
+    loRow = std::clamp(loRow, 0, n - 1);
+    hiRow = std::clamp(hiRow, 0, n - 1);
+    if (loRow > hiRow) std::swap(loRow, hiRow);
+    const int cnt = hiRow - loRow + 1;
+    beginTxn(loRow, hiRow);                      // after = empty, or the refill row
+    for (int i = loRow; i <= hiRow; ++i) {
+        dropBlockInk(ids_[i]);   // hash sync; DB cascades via FK
+        if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);
+    }
+    beginRemoveRows({}, loRow, hiRow);
+    std::vector<double> hs;
+    hs.reserve(rows_.size() - static_cast<size_t>(cnt));
+    for (int i = 0; i < n; ++i)
+        if (i < loRow || i > hiRow) hs.push_back(fenwick_.height(static_cast<size_t>(i)));
+    rows_.erase(rows_.begin() + loRow, rows_.begin() + hiRow + 1);
+    content_.erase(content_.begin() + loRow, content_.begin() + hiRow + 1);
+    ids_.erase(ids_.begin() + loRow, ids_.begin() + hiRow + 1);
+    ranks_.erase(ranks_.begin() + loRow, ranks_.begin() + hiRow + 1);
+    fenwick_.reset(std::move(hs));
+    endRemoveRows();
+    // Never leave an empty document: the band's after-side becomes the fresh
+    // paragraph (delta = -cnt + 1 → after = [lo, lo]).
+    if (rows_.empty()) insertParagraphRaw(0);
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+QVariantList BlockModel::deleteSelectionRange(int loRow, int loCol, int hiRow, int hiCol) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return {};
+    if (loRow > hiRow || (loRow == hiRow && loCol > hiCol)) {
+        std::swap(loRow, hiRow); std::swap(loCol, hiCol);
+    }
+    loRow = std::clamp(loRow, 0, n - 1);
+    hiRow = std::clamp(hiRow, 0, n - 1);
+    const bool loOpaque = isOpaqueRow(loRow), hiOpaque = isOpaqueRow(hiRow);
+    if (!loOpaque) {
+        if (loRow == hiRow && loCol == hiCol) return QVariantList{ loRow, loCol };   // nothing selected
+        deleteRange(loRow, loCol, hiRow, hiCol);          // an opaque high row is consumed whole
+        return QVariantList{ loRow, std::min<int>(loCol, content_[loRow].size()) };
+    }
+    // Opaque low end → whole blocks go. A text high row keeps its tail
+    // (the part after hiCol) and slides up into the low slot.
+    beginTxn(loRow, hiRow);
+    if (loRow == hiRow || hiOpaque) removeBlocks(loRow, hiRow);
+    else {
+        deleteRange(hiRow, 0, hiRow, hiCol);
+        removeBlocks(loRow, hiRow - 1);
+    }
+    endTxn();
+    const int land = std::min(loRow, static_cast<int>(rows_.size()) - 1);
+    return QVariantList{ land, 0 };
+}
+
 void BlockModel::removeBlock(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);                          // after = empty
@@ -5086,36 +5197,345 @@ void BlockModel::removeBlock(int row) {
     endTxn();
 }
 
-void BlockModel::moveBlock(int from, int to) {
+void BlockModel::moveBlock(int from, int to) { moveBlocks(from, 1, to); }
+
+int BlockModel::rowAfterMove(int r, int from, int count, int to) {
+    if (count <= 0 || from == to) return r;
+    if (r >= from && r < from + count) return r + (to - from);          // inside the run
+    if (from < to && r >= from + count && r < to + count) return r - count;   // slid up
+    if (to < from && r >= to && r < from) return r + count;                   // slid down
+    return r;
+}
+
+void BlockModel::moveBlocks(int from, int count, int to) {
     const int n = static_cast<int>(rows_.size());
-    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
-    beginTxn(std::min(from, to), std::max(from, to));
+    if (count < 1 || from < 0 || from + count > n || to < 0 || to > n - count || from == to) return;
+    // The touched band: every row between the two positions, inclusive of
+    // the run at either end. Ids permute inside it → a full-band entry.
+    beginTxn(std::min(from, to), std::max(from, to) + count - 1);
 
-    // Lift the block out (its content/type/spans travel with it).
-    Row r = rows_[from];
-    const QString id = ids_[from], content = content_[from];
-    const double h = fenwick_.height(static_cast<size_t>(from));
-    rows_.erase(rows_.begin() + from);
-    content_.erase(content_.begin() + from);
-    ids_.erase(ids_.begin() + from);
-    ranks_.erase(ranks_.begin() + from);
-    fenwick_.erase(static_cast<size_t>(from));
+    // Lift the run out (content/type/spans + measured heights travel with it).
+    std::vector<Row> rs(rows_.begin() + from, rows_.begin() + from + count);
+    std::vector<QString> ids(ids_.begin() + from, ids_.begin() + from + count);
+    std::vector<QString> cs(content_.begin() + from, content_.begin() + from + count);
+    std::vector<double> hs;
+    hs.reserve(static_cast<size_t>(count));
+    for (int k = 0; k < count; ++k) hs.push_back(fenwick_.height(static_cast<size_t>(from + k)));
+    rows_.erase(rows_.begin() + from, rows_.begin() + from + count);
+    content_.erase(content_.begin() + from, content_.begin() + from + count);
+    ids_.erase(ids_.begin() + from, ids_.begin() + from + count);
+    ranks_.erase(ranks_.begin() + from, ranks_.begin() + from + count);
+    for (int k = 0; k < count; ++k) fenwick_.erase(static_cast<size_t>(from));
 
-    // New fractional rank between the destination neighbours (reduced list).
+    // Chain fresh ranks between the destination neighbours (reduced list).
     const int sz = static_cast<int>(ranks_.size());
-    const QString prev = (to > 0)  ? ranks_[to - 1] : QString();
-    const QString next = (to < sz) ? ranks_[to]     : QString();
-    const QString newRank = rankBetween(prev, next);
-
-    rows_.insert(rows_.begin() + to, r);
-    content_.insert(content_.begin() + to, content);
-    ids_.insert(ids_.begin() + to, id);
-    ranks_.insert(ranks_.begin() + to, newRank);
-    fenwick_.insert(static_cast<size_t>(to), h);
-
-    if (doc_.isOpen()) doc_.updateRank(id, newRank);
+    QString prev = (to > 0)  ? ranks_[to - 1] : QString();
+    const QString next = (to < sz) ? ranks_[to] : QString();
+    for (int k = 0; k < count; ++k) {
+        const QString rk = rankBetween(prev, next);
+        prev = rk;
+        const int at = to + k;
+        rows_.insert(rows_.begin() + at, rs[static_cast<size_t>(k)]);
+        content_.insert(content_.begin() + at, cs[static_cast<size_t>(k)]);
+        ids_.insert(ids_.begin() + at, ids[static_cast<size_t>(k)]);
+        ranks_.insert(ranks_.begin() + at, rk);
+        fenwick_.insert(static_cast<size_t>(at), hs[static_cast<size_t>(k)]);
+        if (doc_.isOpen()) doc_.updateRank(ids[static_cast<size_t>(k)], rk);
+    }
 
     bumpLayout();                 // positions change; cells re-read yForRow/content
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+}
+
+// === Rich clipboard (0.5.0) ==============================================
+
+std::vector<BlockModel::BlockSpec> BlockModel::specsForRange(int loRow, int loCol,
+                                                             int hiRow, int hiCol) const {
+    std::vector<BlockSpec> out;
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return out;
+    if (loRow > hiRow || (loRow == hiRow && loCol > hiCol)) {
+        std::swap(loRow, hiRow); std::swap(loCol, hiCol);
+    }
+    loRow = std::clamp(loRow, 0, n - 1);
+    hiRow = std::clamp(hiRow, 0, n - 1);
+    for (int r = loRow; r <= hiRow; ++r) {
+        BlockSpec sp = specForRow(r);
+        if (isOpaqueRow(r)) { out.push_back(std::move(sp)); continue; }   // whole-in
+        const int len = sp.text.size();
+        int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
+        int to   = (r == hiRow) ? std::clamp(hiCol, 0, len) : len;
+        if (from > to) std::swap(from, to);
+        if (from == 0 && to == len) { out.push_back(std::move(sp)); continue; }
+        // Slice: spans clipped to [from,to) and rebased; a chip cut in half
+        // would be a broken widget → only whole chips travel.
+        std::vector<Span> clipped;
+        for (const Span& s : sp.spans) {
+            const int a = std::max(s.s, from), b = std::min(s.e, to);
+            if (a >= b) continue;
+            if (s.kind == SpanChoice && (s.s < from || s.e > to)) continue;
+            clipped.push_back({a - from, b - from, s.kind, s.href});
+        }
+        sp.text = sp.text.mid(from, to - from);
+        sp.spans = std::move(clipped);
+        out.push_back(std::move(sp));
+    }
+    return out;
+}
+
+QString BlockModel::plainTextForRange(int loRow, int loCol, int hiRow, int hiCol) const {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return {};
+    if (loRow > hiRow || (loRow == hiRow && loCol > hiCol)) {
+        std::swap(loRow, hiRow); std::swap(loCol, hiCol);
+    }
+    loRow = std::clamp(loRow, 0, n - 1);
+    hiRow = std::clamp(hiRow, 0, n - 1);
+    QStringList parts;
+    for (int r = loRow; r <= hiRow; ++r) {
+        const uint8_t t = rows_[r].type;
+        if (t == Media) continue;                            // no honest text form
+        if (t == Divider) { parts << QStringLiteral("---"); continue; }
+        if (t == Table) {
+            const TableGrid& g = gridFor(r);
+            parts << tableRangeTSV(r, 0, 0, g.rows() - 1, g.cols() - 1);
+            continue;
+        }
+        const QString& s = content_[r];
+        const int len = s.size();
+        int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
+        int to   = (r == hiRow) ? std::clamp(hiCol, 0, len) : len;
+        if (from > to) std::swap(from, to);
+        parts << s.mid(from, to - from);
+    }
+    return parts.join(QLatin1Char('\n'));
+}
+
+QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, int hiCol) const {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return {};
+    if (loRow > hiRow || (loRow == hiRow && loCol > hiCol)) {
+        std::swap(loRow, hiRow); std::swap(loCol, hiCol);
+    }
+    loRow = std::clamp(loRow, 0, n - 1);
+    hiRow = std::clamp(hiRow, 0, n - 1);
+
+    BlockClipboard::Payload p;
+    p.docPath = docPath_;
+    p.docDir = mediaAnchorDir();
+    p.package = mediaStore_ ? mediaStore_->packageSource() : QString();
+    p.pageWidth = pageWidth_;
+    p.specs = specsForRange(loRow, loCol, hiRow, hiCol);
+    if (p.specs.empty()) return {};
+
+    // Ink is pinned to the WHOLE block: only rows copied whole carry it.
+    p.ink.reserve(p.specs.size());
+    for (int r = loRow; r <= hiRow; ++r) {
+        bool whole = isOpaqueRow(r);
+        if (!whole) {
+            const int len = content_[r].size();
+            const int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
+            const int to   = (r == hiRow) ? std::clamp(hiCol, 0, len) : len;
+            whole = (from == 0 && to == len);
+        }
+        p.ink.push_back(whole ? inkForRow(r) : QString());
+    }
+
+    // Comment threads: bodies ride with their anchors (SOURCE ids — the
+    // paste remints or re-anchors); ghost anchors are stripped.
+    QHash<QString, QVariantMap> threads;
+    for (const QVariant& tv : commentThreads()) {
+        const QVariantMap m = tv.toMap();
+        threads.insert(m.value(QStringLiteral("id")).toString(), m);
+    }
+    QSet<QString> harvested;
+    for (BlockSpec& sp : p.specs) {
+        for (auto it = sp.spans.begin(); it != sp.spans.end();) {
+            if (it->kind != SpanComment) { ++it; continue; }
+            const auto th = threads.constFind(it->href);
+            if (th == threads.constEnd()) { it = sp.spans.erase(it); continue; }
+            if (!harvested.contains(it->href)) {
+                harvested.insert(it->href);
+                ThreadImport ti;
+                ti.id = it->href;
+                ti.created = th->value(QStringLiteral("created")).toLongLong();
+                ti.resolved = th->value(QStringLiteral("resolved")).toBool();
+                for (const QVariant& mv : commentMessages(it->href)) {
+                    const QVariantMap mm = mv.toMap();
+                    ti.messages.push_back({QString(), mm.value(QStringLiteral("body")).toString(),
+                                           mm.value(QStringLiteral("created")).toLongLong(),
+                                           mm.value(QStringLiteral("modified")).toLongLong()});
+                }
+                p.threads.push_back(std::move(ti));
+            }
+            ++it;
+        }
+    }
+
+    // Asset snapshot: where every collected src's bytes live right now, so a
+    // paste after the source tab closes still finds them (no side effects).
+    const AssetTransfer::Source src = AssetTransfer::Source::fromStore(mediaStore_.get());
+    QSet<QString> seen;
+    AssetTransfer::forEachSrc(p.specs, [&](const QJsonValue& v, bool isVideo) {
+        if (!v.isString()) return;
+        const QString rel = v.toString();
+        if (!rel.startsWith(QLatin1String(".minnotes/")) || seen.contains(rel)) return;
+        seen.insert(rel);
+        const PackageExporter::Resolved res = src.resolve ? src.resolve(rel) : PackageExporter::Resolved{};
+        if (!res.ok) return;
+        BlockClipboard::Asset a;
+        a.rel = rel; a.abs = res.absPath; a.entry = res.packageEntry;
+        a.bytes = res.bytes; a.video = isVideo;
+        p.assets.push_back(std::move(a));
+    });
+    return QString::fromUtf8(BlockClipboard::encode(p));
+}
+
+std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
+                                            const std::vector<QString>& ink, qreal srcPageWidth) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return { 0, 0 };
+    row = std::clamp(row, 0, n - 1);
+    if (specs.empty()) return { row, std::clamp(col, 0, static_cast<int>(content_[row].size())) };
+
+    auto textish = [](const BlockSpec& sp) {
+        return sp.mediaJson.isEmpty() && sp.type != Table && sp.type != Divider;
+    };
+    const bool migrate = srcPageWidth > 0 && !qFuzzyCompare(srcPageWidth, pageWidth_);
+    // Lay ink for specs[k0..] onto rows firstRow.. (parallel). The FIRST one
+    // may be a merged row: never overwrite ink it already has.
+    auto layInk = [&](int firstRow, size_t k0, size_t k1, bool firstMerged) {
+        for (size_t k = k0; k < k1 && k < specs.size() && k < ink.size(); ++k) {
+            if (ink[k].isEmpty()) continue;
+            const int r = firstRow + static_cast<int>(k - k0);
+            if (r < 0 || r >= static_cast<int>(rows_.size())) continue;
+            if (k == k0 && firstMerged && !inkForRow(r).isEmpty()) continue;
+            QString j = ink[k];
+            if (migrate) {
+                const QString m = migrateInkForWidth(j, srcPageWidth, pageWidth_);
+                if (!m.isEmpty()) j = m;
+            }
+            setBlockInk(r, j);
+        }
+    };
+    auto finish = [&]() {
+        bumpLayout();
+        ++contentRevision_;
+        emit contentChangedSpike();
+    };
+
+    // Opaque target, or an opaque first spec into a non-empty row: everything
+    // lands AFTER the row. An opaque first spec into an EMPTY simple row folds
+    // into it (spliceSpecsAt's anchor reuse).
+    const bool targetOpaque = isOpaqueRow(row);
+    if (targetOpaque || !textish(specs[0])) {
+        const bool emptySimple = !targetOpaque && content_[row].isEmpty()
+            && (rows_[row].type == Paragraph || rows_[row].type == Heading
+                || rows_[row].type == Quote || rows_[row].type == ListItem);
+        if (emptySimple) beginTxn(row, row); else beginTxn(row + 1, row);
+        const auto caret = spliceSpecsAt(row + 1, specs, /*allowReuseAnchorAbove=*/emptySimple);
+        layInk(emptySimple ? row : row + 1, 0, specs.size(), false);
+        finish();
+        endTxn();
+        return caret;
+    }
+
+    // Text target + text-ish first spec: split the row at the caret, merge.
+    beginTxn(row, row);
+    const QString s = content_[row];
+    col = std::clamp(col, 0, static_cast<int>(s.size()));
+    for (const Span& sp : rows_[row].spans)           // never split a chip
+        if (sp.kind == SpanChoice && col > sp.s && col < sp.e) { col = sp.e; break; }
+    const QString left = s.left(col), right = s.mid(col);
+    std::vector<Span> leftS, rightS;
+    for (const Span& sp : rows_[row].spans) {
+        if (sp.s < col) leftS.push_back({sp.s, std::min(sp.e, col), sp.kind, sp.href});
+        if (sp.e > col) rightS.push_back({std::max(sp.s, col) - col, sp.e - col, sp.kind, sp.href});
+    }
+    auto appendSpan = [](std::vector<Span>& v, int a, int b, uint8_t kind, const QString& href) {
+        if (a >= b) return;
+        if (spanHasPayload(kind)) v.push_back({a, b, kind, href});
+        else addSpan(v, a, b, kind);
+    };
+    const BlockSpec first = specs[0];
+    // Adopt the first spec's block identity only at a CLEAN start and when it
+    // carries one (a plain paragraph pasted at the start of a heading must
+    // not demote the heading).
+    const bool adopt = left.isEmpty()
+        && (first.type != Paragraph || (right.isEmpty() && rows_[row].type == Paragraph));
+    if (adopt) {
+        rows_[row].type = first.type; rows_[row].level = first.level;
+        rows_[row].taskState = first.taskState; rows_[row].depth = first.depth;
+        rows_[row].lang = first.lang;
+    }
+    QString newContent = left + first.text;
+    std::vector<Span> newSpans = leftS;
+    for (const Span& sp : first.spans)
+        appendSpan(newSpans, sp.s + left.size(), sp.e + left.size(), sp.kind, sp.href);
+    int caretRow = row, caretCol = newContent.size();
+    const bool single = specs.size() == 1;
+    if (single) {
+        for (const Span& sp : rightS)
+            appendSpan(newSpans, sp.s + newContent.size(), sp.e + newContent.size(), sp.kind, sp.href);
+        newContent += right;
+    }
+    content_[row] = newContent;
+    rows_[row].spans = newSpans;
+    rows_[row].param = (rows_[row].type == Code)
+        ? static_cast<uint16_t>(std::clamp<int>(newContent.count(QLatin1Char('\n')) + 1, 1, 65535)) : 1;
+    persistContent(row);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+
+    if (!single) {
+        std::vector<BlockSpec> rest(specs.begin() + 1, specs.end());
+        const size_t lastIdx = rest.size() - 1;
+        bool tailSpec = false;
+        if (textish(rest[lastIdx])) {
+            BlockSpec& last = rest[lastIdx];
+            caretCol = last.text.size();
+            for (const Span& sp : rightS)
+                appendSpan(last.spans, sp.s + last.text.size(), sp.e + last.text.size(), sp.kind, sp.href);
+            last.text += right;
+        } else {
+            caretCol = 0;
+            if (!right.isEmpty() || !rightS.empty()) {
+                BlockSpec tail; tail.type = Paragraph; tail.text = right; tail.spans = rightS;
+                rest.push_back(std::move(tail));
+                tailSpec = true;
+            }
+        }
+        spliceSpecsAt(row + 1, rest, /*allowReuseAnchorAbove=*/false);
+        caretRow = row + 1 + static_cast<int>(lastIdx);
+        Q_UNUSED(tailSpec);
+        layInk(row + 1, 1, specs.size(), false);
+    }
+    layInk(row, 0, 1, /*firstMerged=*/true);   // only spec[0]'s ink, onto the merged row
+    finish();
+    endTxn();
+    return { caretRow, caretCol };
+}
+
+bool BlockModel::htmlIsBareRemoteImage(const QString& html) const {
+    return Importer::htmlIsBareRemoteImage(html);
+}
+
+void BlockModel::duplicateBlocks(int loRow, int hiRow) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return;
+    loRow = std::clamp(loRow, 0, n - 1);
+    hiRow = std::clamp(hiRow, 0, n - 1);
+    if (loRow > hiRow) std::swap(loRow, hiRow);
+    std::vector<BlockSpec> specs;
+    std::vector<QString> ink;
+    for (int r = loRow; r <= hiRow; ++r) { specs.push_back(specForRow(r)); ink.push_back(inkForRow(r)); }
+    beginTxn(hiRow + 1, hiRow);                  // empty before; after = the copies
+    spliceSpecsAt(hiRow + 1, specs, /*allowReuseAnchorAbove=*/false);
+    for (size_t k = 0; k < ink.size(); ++k)
+        if (!ink[k].isEmpty()) setBlockInk(hiRow + 1 + static_cast<int>(k), ink[k]);
+    bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();

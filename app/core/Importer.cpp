@@ -914,3 +914,29 @@ int Importer::importNotionZipToFolder(const QString& path, const QString& destDi
     QDir(stage).removeRecursively();
     return count;
 }
+
+bool Importer::htmlIsBareRemoteImage(const QString& html) {
+    if (html.isEmpty()) return false;
+    QTextDocument doc;
+    doc.setHtml(html);
+    int remoteImages = 0, otherImages = 0;
+    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+        for (auto it = b.begin(); !it.atEnd(); ++it) {
+            const QTextFragment frag = it.fragment();
+            if (!frag.isValid()) continue;
+            const QTextCharFormat cf = frag.charFormat();
+            if (cf.isImageFormat()) {
+                const QString src = cf.toImageFormat().name();
+                if (src.startsWith(QLatin1String("http://")) || src.startsWith(QLatin1String("https://")))
+                    ++remoteImages;
+                else
+                    ++otherImages;
+                continue;
+            }
+            QString t = frag.text();
+            t.replace(QChar(0xFFFC), QString());
+            if (!t.trimmed().isEmpty()) return false;          // real text → a rich paste
+        }
+    }
+    return remoteImages == 1 && otherImages == 0;
+}

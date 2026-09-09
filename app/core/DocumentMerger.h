@@ -17,6 +17,7 @@
 // and copied files sit OUTSIDE the undo entry by existing design.
 #pragma once
 
+#include "AssetTransfer.h"
 #include "BlockModel.h"
 
 #include <QHash>
@@ -62,27 +63,15 @@ signals:
     void mergeFinished(bool ok, int destFirst, int destLast, const QString& error);
 
 private:
-    struct MergeItem {
-        QString srcRel;            // the raw ".minnotes/…" source src string
-        QString srcPath;           // absolute disk source ("" for package items)
-        QString packageEntry;      // "media/<rel>" inside the source .mnpkg
-        QString destName;          // unique basename → dest .minnotes/<destName>
-        QString sidecarDir;        // disk videos: absolute .qcview dir ("" = none)
-        QString pkgSidecarPrefix;  // package videos: archive sidecar prefix
-        qint64 bytes = 0;
-        bool isVideo = false;
-    };
     // Everything the worker + apply need, snapshotted at plan time; the
-    // worker never touches a model.
+    // worker never touches a model. Asset disposition (items, rewrite map)
+    // lives in the shared AssetTransfer::Plan (0.5.0 — the clipboard paster
+    // plans with the same rules).
     struct MergeJob {
         std::vector<BlockModel::BlockSpec> specs;
         std::vector<QString> ink;                        // parallel to specs
         std::vector<BlockModel::ThreadImport> threads;   // NEW ids already minted
-        QHash<QString, QString> srcRewrite;              // rel src → rel src
-        std::vector<MergeItem> items;
-        qint64 totalBytes = 0;
-        QString sourcePackage;     // splice source ("" = none)
-        QString destAssetsDir;
+        AssetTransfer::Plan assets;
         QString anchorId;          // dest block id above the gap ("" = top)
         int gap = 0;
         qreal srcWidth = 760, destWidth = 760;

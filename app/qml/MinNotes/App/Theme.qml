@@ -40,6 +40,12 @@ QtObject {
         readonly property color success:     "#4cb050"   // toast/outcome voice (family value, from QCView)
         readonly property color warn:        "#f5a623"   // toast/outcome voice
         readonly property color selectionBg: "#2a568c"   // text-selection fill (saturated cobalt)
+        // Opaque-block range membership (media/table/divider inside a document
+        // selection): selectionBg as a translucent wash OVER the block.
+        readonly property color selectionWash: Qt.rgba(0.165, 0.337, 0.549, 0.45)
+        // Multi-block selection: a faint full-row band under EVERY selected
+        // row, so a range that spans blocks reads at block grain.
+        readonly property color selectionBand: Qt.rgba(0.165, 0.337, 0.549, 0.16)
         readonly property color quoteBar:    "#3a5e86"
         // QCView note markers — the SAME violet QCView uses on its timeline
         // pins, so "a QCView note" is one color across both apps.

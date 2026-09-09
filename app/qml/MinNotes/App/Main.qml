@@ -977,8 +977,16 @@ ApplicationWindow {
                         .arg(undoKey))
         }
     }
-    Popup {   // merge copy progress — the collect chrome; only for real copies
-        visible: merger.running && win._mergeBytes > 16 * 1024 * 1024
+    // The rich-paste engine copies assets on a worker only when they cross
+    // documents; the bar shows once a copy has run for a moment (a few MB
+    // finish before the popup would even paint).
+    property bool _pasteBar: false
+    Timer { interval: 300; running: paster.running; onTriggered: win._pasteBar = true }
+    Connections { target: paster; function onRunningChanged() { if (!paster.running) win._pasteBar = false } }
+    Popup {   // merge / paste copy progress — the collect chrome; only for real copies
+        id: transferPopup
+        readonly property bool pasting: paster.running && win._pasteBar
+        visible: (merger.running && win._mergeBytes > 16 * 1024 * 1024) || pasting
         modal: true
         closePolicy: Popup.NoAutoClose   // cancel is the only way out
         anchors.centerIn: Overlay.overlay
@@ -988,13 +996,14 @@ ApplicationWindow {
         contentItem: Column {
             spacing: 14
             Text {
-                text: qsTr("Merging “%1”…").arg(win._mergeSrcName)
+                text: transferPopup.pasting ? qsTr("Pasting media…")
+                                            : qsTr("Merging “%1”…").arg(win._mergeSrcName)
                 color: Theme.colors.textBright; font.family: Theme.font.family
                 font.pixelSize: Theme.font.sizeBody; font.bold: true
             }
             Text {
                 width: 400; elide: Text.ElideMiddle
-                text: merger.currentItem
+                text: transferPopup.pasting ? paster.currentItem : merger.currentItem
                 color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
@@ -1003,7 +1012,7 @@ ApplicationWindow {
                 color: Theme.colors.surfaceRecess
                 border.width: 1; border.color: Theme.colors.border
                 Rectangle {
-                    width: Math.round((parent.width - 2) * Math.min(1, merger.progress))
+                    width: Math.round((parent.width - 2) * Math.min(1, transferPopup.pasting ? paster.progress : merger.progress))
                     height: parent.height - 2
                     x: 1; y: 1
                     color: Theme.colors.divider
@@ -1012,7 +1021,7 @@ ApplicationWindow {
             Row {
                 spacing: 8; anchors.right: parent.right
                 FlatButton { text: qsTr("Cancel"); padding: 12
-                             onClicked: merger.cancel() }
+                             onClicked: { if (paster.running) paster.cancel(); else merger.cancel() } }
             }
         }
     }

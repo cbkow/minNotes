@@ -16,6 +16,12 @@
 #include "PackageFormat.h"
 #include "PackageExporter.h"
 #include "DocumentMerger.h"
+#include "AssetTransfer.h"
+#include "BlockClipboard.h"
+#include "Clipboard.h"
+#include "ClipboardPaster.h"
+#include <QClipboard>
+#include <QMimeData>
 #include "RtfConvert.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
@@ -4423,6 +4429,503 @@ static void testExportChipsTasksCells() {
     m.closeDocument();
 }
 
+// =============================================================================
+// 0.5.0 — selection hardening, rich clipboard, block move
+// =============================================================================
+
+// Fresh doc with rows: 0 "abcdef" (bold [1,4)), 1 image, 2 "xyz" (link [0,3)).
+static void buildClipDoc(BlockModel& m, const QString& imgAbs) {
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("abcdef"));
+    m.setFormat(0, 1, 4, QStringLiteral("bold"), true);
+    BlockModel::BlockSpec img; img.type = BlockModel::Media;
+    img.mediaJson = QStringLiteral("{\"src\":\"%1\",\"w\":8,\"h\":8}").arg(imgAbs);
+    m.insertSpecs(0, {img}, false);                                        // row 1
+    m.insertBlock(2); m.setContent(2, QStringLiteral("xyz"));
+    m.setLink(2, 0, 3, QStringLiteral("https://example.com"));
+}
+
+static QString tmpPng(const QString& name) {
+    const QString path = QDir::temp().filePath(name);
+    QImage img(8, 8, QImage::Format_RGB32); img.fill(Qt::red);
+    img.save(path, "PNG");
+    return path;
+}
+
+// --- Test 49: BlockClipboard codec round-trip --------------------------------
+static void testBlockClipboardRoundTrip() {
+    qInfo("[49] BlockClipboard: encode/decode every block type, span kind, ink, gate");
+    BlockClipboard::Payload p;
+    p.docPath = QStringLiteral("/tmp/x.mndb"); p.docDir = QStringLiteral("/tmp");
+    p.package = QString(); p.pageWidth = 900;
+    auto text = [](uint8_t type, const QString& t) { BlockModel::BlockSpec s; s.type = type; s.text = t; return s; };
+    BlockModel::BlockSpec h = text(BlockModel::Heading, QStringLiteral("Title")); h.level = 3;
+    BlockModel::BlockSpec code = text(BlockModel::Code, QStringLiteral("int x;\nreturn x;")); code.lang = QStringLiteral("cpp");
+    BlockModel::BlockSpec li = text(BlockModel::ListItem, QStringLiteral("item")); li.depth = 2;
+    BlockModel::BlockSpec task = text(BlockModel::TaskListItem, QStringLiteral("todo")); task.taskState = 2;
+    BlockModel::BlockSpec para = text(BlockModel::Paragraph, QStringLiteral("plain bold link colour chip note"));
+    para.spans = { {6, 10, BlockModel::SpanBold, {}}, {11, 15, BlockModel::SpanLink, QStringLiteral("https://a.b/")},
+                   {16, 22, BlockModel::SpanFgColor, QStringLiteral("#ff0000")},
+                   {16, 22, BlockModel::SpanHighlight, QStringLiteral("#00ff00")},
+                   {23, 27, BlockModel::SpanChoice, QStringLiteral("{\"o\":[{\"id\":\"a\",\"l\":\"chip\",\"c\":\"#123456\"}],\"v\":\"a\"}")},
+                   {28, 32, BlockModel::SpanComment, QStringLiteral("01THREAD")},
+                   {0, 5, BlockModel::SpanItalic, {}}, {0, 5, BlockModel::SpanStrike, {}},
+                   {0, 5, BlockModel::SpanUnderline, {}}, {0, 5, BlockModel::SpanCode, {}} };
+    BlockModel::BlockSpec div; div.type = BlockModel::Divider;
+    BlockModel::BlockSpec media; media.type = BlockModel::Media;
+    media.mediaJson = QStringLiteral("{\"src\":\".minnotes/a.png\",\"w\":4,\"h\":3}");
+    BlockModel::BlockSpec table; table.type = BlockModel::Table;
+    table.tableJson = TableGrid::makeEmpty(2, 2).toJson();
+    p.specs = { h, code, li, task, text(BlockModel::Quote, QStringLiteral("q")),
+                text(BlockModel::OrderedListItem, QStringLiteral("o")), para, div, media, table };
+    p.ink.assign(p.specs.size(), QString());
+    p.ink[0] = QStringLiteral("{\"strokes\":[{\"pts\":[1,2]}]}");
+    BlockModel::ThreadImport ti; ti.id = QStringLiteral("01THREAD"); ti.created = 42; ti.resolved = true;
+    ti.messages.push_back({QString(), QStringLiteral("hello"), 7, 9});
+    p.threads.push_back(ti);
+    BlockClipboard::Asset a; a.rel = QStringLiteral(".minnotes/a.png"); a.abs = QStringLiteral("/tmp/a.png");
+    a.entry = QStringLiteral("media/a.png"); a.bytes = 99; a.video = false;
+    p.assets.push_back(a);
+
+    const QByteArray json = BlockClipboard::encode(p);
+    BlockClipboard::Payload q; QString err;
+    CHECK(BlockClipboard::decode(json, &q, &err), "decode ok (%s)", qPrintable(err));
+    CHECK(q.specs.size() == p.specs.size() && q.ink.size() == p.specs.size(), "block count");
+    bool same = true;
+    for (size_t i = 0; i < p.specs.size() && i < q.specs.size(); ++i) {
+        const auto& x = p.specs[i]; const auto& y = q.specs[i];
+        if (x.type != y.type || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
+            || x.lang != y.lang || x.text != y.text || x.spans.size() != y.spans.size()) { same = false; break; }
+        for (size_t k = 0; k < x.spans.size(); ++k)
+            if (x.spans[k].s != y.spans[k].s || x.spans[k].e != y.spans[k].e
+                || x.spans[k].kind != y.spans[k].kind || x.spans[k].href != y.spans[k].href) { same = false; break; }
+    }
+    CHECK(same, "every type / level / task / depth / lang / span (incl. payloads) round-trips");
+    CHECK(QJsonDocument::fromJson(q.specs[8].mediaJson.toUtf8()).object().value(QStringLiteral("src")).toString()
+              == QStringLiteral(".minnotes/a.png"), "media descriptor round-trips as JSON");
+    CHECK(TableGrid::fromJson(q.specs[9].tableJson).rows() == 2, "table JSON round-trips");
+    CHECK(q.ink[0].contains(QStringLiteral("strokes")) && q.ink[1].isEmpty(), "ink present/absent per row");
+    CHECK(q.threads.size() == 1 && q.threads[0].id == QStringLiteral("01THREAD")
+              && q.threads[0].resolved && q.threads[0].messages.size() == 1
+              && q.threads[0].messages[0].body == QStringLiteral("hello")
+              && q.threads[0].messages[0].modified == 9, "thread bodies round-trip");
+    CHECK(q.assets.size() == 1 && q.assets[0].entry == QStringLiteral("media/a.png")
+              && q.assets[0].bytes == 99, "asset snapshot round-trips");
+    CHECK(q.docPath == p.docPath && q.docDir == p.docDir && qFuzzyCompare(q.pageWidth, 900.0),
+          "provenance round-trips");
+    // Version / format gate.
+    QJsonObject bad = QJsonDocument::fromJson(json).object();
+    bad.insert(QStringLiteral("version"), 99);
+    CHECK(!BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err), "newer version refused");
+    bad.insert(QStringLiteral("version"), 1); bad.insert(QStringLiteral("format"), QStringLiteral("other"));
+    CHECK(!BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err), "foreign format refused");
+    CHECK(!BlockClipboard::decode("{not json", &q, &err), "malformed refused");
+}
+
+// --- Test 50: specsForRange slicing ------------------------------------------
+static void testSpecsForRange() {
+    qInfo("[50] specsForRange: end rows sliced, spans clipped+rebased, opaque whole");
+    const QString png = tmpPng(QStringLiteral("mn_clip_50.png"));
+    BlockModel m; buildClipDoc(m, png);
+    auto specs = m.specsForRange(0, 2, 2, 1);
+    CHECK(specs.size() == 3, "three specs");
+    CHECK(specs[0].text == QStringLiteral("cdef") && specs[0].spans.size() == 1
+              && specs[0].spans[0].s == 0 && specs[0].spans[0].e == 2
+              && specs[0].spans[0].kind == BlockModel::SpanBold, "low row sliced from col 2, bold clipped to [0,2)");
+    CHECK(specs[1].type == BlockModel::Media && !specs[1].mediaJson.isEmpty(), "media row whole");
+    CHECK(specs[2].text == QStringLiteral("x") && specs[2].spans.size() == 1
+              && specs[2].spans[0].e == 1 && specs[2].spans[0].href == QStringLiteral("https://example.com"),
+          "high row sliced to col 1, link kept with href");
+    auto one = m.specsForRange(0, 1, 0, 4);
+    CHECK(one.size() == 1 && one[0].text == QStringLiteral("bcd") && one[0].spans.size() == 1
+              && one[0].spans[0].s == 0 && one[0].spans[0].e == 3, "single-row slice rebases");
+    auto opq = m.specsForRange(1, 0, 2, 3);
+    CHECK(opq.size() == 2 && opq[0].type == BlockModel::Media, "opaque low end travels whole");
+    // Plain flavour: no descriptor JSON ever.
+    const QString plain = m.plainTextForRange(0, 0, 2, 3);
+    CHECK(plain == QStringLiteral("abcdef\nxyz"), "plain text skips the image (got '%s')", qPrintable(plain));
+    const int t = m.insertTable(2, 2, 2);
+    m.tableSetCell(t, 0, 0, QStringLiteral("h1")); m.tableSetCell(t, 1, 1, QStringLiteral("v"));
+    const QString withTable = m.plainTextForRange(2, 0, t, 0);
+    CHECK(withTable.startsWith(QStringLiteral("xyz\nh1\t")) && withTable.endsWith(QStringLiteral("\tv")),
+          "table rows contribute TSV (got '%s')", qPrintable(withTable));
+    // Chip cut in half is dropped, whole chip travels.
+    m.insertBlock(0); m.setContent(0, QStringLiteral("aa"));
+    const int cs = m.insertChoiceAt(0, 2);
+    CHECK(cs == 2, "chip inserted at 2");
+    const QVariantList cr = m.choiceRangeAt(0, cs);
+    const int ce = cr.size() == 2 ? cr[1].toInt() : -1;
+    auto half = m.specsForRange(0, 0, 0, cs + 1);
+    bool hasChip = false; for (const auto& sp : half[0].spans) if (sp.kind == BlockModel::SpanChoice) hasChip = true;
+    CHECK(!hasChip, "half-clipped chip dropped");
+    auto whole = m.specsForRange(0, 0, 0, ce);
+    hasChip = false; for (const auto& sp : whole[0].spans) if (sp.kind == BlockModel::SpanChoice) hasChip = true;
+    CHECK(hasChip, "whole chip travels");
+}
+
+// --- Test 51: system clipboard mime flavours ---------------------------------
+static void testClipboardMime() {
+    qInfo("[51] Clipboard.writeBlocks: every flavour lands on the system clipboard");
+    const QString png = tmpPng(QStringLiteral("mn_clip_51.png"));
+    Clipboard c;
+    c.writeBlocks(QStringLiteral("{\"format\":\"minnotes-blocks\"}"), QStringLiteral("txt"),
+                  QStringLiteral("<table><tr><td>x</td></tr></table>"), QUrl::fromLocalFile(png).toString());
+    const QMimeData* md = QGuiApplication::clipboard()->mimeData();
+    CHECK(md && md->hasFormat(QLatin1String(BlockClipboard::kMime)), "custom mime present");
+    CHECK(c.hasBlocks() && c.readBlocks() == QStringLiteral("{\"format\":\"minnotes-blocks\"}"), "readBlocks");
+    CHECK(c.readText() == QStringLiteral("txt"), "plain flavour");
+    CHECK(c.hasHtml() && c.readHtml().contains(QStringLiteral("<table")), "html flavour");
+    CHECK(c.hasImage(), "raster flavour");
+    c.writeText(QStringLiteral("plain only"));
+    CHECK(!c.hasBlocks() && c.readBlocks().isEmpty(), "blocks flavour cleared by a plain write");
+}
+
+// --- Test 52 / 53: paste asset disposition -----------------------------------
+static void testPasteAssets() {
+    qInfo("[52] same-doc paste reuses the sidecar file; [53] cross-doc paste copies + rewrites");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_paste"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.filePath(QStringLiteral("s")));
+    QDir().mkpath(dir.filePath(QStringLiteral("d")));
+    const QString srcD = dir.filePath(QStringLiteral("s"));
+    const QString destD = dir.filePath(QStringLiteral("d"));
+    const QString uniq = makeUlid().right(6).toLower();
+    const QString picN = QStringLiteral("cp-") + uniq + QStringLiteral(".png");
+    const QString pic2 = QStringLiteral("cp-") + uniq + QStringLiteral("-2.png");
+
+    BlockModel src;
+    src.newDocument();
+    while (src.rowCountQml() > 0) src.removeBlock(0);
+    src.insertBlock(0); src.setContent(0, QStringLiteral("head"));
+    CHECK(src.saveAs(srcD + QStringLiteral("/src.mndb")), "source anchored");
+    QDir().mkpath(srcD + QStringLiteral("/.minnotes"));
+    { QImage img(12, 10, QImage::Format_RGB32); img.fill(Qt::cyan);
+      img.save(srcD + QStringLiteral("/.minnotes/") + picN, "PNG"); }
+    BlockModel::BlockSpec img; img.type = BlockModel::Media;
+    img.mediaJson = QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN);
+    src.insertSpecs(0, {img}, false);                                       // row 1
+    src.insertBlock(2); src.setContent(2, QStringLiteral("tail note"));
+    const QString tid = src.addComment(2, 0, 4);
+    src.addCommentMessage(tid, QStringLiteral("first!"));
+    src.setBlockInk(2, QStringLiteral("{\"strokes\":[{\"pts\":[0,0,1,1]}]}"));
+
+    const QString payload = src.clipboardPayloadForRange(0, 0, 2, 9);
+    CHECK(!payload.isEmpty(), "payload built");
+    BlockClipboard::Payload dec; QString derr;
+    CHECK(BlockClipboard::decode(payload.toUtf8(), &dec, &derr) && dec.assets.size() == 1
+              && dec.threads.size() == 1 && dec.threads[0].messages.size() == 1
+              && !dec.ink[2].isEmpty(), "payload carries asset snapshot, thread bodies, ink");
+
+    // [52] same document: paste at the end.
+    const int before = src.rowCountQml();
+    const int filesBefore = QDir(srcD + QStringLiteral("/.minnotes")).entryList(QDir::Files).size();
+    int cr = -1, cc = -1; QString perr;
+    CHECK(ClipboardPaster::pasteBlocks(&src, payload, before - 1, 9, -1, 0, -1, 0, &cr, &cc, &perr),
+          "same-doc paste ok (%s)", qPrintable(perr));
+    CHECK(src.rowCountQml() == before + 2 && src.contentForRow(before - 1) == QStringLiteral("tail notehead"),
+          "first spec merged into the caret row, two rows appended (%d)", src.rowCountQml());
+    CHECK(src.contentForRow(before).contains(QStringLiteral(".minnotes/") + picN),
+          "same-doc image src unchanged (same sidecar file)");
+    CHECK(QDir(srcD + QStringLiteral("/.minnotes")).entryList(QDir::Files).size() == filesBefore,
+          "no new sidecar file for a same-doc paste");
+    const QString tid2 = src.commentAt(before + 1, 1);
+    CHECK(!tid2.isEmpty() && tid2 != tid && src.commentMessages(tid2).size() == 1,
+          "same-doc copy duplicates the thread with its messages");
+    CHECK(!src.inkForRow(before + 1).isEmpty(), "ink laid on the pasted row");
+    // Cut + paste back re-anchors the ORIGINAL thread.
+    src.removeBlocks(2, 2);
+    CHECK(src.threadAnchorRow(tid) < 0, "thread orphaned by the cut");
+    const QString cutPayload = payload;   // the payload was copied before the cut
+    CHECK(ClipboardPaster::pasteBlocks(&src, cutPayload, 0, 4, -1, 0, -1, 0, &cr, &cc, &perr), "paste after cut");
+    CHECK(src.threadAnchorRow(tid) >= 0, "orphaned thread re-anchored instead of duplicated");
+
+    // [53] cross document.
+    BlockModel dest;
+    dest.newDocument();
+    while (dest.rowCountQml() > 0) dest.removeBlock(0);
+    dest.insertBlock(0); dest.setContent(0, QStringLiteral("dest"));
+    CHECK(dest.saveAs(destD + QStringLiteral("/dest.mndb")), "dest anchored");
+    QDir().mkpath(destD + QStringLiteral("/.minnotes"));
+    { QFile f(destD + QStringLiteral("/.minnotes/") + picN);   // name collision, different size
+      f.open(QIODevice::WriteOnly); f.write(QByteArray(7, 'x')); }
+    const int dEntries = dest.undoHistory().size();
+    CHECK(ClipboardPaster::pasteBlocks(&dest, payload, 0, 4, -1, 0, -1, 0, &cr, &cc, &perr),
+          "cross-doc paste ok (%s)", qPrintable(perr));
+    CHECK(dest.rowCountQml() == 3 && dest.contentForRow(0) == QStringLiteral("desthead"),
+          "first spec merged at the caret, rest appended (%d rows, row0 '%s')",
+          dest.rowCountQml(), qPrintable(dest.contentForRow(0)));
+    CHECK(dest.contentForRow(1).contains(QStringLiteral(".minnotes/") + pic2),
+          "collided image renamed -2 in the descriptor");
+    {
+        QFile a(srcD + QStringLiteral("/.minnotes/") + picN);
+        QFile b(destD + QStringLiteral("/.minnotes/") + pic2);
+        CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly) && a.readAll() == b.readAll(),
+              "copied image byte-exact");
+    }
+    const QString dtid = dest.commentAt(2, 1);
+    CHECK(!dtid.isEmpty() && dtid != tid && dest.commentMessages(dtid).size() == 1,
+          "thread re-minted in the destination with its message");
+    CHECK(!dest.inkForRow(2).isEmpty(), "ink laid in the destination");
+    CHECK(dest.undoHistory().size() == dEntries + 1, "cross-doc paste = ONE undo entry");
+    dest.undo();
+    CHECK(dest.rowCountQml() == 1 && dest.contentForRow(0) == QStringLiteral("dest"), "undo removes the paste whole");
+    dest.redo();
+    CHECK(dest.rowCountQml() == 3, "redo restores it");
+    // Same-size same-name → reused, no copy.
+    { QFile::remove(destD + QStringLiteral("/.minnotes/") + picN);
+      QFile::copy(srcD + QStringLiteral("/.minnotes/") + picN, destD + QStringLiteral("/.minnotes/") + picN); }
+    CHECK(ClipboardPaster::pasteBlocks(&dest, payload, dest.rowCountQml() - 1, 0, -1, 0, -1, 0, &cr, &cc, &perr),
+          "second cross-doc paste ok");
+    CHECK(dest.contentForRow(dest.rowCountQml() - 2).contains(QStringLiteral(".minnotes/") + picN),
+          "byte-identical existing file reused (src points at it)");
+    // Missing source file → src left as-is.
+    QFile::remove(srcD + QStringLiteral("/.minnotes/") + picN);
+    CHECK(ClipboardPaster::pasteBlocks(&dest, payload, dest.rowCountQml() - 1, 0, -1, 0, -1, 0, &cr, &cc, &perr),
+          "paste with a missing source still lands");
+    CHECK(dest.contentForRow(dest.rowCountQml() - 2).contains(QStringLiteral(".minnotes/") + picN),
+          "broken ref left as-is (honest either side)");
+}
+
+// --- Test 54: replace-selection paste = one undo entry; first-spec merge ------
+static void testPasteGroupUndo() {
+    qInfo("[54] paste over a selection is ONE undo entry; first spec merges into the caret row");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("hello world"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("second"));
+    BlockModel src;
+    src.newDocument();
+    while (src.rowCountQml() > 0) src.removeBlock(0);
+    src.insertBlock(0); src.setContent(0, QStringLiteral("Xb"));
+    src.setFormat(0, 1, 2, QStringLiteral("bold"), true);
+    src.insertBlock(1); src.setContent(1, QStringLiteral("Y"));
+    src.setHeading(1, 2);
+    const QString payload = src.clipboardPayloadForRange(0, 0, 1, 1);
+
+    const int entries = m.undoHistory().size();
+    int cr = -1, cc = -1; QString err;
+    // Select "lo w" (row 0 cols 3..7) and paste over it.
+    CHECK(ClipboardPaster::pasteBlocks(&m, payload, 0, 3, 0, 3, 0, 7, &cr, &cc, &err),
+          "paste over selection ok (%s)", qPrintable(err));
+    CHECK(m.rowCountQml() == 3, "two rows in, one selection out → 3 rows (%d)", m.rowCountQml());
+    CHECK(m.contentForRow(0) == QStringLiteral("helXb"), "row 0 = left + first spec ('%s')", qPrintable(m.contentForRow(0)));
+    CHECK(m.hasFormat(0, 4, 5, QStringLiteral("bold")) && !m.hasFormat(0, 0, 3, QStringLiteral("bold")),
+          "first spec's span shifted by the left part");
+    CHECK(m.contentForRow(1) == QStringLiteral("Yorld") && m.typeForRow(1) == BlockModel::Heading,
+          "last spec carries the tail and keeps its type ('%s')", qPrintable(m.contentForRow(1)));
+    CHECK(cr == 1 && cc == 1, "caret after the last spec's own text (%d,%d)", cr, cc);
+    CHECK(m.undoHistory().size() == entries + 1, "exactly one undo entry");
+    m.undo();
+    CHECK(m.rowCountQml() == 2 && m.contentForRow(0) == QStringLiteral("hello world"), "undo restores the selection text");
+    m.redo();
+    CHECK(m.rowCountQml() == 3 && m.contentForRow(0) == QStringLiteral("helXb"), "redo reapplies");
+    // A plain paragraph pasted at the START of a heading must not demote it.
+    m.setHeading(2, 1);
+    BlockModel p2; p2.newDocument(); while (p2.rowCountQml() > 0) p2.removeBlock(0);
+    p2.insertBlock(0); p2.setContent(0, QStringLiteral("pre "));
+    CHECK(ClipboardPaster::pasteBlocks(&m, p2.clipboardPayloadForRange(0, 0, 0, 4), 2, 0, -1, 0, -1, 0, &cr, &cc, &err), "paste into heading");
+    CHECK(m.typeForRow(2) == BlockModel::Heading && m.contentForRow(2) == QStringLiteral("pre second"),
+          "heading kept, text merged");
+    // Opaque first spec into a non-empty row lands AFTER it.
+    BlockModel p3; p3.newDocument(); while (p3.rowCountQml() > 0) p3.removeBlock(0);
+    p3.insertBlock(0); p3.setContent(0, QStringLiteral("a"));
+    const int t = p3.insertTable(0, 2, 2);
+    CHECK(ClipboardPaster::pasteBlocks(&m, p3.clipboardPayloadForRange(t, 0, t, 0), 0, 2, -1, 0, -1, 0, &cr, &cc, &err), "paste a table mid-row");
+    CHECK(m.typeForRow(1) == BlockModel::Table && m.contentForRow(0) == QStringLiteral("helXb"),
+          "table inserted after the row, row untouched");
+}
+
+// --- Test 55: deleteSelectionRange shapes ------------------------------------
+static void testDeleteSelectionRange() {
+    qInfo("[55] deleteSelectionRange: text/opaque end shapes, refill, ONE undo each");
+    const QString png = tmpPng(QStringLiteral("mn_clip_55.png"));
+    BlockModel m; buildClipDoc(m, png);                    // text / image / text
+    auto pristine = [&]() {
+        return m.rowCountQml() == 3 && m.contentForRow(0) == QStringLiteral("abcdef")
+            && m.typeForRow(1) == BlockModel::Media && m.contentForRow(2) == QStringLiteral("xyz");
+    };
+    QVariantList land = m.deleteSelectionRange(0, 2, 2, 1); // text lo, text hi across the image
+    CHECK(m.rowCountQml() == 1 && m.contentForRow(0) == QStringLiteral("abyz"), "text-text: merged, image removed");
+    CHECK(land.size() == 2 && land[0].toInt() == 0 && land[1].toInt() == 2, "lands at (lo, loCol)");
+    m.undo(); CHECK(pristine(), "ONE undo restores (text-text)");
+
+    land = m.deleteSelectionRange(0, 2, 1, 0);              // text lo, opaque hi
+    CHECK(m.rowCountQml() == 2 && m.contentForRow(0) == QStringLiteral("ab") && m.contentForRow(1) == QStringLiteral("xyz"),
+          "text-opaque: hi consumed whole");
+    m.undo(); CHECK(pristine(), "ONE undo restores (text-opaque)");
+
+    land = m.deleteSelectionRange(1, 0, 2, 1);              // opaque lo, text hi
+    CHECK(m.rowCountQml() == 2 && m.contentForRow(1) == QStringLiteral("yz"), "opaque-text: image gone, hi keeps its tail");
+    CHECK(land.size() == 2 && land[0].toInt() == 1 && land[1].toInt() == 0, "lands at (lo, 0)");
+    m.undo(); CHECK(pristine(), "ONE undo restores (opaque-text)");
+
+    land = m.deleteSelectionRange(1, 0, 1, 0);              // lone opaque
+    CHECK(m.rowCountQml() == 2 && m.typeForRow(1) == BlockModel::Paragraph, "lone opaque removed whole");
+    m.undo(); CHECK(pristine(), "ONE undo restores (lone opaque)");
+
+    land = m.deleteSelectionRange(0, 0, 2, 3);              // everything
+    CHECK(m.rowCountQml() == 1 && m.contentForRow(0).isEmpty() && m.typeForRow(0) == BlockModel::Paragraph,
+          "whole doc → one fresh empty paragraph");
+    m.undo(); CHECK(pristine(), "ONE undo restores the whole doc");
+    // removeBlocks of the entire document refills too.
+    m.removeBlocks(0, 2);
+    CHECK(m.rowCountQml() == 1 && m.contentForRow(0).isEmpty(), "removeBlocks refill");
+    m.undo(); CHECK(pristine(), "removeBlocks undo");
+}
+
+// --- Test 56: moveBlocks -----------------------------------------------------
+static void testMoveBlocks() {
+    qInfo("[56] moveBlocks: order, monotone ranks, heights follow, undo/redo, rowAfterMove");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 6; ++i) { m.insertBlock(i); m.setContent(i, QString(QChar('a' + i))); }
+    for (int i = 0; i < 6; ++i) m.setMeasuredHeight(i, 10.0 * (i + 1));
+    auto order = [&]() { QString s; for (int i = 0; i < m.rowCountQml(); ++i) s += m.contentForRow(i); return s; };
+    const int e = m.undoHistory().size();
+    m.moveBlocks(1, 2, 3);                                  // b,c → after e: a d e b c f
+    CHECK(order() == QStringLiteral("adebcf"), "run moved down ('%s')", qPrintable(order()));
+    CHECK(qFuzzyCompare(m.heightForRow(3), 20.0) && qFuzzyCompare(m.heightForRow(4), 30.0)
+              && qFuzzyCompare(m.heightForRow(1), 40.0), "measured heights travelled with their rows");
+    CHECK(m.undoHistory().size() == e + 1, "one undo entry");
+    m.undo();
+    CHECK(order() == QStringLiteral("abcdef"), "undo restores order");
+    m.redo();
+    CHECK(order() == QStringLiteral("adebcf"), "redo reapplies");
+    m.moveBlocks(3, 2, 0);                                  // b,c → top: b c a d e f
+    CHECK(order() == QStringLiteral("bcadef"), "run moved up ('%s')", qPrintable(order()));
+    // Persisted order survives a reload (ranks strictly increasing).
+    const QString path = QDir::temp().filePath(QStringLiteral("mn_move_56.mndb"));
+    QFile::remove(path);
+    CHECK(m.saveAs(path), "saved");
+    m.closeDocument();
+    BlockModel m2;
+    CHECK(m2.openDocument(path), "reopened");
+    QString o2; for (int i = 0; i < m2.rowCountQml(); ++i) o2 += m2.contentForRow(i);
+    CHECK(o2 == QStringLiteral("bcadef"), "rank order persisted ('%s')", qPrintable(o2));
+    QFile::remove(path);
+    // Invalid args are no-ops without an undo entry.
+    const int e2 = m2.undoHistory().size();
+    m2.moveBlocks(4, 3, 0); m2.moveBlocks(0, 0, 1); m2.moveBlocks(0, 2, 5); m2.moveBlocks(2, 1, 2);
+    CHECK(m2.undoHistory().size() == e2, "invalid moves: no entries");
+    // duplicateBlocks: the run lands right after itself, one entry, undoable.
+    {
+        BlockModel d; d.newDocument(); while (d.rowCountQml() > 0) d.removeBlock(0);
+        for (int i = 0; i < 3; ++i) { d.insertBlock(i); d.setContent(i, QString(QChar('a' + i))); }
+        d.setHeading(1, 2); d.setBlockInk(2, QStringLiteral("{\"strokes\":[{\"pts\":[1,1]}]}"));
+        const int e3 = d.undoHistory().size();
+        d.duplicateBlocks(1, 2);
+        QString o3; for (int i = 0; i < d.rowCountQml(); ++i) o3 += d.contentForRow(i);
+        CHECK(o3 == QStringLiteral("abcbc") && d.typeForRow(3) == BlockModel::Heading && !d.inkForRow(4).isEmpty(),
+              "duplicateBlocks copies the run with types + ink ('%s')", qPrintable(o3));
+        CHECK(d.undoHistory().size() == e3 + 1, "duplicateBlocks: one entry");
+        d.undo();
+        CHECK(d.rowCountQml() == 3, "duplicateBlocks undo");
+    }
+    // rowAfterMove table.
+    CHECK(BlockModel::rowAfterMove(1, 1, 2, 3) == 3 && BlockModel::rowAfterMove(2, 1, 2, 3) == 4, "inside run, down");
+    CHECK(BlockModel::rowAfterMove(3, 1, 2, 3) == 1 && BlockModel::rowAfterMove(4, 1, 2, 3) == 2, "slid up");
+    CHECK(BlockModel::rowAfterMove(0, 1, 2, 3) == 0 && BlockModel::rowAfterMove(5, 1, 2, 3) == 5, "untouched");
+    CHECK(BlockModel::rowAfterMove(3, 3, 2, 0) == 0 && BlockModel::rowAfterMove(0, 3, 2, 0) == 2
+              && BlockModel::rowAfterMove(2, 3, 2, 0) == 4, "inside run up / slid down");
+}
+
+// --- Test 57: tablePasteTSV wipes stale cell state ---------------------------
+static void testTablePasteClears() {
+    qInfo("[57] tablePasteTSV / tableClearRange wipe spans, media and chips; colours stay");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("a"));
+    const int t = m.insertTable(0, 3, 3);
+    m.tableSetCell(t, 1, 1, QStringLiteral("bold me"));
+    m.tableSetCellFormat(t, 1, 1, 0, 4, QStringLiteral("bold"), true);
+    m.tableSetCellMedia(t, 1, 1, QStringLiteral("{\"src\":\"/tmp/x.png\",\"w\":1,\"h\":1}"));
+    m.tableSetCellColor(t, 1, 1, 1, 1, false, QStringLiteral("#112233"));
+    m.tableSetColumnKind(t, 2, 1);
+    m.tableSetCellChoice(t, 1, 2, QStringLiteral("opt"));
+    m.tablePasteTSV(t, 1, 1, QStringLiteral("p\tq"));
+    CHECK(m.tableCell(t, 1, 1) == QStringLiteral("p") && m.tableCell(t, 1, 2) == QStringLiteral("q"), "values pasted");
+    CHECK(m.tableCellSpans(t, 1, 1).isEmpty(), "stale span wiped");
+    CHECK(m.tableCellMedia(t, 1, 1).isEmpty(), "stale media wiped");
+    CHECK(m.tableCellChoice(t, 1, 2).isEmpty(), "stale choice wiped");
+    CHECK(m.tableCellBg(t, 1, 1) == QStringLiteral("#112233"), "colour kept");
+    m.tableSetCellMedia(t, 0, 0, QStringLiteral("{\"src\":\"/tmp/y.png\",\"w\":1,\"h\":1}"));
+    m.tableClearRange(t, 0, 0, 0, 0);
+    CHECK(m.tableCellMedia(t, 0, 0).isEmpty(), "tableClearRange clears media too");
+}
+
+// --- Test 58: bare remote image heuristic ------------------------------------
+static void testBareRemoteImage() {
+    qInfo("[58] htmlIsBareRemoteImage: the browser Copy-Image shape only");
+    CHECK(Importer::htmlIsBareRemoteImage(QStringLiteral("<img src=\"https://x/y.png\">")), "bare https img");
+    CHECK(Importer::htmlIsBareRemoteImage(QStringLiteral("<meta charset='utf-8'><img src=\"http://x/y.png\" alt=\"\">")),
+          "meta + bare http img");
+    CHECK(!Importer::htmlIsBareRemoteImage(QStringLiteral("<p>hi</p><img src=\"https://x/y.png\">")), "text present");
+    CHECK(!Importer::htmlIsBareRemoteImage(QStringLiteral("<img src=\"data:image/png;base64,AAAA\">")), "data URI");
+    CHECK(!Importer::htmlIsBareRemoteImage(QStringLiteral("<img src=\"https://x/a.png\"><img src=\"https://x/b.png\">")),
+          "two images");
+    CHECK(!Importer::htmlIsBareRemoteImage(QString()), "empty");
+}
+
+// --- Test 59: opaque guards --------------------------------------------------
+static void testOpaqueGuards() {
+    qInfo("[59] text mutators refuse opaque rows: no change, no undo entry");
+    const QString png = tmpPng(QStringLiteral("mn_clip_59.png"));
+    BlockModel m; buildClipDoc(m, png);
+    const int t = m.insertTable(2, 2, 2);
+    m.setBlockType(t + 1 <= m.rowCountQml() - 1 ? t + 1 : t, BlockModel::Paragraph);
+    const QString imgJson = m.contentForRow(1), tblJson = m.contentForRow(t);
+    const int e = m.undoHistory().size();
+    m.insertText(1, 0, QStringLiteral("x"));
+    m.insertText(t, 0, QStringLiteral("x"));
+    m.splitBlock(1, 0);
+    m.setFormat(1, 0, 1, QStringLiteral("bold"), true);
+    m.toggleFormat(t, 0, 1, QStringLiteral("bold"));
+    m.setLink(1, 0, 1, QStringLiteral("https://x"));
+    m.setTextColor(1, 0, 1, QStringLiteral("#ff0000"));
+    m.clearFormat(1, 0, 1);
+    CHECK(m.addComment(1, 0, 1).isEmpty(), "addComment refuses an image row");
+    CHECK(m.contentForRow(1) == imgJson && m.contentForRow(t) == tblJson, "descriptors untouched");
+    CHECK(m.rowCountQml() == 4, "no split happened");
+    CHECK(m.spansForRow(1).isEmpty(), "no spans on the image row");
+    CHECK(m.undoHistory().size() == e, "no undo entries pushed");
+    // deleteRange with an opaque high row consumes it whole.
+    m.deleteRange(0, 2, 1, 0);
+    CHECK(m.rowCountQml() == 3 && m.contentForRow(0) == QStringLiteral("ab") && m.typeForRow(1) == BlockModel::Paragraph,
+          "deleteRange: opaque hi consumed whole");
+}
+
+// --- Test 60: fenced code in pasteText ---------------------------------------
+static void testPasteFences() {
+    qInfo("[60] pasteText rebuilds ``` fences as Code blocks");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QString());
+    const QVariantList c = m.pasteText(0, 0,
+        QStringLiteral("intro\n```cpp\nint a;\n\n# not a heading\n```\nafter"));
+    CHECK(m.rowCountQml() == 3, "three blocks (%d)", m.rowCountQml());
+    CHECK(m.typeForRow(1) == BlockModel::Code && m.contentForRow(1) == QStringLiteral("int a;\n\n# not a heading"),
+          "fence → Code block, body verbatim incl. blank line ('%s')", qPrintable(m.contentForRow(1)));
+    CHECK(m.contentForRow(2) == QStringLiteral("after"), "text after the fence");
+    CHECK(c.size() == 2 && c[0].toInt() == 2, "caret on the last block");
+    // Leading fence into an empty row becomes the code block itself.
+    m.insertBlock(3);
+    m.pasteText(3, 0, QStringLiteral("```\nx = 1\n```"));
+    CHECK(m.typeForRow(3) == BlockModel::Code && m.contentForRow(3) == QStringLiteral("x = 1"), "leading fence adopts the empty row");
+    // Leading fence into prose lands after the row, prose intact.
+    m.pasteText(2, 2, QStringLiteral("```\ny\n```"));
+    CHECK(m.contentForRow(2) == QStringLiteral("after") && m.typeForRow(3) == BlockModel::Code
+              && m.contentForRow(3) == QStringLiteral("y"), "fence into prose inserts after it");
+    // Unclosed fence runs to the end.
+    m.insertBlock(0); m.setContent(0, QString());
+    m.pasteText(0, 0, QStringLiteral("```py\nprint(1)\nprint(2)"));
+    CHECK(m.typeForRow(0) == BlockModel::Code && m.contentForRow(0) == QStringLiteral("print(1)\nprint(2)"), "unclosed fence");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -4486,6 +4989,17 @@ int main(int argc, char** argv) {
     testTableBulkOps();
     testCellChoiceChips();
     testExportChipsTasksCells();
+    testBlockClipboardRoundTrip();
+    testSpecsForRange();
+    testClipboardMime();
+    testPasteAssets();
+    testPasteGroupUndo();
+    testDeleteSelectionRange();
+    testMoveBlocks();
+    testTablePasteClears();
+    testBareRemoteImage();
+    testOpaqueGuards();
+    testPasteFences();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

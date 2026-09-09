@@ -70,6 +70,10 @@ public:
     // The classifier itself, callable without an instance (BlockModel's
     // drop/paste intercept runs it before the file-chip fallback).
     static QString formatForPath(const QString& fileUrlOrPath);
+    // Browser "Copy Image" shape (2026-09-09): the HTML's only content is ONE
+    // <img> with an http(s) src and no non-blank text. The raster on the same
+    // clipboard is then the better source than a background download.
+    static bool htmlIsBareRemoteImage(const QString& html);
     // Whether the file expands to MULTIPLE documents (ENEX exports, Notion
     // zips) — QML routes these through the destination-folder flow instead
     // of a fresh tab (user ruling: the OS organizes; N .mndb files land in

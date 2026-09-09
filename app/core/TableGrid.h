@@ -45,6 +45,9 @@ public:
 
     QString cellText(int r, int c) const;
     void setCellText(int r, int c, const QString& t);
+    // Contents wipe: text/spans/media/choice go, colours (formatting) stay.
+    // The rule every overwrite (paste, clear) applies so nothing stale rides.
+    void clearCellContents(int r, int c);
     QString cellBg(int r, int c) const;
     void    setCellBg(int r, int c, const QString& hex);
     QString cellFg(int r, int c) const;

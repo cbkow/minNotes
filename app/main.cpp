@@ -24,6 +24,7 @@
 #include "core/DocumentMerger.h"
 #include "core/PathMapController.h"
 #include "core/Clipboard.h"
+#include "core/ClipboardPaster.h"
 #include "core/VideoFrameProvider.h"
 #include "core/PdfPageProvider.h"
 
@@ -201,6 +202,10 @@ int main(int argc, char *argv[])
     // no model-following; the merger is stateless between merges.
     DocumentMerger merger;
     engine.rootContext()->setContextProperty("merger", &merger);
+    // Rich clipboard paste (x-minnotes-blocks): the merger's plan/copy/apply
+    // shape for a pasted block run; assets travel on a worker when needed.
+    ClipboardPaster paster;
+    engine.rootContext()->setContextProperty("paster", &paster);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.
