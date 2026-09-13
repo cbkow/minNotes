@@ -165,6 +165,12 @@ public:
     Q_INVOKABLE int laneCount(int row) const;        // lanes of a Split record; 0 otherwise
     Q_INVOKABLE QVariantList splitRatios(int row) const;
     bool structureValid() const;                     // the D1 invariants (PLAN-SR3), for tests
+    // Split a block into lanes, one undo step. A top-level block becomes a split row
+    // with the block in one lane and a new empty paragraph in the other; a block in a
+    // lane gets a new lane beside its own, splitting that lane's width. side 0 = the
+    // new lane on the right, 1 = on the left; ratio = the block's share. Returns the
+    // new paragraph's row, or -1 (records and tables don't split).
+    Q_INVOKABLE int splitIntoColumns(int row, int side, qreal ratio);
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;
@@ -1069,6 +1075,21 @@ private:
     // Load-time repair of malformed split rows (never a refusal); fills the ids
     // whose meta changed and the ids of records removed.
     void repairStructure(QSet<QString>& changedIds, QStringList& removedIds);
+    // What a valid structure for rows [lo, hi] looks like (shared by load repair and
+    // A4 after mutations): per row, whether it goes, its lane, its ratios.
+    struct StructurePlan {
+        std::vector<char> remove;
+        std::vector<int8_t> cell;
+        std::vector<std::vector<float>> ratios;
+    };
+    static StructurePlan planStructure(const std::vector<Row>& rows, std::size_t lo, std::size_t hi);
+    // A4 inside the running txn: make [lo, hi] (widened to whole split rows) valid —
+    // collapse emptied lanes (width to the left), unwrap one-lane rows, drop empty records.
+    void normalizeStructure(int lo, int hi);
+    std::pair<int,int> wholeSplitRows(int lo, int hi) const;   // widen a band to whole split rows
+    int splitRowEnd(int record) const;                         // a record's last lane block
+    int8_t laneAt(int at) const;                               // the lane a block inserted at `at` joins
+    void removeRowRaw(int row);                                // erase one row everywhere (no txn)
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
 

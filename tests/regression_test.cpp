@@ -5976,6 +5976,114 @@ static void testSplitRowModel() {
     QDir(dir).removeRecursively();
 }
 
+static void testSplitRowMutations() {
+    qInfo("[75] split rows: split, insert, remove and move keep a valid structure, one undo each (SR-3 step 3b)");
+    auto near = [](double a, double b) { return std::abs(a - b) < 0.01; };
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 4; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+
+    const int e0 = m.undoHistory().size();
+    const int fresh = m.splitIntoColumns(1, 0, 0.6);
+    CHECK(fresh == 3 && m.rowCountQml() == 6 && m.typeForRow(1) == BlockModel::Split
+              && m.laneForRow(2) == 0 && m.contentForRow(2) == QStringLiteral("p1")
+              && m.laneForRow(3) == 1 && m.contentForRow(3).isEmpty() && m.structureValid(),
+          "splitting a block puts it in the left lane and a new paragraph in the right");
+    CHECK(near(m.splitRatios(1)[0].toDouble(), 0.6) && m.undoHistory().size() == e0 + 1,
+          "…at the given share, as one undo step");
+    m.undo();
+    CHECK(m.rowCountQml() == 4 && m.contentForRow(1) == QStringLiteral("p1") && m.laneForRow(1) == -1
+              && m.structureValid(), "undo restores the plain block");
+    m.redo();
+    CHECK(m.rowCountQml() == 6 && m.laneForRow(3) == 1 && m.structureValid(), "redo splits it again");
+    // p0 · rec · p1(l0) · ""(l1) · p2 · p3
+
+    CHECK(m.splitIntoColumns(1, 0, 0.5) == -1 && m.rowCountQml() == 6, "a record doesn't split");
+    const int leftFresh = m.splitIntoColumns(2, 1, 0.5);
+    CHECK(leftFresh == 2 && m.laneForRow(2) == 0 && m.contentForRow(3) == QStringLiteral("p1")
+              && m.laneForRow(3) == 1 && m.laneForRow(4) == 2 && m.laneCount(1) == 3 && m.structureValid(),
+          "splitting inside a lane adds a lane and renumbers the lanes after it");
+    const QVariantList r3 = m.splitRatios(1);
+    CHECK(r3.size() == 3 && near(r3[0].toDouble(), 0.3) && near(r3[1].toDouble(), 0.3) && near(r3[2].toDouble(), 0.4),
+          "…splitting that lane's width");
+    // p0 · rec · ""(l0) · p1(l1) · ""(l2) · p2 · p3
+
+    m.setContent(2, QStringLiteral("left"));
+    m.splitBlock(3, 1);
+    CHECK(m.rowCountQml() == 8 && m.laneForRow(4) == 1 && m.contentForRow(4) == QStringLiteral("1") && m.structureValid(),
+          "Enter inside a lane stays in that lane");
+    m.insertBlock(5);
+    CHECK(m.laneForRow(5) == 1 && m.laneForRow(6) == 2 && m.structureValid(),
+          "a block inserted after a lane block joins its lane");
+    m.duplicateBlock(1);
+    CHECK(m.rowCountQml() == 9, "a record doesn't duplicate");
+    // p0 · rec · left(l0) · p(l1) · 1(l1) · new(l1) · ""(l2) · p2 · p3
+
+    m.removeBlock(6);
+    CHECK(m.rowCountQml() == 8 && m.laneCount(1) == 2 && m.structureValid(), "removing a lane's only block collapses the lane");
+    const QVariantList r2 = m.splitRatios(1);
+    CHECK(r2.size() == 2 && near(r2[0].toDouble(), 0.3) && near(r2[1].toDouble(), 0.7),
+          "…and its width goes to the lane on its left");
+    m.undo();
+    CHECK(m.rowCountQml() == 9 && m.laneCount(1) == 3 && m.laneForRow(6) == 2
+              && near(m.splitRatios(1)[2].toDouble(), 0.4) && m.structureValid(),
+          "undo restores the lane, its block and its width");
+    m.redo();
+    // p0 · rec · left(l0) · p(l1) · 1(l1) · new(l1) · p2 · p3
+
+    m.removeBlock(2);
+    CHECK(m.rowCountQml() == 6 && m.typeForRow(1) != BlockModel::Split && m.laneForRow(1) == -1
+              && m.contentForRow(1) == QStringLiteral("p") && m.structureValid(),
+          "a split row left with one lane unwraps into its blocks");
+    m.undo();
+    CHECK(m.rowCountQml() == 8 && m.typeForRow(1) == BlockModel::Split && m.laneForRow(2) == 0
+              && m.contentForRow(2) == QStringLiteral("left") && m.structureValid(), "undo wraps it back exactly");
+
+    const QString leftText = m.contentForRow(2), laneOneText = m.contentForRow(3);
+    m.deleteRange(2, 2, 3, 0);
+    CHECK(m.contentForRow(2) == leftText && m.contentForRow(3) == laneOneText && m.rowCountQml() == 8,
+          "a text merge across a lane edge is refused");
+
+    m.moveBlocks(7, 1, 3);
+    CHECK(m.contentForRow(3) == QStringLiteral("p3") && m.laneForRow(3) == 0 && m.laneForRow(4) == 1 && m.structureValid(),
+          "a top-level block moved into a lane joins it");
+    m.moveBlocks(3, 1, 7);
+    CHECK(m.contentForRow(7) == QStringLiteral("p3") && m.laneForRow(7) == -1 && m.structureValid(),
+          "…and moved back out, it is top level again");
+    m.moveBlocks(0, 2, 6);
+    CHECK(m.contentForRow(0) == QStringLiteral("p0") && m.typeForRow(1) == BlockModel::Split,
+          "a run that cuts a split row in half doesn't move");
+    m.moveBlocks(1, 5, 2);
+    CHECK(m.contentForRow(1) == QStringLiteral("p2") && m.typeForRow(2) == BlockModel::Split
+              && m.laneForRow(3) == 0 && m.structureValid(), "a whole split row moves between top-level rows");
+    m.undo();
+    CHECK(m.typeForRow(1) == BlockModel::Split && m.contentForRow(6) == QStringLiteral("p2") && m.structureValid(),
+          "undo moves it back");
+
+    m.removeBlock(1);
+    CHECK(m.rowCountQml() == 3 && m.typeForRow(1) != BlockModel::Split && m.structureValid(),
+          "removing a record removes its whole split row");
+    m.undo();
+    CHECK(m.rowCountQml() == 8 && m.laneCount(1) == 2 && m.structureValid(), "undo restores the split row");
+
+    m.removeBlocks(3, 5);
+    CHECK(m.rowCountQml() == 4 && m.laneForRow(1) == -1 && m.contentForRow(1) == QStringLiteral("left")
+              && m.structureValid(), "removing a whole lane from a two-lane row unwraps the row");
+    m.undo();
+    CHECK(m.rowCountQml() == 8 && m.laneCount(1) == 2 && m.structureValid(), "undo restores both lanes");
+
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_split_mutations.mnd");
+    QFile::remove(path);
+    CHECK(m.saveAs(path), "the edited document saves");
+    {
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && m2.rowCountQml() == 8 && m2.laneCount(1) == 2 && m2.laneForRow(4) == 1
+                  && m2.structureValid() && !m2.dirty(), "the mutated structure round-trips unrepaired");
+    }
+    QFile::remove(path);
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -6065,6 +6173,7 @@ int main(int argc, char** argv) {
     testLayoutIndex();
     testFormatGate();
     testSplitRowModel();
+    testSplitRowMutations();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
