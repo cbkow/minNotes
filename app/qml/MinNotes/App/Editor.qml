@@ -1477,11 +1477,9 @@ FocusScope {
     // clean path to cross-block selection: rowForY() finds the block, then that
     // block's own TextEdit maps pixels → column via positionAt().
     function cellForRow(r) {
-        for (var i = 0; i < pool.count; ++i) {
-            var c = pool.itemAt(i)
-            if (c && c.active && c.logicalRow === r) return c
-        }
-        return null
+        const s = (root.slotRev, viewSlots.slotForRow(r))
+        const c = s >= 0 ? pool.itemAt(s) : null
+        return (c && c.active && c.logicalRow === r) ? c : null
     }
     // (cx, cy) in CONTENT coordinates → {row, col}.
     function hitTest(cx, cy) {
@@ -3154,6 +3152,13 @@ FocusScope {
     readonly property int poolSize: Math.min(blockModel.count,
                                     Math.ceil(root.height / 38) + 2 * overscan + 4)
     readonly property int delegateCount: poolSize
+    // SR-2: which row each pool slot renders. Rows that stay in the window keep
+    // their delegate; the query (visibleRows) is the seam SR-3's lanes replace.
+    // sync RETURNS the revision and runs inside this binding, so everything
+    // reading slotRev before rowForSlot() sees the updated table — the ordering
+    // the old modulo formula had. The count read covers the window clipping.
+    readonly property int slotRev: (blockModel.count,
+                                    viewSlots.sync(blockModel.visibleRows(firstRow, poolSize), poolSize))
     readonly property real barFraction: flick.contentHeight > flick.height
         ? flick.contentY / (flick.contentHeight - flick.height) : 0
     readonly property real trueFraction: barFraction
@@ -3186,8 +3191,12 @@ FocusScope {
         boundsBehavior: Flickable.StopAtBounds
         // A resize (or leaving ink mode) can strand contentX past the new
         // clamp range — snap back (the kanban board does the same).
-        onWidthChanged: returnToBounds()
-        onContentWidthChanged: returnToBounds()
+        // Deferred a tick: a width change can land INSIDE a scroll's binding
+        // cascade (a recycled delegate's code block reports its width
+        // synchronously → maxContentWidth → contentWidth), and returnToBounds'
+        // fixup nudges contentY there — re-entering firstVisible (binding loop).
+        onWidthChanged: Qt.callLater(returnToBounds)
+        onContentWidthChanged: Qt.callLater(returnToBounds)
 
         Connections {
             target: blockModel
@@ -3249,8 +3258,7 @@ FocusScope {
             model: root.poolSize
             delegate: Rectangle {
                 required property int index
-                readonly property int prow: root.firstRow
-                    + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
+                readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
                 visible: prow >= 0 && prow < blockModel.count
                          && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
                 z: -1
@@ -3282,8 +3290,7 @@ FocusScope {
             delegate: Item {
                 id: cell
                 required property int index
-                readonly property int logicalRow: root.firstRow
-                    + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
+                readonly property int logicalRow: (root.slotRev, viewSlots.rowForSlot(index))
                 readonly property bool active: logicalRow >= 0 && logicalRow < blockModel.count
                 // contentRevision covers row-shifts (insert/remove/move all bump it,
                 // reactivity rule 2) so a recycled delegate can't mis-render. NOT
@@ -6171,8 +6178,7 @@ FocusScope {
             delegate: Item {
                 id: rnum
                 required property int index
-                readonly property int prow: root.firstRow
-                    + (((index - root.firstRow) % root.poolSize) + root.poolSize) % root.poolSize
+                readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
                 visible: prow >= 0 && prow < blockModel.count
                          && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
                 width: blockRuler.width
