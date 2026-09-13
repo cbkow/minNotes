@@ -38,6 +38,22 @@ Item {
     // Horizontal measure: the lane's width (the page's for a top-level block).
     readonly property real measure: lane.w
     readonly property bool isRecord: active && te.btype === 10   // a split row's record: no text of its own
+    readonly property bool inLane: active && (blockModel.contentRevision, blockModel.laneForRow(logicalRow)) >= 0
+
+    // A record draws the dividers between its lanes: a hairline centred in each gap,
+    // the full height of the row (S7 makes them draggable).
+    Repeater {
+        model: cell.isRecord ? Math.max(0, (blockModel.contentRevision, blockModel.laneCount(cell.logicalRow)) - 1) : 0
+        delegate: Rectangle {
+            required property int index
+            readonly property var span: editor.laneSpan(cell.logicalRow, index)
+            x: editor.leftEdge + span.x + span.w + blockModel.laneGap / 2 - 0.5
+            y: 0
+            width: 1
+            height: cell.height
+            color: Theme.colors.border
+        }
+    }
 
     // The delegate spans the whole field (row fill, washes); content sits at colLeft.
     x: 0
@@ -640,9 +656,10 @@ Item {
         z: -0.5                                  // above the block rules + focus fill, below text + rects
         radius: 0
         color: Theme.colors.selectionBand
-        x: 0
+        // A block in a lane bands only its lane — the neighbouring lane isn't selected.
+        x: cell.inLane ? cell.colLeft : 0
         y: 0
-        width: Math.max(flick.width, editor.contentSpan)
+        width: cell.inLane ? cell.measure : Math.max(flick.width, editor.contentSpan)
         height: cell.height
     }
     Rectangle {  // opaque-row range wash (2026-09-09): media/table/divider

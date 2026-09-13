@@ -69,21 +69,37 @@ FocusScope {
     readonly property real sheetSpan:
         leftEdge * 2 + Math.max(pageWidth, blockModel.maxContentWidth)
     function measureForType(t) { return pageWidth }
-    function measureForRow(row) { return pageWidth }
-    // A block's lane, page-relative (SR-3 D3): the page for a top-level block, else
+    function measureForRow(row) { return laneOf(row).w }   // a lane block measures its lane
+    // Lane `lane` of the split row whose record is `record`, page-relative (SR-3 D3):
     // its share of the page less the gaps between lanes. Computed from pageWidth and
-    // the split row's ratios (not read from the model) so a page-width change can't
-    // race setContentWidth; the model's own geometry uses the same formula.
-    function laneOf(row) {
-        const lane = blockModel.laneForRow(row)
-        if (lane < 0) return { x: 0, w: pageWidth }
-        const ratios = blockModel.splitRatios(blockModel.splitRowOf(row))
-        if (lane >= ratios.length) return { x: 0, w: pageWidth }
+    // the row's ratios (not read from the model) so a page-width change can't race
+    // setContentWidth; the model's own geometry uses the same formula. Reads
+    // contentRevision so every binding calling it follows structure changes.
+    function laneSpan(record, lane) {
+        const rev = blockModel.contentRevision
+        const ratios = blockModel.splitRatios(record)
+        if (lane < 0 || lane >= ratios.length) return { x: 0, w: pageWidth }
         const gap = blockModel.laneGap
         const avail = Math.max(0, pageWidth - gap * (ratios.length - 1))
         let x = 0
         for (let k = 0; k < lane; ++k) x += avail * ratios[k] + gap
         return { x: x, w: avail * ratios[lane] }
+    }
+    // A block's lane: the page for a top-level block.
+    function laneOf(row) {
+        const rev = blockModel.contentRevision
+        const lane = blockModel.laneForRow(row)
+        return lane < 0 ? { x: 0, w: pageWidth } : laneSpan(blockModel.splitRowOf(row), lane)
+    }
+    // The block's column x in CONTENT coordinates (the page edge plus its lane).
+    function columnX(row) { return leftEdge + laneOf(row).x }
+    // Whether a block's box meets the viewport (± a margin). Lane-safe, unlike comparing
+    // flat row numbers to the first/last visible top-level rows: a lane block's number
+    // can sit far past the next top-level row's.
+    function rowInView(row) {
+        const y = (blockModel.layoutRevision, blockModel.yForRow(row))
+        return y + blockModel.heightForRow(row) >= flick.contentY - 100
+            && y <= flick.contentY + flick.height + 100
     }
 
     // The right Inspector panel (set from Main.qml) — the studio's drawing
@@ -5358,7 +5374,7 @@ FocusScope {
         delegate: Rectangle {
             required property var modelData
             readonly property int prow: modelData
-            visible: flick.visible && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+            visible: flick.visible && root.rowInView(prow)
             // Pins stay VISIBLE in ink mode (they mark content) but go
             // pass-through — they sit in the right margin, which is exactly
             // where margin ink lands, and must not steal the pen.
@@ -5733,7 +5749,7 @@ FocusScope {
         readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
         readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
                                                          : Math.round(dispW * 0.5)
-        x: root.leftEdge - flick.contentX
+        x: (r >= 0 ? root.columnX(r) : root.leftEdge) - flick.contentX   // the block's lane column
         y: (blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) - flick.contentY + 6
         width: dispW; height: dispH
 
@@ -5848,7 +5864,7 @@ FocusScope {
             enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-                     && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
+                     && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
@@ -5861,7 +5877,7 @@ FocusScope {
             // modes (and matches the HTML export, which has no bars). Clicks
             // still reach the bar — the disarmed canvas refuses mouse.
             z: 44
-            x: root.leftEdge - flick.contentX
+            x: root.columnX(row) - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: dispW
             height: root.videoTransportH
@@ -5894,7 +5910,7 @@ FocusScope {
             enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-                     && row >= root.firstVisible - 2 && row <= root.lastVisible + 2
+                     && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
@@ -5906,7 +5922,7 @@ FocusScope {
             // z:44 like the video bars — ink paints over the strip in regular
             // mode (never occluded, matches export); the bar stays clickable.
             z: 44
-            x: root.leftEdge - flick.contentX
+            x: root.columnX(row) - flick.contentX
             y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
             width: measure
             height: root.pdfNavH
@@ -5945,7 +5961,7 @@ FocusScope {
         // above the canvas and let the pen RESIZE the layout under the ink.
         visible: row >= 0 && !root.inkMode
                  && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-        readonly property real imgX: root.leftEdge - flick.contentX
+        readonly property real imgX: (row >= 0 ? root.columnX(row) : root.leftEdge) - flick.contentX
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
         readonly property real imgW: row >= 0
@@ -5965,7 +5981,7 @@ FocusScope {
             Icon { anchors.centerIn: parent; name: "frame-corners"; size: 14; color: Theme.colors.textBright }
             MouseArea {
                 id: fitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: blockModel.setMediaWidth(imgResize.row, Math.round(root.pageWidth))
+                onClicked: blockModel.setMediaWidth(imgResize.row, Math.round(root.measureForRow(imgResize.row)))   // fit the lane (the page at top level)
             }
         }
 
@@ -6017,7 +6033,7 @@ FocusScope {
     Rectangle {
         visible: root.imageResizing
         z: 58
-        x: root.leftEdge - flick.contentX
+        x: (root.imageResizeRow >= 0 ? root.columnX(root.imageResizeRow) : root.leftEdge) - flick.contentX
         y: (blockModel.layoutRevision, root.imageResizeRow >= 0
             ? blockModel.yForRow(root.imageResizeRow) : 0) + 6 - flick.contentY
         width: root.imageResizeW
