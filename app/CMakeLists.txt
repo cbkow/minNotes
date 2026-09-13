@@ -10,6 +10,8 @@ qt_add_executable(minnotesapp
     core/FenwickTree.h
     core/BlockModel.h
     core/BlockModel.cpp
+    core/InlineText.h
+    core/InlineText.cpp
     core/Importer.cpp
     core/DocxReader.cpp
     core/XlsxReader.cpp

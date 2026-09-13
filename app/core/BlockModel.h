@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include "FenwickTree.h"
+#include "InlineText.h"
 #include "Document.h"
 #include "TableGrid.h"
 #include "MediaStore.h"
@@ -265,7 +266,9 @@ public:
     // [s,e) over the row's text. `href` is set only for SpanLink (the link target);
     // empty for every other kind. Aggregate-init as {s,e,kind} leaves href empty.
     // (Public since the importer arc: importers construct spans directly.)
-    struct Span { int s; int e; uint8_t kind; QString href; };
+    // The type lives in the inline text engine (InlineText.h); the alias keeps every
+    // BlockModel::Span user (importers, exporter, clipboard, spell) unchanged.
+    using Span = mn::inl::Span;
 
     // --- The importer/paste IR: one entry per block-to-be. Built by the
     // pasteHtml walker today and by every file importer (Importer.cpp) —
@@ -772,23 +775,21 @@ signals:
     void saveStateChanged();   // save lifecycle state changed (Saving/Failed/Conflict/Clean)
 
 public:
-    enum SpanKind : uint8_t { SpanBold = 1, SpanItalic = 2, SpanCode = 3,
-                              SpanStrike = 4, SpanUnderline = 5, SpanLink = 6,
-                              SpanFgColor = 7, SpanHighlight = 8,   // href holds the color hex
-                              SpanComment = 9,                      // href holds the thread id
-                              // DT-2 (2026-08-20): inline choice chip. href
-                              // holds {"o":[{"id","l","c"}...],"v":selectedId}
-                              // (the table option shape); the span's TEXT is
-                              // the selected label — exporters flatten free.
-                              SpanChoice = 10 };
-    static uint8_t spanKindFromString(const QString& s);
-    static const char* spanKindToString(uint8_t k);
+    // Values come from the inline text engine's Kind (persisted + QML-visible — never
+    // renumber). DT-2 (2026-08-20): SpanChoice href holds
+    // {"o":[{"id","l","c"}...],"v":selectedId}; the span's TEXT is the selected label.
+    enum SpanKind : uint8_t { SpanBold = mn::inl::Bold, SpanItalic = mn::inl::Italic,
+                              SpanCode = mn::inl::Code, SpanStrike = mn::inl::Strike,
+                              SpanUnderline = mn::inl::Underline, SpanLink = mn::inl::Link,
+                              SpanFgColor = mn::inl::FgColor,       // href holds the color hex
+                              SpanHighlight = mn::inl::Highlight,   // href holds the color hex
+                              SpanComment = mn::inl::Comment,       // href holds the thread id
+                              SpanChoice = mn::inl::Choice };
+    static uint8_t spanKindFromString(const QString& s) { return mn::inl::kindFromString(s); }
+    static const char* spanKindToString(uint8_t k) { return mn::inl::kindToString(k); }
     // Kinds whose `href` carries a payload (URL / colour hex / thread id /
     // choice JSON) — serialized as "u", pushed whole, never merged by kind.
-    static bool spanHasPayloadKind(uint8_t k) {
-        return k == SpanLink || k == SpanFgColor || k == SpanHighlight
-            || k == SpanComment || k == SpanChoice;
-    }
+    static bool spanHasPayloadKind(uint8_t k) { return mn::inl::hasPayload(k); }
     // Where this doc's sidecar media lives: the package extraction dir for
     // .mnpkg docs, else the original's folder. (Public since the clipboard
     // program: the payload records it as provenance.)
@@ -852,7 +853,9 @@ private:
 
     // Interval ops on one row's spans (same-kind): union-cover test, add+merge,
     // and subtract a range. Offsets shift via shiftSpans on edits.
-    static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind);
+    static bool spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind) {
+        return mn::inl::spansCover(v, start, end, kind);
+    }
     void setPayloadSpan(int row, int start, int end, uint8_t kind, const QString& payload,
                         const QString& coalesce = QString());
     Span* choiceSpanAt(int row, int spanStart);   // the chip addressed by its range start
@@ -863,14 +866,26 @@ private:
     QJsonObject cellChoicePayload(int row, int r, int c, int spanStart) const;
     void replaceCellChoiceText(int row, int r, int c, int spanStart,
                                const QString& label, const QJsonObject& payload);
-    static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
-    static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind);
+    // Forwarders to the inline text engine (InlineText.h) — kept so SR-1 step 1 needs no
+    // call-site churn; later steps call mn::inl directly.
+    static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
+        mn::inl::addSpan(v, start, end, kind);
+    }
+    static void removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
+        mn::inl::removeSpan(v, start, end, kind);
+    }
     // Like addSpan but for a payload span (colour): clears same-kind coverage in
     // [start,end), adds the run, and coalesces with same-payload neighbours.
     static void applyPayloadRun(std::vector<Span>& v, int start, int end,
-                                uint8_t kind, const QString& payload);
-    static void shiftSpansInsert(std::vector<Span>& v, int at, int len);
-    static void shiftSpansDelete(std::vector<Span>& v, int from, int to);
+                                uint8_t kind, const QString& payload) {
+        mn::inl::applyPayloadRun(v, start, end, kind, payload);
+    }
+    static void shiftSpansInsert(std::vector<Span>& v, int at, int len) {
+        mn::inl::shiftSpansInsert(v, at, len);
+    }
+    static void shiftSpansDelete(std::vector<Span>& v, int from, int to) {
+        mn::inl::shiftSpansDelete(v, from, to);
+    }
     // Table cells store spans as a JSON array ({s,e,k,u?}); convert to/from the
     // Span vector so the static span helpers above can be reused for cell editing.
     static std::vector<Span> cellSpansFromJson(const QJsonArray& a);

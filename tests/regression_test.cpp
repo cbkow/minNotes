@@ -5214,6 +5214,58 @@ static int spellProbe() {
     return 0;
 }
 
+// --- Test 66: the inline text engine (SR-1) --------------------------------------
+static void testInlineEngine() {
+    qInfo("[66] inline text engine: span interval + offset rules, kind names (SR-1)");
+    using namespace mn::inl;
+    CHECK((std::is_same_v<BlockModel::Span, Span>), "BlockModel::Span is the engine's span");
+    CHECK(BlockModel::SpanBold == Bold && BlockModel::SpanComment == Comment && BlockModel::SpanChoice == Choice,
+          "SpanKind values mirror the engine");
+    bool names = true;
+    for (uint8_t k = Bold; k <= Choice; ++k)
+        if (kindFromString(QString::fromLatin1(kindToString(k))) != k) names = false;
+    CHECK(names && kindFromString(QStringLiteral("nope")) == 0 && QByteArray(kindToString(0)).isEmpty(),
+          "kind names round-trip; unknown = 0");
+    CHECK(hasPayload(Link) && hasPayload(Choice) && hasPayload(Comment) && !hasPayload(Bold) && !hasPayload(Code),
+          "payload kinds");
+
+    Spans v;
+    addSpan(v, 2, 5, Bold);
+    addSpan(v, 5, 8, Bold);
+    CHECK(v.size() == 1 && v[0].s == 2 && v[0].e == 8, "adjacent same-kind spans merge");
+    addSpan(v, 0, 3, Italic);
+    CHECK(v.size() == 2 && spansCover(v, 2, 8, Bold) && !spansCover(v, 1, 8, Bold),
+          "cover test sees gaps; kinds stay independent");
+    removeSpan(v, 4, 6, Bold);
+    int bold = 0;
+    for (const Span& sp : v) if (sp.kind == Bold) ++bold;
+    CHECK(bold == 2 && spansCover(v, 2, 4, Bold) && spansCover(v, 6, 8, Bold) && !spansCover(v, 4, 6, Bold),
+          "remove splits a span in two");
+
+    Spans c;
+    applyPayloadRun(c, 0, 4, FgColor, QStringLiteral("#f00"));
+    applyPayloadRun(c, 4, 6, FgColor, QStringLiteral("#f00"));
+    CHECK(c.size() == 1 && c[0].s == 0 && c[0].e == 6, "same-payload runs coalesce");
+    applyPayloadRun(c, 2, 4, FgColor, QStringLiteral("#00f"));
+    CHECK(c.size() == 3, "a different payload takes its range (no overlapping same-kind spans)");
+
+    Spans s{{2, 5, Bold}};
+    shiftSpansInsert(s, 2, 3);
+    CHECK(s[0].s == 5 && s[0].e == 8, "insert at a span's start shifts it");
+    shiftSpansInsert(s, 6, 1);
+    CHECK(s[0].s == 5 && s[0].e == 9, "insert inside grows it");
+    shiftSpansInsert(s, 9, 2);
+    CHECK(s[0].e == 9, "insert at the exact end does not extend it");
+    shiftSpansDelete(s, 4, 6);
+    CHECK(s.size() == 1 && s[0].s == 4 && s[0].e == 7, "a delete overlapping the head collapses it");
+    shiftSpansDelete(s, 4, 7);
+    CHECK(s.empty(), "deleting a whole span drops it");
+    Spans p{{1, 3, Link, QStringLiteral("https://x")}};
+    shiftSpansDelete(p, 0, 1);
+    CHECK(p.size() == 1 && p[0].s == 0 && p[0].e == 2 && p[0].href == QStringLiteral("https://x"),
+          "payload survives offset shifts");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5294,6 +5346,7 @@ int main(int argc, char** argv) {
     testHunspellMerged();
     testSpellServiceSync();
     testReplaceTextSpans();
+    testInlineEngine();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

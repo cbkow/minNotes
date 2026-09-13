@@ -62,11 +62,7 @@ constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline 
 // Span kinds whose `href` field carries a payload (URL for links, color hex for
 // color/highlight, thread id for comments) — serialized as "u", and pushed
 // whole (never merged by kind).
-static inline bool spanHasPayload(uint8_t k) {
-    return k == BlockModel::SpanLink || k == BlockModel::SpanFgColor
-        || k == BlockModel::SpanHighlight || k == BlockModel::SpanComment
-        || k == BlockModel::SpanChoice;
-}
+static inline bool spanHasPayload(uint8_t k) { return mn::inl::hasPayload(k); }
                                      // (keep in sync with Editor.qml videoTransportH)
 
 // Fractional-rank alphabet: 62 digits in ascending ASCII order, so plain
@@ -3470,122 +3466,8 @@ QString BlockModel::contentForRow(int row) const {
 }
 
 // --- Semantic format spans --------------------------------------------------
-uint8_t BlockModel::spanKindFromString(const QString& s) {
-    if (s == QLatin1String("bold"))      return SpanBold;
-    if (s == QLatin1String("italic"))    return SpanItalic;
-    if (s == QLatin1String("code"))      return SpanCode;
-    if (s == QLatin1String("strike"))    return SpanStrike;
-    if (s == QLatin1String("underline")) return SpanUnderline;
-    if (s == QLatin1String("link"))      return SpanLink;
-    if (s == QLatin1String("color"))     return SpanFgColor;
-    if (s == QLatin1String("highlight")) return SpanHighlight;
-    if (s == QLatin1String("comment"))   return SpanComment;
-    if (s == QLatin1String("choice"))    return SpanChoice;
-    return 0;
-}
-const char* BlockModel::spanKindToString(uint8_t k) {
-    switch (k) {
-    case SpanBold:      return "bold";
-    case SpanItalic:    return "italic";
-    case SpanCode:      return "code";
-    case SpanStrike:    return "strike";
-    case SpanUnderline: return "underline";
-    case SpanLink:      return "link";
-    case SpanFgColor:   return "color";
-    case SpanHighlight: return "highlight";
-    case SpanComment:   return "comment";
-    case SpanChoice:    return "choice";
-    default:            return "";
-    }
-}
-
-// Does the union of same-kind spans fully cover [start,end)?
-bool BlockModel::spansCover(const std::vector<Span>& v, int start, int end, uint8_t kind) {
-    if (start >= end) return true;
-    std::vector<Span> k;
-    for (const Span& sp : v) if (sp.kind == kind) k.push_back(sp);
-    std::sort(k.begin(), k.end(), [](const Span& a, const Span& b){ return a.s < b.s; });
-    int cur = start;
-    for (const Span& sp : k) {
-        if (sp.s > cur) break;                 // gap before coverage reaches `cur`
-        cur = std::max(cur, sp.e);
-        if (cur >= end) return true;
-    }
-    return cur >= end;
-}
-
-// Add [start,end) of `kind`, then merge overlapping/adjacent same-kind spans.
-void BlockModel::addSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
-    if (start >= end) return;
-    std::vector<Span> k, others;
-    for (const Span& sp : v) (sp.kind == kind ? k : others).push_back(sp);
-    k.push_back({start, end, kind});
-    std::sort(k.begin(), k.end(), [](const Span& a, const Span& b){ return a.s < b.s; });
-    std::vector<Span> merged;
-    for (const Span& sp : k) {
-        if (!merged.empty() && sp.s <= merged.back().e)
-            merged.back().e = std::max(merged.back().e, sp.e);
-        else
-            merged.push_back(sp);
-    }
-    v = others;
-    v.insert(v.end(), merged.begin(), merged.end());
-}
-
-// Add a payload (colour) run: a span carrying a value, where same-kind spans of
-// a DIFFERENT value must not coexist over the same chars. Clear the kind's
-// coverage in [start,end), add the run, then coalesce adjacent same-value spans.
-void BlockModel::applyPayloadRun(std::vector<Span>& v, int start, int end,
-                                 uint8_t kind, const QString& payload) {
-    if (start >= end || payload.isEmpty()) return;
-    removeSpan(v, start, end, kind);                       // run owns this range
-    std::vector<Span> same, others;
-    for (const Span& sp : v) (sp.kind == kind ? same : others).push_back(sp);
-    same.push_back({start, end, kind, payload});
-    std::sort(same.begin(), same.end(), [](const Span& a, const Span& b){ return a.s < b.s; });
-    std::vector<Span> merged;
-    for (const Span& sp : same) {
-        if (!merged.empty() && sp.s <= merged.back().e && sp.href == merged.back().href)
-            merged.back().e = std::max(merged.back().e, sp.e);
-        else
-            merged.push_back(sp);
-    }
-    v = others;
-    v.insert(v.end(), merged.begin(), merged.end());
-}
-
-// Subtract [start,end) from same-kind spans (splitting where it lands inside).
-void BlockModel::removeSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {
-    if (start >= end) return;
-    std::vector<Span> out;
-    for (const Span& sp : v) {
-        if (sp.kind != kind || sp.e <= start || sp.s >= end) { out.push_back(sp); continue; }
-        if (sp.s < start) out.push_back({sp.s, start, kind, sp.href});   // left remainder
-        if (sp.e > end)   out.push_back({end, sp.e, kind, sp.href});     // right remainder
-    }
-    v = out;
-}
-
-// Offset bookkeeping: text inserted at `at` (len chars), or [from,to) deleted.
-void BlockModel::shiftSpansInsert(std::vector<Span>& v, int at, int len) {
-    for (Span& sp : v) {
-        if (at <= sp.s)      { sp.s += len; sp.e += len; }   // wholly after the caret
-        else if (at < sp.e)  { sp.e += len; }                // typed inside → grow (not at exact end)
-    }
-}
-void BlockModel::shiftSpansDelete(std::vector<Span>& v, int from, int to) {
-    const int len = to - from;
-    if (len <= 0) return;
-    std::vector<Span> out;
-    for (const Span& sp : v) {
-        if (sp.e <= from) { out.push_back(sp); continue; }                       // before cut
-        if (sp.s >= to)   { out.push_back({sp.s - len, sp.e - len, sp.kind, sp.href}); continue; }  // after cut
-        const int ns = std::min(sp.s, from);                 // surviving head + shifted tail collapse
-        const int ne = (sp.e > to) ? sp.e - len : from;
-        if (ne > ns) out.push_back({ns, ne, sp.kind, sp.href});
-    }
-    v = out;
-}
+// The span interval + offset rules live in the inline text engine (InlineText.h);
+// BlockModel's static span helpers forward there.
 
 QVariantList BlockModel::spansForRow(int row) const {
     QVariantList out;
