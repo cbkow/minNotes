@@ -1474,7 +1474,7 @@ FocusScope {
     }
 
     // --- Mouse hit-testing. The passive-surface architecture makes this the
-    // clean path to cross-block selection: rowForY() finds the block, then that
+    // clean path to cross-block selection: blockAt() finds the block, then that
     // block's own TextEdit maps pixels → column via positionAt().
     function cellForRow(r) {
         const s = (root.slotRev, viewSlots.slotForRow(r))
@@ -1483,11 +1483,11 @@ FocusScope {
     }
     // (cx, cy) in CONTENT coordinates → {row, col}.
     function hitTest(cx, cy) {
-        var row = blockModel.rowForY(Math.max(0, cy))
+        var row = blockModel.blockAt(cx, Math.max(0, cy))
         var cell = cellForRow(row)
         if (!cell || cell.isMedia) return { row: row, col: 0 }
         var te = cell.teItem
-        var col = te.positionAt(cx - te.x, cy - cell.y - te.y)
+        var col = te.positionAt(cx - cell.x - te.x, cy - cell.y - te.y)
         return { row: row, col: col }
     }
     // (cx, cy) in CONTENT coordinates → the row index if the click is over a task
@@ -1495,12 +1495,12 @@ FocusScope {
     // delegate can't own a MouseArea (the document mouse layer sits above it), so the
     // central handler hit-tests the glyph zone here.
     function taskCheckboxAt(cx, cy) {
-        var row = blockModel.rowForY(Math.max(0, cy))
+        var row = blockModel.blockAt(cx, Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 8) return -1
         var cell = cellForRow(row)
         if (!cell) return -1
         var te = cell.teItem
-        var lx = cx - cell.colLeft           // x within the cell's content column
+        var lx = cx - cell.x - cell.colLeft  // x within the cell's content column
         var ly = cy - cell.y - te.y          // y relative to the text top
         if (lx >= 0 && lx <= 20 && ly >= -2 && ly <= te.lineH) return row
         return -1
@@ -1510,7 +1510,7 @@ FocusScope {
     // hit-testing as the task checkbox — the delegate can't own a MouseArea.
     property int codeChipHoverRow: -1
     function codeLangChipAt(cx, cy) {
-        var row = blockModel.rowForY(Math.max(0, cy))
+        var row = blockModel.blockAt(cx, Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 2) return -1
         var cell = cellForRow(row)
         if (!cell || !cell.langChip || !cell.langChip.visible) return -1
@@ -1524,7 +1524,7 @@ FocusScope {
     // null. Delegates to the table's own BlockTable.cellAtPoint (its delegate
     // can't own a MouseArea — the document mouse layer sits above it).
     function tableHitAt(cx, cy) {
-        var row = blockModel.rowForY(Math.max(0, cy))
+        var row = blockModel.blockAt(cx, Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 7) return null
         var dcell = cellForRow(row)
         var bt = dcell ? dcell.tableItem : null
@@ -3008,6 +3008,9 @@ FocusScope {
                 if (!d) { fail("row " + r + " has no delegate (window " + root.firstVisible + "–" + root.lastVisible + ")"); continue }
                 if (!d.visible || Math.abs(d.y - blockModel.yForRow(r)) > 0.5)
                     fail("row " + r + " at y " + d.y + " visible " + d.visible + ", model y " + blockModel.yForRow(r))
+                // Pointer path: a point just inside the block's top resolves to it.
+                const h = root.hitTest(root.leftEdge + 30, blockModel.yForRow(r) + 1)
+                if (h.row !== r) fail("hitTest at the top of row " + r + " resolved row " + h.row)
             }
             maxRows = Math.max(maxRows, root.lastVisible - root.firstVisible + 1)
         }
@@ -3327,7 +3330,7 @@ FocusScope {
                 // Right-click anywhere on a block → its context menu (capturing the
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
-                    var trow = blockModel.rowForY(m.y)
+                    var trow = blockModel.blockAt(m.x, m.y)
                     root.menuLinkUrl = ""; root.menuIssue = null
                     if (blockModel.typeForRow(trow) === 7) {
                         var th = root.tableHitAt(m.x, m.y)
@@ -3461,7 +3464,7 @@ FocusScope {
                 // hover (not pressed): grip band → grip affordance; else near a
                 // table column border → resize cursor (now y-guarded: the old
                 // check showed a stray SplitHCursor in the margin bands).
-                root.hoverRow = blockModel.rowForY(m.y)
+                root.hoverRow = blockModel.blockAt(m.x, m.y)
                 var overBorder = false
                 var ghit = null
                 if (blockModel.typeForRow(root.hoverRow) === 7) {
@@ -3564,14 +3567,14 @@ FocusScope {
                 // point (which collapsed the word to word-start→cursor).
                 root.dragging = false; root.tableResizing = false
                 // Double-click a file-attachment chip → reveal it in Finder/Explorer.
-                var mrow = blockModel.rowForY(m.y)
+                var mrow = blockModel.blockAt(m.x, m.y)
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
                     blockModel.revealMedia(mrow); return
                 }
                 // Double-click a table column border → reset that column to auto;
                 // otherwise word-select INSIDE the cell (multi-select pass
                 // 2026-08-21 — cells now speak the same double-click language).
-                var drow = blockModel.rowForY(m.y)
+                var drow = blockModel.blockAt(m.x, m.y)
                 if (blockModel.typeForRow(drow) === 7) {
                     var dd = root.cellForRow(drow), dbt = dd ? dd.tableItem : null
                     if (dbt) {

@@ -35,7 +35,12 @@ Item {
     // which the measured height bumps and would form a binding loop.
     readonly property real measure: editor.measureForType(te.btype)
 
-    width: flick.contentWidth   // == flick.width outside ink mode
+    // Lane geometry (SR-2 seam): the whole content width at x 0 today; a
+    // split-row lane (SR-3) places the block at its lane's x and width.
+    property real laneX: 0
+    property real laneWidth: flick.contentWidth   // == flick.width outside ink mode
+    x: laneX
+    width: laneWidth
     visible: active
     y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
     // Code blocks get double vertical padding (24 vs 12) so the

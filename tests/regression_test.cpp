@@ -5587,6 +5587,10 @@ static void testViewportSlots() {
     CHECK(m.visibleRows(n - 2, 10) == QList<int>({n - 2, n - 1}), "…clipped at the end of the document");
     CHECK(m.visibleRows(-5, 2) == QList<int>({0, 1}) && m.visibleRows(4, 0).isEmpty(),
           "…clamped at the start, and empty for no slots");
+    for (int i = 0; i < n; ++i) m.setMeasuredHeight(i, 20 + i);
+    const qreal y7 = m.yForRow(7) + 3;
+    CHECK(m.blockAt(0, y7) == 7 && m.blockAt(5000, y7) == 7 && m.blockAt(-40, y7) == m.rowForY(y7),
+          "blockAt resolves a point by y while every block spans the page");
 }
 
 int main(int argc, char** argv) {

@@ -149,6 +149,10 @@ public:
         for (int r = lo; r < hi; ++r) out.push_back(r);
         return out;
     }
+    // Point (content coords) → block, for the editor's pointer hit-tests (SR-2
+    // seam). Every block spans the page today, so x doesn't decide; SR-3
+    // resolves split-row lanes by x (rows_spike §D).
+    Q_INVOKABLE int blockAt(qreal x, qreal y) const { Q_UNUSED(x); return rowForY(y); }
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;
