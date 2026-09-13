@@ -896,6 +896,8 @@ private:
     void mutateCellInline(int row, int r, int c,
                           const std::function<bool(QString&, std::vector<Span>&)>& fn,
                           const QString& coalesce = QString());
+    // Commit a new span set for `row` as one txn (persist + change signals).
+    void commitRowSpans(int row, std::vector<Span>&& spans, const QString& coalesce = QString());
     // Parse inline markdown in `src` into clean text + spans (markers removed),
     // merging `existing` spans remapped to the clean coords. Returns false (and
     // leaves outputs untouched) if there were no markers to consume.

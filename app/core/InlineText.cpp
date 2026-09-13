@@ -178,4 +178,71 @@ void applyTypingAttributes(Spans& spans, int s, int e, int marks,
     if (!bg.isEmpty()) applyPayloadRun(spans, s, e, Highlight, bg);
 }
 
+namespace {
+// Clamp [start,end) to the text; true when the clamped range is non-empty.
+bool clampRange(const QString& text, int& start, int& end) {
+    const int len = int(text.size());
+    start = std::clamp(start, 0, len);
+    end = std::clamp(end, 0, len);
+    return start < end;
+}
+} // namespace
+
+bool hasFormat(const QString& text, const Spans& spans, int start, int end, uint8_t kind) {
+    if (!kind || !clampRange(text, start, end)) return false;
+    return spansCover(spans, start, end, kind);
+}
+
+bool setFormat(const QString& text, Spans& spans, int start, int end, uint8_t kind, bool on) {
+    if (!kind || !clampRange(text, start, end)) return false;
+    if (on) addSpan(spans, start, end, kind);
+    else    removeSpan(spans, start, end, kind);
+    return true;
+}
+
+bool toggleFormat(const QString& text, Spans& spans, int start, int end, uint8_t kind) {
+    if (!kind || !clampRange(text, start, end)) return false;
+    if (spansCover(spans, start, end, kind)) removeSpan(spans, start, end, kind);
+    else                                     addSpan(spans, start, end, kind);
+    return true;
+}
+
+bool clearFormat(const QString& text, Spans& spans, int start, int end) {
+    if (spans.empty() || !clampRange(text, start, end)) return false;
+    for (const Kind k : {Bold, Italic, Code, Strike, Underline, Link, FgColor, Highlight})
+        removeSpan(spans, start, end, k);
+    return true;
+}
+
+bool payloadCovers(const QString& text, const Spans& spans, int start, int end,
+                   uint8_t kind, const QString& value) {
+    if (!clampRange(text, start, end)) return false;
+    std::vector<std::pair<int, int>> segs;
+    for (const Span& sp : spans)
+        if (sp.kind == kind && sp.href == value && sp.e > start && sp.s < end)
+            segs.emplace_back(sp.s, sp.e);
+    std::sort(segs.begin(), segs.end());
+    int cov = start;
+    for (const auto& seg : segs) {
+        if (seg.first > cov) break;          // gap before this segment
+        cov = std::max(cov, seg.second);
+        if (cov >= end) return true;
+    }
+    return cov >= end;
+}
+
+QVariantList spansToVariantList(const Spans& spans) {
+    QVariantList out;
+    out.reserve(qsizetype(spans.size()));
+    for (const Span& sp : spans) {
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("k"), int(sp.kind));
+        if (hasPayload(sp.kind)) m.insert(QStringLiteral("u"), sp.href);
+        out.append(m);
+    }
+    return out;
+}
+
 } // namespace mn::inl

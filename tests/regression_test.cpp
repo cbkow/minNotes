@@ -5339,6 +5339,67 @@ static void testInlineTextOps() {
     CHECK(m.spansForRow(0).isEmpty(), "shortening a row's text drops spans past its end");
 }
 
+// --- Test 68: inline format ops through the engine (SR-1 step 3) ----------------
+static void testInlineFormatOps() {
+    qInfo("[68] inline format ops: rows and cells share one engine (SR-1 step 3)");
+    using namespace mn::inl;
+    const QString t = QStringLiteral("hello world");
+    Spans v;
+    CHECK(!setFormat(t, v, 3, 3, Bold, true) && !setFormat(t, v, 0, 5, 0, true), "empty range or unknown kind: no-op");
+    CHECK(setFormat(t, v, 0, 99, Bold, true) && hasFormat(t, v, 0, 11, Bold) && !hasFormat(t, v, 5, 5, Bold),
+          "set clamps; has sees the coverage");
+    CHECK(toggleFormat(t, v, 0, 5, Bold) && !hasFormat(t, v, 0, 5, Bold) && hasFormat(t, v, 5, 11, Bold),
+          "toggle removes a covered kind");
+    CHECK(toggleFormat(t, v, 0, 5, Bold) && hasFormat(t, v, 0, 11, Bold), "toggle adds an uncovered kind");
+    v.push_back({0, 5, Choice, QStringLiteral("{\"v\":\"a\"}")});
+    v.push_back({6, 11, Comment, QStringLiteral("thread-1")});
+    v.push_back({6, 11, Link, QStringLiteral("https://x")});
+    CHECK(clearFormat(t, v, 0, 11) && v.size() == 2, "clear formatting removes style + link spans…");
+    bool chip = false, comment = false;
+    for (const Span& sp : v) {
+        if (sp.kind == Choice && sp.s == 0 && sp.e == 5) chip = true;
+        if (sp.kind == Comment && sp.s == 6 && sp.e == 11) comment = true;
+    }
+    CHECK(chip && comment, "…but chips and comments survive intact");
+    Spans p{{0, 4, FgColor, QStringLiteral("#f00")}, {4, 8, FgColor, QStringLiteral("#f00")}};
+    CHECK(payloadCovers(t, p, 0, 8, FgColor, QStringLiteral("#f00")) && !payloadCovers(t, p, 0, 9, FgColor, QStringLiteral("#f00"))
+              && !payloadCovers(t, p, 0, 4, FgColor, QStringLiteral("#00f")),
+          "payload cover matches the exact value");
+    const QVariantList feed = spansToVariantList(v);
+    bool uOk = true;
+    for (const QVariant& it : feed) {
+        const QVariantMap mp = it.toMap();
+        if (hasPayload(uint8_t(mp.value(QStringLiteral("k")).toInt())) != mp.contains(QStringLiteral("u"))) uOk = false;
+    }
+    CHECK(feed.size() == 2 && uOk, "the span feed carries u exactly for payload kinds");
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("status "));
+    const int rc = m.insertChoiceAt(0, 7);
+    const int tb = m.insertTable(1, 2, 2);
+    m.tableSetCell(tb, 0, 0, QStringLiteral("status "));
+    const int cc = m.tableInsertChoiceAt(tb, 0, 0, 7);
+    CHECK(rc >= 0 && cc >= 0 && m.contentForRow(0) == m.tableCell(tb, 0, 0), "a chip inserted in a row and in a cell");
+    const int len = m.contentForRow(0).size();
+    m.setFormat(0, 0, len, QStringLiteral("bold"), true);
+    m.tableSetCellFormat(tb, 0, 0, 0, len, QStringLiteral("bold"), true);
+    m.clearFormat(0, 0, len);
+    m.tableClearCellFormat(tb, 0, 0, 0, len);
+    CHECK(!m.hasFormat(0, 0, len, QStringLiteral("bold")) && !m.tableCellHasFormat(tb, 0, 0, 0, len, QStringLiteral("bold")),
+          "bold cleared in both");
+    CHECK(m.choiceRangesForRow(0).size() == 1 && m.tableChoiceRangesForCell(tb, 0, 0).size() == 1,
+          "the chip survives clear formatting in a row AND in a cell");
+    const QVariantList rf = m.spansForRow(0), cf = m.tableCellSpans(tb, 0, 0);
+    CHECK(rf.size() == 1 && cf.size() == 1
+              && rf[0].toMap().contains(QStringLiteral("u")) && cf[0].toMap().contains(QStringLiteral("u"))
+              && rf[0].toMap().value(QStringLiteral("s")) == cf[0].toMap().value(QStringLiteral("s"))
+              && rf[0].toMap().value(QStringLiteral("e")) == cf[0].toMap().value(QStringLiteral("e")),
+          "row and cell span feeds match, payload included");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5421,6 +5482,7 @@ int main(int argc, char** argv) {
     testReplaceTextSpans();
     testInlineEngine();
     testInlineTextOps();
+    testInlineFormatOps();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

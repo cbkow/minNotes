@@ -7,6 +7,7 @@
 // Offsets are UTF-16 code units ([s,e) over QString), matching JS strings in QML.
 
 #include <QString>
+#include <QVariantList>
 
 #include <cstdint>
 #include <vector>
@@ -72,5 +73,24 @@ void setText(QString& text, Spans& spans, const QString& with);
 // 4 code, 8 strike, 16 underline) plus optional colour / highlight pens.
 void applyTypingAttributes(Spans& spans, int s, int e, int marks,
                            const QString& fg, const QString& bg);
+
+// --- Format ops: ranges clamp to the text; an empty range or unknown kind is a no-op ---
+// Is [start,end) fully covered by `kind`?
+bool hasFormat(const QString& text, const Spans& spans, int start, int end, uint8_t kind);
+// Add (on) or remove `kind` over [start,end). Returns false when nothing applies.
+bool setFormat(const QString& text, Spans& spans, int start, int end, uint8_t kind, bool on);
+// Flip `kind` over [start,end): removed where it already covers the whole range, else added.
+bool toggleFormat(const QString& text, Spans& spans, int start, int end, uint8_t kind);
+// Clear formatting over [start,end): bold … underline, link, text colour, highlight.
+// Comment and choice spans survive — they carry meaning (a thread; a chip whose text is
+// its label), not styling.
+bool clearFormat(const QString& text, Spans& spans, int start, int end);
+// Do payload spans of `kind` carrying exactly `value` cover [start,end)?
+bool payloadCovers(const QString& text, const Spans& spans, int start, int end,
+                   uint8_t kind, const QString& value);
+
+// The span feed QML and overlays read: [{s, e, k, u?}], with `u` present exactly for
+// payload kinds.
+QVariantList spansToVariantList(const Spans& spans);
 
 } // namespace mn::inl

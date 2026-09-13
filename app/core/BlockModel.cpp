@@ -1186,49 +1186,32 @@ void BlockModel::endGroup() { endTxn(); }
 
 bool BlockModel::hasFormat(int row, int start, int end, const QString& kind) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
-    const uint8_t k = spanKindFromString(kind);
-    if (!k) return false;
-    const int len = content_[row].size();
-    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
-    if (start >= end) return false;
-    return spansCover(rows_[row].spans, start, end, k);
+    return mn::inl::hasFormat(content_[row], rows_[row].spans, start, end, spanKindFromString(kind));
 }
 
 bool BlockModel::payloadSpanCovers(int row, int start, int end,
                                    int kind, const QString& value) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
-    const int len = content_[row].size();
-    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
-    if (start >= end) return false;
-    std::vector<std::pair<int,int>> segs;
-    for (const Span& sp : rows_[row].spans)
-        if (sp.kind == static_cast<uint8_t>(kind) && sp.href == value
-            && sp.e > start && sp.s < end)
-            segs.emplace_back(sp.s, sp.e);
-    std::sort(segs.begin(), segs.end());
-    int cov = start;
-    for (const auto& seg : segs) {
-        if (seg.first > cov) break;          // gap before this segment
-        cov = std::max(cov, seg.second);
-        if (cov >= end) return true;
-    }
-    return cov >= end;
+    return mn::inl::payloadCovers(content_[row], rows_[row].spans, start, end,
+                                  static_cast<uint8_t>(kind), value);
+}
+
+// The row format ops edit a copy through the engine, so a no-op never opens a txn.
+void BlockModel::commitRowSpans(int row, std::vector<Span>&& spans, const QString& coalesce) {
+    beginTxn(row, row);
+    rows_[row].spans = std::move(spans);
+    persistMeta(row);
+    emit dataChanged(index(row), index(row), {});
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn(coalesce);
 }
 
 void BlockModel::setFormat(int row, int start, int end, const QString& kind, bool on) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
-    const uint8_t k = spanKindFromString(kind);
-    if (!k) return;
-    const int len = content_[row].size();
-    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
-    if (start >= end) return;
-    beginTxn(row, row);
-    if (on) addSpan(rows_[row].spans, start, end, k);
-    else    removeSpan(rows_[row].spans, start, end, k);
-    persistMeta(row);
-    emit dataChanged(index(row), index(row), {});
-    ++contentRevision_; emit contentChangedSpike();
-    endTxn();
+    std::vector<Span> spans = rows_[row].spans;
+    if (!mn::inl::setFormat(content_[row], spans, start, end, spanKindFromString(kind), on)) return;
+    commitRowSpans(row, std::move(spans));
 }
 
 bool BlockModel::canUndo() const { return undoCur_ >= 0; }
@@ -1782,57 +1765,30 @@ void BlockModel::mutateCellInline(int row, int r, int c,
 }
 
 QVariantList BlockModel::tableCellSpans(int row, int r, int c) const {
-    QVariantList out;
-    if (rowAt(row).type != Table) return out;
-    const QJsonArray a = gridFor(row).cellSpans(r, c);
-    for (const QJsonValue& it : a) {
-        const QJsonObject o = it.toObject();
-        QVariantMap m;
-        m.insert(QStringLiteral("s"), o.value(QStringLiteral("s")).toInt());
-        m.insert(QStringLiteral("e"), o.value(QStringLiteral("e")).toInt());
-        m.insert(QStringLiteral("k"), o.value(QStringLiteral("k")).toInt());
-        if (o.contains(QStringLiteral("u"))) m.insert(QStringLiteral("u"), o.value(QStringLiteral("u")).toString());
-        out.append(m);
-    }
-    return out;
+    if (rowAt(row).type != Table) return {};
+    return mn::inl::spansToVariantList(cellSpansFromJson(gridFor(row).cellSpans(r, c)));
 }
 
 bool BlockModel::tableCellHasFormat(int row, int r, int c, int start, int end, const QString& kind) const {
     if (rowAt(row).type != Table) return false;
-    const uint8_t k = spanKindFromString(kind);
-    if (!k) return false;
     const TableGrid& g = gridFor(row);
-    const int len = g.cellText(r, c).size();
-    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
-    if (start >= end) return false;
-    return spansCover(cellSpansFromJson(g.cellSpans(r, c)), start, end, k);
+    return mn::inl::hasFormat(g.cellText(r, c), cellSpansFromJson(g.cellSpans(r, c)),
+                              start, end, spanKindFromString(kind));
 }
 
 void BlockModel::tableSetCellFormat(int row, int r, int c, int start, int end, const QString& kind, bool on) {
     const uint8_t k = spanKindFromString(kind);
     if (!k) return;
-    mutateTable(row, [&](TableGrid& g){
-        const int len = g.cellText(r, c).size();
-        const int s = std::clamp(start, 0, len), e = std::clamp(end, 0, len);
-        if (s >= e) return;
-        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
-        if (on) addSpan(v, s, e, k); else removeSpan(v, s, e, k);
-        g.setCellSpans(r, c, cellSpansToJson(v));
+    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
+        return mn::inl::setFormat(t, v, start, end, k, on);
     });
 }
 
+// Same rule as blocks: style + link + colour spans clear; comments and chips survive
+// (a chip's text must stay its label).
 void BlockModel::tableClearCellFormat(int row, int r, int c, int start, int end) {
-    mutateTable(row, [&](TableGrid& g){
-        const int len = g.cellText(r, c).size();
-        const int s = std::clamp(start, 0, len), e = std::clamp(end, 0, len);
-        if (s >= e) return;
-        std::vector<Span> kept;                       // drop any span overlapping [s,e)
-        for (const Span& sp : cellSpansFromJson(g.cellSpans(r, c))) {
-            if (sp.e <= s || sp.s >= e) { kept.push_back(sp); continue; }
-            if (sp.s < s) kept.push_back({sp.s, s, sp.kind, sp.href});
-            if (sp.e > e) kept.push_back({e, sp.e, sp.kind, sp.href});
-        }
-        g.setCellSpans(r, c, cellSpansToJson(kept));
+    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
+        return mn::inl::clearFormat(t, v, start, end);
     });
 }
 
@@ -3329,22 +3285,9 @@ qreal BlockModel::mediaDurationMs(int row) const {
 
 void BlockModel::clearFormat(int row, int start, int end) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
-    const int len = content_[row].size();
-    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
-    if (start >= end || rows_[row].spans.empty()) return;
-    beginTxn(row, row);
-    removeSpan(rows_[row].spans, start, end, SpanBold);
-    removeSpan(rows_[row].spans, start, end, SpanItalic);
-    removeSpan(rows_[row].spans, start, end, SpanCode);
-    removeSpan(rows_[row].spans, start, end, SpanStrike);
-    removeSpan(rows_[row].spans, start, end, SpanUnderline);
-    removeSpan(rows_[row].spans, start, end, SpanLink);
-    removeSpan(rows_[row].spans, start, end, SpanFgColor);
-    removeSpan(rows_[row].spans, start, end, SpanHighlight);
-    persistMeta(row);
-    emit dataChanged(index(row), index(row), {});
-    ++contentRevision_; emit contentChangedSpike();
-    endTxn();
+    std::vector<Span> spans = rows_[row].spans;
+    if (!mn::inl::clearFormat(content_[row], spans, start, end)) return;   // comments + chips survive
+    commitRowSpans(row, std::move(spans));
 }
 
 int BlockModel::applyMarkdownTrigger(int row) {
@@ -3462,17 +3405,8 @@ QString BlockModel::contentForRow(int row) const {
 // BlockModel's static span helpers forward there.
 
 QVariantList BlockModel::spansForRow(int row) const {
-    QVariantList out;
-    if (rows_.empty()) return out;
-    for (const Span& sp : rowAt(row).spans) {
-        QVariantMap m;
-        m.insert(QStringLiteral("s"), sp.s);
-        m.insert(QStringLiteral("e"), sp.e);
-        m.insert(QStringLiteral("k"), sp.kind);
-        if (spanHasPayload(sp.kind)) m.insert(QStringLiteral("u"), sp.href);
-        out.append(m);
-    }
-    return out;
+    if (rows_.empty()) return {};
+    return mn::inl::spansToVariantList(rowAt(row).spans);
 }
 
 // A payload span (link/color/highlight) over [start,end): drop any same-kind span
@@ -4234,21 +4168,9 @@ void BlockModel::commitMarkdown(int row) {
 
 void BlockModel::toggleFormat(int row, int start, int end, const QString& kind) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
-    const uint8_t k = spanKindFromString(kind);
-    if (!k) return;
-    const int len = content_[row].size();
-    start = std::clamp(start, 0, len);
-    end   = std::clamp(end, 0, len);
-    if (start >= end) return;
-    beginTxn(row, row);
-    std::vector<Span>& spans = rows_[row].spans;
-    if (spansCover(spans, start, end, k)) removeSpan(spans, start, end, k);
-    else                                  addSpan(spans, start, end, k);
-    persistMeta(row);
-    emit dataChanged(index(row), index(row), {});
-    ++contentRevision_;
-    emit contentChangedSpike();
-    endTxn();
+    std::vector<Span> spans = rows_[row].spans;
+    if (!mn::inl::toggleFormat(content_[row], spans, start, end, spanKindFromString(kind))) return;
+    commitRowSpans(row, std::move(spans));
 }
 
 QVariant BlockModel::data(const QModelIndex& index, int role) const {
