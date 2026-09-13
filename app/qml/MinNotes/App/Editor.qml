@@ -70,6 +70,21 @@ FocusScope {
         leftEdge * 2 + Math.max(pageWidth, blockModel.maxContentWidth)
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return pageWidth }
+    // A block's lane, page-relative (SR-3 D3): the page for a top-level block, else
+    // its share of the page less the gaps between lanes. Computed from pageWidth and
+    // the split row's ratios (not read from the model) so a page-width change can't
+    // race setContentWidth; the model's own geometry uses the same formula.
+    function laneOf(row) {
+        const lane = blockModel.laneForRow(row)
+        if (lane < 0) return { x: 0, w: pageWidth }
+        const ratios = blockModel.splitRatios(blockModel.splitRowOf(row))
+        if (lane >= ratios.length) return { x: 0, w: pageWidth }
+        const gap = blockModel.laneGap
+        const avail = Math.max(0, pageWidth - gap * (ratios.length - 1))
+        let x = 0
+        for (let k = 0; k < lane; ++k) x += avail * ratios[k] + gap
+        return { x: x, w: avail * ratios[lane] }
+    }
 
     // The right Inspector panel (set from Main.qml) — the studio's drawing
     // tool/color/width live there (its Draw target).
@@ -1483,7 +1498,7 @@ FocusScope {
     }
     // (cx, cy) in CONTENT coordinates → {row, col}.
     function hitTest(cx, cy) {
-        var row = blockModel.blockAt(cx, Math.max(0, cy))
+        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
         var cell = cellForRow(row)
         if (!cell || cell.isMedia) return { row: row, col: 0 }
         var te = cell.teItem
@@ -1495,7 +1510,7 @@ FocusScope {
     // delegate can't own a MouseArea (the document mouse layer sits above it), so the
     // central handler hit-tests the glyph zone here.
     function taskCheckboxAt(cx, cy) {
-        var row = blockModel.blockAt(cx, Math.max(0, cy))
+        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 8) return -1
         var cell = cellForRow(row)
         if (!cell) return -1
@@ -1510,7 +1525,7 @@ FocusScope {
     // hit-testing as the task checkbox — the delegate can't own a MouseArea.
     property int codeChipHoverRow: -1
     function codeLangChipAt(cx, cy) {
-        var row = blockModel.blockAt(cx, Math.max(0, cy))
+        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 2) return -1
         var cell = cellForRow(row)
         if (!cell || !cell.langChip || !cell.langChip.visible) return -1
@@ -1524,7 +1539,7 @@ FocusScope {
     // null. Delegates to the table's own BlockTable.cellAtPoint (its delegate
     // can't own a MouseArea — the document mouse layer sits above it).
     function tableHitAt(cx, cy) {
-        var row = blockModel.blockAt(cx, Math.max(0, cy))
+        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 7) return null
         var dcell = cellForRow(row)
         var bt = dcell ? dcell.tableItem : null
@@ -2982,7 +2997,7 @@ FocusScope {
         id: poolProbe
         readonly property bool armed: Qt.application.arguments.some(
             function(a) { return a.indexOf("--pool-probe=") === 0 })
-        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes
         property int step: 0
         property int phaseStep: 0
         property int checks: 0
@@ -3002,17 +3017,24 @@ FocusScope {
                 if (byRow[c.logicalRow] !== undefined) fail("row " + c.logicalRow + " in two delegates")
                 byRow[c.logicalRow] = c
             }
-            for (var r = root.firstVisible; r <= root.lastVisible; ++r) {
+            const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
+            for (var vi = 0; vi < inView.length; ++vi) {
+                const r = inView[vi]
                 ++checks
                 var d = byRow[r]
-                if (!d) { fail("row " + r + " has no delegate (window " + root.firstVisible + "–" + root.lastVisible + ")"); continue }
+                if (!d) { fail("row " + r + " in view has no delegate"); continue }
                 if (!d.visible || Math.abs(d.y - blockModel.yForRow(r)) > 0.5)
                     fail("row " + r + " at y " + d.y + " visible " + d.visible + ", model y " + blockModel.yForRow(r))
-                // Pointer path: a point just inside the block's top resolves to it.
-                const h = root.hitTest(root.leftEdge + 30, blockModel.yForRow(r) + 1)
+                if (blockModel.typeForRow(r) === 10) continue   // a record resolves to its lanes' blocks
+                // Lane geometry: the delegate's column matches the lane.
+                const g = root.laneOf(r)
+                if (Math.abs(d.colLeft - (root.leftEdge + g.x)) > 0.5 || Math.abs(d.measure - g.w) > 0.5)
+                    fail("row " + r + " column " + d.colLeft + "/" + d.measure + ", lane " + (root.leftEdge + g.x) + "/" + g.w)
+                // Pointer path: a point just inside the block's top-left resolves to it.
+                const h = root.hitTest(root.leftEdge + g.x + 12, blockModel.yForRow(r) + 1)
                 if (h.row !== r) fail("hitTest at the top of row " + r + " resolved row " + h.row)
             }
-            maxRows = Math.max(maxRows, root.lastVisible - root.firstVisible + 1)
+            maxRows = Math.max(maxRows, inView.length)
         }
         function next(phaseDone) { if (phaseDone) { ++phase; phaseStep = 0 } else ++phaseStep }
         onTriggered: {
@@ -3041,6 +3063,21 @@ FocusScope {
             } else if (phase === 3) {
                 flick.contentY = Math.max(0, flick.contentY - flick.height * 0.61)
                 next(flick.contentY <= 0)
+            } else if (phase === 4) {
+                // Lanes (SR-3): split blocks in view into two or three lanes, grow a
+                // lane, pull a block into one — then keep walking down.
+                const t = Math.min(blockModel.count - 1, root.firstVisible + 1 + phaseStep % 4)
+                const ty = blockModel.typeForRow(t)
+                if (ty !== 10 && ty !== 7) {
+                    if (phaseStep % 3 === 2 && blockModel.laneForRow(t) >= 0) blockModel.insertBlock(t + 1)
+                    else blockModel.splitIntoColumns(t, phaseStep % 2, 0.35 + 0.1 * (phaseStep % 4))
+                }
+                if (phaseStep % 5 === 4) flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.8)
+                next(phaseStep >= 90)
+            } else if (phase === 5) {
+                if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with lanes present
+                else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
+                next(phaseStep > 0 && flick.contentY >= maxY)
             } else {
                 running = false
                 console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,
@@ -3151,17 +3188,22 @@ FocusScope {
         }
     }
 
-    readonly property int firstRow: Math.max(0, firstVisible - overscan)
+    // SR-3: the pool renders the blocks in view plus an overscan band, straight from
+    // the model's two-level index — a split row contributes its record and only its
+    // lanes' visible blocks. layoutRevision is safe here since SR-2: the slot table
+    // is stable, so a height settle only hands ENTERING blocks to free slots (no
+    // re-render, no re-measure), and measure-back is asynchronous anyway.
+    readonly property real overscanPx: Math.max(200, flick.height * 0.5)
+    readonly property var poolRows: (blockModel.contentRevision, blockModel.layoutRevision,
+        blockModel.visibleBlocks(Math.max(0, flick.contentY - overscanPx),
+                                 flick.contentY + flick.height + overscanPx))
     readonly property int poolSize: Math.min(blockModel.count,
-                                    Math.ceil(root.height / 38) + 2 * overscan + 4)
+        Math.max(poolRows.length, Math.ceil(root.height / 38) + 2 * overscan + 4))
     readonly property int delegateCount: poolSize
-    // SR-2: which row each pool slot renders. Rows that stay in the window keep
-    // their delegate; the query (visibleRows) is the seam SR-3's lanes replace.
-    // sync RETURNS the revision and runs inside this binding, so everything
-    // reading slotRev before rowForSlot() sees the updated table — the ordering
-    // the old modulo formula had. The count read covers the window clipping.
-    readonly property int slotRev: (blockModel.count,
-                                    viewSlots.sync(blockModel.visibleRows(firstRow, poolSize), poolSize))
+    // Which block each pool slot renders. Blocks that stay in view keep their
+    // delegate. sync RETURNS the revision and runs inside this binding, so everything
+    // reading slotRev before rowForSlot() sees the updated table.
+    readonly property int slotRev: viewSlots.sync(poolRows, poolSize)
     // BlockView (the extracted block renderer) reads the editor's controllers
     // through these — ids don't cross file boundaries.
     readonly property var cursorObj: cursor
@@ -3241,11 +3283,15 @@ FocusScope {
             z: -1
             x: 0
             width: Math.max(flick.width, root.contentSpan)
-            y: (blockModel.layoutRevision, blockModel.yForRow(cursor.focusRow))
+            // In a lane, the whole split row is "here" — its record spans the row.
+            readonly property int fillRow: (blockModel.contentRevision,
+                blockModel.splitRowOf(cursor.focusRow) >= 0 ? blockModel.splitRowOf(cursor.focusRow)
+                                                            : cursor.focusRow)
+            y: (blockModel.layoutRevision, blockModel.yForRow(fillRow))
             // layoutRevision dep (rule 1): without it the fill only re-evaluates
             // on focusRow change — a "# " conversion's height settle wouldn't
             // reach it until Return moved the caret.
-            height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(cursor.focusRow)))
+            height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(fillRow)))
             readonly property real sheetW: root.sheetSpan   // matches the sheet tint
             Rectangle {
                 x: 0; width: Math.min(parent.width, parent.sheetW)
@@ -3267,8 +3313,9 @@ FocusScope {
             delegate: Rectangle {
                 required property int index
                 readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
+                // Top entries only: a rule marks where a ROW starts, not a lane block.
                 visible: prow >= 0 && prow < blockModel.count
-                         && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+                         && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0
                 z: -1
                 x: 0
                 width: Math.max(flick.width, root.contentSpan)
@@ -3330,7 +3377,7 @@ FocusScope {
                 // Right-click anywhere on a block → its context menu (capturing the
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
-                    var trow = blockModel.blockAt(m.x, m.y)
+                    var trow = blockModel.blockAt(m.x - root.leftEdge, m.y)
                     root.menuLinkUrl = ""; root.menuIssue = null
                     if (blockModel.typeForRow(trow) === 7) {
                         var th = root.tableHitAt(m.x, m.y)
@@ -3464,7 +3511,7 @@ FocusScope {
                 // hover (not pressed): grip band → grip affordance; else near a
                 // table column border → resize cursor (now y-guarded: the old
                 // check showed a stray SplitHCursor in the margin bands).
-                root.hoverRow = blockModel.blockAt(m.x, m.y)
+                root.hoverRow = blockModel.blockAt(m.x - root.leftEdge, m.y)
                 var overBorder = false
                 var ghit = null
                 if (blockModel.typeForRow(root.hoverRow) === 7) {
@@ -3567,14 +3614,14 @@ FocusScope {
                 // point (which collapsed the word to word-start→cursor).
                 root.dragging = false; root.tableResizing = false
                 // Double-click a file-attachment chip → reveal it in Finder/Explorer.
-                var mrow = blockModel.blockAt(m.x, m.y)
+                var mrow = blockModel.blockAt(m.x - root.leftEdge, m.y)
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
                     blockModel.revealMedia(mrow); return
                 }
                 // Double-click a table column border → reset that column to auto;
                 // otherwise word-select INSIDE the cell (multi-select pass
                 // 2026-08-21 — cells now speak the same double-click language).
-                var drow = blockModel.blockAt(m.x, m.y)
+                var drow = blockModel.blockAt(m.x - root.leftEdge, m.y)
                 if (blockModel.typeForRow(drow) === 7) {
                     var dd = root.cellForRow(drow), dbt = dd ? dd.tableItem : null
                     if (dbt) {
@@ -5545,7 +5592,7 @@ FocusScope {
                 required property int index
                 readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
                 visible: prow >= 0 && prow < blockModel.count
-                         && prow >= root.firstVisible - 2 && prow <= root.lastVisible + 2
+                         && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0   // top entries only
                 width: blockRuler.width
                 height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
                 y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY

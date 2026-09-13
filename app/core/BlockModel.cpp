@@ -4540,14 +4540,16 @@ void BlockModel::refreshMaxContentWidth() {
 
 void BlockModel::setMeasuredHeight(int row, qreal h) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || h <= 0.0) return;
+    const double before = layout().height(static_cast<size_t>(row));
     const double delta = setIndexHeight(static_cast<size_t>(row), h);
     if (!rows_[row].measured) rows_[row].measured = true;
-    if (delta != 0.0) {
-        // A lane block's delta is its split row's delta — report the TOP entry,
-        // which is what the view compensates its scroll position by.
+    // A lane block's delta is its split row's delta — report the TOP entry, which is
+    // what the view compensates its scroll position by.
+    if (delta != 0.0)
         emit heightSettled(static_cast<int>(layout().topOf(static_cast<std::size_t>(row))), delta);
-        bumpLayout();
-    }
+    // Bump on the BLOCK's change, not the row's: in a lane that isn't the tallest the
+    // row keeps its height, but the blocks below it in that lane still move.
+    if (delta != 0.0 || h != before) bumpLayout();
 }
 
 qreal BlockModel::mediaDisplayHeight(int row) const {
@@ -4590,8 +4592,12 @@ void BlockModel::setContentWidth(qreal w) {
     bool any = false;
     const std::vector<double> lw = laneWidths();
     for (size_t i = 0; i < rows_.size(); ++i)
-        if (rows_[i].type == Media)
-            if (setIndexHeight(i, estimatedHeight(rows_[i], lw[i])) != 0.0) any = true;
+        if (rows_[i].type == Media) {
+            // Compare the block's own height: media in a short lane moves its lane
+            // siblings without changing the split row's height.
+            const double h = estimatedHeight(rows_[i], lw[i]);
+            if (h != layout().height(i)) { setIndexHeight(i, h); any = true; }
+        }
     if (any) bumpLayout();
 }
 

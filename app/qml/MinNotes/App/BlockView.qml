@@ -30,17 +30,18 @@ Item {
     readonly property Item teItem: te    // layout oracle, for hit-testing
     readonly property Item tableItem: tableHost   // BlockTable, for table hit-testing
     readonly property Item langChip: codeLangChip // code language chip, for hit-testing
-    // Horizontal measure for this block by type (page vs text bound).
-    // Keyed off te.btype (already reactive) — NOT the layout revision,
-    // which the measured height bumps and would form a binding loop.
-    readonly property real measure: editor.measureForType(te.btype)
+    // Lane geometry (SR-3): {x, w} page-relative — the page for a top-level block, its
+    // lane otherwise. contentRevision covers structure changes, pageWidth the measure.
+    // NOT the layout revision: the measure drives the height, whose settle bumps it.
+    readonly property var lane: (blockModel.contentRevision, editor.pageWidth,
+                                 active ? editor.laneOf(logicalRow) : ({ x: 0, w: editor.pageWidth }))
+    // Horizontal measure: the lane's width (the page's for a top-level block).
+    readonly property real measure: lane.w
+    readonly property bool isRecord: active && te.btype === 10   // a split row's record: no text of its own
 
-    // Lane geometry (SR-2 seam): the whole content width at x 0 today; a
-    // split-row lane (SR-3) places the block at its lane's x and width.
-    property real laneX: 0
-    property real laneWidth: flick.contentWidth   // == flick.width outside ink mode
-    x: laneX
-    width: laneWidth
+    // The delegate spans the whole field (row fill, washes); content sits at colLeft.
+    x: 0
+    width: flick.contentWidth   // == flick.width outside ink mode
     visible: active
     y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
     // Code blocks get double vertical padding (24 vs 12) so the
@@ -54,6 +55,7 @@ Item {
                                  blockModel.mediaDisplayHeight(logicalRow))
                            + (isVideoMedia ? editor.videoTransportH
                                            : isPdfMedia ? editor.pdfNavH : 0)
+          : te.btype === 10 ? (blockModel.layoutRevision, blockModel.heightForRow(logicalRow))   // record: its tallest lane
           : te.btype === 6 ? 12 + 18                       // divider
           : te.btype === 7 ? 64 + tableHost.implicitHeight // table: 32 top + 32 bottom (user-tuned; bottom clears the 14px +row button)
           : (te.btype === 2 ? 24 : 12) + te.height   // te.height = lineCount*lineH (even)
@@ -66,7 +68,7 @@ Item {
     // height to the Fenwick → contentY/firstVisible churn and a
     // scroll-in jump. Text/code/table still measure (reflow is unknown).
     function reportHeight() {
-        if (!active || isMedia) return
+        if (!active || isMedia || te.btype === 10) return   // media and records never measure back
         // Tables: measure ONCE, then reuse the model's cache. A table
         // can't be estimated from data (cell wrapping), but its height
         // is stable once known — and on recycle the delegate briefly
@@ -305,7 +307,7 @@ Item {
         // the cell height reads mediaHost.implicitHeight, and height bumps
         // layoutRevision, so a te.btype dependency here is a latent loop the
         // async poster decode wakes up. BlockTable sidesteps it the same way.
-        maxWidth: editor.pageWidth
+        maxWidth: cell.lane.w      // the lane's width (the page's at top level) — no te.btype dep
         width: implicitWidth
         // Frame height = the model's authoritative value (same as the
         // cell reservation), so the rendered media never disagrees with
@@ -438,11 +440,11 @@ Item {
         }
     }
 
-    readonly property real colLeft: editor.leftEdge   // shared left edge for all blocks
+    readonly property real colLeft: editor.leftEdge + lane.x   // the page's left edge, plus the lane's offset
 
     TextEdit {
         id: te
-        visible: !cell.isMedia && btype !== 6 && btype !== 7   // hidden for divider/table
+        visible: !cell.isMedia && btype !== 6 && btype !== 7 && btype !== 10   // hidden for divider/table/record
         readOnly: true
         activeFocusOnPress: false
         selectByMouse: false
@@ -562,7 +564,7 @@ Item {
     }
 
     Rectangle {  // caret
-        visible: cursor.active && cell.isFocus && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 7
+        visible: cursor.active && cell.isFocus && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 7 && te.btype !== 10
         color: Theme.colors.accent
         width: 2
         property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))

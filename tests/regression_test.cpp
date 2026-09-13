@@ -5925,8 +5925,12 @@ static void testSplitRowModel() {
     CHECK(settledRow == 1 && near(settledDelta, 500.0 - extentBefore),
           "a lane block's measured height settles as its split row's delta");
     CHECK(near(m.yForRow(5), m.yForRow(1) + 500.0), "rows below move by exactly that delta");
+    const int revBefore = m.layoutRevision();
+    const double y4Before = m.yForRow(4);
     m.setMeasuredHeight(3, h3 + 1.0);
     CHECK(settledRow == 1 && near(m.heightForRow(1), 500.0), "a change in a shorter lane leaves the row's height alone");
+    CHECK(m.layoutRevision() > revBefore && near(m.yForRow(4), y4Before + 1.0),
+          "…but still bumps the layout, so the block below it in that lane moves");
 
     m.setContent(3, QStringLiteral("edited"));
     m.undo();

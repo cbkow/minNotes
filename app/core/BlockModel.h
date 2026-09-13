@@ -167,6 +167,8 @@ public:
     Q_INVOKABLE QList<int> visibleBlocks(qreal y0, qreal y1) const;
     // A block's lane geometry, page-relative: top-level blocks and records span the page.
     static constexpr double kLaneGap = 24.0;         // px between lanes (the divider band sits in it)
+    Q_PROPERTY(qreal laneGap READ laneGapPx CONSTANT)
+    qreal laneGapPx() const { return kLaneGap; }
     Q_INVOKABLE qreal xForRow(int row) const;
     Q_INVOKABLE qreal widthForRow(int row) const;
     // --- Split rows (SR-3). A Split record is followed by its lanes' blocks.
