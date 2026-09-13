@@ -57,6 +57,9 @@ public:
 
     Q_INVOKABLE void newTab();                            // fresh untitled scratch doc
     Q_INVOKABLE bool openTab(const QString& pathOrUrl);   // dedupe by canonical path
+    // Why the last openTab failed ("" = no reason known) — the failed model is
+    // gone by then, so its BlockModel::lastOpenError is kept here for QML.
+    Q_INVOKABLE QString lastOpenError() const { return lastOpenError_; }
     Q_INVOKABLE void closeTab(int i);
     Q_INVOKABLE void setActive(int i);
 
@@ -75,6 +78,7 @@ private:
     QList<Tab> tabs_;
     int active_ = -1;
     int nextId_ = 1;
+    QString lastOpenError_;
     BlockModel* empty_ = nullptr;   // persistent no-document model (welcome state)
 
     // Canonical absolute path for an existing file (for openTab dedupe).

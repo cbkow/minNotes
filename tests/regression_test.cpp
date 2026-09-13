@@ -27,6 +27,8 @@
 #include "SpellService.h"
 #include "ViewportSlots.h"
 #include "LayoutIndex.h"
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include "FenwickTree.h"
 #include <random>
 #include <QStandardPaths>
@@ -159,7 +161,7 @@ static void testUndoRedoHeights() {
 // --- Test 4: save -> close -> reopen round-trips structure + content --------
 static void testSaveReopen() {
     qInfo("[4] save -> reopen round-trip (persistence)");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_test.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_test.mnd");
     QFile::remove(path);
 
     BlockModel m;
@@ -245,7 +247,7 @@ static void testUndoBranchCoalesce() {
 // normalization, not a user edit). Saves stamp doc_meta.schema_version.
 static void testCanonicalizeAndStamp() {
     qInfo("[6] markdown canonicalized on disk after open->save; doc_meta stamped");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_canon.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_canon.mnd");
     QFile::remove(path);
 
     {   // Write a doc whose DB content still holds raw markers (setContent
@@ -330,7 +332,7 @@ static void testListsAndDepth() {
     CHECK(m.orderedNumberForRow(2) == 2,
           "deeper child doesn't break the top-level run (got %d)", m.orderedNumberForRow(2));
 
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_lists.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_lists.mnd");
     QFile::remove(path);
     CHECK(m.saveAs(path), "saveAs() succeeded");
     m.closeDocument();
@@ -359,7 +361,7 @@ static void testInkUndoPersist() {
         "\"shapes\":[{\"id\":\"s1\",\"type\":\"freehand\",\"color\":[1,0,0,1],"
         "\"stroke_width\":4,\"filled\":false,\"is_modeled\":true,"
         "\"points\":[[-390.5,2.0],[10.0,44.5]]}]}");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_ink.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_ink.mnd");
     QFile::remove(path);
 
     BlockModel m;
@@ -431,7 +433,7 @@ static void testInkUndoPersist() {
 // and survive orphaning (span deleted) until deleteThread.
 static void testPageWidth() {
     qInfo("[8b] page width: edge-affinity migration, undo atomicity, persistence");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_pw.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_pw.mnd");
     QFile::remove(path);
 
     // One px anchor with: a LEFT-margin stroke (bbox fully left of the 760
@@ -572,7 +574,7 @@ static void testUndoHistory() {
 
 static void testComments() {
     qInfo("[9] comments: span anchor, shift, orphan/undo, persistence");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_comments.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_comments.mnd");
     QFile::remove(path);
 
     BlockModel m;
@@ -866,7 +868,7 @@ static void testExportMarkdown() {
 // setMediaWidth sequence), and round-trip through undo/persistence.
 static void testSketchResizeRenorm() {
     qInfo("[11] sketch resize: renormalize strokes/images, heights, undo, persist");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_sketch.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_sketch.mnd");
     QFile::remove(path);
 
     BlockModel m;
@@ -1087,7 +1089,7 @@ static void testSketchFitToInk() {
 // same layout helper the model does so the check is font-agnostic.
 static void testSketchTextElements() {
     qInfo("[15] sketch text: add/set/box/remove, blank-deletes, fit-to-ink");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_text.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_text.mnd");
     QFile::remove(path);
     BlockModel m;
     m.newDocument();
@@ -1474,7 +1476,7 @@ static void testConsumeEmptyAnchor() {
 // literal 0 / no lang). Drive the sink directly and prove a reload keeps them.
 static void testInsertSpecs() {
     qInfo("[18] insertSpecs: depth + lang persist through save/reopen");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_specs.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_specs.mnd");
     QFile::remove(path);
 
     BlockModel m;
@@ -1633,7 +1635,7 @@ static void testImportFileCores() {
     Importer imp;
     CHECK(imp.formatFor(QStringLiteral("file:///x/Notes%20File.MD")) == QStringLiteral("md")
               && imp.formatFor(QStringLiteral("a.htm")) == QStringLiteral("html")
-              && imp.formatFor(QStringLiteral("a.mndb")).isEmpty()
+              && imp.formatFor(QStringLiteral("a.mnd")).isEmpty()
               && imp.formatFor(QStringLiteral("a")).isEmpty(),
           "formatFor: case-folded extensions classify; unknown → \"\"");
 
@@ -1738,7 +1740,7 @@ static void testPackageFormat() {
     }
 
     CHECK(mnpkg::isPackagePath(QStringLiteral("file:///x/Doc.MnPkg"))
-              && !mnpkg::isPackagePath(QStringLiteral("/x/doc.mndb")),
+              && !mnpkg::isPackagePath(QStringLiteral("/x/doc.mnd")),
           "isPackagePath: extension classifier (case-folded, URL-tolerant)");
 
     const QJsonObject man = mnpkg::readManifest(zipPath);
@@ -1772,7 +1774,7 @@ static void testPackageFormat() {
     CHECK(mnpkg::extractArchive(zipPath, out), "extractArchive succeeded");
     {
         QFile m(out + QStringLiteral("/media/media.bin"));
-        QFile d(out + QStringLiteral("/document.mndb"));
+        QFile d(out + QStringLiteral("/document.mnd"));
         CHECK(m.open(QIODevice::ReadOnly) && m.readAll() == mediaBytes,
               "stored media byte-exact after extract");
         CHECK(d.open(QIODevice::ReadOnly) && d.readAll() == QByteArray(2000, 'a'),
@@ -1917,7 +1919,7 @@ static void testPackageExporter() {
           "sidecar tree re-associates by layout beside the packed video");
 
     BlockModel m2;
-    CHECK(m2.openDocument(ext + QStringLiteral("/document.mndb")), "packed db opens");
+    CHECK(m2.openDocument(ext + QStringLiteral("/document.mnd")), "packed db opens");
     int mediaRows = 0; QSet<QString> resolved;
     for (int r = 0; r < m2.rowCountQml(); ++r) {
         if (m2.typeForRow(r) != BlockModel::Media) continue;
@@ -1997,7 +1999,7 @@ static void testPackageLifecycle() {
         for (const QString& d : QDir(BlockModel::scratchDir())
                  .entryList({QStringLiteral("pkg-*")}, QDir::Dirs))
             pkgScratch = BlockModel::scratchDir() + QLatin1Char('/') + d;
-        CHECK(QFileInfo::exists(pkgScratch + QStringLiteral("/document.mndb"))
+        CHECK(QFileInfo::exists(pkgScratch + QStringLiteral("/document.mnd"))
                   && !QFileInfo::exists(pkgScratch + QStringLiteral("/.minnotes/pic.png")),
               "lazy open: db extracted, media NOT yet");
         const QString mp = m.mediaLocalPath(1);
@@ -2026,17 +2028,17 @@ static void testPackageLifecycle() {
         CHECK(m.documentName() == QStringLiteral("doc"),
               "package view keeps the package's name (not 'Untitled')");
 
-        // Save As → .mndb materializes the package (db + .minnotes sidecar),
+        // Save As → .mnd materializes the package (db + .minnotes sidecar),
         // media included even though nothing lazily extracted it first.
         m.setContent(0, QStringLiteral("my copy"));
-        const QString mndb = dir.filePath(QStringLiteral("materialized.mndb"));
-        CHECK(m.saveAs(mndb), "Save As .mndb from a package view");
+        const QString mnd = dir.filePath(QStringLiteral("materialized.mnd"));
+        CHECK(m.saveAs(mnd), "Save As .mnd from a package view");
         CHECK(m.documentName() == QStringLiteral("materialized"), "identity re-homed");
         CHECK(m.save(), "the materialized copy saves normally from now on");
         m.closeDocument();
 
         BlockModel m2;
-        CHECK(m2.openDocument(mndb), "materialized .mndb opens");
+        CHECK(m2.openDocument(mnd), "materialized .mnd opens");
         CHECK(m2.contentForRow(0) == QStringLiteral("my copy"),
               "content in the materialized doc");
         const QString mp2 = m2.mediaLocalPath(1);
@@ -2048,7 +2050,7 @@ static void testPackageLifecycle() {
         }
         CHECK(!mp2.isEmpty() && bytesOk
                   && mp2.startsWith(dir.absolutePath() + QStringLiteral("/.minnotes/")),
-              "media materialized beside the .mndb BYTE-EXACT (never lazily touched)");
+              "media materialized beside the .mnd BYTE-EXACT (never lazily touched)");
         m2.closeDocument();
     }
 
@@ -2296,8 +2298,8 @@ static void testEnexImport() {
     QString firstPath;
     const int n = Importer::importEnexToFolder(enexPath, dest, &firstPath);
     CHECK(n == 2, "two notes → two docs (%d)", n);
-    CHECK(QFileInfo::exists(dest + QStringLiteral("/Trip Plan.mndb"))
-              && QFileInfo::exists(dest + QStringLiteral("/Trip Plan-2.mndb")),
+    CHECK(QFileInfo::exists(dest + QStringLiteral("/Trip Plan.mnd"))
+              && QFileInfo::exists(dest + QStringLiteral("/Trip Plan-2.mnd")),
           "title collision → -2 suffix");
 
     BlockModel m;
@@ -2372,12 +2374,12 @@ static void testNotionImport() {
     QString firstPath;
     const int n = Importer::importNotionZipToFolder(zipPath, dest, &firstPath);
     CHECK(n == 2, "page + database → two docs (%d)", n);
-    CHECK(QFileInfo::exists(dest + QStringLiteral("/Meeting Notes.mndb"))
-              && QFileInfo::exists(dest + QStringLiteral("/Tasks.mndb")),
+    CHECK(QFileInfo::exists(dest + QStringLiteral("/Meeting Notes.mnd"))
+              && QFileInfo::exists(dest + QStringLiteral("/Tasks.mnd")),
           "32-hex Notion ids stripped from doc names");
 
     BlockModel m;
-    CHECK(m.openDocument(dest + QStringLiteral("/Meeting Notes.mndb")), "page opens");
+    CHECK(m.openDocument(dest + QStringLiteral("/Meeting Notes.mnd")), "page opens");
     CHECK(m.typeForRow(0) == BlockModel::Heading, "md heading landed");
     int imgRow = -1;
     for (int r = 0; r < m.rowCountQml(); ++r)
@@ -2390,7 +2392,7 @@ static void testNotionImport() {
     m.closeDocument();
 
     BlockModel m2;
-    CHECK(m2.openDocument(dest + QStringLiteral("/Tasks.mndb")), "database opens");
+    CHECK(m2.openDocument(dest + QStringLiteral("/Tasks.mnd")), "database opens");
     CHECK(m2.typeForRow(0) == BlockModel::Table
               && m2.tableCell(0, 1, 0) == QStringLiteral("Ship it"),
           "csv database → Table doc");
@@ -3260,7 +3262,7 @@ static void testInlineChoice() {
     }
 
     // Save/reopen: the "choice" kind string must round-trip.
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_choice_rt.mndb");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_choice_rt.mnd");
     QFile::remove(path);
     CHECK(m.saveAs(path), "doc saved");
     m.closeDocument();
@@ -3739,7 +3741,7 @@ static void testMergeAssetsAndEdges() {
     src.newDocument();
     while (src.rowCountQml() > 0) src.removeBlock(0);
     src.insertBlock(0); src.setContent(0, QStringLiteral("assets"));
-    CHECK(src.saveAs(srcD + QStringLiteral("/src.mndb")), "source doc anchored");
+    CHECK(src.saveAs(srcD + QStringLiteral("/src.mnd")), "source doc anchored");
     QDir().mkpath(srcD + QStringLiteral("/.minnotes/.qcview/") + vidN);
     { QImage img(12, 10, QImage::Format_RGB32); img.fill(Qt::yellow);
       img.save(srcD + QStringLiteral("/.minnotes/") + picN, "PNG"); }
@@ -3770,7 +3772,7 @@ static void testMergeAssetsAndEdges() {
     dest.newDocument();
     while (dest.rowCountQml() > 0) dest.removeBlock(0);
     dest.insertBlock(0); dest.setContent(0, QStringLiteral("d"));
-    CHECK(dest.saveAs(destD + QStringLiteral("/dest.mndb")), "dest doc anchored");
+    CHECK(dest.saveAs(destD + QStringLiteral("/dest.mnd")), "dest doc anchored");
     QDir().mkpath(destD + QStringLiteral("/.minnotes"));
     { QFile f(destD + QStringLiteral("/.minnotes/") + picN);   // name collision
       f.open(QIODevice::WriteOnly); f.write(QByteArray(7, 'x')); }
@@ -3831,7 +3833,7 @@ static void testMergeAssetsAndEdges() {
     dest.closeDocument();
     {
         BlockModel m2;
-        CHECK(m2.openDocument(destD + QStringLiteral("/dest.mndb")), "dest reopens");
+        CHECK(m2.openDocument(destD + QStringLiteral("/dest.mnd")), "dest reopens");
         CHECK(m2.rowCountQml() == destCount
                   && m2.contentForRow(2).contains(QStringLiteral(".minnotes/") + pic2),
               "merged rows + rewritten descriptors persisted");
@@ -4474,7 +4476,7 @@ static QString tmpPng(const QString& name) {
 static void testBlockClipboardRoundTrip() {
     qInfo("[49] BlockClipboard: encode/decode every block type, span kind, ink, gate");
     BlockClipboard::Payload p;
-    p.docPath = QStringLiteral("/tmp/x.mndb"); p.docDir = QStringLiteral("/tmp");
+    p.docPath = QStringLiteral("/tmp/x.mnd"); p.docDir = QStringLiteral("/tmp");
     p.package = QString(); p.pageWidth = 900;
     auto text = [](uint8_t type, const QString& t) { BlockModel::BlockSpec s; s.type = type; s.text = t; return s; };
     BlockModel::BlockSpec h = text(BlockModel::Heading, QStringLiteral("Title")); h.level = 3;
@@ -4533,10 +4535,21 @@ static void testBlockClipboardRoundTrip() {
           "provenance round-trips");
     // Version / format gate.
     QJsonObject bad = QJsonDocument::fromJson(json).object();
+    CHECK(QJsonDocument::fromJson(json).object().value(QStringLiteral("minReader")).toInt()
+              == BlockClipboard::kMinReader, "the payload names the oldest reader that can decode it");
     bad.insert(QStringLiteral("version"), 99);
-    CHECK(!BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err), "newer version refused");
-    bad.insert(QStringLiteral("version"), 1); bad.insert(QStringLiteral("format"), QStringLiteral("other"));
+    CHECK(BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err),
+          "a newer writer with only additive fields still decodes (minReader unchanged)");
+    bad.insert(QStringLiteral("minReader"), 99);
+    CHECK(!BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err), "a payload needing a newer reader is refused");
+    bad.insert(QStringLiteral("version"), 1); bad.insert(QStringLiteral("minReader"), 1);
+    bad.insert(QStringLiteral("format"), QStringLiteral("other"));
     CHECK(!BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err), "foreign format refused");
+    bad.insert(QStringLiteral("format"), QStringLiteral("minnotes-blocks"));
+    CHECK(!BlockClipboard::decode(QJsonDocument(bad).toJson(), &q, &err),
+          "a pre-1.0 minnotes-blocks payload is refused (no legacy decode)");
+    CHECK(QLatin1String(BlockClipboard::kMime) == QLatin1String("application/x-mnd-blocks"),
+          "the clipboard MIME is the 1.0 name");
     CHECK(!BlockClipboard::decode("{not json", &q, &err), "malformed refused");
 }
 
@@ -4586,11 +4599,11 @@ static void testClipboardMime() {
     qInfo("[51] Clipboard.writeBlocks: every flavour lands on the system clipboard");
     const QString png = tmpPng(QStringLiteral("mn_clip_51.png"));
     Clipboard c;
-    c.writeBlocks(QStringLiteral("{\"format\":\"minnotes-blocks\"}"), QStringLiteral("txt"),
+    c.writeBlocks(QStringLiteral("{\"format\":\"mnd-blocks\"}"), QStringLiteral("txt"),
                   QStringLiteral("<table><tr><td>x</td></tr></table>"), QUrl::fromLocalFile(png).toString());
     const QMimeData* md = QGuiApplication::clipboard()->mimeData();
     CHECK(md && md->hasFormat(QLatin1String(BlockClipboard::kMime)), "custom mime present");
-    CHECK(c.hasBlocks() && c.readBlocks() == QStringLiteral("{\"format\":\"minnotes-blocks\"}"), "readBlocks");
+    CHECK(c.hasBlocks() && c.readBlocks() == QStringLiteral("{\"format\":\"mnd-blocks\"}"), "readBlocks");
     CHECK(c.readText() == QStringLiteral("txt"), "plain flavour");
     CHECK(c.hasHtml() && c.readHtml().contains(QStringLiteral("<table")), "html flavour");
     CHECK(c.hasImage(), "raster flavour");
@@ -4615,7 +4628,7 @@ static void testPasteAssets() {
     src.newDocument();
     while (src.rowCountQml() > 0) src.removeBlock(0);
     src.insertBlock(0); src.setContent(0, QStringLiteral("head"));
-    CHECK(src.saveAs(srcD + QStringLiteral("/src.mndb")), "source anchored");
+    CHECK(src.saveAs(srcD + QStringLiteral("/src.mnd")), "source anchored");
     QDir().mkpath(srcD + QStringLiteral("/.minnotes"));
     { QImage img(12, 10, QImage::Format_RGB32); img.fill(Qt::cyan);
       img.save(srcD + QStringLiteral("/.minnotes/") + picN, "PNG"); }
@@ -4662,7 +4675,7 @@ static void testPasteAssets() {
     dest.newDocument();
     while (dest.rowCountQml() > 0) dest.removeBlock(0);
     dest.insertBlock(0); dest.setContent(0, QStringLiteral("dest"));
-    CHECK(dest.saveAs(destD + QStringLiteral("/dest.mndb")), "dest anchored");
+    CHECK(dest.saveAs(destD + QStringLiteral("/dest.mnd")), "dest anchored");
     QDir().mkpath(destD + QStringLiteral("/.minnotes"));
     { QFile f(destD + QStringLiteral("/.minnotes/") + picN);   // name collision, different size
       f.open(QIODevice::WriteOnly); f.write(QByteArray(7, 'x')); }
@@ -4814,7 +4827,7 @@ static void testMoveBlocks() {
     m.moveBlocks(3, 2, 0);                                  // b,c → top: b c a d e f
     CHECK(order() == QStringLiteral("bcadef"), "run moved up ('%s')", qPrintable(order()));
     // Persisted order survives a reload (ranks strictly increasing).
-    const QString path = QDir::temp().filePath(QStringLiteral("mn_move_56.mndb"));
+    const QString path = QDir::temp().filePath(QStringLiteral("mn_move_56.mnd"));
     QFile::remove(path);
     CHECK(m.saveAs(path), "saved");
     m.closeDocument();
@@ -5757,6 +5770,100 @@ static void testLayoutIndex() {
           "an empty document indexes to nothing");
 }
 
+// Run one SQL statement against a file through a private connection.
+static void execOnFile(const QString& path, const QString& stmt) {
+    const QString conn = QStringLiteral("mn_format_gate");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), conn);
+        db.setDatabaseName(path);
+        if (db.open()) { QSqlQuery q(db); q.exec(stmt); db.close(); }
+    }
+    QSqlDatabase::removeDatabase(conn);
+}
+
+static void testFormatGate() {
+    qInfo("[73] the .mnd clean break: only files stamped with this format open (SR-3 step 2)");
+    const QString dir = QDir::tempPath() + QStringLiteral("/mn_format_gate");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+
+    const QString good = dir + QStringLiteral("/new.mnd");
+    {
+        BlockModel m;
+        m.newDocument();
+        m.setContent(0, QStringLiteral("hello"));
+        CHECK(m.saveAs(good), "a new document saves");
+    }
+    {
+        Document d;
+        CHECK(d.open(good) && d.format() == QLatin1String(Document::kFormat) && d.schemaVersion() == 1,
+              "a saved file carries the mnd marker at schema v1");
+        d.close();
+    }
+    {
+        BlockModel m;
+        CHECK(m.openDocument(good) && m.contentForRow(0) == QStringLiteral("hello") && m.lastOpenError().isEmpty(),
+              "a stamped file opens");
+    }
+
+    // An earlier minNotes file: the minNotes tables and a schema_version, no format column.
+    const QString old = dir + QStringLiteral("/old.mnd");
+    QFile::copy(good, old);
+    execOnFile(old, QStringLiteral("UPDATE doc_meta SET format = NULL, schema_version = 3"));
+    execOnFile(old, QStringLiteral("ALTER TABLE doc_meta DROP COLUMN format"));
+    const QByteArray oldBytes = [&] { QFile f(old); f.open(QIODevice::ReadOnly); return f.readAll(); }();
+    {
+        BlockModel m;
+        CHECK(!m.openDocument(old) && !m.documentOpen(), "an earlier minNotes file is refused");
+        CHECK(m.lastOpenError().contains(QStringLiteral("earlier minNotes")),
+              "…with a reason that says so (%s)", qPrintable(m.lastOpenError()));
+    }
+    {
+        QFile f(old); f.open(QIODevice::ReadOnly);
+        CHECK(f.readAll() == oldBytes, "a refused file is left byte-for-byte untouched");
+    }
+
+    const QString foreign = dir + QStringLiteral("/foreign.mnd");
+    execOnFile(foreign, QStringLiteral("CREATE TABLE notes (x TEXT)"));
+    {
+        BlockModel m;
+        CHECK(!m.openDocument(foreign) && m.lastOpenError().contains(QStringLiteral("isn't a minNotes document")),
+              "a database minNotes didn't write is refused as not a minNotes document");
+    }
+
+    // Packages: exactly this format version opens; earlier or manifest-less ones are refused.
+    const QByteArray dbBytes = [&] { QFile f(good); f.open(QIODevice::ReadOnly); return f.readAll(); }();
+    auto writePackage = [&](const QString& path, const QJsonObject& manifest) {
+        mnpkg::PackageWriter w(path);
+        bool ok = w.addCompressed(QLatin1String(mnpkg::kDbEntry), dbBytes);
+        if (!manifest.isEmpty())
+            ok = ok && w.addCompressed(QLatin1String(mnpkg::kManifestEntry),
+                                       QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+        return ok && w.finish();
+    };
+    const QString pkgNow = dir + QStringLiteral("/now.mnpkg");
+    const QString pkgOld = dir + QStringLiteral("/old.mnpkg");
+    const QString pkgBare = dir + QStringLiteral("/bare.mnpkg");
+    QJsonObject oldManifest = mnpkg::makeManifest(0, 0);
+    oldManifest.insert(QStringLiteral("formatVersion"), 1);
+    CHECK(writePackage(pkgNow, mnpkg::makeManifest(0, 0)) && writePackage(pkgOld, oldManifest)
+              && writePackage(pkgBare, QJsonObject{}), "test packages written");
+    {
+        BlockModel m;
+        CHECK(m.openDocument(pkgNow) && m.contentForRow(0) == QStringLiteral("hello"),
+              "a package of this format version opens");
+    }
+    {
+        BlockModel m;
+        CHECK(!m.openDocument(pkgOld) && m.lastOpenError().contains(QStringLiteral("earlier minNotes")),
+              "a package from an earlier minNotes is refused with a reason");
+        BlockModel m2;
+        CHECK(!m2.openDocument(pkgBare) && !m2.lastOpenError().isEmpty(),
+              "a package without a manifest is refused");
+    }
+    QDir(dir).removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5844,6 +5951,7 @@ int main(int argc, char** argv) {
     testPayloadOnlyEditsAreEdits();
     testViewportSlots();
     testLayoutIndex();
+    testFormatGate();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

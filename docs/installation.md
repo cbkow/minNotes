@@ -40,7 +40,7 @@ The installer registers two file types and a URL scheme:
 
 | Type | What it is |
 |---|---|
-| `.mndb` | A note — a plain SQLite file you can store anywhere |
+| `.mnd` | A note — a plain SQLite file you can store anywhere |
 | `.mnpkg` | A sealed [package](packages.md) with all assets inside |
 | `minnotes://` | Deep links that open a note from other apps |
 

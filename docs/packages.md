@@ -29,9 +29,9 @@ media loads lazily out of the archive, and video plays straight from it
 without extraction.
 
 Packages are snapshots: you can type in the view, but **Save is
-disabled** — use **Save As** to materialize an editable `.mndb` copy
+disabled** — use **Save As** to materialize an editable `.mnd` copy
 (with its media folder) wherever you want it. The package on disk is
 never modified.
 
-> The rule of thumb: `.mndb` is the source you work in; `.mnpkg` is the
+> The rule of thumb: `.mnd` is the source you work in; `.mnpkg` is the
 > artifact you send.

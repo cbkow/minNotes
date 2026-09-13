@@ -1,8 +1,8 @@
 # macOS packaging assets
 
 - **`Info.plist.in`** — bundle template (configured by `app/CMakeLists.txt`).
-  Declares the `app.minnotes` bundle id, the `.mndb` document type +
-  `app.minnotes.mndb` exported UTI, the `minnotes://` URL scheme, and the
+  Declares the `app.minnotes` bundle id, the `.mnd` document type +
+  `app.minnotes.mnd` exported UTI, the `minnotes://` URL scheme, and the
   Sparkle `SU*` keys. `SUPublicEDKey` is a placeholder until you generate the
   EdDSA key with Sparkle's `generate_keys` (`external/Sparkle/bin/`).
 - **`entitlements.plist`** — hardened-runtime entitlements for Developer ID

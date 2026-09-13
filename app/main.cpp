@@ -31,7 +31,7 @@
 #include "core/PdfPageProvider.h"
 
 // Resolve a file path / file:// URL / minnotes:// deep link to a document path
-// and open it in a tab. `minnotes:///abs/path/doc.mndb` opens that document,
+// and open it in a tab. `minnotes:///abs/path/doc.mnd` opens that document,
 // mirroring QCView's project deep links. openTab dedupes: a path that's already
 // open just focuses its existing tab.
 static void resolveAndOpen(DocumentManager &docs, const QString &s)
@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
     // ── Single-instance gate (Windows) ────────────────────────────────
     // The first process holds a per-user lock and becomes the primary (it
     // listens on a local socket, below). A later launch — double-clicking a
-    // .mndb or following a minnotes:// link while minNotes is open — forwards
+    // .mnd or following a minnotes:// link while minNotes is open — forwards
     // its file/URI args to the primary and exits, so there's never a second
     // window contending for the same SQLite document. macOS needs none of this:
     // the OS reuses the .app and delivers the open as a QFileOpenEvent.
@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
     // no model-following; the merger is stateless between merges.
     DocumentMerger merger;
     engine.rootContext()->setContextProperty("merger", &merger);
-    // Rich clipboard paste (x-minnotes-blocks): the merger's plan/copy/apply
+    // Rich clipboard paste (x-mnd-blocks): the merger's plan/copy/apply
     // shape for a pasted block run; assets travel on a worker when needed.
     ClipboardPaster paster;
     engine.rootContext()->setContextProperty("paster", &paster);

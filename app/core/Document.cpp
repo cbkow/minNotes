@@ -99,11 +99,8 @@ bool Document::open(const QString& path) {
               id INTEGER PRIMARY KEY CHECK (id = 1),
               title TEXT, schema_version INTEGER, app_version TEXT,
               created INTEGER, modified INTEGER, last_cursor TEXT,
-              page_width INTEGER
+              page_width INTEGER, format TEXT
           ))");
-    // v3 column on pre-v3 files: additive, so older builds keep opening the
-    // file untouched (they never read it). Fails harmlessly when present.
-    exec("ALTER TABLE doc_meta ADD COLUMN page_width INTEGER");
 
     // v2: document annotations. block_ink = ONE row per anchored block, the
     // whole serialized stroke blob (block-local coordinate envelope, see
@@ -145,7 +142,9 @@ bool Document::open(const QString& path) {
 
     // Soft format gate: a doc stamped by a NEWER format still opens, but say
     // so — editing it with this build may drop fields the newer format added.
-    if (const int v = schemaVersion(); v > kSchemaVersion)
+    // Only a .mnd file can be newer; an earlier minNotes file (no marker, its
+    // own version numbering) is refused by BlockModel instead.
+    if (const int v = schemaVersion(); v > kSchemaVersion && format() == QLatin1String(kFormat))
         qWarning() << "Document:" << path << "uses format v" << v
                    << "(this build writes v" << kSchemaVersion
                    << ") — newer fields may be lost on save";
@@ -157,16 +156,28 @@ void Document::stampMeta() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare(QStringLiteral(
-        "INSERT INTO doc_meta (id, schema_version, app_version, created, modified) "
-        "VALUES (1, ?, ?, ?, ?) "
+        "INSERT INTO doc_meta (id, schema_version, app_version, created, modified, format) "
+        "VALUES (1, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET schema_version = excluded.schema_version, "
-        "app_version = excluded.app_version, modified = excluded.modified"));
+        "app_version = excluded.app_version, modified = excluded.modified, "
+        "format = excluded.format"));
     q.addBindValue(kSchemaVersion);
     q.addBindValue(QStringLiteral(MINNOTES_APP_VERSION));
     q.addBindValue(now);
     q.addBindValue(now);
+    q.addBindValue(QString::fromLatin1(kFormat));
     if (!q.exec())
         qWarning() << "Document: doc_meta stamp failed:" << q.lastError().text();
+}
+
+QString Document::format() const {
+    if (!open_) return {};
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    // An earlier minNotes file has no format column at all — the query fails,
+    // which reads as "no marker".
+    if (q.exec(QStringLiteral("SELECT format FROM doc_meta WHERE id = 1")) && q.next())
+        return q.value(0).toString();
+    return {};
 }
 
 int Document::schemaVersion() const {

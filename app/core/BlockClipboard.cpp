@@ -97,8 +97,9 @@ BlockModel::BlockSpec specFromJson(const QJsonObject& o, QString* ink) {
 
 QByteArray encode(const Payload& p) {
     QJsonObject root;
-    root.insert(QStringLiteral("format"), QStringLiteral("minnotes-blocks"));
+    root.insert(QStringLiteral("format"), QStringLiteral("mnd-blocks"));
     root.insert(QStringLiteral("version"), p.version);
+    root.insert(QStringLiteral("minReader"), kMinReader);
     QJsonObject source;
     source.insert(QStringLiteral("docPath"), p.docPath);
     source.insert(QStringLiteral("docDir"), p.docDir);
@@ -149,11 +150,12 @@ bool decode(const QByteArray& json, Payload* out, QString* error) {
     if (pe.error != QJsonParseError::NoError || !d.isObject())
         return fail(QStringLiteral("malformed payload"));
     const QJsonObject root = d.object();
-    if (root.value(QStringLiteral("format")).toString() != QLatin1String("minnotes-blocks"))
+    if (root.value(QStringLiteral("format")).toString() != QLatin1String("mnd-blocks"))
         return fail(QStringLiteral("not a minNotes blocks payload"));
     const int version = root.value(QStringLiteral("version")).toInt();
-    if (version < 1 || version > kVersion)
-        return fail(QStringLiteral("unsupported payload version %1").arg(version));
+    const int minReader = root.value(QStringLiteral("minReader")).toInt(version);
+    if (version < 1 || minReader < 1 || minReader > kVersion)
+        return fail(QStringLiteral("payload needs a newer minNotes (reader %1)").arg(minReader));
     Payload p;
     p.version = version;
     const QJsonObject source = root.value(QStringLiteral("source")).toObject();

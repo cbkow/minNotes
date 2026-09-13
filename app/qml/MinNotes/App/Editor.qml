@@ -2279,7 +2279,7 @@ FocusScope {
             root.copyRange(fr0, 0, fr0, cursor.opaque(fr0) ? 0 : blockModel.contentForRow(fr0).length)
         }
     }
-    // Rich copy (0.5.0): the x-minnotes-blocks payload PLUS the flavours other
+    // Rich copy (0.5.0): the x-mnd-blocks payload PLUS the flavours other
     // apps read — plain text (a table's TSV), a lone table's HTML, a lone image
     // block's raster. Opaque rows never leak descriptor JSON.
     function copyRange(lR, lC, hR, hC) {

@@ -101,7 +101,7 @@ QString BlockModel::documentName() const {
     // Package views are untitled (snapshot semantics) but keep the package's
     // name — the tab should say what you're looking at.
     if (untitled_ && pkgDir_.isEmpty()) return QStringLiteral("Untitled");
-    return QFileInfo(docPath_).completeBaseName();   // basename without .mndb/.mnpkg
+    return QFileInfo(docPath_).completeBaseName();   // basename without .mnd/.mnpkg
 }
 
 void BlockModel::closeDocument() {
@@ -162,7 +162,7 @@ QString BlockModel::scratchDir() {
 QString BlockModel::newScratchPath() {
     const QString dir = scratchDir();
     QDir().mkpath(dir);
-    return dir + QStringLiteral("/work-") + makeUlid() + QStringLiteral(".mndb");
+    return dir + QStringLiteral("/work-") + makeUlid() + QStringLiteral(".mnd");
 }
 
 void BlockModel::cleanupScratch() {
@@ -215,23 +215,32 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
     // (atomic replace on save). `path` stays the identity + media anchor.
     doc_.close();
     cleanupScratch();
+    lastOpenError_.clear();
 
     // .mnpkg fork: packages are SEALED SNAPSHOTS (user ruling 2026-08-18 —
-    // .mndb is the ONE editable format; a package is produced by Export and
-    // received for viewing). Opening one is a LAZY read: only document.mndb
+    // .mnd is the ONE editable format; a package is produced by Export and
+    // received for viewing). Opening one is a LAZY read: only document.mnd
     // extracts up front (instant regardless of package size); media stays in
     // the archive until something touches it (MediaStore::resolvePath pulls
     // `media/<x>` → `.minnotes/<x>` on first access; videos bring their
     // .qcview sidecar). The doc opens with UNTITLED semantics — you can read,
     // play, even type, but nothing persists until Save As materializes a
-    // real .mndb; the package file itself is NEVER written. docPath_ stays
+    // real .mnd; the package file itself is NEVER written. docPath_ stays
     // the .mnpkg for tab dedupe, recents, and documentName.
     if (!untitled && mnpkg::isPackagePath(path)) {
         if (!QFileInfo::exists(path)) return false;
+        // The 1.0 clean break (R-I6 6b): a package from an earlier minNotes —
+        // or one with no manifest — is refused, not converted.
+        const QJsonObject manifest = mnpkg::readManifest(path);
+        if (manifest.value(QStringLiteral("format")).toString() != QLatin1String("mnpkg")
+            || manifest.value(QStringLiteral("formatVersion")).toInt() != mnpkg::kFormatVersion) {
+            lastOpenError_ = tr("This package was made with an earlier minNotes and can't be opened.");
+            return false;
+        }
         pkgDir_ = scratchDir() + QStringLiteral("/pkg-") + makeUlid();
-        scratchPath_ = pkgDir_ + QStringLiteral("/document.mndb");
+        scratchPath_ = pkgDir_ + QStringLiteral("/document.mnd");
         if (!mnpkg::extractEntry(path, QLatin1String(mnpkg::kDbEntry), scratchPath_)) {
-            qWarning() << "BlockModel: package has no readable document.mndb" << path;
+            qWarning() << "BlockModel: package has no readable document.mnd" << path;
             cleanupScratch();
             return false;
         }
@@ -242,6 +251,7 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
             cleanupScratch();
             return false;
         }
+        if (!acceptOpenedFormat()) return false;
         docPath_ = path;
         untitled_ = true;   // snapshot: save() routes to Save As, no conflict baseline
         mediaStore_ = std::make_unique<MediaStore>(scratchPath_);  // anchored to the extraction
@@ -293,6 +303,7 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
         cleanupScratch();
         return false;
     }
+    if (!untitled && QFileInfo::exists(path) && !acceptOpenedFormat()) return false;
     docPath_ = path;
     untitled_ = untitled;
     mediaStore_ = std::make_unique<MediaStore>(path);   // media anchored to the ORIGINAL folder
@@ -301,6 +312,19 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
     setSaveState(SaveClean);
     clearUndo();
     return true;
+}
+
+// The 1.0 clean break (PLAN-split-rows-interchange R-I1): only files stamped
+// with this build's format open. Anything else is refused with a reason —
+// never migrated. The working copy is discarded; the original is untouched.
+bool BlockModel::acceptOpenedFormat() {
+    if (doc_.format() == QLatin1String(Document::kFormat)) return true;
+    lastOpenError_ = doc_.schemaVersion() > 0
+        ? tr("This document was made with an earlier minNotes and can't be opened.")
+        : tr("This file isn't a minNotes document.");
+    doc_.close();
+    cleanupScratch();
+    return false;
 }
 
 void BlockModel::seedEmptyDoc() {
@@ -317,7 +341,7 @@ void BlockModel::newDocument() {
     // The bytes live in the working copy (scratchPath_), not at this path.
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
-    const QString path = dir + QStringLiteral("/untitled-") + makeUlid() + QStringLiteral(".mndb");
+    const QString path = dir + QStringLiteral("/untitled-") + makeUlid() + QStringLiteral(".mnd");
     if (!loadDocument(path, /*untitled*/true)) return;
     seedEmptyDoc();
     loadFromStore();
@@ -389,7 +413,7 @@ bool BlockModel::saveAs(const QString& pathOrUrl) {
     QString path = pathOrUrl.startsWith(QLatin1String("file:"))
                  ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
     if (path.isEmpty()) return false;
-    if (!path.endsWith(QLatin1String(".mndb"), Qt::CaseInsensitive)) path += QStringLiteral(".mndb");
+    if (!path.endsWith(QLatin1String(".mnd"), Qt::CaseInsensitive)) path += QStringLiteral(".mnd");
     const QString srcMediaDir = mediaAnchorDir();   // package docs: the extraction dir
     const QString dstDir = QFileInfo(path).absolutePath();
     QDir().mkpath(dstDir);

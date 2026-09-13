@@ -77,15 +77,15 @@ ApplicationWindow {
     FileDialog {
         id: openDialog
         title: "Open document"
-        nameFilters: ["minNotes documents (*.mndb *.mnpkg)"]
+        nameFilters: ["minNotes documents (*.mnd *.mnpkg)"]
         onAccepted: win.openDoc(selectedFile)
     }
     FileDialog {
         id: saveAsDialog
         title: "Save As"
         fileMode: FileDialog.SaveFile
-        defaultSuffix: "mndb"
-        nameFilters: ["minNotes documents (*.mndb)"]
+        defaultSuffix: "mnd"
+        nameFilters: ["minNotes documents (*.mnd)"]
         onAccepted: {
             var f = "" + selectedFile
             if (blockModel.saveAs(f)) {
@@ -136,7 +136,7 @@ ApplicationWindow {
         }
         onAccepted: win.startImport("" + selectedFile)
     }
-    // Multi-document imports (ENEX, Notion zips) write N .mndb files into a
+    // Multi-document imports (ENEX, Notion zips) write N .mnd files into a
     // chosen folder — the OS organizes (no vault) — then open the first.
     property string _pendingMultiImport: ""
     property string _pendingImportName: ""
@@ -802,7 +802,7 @@ ApplicationWindow {
         if (list.length > 10) list = list.slice(0, 10)
         recentsStore.paths = JSON.stringify(list)
     }
-    function baseName(path) { var n = ("" + path).split("/").pop(); return n.replace(/\.(mndb|mnpkg)$/i, "") }
+    function baseName(path) { var n = ("" + path).split("/").pop(); return n.replace(/\.(mnd|mnpkg)$/i, "") }
     function removeRecent(path) {
         recentsStore.paths = JSON.stringify(
             recentPaths().filter(function (p) { return p !== path }))
@@ -811,6 +811,7 @@ ApplicationWindow {
     // renamed, or deleted) used to fail SILENTLY — indistinguishable from the
     // app just not opening anything. Now it says so and prunes the entry.
     property string openFailedPath: ""
+    property string openFailedReason: ""   // set when the file was refused (e.g. an earlier minNotes)
     function openDoc(path) {
         path = "" + path
         if (docs.openTab(path)) {
@@ -821,6 +822,7 @@ ApplicationWindow {
             return
         }
         openFailedPath = path
+        openFailedReason = docs.lastOpenError()
         removeRecent(path)
         openFailedDialog.open()
     }
@@ -836,7 +838,9 @@ ApplicationWindow {
                    color: Theme.colors.textBright; font.family: Theme.font.family
                    font.pixelSize: Theme.font.sizeBody; font.bold: true }
             Text { width: 400; wrapMode: Text.Wrap
-                   text: "The file may have been moved, renamed, or deleted:\n"
+                   text: (win.openFailedReason !== ""
+                              ? win.openFailedReason + "\n"
+                              : "The file may have been moved, renamed, or deleted:\n")
                        + win.openFailedPath + "\n\nIt has been removed from Open Recent."
                    color: Theme.colors.textMuted; font.family: Theme.font.family
                    font.pixelSize: Theme.font.sizeBody }
@@ -1610,7 +1614,7 @@ ApplicationWindow {
         // Swallow stray clicks so nothing reaches the rail/editor underneath.
         MouseArea { anchors.fill: parent }
 
-        // Drop a document right onto the welcome screen: .mndb opens, any
+        // Drop a document right onto the welcome screen: .mnd opens, any
         // importable format (importer.formatFor) imports into a fresh tab.
         DropArea {
             id: welcomeDrop
@@ -1619,7 +1623,7 @@ ApplicationWindow {
                 if (!drop.hasUrls) return
                 for (var i = 0; i < drop.urls.length; ++i) {
                     var u = "" + drop.urls[i]
-                    if (/\.(mndb|mnpkg)$/i.test(u)) win.openDoc(u)
+                    if (/\.(mnd|mnpkg)$/i.test(u)) win.openDoc(u)
                     else if (importer.formatFor(u) !== "") win.startImport(u)
                 }
             }

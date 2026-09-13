@@ -102,17 +102,17 @@ Name: "{group}\{cm:UninstallProgram,minNotes}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\minNotes";                 Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; ---- .mndb document association (minNotes.Document progid) -----------
-; HKA → HKLM\Software\Classes (admin/per-machine install). Double-click a .mndb
-; (or `minNotes.exe file.mndb`) → main.cpp resolveAndOpen() opens it via argv.
-Root: HKA; Subkey: "Software\Classes\.mndb"; ValueType: string; ValueName: ""; ValueData: "minNotes.Document"; Flags: uninsdeletevalue
+; ---- .mnd document association (minNotes.Document progid) -----------
+; HKA → HKLM\Software\Classes (admin/per-machine install). Double-click a .mnd
+; (or `minNotes.exe file.mnd`) → main.cpp resolveAndOpen() opens it via argv.
+Root: HKA; Subkey: "Software\Classes\.mnd"; ValueType: string; ValueName: ""; ValueData: "minNotes.Document"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\minNotes.Document"; ValueType: string; ValueName: ""; ValueData: "minNotes Document"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\minNotes.Document\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\minNotes.ico,0"
 Root: HKA; Subkey: "Software\Classes\minNotes.Document\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 ; ---- .mnpkg package association (minNotes.Package progid) ------------
 ; The hand-off package (sealed snapshot): double-click opens a read-only
-; view; Save As materializes a .mndb. It's a zip inside — users can rename
+; view; Save As materializes a .mnd. It's a zip inside — users can rename
 ; to .zip to inspect.
 Root: HKA; Subkey: "Software\Classes\.mnpkg"; ValueType: string; ValueName: ""; ValueData: "minNotes.Package"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\minNotes.Package"; ValueType: string; ValueName: ""; ValueData: "minNotes Package"; Flags: uninsdeletekey
@@ -120,7 +120,7 @@ Root: HKA; Subkey: "Software\Classes\minNotes.Package\DefaultIcon"; ValueType: s
 Root: HKA; Subkey: "Software\Classes\minNotes.Package\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 ; ---- minnotes:// URI scheme (deep links) ----------------------------
-; minnotes:///abs/path/doc.mndb → resolveAndOpen() opens that document.
+; minnotes:///abs/path/doc.mnd → resolveAndOpen() opens that document.
 Root: HKA; Subkey: "Software\Classes\minnotes"; ValueType: string; ValueName: ""; ValueData: "URL:minNotes Protocol"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\minnotes"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\minnotes\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\minNotes.ico,0"

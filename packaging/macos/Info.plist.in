@@ -53,7 +53,7 @@
     <false/>
 
     <!-- ================================================================ -->
-    <!-- Document Types — minNotes documents (.mndb), owned by this app.   -->
+    <!-- Document Types — minNotes documents (.mnd), owned by this app.   -->
     <!-- ================================================================ -->
     <key>CFBundleDocumentTypes</key>
     <array>
@@ -66,11 +66,11 @@
             <string>Owner</string>
             <key>LSItemContentTypes</key>
             <array>
-                <string>app.minnotes.mndb</string>
+                <string>app.minnotes.mnd</string>
             </array>
         </dict>
         <!-- .mnpkg — the hand-off package (sealed snapshot). Double-click
-             opens it as a read-only view; Save As materializes a .mndb. -->
+             opens it as a read-only view; Save As materializes a .mnd. -->
         <dict>
             <key>CFBundleTypeName</key>
             <string>minNotes Package</string>
@@ -87,7 +87,7 @@
 
     <!-- ================================================================ -->
     <!-- Custom URI Scheme (minnotes:// deep links)                       -->
-    <!-- minnotes:///abs/path/doc.mndb opens that document. Handled via    -->
+    <!-- minnotes:///abs/path/doc.mnd opens that document. Handled via    -->
     <!-- QFileOpenEvent in MinNotesApplication → resolveAndOpen in main.   -->
     <!-- ================================================================ -->
     <key>CFBundleURLTypes</key>
@@ -105,7 +105,7 @@
     </array>
 
     <!-- ================================================================ -->
-    <!-- Exported Type Declarations (the .mndb type owned by minNotes).    -->
+    <!-- Exported Type Declarations (the .mnd type owned by minNotes).    -->
     <!-- An SQLite-backed document; conforms to public.database so Finder  -->
     <!-- and Spotlight treat it as a single data file.                     -->
     <!-- ================================================================ -->
@@ -113,7 +113,7 @@
     <array>
         <dict>
             <key>UTTypeIdentifier</key>
-            <string>app.minnotes.mndb</string>
+            <string>app.minnotes.mnd</string>
             <key>UTTypeDescription</key>
             <string>minNotes Document</string>
             <key>UTTypeConformsTo</key>
@@ -125,11 +125,11 @@
             <dict>
                 <key>public.filename-extension</key>
                 <array>
-                    <string>mndb</string>
+                    <string>mnd</string>
                 </array>
             </dict>
         </dict>
-        <!-- .mnpkg is a zip (document.mndb + media/ + manifest.json), so it
+        <!-- .mnpkg is a zip (document.mnd + media/ + manifest.json), so it
              conforms to public.zip-archive — Archive Utility can still crack
              one open for inspection while minNotes owns the double-click. -->
         <dict>

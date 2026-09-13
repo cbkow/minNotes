@@ -27,29 +27,31 @@ public:
     bool open(const QString& path);
     void close();
     bool isOpen() const { return open_; }
-    // Flush the WAL into the main file so the .mndb is self-contained (Save).
+    // Flush the WAL into the main file so the .mnd is self-contained (Save).
     bool checkpoint();
     // Write a clean, compacted copy of the DB to `path` (Save As). Does not
     // switch — the caller re-opens the new path.
     bool vacuumInto(const QString& path) const;
 
     // --- Format versioning (doc_meta, id=1) ---
-    // The .mndb format this build writes. Bump on any incompatible change to
-    // the blocks/attrs/content encoding; readers gate migrations on
-    // schemaVersion(). v1 = clean-text+spans content (markdown markers are
-    // consumed on load), string span kinds in attrs, media descriptors with
-    // portable src refs. v2 adds document annotations: the block_ink table
-    // (block-pinned margin ink), comment_threads/comment_messages, and the
-    // "comment" span kind. v3 adds doc_meta.page_width (per-document page
-    // measure; absent/0 = the classic 760). The gate is SOFT — older builds
-    // still open v3 files (warning only), they just render at 760.
-    static constexpr int kSchemaVersion = 3;
+    // The .mnd format this build writes — the 1.0 clean break
+    // (PLAN-split-rows-interchange R-I1): doc_meta.format == kFormat marks a
+    // file as this format, and a file without it is REFUSED, never migrated.
+    // v1 = clean-text+spans content (markdown markers are consumed on load),
+    // string span kinds in attrs, portable media descriptors, block_ink +
+    // comment_threads/comment_messages, doc_meta.page_width. Bump on any
+    // incompatible change; a NEWER version still opens with a warning.
+    static constexpr int kSchemaVersion = 1;
+    static constexpr const char* kFormat = "mnd";
     // Upsert the doc_meta row: `created` is written once, then every stamp
     // updates schema_version + app_version + modified. Called on the save
     // paths so a saved file always records what wrote it.
     void stampMeta();
     // schema_version of the open doc; 0 = pre-versioning legacy (never stamped).
     int schemaVersion() const;
+    // doc_meta.format of the open doc; "" = not a .mnd file (an earlier
+    // minNotes file, or a database this app didn't write).
+    QString format() const;
     // Per-document page measure (v3). 760 when absent/unset — every pre-v3
     // document reads as the classic width. Setter upserts doc_meta so the
     // width survives even before the first stampMeta.

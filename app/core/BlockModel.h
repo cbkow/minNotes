@@ -86,6 +86,9 @@ public:
     // SQLite never runs on smbfs/Dropbox/etc); save() writes it back to the original.
     Q_INVOKABLE void newDocument();                       // fresh untitled scratch
     Q_INVOKABLE bool openDocument(const QString& pathOrUrl);
+    // Why the last open failed ("" = it didn't, or no reason is known) — e.g. a
+    // file from an earlier minNotes, refused by the 1.0 clean break.
+    QString lastOpenError() const { return lastOpenError_; }
     Q_INVOKABLE void closeDocument();                     // back to the no-doc state
     Q_INVOKABLE bool save();                              // write working copy → original; false if untitled/conflict/failed
     Q_INVOKABLE bool overwriteSave();                     // save ignoring an external-change conflict ("Overwrite")
@@ -329,7 +332,7 @@ public:
     // char columns at its ends; opaque rows (media/table/divider) are always
     // whole. specsForRange slices the end rows (spans clipped + rebased,
     // partially-clipped chips dropped); clipboardPayloadForRange wraps that
-    // as the x-minnotes-blocks JSON (ink for whole rows only, comment thread
+    // as the x-mnd-blocks JSON (ink for whole rows only, comment thread
     // bodies, asset snapshot); plainTextForRange is the plain flavour every
     // copy also writes (text rows sliced, tables as TSV, dividers as "---",
     // media omitted — never descriptor JSON).
@@ -670,7 +673,7 @@ public:
     // PDF page ink (2026-08-19): per-PAGE stroke overlays for kind:"pdf"
     // media, stored in the block's content JSON under "ink" keyed by page
     // index (the sketch storage precedent — document-owned, txn undo,
-    // cascades with the block, travels in .mndb/.mnpkg; the PDF file itself
+    // cascades with the block, travels in .mnd/.mnpkg; the PDF file itself
     // is never modified). Envelope per page = the engine's QCView schema
     // {version, coordinate_system, shapes} exactly as sketchSetShapes keeps it.
     Q_INVOKABLE QString pdfPageInk(int row, int page) const;   // "" = no ink on that page
@@ -971,6 +974,8 @@ private:
     double estimatedHeight(const Row& r) const;
     double mediaFrameHeight(const Row& r) const;   // displayed media frame px at contentWidth_
     double mediaDisplayWidth(const Row& r) const;  // per-block override or default width
+    QString lastOpenError_;          // why the last open was refused (lastOpenError())
+    bool acceptOpenedFormat();       // the 1.0 format gate on a just-opened working copy
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)
     QString genBase(int row, const Row& r) const;   // synthesize a row's text (no edit overlay)
     QString textAt(int row) const;                  // edit override else loaded content
@@ -1003,9 +1008,9 @@ private:
     QString docPath_;        // canonical original (or the untitled identity path); media anchor + Save-As source
     QString scratchPath_;    // local working-copy DB the SQLite connection actually runs against
     // Open .mnpkg: the per-document extraction dir (scratch subdir holding
-    // document.mndb + .minnotes/). Empty for plain .mndb docs. Tracked for
+    // document.mnd + .minnotes/). Empty for plain .mnd docs. Tracked for
     // cleanup + the media anchor; the SAVE fork keys off isPackagePath(docPath_)
-    // instead (Save As can re-home a package doc to .mndb while its working
+    // instead (Save As can re-home a package doc to .mnd while its working
     // copy stays here).
     QString pkgDir_;
     bool untitled_ = true;   // scratch doc with no chosen path yet

@@ -1,4 +1,4 @@
-// .mnpkg — the app's interchange package: a zip carrying `document.mndb` +
+// .mnpkg — the app's interchange package: a zip carrying `document.mnd` +
 // a `media/` tree + `manifest.json`. Media entries are STORED (pre-compressed
 // bytes; repack at disk-copy speed), db + manifest DEFLATE. This is the ONE
 // archive layer — the packer (Lane A) and the archive-shaped importers
@@ -27,10 +27,13 @@
 
 namespace mnpkg {
 
-inline constexpr int kFormatVersion = 1;
+// 2 = the 1.0 generation (document.mnd). The package-open gate accepts exactly
+// this version: an earlier package, or one without a manifest, is refused
+// (the clean break, PLAN-split-rows-interchange R-I6 6b).
+inline constexpr int kFormatVersion = 2;
 
-// Package entry names (layout contract, format v1).
-inline constexpr const char* kDbEntry       = "document.mndb";
+// Package entry names (layout contract, format v2).
+inline constexpr const char* kDbEntry       = "document.mnd";
 inline constexpr const char* kManifestEntry = "manifest.json";
 inline constexpr const char* kMediaDir      = "media";   // tree prefix (see header note)
 
@@ -38,7 +41,7 @@ inline constexpr const char* kMediaDir      = "media";   // tree prefix (see hea
 bool isPackagePath(const QString& pathOrUrl);
 
 // The package's manifest.json as an object ({} = unreadable/absent — caller
-// decides how lenient to be; format v1 readers tolerate a missing manifest).
+// decides how lenient to be; the package-open gate refuses a missing one).
 QJsonObject readManifest(const QString& zipPath);
 // A fresh manifest for writing.
 QJsonObject makeManifest(int mediaCount, qint64 mediaBytes);

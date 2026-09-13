@@ -5,7 +5,7 @@
 #include <QStringList>
 
 // QGuiApplication subclass that captures macOS QFileOpenEvent — Finder double-
-// click / `open file.mndb` / `minnotes://` deep links — and forwards them.
+// click / `open file.mnd` / `minnotes://` deep links — and forwards them.
 // Cold-start events (delivered before the QML engine + model are ready) are
 // stashed and drained from main() once the app signals readiness. The same
 // `openRequested` path serves CLI/terminal arguments (parsed in main).

@@ -609,7 +609,7 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
 }
 
 // ---------------------------------------------------------------------------
-// Multi-document imports (ENEX / Notion) — one .mndb per note/page, written
+// Multi-document imports (ENEX / Notion) — one .mnd per note/page, written
 // into a user-chosen folder (the OS organizes; no vault).
 // ---------------------------------------------------------------------------
 
@@ -625,17 +625,17 @@ QString sanitizeDocName(QString s) {
     return s.isEmpty() ? QStringLiteral("Untitled note") : s;
 }
 
-// destDir/<base>.mndb, -2/-3… on collision (against both this run and disk).
+// destDir/<base>.mnd, -2/-3… on collision (against both this run and disk).
 QString uniqueDocPath(const QString& destDir, const QString& base,
                       QSet<QString>& taken) {
     QString name = base;
     for (int n = 2;
          taken.contains(name.toLower())
-             || QFileInfo::exists(destDir + QLatin1Char('/') + name + QStringLiteral(".mndb"));
+             || QFileInfo::exists(destDir + QLatin1Char('/') + name + QStringLiteral(".mnd"));
          ++n)
         name = base + QLatin1Char('-') + QString::number(n);
     taken.insert(name.toLower());
-    return destDir + QLatin1Char('/') + name + QStringLiteral(".mndb");
+    return destDir + QLatin1Char('/') + name + QStringLiteral(".mnd");
 }
 
 // Fresh headless model in the untitled scratch (the regression pattern):
@@ -659,7 +659,7 @@ struct EnexResource {
     QString md5;        // hex — the en-media linkage key
 };
 
-// One <note>'s ENML + resources → a saved .mndb. Returns false on write
+// One <note>'s ENML + resources → a saved .mnd. Returns false on write
 // failure (malformed notes still produce whatever converted).
 bool writeEnexNote(const QString& title, const QString& enml,
                    const QList<EnexResource>& resources,

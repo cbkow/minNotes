@@ -6,7 +6,7 @@ nav_order: 3
 
 # Documents & Tabs
 
-A note is a single `.mndb` file. Keep it on local disk, a NAS share,
+A note is a single `.mnd` file. Keep it on local disk, a NAS share,
 Dropbox, LucidLink — anywhere — and open it from macOS or Windows.
 
 ## Tabs

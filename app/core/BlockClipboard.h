@@ -1,5 +1,5 @@
 // BlockClipboard — the in-app rich clipboard flavour (0.5.0):
-// `application/x-minnotes-blocks`, a JSON serialization of a BlockSpec list
+// `application/x-mnd-blocks`, a JSON serialization of a BlockSpec list
 // plus what a faithful paste needs beyond the specs — per-block margin ink,
 // the bodies of every comment thread the spans anchor, and a copy-time
 // snapshot of where each collected (".minnotes/") asset's bytes live, so a
@@ -7,8 +7,11 @@
 // links into the headless test target.
 //
 // The payload is NEVER persisted (no document-format bump) but carries its
-// own version: decoders ignore a foreign format or a newer version and the
-// paste falls back to the plain-text flavour the same copy always writes.
+// own version plus the OLDEST reader version that can decode it (minReader).
+// Additive fields bump neither. A decoder refuses a foreign format — including
+// the pre-1.0 "minnotes-blocks" payload (no legacy decode) — or a payload whose
+// minReader is newer than itself, and the paste falls back to the plain-text
+// flavour the same copy always writes.
 #pragma once
 
 #include "AssetTransfer.h"
@@ -21,8 +24,9 @@
 
 namespace BlockClipboard {
 
-inline constexpr const char* kMime = "application/x-minnotes-blocks";
-inline constexpr int kVersion = 1;
+inline constexpr const char* kMime = "application/x-mnd-blocks";
+inline constexpr int kVersion = 1;     // what this build writes and understands
+inline constexpr int kMinReader = 1;   // the oldest reader this build's payloads need
 
 struct Asset {
     QString rel;      // the ".minnotes/…" src as it appears in the specs

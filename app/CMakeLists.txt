@@ -270,7 +270,7 @@ target_include_directories(minnotesapp PRIVATE
 
 # ---- macOS .app bundle: Info.plist, icons, Sparkle ----------------
 # Turns minnotesapp into minnotesapp.app with a custom Info.plist (URI scheme
-# minnotes://, the .mndb document type + exported UTI, Sparkle SU* keys), a
+# minnotes://, the .mnd document type + exported UTI, Sparkle SU* keys), a
 # proper Finder/dock icon (legacy .icns for macOS 13–25 + the Tahoe layered
 # .icon for 26+), and the vendored Sparkle.framework embedded in Frameworks/.
 if(APPLE)

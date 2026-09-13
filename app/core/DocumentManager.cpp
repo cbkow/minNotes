@@ -80,6 +80,7 @@ void DocumentManager::newTab() {
 }
 
 bool DocumentManager::openTab(const QString& pathOrUrl) {
+    lastOpenError_.clear();
     // Already open → just focus that tab (no duplicate window on the same DB).
     const int existing = indexOfPath(canonical(pathOrUrl));
     if (existing >= 0) { setActive(existing); return true; }
@@ -87,6 +88,7 @@ bool DocumentManager::openTab(const QString& pathOrUrl) {
     auto* m = new BlockModel(this);
     connect(m, &BlockModel::dirtyChanged, this, &DocumentManager::dirtyCountChanged);
     if (!m->openDocument(pathOrUrl)) {
+        lastOpenError_ = m->lastOpenError();
         delete m;
         return false;
     }

@@ -306,7 +306,7 @@ bool PackageExporter::packDocument(BlockModel* m, const QString& destPath,
     const PackPlan plan = buildPackPlan(m, includeVideos);
 
     const QString tmpDb = BlockModel::scratchDir() + QStringLiteral("/pack-")
-                        + QFileInfo(destPath).completeBaseName() + QStringLiteral(".mndb");
+                        + QFileInfo(destPath).completeBaseName() + QStringLiteral(".mnd");
     if (!prepareDb(m, plan, tmpDb)) {
         QFile::remove(tmpDb);
         return fail(QStringLiteral("Snapshot failed"));
@@ -360,7 +360,7 @@ void PackageExporter::startExport(const QString& fileUrlOrPath, bool includeVide
     // GUI-thread phase: everything that touches the model (fast).
     const PackPlan plan = buildPackPlan(model_, includeVideos);
     const QString tmpDb = BlockModel::scratchDir() + QStringLiteral("/pack-")
-                        + QFileInfo(dest).completeBaseName() + QStringLiteral(".mndb");
+                        + QFileInfo(dest).completeBaseName() + QStringLiteral(".mnd");
     if (!prepareDb(model_, plan, tmpDb)) {
         QFile::remove(tmpDb);
         lastError_ = QStringLiteral("Snapshot failed");

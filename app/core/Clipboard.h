@@ -7,7 +7,7 @@ class QClipboard;
 
 // A small mime-aware bridge over the system clipboard: text / html / image /
 // local file URLs, plus (0.5.0) the in-app rich flavour — application/
-// x-minnotes-blocks, a BlockClipboard JSON payload that every document copy
+// x-mnd-blocks, a BlockClipboard JSON payload that every document copy
 // writes ALONGSIDE the plain text (and a table's TSV + <table>, a lone image's
 // raster), so pasting into other apps keeps working while an in-app paste
 // gets the block run back with its types, spans, chips, ink and comments.
@@ -34,7 +34,7 @@ public:
     // paste re-imports as PNG.) Returns false if the file can't be loaded.
     Q_INVOKABLE bool writeImageFromFile(const QString& fileUrl);
 
-    // --- The in-app rich flavour (0.5.0): application/x-minnotes-blocks, the
+    // --- The in-app rich flavour (0.5.0): application/x-mnd-blocks, the
     // BlockClipboard JSON. writeBlocks publishes EVERY flavour at once so a
     // paste into another app keeps working: the blocks JSON, the plain text
     // (TSV for a table), optional HTML (a table's <table>) and an optional
