@@ -6,10 +6,12 @@
 //
 // Offsets are UTF-16 code units ([s,e) over QString), matching JS strings in QML.
 
+#include <QJsonObject>
 #include <QString>
 #include <QVariantList>
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace mn::inl {
@@ -92,5 +94,36 @@ bool payloadCovers(const QString& text, const Spans& spans, int start, int end,
 // The span feed QML and overlays read: [{s, e, k, u?}], with `u` present exactly for
 // payload kinds.
 QVariantList spansToVariantList(const Spans& spans);
+
+// --- Choice chips (DT-2) ---
+// A chip is a Choice span whose TEXT is the selected option's label and whose href is
+// the payload {"o":[{"id","l","c"}...],"v":selectedId}. Labels never carry
+// markdown-active characters (convertMarkdown scans raw text).
+QString sanitizeChoiceLabel(QString label);
+QString choiceLabelFor(const QJsonObject& payload, const QString& id);
+QString choiceColorFor(const QJsonObject& payload, const QString& id);
+QString encodeChoicePayload(const QJsonObject& payload);   // compact JSON for href
+// The chip covering `col` (s <= col < e), or nullptr.
+const Span* choiceAt(const Spans& spans, int col);
+// Insert a chip carrying `payload` at `col` (clamped; moved past a chip it lands inside).
+// Returns the chip's start.
+int insertChoice(QString& text, Spans& spans, int col, const QJsonObject& payload);
+// Rewrite the chip starting at `spanStart`: `edit` changes the payload and names the label
+// to show, or returns false to abort. The label text and every later span shift together.
+// Returns false (nothing changed) when there is no chip there or the edit aborts.
+using ChoiceEdit = std::function<bool(QJsonObject& payload, QString& label)>;
+bool editChoice(QString& text, Spans& spans, int spanStart, const ChoiceEdit& edit);
+// Payload edits for editChoice.
+// Select option `id`: false when it is already selected or unknown.
+bool selectOption(QJsonObject& payload, const QString& id, QString& label);
+// Append option `id` (label sanitized) and select it.
+void addOption(QJsonObject& payload, const QString& id, const QString& label,
+               const QString& color, QString& shownLabel);
+// Replace the option set ([{id?, label, color?}]; missing ids minted). The selection
+// survives if its id does, else falls to the first option. False for an empty list.
+bool setOptions(QJsonObject& payload, const QVariantList& options,
+                const std::function<QString()>& mintId, QString& label);
+// The chip overlay feed: [{s, e, color}] with the selected option's colour.
+QVariantList choiceRanges(const Spans& spans);
 
 } // namespace mn::inl

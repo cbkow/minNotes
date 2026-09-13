@@ -5400,6 +5400,93 @@ static void testInlineFormatOps() {
           "row and cell span feeds match, payload included");
 }
 
+// --- Test 69: choice chips through the engine (SR-1 step 4) ---------------------
+static void testInlineChoiceOps() {
+    qInfo("[69] choice chips: rows and cells share one engine (SR-1 step 4)");
+    using namespace mn::inl;
+    const auto K = [](const char* s) { return QString::fromLatin1(s); };
+    QJsonObject pay;
+    {
+        QJsonArray o;
+        o.append(QJsonObject{{K("id"), K("a")}, {K("l"), K("To do")}, {K("c"), K("#111")}});
+        o.append(QJsonObject{{K("id"), K("b")}, {K("l"), K("In progress")}, {K("c"), K("#222")}});
+        pay.insert(K("o"), o);
+        pay.insert(K("v"), K("a"));
+    }
+    QString t = K("x  y");
+    Spans v{{3, 4, Bold}};
+    CHECK(insertChoice(t, v, 1, pay) == 1 && t == K("xTo do  y") && v.size() == 2, "insert a chip; its text is the label");
+    bool boldShifted = false;
+    for (const Span& sp : v) if (sp.kind == Bold && sp.s == 8 && sp.e == 9) boldShifted = true;
+    CHECK(boldShifted, "later spans shift past the chip");
+    CHECK(insertChoice(t, v, 3, pay) == 6 && t == K("xTo doTo do  y"), "an insert inside a chip lands after it");
+    const QVariantList ranges = choiceRanges(v);
+    CHECK(ranges.size() == 2 && ranges[0].toMap().value(K("color")).toString() == K("#111"),
+          "overlay feed: one range per chip, selected colour");
+    const Span* first = choiceAt(v, 2);
+    CHECK(first && first->s == 1 && first->e == 6 && !choiceAt(v, 0), "choiceAt finds the covering chip");
+    CHECK(!editChoice(t, v, 1, [&](QJsonObject& p, QString& l) { return selectOption(p, K("a"), l); }),
+          "selecting the selected option is a no-op");
+    CHECK(!editChoice(t, v, 1, [&](QJsonObject& p, QString& l) { return selectOption(p, K("zzz"), l); }),
+          "an unknown option id is a no-op");
+    CHECK(!editChoice(t, v, 99, [](QJsonObject&, QString&) { return true; }), "no chip at that start: no-op");
+    CHECK(editChoice(t, v, 1, [&](QJsonObject& p, QString& l) { return selectOption(p, K("b"), l); })
+              && t == K("xIn progressTo do  y"), "select swaps the label text");
+    const Span* second = choiceAt(v, 13);
+    CHECK(second && second->s == 12 && second->e == 17, "the next chip shifted by the label delta");
+
+    QJsonObject p2 = pay;
+    QString shown;
+    addOption(p2, K("c"), K("  Bl*ocked  "), QString(), shown);
+    CHECK(shown == K("Blocked") && p2.value(K("v")).toString() == K("c") && p2.value(K("o")).toArray().size() == 3,
+          "add option sanitizes, appends and selects");
+    QString lab;
+    int minted = 0;
+    const QVariantList keepAndNew{QVariantMap{{K("id"), K("c")}, {K("label"), K("Blocked")}},
+                                  QVariantMap{{K("label"), K("New")}}};
+    CHECK(setOptions(p2, keepAndNew, [&] { ++minted; return K("n") + QString::number(minted); }, lab)
+              && lab == K("Blocked") && minted == 1,
+          "set options keeps a surviving selection and mints missing ids");
+    CHECK(setOptions(p2, QVariantList{QVariantMap{{K("label"), K("Only")}}}, [] { return QStringLiteral("o1"); }, lab)
+              && lab == K("Only") && p2.value(K("v")).toString() == K("o1"),
+          "a deleted selection falls back to the first option");
+    CHECK(!setOptions(p2, QVariantList{}, [] { return QString(); }, lab), "an empty option list refuses");
+
+    // Row / cell parity through the model API.
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, K("status "));
+    const int tb = m.insertTable(1, 2, 2);
+    m.tableSetCell(tb, 0, 0, K("status "));
+    const auto same = [&] { return m.contentForRow(0) == m.tableCell(tb, 0, 0); };
+    CHECK(m.insertChoiceAt(0, 7) == 7 && m.tableInsertChoiceAt(tb, 0, 0, 7) == 7 && same()
+              && m.contentForRow(0) == K("status To do"), "insert: row and cell match");
+    const auto optionId = [&](const QString& json, int i) {
+        return QJsonDocument::fromJson(json.toUtf8()).object().value(K("o")).toArray().at(i).toObject().value(K("id")).toString();
+    };
+    m.setChoiceSelected(0, 7, optionId(m.choiceAt(0, 7), 1));
+    m.tableSetChoiceSelected(tb, 0, 0, 7, optionId(m.tableChoiceAt(tb, 0, 0, 7), 1));
+    CHECK(same() && m.contentForRow(0) == K("status Doing"), "select: row and cell labels match");
+    CHECK(!m.choiceAddOption(0, 7, K("Blocked"), K("#E05F5F")).isEmpty()
+              && !m.tableChoiceAddOption(tb, 0, 0, 7, K("Blocked"), K("#E05F5F")).isEmpty()
+              && same() && m.contentForRow(0) == K("status Blocked"), "add option selects it in both");
+    CHECK(m.choiceAddOption(0, 99, K("x"), QString()).isEmpty() && m.tableChoiceAddOption(tb, 0, 0, 99, K("x"), QString()).isEmpty(),
+          "no chip at that start: no id in either");
+    const QVariantList only{QVariantMap{{K("label"), K("Only")}}};
+    m.setChoiceOptions(0, 7, only);
+    m.tableSetChoiceOptions(tb, 0, 0, 7, only);
+    CHECK(same() && m.contentForRow(0) == K("status Only")
+              && m.choiceRangesForRow(0).size() == 1 && m.tableChoiceRangesForCell(tb, 0, 0).size() == 1,
+          "set options: a deleted selection falls back in both");
+    m.removeChoiceAt(0, 7);
+    m.tableRemoveChoiceAt(tb, 0, 0, 7);
+    CHECK(same() && m.contentForRow(0) == K("status ")
+              && m.choiceRangesForRow(0).isEmpty() && m.tableChoiceRangesForCell(tb, 0, 0).isEmpty(),
+          "remove: chip and label gone in both");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5483,6 +5570,7 @@ int main(int argc, char** argv) {
     testInlineEngine();
     testInlineTextOps();
     testInlineFormatOps();
+    testInlineChoiceOps();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

@@ -861,11 +861,12 @@ private:
     Span* choiceSpanAt(int row, int spanStart);   // the chip addressed by its range start
     void replaceChoiceText(int row, int spanStart, const QString& label,
                            const QJsonObject& payload);   // label-swap txn core
-    // Cell-chip core: the cell-span mirror of replaceChoiceText (one
-    // mutateTable). Returns the chip's payload, {} if none at spanStart.
-    QJsonObject cellChoicePayload(int row, int r, int c, int spanStart) const;
-    void replaceCellChoiceText(int row, int r, int c, int spanStart,
-                               const QString& label, const QJsonObject& payload);
+    // Chip payload edits as one txn through the inline engine (mn::inl::editChoice);
+    // a no-op opens no txn. Return whether the chip existed and the edit applied.
+    bool editRowChoice(int row, int spanStart, const mn::inl::ChoiceEdit& edit);
+    bool editCellChoice(int row, int r, int c, int spanStart, const mn::inl::ChoiceEdit& edit);
+    // Commit new text + spans for `row` as one txn (persist, change signals, relayout).
+    void commitRowTextAndSpans(int row, QString&& text, std::vector<Span>&& spans);
     // Forwarders to the inline text engine (InlineText.h) — kept so SR-1 step 1 needs no
     // call-site churn; later steps call mn::inl directly.
     static void addSpan(std::vector<Span>& v, int start, int end, uint8_t kind) {

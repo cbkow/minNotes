@@ -1,5 +1,9 @@
 #include "InlineText.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QVariantMap>
+
 #include <algorithm>
 
 namespace mn::inl {
@@ -240,6 +244,136 @@ QVariantList spansToVariantList(const Spans& spans) {
         m.insert(QStringLiteral("e"), sp.e);
         m.insert(QStringLiteral("k"), int(sp.kind));
         if (hasPayload(sp.kind)) m.insert(QStringLiteral("u"), sp.href);
+        out.append(m);
+    }
+    return out;
+}
+
+// --- Choice chips ---
+
+QString sanitizeChoiceLabel(QString label) {
+    static const QString bad = QStringLiteral("`*_~[]\\\n\r");
+    QString out;
+    out.reserve(label.size());
+    for (const QChar ch : label)
+        if (!bad.contains(ch)) out += ch;
+    out = out.trimmed();
+    return out.isEmpty() ? QStringLiteral("Option") : out;
+}
+
+namespace {
+QString optionField(const QJsonObject& payload, const QString& id, const QString& field) {
+    for (const QJsonValue& v : payload.value(QStringLiteral("o")).toArray()) {
+        const QJsonObject o = v.toObject();
+        if (o.value(QStringLiteral("id")).toString() == id)
+            return o.value(field).toString();
+    }
+    return {};
+}
+} // namespace
+
+QString choiceLabelFor(const QJsonObject& payload, const QString& id) {
+    return optionField(payload, id, QStringLiteral("l"));
+}
+
+QString choiceColorFor(const QJsonObject& payload, const QString& id) {
+    return optionField(payload, id, QStringLiteral("c"));
+}
+
+QString encodeChoicePayload(const QJsonObject& payload) {
+    return QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+const Span* choiceAt(const Spans& spans, int col) {
+    for (const Span& sp : spans)
+        if (sp.kind == Choice && col >= sp.s && col < sp.e) return &sp;
+    return nullptr;
+}
+
+int insertChoice(QString& text, Spans& spans, int col, const QJsonObject& payload) {
+    col = std::clamp(col, 0, int(text.size()));
+    for (const Span& sp : spans)   // never inside another chip
+        if (sp.kind == Choice && col > sp.s && col < sp.e) col = sp.e;
+    const QString label = choiceLabelFor(payload, payload.value(QStringLiteral("v")).toString());
+    shiftSpansInsert(spans, col, int(label.size()));
+    text.insert(col, label);
+    spans.push_back({col, col + int(label.size()), Choice, encodeChoicePayload(payload)});
+    return col;
+}
+
+bool editChoice(QString& text, Spans& spans, int spanStart, const ChoiceEdit& edit) {
+    const auto it = std::find_if(spans.begin(), spans.end(), [&](const Span& sp) {
+        return sp.kind == Choice && sp.s == spanStart;
+    });
+    if (it == spans.end()) return false;
+    QJsonObject payload = QJsonDocument::fromJson(it->href.toUtf8()).object();
+    QString label;
+    if (!edit(payload, label)) return false;
+    const Span chip = *it;
+    spans.erase(it);
+    shiftSpansDelete(spans, chip.s, chip.e);
+    shiftSpansInsert(spans, chip.s, int(label.size()));
+    text.replace(chip.s, chip.e - chip.s, label);
+    spans.push_back({chip.s, chip.s + int(label.size()), Choice, encodeChoicePayload(payload)});
+    return true;
+}
+
+bool selectOption(QJsonObject& payload, const QString& id, QString& label) {
+    if (payload.value(QStringLiteral("v")).toString() == id) return false;   // already selected
+    label = choiceLabelFor(payload, id);
+    if (label.isEmpty()) return false;                                      // unknown id
+    payload.insert(QStringLiteral("v"), id);
+    return true;
+}
+
+void addOption(QJsonObject& payload, const QString& id, const QString& label,
+               const QString& color, QString& shownLabel) {
+    shownLabel = sanitizeChoiceLabel(label);
+    QJsonArray opts = payload.value(QStringLiteral("o")).toArray();
+    QJsonObject o;
+    o.insert(QStringLiteral("id"), id);
+    o.insert(QStringLiteral("l"), shownLabel);
+    if (!color.isEmpty()) o.insert(QStringLiteral("c"), color);
+    opts.append(o);
+    payload.insert(QStringLiteral("o"), opts);
+    payload.insert(QStringLiteral("v"), id);   // quick-add implies intent
+}
+
+bool setOptions(QJsonObject& payload, const QVariantList& options,
+                const std::function<QString()>& mintId, QString& label) {
+    if (options.isEmpty()) return false;
+    QJsonArray opts;
+    for (const QVariant& v : options) {
+        const QVariantMap m = v.toMap();
+        QString id = m.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) id = mintId();
+        QJsonObject o;
+        o.insert(QStringLiteral("id"), id);
+        o.insert(QStringLiteral("l"), sanitizeChoiceLabel(m.value(QStringLiteral("label")).toString()));
+        const QString c = m.value(QStringLiteral("color")).toString();
+        if (!c.isEmpty()) o.insert(QStringLiteral("c"), c);
+        opts.append(o);
+    }
+    QString sel = payload.value(QStringLiteral("v")).toString();
+    payload.insert(QStringLiteral("o"), opts);
+    label = choiceLabelFor(payload, sel);
+    if (label.isEmpty()) {   // the selected option was deleted → first option
+        sel = opts.first().toObject().value(QStringLiteral("id")).toString();
+        label = opts.first().toObject().value(QStringLiteral("l")).toString();
+    }
+    payload.insert(QStringLiteral("v"), sel);
+    return true;
+}
+
+QVariantList choiceRanges(const Spans& spans) {
+    QVariantList out;
+    for (const Span& sp : spans) {
+        if (sp.kind != Choice || sp.e <= sp.s) continue;
+        const QJsonObject payload = QJsonDocument::fromJson(sp.href.toUtf8()).object();
+        QVariantMap m;
+        m.insert(QStringLiteral("s"), sp.s);
+        m.insert(QStringLiteral("e"), sp.e);
+        m.insert(QStringLiteral("color"), choiceColorFor(payload, payload.value(QStringLiteral("v")).toString()));
         out.append(m);
     }
     return out;
