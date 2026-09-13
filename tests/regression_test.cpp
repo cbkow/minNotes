@@ -26,6 +26,9 @@
 #include "SpellDictionaryFiles.h"
 #include "SpellService.h"
 #include "ViewportSlots.h"
+#include "LayoutIndex.h"
+#include "FenwickTree.h"
+#include <random>
 #include <QStandardPaths>
 #include <QXmlStreamReader>
 #include <QTextStream>
@@ -5593,6 +5596,167 @@ static void testViewportSlots() {
           "blockAt resolves a point by y while every block spans the page");
 }
 
+// A random DFS-flat document: plain blocks and split records with 2–3 lanes of
+// 1–6 blocks. Heights are multiples of 24 so every sum is exact.
+struct LayoutFixture {
+    std::vector<mn::LayoutIndex::Entry> entries;
+    std::vector<double> heights;
+};
+static LayoutFixture makeLayoutFixture(std::size_t tops, std::mt19937& rng) {
+    std::uniform_int_distribution<int> lines(1, 4), lanes(2, 3), blocks(1, 6), coin(0, 3);
+    LayoutFixture f;
+    for (std::size_t t = 0; t < tops; ++t) {
+        if (coin(rng) == 0) {
+            f.entries.push_back({true, mn::LayoutIndex::kTop});
+            f.heights.push_back(0.0);
+            const int C = lanes(rng);
+            for (int c = 0; c < C; ++c)
+                for (int b = blocks(rng); b > 0; --b) {
+                    f.entries.push_back({false, c});
+                    f.heights.push_back(24.0 * lines(rng));
+                }
+        } else {
+            f.entries.push_back({false, mn::LayoutIndex::kTop});
+            f.heights.push_back(24.0 * lines(rng));
+        }
+    }
+    return f;
+}
+// Brute-force layout of the fixture: y and height per flat entry.
+static void bruteLayout(const LayoutFixture& f, std::vector<double>& ys, std::vector<double>& hs) {
+    const std::size_t n = f.entries.size();
+    ys.assign(n, 0.0); hs = f.heights;
+    double top = 0.0;
+    for (std::size_t i = 0; i < n;) {
+        ys[i] = top;
+        if (!f.entries[i].split) { top += f.heights[i]; ++i; continue; }
+        std::vector<double> laneY(4, 0.0);
+        double extent = 0.0;
+        std::size_t j = i + 1;
+        for (; j < n && f.entries[j].cell >= 0; ++j) {
+            const auto c = std::size_t(f.entries[j].cell);
+            ys[j] = top + laneY[c];
+            laneY[c] += f.heights[j];
+            extent = std::max(extent, laneY[c]);
+        }
+        hs[i] = extent;
+        top += extent;
+        i = j;
+    }
+}
+
+static void testLayoutIndex() {
+    qInfo("[72] the two-level layout index matches brute force on split-row documents (SR-3 step 1)");
+    using LI = mn::LayoutIndex;
+
+    {   // No split rows: identical to today's FenwickTree.
+        std::vector<LI::Entry> e(50);
+        std::vector<double> h;
+        for (int i = 0; i < 50; ++i) h.push_back(24.0 * (1 + i % 4));
+        LI li; FenwickTree ft;
+        const bool ok = li.reset(e, h);
+        ft.reset(h);
+        bool same = ok && li.total() == ft.total();
+        for (std::size_t i = 0; same && i < 50; ++i)
+            same = li.y(i) == ft.prefix(i) && li.height(i) == ft.height(i) && li.topAt(li.y(i) + 5) == ft.rowAtOffset(ft.prefix(i) + 5);
+        CHECK(same, "without split rows the index is the plain Fenwick: same y, height, topAt, total");
+    }
+
+    std::mt19937 rng(20260913);
+    LayoutFixture f = makeLayoutFixture(400, rng);
+    LI li;
+    CHECK(li.reset(f.entries, f.heights), "a random mixed document indexes");
+    std::vector<double> ys, hs;
+    bruteLayout(f, ys, hs);
+    auto allMatch = [&]() {
+        for (std::size_t i = 0; i < f.entries.size(); ++i)
+            if (li.y(i) != ys[i] || li.height(i) != hs[i]) return false;
+        const std::size_t lastTop = li.topOf(f.entries.size() - 1);
+        return li.total() == ys[lastTop] + hs[lastTop];
+    };
+    CHECK(allMatch(), "every block and record has the brute-force y and height");
+
+    bool deltasOk = true;
+    std::uniform_int_distribution<std::size_t> anyEntry(0, f.entries.size() - 1);
+    std::uniform_int_distribution<int> lines(1, 6);
+    for (int k = 0; k < 600; ++k) {
+        const std::size_t i = anyEntry(rng);
+        if (f.entries[i].split) continue;
+        const std::size_t top = li.topOf(i);
+        const double before = hs[top];
+        f.heights[i] = 24.0 * lines(rng);
+        const double delta = li.setHeight(i, f.heights[i]);
+        bruteLayout(f, ys, hs);
+        if (delta != hs[top] - before) deltasOk = false;
+    }
+    CHECK(deltasOk, "setHeight returns exactly the change in the containing top entry's height");
+    CHECK(allMatch(), "after 600 height changes every y still matches brute force");
+    {
+        std::size_t leaf = 0;
+        while (f.entries[leaf].split) ++leaf;
+        std::size_t rec = 0;
+        while (!f.entries[rec].split) ++rec;
+        const double t = li.total();
+        CHECK(li.setHeight(leaf, li.height(leaf)) == 0.0 && li.setHeight(rec, 999.0) == 0.0 && li.total() == t,
+              "an unchanged height, or a height set on a record, changes nothing");
+    }
+
+    bool visOk = true;
+    std::uniform_real_distribution<double> anyY(-50.0, li.total() + 50.0), span(1.0, 900.0);
+    for (int k = 0; k < 300 && visOk; ++k) {
+        const double y0 = anyY(rng), y1 = y0 + span(rng);
+        std::vector<std::size_t> want;
+        for (std::size_t i = 0; i < f.entries.size(); ++i)
+            if (ys[i] < y1 && (ys[i] + hs[i] > y0 || ys[i] >= y0)) want.push_back(i);
+        if (li.visible(y0, y1) != want) visOk = false;
+    }
+    CHECK(visOk, "visible(y0, y1) returns exactly the intersecting entries, in flat order");
+
+    bool hitOk = true;
+    for (std::size_t i = 0; i < f.entries.size() && hitOk; ++i) {
+        const double yy = ys[i] + 1.0;
+        if (f.entries[i].cell == LI::kTop) {
+            if (li.topAt(yy) != i) hitOk = false;
+            continue;
+        }
+        const std::size_t rec = li.topOf(i);
+        if (li.topAt(yy) != rec) hitOk = false;
+        bool past = true;
+        if (li.blockInCellAt(rec, f.entries[i].cell, yy - ys[rec], &past) != i || past) hitOk = false;
+    }
+    CHECK(hitOk, "topAt and blockInCellAt resolve a point just inside every block");
+
+    bool laneOk = true;
+    for (std::size_t s = 0; s < li.topCount() && laneOk; ++s) {
+        const std::size_t rec = li.flatOfSlot(s);
+        if (!f.entries[rec].split) continue;
+        for (int c = 0; c < li.cellCount(rec); ++c) {
+            const std::size_t a = li.cellFirst(rec, c), b = li.cellEnd(rec, c);
+            double sum = 0.0;
+            for (std::size_t i = a; i < b; ++i) { if (f.entries[i].cell != c) laneOk = false; sum += f.heights[i]; }
+            if (sum != li.cellHeight(rec, c)) laneOk = false;
+            if (sum < hs[rec]) {   // a short lane: the space below it is that lane's end
+                bool past = false;
+                if (li.blockInCellAt(rec, c, sum + 2.0, &past) != b - 1 || !past) laneOk = false;
+            }
+        }
+    }
+    CHECK(laneOk, "lane ranges, lane heights and the space below a short lane are exact");
+
+    auto rejects = [](std::vector<LI::Entry> e) {
+        LI x; return !x.reset(e, std::vector<double>(e.size(), 24.0)) && x.size() == 0;
+    };
+    CHECK(rejects({{false, 0}}), "a lane block with no record before it is rejected");
+    CHECK(rejects({{true, -1}, {false, 0}, {false, 2}}), "a lane gap (0 then 2) is rejected");
+    CHECK(rejects({{true, -1}, {false, 1}}), "lanes must start at 0");
+    CHECK(rejects({{true, -1}, {false, 0}, {false, 1}, {false, 0}}), "a lane revisited is rejected");
+    CHECK(rejects({{true, -1}, {false, 0}, {true, -1}}), "a trailing record with no blocks is rejected");
+    CHECK(rejects({{true, -1}, {true, 0}}), "a record inside a lane is rejected");
+    LI empty;
+    CHECK(empty.reset({}, {}) && empty.total() == 0.0 && empty.visible(0, 100).empty() && empty.topAt(10) == 0,
+          "an empty document indexes to nothing");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5679,6 +5843,7 @@ int main(int argc, char** argv) {
     testInlineChoiceOps();
     testPayloadOnlyEditsAreEdits();
     testViewportSlots();
+    testLayoutIndex();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
