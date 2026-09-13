@@ -137,6 +137,18 @@ public:
     // Tables use this to measure only once and reuse the cache on recycle.
     Q_INVOKABLE bool rowMeasured(int row) const { return rows_[clampRow(row)].measured; }
     Q_INVOKABLE int rowForY(qreal y) const { return static_cast<int>(fenwick_.rowAtOffset(y < 0 ? 0 : y)); }
+    // The rows the delegate pool renders (SR-2 seam, fed to viewSlots.sync).
+    // Today the contiguous [firstRow, firstRow+count) clipped to the document;
+    // SR-3 answers it from the two-level index, where lanes leave gaps.
+    Q_INVOKABLE QList<int> visibleRows(int firstRow, int count) const {
+        QList<int> out;
+        const int n = static_cast<int>(rows_.size());
+        const int lo = std::clamp(firstRow, 0, n);
+        const int hi = std::clamp(lo + std::max(0, count), lo, n);
+        out.reserve(hi - lo);
+        for (int r = lo; r < hi; ++r) out.push_back(r);
+        return out;
+    }
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;

@@ -12,6 +12,8 @@ qt_add_executable(minnotesapp
     core/BlockModel.cpp
     core/InlineText.h
     core/InlineText.cpp
+    core/ViewportSlots.h
+    core/ViewportSlots.cpp
     core/Importer.cpp
     core/DocxReader.cpp
     core/XlsxReader.cpp

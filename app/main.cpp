@@ -23,6 +23,7 @@
 #include "core/PackageExporter.h"
 #include "core/DocumentMerger.h"
 #include "core/PathMapController.h"
+#include "core/ViewportSlots.h"
 #include "core/Clipboard.h"
 #include "core/ClipboardPaster.h"
 #include "spell/SpellService.h"
@@ -151,6 +152,9 @@ int main(int argc, char *argv[])
     // Cross-OS path mappings for referenced media. Loads from QSettings + feeds
     // mn::activeMappings(), which the per-document MediaStore reads on resolve.
     PathMapController pathMap;
+    // The editor pool's stable slot table (SR-2). Declared before the engine so
+    // it outlives every binding that reads it.
+    ViewportSlots viewSlots;
 
     QQmlApplicationEngine engine;
     engine.addImageProvider("videoframe", new VideoFrameProvider);   // inline video posters
@@ -166,6 +170,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);
     engine.rootContext()->setContextProperty("pathMap", &pathMap);
+    engine.rootContext()->setContextProperty("viewSlots", &viewSlots);
     // Document export (File ▸ Export…). Follows the active tab's model the
     // same way `blockModel` does.
     Exporter exporter;

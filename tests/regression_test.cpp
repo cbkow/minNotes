@@ -25,6 +25,7 @@
 #include "SpellEngine.h"
 #include "SpellDictionaryFiles.h"
 #include "SpellService.h"
+#include "ViewportSlots.h"
 #include <QStandardPaths>
 #include <QXmlStreamReader>
 #include <QTextStream>
@@ -5520,6 +5521,74 @@ static void testPayloadOnlyEditsAreEdits() {
     CHECK(m.languageForRow(1) == QStringLiteral("cpp"), "undo restores the old language");
 }
 
+// Every row in `rows` sits in exactly one slot, idle slots hold -1, and the
+// row→slot lookup agrees with the slot→row table.
+static bool slotsConsistent(const ViewportSlots& v, int slotCount, const QList<int>& rows) {
+    QSet<int> seen;
+    for (int i = 0; i < slotCount; ++i) {
+        const int r = v.rowForSlot(i);
+        if (r < 0) continue;
+        if (seen.contains(r) || v.slotForRow(r) != i) return false;
+        seen.insert(r);
+    }
+    for (int r : rows) if (!seen.contains(r)) return false;
+    return seen.size() == rows.size();
+}
+
+static void testViewportSlots() {
+    qInfo("[71] the delegate pool's slot table is stable, gap-safe and duplicate-free (SR-2 step 1)");
+    ViewportSlots v;
+    const QList<int> w0 {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    const int rev0 = v.sync(w0, 10);
+    CHECK(slotsConsistent(v, 10, w0), "a first window fills every slot once");
+    CHECK(v.sync(w0, 10) == rev0, "re-syncing the same window keeps the revision");
+
+    QList<int> before; for (int i = 0; i < 10; ++i) before.push_back(v.slotForRow(i));
+    const QList<int> w1 {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    CHECK(v.sync(w1, 10) != rev0, "scrolling one row bumps the revision");
+    bool kept = true;
+    for (int r = 1; r <= 9; ++r) if (v.slotForRow(r) != before[r]) kept = false;
+    CHECK(kept && slotsConsistent(v, 10, w1), "scrolling one row keeps the nine staying rows in their slots");
+    CHECK(v.slotForRow(10) == before[0] && v.slotForRow(0) == -1, "the entering row takes the leaving row's slot");
+
+    QList<int> w2; for (int r = 500; r < 510; ++r) w2.push_back(r);
+    v.sync(w2, 10);
+    CHECK(slotsConsistent(v, 10, w2), "a jump reassigns every slot without duplicates");
+
+    const QList<int> g0 {0, 1, 2, 50, 51, 900};   // lanes leave gaps (SR-3)
+    v.sync(g0, 10);
+    CHECK(slotsConsistent(v, 10, g0), "a gapped set fills six slots and leaves four idle");
+    const int s0 = v.slotForRow(0), s2 = v.slotForRow(2), s50 = v.slotForRow(50), s900 = v.slotForRow(900);
+    const QList<int> g1 {0, 2, 50, 52, 900, 901};
+    v.sync(g1, 10);
+    CHECK(slotsConsistent(v, 10, g1) && v.slotForRow(0) == s0 && v.slotForRow(2) == s2
+              && v.slotForRow(50) == s50 && v.slotForRow(900) == s900,
+          "rows that stay visible across a gapped change keep their slots");
+
+    v.sync(g1, 3);
+    CHECK(slotsConsistent(v, 3, {0, 2, 50}) && v.slotForRow(52) == -1,
+          "shrinking the pool shows the first rows that fit");
+    CHECK(v.rowForSlot(3) == -1 && v.rowForSlot(-1) == -1, "out-of-range slots read idle");
+    const int s50b = v.slotForRow(50);
+    v.sync(g1, 8);
+    CHECK(slotsConsistent(v, 8, g1) && v.slotForRow(50) == s50b, "growing the pool admits the rest and keeps the placed ones");
+
+    v.sync({5, 5, 6}, 4);
+    CHECK(slotsConsistent(v, 4, {5, 6}), "a duplicate visible row is shown once");
+    v.sync({}, 4);
+    CHECK(slotsConsistent(v, 4, {}), "an empty window idles every slot");
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 20; ++i) m.insertBlock(i);
+    const int n = m.rowCountQml();
+    CHECK(m.visibleRows(3, 4) == QList<int>({3, 4, 5, 6}), "visibleRows is the contiguous window");
+    CHECK(m.visibleRows(n - 2, 10) == QList<int>({n - 2, n - 1}), "…clipped at the end of the document");
+    CHECK(m.visibleRows(-5, 2) == QList<int>({0, 1}) && m.visibleRows(4, 0).isEmpty(),
+          "…clamped at the start, and empty for no slots");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5605,6 +5674,7 @@ int main(int argc, char** argv) {
     testInlineFormatOps();
     testInlineChoiceOps();
     testPayloadOnlyEditsAreEdits();
+    testViewportSlots();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
