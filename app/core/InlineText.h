@@ -57,4 +57,20 @@ void shiftSpansInsert(Spans& v, int at, int len);
 // [from,to) deleted: spans after shift left, overlapping spans shrink, emptied spans drop.
 void shiftSpansDelete(Spans& v, int from, int to);
 
+// --- Text edits: text and spans change together ---
+// Insert `ins` at `at` (clamped to the text). Returns the clamped position.
+int insertText(QString& text, Spans& spans, int at, const QString& ins);
+// Delete [from,to) (clamped). Returns false — nothing changed — for an empty range.
+bool deleteRange(QString& text, Spans& spans, int from, int to);
+// Replace [s,e) (clamped, e >= s) with `with`. A span covering the whole replaced range
+// keeps covering it (a bold or linked word stays bold/linked after a fix); other spans
+// shift or clip around it. Returns false when nothing would change.
+bool replaceRange(QString& text, Spans& spans, int s, int e, const QString& with);
+// Replace the whole text: spans clamp to the new length and emptied spans drop.
+void setText(QString& text, Spans& spans, const QString& with);
+// Typing attributes for a freshly inserted run [s,e): `marks` bitmask (1 bold, 2 italic,
+// 4 code, 8 strike, 16 underline) plus optional colour / highlight pens.
+void applyTypingAttributes(Spans& spans, int s, int e, int marks,
+                           const QString& fg, const QString& bg);
+
 } // namespace mn::inl

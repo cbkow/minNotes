@@ -890,6 +890,12 @@ private:
     // Span vector so the static span helpers above can be reused for cell editing.
     static std::vector<Span> cellSpansFromJson(const QJsonArray& a);
     static QJsonArray cellSpansToJson(const std::vector<Span>& v);
+    // One cell's (text, spans) through the inline text engine inside a single
+    // mutateTable txn. `fn` returns false when it changed nothing. (SR-1 adapter —
+    // retired with the Table block when cells become real blocks.)
+    void mutateCellInline(int row, int r, int c,
+                          const std::function<bool(QString&, std::vector<Span>&)>& fn,
+                          const QString& coalesce = QString());
     // Parse inline markdown in `src` into clean text + spans (markers removed),
     // merging `existing` spans remapped to the clean coords. Returns false (and
     // leaves outputs untouched) if there were no markers to consume.

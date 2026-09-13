@@ -5266,6 +5266,79 @@ static void testInlineEngine() {
           "payload survives offset shifts");
 }
 
+// --- Test 67: inline text ops through the engine (SR-1 step 2) ------------------
+static void testInlineTextOps() {
+    qInfo("[67] inline text ops: rows and cells share one engine (SR-1 step 2)");
+    using namespace mn::inl;
+    QString t = QStringLiteral("hello world");
+    Spans v{{6, 11, Bold}};
+    CHECK(insertText(t, v, 99, QStringLiteral("!")) == 11 && t == QStringLiteral("hello world!")
+              && v[0].s == 6 && v[0].e == 11, "insert clamps; typing at a span's end doesn't extend it");
+    CHECK(!deleteRange(t, v, 5, 5) && deleteRange(t, v, 0, 6) && t == QStringLiteral("world!")
+              && v[0].s == 0 && v[0].e == 5, "delete: empty range is a no-op; spans shift");
+    CHECK(replaceRange(t, v, 0, 5, QStringLiteral("there")) && t == QStringLiteral("there!")
+              && v.size() == 1 && v[0].s == 0 && v[0].e == 5, "replace keeps a covering span");
+    CHECK(!replaceRange(t, v, 3, 3, QString()), "replacing nothing with nothing is a no-op");
+    setText(t, v, QStringLiteral("the"));
+    CHECK(t == QStringLiteral("the") && v.size() == 1 && v[0].s == 0 && v[0].e == 3, "setText clamps spans");
+    setText(t, v, QString());
+    CHECK(t.isEmpty() && v.empty(), "setText to empty drops every span");
+    Spans a;
+    applyTypingAttributes(a, 2, 4, 1 | 16, QStringLiteral("#f00"), QString());
+    CHECK(a.size() == 3 && spansCover(a, 2, 4, Bold) && spansCover(a, 2, 4, Underline) && !spansCover(a, 2, 4, Italic),
+          "typing attributes: marks + colour pen");
+
+    // Row / cell parity: the same edit sequence gives the same text and spans.
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("hello world"));
+    m.setFormat(0, 6, 11, QStringLiteral("bold"), true);
+    const int tb = m.insertTable(1, 2, 2);
+    m.tableSetCell(tb, 0, 0, QStringLiteral("hello world"));
+    m.tableSetCellFormat(tb, 0, 0, 6, 11, QStringLiteral("bold"), true);
+    m.insertText(0, 0, QStringLiteral("Oh, "), 0, QString(), QString());
+    m.tableCellInsert(tb, 0, 0, 0, QStringLiteral("Oh, "));
+    m.replaceText(0, 4, 9, QStringLiteral("howdy"));
+    m.tableCellReplace(tb, 0, 0, 4, 9, QStringLiteral("howdy"));
+    m.deleteRange(0, 1, 0, 3);
+    m.tableCellDelete(tb, 0, 0, 1, 3);
+    CHECK(m.contentForRow(0) == QStringLiteral("O howdy world") && m.tableCell(tb, 0, 0) == m.contentForRow(0),
+          "row and cell text identical after the same edits");
+    CHECK(m.hasFormat(0, 8, 13, QStringLiteral("bold")) && m.tableCellHasFormat(tb, 0, 0, 8, 13, QStringLiteral("bold"))
+              && !m.hasFormat(0, 7, 13, QStringLiteral("bold")) && !m.tableCellHasFormat(tb, 0, 0, 7, 13, QStringLiteral("bold")),
+          "row and cell spans identical");
+
+    // Cell undo granularity mirrors block typing.
+    const int h0 = m.undoHistory().size();
+    m.tableCellInsert(tb, 1, 1, 0, QStringLiteral("a"));
+    m.tableCellInsert(tb, 1, 1, 1, QStringLiteral("b"));
+    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("ab") && m.undoHistory().size() == h0 + 1,
+          "single-char cell typing coalesces into one entry");
+    m.tableCellDelete(tb, 1, 1, 1, 2);
+    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("a") && m.undoHistory().size() == h0 + 2,
+          "a delete after typing starts its own entry");
+    m.tableCellInsert(tb, 1, 1, 1, QStringLiteral("xyz"));
+    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("axyz") && m.undoHistory().size() == h0 + 3,
+          "a multi-char insert (paste) is its own entry");
+    m.undo();
+    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("a"), "undo removes the paste only");
+    m.undo();
+    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("ab"), "undo restores the deleted char");
+    m.undo();
+    CHECK(m.tableCell(tb, 1, 1).isEmpty(), "undo removes the typing run");
+
+    // Whole-text replacement clamps spans.
+    m.tableSetCell(tb, 0, 1, QStringLiteral("bold text"));
+    m.tableSetCellFormat(tb, 0, 1, 0, 4, QStringLiteral("bold"), true);
+    m.tableSetCell(tb, 0, 1, QString());
+    m.tableSetCell(tb, 0, 1, QStringLiteral("plain"));
+    CHECK(m.tableCellSpans(tb, 0, 1).isEmpty(), "clearing a cell drops its spans");
+    m.setContent(0, QStringLiteral("O howdy"));
+    CHECK(m.spansForRow(0).isEmpty(), "shortening a row's text drops spans past its end");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5347,6 +5420,7 @@ int main(int argc, char** argv) {
     testSpellServiceSync();
     testReplaceTextSpans();
     testInlineEngine();
+    testInlineTextOps();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

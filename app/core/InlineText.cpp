@@ -115,4 +115,67 @@ void shiftSpansDelete(Spans& v, int from, int to) {
     v = out;
 }
 
+int insertText(QString& text, Spans& spans, int at, const QString& ins) {
+    at = std::clamp(at, 0, int(text.size()));
+    text.insert(at, ins);
+    if (!spans.empty()) shiftSpansInsert(spans, at, int(ins.size()));
+    return at;
+}
+
+bool deleteRange(QString& text, Spans& spans, int from, int to) {
+    const int len = int(text.size());
+    from = std::clamp(from, 0, len);
+    to = std::clamp(to, 0, len);
+    if (from >= to) return false;
+    text.remove(from, to - from);
+    shiftSpansDelete(spans, from, to);
+    return true;
+}
+
+bool replaceRange(QString& text, Spans& spans, int s, int e, const QString& with) {
+    const int len = int(text.size());
+    s = std::clamp(s, 0, len);
+    e = std::clamp(e, s, len);
+    if (s == e && with.isEmpty()) return false;
+    text.replace(s, e - s, with);
+    if (!spans.empty()) {
+        const int n = int(with.size());
+        const int delta = n - (e - s);
+        Spans kept;
+        for (Span sp : spans) {
+            if (sp.e <= s) { kept.push_back(sp); continue; }                                  // before
+            if (sp.s >= e) { sp.s += delta; sp.e += delta; kept.push_back(sp); continue; }    // after
+            if (sp.s <= s && sp.e >= e) { sp.e += delta; if (sp.e > sp.s) kept.push_back(sp); continue; }  // covers
+            if (sp.s < s) { sp.e = s; if (sp.e > sp.s) kept.push_back(sp); continue; }        // overlaps the start
+            sp.s = s + n; sp.e += delta; if (sp.e > sp.s) kept.push_back(sp);                  // overlaps the end
+        }
+        spans = std::move(kept);
+    }
+    return true;
+}
+
+void setText(QString& text, Spans& spans, const QString& with) {
+    text = with;
+    const int len = int(with.size());
+    Spans kept;
+    for (Span sp : spans) {
+        sp.s = std::min(sp.s, len);
+        sp.e = std::min(sp.e, len);
+        if (sp.e > sp.s) kept.push_back(sp);
+    }
+    spans = std::move(kept);
+}
+
+void applyTypingAttributes(Spans& spans, int s, int e, int marks,
+                           const QString& fg, const QString& bg) {
+    if (s >= e) return;
+    if (marks & 1)  addSpan(spans, s, e, Bold);
+    if (marks & 2)  addSpan(spans, s, e, Italic);
+    if (marks & 4)  addSpan(spans, s, e, Code);
+    if (marks & 8)  addSpan(spans, s, e, Strike);
+    if (marks & 16) addSpan(spans, s, e, Underline);
+    if (!fg.isEmpty()) applyPayloadRun(spans, s, e, FgColor, fg);
+    if (!bg.isEmpty()) applyPayloadRun(spans, s, e, Highlight, bg);
+}
+
 } // namespace mn::inl

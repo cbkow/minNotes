@@ -1704,8 +1704,11 @@ int BlockModel::tableColAlign(int row, int c) const {
 }
 
 void BlockModel::tableSetCell(int row, int r, int c, const QString& text) {
-    mutateTable(row, [&](TableGrid& g){ g.setCellText(r, c, text); },
-                QStringLiteral("tcell:%1:%2").arg(r).arg(c));
+    // Spans clamp to the new text, so a cleared cell no longer keeps stale spans.
+    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
+        mn::inl::setText(t, v, text);
+        return true;
+    }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
 }
 void BlockModel::tableSetCellColor(int row, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
     if (r0 > r1) std::swap(r0, r1);
@@ -1766,6 +1769,18 @@ QJsonArray BlockModel::cellSpansToJson(const std::vector<Span>& v) {
     return a;
 }
 
+void BlockModel::mutateCellInline(int row, int r, int c,
+                                  const std::function<bool(QString&, std::vector<Span>&)>& fn,
+                                  const QString& coalesce) {
+    mutateTable(row, [&](TableGrid& g) {
+        QString t = g.cellText(r, c);
+        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
+        if (!fn(t, v)) return;
+        g.setCellText(r, c, t);
+        g.setCellSpans(r, c, cellSpansToJson(v));
+    }, coalesce);
+}
+
 QVariantList BlockModel::tableCellSpans(int row, int r, int c) const {
     QVariantList out;
     if (rowAt(row).type != Table) return out;
@@ -1821,51 +1836,28 @@ void BlockModel::tableClearCellFormat(int row, int r, int c, int start, int end)
     });
 }
 
-// Span-aware cell text edits: insert/delete text AND shift the cell's spans, so
-// formatting stays glued to its characters as the user types (mirrors insertText/
-// deleteRange for blocks). Coalesced per cell like tableSetCell.
+// Span-aware cell text edits: the same engine ops as blocks, so formatting stays glued
+// to its characters as the user types. Coalescing mirrors block typing: only
+// single-char inserts ("type") or single-char deletes ("del") join a run, keyed per
+// cell — a paste or a switch between typing and deleting starts a new undo entry.
 void BlockModel::tableCellInsert(int row, int r, int c, int at, const QString& text) {
     if (text.isEmpty()) return;
-    mutateTable(row, [&](TableGrid& g){
-        QString t = g.cellText(r, c);
-        const int p = std::clamp(at, 0, int(t.size()));
-        g.setCellText(r, c, t.left(p) + text + t.mid(p));
-        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
-        shiftSpansInsert(v, p, text.size());
-        g.setCellSpans(r, c, cellSpansToJson(v));
-    }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
+    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
+        mn::inl::insertText(t, v, at, text);
+        return true;
+    }, text.size() == 1 ? QStringLiteral("tcell-type:%1:%2").arg(r).arg(c) : QString());
 }
 
 void BlockModel::tableCellReplace(int row, int r, int c, int s, int e, const QString& text) {
-    mutateTable(row, [&](TableGrid& g){
-        QString t = g.cellText(r, c);
-        const int f = std::clamp(s, 0, int(t.size())), en = std::clamp(e, 0, int(t.size()));
-        if (f > en) return;
-        g.setCellText(r, c, t.left(f) + text + t.mid(en));
-        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
-        const int delta = text.size() - (en - f);
-        std::vector<Span> kept;
-        for (Span sp : v) {
-            if (sp.e <= f) { kept.push_back(sp); continue; }
-            if (sp.s >= en) { sp.s += delta; sp.e += delta; kept.push_back(sp); continue; }
-            if (sp.s <= f && sp.e >= en) { sp.e += delta; if (sp.e > sp.s) kept.push_back(sp); continue; }
-            if (sp.s < f) { sp.e = f; if (sp.e > sp.s) kept.push_back(sp); continue; }
-            sp.s = f + text.size(); sp.e += delta; if (sp.e > sp.s) kept.push_back(sp);
-        }
-        g.setCellSpans(r, c, cellSpansToJson(kept));
+    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
+        return mn::inl::replaceRange(t, v, s, e, text);
     });
 }
 
 void BlockModel::tableCellDelete(int row, int r, int c, int from, int to) {
-    mutateTable(row, [&](TableGrid& g){
-        QString t = g.cellText(r, c);
-        const int f = std::clamp(from, 0, int(t.size())), e = std::clamp(to, 0, int(t.size()));
-        if (f >= e) return;
-        g.setCellText(r, c, t.left(f) + t.mid(e));
-        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
-        shiftSpansDelete(v, f, e);
-        g.setCellSpans(r, c, cellSpansToJson(v));
-    }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
+    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
+        return mn::inl::deleteRange(t, v, from, to);
+    }, to - from == 1 ? QStringLiteral("tcell-del:%1:%2").arg(r).arg(c) : QString());
 }
 
 // --- images inside cells ---------------------------------------------------
@@ -4370,8 +4362,10 @@ void BlockModel::setContentWidth(qreal w) {
 void BlockModel::setContent(int row, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);
-    content_[row] = text;
+    const bool hadSpans = !rows_[row].spans.empty();
+    mn::inl::setText(content_[row], rows_[row].spans, text);   // spans clamp to the new text
     persistContent(row);                          // write-through to SQLite
+    if (hadSpans) persistMeta(row);
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ContentRole});
     ++contentRevision_;
@@ -4450,28 +4444,16 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks,
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     if (isOpaqueRow(row)) return;                    // never type into a descriptor
     beginTxn(row, row);
-    const QString s = content_[row];
-    col = std::clamp(col, 0, static_cast<int>(s.size()));
-    content_[row] = s.left(col) + text + s.mid(col);
+    std::vector<Span>& spans = rows_[row].spans;
+    col = mn::inl::insertText(content_[row], spans, col, text);   // clamps; existing spans shift
     persistContent(row);
     // Code blocks are multi-line: keep the line-count param honest when the
     // insert carries newlines (verbatim paste; single Enter presses too).
     if (rows_[row].type == Code && text.contains(QLatin1Char('\n')))
         rows_[row].param = static_cast<uint16_t>(
             std::clamp<int>(content_[row].count(QLatin1Char('\n')) + 1, 1, 65535));
-    std::vector<Span>& spans = rows_[row].spans;
-    if (!spans.empty())                              // keep existing span offsets aligned
-        shiftSpansInsert(spans, col, text.size());
-    const int e = col + text.size();
-    if (marks) {                                     // armed typing attributes → span the new run
-        if (marks & 1)  addSpan(spans, col, e, SpanBold);
-        if (marks & 2)  addSpan(spans, col, e, SpanItalic);
-        if (marks & 4)  addSpan(spans, col, e, SpanCode);
-        if (marks & 8)  addSpan(spans, col, e, SpanStrike);
-        if (marks & 16) addSpan(spans, col, e, SpanUnderline);
-    }
-    if (!fgColor.isEmpty()) applyPayloadRun(spans, col, e, SpanFgColor,   fgColor);
-    if (!bgColor.isEmpty()) applyPayloadRun(spans, col, e, SpanHighlight, bgColor);
+    // Armed typing attributes (marks + colour pens) span the new run.
+    mn::inl::applyTypingAttributes(spans, col, col + int(text.size()), marks, fgColor, bgColor);
     if (!spans.empty()) persistMeta(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
@@ -5446,27 +5428,17 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
 // === Spell menu: replace a range as ONE transaction ========================
 void BlockModel::replaceText(int row, int s, int e, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
-    const QString cur = content_[row];
-    s = std::clamp(s, 0, static_cast<int>(cur.size()));
-    e = std::clamp(e, s, static_cast<int>(cur.size()));
-    if (s == e && text.isEmpty()) return;
+    // Engine edit on copies first: an empty no-op must not open a txn. A span
+    // covering the replaced range keeps it; others shift or clip (InlineText.h).
+    QString edited = content_[row];
+    std::vector<Span> spans = rows_[row].spans;
+    const bool hadSpans = !spans.empty();
+    if (!mn::inl::replaceRange(edited, spans, s, e, text)) return;
     beginTxn(row, row);
-    content_[row] = cur.left(s) + text + cur.mid(e);
+    content_[row] = edited;
     persistContent(row);
-    // Spans: one covering the replaced range keeps it (a bold or linked word
-    // stays bold/linked after the fix); others shift or clip around it.
-    std::vector<Span>& spans = rows_[row].spans;
-    if (!spans.empty()) {
-        const int delta = text.size() - (e - s);
-        std::vector<Span> kept;
-        for (Span sp : spans) {
-            if (sp.e <= s) { kept.push_back(sp); continue; }                 // before
-            if (sp.s >= e) { sp.s += delta; sp.e += delta; kept.push_back(sp); continue; }   // after
-            if (sp.s <= s && sp.e >= e) { sp.e += delta; if (sp.e > sp.s) kept.push_back(sp); continue; }   // covers
-            if (sp.s < s) { sp.e = s; if (sp.e > sp.s) kept.push_back(sp); continue; }       // overlaps the start
-            sp.s = s + text.size(); sp.e += delta; if (sp.e > sp.s) kept.push_back(sp);       // overlaps the end
-        }
-        spans = kept;
+    if (hadSpans) {
+        rows_[row].spans = std::move(spans);
         persistMeta(row);
     }
     if (rows_[row].type == Code)
