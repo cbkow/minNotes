@@ -1268,7 +1268,22 @@ ApplicationWindow {
         }
         return false
     }
+    // Dev-only (SR-2): --pool-probe=<file.md> imports the fixture into a fresh
+    // tab at a fixed size; Editor.qml's poolProbe drives the run and exits.
+    // Never touches the saved window geometry.
+    readonly property string _poolProbeFixture: {
+        var a = Qt.application.arguments
+        for (var i = 0; i < a.length; ++i)
+            if (a[i].indexOf("--pool-probe=") === 0) return a[i].substring(13)
+        return ""
+    }
     Component.onCompleted: {
+        if (_poolProbeFixture !== "") {
+            width = 1200; height = 900
+            docs.newTab()
+            if (!importer.importFile(_poolProbeFixture)) { console.log("POOL-PROBE FAIL import"); Qt.exit(101) }
+            return
+        }
         width = Math.max(640, winState.w)
         height = Math.max(480, winState.h)
         if (winState.wx >= 0 && _fitsAScreen(winState.wx, winState.wy, width, height)) {
@@ -1282,7 +1297,7 @@ ApplicationWindow {
         else win.menuBar = winMenuBarComp.createObject(win)
     }
     function _captureGeometry() {
-        if (!_geomRestored) return
+        if (!_geomRestored || _poolProbeFixture !== "") return
         if (win.visibility === Window.Maximized || win.visibility === Window.FullScreen) {
             winState.maximized = (win.visibility === Window.Maximized)
             return

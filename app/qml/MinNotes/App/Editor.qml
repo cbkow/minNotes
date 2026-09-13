@@ -2974,6 +2974,81 @@ FocusScope {
 
     Timer { interval: 530; running: true; repeat: true; onTriggered: root.caretOn = !root.caretOn }
 
+    // --- Dev-only pool probe (SR-2). Inert unless launched with
+    // --pool-probe=<file.md> (Main.qml imports the fixture into a fresh tab).
+    // Sweeps the document down, jumps around, nudges by a few pixels, runs
+    // structural edits, sweeps back up — and after every step asserts that each
+    // visible row has exactly ONE active pool delegate sitting at the model's y.
+    // Prints POOL-PROBE lines and exits with the failure count (capped).
+    Timer {
+        id: poolProbe
+        readonly property bool armed: Qt.application.arguments.some(
+            function(a) { return a.indexOf("--pool-probe=") === 0 })
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up
+        property int step: 0
+        property int phaseStep: 0
+        property int checks: 0
+        property int fails: 0
+        property int maxRows: 0
+        property int seed: 12345
+        interval: 40; repeat: true
+        running: armed && flick.visible && blockModel.count > 1000
+        onRunningChanged: if (running) console.log("POOL-PROBE START blocks", blockModel.count)
+        function rand(n) { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n }
+        function fail(msg) { if (++fails <= 40) console.log("POOL-PROBE FAIL", "step", step, "phase", phase, msg) }
+        function verify() {
+            var byRow = ({})
+            for (var i = 0; i < pool.count; ++i) {
+                var c = pool.itemAt(i)
+                if (!c || !c.active) continue
+                if (byRow[c.logicalRow] !== undefined) fail("row " + c.logicalRow + " in two delegates")
+                byRow[c.logicalRow] = c
+            }
+            for (var r = root.firstVisible; r <= root.lastVisible; ++r) {
+                ++checks
+                var d = byRow[r]
+                if (!d) { fail("row " + r + " has no delegate (window " + root.firstVisible + "–" + root.lastVisible + ")"); continue }
+                if (!d.visible || Math.abs(d.y - blockModel.yForRow(r)) > 0.5)
+                    fail("row " + r + " at y " + d.y + " visible " + d.visible + ", model y " + blockModel.yForRow(r))
+            }
+            maxRows = Math.max(maxRows, root.lastVisible - root.firstVisible + 1)
+        }
+        function next(phaseDone) { if (phaseDone) { ++phase; phaseStep = 0 } else ++phaseStep }
+        onTriggered: {
+            verify()
+            ++step
+            var maxY = Math.max(0, flick.contentHeight - flick.height)
+            if (phase === 0) {
+                flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
+                next(flick.contentY >= maxY)
+            } else if (phase === 1) {
+                flick.contentY = rand(Math.max(1, Math.floor(maxY)))
+                next(phaseStep >= 80)
+            } else if (phase === 2) {
+                var r = Math.min(blockModel.count - 1, root.firstVisible + 2)
+                switch (phaseStep % 8) {
+                case 0: blockModel.insertBlock(r); break
+                case 1: blockModel.removeBlock(r); break
+                case 2: blockModel.undo(); break
+                case 3: blockModel.redo(); break
+                case 4: blockModel.setContent(r, "probe ".repeat(120)); break
+                case 5: blockModel.undo(); break
+                case 6: flick.contentY = Math.min(maxY, flick.contentY + 13); break
+                case 7: flick.contentY = Math.max(0, flick.contentY - 29); break
+                }
+                next(phaseStep >= 96)
+            } else if (phase === 3) {
+                flick.contentY = Math.max(0, flick.contentY - flick.height * 0.61)
+                next(flick.contentY <= 0)
+            } else {
+                running = false
+                console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,
+                            "maxVisibleRows", maxRows, "pool", root.poolSize, "blocks", blockModel.count)
+                Qt.exit(Math.min(fails, 100))
+            }
+        }
+    }
+
     // --- HUD telemetry (same surface as the other arms) ---
     // Load-bearing revision read (reactivity rule 1e): rowForY() is a Q_INVOKABLE,
     // so QML can't see that it depends on the Fenwick heights / row count. Without
