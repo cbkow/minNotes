@@ -1102,15 +1102,18 @@ void BlockModel::endTxn(const QString& coalesce) {
     std::vector<BlockSnap> after = snapshotRange(txnLo_, txnHi_ + delta);
 
     // No-op group (e.g. "clear" on an already-plain paragraph) → no undo entry.
+    // Every persisted field counts: a change to only a span's payload (a link URL, a
+    // chip payload) or only a code block's language is a real edit — it must reach
+    // undo and mark the document dirty, or it is never saved.
     auto snapEq = [](const BlockSnap& x, const BlockSnap& y) {
         if (x.id != y.id || x.rank != y.rank || x.type != y.type
             || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
-            || x.content != y.content
+            || x.content != y.content || x.lang != y.lang
             || x.spans.size() != y.spans.size()
             || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
         for (size_t j = 0; j < x.spans.size(); ++j)
             if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
-                || x.spans[j].kind != y.spans[j].kind) return false;
+                || x.spans[j].kind != y.spans[j].kind || x.spans[j].href != y.spans[j].href) return false;
         return true;
     };
     auto sameSnaps = [&](const std::vector<BlockSnap>& a, const std::vector<BlockSnap>& b) {

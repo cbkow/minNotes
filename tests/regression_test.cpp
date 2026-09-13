@@ -5487,6 +5487,33 @@ static void testInlineChoiceOps() {
           "remove: chip and label gone in both");
 }
 
+// --- Test 70: payload-only and language-only edits reach undo (SR-1 step 5) -------
+static void testPayloadOnlyEditsAreEdits() {
+    qInfo("[70] a change to only a span payload or a code language is a real edit (SR-1 step 5)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    m.setContent(0, QStringLiteral("hello world"));
+    m.setLink(0, 0, 5, QStringLiteral("https://a.example"));
+    const int e0 = m.undoHistory().size();
+    m.setLink(0, 0, 5, QStringLiteral("https://b.example"));   // same range, new URL only
+    CHECK(m.linkAt(0, 1) == QStringLiteral("https://b.example") && m.undoHistory().size() == e0 + 1,
+          "retargeting a link over the same range creates an undo entry");
+    CHECK(m.dirty(), "…and the document is dirty");
+    m.undo();
+    CHECK(m.linkAt(0, 1) == QStringLiteral("https://a.example"), "undo restores the old URL");
+
+    m.insertBlock(1);
+    m.makeCodeBlock(1, QStringLiteral("cpp"));
+    const int e1 = m.undoHistory().size();
+    m.setCodeLanguage(1, QStringLiteral("python"));
+    CHECK(m.languageForRow(1) == QStringLiteral("python") && m.undoHistory().size() == e1 + 1,
+          "changing only a code block's language creates an undo entry");
+    m.undo();
+    CHECK(m.languageForRow(1) == QStringLiteral("cpp"), "undo restores the old language");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5571,6 +5598,7 @@ int main(int argc, char** argv) {
     testInlineTextOps();
     testInlineFormatOps();
     testInlineChoiceOps();
+    testPayloadOnlyEditsAreEdits();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
