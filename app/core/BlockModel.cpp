@@ -550,6 +550,7 @@ void BlockModel::normalizeStructure(int lo, int hi) {
     if (!changed) return;
     if (!indexDirty_) reindex(std::vector<double>(layout_.heights()));   // lanes changed in place
     const int last = std::min(hi, static_cast<int>(rows_.size()) - 1);
+    rederiveMedia(lo, last);                          // lane widths may have changed
     if (lo <= last) emit dataChanged(index(lo), index(last));
 }
 
@@ -568,7 +569,7 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
         content_.insert(content_.begin() + at, QString());
         ids_.insert(ids_.begin() + at, id);
         ranks_.insert(ranks_.begin() + at, rank);
-        indexInsert(static_cast<size_t>(at), r.type == Split ? 0.0 : estimatedHeight(r));
+        indexInsert(static_cast<size_t>(at), r.type == Split ? 0.0 : estimatedHeight(r, laneWidthForInsert(at, r.cell)));
         endInsertRows();
         if (doc_.isOpen())
             doc_.appendBlock(id, rank, r.depth, QString::fromLatin1(typeToString(r.type)),
@@ -596,6 +597,7 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
             freshRow = row + 1;
             insertRow(freshRow, fresh, rankBetween(recRank, ranks_[size_t(row + 2)]));
         }
+        rederiveMedia(row, row + 2);                  // the block now lays out at a lane's width
         emit dataChanged(index(row), index(row + 2));
     } else {
         // A new lane beside the block's lane, splitting that lane's width.
@@ -628,6 +630,7 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
             freshRow = first;
             insertRow(freshRow, fresh, rankBetween(ranks_[size_t(first - 1)], ranks_[size_t(first)]));
         }
+        rederiveMedia(rec, band.second + 1);          // the split lane narrowed
         emit dataChanged(index(rec), index(band.second + 1));
     }
     bumpLayout();
@@ -946,7 +949,10 @@ void BlockModel::loadFromStore() {
     QSet<QString> restructured;
     QStringList removedRecords;
     repairStructure(restructured, removedRecords);
-    for (const Row& r : rows_) heights.push_back(estimatedHeight(r));
+    {
+        const std::vector<double> lw = laneWidths();
+        for (size_t i = 0; i < rows_.size(); ++i) heights.push_back(estimatedHeight(rows_[i], lw[i]));
+    }
     // Persist the conversions and repairs into the WORKING COPY in one
     // transaction (the original file updates on the next explicit save, as
     // always). This is a normalization, not a user edit: no undo entries (the
@@ -1022,7 +1028,7 @@ void BlockModel::rebuild(int n, int distribution) {
         ids_.push_back(makeUlid());
         ranks_.push_back(encode62(static_cast<quint64>(i + 1)
                          * std::max<quint64>(1, (62ull*62*62*62) / static_cast<quint64>(n + 1)), 4));
-        heights.push_back(estimatedHeight(r));
+        heights.push_back(estimatedHeight(r, contentWidth_));
     }
     reindex(std::move(heights));
     endResetModel();
@@ -1059,36 +1065,115 @@ void BlockModel::fillMediaMeta(Row& r, const QString& content) const {
 // the practical cap; the page scrolls like it does for wide tables/code), else
 // the default — PDFs fit the page, raster media is intrinsic-capped (never
 // upscaled by default).
-double BlockModel::mediaDisplayWidth(const Row& r) const {
+double BlockModel::mediaDisplayWidth(const Row& r, double laneW) const {
     if (r.dispW > 0) return r.dispW;
-    if (r.isPdf) return contentWidth_;   // fit the page
+    if (r.isPdf) return laneW;   // fit the page (or the lane)
     // Sketches FILL the page and TRACK page-width changes (user ruling
     // 2026-08-21 — illustrations are page furniture, not fixed-px images).
     // Strokes are normalized, so display scale is exact; dw still overrides.
-    if (r.isSketch) return contentWidth_;
-    if (r.mediaW > 0) return std::min<double>(contentWidth_, r.mediaW);
-    return contentWidth_;
+    if (r.isSketch) return laneW;
+    if (r.mediaW > 0) return std::min<double>(laneW, r.mediaW);
+    return laneW;
+}
+
+// === Lane geometry (SR-3, PLAN-SR3 D3) =====================================
+// Lanes share the page measure less a kLaneGap between neighbours.
+
+double BlockModel::laneWidthFrom(const std::vector<float>& ratios, int lane) const {
+    if (lane < 0 || lane >= static_cast<int>(ratios.size())) return contentWidth_;
+    const double avail = std::max(0.0, contentWidth_ - kLaneGap * double(ratios.size() - 1));
+    return avail * double(ratios[size_t(lane)]);
+}
+
+double BlockModel::laneLeftFrom(const std::vector<float>& ratios, int lane) const {
+    double x = 0.0;
+    for (int k = 0; k < lane && k < static_cast<int>(ratios.size()); ++k)
+        x += laneWidthFrom(ratios, k) + kLaneGap;
+    return x;
+}
+
+double BlockModel::laneWidthOfRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return contentWidth_;
+    int i = row;
+    while (i > 0 && rows_[size_t(i)].cell >= 0) --i;
+    return rows_[size_t(i)].type == Split ? laneWidthFrom(rows_[size_t(i)].ratios, rows_[size_t(row)].cell)
+                                          : contentWidth_;
+}
+
+double BlockModel::laneWidthForInsert(int at, int8_t cell) const {
+    if (cell < 0) return contentWidth_;
+    int i = std::min(at, static_cast<int>(rows_.size())) - 1;
+    while (i >= 0 && rows_[size_t(i)].cell >= 0) --i;
+    return (i >= 0 && rows_[size_t(i)].type == Split) ? laneWidthFrom(rows_[size_t(i)].ratios, cell)
+                                                       : contentWidth_;
+}
+
+std::vector<double> BlockModel::laneWidths() const {
+    std::vector<double> w(rows_.size(), contentWidth_);
+    const std::vector<float>* ratios = nullptr;
+    for (size_t i = 0; i < rows_.size(); ++i) {
+        const Row& r = rows_[i];
+        if (r.cell < 0) { ratios = r.type == Split ? &r.ratios : nullptr; continue; }
+        if (ratios) w[i] = laneWidthFrom(*ratios, r.cell);
+    }
+    return w;
+}
+
+void BlockModel::rederiveMedia(int lo, int hi) {
+    hi = std::min(hi, static_cast<int>(rows_.size()) - 1);
+    for (int i = std::max(0, lo); i <= hi; ++i)
+        if (rows_[size_t(i)].type == Media)
+            setIndexHeight(size_t(i), estimatedHeight(rows_[size_t(i)], laneWidthOfRow(i)));
+}
+
+qreal BlockModel::xForRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return 0.0;
+    int i = row;
+    while (i > 0 && rows_[size_t(i)].cell >= 0) --i;
+    return rows_[size_t(i)].type == Split ? laneLeftFrom(rows_[size_t(i)].ratios, rows_[size_t(row)].cell) : 0.0;
+}
+
+qreal BlockModel::widthForRow(int row) const { return laneWidthOfRow(row); }
+
+int BlockModel::blockAt(qreal x, qreal y) const {
+    const int top = rowForY(y);
+    if (top < 0 || top >= static_cast<int>(rows_.size()) || rows_[size_t(top)].type != Split) return top;
+    const mn::LayoutIndex& li = layout();
+    if (size_t(top) >= li.size() || !li.entry(size_t(top)).split) return top;
+    const std::vector<float>& ratios = rows_[size_t(top)].ratios;
+    const int lanes = std::min(li.cellCount(size_t(top)), static_cast<int>(ratios.size()));
+    if (lanes < 1) return top;
+    int lane = lanes - 1;
+    for (int k = 0; k < lanes; ++k)   // the gap belongs half to each neighbour
+        if (x < laneLeftFrom(ratios, k) + laneWidthFrom(ratios, k) + kLaneGap / 2.0) { lane = k; break; }
+    return static_cast<int>(li.blockInCellAt(size_t(top), lane, y - li.y(size_t(top))));
+}
+
+QList<int> BlockModel::visibleBlocks(qreal y0, qreal y1) const {
+    QList<int> out;
+    for (size_t f : layout().visible(y0, y1)) out.push_back(static_cast<int>(f));
+    return out;
 }
 
 // Displayed media frame height: dispW = min(contentWidth, w) (never upscaled),
 // height = round(dispW * h/w). Pure function of the probed dims + the layout
 // width — recomputed when setContentWidth changes (resize). Falls back to the
 // aspect param if intrinsic dims are missing.
-double BlockModel::mediaFrameHeight(const Row& r) const {
+double BlockModel::mediaFrameHeight(const Row& r, double laneW) const {
     if (r.isFile) return kFileChip;            // fixed-height attachment chip
-    const double w = mediaDisplayWidth(r);
+    const double w = mediaDisplayWidth(r, laneW);
     if (r.mediaW > 0 && r.mediaH > 0)
         return std::floor(w * r.mediaH / r.mediaW + 0.5);
-    return contentWidth_ * (r.param / 100.0);
+    return laneW * (r.param / 100.0);
 }
 
-double BlockModel::estimatedHeight(const Row& r) const {
+double BlockModel::estimatedHeight(const Row& r, double laneW) const {
     switch (r.type) {
     case Heading: return kHeading + kPadV;
     case Media:   // 12px vertical pad + the transport toolbar for video. Matches
                   // the Editor cell delegate exactly, and media never measures
                   // back, so this IS the authoritative height (no scroll-in jump).
-        return 12.0 + mediaFrameHeight(r)
+        return 12.0 + mediaFrameHeight(r, laneW)
              + (r.isVideo ? kVideoBar : r.isPdf ? kPdfNav : 0.0);
     case Divider: return 24.0;
     case Table:   return r.param * 34.0 + 58.0;     // param = row count; + 6 top/20 bottom pad (+row button) + header/strip
@@ -1386,6 +1471,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     }
     const int regionEnd = lo + static_cast<int>(snaps.size());   // [lo,regionEnd) = restored snaps
     std::vector<double> heights; heights.reserve(rows_.size());
+    const std::vector<double> lw = laneWidths();   // media estimates use the lane's width
     for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
         const bool replaced = (i >= lo && i < regionEnd);        // a restored snap → re-measure
         auto it = measuredById.constFind(ids_[i]);
@@ -1398,13 +1484,13 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
             // still at the resized height; user-caught 2026-08-21). The
             // estimate reflects the restored descriptor via fillMediaMeta.
             rows_[i].measured = false;
-            heights.push_back(estimatedHeight(rows_[i]));
+            heights.push_back(estimatedHeight(rows_[i], lw[size_t(i)]));
         } else {
             rows_[i].measured = false;                           // changed/new → re-measure
             auto hit = heightById.constFind(ids_[i]);
             heights.push_back(hit != heightById.constEnd()
                                   ? hit.value()                  // seed: pre-reset height beats a
-                                  : estimatedHeight(rows_[i]));  // media-blind estimate; re-born → estimate
+                                  : estimatedHeight(rows_[i], lw[size_t(i)]));  // media-blind estimate; re-born → estimate
         }
     }
     reindex(std::move(heights));
@@ -1440,7 +1526,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         // rows (2026-08-21): they never measure back — the estimate is
         // authoritative and must re-derive from the restored descriptor.
         if (r.type == Media)
-            setIndexHeight(static_cast<size_t>(p.row), estimatedHeight(r));
+            setIndexHeight(static_cast<size_t>(p.row), estimatedHeight(r, laneWidthOfRow(p.row)));
         if (doc_.isOpen()) {
             doc_.updateContent(s.id, s.content);
             doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),
@@ -1947,7 +2033,7 @@ int BlockModel::insertDivider(int afterRow) {
     content_.insert(content_.begin() + at, QString());
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QStringLiteral("divider"), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), QString());
@@ -2641,7 +2727,7 @@ int BlockModel::insertSketch(int afterRow) {
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -2936,7 +3022,7 @@ void BlockModel::sketchResizeCanvas(int row, int dl, int dt, int dr, int db) {
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], laneWidthOfRow(row)));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -3086,7 +3172,7 @@ int BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -3118,7 +3204,7 @@ int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -3170,7 +3256,7 @@ int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectPa
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -4466,11 +4552,11 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
 
 qreal BlockModel::mediaDisplayHeight(int row) const {
     const Row& r = rowAt(row);
-    return (r.type == Media) ? mediaFrameHeight(r) : 0.0;
+    return (r.type == Media) ? mediaFrameHeight(r, laneWidthOfRow(row)) : 0.0;
 }
 int BlockModel::mediaDispWidth(int row) const {
     const Row& r = rowAt(row);
-    return (r.type == Media) ? int(mediaDisplayWidth(r) + 0.5) : 0;
+    return (r.type == Media) ? int(mediaDisplayWidth(r, laneWidthOfRow(row)) + 0.5) : 0;
 }
 void BlockModel::setMediaWidth(int row, int w) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
@@ -4484,7 +4570,7 @@ void BlockModel::setMediaWidth(int row, int w) {
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], laneWidthOfRow(row)));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -4502,9 +4588,10 @@ void BlockModel::setContentWidth(qreal w) {
     // Media heights are derived from this width — re-derive them in the Fenwick.
     // (Media never measures back, so the estimate is the authoritative height.)
     bool any = false;
+    const std::vector<double> lw = laneWidths();
     for (size_t i = 0; i < rows_.size(); ++i)
         if (rows_[i].type == Media)
-            if (setIndexHeight(i, estimatedHeight(rows_[i])) != 0.0) any = true;
+            if (setIndexHeight(i, estimatedHeight(rows_[i], lw[i])) != 0.0) any = true;
     if (any) bumpLayout();
 }
 
@@ -4740,7 +4827,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
             content_.insert(content_.begin() + at, contentj);
             ids_.insert(ids_.begin() + at, newId);
             ranks_.insert(ranks_.begin() + at, newRank);
-            indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+            indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
             made.push_back({newId, newRank, contentj, tj, lj, tsj, langj, spans, r.cell});
         }
         endInsertRows();
@@ -4969,7 +5056,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
             content_.insert(content_.begin() + at, content);
             ids_.insert(ids_.begin() + at, id);
             ranks_.insert(ranks_.begin() + at, rk);
-            indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+            indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
             made.push_back({id, rk, content, r});
             caretRow = at; caretCol = (sp.type == Table) ? 0 : content.size();
         }
@@ -5030,7 +5117,7 @@ void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& js
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], laneWidthOfRow(row)));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -5083,7 +5170,7 @@ void BlockModel::splitBlock(int row, int col) {
     content_.insert(content_.begin() + at, right);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -5115,7 +5202,7 @@ void BlockModel::insertParagraphRaw(int row) {
     content_.insert(content_.begin() + row, QString());
     ids_.insert(ids_.begin() + row, newId);
     ranks_.insert(ranks_.begin() + row, newRank);
-    indexInsert(static_cast<size_t>(row), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(row), estimatedHeight(r, laneWidthForInsert(row, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -5149,7 +5236,7 @@ void BlockModel::duplicateBlock(int row) {
     content_.insert(content_.begin() + at, text);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -5306,6 +5393,7 @@ void BlockModel::moveBlocks(int from, int count, int to) {
         if (moved.cell != rs[static_cast<size_t>(k)].cell) persistMeta(at);
     }
     normalizeStructure(band.first, band.second);   // the lane the run left may be empty now
+    rederiveMedia(band.first, band.second);        // moved media lays out at its new width
 
     bumpLayout();                 // positions change; cells re-read yForRow/content
     ++contentRevision_;

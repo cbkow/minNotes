@@ -6084,6 +6084,62 @@ static void testSplitRowMutations() {
     QFile::remove(path);
 }
 
+static void testSplitRowGeometry() {
+    qInfo("[76] lanes: x and width, hit-testing by x, visible blocks, media sized to its lane (SR-3 step 3c)");
+    auto near = [](double a, double b) { return std::abs(a - b) < 0.51; };
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 3; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+    m.setContentWidth(760);
+    m.splitIntoColumns(1, 0, 0.5);          // p0 · rec · p1(l0) · ""(l1) · p2
+    m.splitIntoColumns(2, 0, 0.6);          // lane 0 splits: 0.3 | 0.2 | 0.5
+    // p0 · rec · p1(l0) · ""(l1) · ""(l2) · p2
+    const double avail = 760.0 - 2 * BlockModel::kLaneGap;
+    CHECK(near(m.widthForRow(2), 0.3 * avail) && near(m.widthForRow(3), 0.2 * avail) && near(m.widthForRow(4), 0.5 * avail),
+          "lanes share the page measure less the gaps between them");
+    CHECK(near(m.xForRow(2), 0) && near(m.xForRow(3), 0.3 * avail + BlockModel::kLaneGap)
+              && near(m.xForRow(4), 0.5 * avail + 2 * BlockModel::kLaneGap),
+          "lanes sit side by side, a gap apart");
+    CHECK(near(m.xForRow(0), 0) && near(m.widthForRow(0), 760) && near(m.widthForRow(1), 760),
+          "top-level blocks and records span the page");
+
+    const double yTop = m.yForRow(1);
+    CHECK(m.blockAt(10, yTop + 1) == 2 && m.blockAt(m.xForRow(3) + 5, yTop + 1) == 3 && m.blockAt(700, yTop + 1) == 4,
+          "a point in a split row resolves to the lane under x");
+    CHECK(m.blockAt(-50, yTop + 1) == 2 && m.blockAt(5000, yTop + 1) == 4,
+          "x left of the page picks the first lane; right of it, the last");
+    CHECK(m.blockAt(10, m.yForRow(0) + 1) == 0, "a top-level block ignores x");
+
+    m.insertBlock(3);                       // after p1 → lane 0: p1(l0) · new(l0) · ""(l1) · ""(l2)
+    m.setMeasuredHeight(2, 100.0);
+    m.setMeasuredHeight(3, 100.0);
+    CHECK(m.laneForRow(3) == 0 && near(m.heightForRow(1), 200.0), "lane 0 is now the tall lane");
+    CHECK(m.blockAt(m.xForRow(4) + 5, yTop + 150) == 4, "below a short lane, a point resolves to that lane's last block");
+    const QList<int> vis = m.visibleBlocks(yTop, yTop + 50);
+    CHECK(vis.contains(1) && vis.contains(2) && vis.contains(4) && vis.contains(5)
+              && !vis.contains(3) && !vis.contains(0) && !vis.contains(6),
+          "the visible set is the record plus each lane's blocks in view");
+
+    BlockModel::BlockSpec img;
+    img.type = BlockModel::Media;
+    img.mediaJson = QStringLiteral("{\"src\":\"x.png\",\"w\":400,\"h\":200}");
+    m.spliceSpecsAt(6, {img}, false);       // after lane 2's block → lane 2
+    const double hLane = m.mediaDisplayHeight(6);
+    CHECK(m.typeForRow(6) == BlockModel::Media && m.laneForRow(6) == 2 && hLane > 0
+              && near(m.heightForRow(6), 12.0 + hLane), "media in a lane is sized to the lane");
+    m.moveBlocks(6, 1, 7);
+    CHECK(m.laneForRow(7) == -1 && m.mediaDisplayHeight(7) > hLane
+              && near(m.heightForRow(7), 12.0 + m.mediaDisplayHeight(7)),
+          "moved to the top level, it is sized to the page");
+    m.undo();
+    CHECK(m.laneForRow(6) == 2 && near(m.mediaDisplayHeight(6), hLane) && near(m.heightForRow(6), 12.0 + hLane),
+          "undo puts it back at its lane size");
+    m.setContentWidth(1000);
+    CHECK(m.mediaDisplayHeight(6) > hLane && near(m.heightForRow(6), 12.0 + m.mediaDisplayHeight(6)),
+          "a wider page re-derives the heights of media in lanes");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -6174,6 +6230,7 @@ int main(int argc, char** argv) {
     testFormatGate();
     testSplitRowModel();
     testSplitRowMutations();
+    testSplitRowGeometry();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

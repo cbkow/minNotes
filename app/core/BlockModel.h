@@ -158,7 +158,17 @@ public:
     // Point (content coords) → block, for the editor's pointer hit-tests (SR-2
     // seam). Every block spans the page today, so x doesn't decide; SR-3
     // resolves split-row lanes by x (rows_spike §D).
-    Q_INVOKABLE int blockAt(qreal x, qreal y) const { Q_UNUSED(x); return rowForY(y); }
+    // Point → block. x is PAGE-relative (0 = the page's left edge): in a split row
+    // it picks the lane (clamped to the first/last), then y picks the lane's block —
+    // below a short lane, its last block.
+    Q_INVOKABLE int blockAt(qreal x, qreal y) const;
+    // Every block and record intersecting [y0, y1) in document order (records
+    // included; lanes contribute only their visible blocks).
+    Q_INVOKABLE QList<int> visibleBlocks(qreal y0, qreal y1) const;
+    // A block's lane geometry, page-relative: top-level blocks and records span the page.
+    static constexpr double kLaneGap = 24.0;         // px between lanes (the divider band sits in it)
+    Q_INVOKABLE qreal xForRow(int row) const;
+    Q_INVOKABLE qreal widthForRow(int row) const;
     // --- Split rows (SR-3). A Split record is followed by its lanes' blocks.
     Q_INVOKABLE int laneForRow(int row) const;       // the lane a block sits in; -1 = top level
     Q_INVOKABLE int splitRowOf(int row) const;       // the record of the split row containing row, or -1
@@ -991,9 +1001,17 @@ private:
     // by loadFromStore, insertMedia, AND undo/redo restore, so they can't diverge
     // (divergence is what hid undo-restored media at ~0 height). No-op for non-media.
     void fillMediaMeta(Row& r, const QString& content) const;
-    double estimatedHeight(const Row& r) const;
-    double mediaFrameHeight(const Row& r) const;   // displayed media frame px at contentWidth_
-    double mediaDisplayWidth(const Row& r) const;  // per-block override or default width
+    // laneW = the width the block lays out at (its lane's, or the page's) —
+    // mandatory, so a block in a lane can never be sized to the page by accident.
+    double estimatedHeight(const Row& r, double laneW) const;
+    double mediaFrameHeight(const Row& r, double laneW) const;   // displayed media frame px
+    double mediaDisplayWidth(const Row& r, double laneW) const;  // per-block override or default width
+    double laneWidthFrom(const std::vector<float>& ratios, int lane) const;
+    double laneLeftFrom(const std::vector<float>& ratios, int lane) const;
+    double laneWidthOfRow(int row) const;                 // scans rows_, never the (maybe stale) index
+    double laneWidthForInsert(int at, int8_t cell) const; // for a row about to be inserted at `at`
+    std::vector<double> laneWidths() const;               // every row's width, one O(n) pass
+    void rederiveMedia(int lo, int hi);                   // media heights after lane widths changed
     QString lastOpenError_;          // why the last open was refused (lastOpenError())
     bool acceptOpenedFormat();       // the 1.0 format gate on a just-opened working copy
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)

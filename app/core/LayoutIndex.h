@@ -41,7 +41,7 @@ public:
     double setHeight(std::size_t flat, double h);   // no-op (0) on a record
 
     const Entry& entry(std::size_t flat) const { return entries_[flat]; }
-    std::size_t topOf(std::size_t flat) const { return flatOfSlot_[slotOf_[flat]]; }
+    std::size_t topOf(std::size_t flat) const { return flat < slotOf_.size() ? flatOfSlot_[slotOf_[flat]] : flat; }
     std::size_t topAt(double y) const;
     std::size_t topCount() const { return flatOfSlot_.size(); }
     std::size_t slotOf(std::size_t flat) const { return slotOf_[flat]; }
