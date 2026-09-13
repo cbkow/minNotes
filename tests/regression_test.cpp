@@ -5501,6 +5501,9 @@ static void testPayloadOnlyEditsAreEdits() {
     CHECK(m.linkAt(0, 1) == QStringLiteral("https://b.example") && m.undoHistory().size() == e0 + 1,
           "retargeting a link over the same range creates an undo entry");
     CHECK(m.dirty(), "…and the document is dirty");
+    CHECK(m.undoHistory().constLast().toMap().value(QStringLiteral("label")).toString()
+              == QStringLiteral("Formatting"),
+          "…and the history names it Formatting, not Edit");
     m.undo();
     CHECK(m.linkAt(0, 1) == QStringLiteral("https://a.example"), "undo restores the old URL");
 
@@ -5510,6 +5513,9 @@ static void testPayloadOnlyEditsAreEdits() {
     m.setCodeLanguage(1, QStringLiteral("python"));
     CHECK(m.languageForRow(1) == QStringLiteral("python") && m.undoHistory().size() == e1 + 1,
           "changing only a code block's language creates an undo entry");
+    CHECK(m.undoHistory().constLast().toMap().value(QStringLiteral("label")).toString()
+              == QStringLiteral("Code language"),
+          "…and the history names it Code language");
     m.undo();
     CHECK(m.languageForRow(1) == QStringLiteral("cpp"), "undo restores the old language");
 }

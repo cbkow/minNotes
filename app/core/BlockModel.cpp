@@ -1367,7 +1367,7 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         return n == 1 ? tr("Delete block") : tr("Delete %1 blocks").arg(n);
     }
     bool contentDiff = false, inkDiff = false, spanDiff = false;
-    bool metaDiff = false, rankDiff = false, commentAdded = false;
+    bool metaDiff = false, rankDiff = false, commentAdded = false, langDiff = false;
     bool mediaContent = false;
     int contentRows = 0;
     // Sparse entries carry pairs in `patches`; bands carry them in b/a
@@ -1383,6 +1383,7 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         }
         if (x.ink != y.ink) inkDiff = true;
         if (x.rank != y.rank) rankDiff = true;
+        if (x.lang != y.lang) langDiff = true;
         if (x.type != y.type || x.level != y.level
             || x.taskState != y.taskState || x.depth != y.depth) metaDiff = true;
         if (x.spans.size() != y.spans.size()) {
@@ -1398,9 +1399,11 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         } else {
             for (size_t j = 0; j < x.spans.size(); ++j)
                 if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
-                    || x.spans[j].kind != y.spans[j].kind) { spanDiff = true; break; }
+                    || x.spans[j].kind != y.spans[j].kind
+                    || x.spans[j].href != y.spans[j].href) { spanDiff = true; break; }
         }
     }
+    if (langDiff && !contentDiff && !spanDiff && !metaDiff) return tr("Code language");
     if (inkDiff && !contentDiff && !spanDiff && !metaDiff) return tr("Ink");
     if (commentAdded) return tr("Comment");
     if (spanDiff && !contentDiff && !metaDiff) return tr("Formatting");
@@ -1414,7 +1417,8 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         return tr("Resize");
     if (mediaContent && contentRows == 1) return tr("Media");   // sketch/PDF-ink
     if (!e.coalesce.isEmpty()) {
-        if (e.coalesce == QLatin1String("del")) return tr("Delete text");
+        if (e.coalesce == QLatin1String("del") || e.coalesce.startsWith(QLatin1String("tcell-del:")))
+            return tr("Delete text");
         return tr("Typing");
     }
     return tr("Edit");
