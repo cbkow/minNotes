@@ -114,7 +114,7 @@ void BlockModel::closeDocument() {
     setSaveState(SaveClean);
     beginResetModel();
     rows_.clear(); ids_.clear(); ranks_.clear(); content_.clear();
-    fenwick_.reset(std::vector<double>{});
+    reindex(std::vector<double>{});
     endResetModel();
     clearUndo();
     if (!inkByBlock_.isEmpty()) { inkByBlock_.clear(); ++inkRevision_; emit inkChanged(); }
@@ -314,6 +314,148 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
     return true;
 }
 
+// === The layout index (SR-3) ================================================
+
+std::vector<mn::LayoutIndex::Entry> BlockModel::layoutEntries() const {
+    std::vector<mn::LayoutIndex::Entry> e(rows_.size());
+    for (size_t i = 0; i < rows_.size(); ++i)
+        e[i] = { rows_[i].type == Split && rows_[i].cell < 0, rows_[i].cell };
+    return e;
+}
+
+const mn::LayoutIndex& BlockModel::layout() const {
+    if (indexDirty_ && pendingHeights_.size() == rows_.size()) {
+        if (layout_.reset(layoutEntries(), pendingHeights_)) {
+            indexDirty_ = false;
+        } else {
+            // A structure the index can't represent — a mutation part-way, or a
+            // bug: index flat so nothing reads garbage, and retry on the next query.
+            layout_.reset(std::vector<mn::LayoutIndex::Entry>(rows_.size()), pendingHeights_);
+        }
+    }
+    return layout_;
+}
+
+void BlockModel::reindex(std::vector<double> heights) {
+    pendingHeights_ = std::move(heights);
+    indexDirty_ = true;
+}
+
+void BlockModel::indexInsert(std::size_t at, double h) {
+    if (!indexDirty_) { pendingHeights_ = layout_.heights(); indexDirty_ = true; }
+    at = std::min(at, pendingHeights_.size());
+    pendingHeights_.insert(pendingHeights_.begin() + static_cast<std::ptrdiff_t>(at), h);
+}
+
+void BlockModel::indexErase(std::size_t at) {
+    if (!indexDirty_) { pendingHeights_ = layout_.heights(); indexDirty_ = true; }
+    if (at < pendingHeights_.size())
+        pendingHeights_.erase(pendingHeights_.begin() + static_cast<std::ptrdiff_t>(at));
+}
+
+double BlockModel::setIndexHeight(std::size_t row, double h) {
+    layout();
+    if (indexDirty_) {                     // mid-structure-edit: stage it, rebuild later
+        if (row < pendingHeights_.size()) pendingHeights_[row] = h;
+        return 0.0;
+    }
+    return layout_.setHeight(row, h);
+}
+
+int BlockModel::laneForRow(int row) const {
+    return (row >= 0 && row < static_cast<int>(rows_.size())) ? rows_[size_t(row)].cell : -1;
+}
+
+int BlockModel::splitRowOf(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return -1;
+    if (rows_[size_t(row)].type == Split && rows_[size_t(row)].cell < 0) return row;
+    if (rows_[size_t(row)].cell < 0) return -1;
+    int i = row;
+    while (i > 0 && rows_[size_t(i)].cell >= 0) --i;
+    return rows_[size_t(i)].type == Split ? i : -1;
+}
+
+int BlockModel::laneCount(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].type != Split) return 0;
+    return layout().cellCount(size_t(row));
+}
+
+QVariantList BlockModel::splitRatios(int row) const {
+    QVariantList out;
+    if (row >= 0 && row < static_cast<int>(rows_.size()))
+        for (float f : rows_[size_t(row)].ratios) out.push_back(double(f));
+    return out;
+}
+
+bool BlockModel::structureValid() const {
+    for (const Row& r : rows_)
+        if (r.type == Split && r.cell >= 0) return false;       // I3: no record inside a lane
+    mn::LayoutIndex probe;
+    if (!probe.reset(layoutEntries(), std::vector<double>(rows_.size(), 1.0))) return false;   // I1
+    for (size_t s = 0; s < probe.topCount(); ++s) {
+        const size_t rec = probe.flatOfSlot(s);
+        if (rows_[rec].type != Split) continue;
+        const int lanes = probe.cellCount(rec);
+        if (lanes < 2 || static_cast<int>(rows_[rec].ratios.size()) != lanes) return false;   // I2, I4
+    }
+    return true;
+}
+
+// Load-time repair (PLAN-SR3 D1). A block outside any record is top level; a
+// record inside a lane starts its own row; lanes renumber in order of appearance
+// (a gap or a revisited lane becomes the next lane); a record with no blocks is
+// dropped and a one-lane record unwraps; wrong ratios become equal ones.
+void BlockModel::repairStructure(QSet<QString>& changedIds, QStringList& removedIds) {
+    const size_t n = rows_.size();
+    std::vector<Row> nr;
+    std::vector<QString> ni, nk, nc;
+    nr.reserve(n); ni.reserve(n); nk.reserve(n); nc.reserve(n);
+    auto keep = [&](size_t k, const Row& r) {
+        nr.push_back(r); ni.push_back(ids_[k]); nk.push_back(ranks_[k]); nc.push_back(content_[k]);
+    };
+    for (size_t i = 0; i < n;) {
+        Row r = rows_[i];
+        if (r.cell >= 0) { r.cell = -1; changedIds.insert(ids_[i]); }
+        if (r.type != Split) { keep(i, r); ++i; continue; }
+
+        size_t j = i + 1;
+        while (j < n && rows_[j].cell >= 0 && rows_[j].type != Split) ++j;
+        std::vector<int8_t> lane(j - i - 1);
+        int runs = 0, prev = -2;
+        for (size_t k = i + 1; k < j; ++k) {
+            if (rows_[k].cell != prev) { prev = rows_[k].cell; ++runs; }
+            lane[k - i - 1] = static_cast<int8_t>(std::min(runs - 1, 63));
+        }
+        const int lanes = std::min(runs, 64);
+        if (lanes < 2) {                    // no blocks, or one lane: the record goes
+            removedIds.push_back(ids_[i]);
+            for (size_t k = i + 1; k < j; ++k) {
+                Row c = rows_[k];
+                c.cell = -1;
+                changedIds.insert(ids_[k]);
+                keep(k, c);
+            }
+            i = j;
+            continue;
+        }
+        bool ratiosOk = static_cast<int>(r.ratios.size()) == lanes;
+        double sum = 0.0;
+        for (float f : r.ratios) { if (!(f > 0.0f)) ratiosOk = false; sum += f; }
+        if (!ratiosOk || std::abs(sum - 1.0) > 0.01) {
+            r.ratios.assign(size_t(lanes), 1.0f / float(lanes));
+            changedIds.insert(ids_[i]);
+        }
+        keep(i, r);
+        for (size_t k = i + 1; k < j; ++k) {
+            Row c = rows_[k];
+            if (c.cell != lane[k - i - 1]) { c.cell = lane[k - i - 1]; changedIds.insert(ids_[k]); }
+            keep(k, c);
+        }
+        i = j;
+    }
+    rows_.swap(nr); ids_.swap(ni); ranks_.swap(nk); content_.swap(nc);
+}
+
 // The 1.0 clean break (PLAN-split-rows-interchange R-I1): only files stamped
 // with this build's format open. Anything else is refused with a reason —
 // never migrated. The working copy is discarded; the original is untouched.
@@ -478,6 +620,7 @@ BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
     if (s == QLatin1String("ordered_item")) return OrderedListItem;
     if (s == QLatin1String("divider"))   return Divider;
     if (s == QLatin1String("table"))     return Table;
+    if (s == QLatin1String("split"))     return Split;
     return Paragraph;
 }
 
@@ -492,6 +635,7 @@ const char* BlockModel::typeToString(uint8_t t) {
     case OrderedListItem: return "ordered_item";
     case Divider:  return "divider";
     case Table:    return "table";
+    case Split:    return "split";
     default:       return "paragraph";
     }
 }
@@ -552,7 +696,7 @@ void BlockModel::loadFromStore() {
     content_.reserve(metas.size());
     std::vector<double> heights;
     heights.reserve(metas.size());
-    std::vector<int> canonicalized;   // rows whose markdown markers were consumed
+    QSet<QString> canonicalized;      // ids whose markdown markers were consumed
 
     for (const Document::BlockMeta& m : metas) {
         QString text = doc_.contentFor(m.id);   // Phase 1a: load eagerly
@@ -568,6 +712,13 @@ void BlockModel::loadFromStore() {
             r.depth = static_cast<uint8_t>(std::clamp(m.depth, 0, kMaxListDepth));
         if (r.type == Code)
             r.lang = o.value(QStringLiteral("lang")).toString();
+        // Split rows (SR-3): a lane block records its lane, a record its ratios.
+        // Structure is validated as a whole after the scan (repairStructure).
+        if (const QJsonValue cv = o.value(QStringLiteral("cell")); cv.isDouble())
+            r.cell = static_cast<int8_t>(std::clamp(cv.toInt(), 0, 63));
+        if (r.type == Split)
+            for (const QJsonValue& rv : o.value(QStringLiteral("ratios")).toArray())
+                r.ratios.push_back(static_cast<float>(rv.toDouble()));
         if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
             r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(text).rows()));
         fillMediaMeta(r, text);   // media: dims/video/aspect-param from the descriptor JSON
@@ -589,7 +740,7 @@ void BlockModel::loadFromStore() {
             QString clean; std::vector<Span> spans;
             if (convertMarkdown(text, r.spans, clean, spans)) {
                 text = clean; r.spans = spans;
-                canonicalized.push_back(static_cast<int>(rows_.size()));   // row index of the push below
+                canonicalized.insert(m.id);
             }
         }
         // Defensive: drop/clamp spans that exceed the content (stale data must
@@ -608,15 +759,26 @@ void BlockModel::loadFromStore() {
         ids_.push_back(m.id);
         ranks_.push_back(m.rank);
         content_.push_back(text);
-        heights.push_back(estimatedHeight(r));
     }
-    // Persist the conversions into the WORKING COPY in one transaction (the
-    // original file updates on the next explicit save, as always). This is a
-    // normalization, not a user edit: no undo entries (the txn chokepoint is
-    // bypassed deliberately), no dirty flag.
-    if (!canonicalized.empty() && doc_.isOpen()) {
+    // A malformed split row is repaired, never refused — the way the editor's
+    // own rules would leave it (PLAN-SR3 D1).
+    QSet<QString> restructured;
+    QStringList removedRecords;
+    repairStructure(restructured, removedRecords);
+    for (const Row& r : rows_) heights.push_back(estimatedHeight(r));
+    // Persist the conversions and repairs into the WORKING COPY in one
+    // transaction (the original file updates on the next explicit save, as
+    // always). This is a normalization, not a user edit: no undo entries (the
+    // txn chokepoint is bypassed deliberately), no dirty flag.
+    if ((!canonicalized.isEmpty() || !restructured.isEmpty() || !removedRecords.isEmpty())
+        && doc_.isOpen()) {
         doc_.begin();
-        for (int row : canonicalized) { persistContent(row); persistMeta(row); }
+        for (const QString& id : removedRecords) doc_.deleteBlock(id);
+        for (int row = 0; row < static_cast<int>(rows_.size()); ++row) {
+            const bool canon = canonicalized.contains(ids_[row]);
+            if (canon) persistContent(row);
+            if (canon || restructured.contains(ids_[row])) persistMeta(row);
+        }
         doc_.commit();
     }
     // Margin ink: one SELECT for the whole doc. Guard against orphans (an ink
@@ -632,7 +794,7 @@ void BlockModel::loadFromStore() {
     }
     ++inkRevision_;
     emit inkChanged();
-    fenwick_.reset(std::move(heights));
+    reindex(std::move(heights));
     endResetModel();
     ++layoutRevision_;
     clearUndo();
@@ -681,7 +843,7 @@ void BlockModel::rebuild(int n, int distribution) {
                          * std::max<quint64>(1, (62ull*62*62*62) / static_cast<quint64>(n + 1)), 4));
         heights.push_back(estimatedHeight(r));
     }
-    fenwick_.reset(std::move(heights));
+    reindex(std::move(heights));
     endResetModel();
     ++layoutRevision_;
     clearUndo();
@@ -916,11 +1078,18 @@ bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, in
 }
 
 QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
-                              const std::vector<Span>& spans, uint8_t taskState) const {
+                              const std::vector<Span>& spans, uint8_t taskState,
+                              int cell, const std::vector<float>& ratios) const {
     QJsonObject o;
     if (type == Heading && level > 0) o.insert(QStringLiteral("level"), level);
     if (type == TaskListItem) o.insert(QStringLiteral("state"), taskState);
     if (type == Code && !lang.isEmpty()) o.insert(QStringLiteral("lang"), lang);
+    if (cell >= 0) o.insert(QStringLiteral("cell"), cell);
+    if (type == Split && !ratios.empty()) {
+        QJsonArray ra;
+        for (float f : ratios) ra.append(std::round(double(f) * 10000.0) / 10000.0);
+        o.insert(QStringLiteral("ratios"), ra);
+    }
     if (!spans.empty()) {
         QJsonArray arr;
         for (const Span& sp : spans) {
@@ -940,7 +1109,7 @@ void BlockModel::persistMeta(int row) {
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
-                    attrsJson(r.type, r.level, r.lang, r.spans, r.taskState), r.depth);
+                    attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), r.depth);
 }
 
 // === Undo / redo: region-snapshot transactions ===========================
@@ -951,6 +1120,8 @@ BlockModel::BlockSnap BlockModel::snapAt(int row) const {
     s.taskState = rows_[row].taskState;
     s.depth = rows_[row].depth;
     s.lang = rows_[row].lang;
+    s.cell = rows_[row].cell;
+    s.ratios = rows_[row].ratios;
     s.ink = inkByBlock_.value(s.id);   // "" when uninked (the common case)
     return s;
 }
@@ -981,8 +1152,8 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     QHash<QString, double> measuredById;   // untouched rows: keep flag semantics
     measuredById.reserve(static_cast<int>(rows_.size()));
     for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
-        heightById.insert(ids_[i], fenwick_.height(i));
-        if (rows_[i].measured) measuredById.insert(ids_[i], fenwick_.height(i));
+        heightById.insert(ids_[i], layout().height(i));
+        if (rows_[i].measured) measuredById.insert(ids_[i], layout().height(i));
     }
     const int last = std::min(lo + oldCount, static_cast<int>(rows_.size()));
     QSet<QString> newIds, oldIds;
@@ -1002,6 +1173,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     int at = lo;
     for (const BlockSnap& s : snaps) {
         Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans; r.lang = s.lang;
+        r.cell = s.cell; r.ratios = s.ratios;
         r.taskState = s.taskState;
         r.depth = s.depth;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
@@ -1011,7 +1183,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         ids_.insert(ids_.begin() + at, s.id);
         ranks_.insert(ranks_.begin() + at, s.rank);
         if (doc_.isOpen()) {
-            const QString attrs = attrsJson(s.type, s.level, s.lang, s.spans, s.taskState);
+            const QString attrs = attrsJson(s.type, s.level, s.lang, s.spans, s.taskState, s.cell, s.ratios);
             const QString type = QString::fromLatin1(typeToString(s.type));
             if (oldIds.contains(s.id)) {   // survived: content/meta/rank may all have changed (incl. reorder)
                 doc_.updateContent(s.id, s.content);
@@ -1054,7 +1226,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
                                   : estimatedHeight(rows_[i]));  // media-blind estimate; re-born → estimate
         }
     }
-    fenwick_.reset(std::move(heights));
+    reindex(std::move(heights));
     endResetModel();
     ++layoutRevision_; ++contentRevision_;
     if (inkTouched) { ++inkRevision_; emit inkChanged(); }
@@ -1065,11 +1237,14 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
 void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide) {
     applying_ = true;
     bool inkTouched = false;
+    bool restructured = false;   // a patch moved a block between lanes (or retyped a record)
     for (const UndoPatch& p : ps) {
         const BlockSnap& s = beforeSide ? p.before : p.after;
         if (p.row < 0 || p.row >= static_cast<int>(rows_.size())
             || ids_[p.row] != s.id) continue;   // safety net — never expected
         Row& r = rows_[p.row];
+        if (r.type != s.type || r.cell != s.cell) restructured = true;
+        r.cell = s.cell; r.ratios = s.ratios;
         r.type = s.type; r.level = s.level; r.lang = s.lang;
         r.taskState = s.taskState; r.depth = s.depth; r.spans = s.spans;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
@@ -1084,11 +1259,11 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         // rows (2026-08-21): they never measure back — the estimate is
         // authoritative and must re-derive from the restored descriptor.
         if (r.type == Media)
-            fenwick_.setHeight(static_cast<size_t>(p.row), estimatedHeight(r));
+            setIndexHeight(static_cast<size_t>(p.row), estimatedHeight(r));
         if (doc_.isOpen()) {
             doc_.updateContent(s.id, s.content);
             doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),
-                            attrsJson(s.type, s.level, s.lang, s.spans, s.taskState),
+                            attrsJson(s.type, s.level, s.lang, s.spans, s.taskState, s.cell, s.ratios),
                             s.depth);
             doc_.updateRank(s.id, s.rank);
         }
@@ -1100,6 +1275,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         emit dataChanged(index(p.row), index(p.row));   // all roles — type/spans/content may differ
     }
     tableCacheRow_ = -1;               // a patched row may be a table — drop the parse cache
+    if (restructured) reindex(std::vector<double>(layout().heights()));
     ++contentRevision_;
     if (inkTouched) { ++inkRevision_; emit inkChanged(); }
     bumpLayout();
@@ -1133,6 +1309,7 @@ void BlockModel::endTxn(const QString& coalesce) {
         if (x.id != y.id || x.rank != y.rank || x.type != y.type
             || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
             || x.content != y.content || x.lang != y.lang
+            || x.cell != y.cell || x.ratios != y.ratios
             || x.spans.size() != y.spans.size()
             || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
         for (size_t j = 0; j < x.spans.size(); ++j)
@@ -1589,7 +1766,7 @@ int BlockModel::insertDivider(int afterRow) {
     content_.insert(content_.begin() + at, QString());
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QStringLiteral("divider"), QString(), QString());
@@ -2283,7 +2460,7 @@ int BlockModel::insertSketch(int afterRow) {
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -2578,7 +2755,7 @@ void BlockModel::sketchResizeCanvas(int row, int dl, int dt, int dr, int db) {
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    fenwick_.setHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -2728,7 +2905,7 @@ int BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -2760,7 +2937,7 @@ int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -2812,7 +2989,7 @@ int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectPa
     content_.insert(content_.begin() + at, json);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -4047,7 +4224,7 @@ QVariant BlockModel::data(const QModelIndex& index, int role) const {
     switch (role) {
     case TypeRole:     return r.type;
     case ContentRole:  return textAt(row);
-    case HeightRole:   return fenwick_.height(row);
+    case HeightRole:   return layout().height(row);
     case MeasuredRole: return r.measured;
     default:           return {};
     }
@@ -4096,10 +4273,12 @@ void BlockModel::refreshMaxContentWidth() {
 
 void BlockModel::setMeasuredHeight(int row, qreal h) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || h <= 0.0) return;
-    const double delta = fenwick_.setHeight(static_cast<size_t>(row), h);
+    const double delta = setIndexHeight(static_cast<size_t>(row), h);
     if (!rows_[row].measured) rows_[row].measured = true;
     if (delta != 0.0) {
-        emit heightSettled(row, delta);
+        // A lane block's delta is its split row's delta — report the TOP entry,
+        // which is what the view compensates its scroll position by.
+        emit heightSettled(static_cast<int>(layout().topOf(static_cast<std::size_t>(row))), delta);
         bumpLayout();
     }
 }
@@ -4124,7 +4303,7 @@ void BlockModel::setMediaWidth(int row, int w) {
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    fenwick_.setHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -4144,7 +4323,7 @@ void BlockModel::setContentWidth(qreal w) {
     bool any = false;
     for (size_t i = 0; i < rows_.size(); ++i)
         if (rows_[i].type == Media)
-            if (fenwick_.setHeight(i, estimatedHeight(rows_[i])) != 0.0) any = true;
+            if (setIndexHeight(i, estimatedHeight(rows_[i])) != 0.0) any = true;
     if (any) bumpLayout();
 }
 
@@ -4213,12 +4392,12 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
         std::vector<double> hs;
         hs.reserve(rows_.size() - static_cast<size_t>(cnt));
         for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
-            if (i < first || i > last) hs.push_back(fenwick_.height(static_cast<size_t>(i)));
+            if (i < first || i > last) hs.push_back(layout().height(static_cast<size_t>(i)));
         rows_.erase(rows_.begin() + first, rows_.begin() + last + 1);
         content_.erase(content_.begin() + first, content_.begin() + last + 1);
         ids_.erase(ids_.begin() + first, ids_.begin() + last + 1);
         ranks_.erase(ranks_.begin() + first, ranks_.begin() + last + 1);
-        fenwick_.reset(std::move(hs));
+        reindex(std::move(hs));
         endRemoveRows();
         bumpLayout();
     }
@@ -4350,7 +4529,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         const int first = afterRow + 1, last = afterRow + cnt;
         QString prevRank = ranks_[afterRow];
         const QString nextRank = (first < static_cast<int>(ranks_.size())) ? ranks_[first] : QString();
-        struct NewBlk { QString id, rank, content; uint8_t type, level, taskState; QString lang; std::vector<Span> spans; };
+        struct NewBlk { QString id, rank, content; uint8_t type, level, taskState; QString lang; std::vector<Span> spans; int8_t cell; };
         std::vector<NewBlk> made;
         beginInsertRows({}, first, last);
         for (int k = 0; k < cnt; ++k) {
@@ -4376,14 +4555,14 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
             content_.insert(content_.begin() + at, contentj);
             ids_.insert(ids_.begin() + at, newId);
             ranks_.insert(ranks_.begin() + at, newRank);
-            fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
-            made.push_back({newId, newRank, contentj, tj, lj, tsj, langj, spans});
+            indexInsert(static_cast<size_t>(at), estimatedHeight(r));
+            made.push_back({newId, newRank, contentj, tj, lj, tsj, langj, spans, r.cell});
         }
         endInsertRows();
         if (doc_.isOpen())
             for (const NewBlk& b : made)
                 doc_.appendBlock(b.id, b.rank, 0, QString::fromLatin1(typeToString(b.type)),
-                                 attrsJson(b.type, b.level, b.lang, b.spans, b.taskState), b.content);
+                                 attrsJson(b.type, b.level, b.lang, b.spans, b.taskState, b.cell, std::vector<float>{}), b.content);
     };
 
     // A leading fence merges only into an EMPTY row (it becomes the code
@@ -4603,7 +4782,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
             content_.insert(content_.begin() + at, content);
             ids_.insert(ids_.begin() + at, id);
             ranks_.insert(ranks_.begin() + at, rk);
-            fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+            indexInsert(static_cast<size_t>(at), estimatedHeight(r));
             made.push_back({id, rk, content, r});
             caretRow = at; caretCol = (sp.type == Table) ? 0 : content.size();
         }
@@ -4611,7 +4790,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
         if (doc_.isOpen())
             for (const NewBlk& b : made)
                 doc_.appendBlock(b.id, b.rank, b.r.depth, QString::fromLatin1(typeToString(b.r.type)),
-                                 attrsJson(b.r.type, b.r.level, b.r.lang, b.r.spans, b.r.taskState), b.content);
+                                 attrsJson(b.r.type, b.r.level, b.r.lang, b.r.spans, b.r.taskState, b.r.cell, b.r.ratios), b.content);
     }
 
     bumpLayout();
@@ -4664,7 +4843,7 @@ void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& js
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    fenwick_.setHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row]));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -4715,7 +4894,7 @@ void BlockModel::splitBlock(int row, int col) {
     content_.insert(content_.begin() + at, right);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -4747,7 +4926,7 @@ void BlockModel::insertParagraphRaw(int row) {
     content_.insert(content_.begin() + row, QString());
     ids_.insert(ids_.begin() + row, newId);
     ranks_.insert(ranks_.begin() + row, newRank);
-    fenwick_.insert(static_cast<size_t>(row), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(row), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
@@ -4780,12 +4959,12 @@ void BlockModel::duplicateBlock(int row) {
     content_.insert(content_.begin() + at, text);
     ids_.insert(ids_.begin() + at, newId);
     ranks_.insert(ranks_.begin() + at, newRank);
-    fenwick_.insert(static_cast<size_t>(at), estimatedHeight(r));
+    indexInsert(static_cast<size_t>(at), estimatedHeight(r));
     endInsertRows();
 
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)),
-                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState), text);
+                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), text);
 
     bumpLayout();
     ++contentRevision_;
@@ -4809,12 +4988,12 @@ void BlockModel::removeBlocks(int loRow, int hiRow) {
     std::vector<double> hs;
     hs.reserve(rows_.size() - static_cast<size_t>(cnt));
     for (int i = 0; i < n; ++i)
-        if (i < loRow || i > hiRow) hs.push_back(fenwick_.height(static_cast<size_t>(i)));
+        if (i < loRow || i > hiRow) hs.push_back(layout().height(static_cast<size_t>(i)));
     rows_.erase(rows_.begin() + loRow, rows_.begin() + hiRow + 1);
     content_.erase(content_.begin() + loRow, content_.begin() + hiRow + 1);
     ids_.erase(ids_.begin() + loRow, ids_.begin() + hiRow + 1);
     ranks_.erase(ranks_.begin() + loRow, ranks_.begin() + hiRow + 1);
-    fenwick_.reset(std::move(hs));
+    reindex(std::move(hs));
     endRemoveRows();
     // Never leave an empty document: the band's after-side becomes the fresh
     // paragraph (delta = -cnt + 1 → after = [lo, lo]).
@@ -4862,7 +5041,7 @@ void BlockModel::removeBlock(int row) {
     content_.erase(content_.begin() + row);
     ids_.erase(ids_.begin() + row);
     ranks_.erase(ranks_.begin() + row);
-    fenwick_.erase(static_cast<size_t>(row));
+    indexErase(static_cast<size_t>(row));
     endRemoveRows();
     bumpLayout();
     ++contentRevision_;            // row→content mapping shifted: refresh content bindings
@@ -4893,12 +5072,12 @@ void BlockModel::moveBlocks(int from, int count, int to) {
     std::vector<QString> cs(content_.begin() + from, content_.begin() + from + count);
     std::vector<double> hs;
     hs.reserve(static_cast<size_t>(count));
-    for (int k = 0; k < count; ++k) hs.push_back(fenwick_.height(static_cast<size_t>(from + k)));
+    for (int k = 0; k < count; ++k) hs.push_back(layout().height(static_cast<size_t>(from + k)));
     rows_.erase(rows_.begin() + from, rows_.begin() + from + count);
     content_.erase(content_.begin() + from, content_.begin() + from + count);
     ids_.erase(ids_.begin() + from, ids_.begin() + from + count);
     ranks_.erase(ranks_.begin() + from, ranks_.begin() + from + count);
-    for (int k = 0; k < count; ++k) fenwick_.erase(static_cast<size_t>(from));
+    for (int k = 0; k < count; ++k) indexErase(static_cast<size_t>(from));
 
     // Chain fresh ranks between the destination neighbours (reduced list).
     const int sz = static_cast<int>(ranks_.size());
@@ -4912,7 +5091,7 @@ void BlockModel::moveBlocks(int from, int count, int to) {
         content_.insert(content_.begin() + at, cs[static_cast<size_t>(k)]);
         ids_.insert(ids_.begin() + at, ids[static_cast<size_t>(k)]);
         ranks_.insert(ranks_.begin() + at, rk);
-        fenwick_.insert(static_cast<size_t>(at), hs[static_cast<size_t>(k)]);
+        indexInsert(static_cast<size_t>(at), hs[static_cast<size_t>(k)]);
         if (doc_.isOpen()) doc_.updateRank(ids[static_cast<size_t>(k)], rk);
     }
 

@@ -9,7 +9,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include "FenwickTree.h"
+#include "LayoutIndex.h"
+#include <QSet>
 #include "InlineText.h"
 #include "Document.h"
 #include "TableGrid.h"
@@ -106,7 +107,8 @@ public:
         Paragraph = 0, Heading = 1, Code = 2, Media = 3,
         Quote = 4, ListItem = 5, Divider = 6, Table = 7,
         TaskListItem = 8,   // a list item carrying a tri-state status (todo/doing/done)
-        OrderedListItem = 9 // numbered item; the number is COMPUTED at render time
+        OrderedListItem = 9, // numbered item; the number is COMPUTED at render time
+        Split = 10          // a split row's record (SR-3): its lanes' blocks follow it, DFS-flat
     };
     // List-shaped blocks: the only types that carry a nesting `depth` and
     // respond to Tab/Shift+Tab. Appended enum values keep the QML type-number
@@ -126,7 +128,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     int rowCountQml() const { return static_cast<int>(rows_.size()); }
-    qreal totalHeight() const { return fenwick_.total(); }
+    qreal totalHeight() const { return layout().total(); }
     int layoutRevision() const { return layoutRevision_; }
     int contentRevision() const { return contentRevision_; }
 
@@ -134,12 +136,13 @@ public:
     Q_INVOKABLE void rebuild(int n, int distribution);
 
     // --- Geometry, for the Flickable arm (and HUD) ---
-    Q_INVOKABLE qreal yForRow(int row) const { return fenwick_.prefix(clampRow(row)); }
-    Q_INVOKABLE qreal heightForRow(int row) const { return fenwick_.height(clampRow(row)); }
+    Q_INVOKABLE qreal yForRow(int row) const { return layout().y(static_cast<std::size_t>(clampRow(row))); }
+    Q_INVOKABLE qreal heightForRow(int row) const { return layout().height(static_cast<std::size_t>(clampRow(row))); }
     // True once a row has reported a real laid-out height (cached in the Fenwick).
     // Tables use this to measure only once and reuse the cache on recycle.
     Q_INVOKABLE bool rowMeasured(int row) const { return rows_[clampRow(row)].measured; }
-    Q_INVOKABLE int rowForY(qreal y) const { return static_cast<int>(fenwick_.rowAtOffset(y < 0 ? 0 : y)); }
+    // The TOP entry at y: a split row answers with its record (lanes resolve by x in blockAt).
+    Q_INVOKABLE int rowForY(qreal y) const { return static_cast<int>(layout().topAt(y < 0 ? 0 : y)); }
     // The rows the delegate pool renders (SR-2 seam, fed to viewSlots.sync).
     // Today the contiguous [firstRow, firstRow+count) clipped to the document;
     // SR-3 answers it from the two-level index, where lanes leave gaps.
@@ -156,6 +159,12 @@ public:
     // seam). Every block spans the page today, so x doesn't decide; SR-3
     // resolves split-row lanes by x (rows_spike §D).
     Q_INVOKABLE int blockAt(qreal x, qreal y) const { Q_UNUSED(x); return rowForY(y); }
+    // --- Split rows (SR-3). A Split record is followed by its lanes' blocks.
+    Q_INVOKABLE int laneForRow(int row) const;       // the lane a block sits in; -1 = top level
+    Q_INVOKABLE int splitRowOf(int row) const;       // the record of the split row containing row, or -1
+    Q_INVOKABLE int laneCount(int row) const;        // lanes of a Split record; 0 otherwise
+    Q_INVOKABLE QVariantList splitRatios(int row) const;
+    bool structureValid() const;                     // the D1 invariants (PLAN-SR3), for tests
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;
@@ -833,6 +842,8 @@ private:
         uint16_t mediaH = 0;    // media only: intrinsic height px
         QString lang;       // code blocks: syntax-highlight language (else empty)
         std::vector<Span> spans;   // travels with the row on insert/erase
+        int8_t cell = -1;          // split rows (SR-3): the lane this block sits in; -1 = top level
+        std::vector<float> ratios; // a Split record's lane fractions (sum 1); empty otherwise
     };
 
     // Full, restorable state of one block — the unit an undo transaction snaps.
@@ -844,6 +855,8 @@ private:
         QString ink;
         uint8_t type = 0, level = 0, taskState = 0, depth = 0;
         std::vector<Span> spans;
+        int8_t cell = -1;           // split-row structure travels with the snap, so
+        std::vector<float> ratios;  // every undo path restores it for free
     };
     // A sparse per-row change: this row's snap swapped before↔after in place.
     // Only born from non-structural bands (same ids, same count) — see endTxn.
@@ -925,8 +938,9 @@ private:
                                 QString& cleanText, std::vector<Span>& outSpans);
 
     // --- Undo internals ---
+    // cell/ratios are mandatory so no writer can silently drop split-row structure.
     QString attrsJson(uint8_t type, uint8_t level, const QString& lang, const std::vector<Span>& spans,
-                      uint8_t taskState = 0) const;
+                      uint8_t taskState, int cell, const std::vector<float>& ratios) const;
     BlockSnap snapAt(int row) const;
     std::vector<BlockSnap> snapshotRange(int lo, int hi) const;
     // Replace the current rows [lo, lo+oldCount) with `snaps` (in-memory + DB +
@@ -1039,7 +1053,22 @@ private:
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
     std::vector<QString> ranks_;     // fractional rank per row, parallel to rows_
     std::vector<QString> content_;   // content per row (the in-memory truth; write-through to DB)
-    FenwickTree fenwick_;
+    // The two-level height index (SR-3, LayoutIndex). Rebuilt LAZILY: structural
+    // edits stage heights in pendingHeights_, and the next query reindexes from
+    // rows_ once rows_ and the staged heights agree again (a signal fired between
+    // a rows_ erase and its index erase reads the previous, still-coherent index).
+    mutable mn::LayoutIndex layout_;
+    mutable std::vector<double> pendingHeights_;
+    mutable bool indexDirty_ = false;
+    const mn::LayoutIndex& layout() const;   // (not index(): that's QAbstractListModel's)
+    void reindex(std::vector<double> heights);
+    void indexInsert(std::size_t at, double h);
+    void indexErase(std::size_t at);
+    double setIndexHeight(std::size_t row, double h);   // returns the top entry's delta
+    std::vector<mn::LayoutIndex::Entry> layoutEntries() const;
+    // Load-time repair of malformed split rows (never a refusal); fills the ids
+    // whose meta changed and the ids of records removed.
+    void repairStructure(QSet<QString>& changedIds, QStringList& removedIds);
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
 

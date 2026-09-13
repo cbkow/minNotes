@@ -5864,6 +5864,118 @@ static void testFormatGate() {
     QDir(dir).removeRecursively();
 }
 
+// A saved document of `n` paragraphs "p0".."p<n-1>", then split-row structure
+// written straight into its blocks table (nothing in the UI makes split rows
+// yet). shape: offset → {type, attrs}; a split record also loses its text.
+static void writeSplitFixture(const QString& path, int n, const QList<QPair<int, QPair<QString, QString>>>& shape) {
+    QFile::remove(path);
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < n; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+        m.saveAs(path);
+    }
+    for (const auto& s : shape) {
+        const QString where = QStringLiteral("WHERE id = (SELECT id FROM blocks ORDER BY rank LIMIT 1 OFFSET %1)").arg(s.first);
+        execOnFile(path, QStringLiteral("UPDATE blocks SET type = '%1', attrs = '%2' ").arg(s.second.first, s.second.second) + where);
+        if (s.second.first == QLatin1String("split"))
+            execOnFile(path, QStringLiteral("UPDATE blocks SET content = '' ") + where);
+    }
+}
+
+static void testSplitRowModel() {
+    qInfo("[74] split rows load, index, repair, and survive undo and save (SR-3 step 3a)");
+    const QString dir = QDir::tempPath() + QStringLiteral("/mn_split_model");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    auto near = [](double a, double b) { return std::abs(a - b) < 0.01; };
+    auto sh = [](int off, const char* type, const char* attrs) {
+        return qMakePair(off, qMakePair(QString::fromLatin1(type), QString::fromLatin1(attrs)));
+    };
+
+    // Rows: p0 · [record 0.4|0.6] · lane0: p2 · lane1: p3, p4 · p5 p6 p7
+    const QString path = dir + QStringLiteral("/split.mnd");
+    writeSplitFixture(path, 8, { sh(1, "split", "{\"ratios\":[0.4,0.6]}"), sh(2, "paragraph", "{\"cell\":0}"),
+                                 sh(3, "paragraph", "{\"cell\":1}"), sh(4, "paragraph", "{\"cell\":1}") });
+    BlockModel m;
+    CHECK(m.openDocument(path) && m.rowCountQml() == 8, "a document with a split row opens");
+    CHECK(m.structureValid() && !m.dirty(), "…its structure is valid and opening changed nothing");
+    CHECK(m.typeForRow(1) == BlockModel::Split && m.laneCount(1) == 2
+              && m.laneForRow(2) == 0 && m.laneForRow(3) == 1 && m.laneForRow(4) == 1 && m.laneForRow(5) == -1,
+          "the record, its two lanes, and the blocks in them load as written");
+    const QVariantList ratios = m.splitRatios(1);
+    CHECK(ratios.size() == 2 && near(ratios[0].toDouble(), 0.4) && near(ratios[1].toDouble(), 0.6),
+          "lane ratios load");
+    CHECK(m.splitRowOf(4) == 1 && m.splitRowOf(1) == 1 && m.splitRowOf(5) == -1, "splitRowOf finds the record");
+
+    const double h2 = m.heightForRow(2), h3 = m.heightForRow(3), h4 = m.heightForRow(4);
+    CHECK(near(m.yForRow(2), m.yForRow(1)) && near(m.yForRow(3), m.yForRow(1))
+              && near(m.yForRow(4), m.yForRow(3) + h3),
+          "lanes start at the row's top and stack their own blocks");
+    CHECK(near(m.heightForRow(1), std::max(h2, h3 + h4)) && near(m.yForRow(5), m.yForRow(1) + m.heightForRow(1)),
+          "the split row is as tall as its tallest lane, and the next row starts below it");
+    CHECK(m.rowForY(m.yForRow(4) + 1) == 1, "a y inside the split row resolves to its record");
+    CHECK(near(m.totalHeight(), m.yForRow(7) + m.heightForRow(7)), "total height is exact");
+
+    int settledRow = -2; qreal settledDelta = 0;
+    QObject::connect(&m, &BlockModel::heightSettled, [&](int r, qreal d) { settledRow = r; settledDelta = d; });
+    const double extentBefore = m.heightForRow(1);
+    m.setMeasuredHeight(2, 500.0);
+    CHECK(settledRow == 1 && near(settledDelta, 500.0 - extentBefore),
+          "a lane block's measured height settles as its split row's delta");
+    CHECK(near(m.yForRow(5), m.yForRow(1) + 500.0), "rows below move by exactly that delta");
+    m.setMeasuredHeight(3, h3 + 1.0);
+    CHECK(settledRow == 1 && near(m.heightForRow(1), 500.0), "a change in a shorter lane leaves the row's height alone");
+
+    m.setContent(3, QStringLiteral("edited"));
+    m.undo();
+    CHECK(m.contentForRow(3) == QStringLiteral("p3") && m.laneForRow(3) == 1 && m.structureValid(),
+          "undoing an edit inside a lane keeps the block in its lane");
+    m.removeBlock(4);
+    CHECK(m.rowCountQml() == 7 && m.laneForRow(3) == 1 && m.structureValid(), "removing one of a lane's two blocks keeps the row");
+    m.undo();
+    CHECK(m.rowCountQml() == 8 && m.contentForRow(4) == QStringLiteral("p4") && m.laneForRow(4) == 1
+              && m.structureValid(), "undo brings the block back into its lane");
+    m.redo(); m.undo();
+    CHECK(m.laneForRow(4) == 1 && m.structureValid(), "redo/undo round-trips the structure");
+    CHECK(m.save(), "the document saves");
+    {
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && m2.structureValid() && m2.laneForRow(4) == 1 && m2.laneCount(1) == 2
+                  && near(m2.splitRatios(1)[1].toDouble(), 0.6), "split-row structure round-trips through save");
+    }
+
+    // Repairs: an orphan lane block · a record with no blocks · a one-lane record ·
+    // a record with a lane gap and a wrong ratio count.
+    const QString bad = dir + QStringLiteral("/repair.mnd");
+    writeSplitFixture(bad, 10, { sh(0, "paragraph", "{\"cell\":0}"),
+                                 sh(1, "split", "{\"ratios\":[0.5,0.5]}"),
+                                 sh(3, "split", "{\"ratios\":[1]}"), sh(4, "paragraph", "{\"cell\":0}"), sh(5, "paragraph", "{\"cell\":0}"),
+                                 sh(6, "split", "{\"ratios\":[0.2]}"), sh(7, "paragraph", "{\"cell\":0}"), sh(8, "paragraph", "{\"cell\":2}") });
+    {
+        BlockModel r;
+        CHECK(r.openDocument(bad) && r.structureValid(), "a malformed layout opens, repaired");
+        CHECK(r.rowCountQml() == 8 && !r.dirty(), "…the empty and one-lane records are gone, without dirtying");
+        CHECK(r.contentForRow(0) == QStringLiteral("p0") && r.laneForRow(0) == -1
+                  && r.contentForRow(1) == QStringLiteral("p2") && r.contentForRow(2) == QStringLiteral("p4")
+                  && r.laneForRow(2) == -1 && r.laneForRow(3) == -1,
+              "orphan and unwrapped blocks are at top level, in order");
+        CHECK(r.typeForRow(4) == BlockModel::Split && r.laneForRow(5) == 0 && r.laneForRow(6) == 1
+                  && r.contentForRow(6) == QStringLiteral("p8") && r.laneForRow(7) == -1,
+              "a lane gap renumbers to consecutive lanes");
+        const QVariantList eq = r.splitRatios(4);
+        CHECK(eq.size() == 2 && near(eq[0].toDouble(), 0.5), "a wrong ratio count becomes equal lanes");
+        CHECK(r.save(), "the repaired document saves");
+    }
+    {
+        BlockModel r2;
+        CHECK(r2.openDocument(bad) && r2.rowCountQml() == 8 && r2.structureValid() && r2.laneForRow(6) == 1,
+              "the repair was persisted — reopening finds the same structure");
+    }
+    QDir(dir).removeRecursively();
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -5952,6 +6064,7 @@ int main(int argc, char** argv) {
     testViewportSlots();
     testLayoutIndex();
     testFormatGate();
+    testSplitRowModel();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

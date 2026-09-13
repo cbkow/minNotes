@@ -37,6 +37,7 @@ public:
     double total() const { return outer_.total(); }
     double y(std::size_t flat) const;
     double height(std::size_t flat) const { return flat < heights_.size() ? heights_[flat] : 0.0; }
+    const std::vector<double>& heights() const { return heights_; }   // per flat entry
     double setHeight(std::size_t flat, double h);   // no-op (0) on a record
 
     const Entry& entry(std::size_t flat) const { return entries_[flat]; }
