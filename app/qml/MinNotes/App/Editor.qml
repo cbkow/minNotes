@@ -160,6 +160,21 @@ FocusScope {
     readonly property int activeGridHead: (blockModel.layoutRevision, blockModel.contentRevision,
         activeGridId === "" ? -1 : blockModel.rowForId(activeGridId))
     onActiveGridHeadChanged: if (activeGridId !== "" && (activeGridHead < 0 || blockModel.headerCount(activeGridHead) <= 0)) activeGridId = ""
+    // The grid frame (S9b): the document view restricted to the tab's table — blocks outside it hidden,
+    // the scroll range clamped to the table's extent through the Flickable's margins (negative margins
+    // move the min / max offsets inward), the pool and every gesture untouched.
+    readonly property int frameLo: activeGridHead >= 0 && !boardMode ? activeGridHead : -1
+    readonly property int frameHiRec: {
+        if (frameLo < 0) return -1
+        const dep = blockModel.contentRevision
+        const recs = blockModel.tableRecords(frameLo)
+        return recs.length ? recs[recs.length - 1] : frameLo
+    }
+    readonly property int frameHi: frameLo >= 0 ? (blockModel.contentRevision, blockModel.splitRowLast(frameHiRec)) : -1
+    readonly property real frameTop: frameLo >= 0 ? (blockModel.layoutRevision, blockModel.yForRow(frameLo)) : 0
+    readonly property real frameBottom: frameLo >= 0
+        ? (blockModel.layoutRevision, blockModel.yForRow(frameHiRec) + blockModel.heightForRow(frameHiRec)) : 0
+    onFrameLoChanged: if (frameLo >= 0) { flick.contentX = 0; flick.contentY = frameTop - Theme.dim.toolStripHeight }
     function firstGroupColOf(head) {
         for (var c = 0; c < blockModel.tableColumnCount(head); ++c) {
             var k = blockModel.gridColumnKind(head, c)
@@ -274,17 +289,11 @@ FocusScope {
             if (pc >= 0) { boardCol = pc; boardMode = true }
         }
         else if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a derived table (S9)
-            var gc = boardPref(id)
-            if (gc < 0 || (blockModel.gridColumnKind(r, gc) !== 1 && blockModel.gridColumnKind(r, gc) !== 2)) gc = firstGroupColOf(r)
-            if (gc < 0) {                        // no grouping column: the grid frame lands with S9b — stay in the document
-                activeTableId = ""; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""
-                landInCell(r, 0, 0)
-                Toasts.show(qsTr("Add a choice or checkmark column to view this table as a board"))
-                return
-            }
             if (t !== "type") inspector.drawTool = "type"
             activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = id
-            boardCol = gc; boardMode = true
+            var gc = boardPref(id)               // this table's remembered view: the board, else the grid frame
+            if (gc >= 0 && blockModel.gridColumnKind(r, gc) !== 1 && blockModel.gridColumnKind(r, gc) !== 2) gc = -1
+            if (gc >= 0) { boardCol = gc; boardMode = true }
         }
         else if (blockModel.mediaKind(r) === "video") {
             if (t === "text") inspector.drawTool = "select"
@@ -418,17 +427,8 @@ FocusScope {
         boardMode = false
         saveBoardPref(activeTableId !== "" ? activeTableId : activeGridId, -1)
     }
-    // Leaving the board: the legacy tab shows its grid; a derived table's tab returns to the
-    // document at the table until the grid frame lands (S9b).
-    function leaveBoard() {
-        if (activeGridHead >= 0) {
-            const gh = activeGridHead
-            showGridView(); setActiveTab("")
-            landInCell(gh, 0, 0)
-            return
-        }
-        showGridView()
-    }
+    // Leaving the board: the tab shows its grid (a derived table's grid frame, S9b).
+    function leaveBoard() { showGridView() }
     // Kanban board: the active table tab rendered as a board grouped by a
     // choice/check column. View state only (not persisted, not undoable).
     property bool boardMode: false
@@ -4156,7 +4156,22 @@ FocusScope {
                 } else {
                     const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
                     const r = blockModel.gridRowOf(row), rows = blockModel.gridRowCount(head)
-                    switch (rand(13)) {
+                    switch (rand(14)) {
+                    case 13: {   // S9b: the grid frame shows one table — every visible delegate is inside it
+                        root.setActiveTab(blockModel.idForRow(head))
+                        if (root.boardMode) root.showGridView()
+                        let outside = 0, inside = 0
+                        for (let i = 0; i < pool.count; ++i) {
+                            const c = pool.itemAt(i)
+                            if (!c || !c.active || !c.visible) continue
+                            if (c.logicalRow >= root.frameLo && c.logicalRow <= root.frameHi) ++inside; else ++outside
+                        }
+                        checks += 2
+                        if (root.frameLo !== head || outside > 0) fail("the grid frame of table " + head + " showed " + outside + " blocks outside it")
+                        if (flick.contentY < root.frameTop - Theme.dim.toolStripHeight - 1) fail("the grid frame scrolled above its table (" + flick.contentY + " < " + root.frameTop + ")")
+                        root.setActiveTab("")
+                        break
+                    }
                     case 12: {   // SR-0 §4.9: a row range reaching into a table from above takes the whole table
                         const recs = blockModel.tableRecords(head), last = blockModel.splitRowLast(recs[recs.length - 1])
                         const above = head - 1
@@ -4477,7 +4492,11 @@ FocusScope {
     Flickable {
         id: flick
         visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
+                 && !(root.activeGridId !== "" && root.boardMode)                 // a derived table's board covers it
         anchors.fill: parent
+        // The grid frame's clamp (S9b): the table's top sits under the tab toolbar, its bottom at the end.
+        topMargin: root.frameLo >= 0 ? -(root.frameTop - Theme.dim.toolStripHeight) : 0
+        bottomMargin: root.frameLo >= 0 ? -Math.max(0, contentHeight - root.frameBottom) : 0
         // In ink mode the content is wider than the viewport (locked page +
         // margins) and pans natively; contentSpan == width otherwise, so this
         // is a no-op outside the mode.
@@ -4562,6 +4581,7 @@ FocusScope {
                 // Top entries only: a rule marks where a ROW starts, not a lane block.
                 visible: prow >= 0 && prow < blockModel.count
                          && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0
+                         && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))   // the grid frame
                 z: -1
                 x: 0
                 width: Math.max(flick.width, root.contentSpan)
@@ -5567,7 +5587,7 @@ FocusScope {
             onOpenCard: (r, c) => {              // double-click → grid, cell focused
                 if (root.activeGridHead >= 0) {
                     const gh = root.activeGridHead
-                    root.showGridView(); root.setActiveTab("")
+                    root.showGridView()          // the grid frame (S9b)
                     root.landInCell(gh, r, c); root.forceActiveFocus()
                     return
                 }
@@ -7112,6 +7132,7 @@ FocusScope {
                 readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
                 visible: prow >= 0 && prow < blockModel.count
                          && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0   // top entries only
+                         && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))
                 width: blockRuler.width
                 height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
                 y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY
