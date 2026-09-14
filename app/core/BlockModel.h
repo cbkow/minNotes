@@ -204,6 +204,13 @@ public:
     Q_INVOKABLE int tableColumnCount(int head) const; // max(the head's column spec, the widest row)
     Q_INVOKABLE bool setHeaderRole(int record, int count);   // assign (count ≥ 1) / unassign (0); one undo
     Q_INVOKABLE int insertTableRows(int afterRow, int nRows, int nCols);   // head + body rows; → the first cell's row
+    // Table geometry (SR-4 S2): px columns side by side from the table's left edge — a
+    // manual width from the head's spec, else auto (the widest text line + padding,
+    // clamped [48, 360]; 160 for a column with nothing measurable). May exceed the page.
+    Q_INVOKABLE qreal tableColumnWidth(int head, int column) const;
+    Q_INVOKABLE qreal tableColumnLeft(int head, int column) const;
+    Q_INVOKABLE qreal tableWidth(int head) const;
+    Q_INVOKABLE bool setTableColumnWidth(int head, int column, qreal width);   // ≤ 0 = auto; one undo
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -948,6 +955,7 @@ private:
         std::vector<float> ratios; // a Split record's lane fractions (sum 1); empty otherwise
         uint8_t header = 0;        // SR-4: a Split record heading a table — its header row count; 0 = none
         QString table;             // SR-4: a Split record's table attrs (compact JSON: a head's column spec, row/cell colours)
+        mutable int32_t natW = -1; // SR-4: a table cell block's widest text line in px (-1 = not measured yet)
     };
 
     // Full, restorable state of one block — the unit an undo transaction snaps.
@@ -1212,6 +1220,18 @@ private:
     mutable bool tablesDirty_ = true;
     const std::vector<int>& tableHeads() const;
     std::pair<int,int> splitRunBand(int record) const;   // adjacent top-level split rows around record
+    // Per-table column geometry, rebuilt lazily for every table at once. Stale when the
+    // grouping rebuilds, a table cell's text changes (persistContent), or a record's
+    // table attrs change (persistMeta).
+    struct TableGeom { std::vector<double> x, w; double width = 0.0; };
+    mutable QHash<int, TableGeom> geoms_;               // keyed by head record
+    mutable bool tableGeomDirty_ = true;
+    mutable std::size_t geomRows_ = 0;
+    const TableGeom* tableGeom(int head) const;         // nullptr unless head is a table head
+    TableGeom buildTableGeom(int head) const;
+    static double tableLaneWidth(const TableGeom& g, int cell) {
+        return cell >= 0 && static_cast<std::size_t>(cell) < g.w.size() ? g.w[static_cast<std::size_t>(cell)] : 160.0;
+    }
     bool lastPasteRelocated_ = false;
 public:
     std::pair<int,int> wholeSplitRows(int lo, int hi) const;   // widen a band to whole split rows

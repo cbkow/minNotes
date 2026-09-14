@@ -6812,6 +6812,51 @@ static void testTableModel() {
     }
 }
 
+static void testTableGeometry() {
+    qInfo("[86] table geometry: px columns, auto widths from content, manual widths, rows wider than the page (SR-4 step 2)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+    m.insertTableRows(0, 3, 3);
+    // 0 above · 1 H · 2 3 4 · 5 B1 · 6 7 8 · 9 B2 · 10 11 12 · 13 below
+    CHECK(m.tableColumnWidth(1, 0) == 160 && m.tableColumnWidth(1, 2) == 160 && m.tableWidth(1) == 480
+              && m.tableColumnLeft(1, 1) == 160 && m.tableColumnLeft(1, 2) == 320,
+          "an empty table's columns start at the 160 px default, side by side with no gap");
+    CHECK(m.widthForRow(7) == 160 && m.xForRow(7) == 160 && m.xForRow(12) == 320, "cell blocks take their column's x and width");
+
+    const int rev0 = m.layoutRevision();
+    m.setContent(3, QStringLiteral("x"));
+    const qreal narrow = m.tableColumnWidth(1, 1);
+    CHECK(narrow >= 48 && narrow < 160 && m.layoutRevision() > rev0 && m.xForRow(8) == 160 + narrow,
+          "a short header label narrows its auto column (%.1f), and the column to its right moves", narrow);
+    m.setContent(7, QString(80, QLatin1Char('m')));
+    CHECK(m.tableColumnWidth(1, 1) == 360, "a long cell widens its column up to the 360 px auto cap");
+    m.setContent(7, QStringLiteral("mm"));
+    CHECK(m.tableColumnWidth(1, 1) < 160, "…and shortening the text narrows it again");
+
+    CHECK(m.setTableColumnWidth(1, 0, 300) && m.setTableColumnWidth(1, 2, 460), "manual widths set");
+    const qreal total = 300 + m.tableColumnWidth(1, 1) + 460;
+    CHECK(m.tableColumnWidth(1, 0) == 300 && m.tableColumnWidth(1, 2) == 460 && m.tableWidth(1) == total
+              && m.maxContentWidth() >= total && m.xForRow(12) == 300 + m.tableColumnWidth(1, 1),
+          "manual widths pass through uncapped, and a table wider than the page widens the content (%.0f)", total);
+    const qreal y = m.yForRow(9) + 2;
+    CHECK(m.blockAt(total - 5, y) == 12 && m.blockAt(5, y) == 10 && m.blockAt(305, y) == 11,
+          "hit-tests find the column, past the page edge too");
+    m.undo();
+    CHECK(m.tableColumnWidth(1, 2) == 160 && m.tableColumnWidth(1, 0) == 300, "undo restores the auto width");
+
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_table_geometry.mnd");
+    QFile::remove(path);
+    CHECK(m.saveAs(path), "the document saves");
+    BlockModel m2;
+    CHECK(m2.openDocument(path) && m2.tableColumnWidth(1, 0) == 300 && m2.tableColumnWidth(1, 1) < 160
+              && m2.tableColumnWidth(1, 2) == 160 && m2.xForRow(12) == 300 + m2.tableColumnWidth(1, 1),
+          "manual and auto widths come back after reopening");
+    QFile::remove(path);
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7008,6 +7053,7 @@ int main(int argc, char** argv) {
     testSplitRowInterchange();
     testSplitRowExports();
     testTableModel();
+    testTableGeometry();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

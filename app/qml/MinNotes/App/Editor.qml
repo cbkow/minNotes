@@ -77,6 +77,11 @@ FocusScope {
     // contentRevision so every binding calling it follows structure changes.
     function laneSpan(record, lane) {
         const rev = blockModel.contentRevision
+        const head = blockModel.tableHeadOf(record)
+        if (head >= 0) {       // SR-4: table columns are px from the head's spec (C++), past the page too
+            const lrev = blockModel.layoutRevision
+            return { x: blockModel.tableColumnLeft(head, lane), w: blockModel.tableColumnWidth(head, lane) }
+        }
         const ratios = blockModel.splitRatios(record)
         if (lane < 0 || lane >= ratios.length) return { x: 0, w: pageWidth }
         const gap = blockModel.laneGap

@@ -39,6 +39,8 @@
 #include <functional>
 #include <algorithm>
 #include <limits>
+#include <QFont>
+#include <QFontMetricsF>
 #include <cmath>
 #include <cstdio>
 #include "PackageFormat.h"   // mnpkg::atomicReplace — the save write-back primitive
@@ -420,7 +422,113 @@ const std::vector<int>& BlockModel::tableHeads() const {
         tableHeads_[i] = cur;
     }
     tablesDirty_ = false;
+    tableGeomDirty_ = true;                           // heads may have moved: geometry follows
     return tableHeads_;
+}
+
+// The app's auto column-width rule (mirrors exportColWidth): the widest text line in the
+// body font, the head row reserving the sort-glyph slot, + padding, clamped [48, 360].
+static double tableTextWidth(const QString& text) {
+    static const QFontMetricsF fm = [] {
+        QFont f(QStringLiteral("Aspekta"));
+        f.setPixelSize(14);
+        return QFontMetricsF(f);
+    }();
+    double w = 0.0;
+    for (const QString& line : text.split(QLatin1Char('\n'))) w = std::max(w, fm.horizontalAdvance(line));
+    return w;
+}
+
+BlockModel::TableGeom BlockModel::buildTableGeom(int head) const {
+    TableGeom g;
+    const int n = static_cast<int>(rows_.size());
+    const QJsonArray spec = QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8())
+                                .object().value(QStringLiteral("cols")).toArray();
+    int cols = static_cast<int>(spec.size());
+    std::vector<double> widest;
+    std::vector<char> measurable;
+    for (int rec = head; rec < n && rows_[size_t(rec)].type == Split && rows_[size_t(rec)].cell < 0
+                         && (rec == head || rows_[size_t(rec)].header == 0); rec = splitRowEnd(rec) + 1) {
+        for (int i = rec + 1; i <= splitRowEnd(rec); ++i) {
+            const Row& b = rows_[size_t(i)];
+            if (b.cell < 0) continue;
+            cols = std::max(cols, b.cell + 1);
+            if (b.type == Media || b.type == Divider || b.type == Table || content_[size_t(i)].isEmpty()) continue;
+            if (b.natW < 0) b.natW = static_cast<int32_t>(std::lround(tableTextWidth(content_[size_t(i)])));
+            if (widest.size() < size_t(cols)) { widest.resize(size_t(cols), 0.0); measurable.resize(size_t(cols), 0); }
+            widest[size_t(b.cell)] = std::max(widest[size_t(b.cell)], b.natW + (rec == head ? 18.0 : 0.0));
+            measurable[size_t(b.cell)] = 1;
+        }
+    }
+    widest.resize(size_t(cols), 0.0);
+    measurable.resize(size_t(cols), 0);
+    g.x.resize(size_t(cols));
+    g.w.resize(size_t(cols));
+    for (int c = 0; c < cols; ++c) {
+        const int manual = c < spec.size() ? spec[c].toObject().value(QStringLiteral("w")).toInt(0) : 0;
+        const double w = manual > 0 ? double(manual)
+                       : measurable[size_t(c)] ? std::clamp(std::round(widest[size_t(c)] + 2 * 8 + 6), 48.0, 360.0)
+                                               : 160.0;
+        g.x[size_t(c)] = g.width;
+        g.w[size_t(c)] = w;
+        g.width += w;
+    }
+    return g;
+}
+
+const BlockModel::TableGeom* BlockModel::tableGeom(int head) const {
+    const std::vector<int>& heads = tableHeads();      // first: a regrouping dirties geometry
+    if (tableGeomDirty_ || geomRows_ != rows_.size()) {
+        geoms_.clear();
+        for (size_t i = 0; i < rows_.size(); ++i)
+            if (heads[i] == static_cast<int>(i)) geoms_.insert(static_cast<int>(i), buildTableGeom(static_cast<int>(i)));
+        geomRows_ = rows_.size();
+        tableGeomDirty_ = false;
+    }
+    const auto it = geoms_.constFind(head);
+    return it == geoms_.constEnd() ? nullptr : &it.value();
+}
+
+qreal BlockModel::tableColumnWidth(int head, int column) const {
+    const TableGeom* g = tableGeom(head);
+    return g && column >= 0 && size_t(column) < g->w.size() ? g->w[size_t(column)] : 0.0;
+}
+
+qreal BlockModel::tableColumnLeft(int head, int column) const {
+    const TableGeom* g = tableGeom(head);
+    if (!g || column < 0) return 0.0;
+    return size_t(column) < g->x.size() ? g->x[size_t(column)] : g->width;
+}
+
+qreal BlockModel::tableWidth(int head) const {
+    const TableGeom* g = tableGeom(head);
+    return g ? g->width : 0.0;
+}
+
+bool BlockModel::setTableColumnWidth(int head, int column, qreal width) {
+    if (headerCount(head) == 0 || column < 0 || column >= 63) return false;
+    const int w = width <= 0 ? 0 : static_cast<int>(std::lround(std::clamp<qreal>(width, 48.0, 4000.0)));
+    QJsonObject t = QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8()).object();
+    QJsonArray cols = t.value(QStringLiteral("cols")).toArray();
+    while (cols.size() <= column) cols.append(QJsonObject());
+    QJsonObject col = cols[column].toObject();
+    if (col.value(QStringLiteral("w")).toInt(0) == w) return true;
+    if (w > 0) col.insert(QStringLiteral("w"), w);
+    else col.remove(QStringLiteral("w"));
+    cols[column] = col;
+    t.insert(QStringLiteral("cols"), cols);
+    const QVariantList recs = tableRecords(head);
+    const int end = splitRowEnd(recs.back().toInt());
+    beginTxn(head, head);
+    rows_[size_t(head)].table = QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+    persistMeta(head);
+    rederiveMedia(head, end);                          // cell media re-fit their column
+    bumpLayout();
+    ++contentRevision_;
+    emit dataChanged(index(head), index(end));
+    emit contentChangedSpike();
+    endTxn();
+    return true;
 }
 
 std::pair<int,int> BlockModel::splitRunBand(int record) const {
@@ -991,6 +1099,20 @@ QString BlockModel::rankBetween(const QString& a, const QString& b) {
 void BlockModel::persistContent(int row) {
     if (doc_.isOpen() && row >= 0 && row < static_cast<int>(ids_.size()))
         doc_.updateContent(ids_[row], content_[row]);
+    // SR-4: a table cell's text can move its column's auto width — and every column right of it.
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return;
+    const int head = tableHeadOf(row);
+    if (head < 0) return;
+    const int column = rows_[size_t(row)].cell;
+    const qreal before = tableColumnWidth(head, column);
+    rows_[size_t(row)].natW = -1;
+    tableGeomDirty_ = true;
+    if (tableColumnWidth(head, column) == before) return;
+    const QVariantList recs = tableRecords(head);
+    const int end = splitRowEnd(recs.back().toInt());
+    rederiveMedia(head, end);
+    bumpLayout();
+    emit dataChanged(index(head), index(end));
 }
 
 void BlockModel::seedSyntheticStore(int n) {
@@ -1244,6 +1366,7 @@ double BlockModel::laneWidthOfRow(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return contentWidth_;
     int i = row;
     while (i > 0 && rows_[size_t(i)].cell >= 0) --i;
+    if (const TableGeom* tg = tableGeom(tableHeadOf(i))) return tableLaneWidth(*tg, rows_[size_t(row)].cell);
     return rows_[size_t(i)].type == Split ? laneWidthFrom(rows_[size_t(i)].ratios, rows_[size_t(row)].cell)
                                           : contentWidth_;
 }
@@ -1252,6 +1375,8 @@ double BlockModel::laneWidthForInsert(int at, int8_t cell) const {
     if (cell < 0) return contentWidth_;
     int i = std::min(at, static_cast<int>(rows_.size())) - 1;
     while (i >= 0 && rows_[size_t(i)].cell >= 0) --i;
+    if (i >= 0)
+        if (const TableGeom* tg = tableGeom(tableHeadOf(i))) return tableLaneWidth(*tg, cell);
     return (i >= 0 && rows_[size_t(i)].type == Split) ? laneWidthFrom(rows_[size_t(i)].ratios, cell)
                                                        : contentWidth_;
 }
@@ -1259,10 +1384,16 @@ double BlockModel::laneWidthForInsert(int at, int8_t cell) const {
 std::vector<double> BlockModel::laneWidths() const {
     std::vector<double> w(rows_.size(), contentWidth_);
     const std::vector<float>* ratios = nullptr;
+    const TableGeom* tg = nullptr;
     for (size_t i = 0; i < rows_.size(); ++i) {
         const Row& r = rows_[i];
-        if (r.cell < 0) { ratios = r.type == Split ? &r.ratios : nullptr; continue; }
-        if (ratios) w[i] = laneWidthFrom(*ratios, r.cell);
+        if (r.cell < 0) {
+            ratios = r.type == Split ? &r.ratios : nullptr;
+            tg = r.type == Split ? tableGeom(tableHeadOf(static_cast<int>(i))) : nullptr;
+            continue;
+        }
+        if (tg) w[i] = tableLaneWidth(*tg, r.cell);
+        else if (ratios) w[i] = laneWidthFrom(*ratios, r.cell);
     }
     return w;
 }
@@ -1278,6 +1409,10 @@ qreal BlockModel::xForRow(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return 0.0;
     int i = row;
     while (i > 0 && rows_[size_t(i)].cell >= 0) --i;
+    if (const TableGeom* tg = tableGeom(tableHeadOf(i))) {
+        const size_t c = size_t(rows_[size_t(row)].cell);
+        return c < tg->x.size() ? tg->x[c] : tg->width;
+    }
     return rows_[size_t(i)].type == Split ? laneLeftFrom(rows_[size_t(i)].ratios, rows_[size_t(row)].cell) : 0.0;
 }
 
@@ -1288,13 +1423,20 @@ int BlockModel::blockAt(qreal x, qreal y) const {
     if (top < 0 || top >= static_cast<int>(rows_.size()) || rows_[size_t(top)].type != Split) return top;
     const mn::LayoutIndex& li = layout();
     if (size_t(top) >= li.size() || !li.entry(size_t(top)).split) return top;
-    const int lanes = std::min(li.cellCount(size_t(top)), static_cast<int>(rows_[size_t(top)].ratios.size()));
+    const int lanes = tableHeadOf(top) >= 0 ? li.cellCount(size_t(top))
+                                            : std::min(li.cellCount(size_t(top)), static_cast<int>(rows_[size_t(top)].ratios.size()));
     if (lanes < 1) return top;
     const int lane = std::min(laneAtX(top, x), lanes - 1);
     return static_cast<int>(li.blockInCellAt(size_t(top), lane, y - li.y(size_t(top))));
 }
 
 int BlockModel::laneAtX(int record, qreal pageX) const {
+    if (const TableGeom* tg = tableGeom(tableHeadOf(record))) {   // px columns, past the page too
+        const int cols = static_cast<int>(tg->w.size());
+        for (int k = 0; k < cols; ++k)
+            if (pageX < tg->x[size_t(k)] + tg->w[size_t(k)]) return k;
+        return std::max(0, cols - 1);
+    }
     const std::vector<float>& ratios = rows_[size_t(record)].ratios;
     const int lanes = static_cast<int>(ratios.size());
     for (int k = 0; k < lanes; ++k)   // the gap belongs half to each neighbour
@@ -2090,6 +2232,8 @@ QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
 }
 
 void BlockModel::persistMeta(int row) {
+    if (row >= 0 && row < static_cast<int>(rows_.size()) && rows_[size_t(row)].type == Split)
+        tableGeomDirty_ = true;                        // a head's column spec may have changed
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
@@ -5257,6 +5401,8 @@ void BlockModel::setMeasuredWidth(int row, qreal w) {
 void BlockModel::refreshMaxContentWidth() {
     double m = 0.0;
     for (const Row& r : rows_) m = std::max(m, static_cast<double>(r.measuredW));
+    tableGeom(-1);                                     // SR-4: tables wider than the page widen the content
+    for (auto it = geoms_.cbegin(); it != geoms_.cend(); ++it) m = std::max(m, it.value().width);
     if (m != maxContentWidth_) {
         maxContentWidth_ = m;
         emit maxContentWidthChanged();
