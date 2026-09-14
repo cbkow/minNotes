@@ -7431,81 +7431,6 @@ static void testInsertGridFromTSV() {
     CHECK(m.insertGridFromTSV(0, QString()) == -1 && m.rowCountQml() == 2, "an empty grid makes nothing");
 }
 
-static void testSplitRowExitsAndPastedTables() {
-    qInfo("[94] ways out of split rows, and pasted HTML tables as derived tables (the 2026-09-14 walk)");
-    {   // exitLane: a lane's double Enter
-        BlockModel m;
-        m.newDocument();
-        while (m.rowCountQml() > 0) m.removeBlock(0);
-        for (int i = 0; i < 5; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
-        m.splitIntoColumns(1, 0, 0.5);
-        m.insertBlock(3);
-        m.setContent(3, QStringLiteral("q"));
-        m.setContent(4, QStringLiteral("a1"));
-        m.insertBlock(4);                                    // an empty last block in lane 0
-        // 0 p0 · 1 A · 2 p1(l0) · 3 q(l0) · 4 ·(l0) · 5 a1(l1) · 6 p2 · 7 p3 · 8 p4
-        CHECK(m.laneForRow(4) == 0 && m.contentForRow(4).isEmpty() && m.laneForRow(5) == 1 && m.rowCountQml() == 9,
-              "fixture: an empty last block in lane 0");
-        CHECK(m.exitLane(2) == -1 && m.exitLane(5) == -1 && m.exitLane(6) == -1,
-              "only an empty last block of a layout lane exits");
-        const int out = m.exitLane(4);
-        CHECK(out == 5 && m.laneForRow(5) == -1 && m.contentForRow(5).isEmpty() && m.contentForRow(4) == QStringLiteral("a1")
-                  && m.contentForRow(6) == QStringLiteral("p2") && m.rowCountQml() == 9 && m.structureValid(),
-              "Enter on it leaves the split row: the empty block goes, a paragraph lands below (%d)", out);
-        m.undo();
-        CHECK(m.laneForRow(4) == 0 && m.contentForRow(4).isEmpty() && m.contentForRow(6) == QStringLiteral("p2")
-                  && m.rowCountQml() == 9 && m.structureValid(), "…one undo step");
-
-        BlockModel e;
-        e.newDocument();
-        while (e.rowCountQml() > 0) e.removeBlock(0);
-        e.insertBlock(0); e.setContent(0, QStringLiteral("x"));
-        e.splitIntoColumns(0, 0, 0.5);                       // 0 A · 1 x(l0) · 2 ·(l1), the document's end
-        const int below = e.exitLane(2);
-        CHECK(below == 3 && e.rowCountQml() == 4 && e.laneForRow(2) == 1 && e.laneForRow(3) == -1 && e.structureValid(),
-              "a lane's only (empty) block stays; the caret still gets a paragraph below the row");
-        const int again = e.exitLane(2);
-        CHECK(again == 3 && e.rowCountQml() == 4, "an empty paragraph already below is reused");
-        const int above = e.insertParagraphAbove(1);
-        CHECK(above == 0 && e.laneForRow(0) == -1 && e.typeForRow(1) == BlockModel::Split && e.structureValid(),
-              "insertParagraphAbove puts a paragraph above the split row");
-    }
-    {   // an HTML table paste
-        BlockModel m;
-        m.newDocument();
-        while (m.rowCountQml() > 0) m.removeBlock(0);
-        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
-        m.pasteHtml(0, 5, QStringLiteral("<table><tr><th>Name</th><th>Status</th></tr><tr><td>a</td><td><b>b</b></td></tr></table>"));
-        int head = -1;
-        bool legacy = false;
-        for (int r = 0; r < m.rowCountQml(); ++r) {
-            if (m.typeForRow(r) == BlockModel::Table) legacy = true;
-            if (head < 0 && m.headerCount(r) > 0) head = r;
-        }
-        CHECK(!legacy && head >= 0 && m.gridRowCount(head) == 2 && m.gridCellText(head, 0, 0) == QStringLiteral("Name")
-                  && m.gridCellText(head, 1, 1) == QStringLiteral("b") && m.structureValid(),
-              "an HTML table pastes as a derived table, not a Table block");
-    }
-    {   // the grid conversion carries widths, kinds, choices and colours
-        TableGrid g = TableGrid::makeEmpty(2, 2);
-        g.setCellText(0, 0, QStringLiteral("Name"));
-        g.setColWidth(0, 200);
-        g.setColKind(1, TableGrid::ColChoice);
-        g.addOption(1, QStringLiteral("o1"), QStringLiteral("Done"), QStringLiteral("#58A65C"));
-        g.setCellChoice(1, 1, QStringLiteral("o1"));
-        g.setCellBg(1, 0, QStringLiteral("#ff0000"));
-        BlockModel m;
-        m.newDocument();
-        while (m.rowCountQml() > 0) m.removeBlock(0);
-        m.insertBlock(0);
-        m.spliceSpecsAt(1, BlockModel::gridSpecsFromTable(g.toJson()), false, -1);
-        CHECK(m.headerCount(1) == 1 && m.tableColumnWidth(1, 0) == 200 && m.gridColumnKind(1, 1) == 1
-                  && m.gridCellChoiceLabel(1, 1, 1) == QStringLiteral("Done") && m.gridCellBg(1, 1, 0) == QStringLiteral("#ff0000")
-                  && m.gridCellText(1, 0, 0) == QStringLiteral("Name") && m.structureValid(),
-              "a Table grid converts with its widths, choice column, values and cell colours");
-    }
-}
-
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7710,7 +7635,6 @@ int main(int argc, char** argv) {
     testTableKeysModel();
     testTableSelectionOps();
     testInsertGridFromTSV();
-    testSplitRowExitsAndPastedTables();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

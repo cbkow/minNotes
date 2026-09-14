@@ -64,36 +64,12 @@ Item {
         delegate: Rectangle {
             required property int index
             readonly property var span: editor.laneSpan(cell.logicalRow, index)
-            // Accent while hovered or dragged (2026-09-14 walk): the gesture's target reads before the press.
-            readonly property bool hot: editor.dividerDragging
-                ? editor.dividerDragRecord === cell.logicalRow && editor.dividerDragIndex === index
-                : editor.dividerHoverRecord === cell.logicalRow && editor.dividerHoverIndex === index
-            x: editor.leftEdge + span.x + span.w + blockModel.laneGap / 2 - (hot ? 1 : 0.5)
+            x: editor.leftEdge + span.x + span.w + blockModel.laneGap / 2 - 0.5
             y: 0
-            width: hot ? 2 : 1
+            width: 1
             height: cell.height
-            color: hot ? Theme.colors.accent : Theme.colors.border
+            color: Theme.colors.border
         }
-    }
-    // A table column border under the pointer or being dragged, for this table's records.
-    readonly property int hotColumn: !isTableRecord ? -1
-        : editor.dividerDragging
-            ? (blockModel.tableHeadOf(editor.dividerDragRecord) === tableHead ? editor.dividerDragIndex : -1)
-            : (editor.dividerHoverRecord >= 0 && blockModel.tableHeadOf(editor.dividerHoverRecord) === tableHead
-               ? editor.dividerHoverIndex : -1)
-    // The pull band a lane pull starts from: lit on hover, and while pulling from this block.
-    readonly property bool pullHot: active && !isRecord
-        && (editor.pulling ? editor.pullRow === logicalRow : editor.pullHoverRow === logicalRow)
-    Rectangle {
-        visible: cell.pullHot
-        readonly property int side: editor.pulling ? editor.pullSide : editor.pullHoverSide
-        x: editor.leftEdge + cell.lane.x + (side === 1 ? 0 : cell.lane.w - 3)
-        y: 0
-        width: 3
-        height: cell.height
-        color: Theme.colors.accent
-        opacity: editor.pulling ? 0.9 : 0.55
-        z: 2
     }
 
     // A table row's record paints the row under its cells (SR-4 S5): each column's cell
@@ -115,15 +91,11 @@ Item {
             Rectangle {   // A7 (S6c): this cell sits in the editor's cell rectangle
                 readonly property var rect: editor.cellRect
                 visible: rect !== null && rect.head === cell.tableHead && cell.gridRow >= rect.r0 && cell.gridRow <= rect.r1
-                         && index >= rect.c0 && index <= rect.c1 && !editor.objectSelected
+                         && index >= rect.c0 && index <= rect.c1
                 anchors.fill: parent
                 color: Theme.colors.selectionBg
             }
-            Rectangle {   // the column's right border — accent while hovered or dragged
-                readonly property bool hot: cell.hotColumn === index
-                anchors.right: parent.right; width: hot ? 2 : 1; height: parent.height
-                color: hot ? Theme.colors.accent : Theme.colors.border
-            }
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
             Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
         }
     }
@@ -382,7 +354,6 @@ Item {
         // wash rectangle below, never via text rects over a hidden te.
         if (!cell.inSel || cell.isMedia || te.btype === 6 || te.btype === 7) return []
         if (cell.inTable && editor.cellRect !== null) return []   // a cell rectangle washes whole cells (the record)
-        if (editor.objectSelected) return []                      // a whole row/table: the margin bracket
         var sp = (cell.logicalRow === cursor.loRow) ? Math.min(cursor.loCol, te.length) : 0
         var ep = (cell.logicalRow === cursor.hiRow) ? Math.min(cursor.hiCol, te.length) : te.length
         return editor.selectionRects(te, sp, ep)
@@ -770,7 +741,7 @@ Item {
         // Runs the FULL FIELD like the focused block's fill (page
         // and margins alike) — one row treatment, not two widths.
         visible: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
-                 && !(cell.inTable && editor.cellRect !== null) && !editor.objectSelected
+                 && !(cell.inTable && editor.cellRect !== null)
         z: -0.5                                  // above the block rules + focus fill, below text + rects
         radius: 0
         color: Theme.colors.selectionBand
