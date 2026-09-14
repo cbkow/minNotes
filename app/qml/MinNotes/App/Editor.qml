@@ -3338,7 +3338,7 @@ FocusScope {
         id: poolProbe
         readonly property bool armed: Qt.application.arguments.some(
             function(a) { return a.indexOf("--pool-probe=") === 0 })
-        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits · 8 gestures
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits · 8 gestures · 9 tables · 10 sweep with tables
         property int step: 0
         property int phaseStep: 0
         property int checks: 0
@@ -3369,8 +3369,12 @@ FocusScope {
                 if (blockModel.typeForRow(r) === 10) continue   // a record resolves to its lanes' blocks
                 // Lane geometry: the delegate's column matches the lane.
                 const g = root.laneOf(r)
-                if (Math.abs(d.colLeft - (root.leftEdge + g.x)) > 0.5 || Math.abs(d.measure - g.w) > 0.5)
+                if (Math.abs(d.colLeft - d.cellInset - (root.leftEdge + g.x)) > 0.5 || Math.abs(d.measure + 2 * d.cellInset - g.w) > 0.5)
                     fail("row " + r + " column " + d.colLeft + "/" + d.measure + ", lane " + (root.leftEdge + g.x) + "/" + g.w)
+                // A table cell sits at its column (SR-4 S5).
+                if (d.gridCol >= 0 && Math.abs(g.x - blockModel.tableColumnLeft(d.tableHead, d.gridCol)) > 0.5)
+                    fail("table cell row " + r + " at x " + g.x + ", column " + d.gridCol + " starts at "
+                         + blockModel.tableColumnLeft(d.tableHead, d.gridCol))
                 // Pointer path: a point just inside the block's top-left resolves to it.
                 const h = root.hitTest(root.leftEdge + g.x + 12, blockModel.yForRow(r) + 1)
                 if (h.row !== r) fail("hitTest at the top of row " + r + " resolved row " + h.row)
@@ -3512,6 +3516,36 @@ FocusScope {
                 if (!blockModel.structureValid()) fail("the structure broke after a lane gesture near row " + row)
                 if (phaseStep % 6 === 5) flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.7)
                 next(phaseStep >= 120)
+            } else if (phase === 9) {
+                // Tables (SR-4 S5): make tables in view, type into cells (auto widths move the
+                // columns), set manual widths, change column kinds, sort, insert columns, undo —
+                // verify() keeps every cell at its column; the structure stays valid.
+                const at = Math.min(blockModel.count - 1, root.firstVisible + 1)
+                let head = -1
+                for (let i = root.firstVisible; i < Math.min(blockModel.count, root.firstVisible + 80) && head < 0; ++i)
+                    if (blockModel.headerCount(i) > 0) head = i
+                switch (phaseStep % 8) {
+                case 0: if (blockModel.laneForRow(at) < 0 && blockModel.typeForRow(at) !== 10) blockModel.insertTableRows(at, 4, 3); break
+                case 1: if (head >= 0) blockModel.setContent(blockModel.gridCellAt(head, 1 + rand(3), rand(3)), "cell ".repeat(1 + rand(12))); break
+                case 2: if (head >= 0) blockModel.setTableColumnWidth(head, rand(3), rand(2) ? 0 : 220 + rand(300)); break
+                case 3: if (head >= 0) blockModel.gridSetColumnKind(head, rand(3), rand(3)); break
+                case 4: if (head >= 0) blockModel.gridSortByColumn(head, rand(3), rand(2) === 0); break
+                case 5: if (head >= 0) blockModel.gridInsertColumn(head, rand(3)); break
+                case 6: if (rand(3) === 0) blockModel.undo(); break
+                case 7: flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.6); break
+                }
+                ++checks
+                if (!blockModel.structureValid()) fail("the structure broke after a table op near row " + at)
+                if (phaseStep === 12 || phaseStep === 150) {   // inspection artifacts next to the fixture
+                    const arg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
+                    const dir = arg.substring("--pool-probe=".length).replace(/[^\/]*$/, "")
+                    flick.grabToImage(function(res) { res.saveToFile(dir + "tables-" + step + ".png") })
+                }
+                next(phaseStep >= 160)
+            } else if (phase === 10) {
+                if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
+                else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
+                next(phaseStep > 0 && flick.contentY >= maxY)
             } else {
                 running = false
                 console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,

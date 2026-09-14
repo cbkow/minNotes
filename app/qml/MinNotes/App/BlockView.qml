@@ -36,14 +36,31 @@ Item {
     readonly property var lane: (blockModel.contentRevision, editor.pageWidth,
                                  active ? editor.laneOf(logicalRow) : ({ x: 0, w: editor.pageWidth }))
     // Horizontal measure: the lane's width (the page's for a top-level block).
-    readonly property real measure: lane.w
+    readonly property real measure: lane.w - 2 * cellInset
     readonly property bool isRecord: active && te.btype === 10   // a split row's record: no text of its own
     readonly property bool inLane: active && (blockModel.contentRevision, blockModel.laneForRow(logicalRow)) >= 0
+    // Derived tables (SR-4 S5): the table this record or cell block belongs to (-1 = none), its
+    // row in the table, and a cell block's column. contentRevision only (no layout deps: these
+    // feed the text's font and so the height).
+    readonly property int tableHead: active ? (blockModel.contentRevision, blockModel.tableHeadOf(logicalRow)) : -1
+    readonly property bool inTable: tableHead >= 0
+    readonly property bool isTableRecord: isRecord && inTable
+    readonly property int gridRow: inTable ? (blockModel.contentRevision, blockModel.gridRowOf(logicalRow)) : -1
+    readonly property int gridCol: inTable && !isRecord ? (blockModel.contentRevision, blockModel.gridColumnOf(logicalRow)) : -1
+    readonly property bool headerCell: inTable && (blockModel.contentRevision, blockModel.isHeaderRow(logicalRow))
+    readonly property int colKind: gridCol >= 0 && !headerCell
+        ? (blockModel.contentRevision, blockModel.gridColumnKind(tableHead, gridCol)) : 0
+    readonly property int colAlign: gridCol >= 0 ? (blockModel.contentRevision, blockModel.gridColAlign(tableHead, gridCol)) : 0
+    readonly property string cellFg: gridCol >= 0
+        ? (blockModel.contentRevision, blockModel.gridCellFg(tableHead, gridRow, gridCol)) : ""
+    readonly property int checkState: colKind === 2
+        ? (blockModel.contentRevision, blockModel.gridCellCheck(tableHead, gridRow, gridCol)) : 0
+    readonly property real cellInset: gridCol >= 0 ? 8 : 0   // a table cell's text sits inside its column
 
     // A record draws the dividers between its lanes: a hairline centred in each gap,
     // the full height of the row (S7 makes them draggable).
     Repeater {
-        model: cell.isRecord ? Math.max(0, (blockModel.contentRevision, blockModel.laneCount(cell.logicalRow)) - 1) : 0
+        model: cell.isRecord && !cell.inTable ? Math.max(0, (blockModel.contentRevision, blockModel.laneCount(cell.logicalRow)) - 1) : 0
         delegate: Rectangle {
             required property int index
             readonly property var span: editor.laneSpan(cell.logicalRow, index)
@@ -55,7 +72,37 @@ Item {
         }
     }
 
+    // A table row's record paints the row under its cells (SR-4 S5): each column's cell
+    // background (cell > row > column colour; header rows tinted) and the grid lines. It
+    // stacks below the cell blocks' delegates.
+    Repeater {
+        model: cell.isTableRecord ? (blockModel.contentRevision, blockModel.tableColumnCount(cell.tableHead)) : 0
+        delegate: Rectangle {
+            required property int index
+            readonly property string bg: (blockModel.contentRevision, blockModel.gridCellBg(cell.tableHead, cell.gridRow, index))
+            x: editor.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(cell.tableHead, index))
+            y: 0
+            width: (blockModel.layoutRevision, blockModel.tableColumnWidth(cell.tableHead, index))
+            height: cell.height
+            color: bg !== "" ? bg : cell.headerCell ? Theme.colors.surfaceHover : "transparent"
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+            Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
+        }
+    }
+    Rectangle {   // the table's left edge
+        visible: cell.isTableRecord
+        x: editor.leftEdge; y: 0; width: 1; height: cell.height
+        color: Theme.colors.border
+    }
+    Rectangle {   // the top edge, on the table's first row
+        visible: cell.isTableRecord && cell.gridRow === 0
+        x: editor.leftEdge; y: 0; height: 1
+        width: (blockModel.layoutRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
+        color: Theme.colors.border
+    }
+
     // The delegate spans the whole field (row fill, washes); content sits at colLeft.
+    z: isTableRecord ? -1 : 0
     x: 0
     width: flick.contentWidth   // == flick.width outside ink mode
     visible: active
@@ -258,6 +305,7 @@ Item {
     property var choiceRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision
         if (!cell.active || cell.isMedia) return []
+        if (cell.colKind === 2) return []   // a check cell shows its checkbox, not the chip
         var ranges = blockModel.choiceRangesForRow(cell.logicalRow)
         var out = []
         for (var i = 0; i < ranges.length; ++i) {
@@ -456,11 +504,12 @@ Item {
         }
     }
 
-    readonly property real colLeft: editor.leftEdge + lane.x   // the page's left edge, plus the lane's offset
+    readonly property real colLeft: editor.leftEdge + lane.x + cellInset   // the page's left edge, plus the lane's offset
 
     TextEdit {
         id: te
         visible: !cell.isMedia && btype !== 6 && btype !== 7 && btype !== 10   // hidden for divider/table/record
+        opacity: cell.colKind === 2 ? 0 : 1   // a check cell: its checkbox stands in for the text (still laid out)
         readOnly: true
         activeFocusOnPress: false
         selectByMouse: false
@@ -493,6 +542,8 @@ Item {
         // are reachable, rather than forcing the whole block italic.
         text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
         wrapMode: btype === 2 ? TextEdit.NoWrap : TextEdit.Wrap
+        horizontalAlignment: cell.colAlign === 1 ? TextEdit.AlignHCenter
+                           : cell.colAlign === 2 ? TextEdit.AlignRight : TextEdit.AlignLeft
         textFormat: TextEdit.PlainText
         // Width joins the measure-once cache (the tables' contract):
         // code reports its natural line width (+ the fill's 8px
@@ -517,7 +568,8 @@ Item {
         readonly property int btype: (blockModel.contentRevision,
                                       cell.active ? blockModel.typeForRow(cell.logicalRow) : 0)
         readonly property var headingSizes: [26, 30, 26, 22, 19, 17, 16]   // index by level (1–6)
-        color: btype === 1 ? Theme.colors.textBright
+        color: cell.cellFg !== "" ? cell.cellFg
+             : btype === 1 ? Theme.colors.textBright
              : btype === 2 ? Theme.colors.codeText
              : btype === 4 ? Theme.colors.textMuted   // quote
              : (btype === 8 && taskState === 2) ? Theme.colors.textMuted   // done task
@@ -531,7 +583,7 @@ Item {
             if (btype !== 1 || !cell.active) return Theme.font.sizeBody
             return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
         }
-        font.bold: btype === 1
+        font.bold: btype === 1 || cell.headerCell
         font.strikeout: btype === 8 && taskState === 2   // done task
         // Deterministic line height: TextEdit's natural single-line
         // implicitHeight rounds to 19 OR 20px for the same body text (a Qt
@@ -632,6 +684,31 @@ Item {
         }
         Text {  // done: check mark
             visible: te.taskState === 2
+            anchors.centerIn: parent
+            text: "✓"
+            color: Theme.colors.textBright
+            font.pixelSize: 11; font.bold: true
+        }
+    }
+    Item {  // table check cell (SR-4 S5): the painted tri-state box, the task item's recipe
+        visible: cell.active && cell.colKind === 2
+        x: cell.colLeft + 2; y: te.y + Math.round((te.lineH - 14) / 2)
+        width: 14; height: 14
+        Rectangle {
+            anchors.fill: parent
+            radius: 0
+            color: cell.checkState === 2 ? Theme.colors.accent : "transparent"
+            border.width: cell.checkState === 2 ? 0 : 1.5
+            border.color: cell.checkState === 1 ? Theme.colors.accent : Theme.colors.textMuted
+        }
+        Rectangle {
+            visible: cell.checkState === 1
+            anchors.centerIn: parent
+            width: 7; height: 2; radius: 0
+            color: Theme.colors.accent
+        }
+        Text {
+            visible: cell.checkState === 2
             anchors.centerIn: parent
             text: "✓"
             color: Theme.colors.textBright
