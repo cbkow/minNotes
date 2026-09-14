@@ -171,6 +171,17 @@ public:
     qreal laneGapPx() const { return kLaneGap; }
     Q_INVOKABLE qreal xForRow(int row) const;
     Q_INVOKABLE qreal widthForRow(int row) const;
+    // Caret navigation across lanes (SR-0 §4.4–4.7). Records are never caret targets;
+    // -1 = nothing that way. pageX is page-relative goal-x.
+    Q_INVOKABLE int nextLeaf(int row) const;                  // reading order: lanes left→right, blocks top→bottom
+    Q_INVOKABLE int prevLeaf(int row) const;
+    Q_INVOKABLE int leafBelow(int row, qreal pageX) const;    // Down past a block's bottom edge
+    Q_INVOKABLE int leafAbove(int row, qreal pageX) const;    // Up past its top edge
+    Q_INVOKABLE int tabTarget(int row, bool back) const;      // Tab from a lane block (-1 at top level)
+    Q_INVOKABLE int splitRowLast(int row) const;              // last block of the split row holding row, or -1
+    // A top-level empty paragraph under the whole split row holding `row` (under `row`
+    // itself at top level), one undo step. Returns its row.
+    Q_INVOKABLE int insertParagraphBelow(int row);
     // --- Split rows (SR-3). A Split record is followed by its lanes' blocks.
     Q_INVOKABLE int laneForRow(int row) const;       // the lane a block sits in; -1 = top level
     Q_INVOKABLE int splitRowOf(int row) const;       // the record of the split row containing row, or -1
@@ -1014,6 +1025,10 @@ private:
     double laneWidthForInsert(int at, int8_t cell) const; // for a row about to be inserted at `at`
     std::vector<double> laneWidths() const;               // every row's width, one O(n) pass
     void rederiveMedia(int lo, int hi);                   // media heights after lane widths changed
+    int laneAtX(int record, qreal pageX) const;           // the lane under a page-relative x (clamped)
+    int laneFirst(int record, int lane) const;            // first / last block of a lane, or -1
+    int laneLast(int record, int lane) const;
+    int entryLeaf(int top, qreal pageX, bool fromAbove) const;   // the block a vertical move enters
     QString lastOpenError_;          // why the last open was refused (lastOpenError())
     bool acceptOpenedFormat();       // the 1.0 format gate on a just-opened working copy
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)

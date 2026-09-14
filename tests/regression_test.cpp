@@ -6144,6 +6144,52 @@ static void testSplitRowGeometry() {
           "a wider page re-derives the heights of media in lanes");
 }
 
+static void testSplitRowNavigation() {
+    qInfo("[77] caret navigation across lanes: reading order, up/down at goal-x, Tab (SR-3 step 6a)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 8; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+    m.splitIntoColumns(1, 0, 0.5);   // p0 · A[p1 | nA] · p2 …
+    m.insertBlock(3);                // A[p1 xA | nA]
+    m.splitIntoColumns(7, 0, 0.3);   // … p3 · B[p4 | nB] · p5 p6 p7
+    m.insertBlock(10);               // B[p4 | nB yB]
+    // 0 p0 · 1 A · 2 p1(l0) · 3 xA(l0) · 4 nA(l1) · 5 p2 · 6 p3 · 7 B · 8 p4(l0) · 9 nB(l1) · 10 yB(l1) · 11 p5 · 12 p6 · 13 p7
+    CHECK(m.rowCountQml() == 14 && m.structureValid() && m.laneForRow(3) == 0 && m.laneForRow(10) == 1
+              && m.laneForRow(11) == -1, "fixture: two split rows between top-level blocks");
+
+    CHECK(m.nextLeaf(0) == 2 && m.nextLeaf(3) == 4 && m.nextLeaf(4) == 5 && m.nextLeaf(6) == 8 && m.nextLeaf(13) == -1,
+          "reading order steps into a split row past its record, lane by lane, and out again");
+    CHECK(m.prevLeaf(2) == 0 && m.prevLeaf(4) == 3 && m.prevLeaf(5) == 4 && m.prevLeaf(8) == 6 && m.prevLeaf(0) == -1,
+          "…and backwards");
+
+    const qreal left = 10.0, right = 700.0;
+    CHECK(m.leafBelow(2, left) == 3 && m.leafBelow(3, left) == 5 && m.leafBelow(4, right) == 5,
+          "Down stays in the lane, then leaves the split row for the row below");
+    CHECK(m.leafBelow(6, left) == 8 && m.leafBelow(6, right) == 9 && m.leafBelow(13, left) == -1,
+          "Down into a split row lands on the first block of the lane under goal-x");
+    CHECK(m.leafAbove(10, left) == 9 && m.leafAbove(9, right) == 6 && m.leafAbove(2, left) == 0,
+          "Up stays in the lane, then leaves the split row for the row above");
+    CHECK(m.leafAbove(11, left) == 8 && m.leafAbove(11, right) == 10 && m.leafAbove(5, left) == 3
+              && m.leafAbove(5, right) == 4 && m.leafAbove(0, left) == -1,
+          "Up into a split row lands on the last block of the lane under goal-x");
+
+    CHECK(m.tabTarget(2, false) == 4 && m.tabTarget(4, false) == 5 && m.tabTarget(0, false) == -1,
+          "Tab moves to the next lane's last block, then on in reading order; not at top level");
+    CHECK(m.tabTarget(4, true) == 3 && m.tabTarget(2, true) == 0 && m.tabTarget(8, true) == 6,
+          "Shift+Tab moves to the previous lane's last block, then back in reading order");
+    CHECK(m.splitRowLast(3) == 4 && m.splitRowLast(1) == 4 && m.splitRowLast(0) == -1,
+          "splitRowLast finds a split row's last block");
+
+    const int below = m.insertParagraphBelow(3);
+    CHECK(below == 5 && m.laneForRow(5) == -1 && m.contentForRow(5).isEmpty()
+              && m.contentForRow(6) == QStringLiteral("p2") && m.structureValid(),
+          "insertParagraphBelow lands a top-level paragraph under the whole split row");
+    m.undo();
+    CHECK(m.rowCountQml() == 14 && m.contentForRow(5) == QStringLiteral("p2") && m.structureValid(),
+          "…as one undo step");
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -6235,6 +6281,7 @@ int main(int argc, char** argv) {
     testSplitRowModel();
     testSplitRowMutations();
     testSplitRowGeometry();
+    testSplitRowNavigation();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

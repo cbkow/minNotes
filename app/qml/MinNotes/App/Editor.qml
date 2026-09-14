@@ -1639,9 +1639,11 @@ FocusScope {
             cursor.move(cursor.focusRow,
                         cr.length === 2 ? cr[1] : cursor.focusCol + 1, shift)
         }
-        else if (cursor.focusRow < n - 1) {
-            if (blockModel.typeForRow(cursor.focusRow + 1) === 7) root.enterTable(cursor.focusRow + 1, true)
-            else cursor.move(cursor.focusRow + 1, 0, shift)
+        else {                               // the next block in reading order (records skipped)
+            const nx = blockModel.nextLeaf(cursor.focusRow)
+            if (nx < 0) return
+            if (blockModel.typeForRow(nx) === 7) root.enterTable(nx, true)
+            else cursor.move(nx, 0, shift)
         }
     }
     function navLeft(shift) {
@@ -1651,10 +1653,37 @@ FocusScope {
             cursor.move(cursor.focusRow,
                         cl.length === 2 ? cl[0] : cursor.focusCol - 1, shift)
         }
-        else if (cursor.focusRow > 0) {
-            if (blockModel.typeForRow(cursor.focusRow - 1) === 7) root.enterTable(cursor.focusRow - 1, false)
-            else cursor.move(cursor.focusRow - 1, blockModel.contentForRow(cursor.focusRow - 1).length, shift)
+        else {                               // the previous block in reading order (records skipped)
+            const pv = blockModel.prevLeaf(cursor.focusRow)
+            if (pv < 0) return
+            if (blockModel.typeForRow(pv) === 7) root.enterTable(pv, false)
+            else cursor.move(pv, blockModel.contentForRow(pv).length, shift)
         }
+    }
+    // Whether the selection is exactly one whole split row (Escape's rung 2 result).
+    function selectionIsSplitRow() {
+        const rec = blockModel.splitRowOf(cursor.loRow)
+        return rec >= 0 && blockModel.splitRowOf(cursor.hiRow) === rec
+            && cursor.loRow === blockModel.nextLeaf(rec) && cursor.loCol === 0
+            && cursor.hiRow === blockModel.splitRowLast(rec)
+            && cursor.hiCol >= blockModel.contentForRow(cursor.hiRow).length
+    }
+    // Tab / Shift+Tab. In a lane (SR-0 §4.7): the next/previous lane, landing at the end
+    // of its last block with no selection, then on in reading order. At top level: list
+    // indent/outdent of the focused item, or of every list item in the selection.
+    function tabKey(back) {
+        if (blockModel.laneForRow(cursor.focusRow) >= 0) {
+            cursor.resetGoalX(); cursor.clearMarks()
+            const t = blockModel.tabTarget(cursor.focusRow, back)
+            if (t < 0) return
+            const tt = blockModel.typeForRow(t)
+            if (tt === 7) { root.enterTable(t, !back); return }
+            cursor.move(t, (tt === 3 || tt === 6) ? 0 : blockModel.contentForRow(t).length, false)
+            return
+        }
+        blockModel.indentBlocks(cursor.hasSel ? cursor.loRow : cursor.focusRow,
+                                cursor.hasSel ? cursor.hiRow : cursor.focusRow,
+                                back ? -1 : 1)
     }
     // Map the sticky goal-x onto a visual line of `row`'s block (te-local y),
     // returning the column there. Falls back to col 0 if that block has no live
@@ -1662,20 +1691,26 @@ FocusScope {
     function colAtGoalX(row, yLocal) {
         var cell = cellForRow(row)
         if (!cell || cell.isMedia) return 0
-        return cell.teItem.positionAt(cursor.goalX, yLocal)
+        // goalX is page-relative; the target's text starts at its own lane + decoration.
+        return cell.teItem.positionAt(cursor.goalX - (cell.teItem.x - root.leftEdge), yLocal)
     }
     function navDown(shift) {
         cursor.clearMarks()
-        var fb = root.focusBlockItem, n = blockModel.count
+        var fb = root.focusBlockItem
         if (!fb) return
         var r = fb.positionToRectangle(Math.min(cursor.focusCol, fb.length))
         var lh = r.height > 0 ? r.height : 18
-        if (cursor.goalX < 0) cursor.goalX = r.x          // capture at the start of a vertical run
-        if (r.y < fb.contentHeight - lh * 1.5)            // another visual line below in this block
-            cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX, r.y + lh * 1.5), shift)
-        else if (cursor.focusRow < n - 1) {               // cross into the next block at goal-x
-            if (blockModel.typeForRow(cursor.focusRow + 1) === 7) root.enterTable(cursor.focusRow + 1, true)
-            else cursor.move(cursor.focusRow + 1, colAtGoalX(cursor.focusRow + 1, 2), shift)
+        // Goal-x is PAGE-relative (SR-0 §1): the text's left edge (fb.x already carries
+        // the lane) plus the caret's x — so a vertical run keeps its column across lanes.
+        const textLeft = fb.x - root.leftEdge
+        if (cursor.goalX < 0) cursor.goalX = textLeft + r.x   // capture at the start of a vertical run
+        if (r.y < fb.contentHeight - lh * 1.5)                 // another visual line below in this block
+            cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX - textLeft, r.y + lh * 1.5), shift)
+        else {                                                  // the block below: in the lane, else the row below at goal-x
+            const below = blockModel.leafBelow(cursor.focusRow, cursor.goalX)
+            if (below < 0) return
+            if (blockModel.typeForRow(below) === 7) root.enterTable(below, true)
+            else cursor.move(below, colAtGoalX(below, 2), shift)
         }
     }
     function navUp(shift) {
@@ -1684,14 +1719,17 @@ FocusScope {
         if (!fb) return
         var r = fb.positionToRectangle(Math.min(cursor.focusCol, fb.length))
         var lh = r.height > 0 ? r.height : 18
-        if (cursor.goalX < 0) cursor.goalX = r.x
-        if (r.y > lh * 0.5)                               // another visual line above in this block
-            cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX, r.y - lh * 0.5), shift)
-        else if (cursor.focusRow > 0) {                   // cross into the previous block's last line
-            if (blockModel.typeForRow(cursor.focusRow - 1) === 7) { root.enterTable(cursor.focusRow - 1, false); return }
-            var prev = cellForRow(cursor.focusRow - 1)
+        const textLeft = fb.x - root.leftEdge                  // page-relative goal-x (see navDown)
+        if (cursor.goalX < 0) cursor.goalX = textLeft + r.x
+        if (r.y > lh * 0.5)                                    // another visual line above in this block
+            cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX - textLeft, r.y - lh * 0.5), shift)
+        else {                                                  // the block above: in the lane, else the row above at goal-x
+            const above = blockModel.leafAbove(cursor.focusRow, cursor.goalX)
+            if (above < 0) return
+            if (blockModel.typeForRow(above) === 7) { root.enterTable(above, false); return }
+            var prev = cellForRow(above)
             var yLast = (prev && !prev.isMedia) ? prev.teItem.contentHeight - 2 : 0
-            cursor.move(cursor.focusRow - 1, colAtGoalX(cursor.focusRow - 1, yLast), shift)
+            cursor.move(above, colAtGoalX(above, yLast), shift)
         }
     }
 
@@ -1702,7 +1740,7 @@ FocusScope {
     function caretLandRow(row, dir) {
         var n = blockModel.count
         if (n === 0) return 0
-        function ok(r) { var t = blockModel.typeForRow(r); return t !== 3 && t !== 6 && t !== 7 }
+        function ok(r) { var t = blockModel.typeForRow(r); return t !== 3 && t !== 6 && t !== 7 && t !== 10 }   // never a record
         var r = Math.max(0, Math.min(n - 1, row))
         var s = r
         while (s >= 0 && s < n) { if (ok(s)) return s; s += dir }
@@ -2767,8 +2805,24 @@ FocusScope {
                 else if (tcur.hasSel) { tcur.clearAll(); cursor.sync() }
                 else root.exitTable(1)
             }
+            else if (cursor.hasSel && root.selectionIsSplitRow()) {
+                // SR-0 §4.8 rung 4: a selected split row → the caret to the block below it
+                // (a top-level paragraph is made when there is none).
+                const below = blockModel.nextLeaf(blockModel.splitRowLast(cursor.loRow))
+                const land = (below >= 0 && blockModel.laneForRow(below) < 0) ? below
+                                                                              : blockModel.insertParagraphBelow(cursor.loRow)
+                cursor.setCaret(land, 0); root.ensureVisible(land)
+            }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
             else if (cursor.activeMarks !== 0 || cursor.armedFg !== "" || cursor.armedBg !== "") { cursor.clearMarks() }
+            else if (blockModel.laneForRow(cursor.focusRow) >= 0) {
+                // Rung 2: a caret in a lane → select its whole split row.
+                const rec = blockModel.splitRowOf(cursor.focusRow)
+                const first = blockModel.nextLeaf(rec), last = blockModel.splitRowLast(rec)
+                cursor.anchorRow = first; cursor.anchorCol = 0
+                cursor.focusRow = last; cursor.focusCol = blockModel.contentForRow(last).length
+                cursor.sync()
+            }
             event.accepted = true
         }
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
@@ -2990,11 +3044,7 @@ FocusScope {
         else if (k === Qt.Key_Backspace) { cursor.backspace(); event.accepted = true }
         else if (k === Qt.Key_Delete) { cursor.forwardDelete(); event.accepted = true }
         else if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
-            // Lists: Tab indents / Shift+Tab outdents the focused item (or every
-            // list item in the selection). Swallowed regardless — Tab never types.
-            blockModel.indentBlocks(cursor.hasSel ? cursor.loRow : cursor.focusRow,
-                                    cursor.hasSel ? cursor.hiRow : cursor.focusRow,
-                                    k === Qt.Key_Backtab ? -1 : 1)
+            root.tabKey(k === Qt.Key_Backtab)   // lanes navigate, lists indent; Tab never types
             event.accepted = true
         }
         else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(shift); event.accepted = true }
@@ -3013,7 +3063,7 @@ FocusScope {
         id: poolProbe
         readonly property bool armed: Qt.application.arguments.some(
             function(a) { return a.indexOf("--pool-probe=") === 0 })
-        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys
         property int step: 0
         property int phaseStep: 0
         property int checks: 0
@@ -3094,6 +3144,37 @@ FocusScope {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with lanes present
                 else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
                 next(phaseStep > 0 && flick.contentY >= maxY)
+            } else if (phase === 6) {
+                // Keys across lanes (SR-3 S6a): a random walk of arrows and Tab starting
+                // inside split rows. The caret never lands on a record, and Tab lands
+                // where the model says. Tables/media restart the walk in a lane.
+                const restart = function() {
+                    for (let i = rand(blockModel.count), k = 0; k < blockModel.count; ++k, i = (i + 1) % blockModel.count)
+                        if (blockModel.typeForRow(i) === 10) { cursor.setCaret(blockModel.nextLeaf(i), 0); return }
+                }
+                const ft = blockModel.typeForRow(cursor.focusRow)
+                if (phaseStep === 0 || ft === 7 || ft === 3 || ft === 6) restart()
+                else {
+                    const before = cursor.focusRow
+                    switch (rand(6)) {
+                    case 0: root.navDown(false); break
+                    case 1: root.navUp(false); break
+                    case 2: cursor.setCaret(before, blockModel.contentForRow(before).length); root.navRight(false); break
+                    case 3: cursor.setCaret(before, 0); root.navLeft(false); break
+                    case 4: {
+                        const want = blockModel.tabTarget(before, false)
+                        root.tabKey(false)
+                        if (want >= 0 && blockModel.typeForRow(want) !== 7 && cursor.focusRow !== want)
+                            fail("Tab from " + before + " landed on " + cursor.focusRow + ", model says " + want)
+                        break
+                    }
+                    case 5: root.tabKey(true); break
+                    }
+                    ++checks
+                    if (blockModel.typeForRow(cursor.focusRow) === 10) fail("the caret landed on a record at " + cursor.focusRow)
+                }
+                if (cursor.focusRow >= 0) root.ensureVisible(cursor.focusRow)
+                next(phaseStep >= 400)
             } else {
                 running = false
                 console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,

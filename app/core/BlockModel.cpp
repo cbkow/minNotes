@@ -1140,13 +1140,106 @@ int BlockModel::blockAt(qreal x, qreal y) const {
     if (top < 0 || top >= static_cast<int>(rows_.size()) || rows_[size_t(top)].type != Split) return top;
     const mn::LayoutIndex& li = layout();
     if (size_t(top) >= li.size() || !li.entry(size_t(top)).split) return top;
-    const std::vector<float>& ratios = rows_[size_t(top)].ratios;
-    const int lanes = std::min(li.cellCount(size_t(top)), static_cast<int>(ratios.size()));
+    const int lanes = std::min(li.cellCount(size_t(top)), static_cast<int>(rows_[size_t(top)].ratios.size()));
     if (lanes < 1) return top;
-    int lane = lanes - 1;
-    for (int k = 0; k < lanes; ++k)   // the gap belongs half to each neighbour
-        if (x < laneLeftFrom(ratios, k) + laneWidthFrom(ratios, k) + kLaneGap / 2.0) { lane = k; break; }
+    const int lane = std::min(laneAtX(top, x), lanes - 1);
     return static_cast<int>(li.blockInCellAt(size_t(top), lane, y - li.y(size_t(top))));
+}
+
+int BlockModel::laneAtX(int record, qreal pageX) const {
+    const std::vector<float>& ratios = rows_[size_t(record)].ratios;
+    const int lanes = static_cast<int>(ratios.size());
+    for (int k = 0; k < lanes; ++k)   // the gap belongs half to each neighbour
+        if (pageX < laneLeftFrom(ratios, k) + laneWidthFrom(ratios, k) + kLaneGap / 2.0) return k;
+    return std::max(0, lanes - 1);
+}
+
+int BlockModel::laneFirst(int record, int lane) const {
+    for (int i = record + 1; i < static_cast<int>(rows_.size()) && rows_[size_t(i)].cell >= 0; ++i)
+        if (rows_[size_t(i)].cell == lane) return i;
+    return -1;
+}
+
+int BlockModel::laneLast(int record, int lane) const {
+    int last = -1;
+    for (int i = record + 1; i < static_cast<int>(rows_.size()) && rows_[size_t(i)].cell >= 0; ++i) {
+        if (rows_[size_t(i)].cell == lane) last = i;
+        else if (last >= 0) break;
+    }
+    return last;
+}
+
+int BlockModel::splitRowLast(int row) const {
+    const int rec = splitRowOf(row);
+    return rec >= 0 ? splitRowEnd(rec) : -1;
+}
+
+int BlockModel::nextLeaf(int row) const {
+    int r = row + 1;
+    while (r < static_cast<int>(rows_.size()) && rows_[size_t(r)].type == Split) ++r;
+    return (row >= -1 && r < static_cast<int>(rows_.size())) ? r : -1;
+}
+
+int BlockModel::prevLeaf(int row) const {
+    int r = std::min(row, static_cast<int>(rows_.size())) - 1;
+    while (r >= 0 && rows_[size_t(r)].type == Split) --r;
+    return r;
+}
+
+int BlockModel::entryLeaf(int top, qreal pageX, bool fromAbove) const {
+    if (top < 0 || top >= static_cast<int>(rows_.size())) return -1;
+    if (rows_[size_t(top)].type != Split) return top;
+    const int lane = laneAtX(top, pageX);
+    return fromAbove ? laneFirst(top, lane) : laneLast(top, lane);
+}
+
+int BlockModel::leafBelow(int row, qreal pageX) const {
+    const int n = static_cast<int>(rows_.size());
+    if (row < 0 || row >= n) return -1;
+    const int8_t lane = rows_[size_t(row)].cell;
+    if (lane >= 0 && row + 1 < n && rows_[size_t(row + 1)].cell == lane) return row + 1;   // the next block in the lane
+    const int rec = splitRowOf(row);
+    return entryLeaf((rec >= 0 ? splitRowEnd(rec) : row) + 1, pageX, true);   // the row below, at goal-x
+}
+
+int BlockModel::leafAbove(int row, qreal pageX) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return -1;
+    const int8_t lane = rows_[size_t(row)].cell;
+    if (lane >= 0 && row > 0 && rows_[size_t(row - 1)].cell == lane) return row - 1;    // the previous block in the lane
+    const int rec = splitRowOf(row);
+    const int before = (rec >= 0 ? rec : row) - 1;
+    if (before < 0) return -1;
+    return entryLeaf(rows_[size_t(before)].cell >= 0 ? splitRowOf(before) : before, pageX, false);
+}
+
+int BlockModel::insertParagraphBelow(int row) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return -1;
+    row = std::clamp(row, 0, n - 1);
+    const int last = splitRowOf(row) >= 0 ? splitRowLast(row) : row;
+    const int at = last + 1;
+    beginTxn(at, at - 1);
+    insertParagraphRaw(at);                          // joins the lane above …
+    if (rows_[size_t(at)].cell >= 0) {               // … so lift it out to the top level
+        rows_[size_t(at)].cell = -1;
+        persistMeta(at);
+    }
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return at;
+}
+
+int BlockModel::tabTarget(int row, bool back) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return -1;
+    const int rec = splitRowOf(row);
+    if (rec < 0) return -1;
+    const int lane = rows_[size_t(row)].cell;
+    const int lanes = static_cast<int>(rows_[size_t(rec)].ratios.size());
+    if (!back)
+        return lane + 1 < lanes ? laneLast(rec, lane + 1) : nextLeaf(splitRowEnd(rec));
+    return lane > 0 ? laneLast(rec, lane - 1) : prevLeaf(laneFirst(rec, 0));
 }
 
 QList<int> BlockModel::visibleBlocks(qreal y0, qreal y1) const {
