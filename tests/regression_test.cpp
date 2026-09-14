@@ -92,8 +92,8 @@ static void buildDoc(BlockModel& m) {
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);   // start from a clean slate
     m.insertBlock(0);            m.setContent(0, QStringLiteral("A"));
-    m.insertTable(0, 3, 3);      // table inserted after row 0 → at row 1
-    int after = findRowOfType(m, BlockModel::Table);
+    const int head = m.insertTableRows(0, 3, 3) - 1;   // a 3×3 table after row 0 → head at row 1
+    int after = m.splitRowLast(m.tableRecords(head).last().toInt());   // its last row
     m.insertBlock(after + 1);    m.setContent(after + 1, QStringLiteral("B"));
     m.insertBlock(after + 2);    m.setContent(after + 2, QStringLiteral("C"));
 }
@@ -141,19 +141,20 @@ static void testUndoRedoHeights() {
     qInfo("[3] undo/redo preserves measured heights (table layout corruption)");
     BlockModel m;
     buildDoc(m);
-    const int t0 = findRowOfType(m, BlockModel::Table);
-    CHECK(t0 >= 1, "table built at row >= 1 (row %d)", t0);
+    // The table's first cell block stands in for "the table" (a record's height is derived).
+    const int t0 = m.gridCellAt(findTableHead(m), 0, 0);
+    CHECK(t0 >= 2, "table built at row >= 1 (cell row %d)", t0);
 
-    // Simulate the view measuring every row: paragraphs 30px, the table 200px.
+    // Simulate the view measuring every row: paragraphs 30px, the table cell 200px.
     const qreal TABLE_H = 200.0;
     for (int i = 0; i < m.rowCountQml(); ++i)
         m.setMeasuredHeight(i, (i == t0) ? TABLE_H : 30.0);
-    CHECK(qFuzzyCompare(m.heightForRow(t0), TABLE_H), "table measured to 200 pre-edit");
+    CHECK(qFuzzyCompare(m.heightForRow(t0), TABLE_H), "table cell measured to 200 pre-edit");
 
     // Delete paragraph "A" at row 0 (a DIFFERENT row than the table), then undo.
     m.removeBlock(0);
     m.undo();
-    const int t1 = findRowOfType(m, BlockModel::Table);
+    const int t1 = m.gridCellAt(findTableHead(m), 0, 0);
     CHECK(m.rowCountQml() >= 4, "undo restored the removed block");
     CHECK(m.rowMeasured(t1), "table still flagged measured after undo");
     CHECK(qFuzzyCompare(m.heightForRow(t1), TABLE_H),
@@ -164,7 +165,7 @@ static void testUndoRedoHeights() {
 
     // Redo the deletion: the table is untouched → keeps its measured height.
     m.redo();
-    const int t2 = findRowOfType(m, BlockModel::Table);
+    const int t2 = m.gridCellAt(findTableHead(m), 0, 0);
     CHECK(m.rowMeasured(t2) && qFuzzyCompare(m.heightForRow(t2), TABLE_H),
           "table height preserved after redo (got %.1f, want 200)", m.heightForRow(t2));
 }
@@ -178,7 +179,7 @@ static void testSaveReopen() {
     BlockModel m;
     buildDoc(m);
     const int countA = m.rowCountQml();
-    const int tableA = findRowOfType(m, BlockModel::Table);
+    const int tableA = findTableHead(m);
     QStringList typesA, textA;
     for (int i = 0; i < countA; ++i) { typesA << QString::number(m.typeForRow(i)); textA << m.contentForRow(i); }
     CHECK(m.saveAs(path), "saveAs() succeeded");
@@ -188,7 +189,7 @@ static void testSaveReopen() {
     BlockModel m2;
     CHECK(m2.openDocument(path), "openDocument() succeeded");
     CHECK(m2.rowCountQml() == countA, "row count round-trips (%d == %d)", m2.rowCountQml(), countA);
-    CHECK(findRowOfType(m2, BlockModel::Table) == tableA, "table at same row after reopen");
+    CHECK(findTableHead(m2) == tableA, "table at same row after reopen");
     bool typesOk = true, textOk = true;
     for (int i = 0; i < m2.rowCountQml() && i < countA; ++i) {
         if (QString::number(m2.typeForRow(i)) != typesA[i]) typesOk = false;
@@ -1399,16 +1400,17 @@ static void testConsumeEmptyAnchor() {
     m.insertBlock(2); m.setContent(2, QStringLiteral("below"));
     CHECK(m.rowCountQml() == 3, "fixture: above / (empty) / below");
 
-    const int tr = m.insertTable(1, 2, 2);
-    CHECK(tr == 1 && m.rowCountQml() == 3 && m.typeForRow(1) == BlockModel::Table,
-          "table CONSUMED the empty anchor (row %d, count %d)", tr, m.rowCountQml());
-    CHECK(m.contentForRow(2) == QStringLiteral("below"), "below block undisturbed");
+    // A table never consumes: its rows splice AFTER the anchor (a record can't take a paragraph's place).
+    const int tr = m.insertTableRows(1, 2, 2) - 1;
+    CHECK(tr == 2 && m.rowCountQml() == 9 && m.typeForRow(1) == BlockModel::Paragraph && m.headerCount(2) > 0,
+          "table lands below the empty anchor (head %d, count %d)", tr, m.rowCountQml());
+    CHECK(m.contentForRow(8) == QStringLiteral("below"), "below block undisturbed");
     m.undo();
     CHECK(m.rowCountQml() == 3 && m.typeForRow(1) == BlockModel::Paragraph
               && m.contentForRow(1).isEmpty(),
-          "ONE undo restores the empty paragraph");
+          "ONE undo removes the table");
     m.redo();
-    CHECK(m.typeForRow(1) == BlockModel::Table, "redo re-consumes");
+    CHECK(m.headerCount(2) > 0, "redo re-inserts it");
     m.undo();
 
     // Sketch + divider consume too (returned row = the anchor's row).
@@ -1436,7 +1438,7 @@ static void testConsumeEmptyAnchor() {
 
     // Guards: non-empty, non-paragraph, and inked anchors are NOT consumed.
     m.setContent(1, QStringLiteral("text"));
-    CHECK(m.insertTable(1, 2, 2) == 2 && m.rowCountQml() == 4,
+    CHECK(m.insertDivider(1) == 2 && m.rowCountQml() == 4,
           "non-empty anchor: inserts BELOW");
     m.undo();
     m.setContent(1, QString());
@@ -1469,9 +1471,9 @@ static void testConsumeEmptyAnchor() {
     s.newDocument();
     while (s.rowCountQml() > 0) s.removeBlock(0);
     s.insertBlock(0);                                    // lone empty paragraph
-    CHECK(s.insertTable(0, 2, 2) == 0 && s.rowCountQml() == 1
-              && s.typeForRow(0) == BlockModel::Table,
-          "lone empty block: table takes its place");
+    CHECK(s.insertDivider(0) == 0 && s.rowCountQml() == 1
+              && s.typeForRow(0) == BlockModel::Divider,
+          "lone empty block: the divider takes its place");
     s.undo();
     CHECK(s.rowCountQml() == 1 && s.typeForRow(0) == BlockModel::Paragraph,
           "undo restores the lone empty paragraph");
@@ -2678,11 +2680,15 @@ static void testCollectMedia() {
         m.insertSpecs(1, {vid}, false);
     }
     const int imgRow = 1, vidRow = 2;
-    const int tRow = m.insertTable(vidRow, 2, 2);
-    m.tableSetCellMedia(tRow, 0, 0,
-        QStringLiteral("{\"src\":\"%1\",\"w\":12,\"h\":10}").arg(pic));
+    const int tHead = m.insertTableRows(vidRow, 2, 2) - 1;
+    {   // the same picture again, as an image block inside cell (0,0)
+        BlockModel::BlockSpec cm; cm.type = BlockModel::Media;
+        cm.mediaJson = QStringLiteral("{\"src\":\"%1\",\"w\":12,\"h\":10}").arg(pic);
+        m.spliceSpecsAt(m.gridCellAt(tHead, 0, 0) + 1, {cm}, false, 0);
+    }
+    const int cellImg = m.gridCellAt(tHead, 0, 0) + 1;
     CHECK(m.mediaKind(imgRow) == QLatin1String("image")
-              && m.mediaKind(vidRow) == QLatin1String("video") && tRow > 0,
+              && m.mediaKind(vidRow) == QLatin1String("video") && tHead > 0 && m.mediaKind(cellImg) == QLatin1String("image"),
           "collect fixtures in place");
 
     int copied = 0; QString err;
@@ -2704,9 +2710,9 @@ static void testCollectMedia() {
                                    + QFileInfo(vp).fileName()
                                    + QStringLiteral("/notes.json")),
           "video + .qcview sidecar collected (%s)", qPrintable(vp));
-    CHECK(m.tableCellMedia(tRow, 0, 0).contains(
+    CHECK(m.contentForRow(cellImg).contains(
               QStringLiteral(".minnotes/") + QFileInfo(ip).fileName()),
-          "table cell descriptor followed the copy");
+          "table cell image descriptor followed the copy");
     {   // byte-exact, no re-encode
         QFile a(pic), b(ip);
         CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly)
@@ -2715,7 +2721,7 @@ static void testCollectMedia() {
     // ONE undo entry restores every source; redo re-applies (copies stay).
     m.undo();
     CHECK(m.mediaLocalPath(imgRow) == QFileInfo(pic).absoluteFilePath()
-              && m.tableCellMedia(tRow, 0, 0).contains(pic),
+              && m.contentForRow(cellImg).contains(pic),
           "one undo restores all original refs");
     m.redo();
     CHECK(m.mediaLocalPath(imgRow) == ip, "redo re-applies the collected refs");
@@ -3089,10 +3095,10 @@ static void testExportPdf() {
     m.setBlockType(r, BlockModel::ListItem);
     m.insertBlock(++r); m.setContent(r, QStringLiteral("int x = 1;"));
     m.makeCodeBlock(r, QStringLiteral("cpp"));
-    const int tRow = m.insertTable(r, 2, 2);
-    m.tableSetCell(tRow, 0, 0, QStringLiteral("H1"));
-    m.tableSetCell(tRow, 1, 0, QStringLiteral("cell body"));
-    r = tRow;
+    const int tHead = m.insertTableRows(r, 2, 2) - 1;
+    m.setContent(m.gridCellAt(tHead, 0, 0), QStringLiteral("H1"));
+    m.setContent(m.gridCellAt(tHead, 1, 0), QStringLiteral("cell body"));
+    r = m.splitRowLast(m.tableRecords(tHead).last().toInt());   // the table's last row
     {   // pdf media block with ink on page 3
         BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
         sp.mediaJson = QStringLiteral(
@@ -3324,20 +3330,21 @@ static void testUndoHeightSeeding() {
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
-    const int tRow = m.insertTable(0, 2, 2);
-    CHECK(tRow == 1, "table inserted");
+    m.insertBlock(0); m.setContent(1, QStringLiteral("a tall wrapped block"));
+    const int tRow = 1;
+    CHECK(m.rowCountQml() == 2, "block inserted");
     auto rowH = [&](int r) {
         return (r + 1 < m.rowCountQml() ? m.yForRow(r + 1) : m.totalHeight())
                - m.yForRow(r);
     };
 
-    // Band path: a cell edit + undo/redo must keep the measured 333, not
-    // drop to the (media-blind) estimate.
+    // Band path: an edit + undo/redo must keep the measured 333, not
+    // drop to the estimate.
     m.setMeasuredHeight(tRow, 333);
-    m.tableSetCell(tRow, 1, 1, QStringLiteral("edited"));
+    m.setContent(tRow, QStringLiteral("edited"));
     m.undo();
     CHECK(qAbs(rowH(tRow) - 333.0) < 0.5,
-          "undo keeps the table's measured height (got %f)", rowH(tRow));
+          "undo keeps the block's measured height (got %f)", rowH(tRow));
     CHECK(!m.rowMeasured(tRow), "restored row still re-measures (flag cleared)");
     m.redo();
     CHECK(qAbs(rowH(tRow) - 333.0) < 0.5, "redo keeps it too");
@@ -3622,23 +3629,26 @@ static void testMergeEngine() {
     src.setFormat(1, 0, 5, QStringLiteral("bold"), true);
     src.insertBlock(2); src.makeCodeBlock(2, QStringLiteral("py"));
     src.setContent(2, QStringLiteral("x = 1\ny = 2"));
-    const int tRow = src.insertTable(2, 2, 2);           // row 3
-    src.tableSetCell(tRow, 0, 0, QStringLiteral("c00"));
+    // A 2×2 table: rows 3..8 (2 records + 4 cells) — every row after it sits 5 further down
+    // than a one-row block would (`grow` below).
+    const int tHead = src.insertTableRows(2, 2, 2) - 1;
+    src.setContent(src.gridCellAt(tHead, 0, 0), QStringLiteral("c00"));
+    const int tEnd = src.splitRowLast(src.tableRecords(tHead).last().toInt());   // row 8
     {   // choice chip: text == selected label, payload in the span
         BlockModel::BlockSpec ch;
         ch.type = BlockModel::Paragraph;
         ch.text = QStringLiteral("Doing");
         ch.spans.push_back({0, 5, BlockModel::SpanChoice, kChoice});
-        src.insertSpecs(tRow, {ch}, false);              // row 4
+        src.insertSpecs(tEnd, {ch}, false);              // row 9
     }
-    src.insertBlock(5); src.setContent(5, QStringLiteral("note me"));
-    const QString tid = src.addComment(5, 0, 4);
+    src.insertBlock(10); src.setContent(10, QStringLiteral("note me"));
+    const QString tid = src.addComment(10, 0, 4);
     src.addCommentMessage(tid, QStringLiteral("first"));
     src.addCommentMessage(tid, QStringLiteral("second"));
-    src.insertBlock(6); src.setContent(6, QStringLiteral("inked"));
-    src.setBlockInk(6, kInk);
+    src.insertBlock(11); src.setContent(11, QStringLiteral("inked"));
+    src.setBlockInk(11, kInk);
     const int srcN = src.rowCountQml();
-    CHECK(srcN == 7 && !tid.isEmpty(), "source fixture: 7 blocks + a thread");
+    CHECK(srcN == 12 && tHead == 3 && tEnd == 8 && !tid.isEmpty(), "source fixture: 12 rows + a thread (%d)", srcN);
 
     BlockModel dest;
     dest.newDocument();
@@ -3650,9 +3660,8 @@ static void testMergeEngine() {
     int first = -1, last = -1; QString err;
     CHECK(DocumentMerger::mergeDocuments(&src, &dest, 1, &first, &last, &err),
           "merge succeeded (%s)", qPrintable(err));
-    // The source's 2×2 Table block lands as a derived table: 2 records + 4 cells = 5 more rows (SR-4 S8a).
-    const int grow = 5;
-    CHECK(first == 1 && last == 7 + grow && dest.rowCountQml() == 2 + srcN + grow,
+    const int grow = 5;   // the table's 5 extra rows (see the fixture)
+    CHECK(first == 1 && last == 7 + grow && dest.rowCountQml() == 2 + srcN,
           "gap-1 merge landed between top and bottom (%d..%d)", first, last);
 
     // Fidelity, row by row.
@@ -3668,7 +3677,7 @@ static void testMergeEngine() {
           "code block + language rode along");
     CHECK(dest.headerCount(4) > 0 && dest.gridRowCount(4) == 2 && dest.gridCellText(4, 0, 0) == QStringLiteral("c00")
               && dest.structureValid(),
-          "table content rode along (as a derived table)");
+          "table content rode along");
     {
         bool choiceOk = false;
         for (const QVariant& v : dest.spansForRow(5 + grow)) {
@@ -3702,12 +3711,12 @@ static void testMergeEngine() {
               && dest.contentForRow(1) == QStringLiteral("bottom"),
           "one undo removes the whole merge");
     dest.redo();
-    CHECK(dest.rowCountQml() == 2 + srcN + grow && dest.inkForRow(7 + grow) == kInk
+    CHECK(dest.rowCountQml() == 2 + srcN && dest.inkForRow(7 + grow) == kInk
               && dest.commentAt(6 + grow, 1) == newTid,
           "redo brings it back with ink + comment anchor");
 
     // The source was never touched; refusals + the pristine no-op.
-    CHECK(src.rowCountQml() == srcN && src.commentAt(5, 1) == tid,
+    CHECK(src.rowCountQml() == srcN && src.commentAt(5 + grow, 1) == tid,
           "source untouched (copy semantics)");
     CHECK(!DocumentMerger::mergeDocuments(&src, &src, 0, nullptr, nullptr, &err),
           "self-merge refused (%s)", qPrintable(err));
@@ -3944,254 +3953,6 @@ static void testCodeBlockInsert() {
     m.closeDocument();
 }
 
-// --- Test 42: table CELL images in md / DOCX / PDF exports ------------------
-// Cell media must ride every exporter like block images do: md collects into
-// .assets (absolute-path fallback when unreachable), DOCX embeds a drawing
-// run in the cell, PDF paints the image in the cell.
-// --- Test 43: table bulk ops over selection sets ---------------------------
-// Every bulk invokable = ONE mutateTable lambda = ONE undo entry; index
-// lists arrive unordered with dupes; deletes run descending; clear = contents
-// only (colours stay); TSV/Html readers emit ascending order.
-static void testTableBulkOps() {
-    qInfo("[43] table bulk ops: sets, one entry each, descending deletes");
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
-    const int t = m.insertTable(0, 5, 3);
-    for (int r = 0; r < 5; ++r)
-        for (int c = 0; c < 3; ++c)
-            m.tableSetCell(t, r, c, QStringLiteral("r%1c%2").arg(r).arg(c));
-
-    // NOTE on entry counting: undoHistory() is the ACTIVE PATH of the undo
-    // tree — pushing after an undo collapses the redoable tail, so the size
-    // is only a push-counter at a clean leaf. Count once there; every other
-    // section proves the real guarantee semantically (ONE undo restores all).
-
-    // Readers first (pristine 5x3): ascending order, column subsets.
-    CHECK(m.tableRowsTSV(t, {4, 0}) ==
-              QStringLiteral("r0c0\tr0c1\tr0c2\nr4c0\tr4c1\tr4c2"),
-          "rowsTSV ascending");
-    CHECK(m.tableColsTSV(t, {2, 0}).startsWith(QStringLiteral("r0c0\tr0c2\n")),
-          "colsTSV column subset per row");
-    CHECK(m.tableRowsHtml(t, {1}).contains(QStringLiteral("<td>r1c1</td>"))
-              && m.tableColsHtml(t, {1}).contains(QStringLiteral("<td>r3c1</td>")),
-          "html readers emit the members");
-
-    // Rows colour: the one clean-leaf entry count + members only.
-    {
-        const int entries = m.undoHistory().size();
-        m.tableSetRowsColor(t, {1, 3}, /*fg*/false, QStringLiteral("#224466"));
-        CHECK(m.undoHistory().size() == entries + 1
-                  && m.tableRowBg(t, 1) == QStringLiteral("#224466")
-                  && m.tableRowBg(t, 3) == QStringLiteral("#224466")
-                  && m.tableRowBg(t, 2).isEmpty(),
-              "rows colour: one entry, members only");
-        m.undo();
-        CHECK(m.tableRowBg(t, 1).isEmpty(), "one undo clears both rows");
-    }
-    // Cols align + cols kind: members only, one undo reverts each fully.
-    {
-        m.tableSetColsAlign(t, {0, 2}, 2);
-        CHECK(m.tableColAlign(t, 0) == 2 && m.tableColAlign(t, 2) == 2
-                  && m.tableColAlign(t, 1) == 0,
-              "cols align: members only");
-        m.undo();
-        CHECK(m.tableColAlign(t, 0) == 0 && m.tableColAlign(t, 2) == 0,
-              "one undo reverts both aligns");
-        m.tableSetColumnsKind(t, {1, 2}, 2);
-        CHECK(m.tableColumnKind(t, 1) == 2 && m.tableColumnKind(t, 2) == 2
-                  && m.tableColumnKind(t, 0) == 0
-                  && m.tableCell(t, 1, 0) == QStringLiteral("r1c0"),
-              "cols kind: members converted, text column's cells untouched");
-        m.undo();
-        CHECK(m.tableColumnKind(t, 1) == 0 && m.tableColumnKind(t, 2) == 0,
-              "one undo reverts both kinds");
-    }
-    // Clear rows: contents (text/media/choice) go, colours stay.
-    {
-        m.tableSetCellColor(t, 1, 1, 1, 1, /*fg*/false, QStringLiteral("#aa3355"));
-        m.tableSetCellMedia(t, 2, 0,
-            QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":4,\"h\":4}"));
-        const QString withFixtures = m.contentForRow(t);
-        m.tableClearRows(t, {1, 2});
-        CHECK(m.tableCell(t, 1, 1).isEmpty() && m.tableCell(t, 2, 0).isEmpty()
-                  && m.tableCellMedia(t, 2, 0).isEmpty()
-                  && m.tableCellBg(t, 1, 1) == QStringLiteral("#aa3355")
-                  && m.tableCell(t, 0, 0) == QStringLiteral("r0c0"),
-              "clearRows: contents cleared, colour stays, non-members untouched");
-        m.undo();
-        CHECK(m.contentForRow(t) == withFixtures,
-              "one undo restores every cleared cell");
-    }
-    // Delete a disjoint, UNORDERED, duped set → survivors keep identity.
-    {
-        const QString pre = m.contentForRow(t);
-        m.tableDeleteRows(t, {3, 1, 3});
-        CHECK(m.tableRows(t) == 3
-                  && m.tableCell(t, 0, 0) == QStringLiteral("r0c0")
-                  && m.tableCell(t, 1, 0) == QStringLiteral("r2c0")
-                  && m.tableCell(t, 2, 0) == QStringLiteral("r4c0"),
-              "descending delete: survivors keep identity");
-        m.undo();
-        CHECK(m.contentForRow(t) == pre, "one undo restores the whole delete");
-    }
-    // Column floor: deleting every column leaves one.
-    {
-        m.tableDeleteColumns(t, {0, 1, 2});
-        CHECK(m.tableColumns(t) == 1, "delete-all-columns floors at 1");
-        m.undo();
-        CHECK(m.tableColumns(t) == 3, "undo restores the columns");
-    }
-    // Media resize nudge-runs coalesce (2026-08-21): consecutive resizes of
-    // the same target = ONE entry labeled "Resize"; undo returns to the
-    // pre-run size in one step.
-    {
-        BlockModel::BlockSpec img; img.type = BlockModel::Media;
-        img.mediaJson = QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":40,\"h\":30}");
-        m.insertSpecs(0, {img}, false);
-        const int mr = 1;
-        const double h0 = m.heightForRow(mr);
-        const int entries = m.undoHistory().size();
-        m.setMediaWidth(mr, 300);
-        m.setMediaWidth(mr, 400);
-        m.setMediaWidth(mr, 500);
-        CHECK(m.undoHistory().size() == entries + 1
-                  && m.contentForRow(mr).contains(QStringLiteral("\"dw\":500")),
-              "three block-image resizes coalesce into ONE entry");
-        CHECK(m.undoHistory().last().toMap().value("label").toString()
-                  == QStringLiteral("Resize"),
-              "the run is labeled Resize in the history");
-        const double h500 = m.heightForRow(mr);
-        CHECK(h500 > h0 + 1, "the resize grew the row (estimate-derived)");
-        m.undo();
-        CHECK(!m.contentForRow(mr).contains(QStringLiteral("\"dw\"")),
-              "one undo returns to the pre-run (intrinsic) size");
-        // Media heights are estimate-authoritative (never measured back) —
-        // the undo must RE-DERIVE the height, not seed the stale one
-        // (user-caught 2026-08-21).
-        CHECK(std::abs(m.heightForRow(mr) - h0) < 1.0,
-              "undo re-derives the media row height (%.0f -> %.0f)",
-              h500, m.heightForRow(mr));
-        m.redo();
-        CHECK(std::abs(m.heightForRow(mr) - h500) < 1.0,
-              "redo re-derives it forward again");
-        m.undo();
-        // Cell image: same rule through mutateTable's coalesce.
-        const int t2 = t + 1;   // the table shifted down by the inserted media row
-        m.tableSetCellMedia(t2, 1, 1,
-            QStringLiteral("{\"src\":\"/tmp/none.png\",\"w\":40,\"h\":30}"));
-        const int entries2 = m.undoHistory().size();
-        m.tableSetCellImageWidth(t2, 1, 1, 200);
-        m.tableSetCellImageWidth(t2, 1, 1, 260);
-        CHECK(m.undoHistory().size() == entries2 + 1
-                  && m.tableCellMedia(t2, 1, 1).contains(QStringLiteral("\"dw\":260")),
-              "cell-image resizes coalesce too");
-    }
-    m.closeDocument();
-}
-
-// --- Test 44: choice chips inside table TEXT cells ---------------------------
-// The DT-2 chip in a cell's span list: same text==label invariant, same
-// payload; ops are one mutateTable each; typed (choice/check) BODY cells
-// refuse while typed columns' header cells (still text) accept.
-static void testCellChoiceChips() {
-    qInfo("[44] cell choice chips: insert/select/options/remove in cell spans");
-    auto payloadOf = [](const QString& j) {
-        return QJsonDocument::fromJson(j.toUtf8()).object();
-    };
-    auto idFor = [&](const QString& j, const QString& label) {
-        for (const QJsonValue& v : payloadOf(j).value(QStringLiteral("o")).toArray())
-            if (v.toObject().value(QStringLiteral("l")).toString() == label)
-                return v.toObject().value(QStringLiteral("id")).toString();
-        return QString();
-    };
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
-    const int t = m.insertTable(0, 3, 2);
-    m.tableSetCell(t, 1, 0, QStringLiteral("status: here"));
-
-    const int s = m.tableInsertChoiceAt(t, 1, 0, 8);
-    CHECK(s == 8, "cell chip inserted at the caret (start=%d)", s);
-    CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere"),
-          "default label spliced into the cell text");
-    const QString pj = m.tableChoiceAt(t, 1, 0, 9);
-    CHECK(!pj.isEmpty()
-              && payloadOf(pj).value(QStringLiteral("o")).toArray().size() == 3
-              && payloadOf(pj).value(QStringLiteral("v")).toString()
-                     == idFor(pj, QStringLiteral("To do")),
-          "payload carries the tri-state set, To do selected");
-    CHECK(m.tableChoiceRangeAt(t, 1, 0, 9) == (QVariantList{8, 13}),
-          "range covers the label");
-
-    // A neighbour cell span must shift when the label swaps.
-    m.tableSetCellFormat(t, 1, 0, 13, 17, QStringLiteral("bold"), true);   // "here"
-    m.tableSetChoiceSelected(t, 1, 0, 8, idFor(pj, QStringLiteral("Done")));
-    CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: Donehere"),
-          "selecting swaps the label text");
-    CHECK(m.tableCellHasFormat(t, 1, 0, 12, 16, QStringLiteral("bold")),
-          "neighbour cell span shifted with the swap");
-    CHECK(m.tableChoiceRangesForCell(t, 1, 0).first().toMap()
-              .value(QStringLiteral("color")).toString()
-              == QStringLiteral("#58A65C"),
-          "overlay feed reports the selected option's color");
-    m.undo();
-    CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere")
-              && m.tableCellHasFormat(t, 1, 0, 13, 17, QStringLiteral("bold")),
-          "one undo restores text, payload AND the neighbour");
-    m.redo();
-
-    // Quick-add selects, labels sanitize; options commit falls back to first
-    // when the selected option is deleted (the block-chip rules verbatim).
-    const QString nid = m.tableChoiceAddOption(t, 1, 0, 8,
-        QStringLiteral("Blo*ck*ed"), QStringLiteral("#FF0000"));
-    CHECK(!nid.isEmpty()
-              && m.tableCell(t, 1, 0) == QStringLiteral("status: Blockedhere"),
-          "quick-add selects; label sanitized");
-    {
-        const QString cur = m.tableChoiceAt(t, 1, 0, 9);
-        QVariantList arr;
-        for (const QJsonValue& v : payloadOf(cur).value(QStringLiteral("o")).toArray()) {
-            const QJsonObject o = v.toObject();
-            if (o.value(QStringLiteral("id")).toString() == nid) continue;   // delete it
-            QVariantMap e;
-            e.insert(QStringLiteral("id"), o.value(QStringLiteral("id")).toString());
-            e.insert(QStringLiteral("label"), o.value(QStringLiteral("l")).toString());
-            e.insert(QStringLiteral("color"), o.value(QStringLiteral("c")).toString());
-            arr.append(e);
-        }
-        m.tableSetChoiceOptions(t, 1, 0, 8, arr);
-        CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere"),
-              "deleted-selected falls back to the first option");
-    }
-
-    // Remove: ONE clean entry; the label text dies with the span.
-    {
-        const int entries = m.undoHistory().size();
-        m.tableRemoveChoiceAt(t, 1, 0, 8);
-        CHECK(m.undoHistory().size() == entries + 1
-                  && m.tableCell(t, 1, 0) == QStringLiteral("status: here")
-                  && m.tableChoiceRangesForCell(t, 1, 0).isEmpty(),
-              "remove: one entry, chip and label gone");
-        m.undo();
-        CHECK(m.tableCell(t, 1, 0) == QStringLiteral("status: To dohere")
-                  && !m.tableChoiceRangesForCell(t, 1, 0).isEmpty(),
-              "one undo revives the chip");
-    }
-
-    // Typed columns: body cells refuse (they render a widget); their header
-    // cells are still text and accept.
-    m.tableSetColumnsKind(t, {1}, 1);
-    CHECK(m.tableInsertChoiceAt(t, 1, 1, 0) == -1,
-          "choice-column body cell refuses a chip");
-    CHECK(m.tableInsertChoiceAt(t, 0, 1, 0) >= 0,
-          "typed column's header cell still takes one");
-    m.closeDocument();
-}
-
 // --- Test 48: exports carry chips + cell spans; typed headers stay text ----
 // The 2026-08-22 gap-close: inline/cell chips render in HTML (the .chip
 // pill) and shade in DOCX/PDF; cell spans reach every emitter; typed
@@ -4323,11 +4084,11 @@ static void testSpecsForRange() {
     // Plain flavour: no descriptor JSON ever.
     const QString plain = m.plainTextForRange(0, 0, 2, 3);
     CHECK(plain == QStringLiteral("abcdef\nxyz"), "plain text skips the image (got '%s')", qPrintable(plain));
-    const int t = m.insertTable(2, 2, 2);
-    m.tableSetCell(t, 0, 0, QStringLiteral("h1")); m.tableSetCell(t, 1, 1, QStringLiteral("v"));
-    const QString withTable = m.plainTextForRange(2, 0, t, 0);
-    CHECK(withTable.startsWith(QStringLiteral("xyz\nh1\t")) && withTable.endsWith(QStringLiteral("\tv")),
-          "table rows contribute TSV (got '%s')", qPrintable(withTable));
+    const int t = m.insertTableRows(2, 2, 2) - 1;
+    m.setContent(m.gridCellAt(t, 0, 0), QStringLiteral("h1")); m.setContent(m.gridCellAt(t, 1, 1), QStringLiteral("v"));
+    const QString withTable = m.plainTextForRange(2, 0, m.gridCellAt(t, 1, 1), 1);
+    CHECK(withTable.startsWith(QStringLiteral("xyz\nh1")) && withTable.endsWith(QStringLiteral("v")),
+          "a table's cells contribute their text in order (got '%s')", qPrintable(withTable));
     // Chip cut in half is dropped, whole chip travels.
     m.insertBlock(0); m.setContent(0, QStringLiteral("aa"));
     const int cs = m.insertChoiceAt(0, 2);
@@ -4509,10 +4270,11 @@ static void testPasteGroupUndo() {
     // Opaque first spec into a non-empty row lands AFTER it.
     BlockModel p3; p3.newDocument(); while (p3.rowCountQml() > 0) p3.removeBlock(0);
     p3.insertBlock(0); p3.setContent(0, QStringLiteral("a"));
-    const int t = p3.insertTable(0, 2, 2);
-    CHECK(ClipboardPaster::pasteBlocks(&m, p3.clipboardPayloadForRange(t, 0, t, 0), 0, 2, -1, 0, -1, 0, &cr, &cc, &err), "paste a table mid-row");
+    const int t = p3.insertTableRows(0, 2, 2) - 1;
+    const int tEnd = p3.splitRowLast(p3.tableRecords(t).last().toInt());
+    CHECK(ClipboardPaster::pasteBlocks(&m, p3.clipboardPayloadForRange(t, 0, tEnd, 0), 0, 2, -1, 0, -1, 0, &cr, &cc, &err), "paste a table mid-row");
     CHECK(m.headerCount(1) > 0 && m.contentForRow(0) == QStringLiteral("helXb") && m.structureValid(),
-          "table inserted after the row (as a derived table), row untouched");
+          "table inserted after the row, row untouched");
 }
 
 // --- Test 55: deleteSelectionRange shapes ------------------------------------
@@ -4610,31 +4372,6 @@ static void testMoveBlocks() {
               && BlockModel::rowAfterMove(2, 3, 2, 0) == 4, "inside run up / slid down");
 }
 
-// --- Test 57: tablePasteTSV wipes stale cell state ---------------------------
-static void testTablePasteClears() {
-    qInfo("[57] tablePasteTSV / tableClearRange wipe spans, media and chips; colours stay");
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("a"));
-    const int t = m.insertTable(0, 3, 3);
-    m.tableSetCell(t, 1, 1, QStringLiteral("bold me"));
-    m.tableSetCellFormat(t, 1, 1, 0, 4, QStringLiteral("bold"), true);
-    m.tableSetCellMedia(t, 1, 1, QStringLiteral("{\"src\":\"/tmp/x.png\",\"w\":1,\"h\":1}"));
-    m.tableSetCellColor(t, 1, 1, 1, 1, false, QStringLiteral("#112233"));
-    m.tableSetColumnKind(t, 2, 1);
-    m.tableSetCellChoice(t, 1, 2, QStringLiteral("opt"));
-    m.tablePasteTSV(t, 1, 1, QStringLiteral("p\tq"));
-    CHECK(m.tableCell(t, 1, 1) == QStringLiteral("p") && m.tableCell(t, 1, 2) == QStringLiteral("q"), "values pasted");
-    CHECK(m.tableCellSpans(t, 1, 1).isEmpty(), "stale span wiped");
-    CHECK(m.tableCellMedia(t, 1, 1).isEmpty(), "stale media wiped");
-    CHECK(m.tableCellChoice(t, 1, 2).isEmpty(), "stale choice wiped");
-    CHECK(m.tableCellBg(t, 1, 1) == QStringLiteral("#112233"), "colour kept");
-    m.tableSetCellMedia(t, 0, 0, QStringLiteral("{\"src\":\"/tmp/y.png\",\"w\":1,\"h\":1}"));
-    m.tableClearRange(t, 0, 0, 0, 0);
-    CHECK(m.tableCellMedia(t, 0, 0).isEmpty(), "tableClearRange clears media too");
-}
-
 // --- Test 58: bare remote image heuristic ------------------------------------
 static void testBareRemoteImage() {
     qInfo("[58] htmlIsBareRemoteImage: the browser Copy-Image shape only");
@@ -4653,7 +4390,7 @@ static void testOpaqueGuards() {
     qInfo("[59] text mutators refuse opaque rows: no change, no undo entry");
     const QString png = tmpPng(QStringLiteral("mn_clip_59.png"));
     BlockModel m; buildClipDoc(m, png);
-    const int t = m.insertTable(2, 2, 2);
+    const int t = m.insertDivider(2);
     m.setBlockType(t + 1 <= m.rowCountQml() - 1 ? t + 1 : t, BlockModel::Paragraph);
     const QString imgJson = m.contentForRow(1), tblJson = m.contentForRow(t);
     const int e = m.undoHistory().size();
@@ -4879,8 +4616,8 @@ static void testSpellServiceSync() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0); m.setContent(0, QStringLiteral("Teh cat sat"));
     m.insertBlock(1); m.setContent(1, QStringLiteral("the the end"));
-    const int t = m.insertTable(1, 2, 2);
-    m.tableSetCell(t, 0, 0, QStringLiteral("quikc"));
+    const int cell = m.gridCellAt(m.insertTableRows(1, 2, 2) - 1, 0, 0);   // a table cell is a block
+    m.setContent(cell, QStringLiteral("quikc"));
     SpellService svc(QStringLiteral("test"));
     svc.setModel(&m);
     QVariantList now;
@@ -4898,8 +4635,8 @@ static void testSpellServiceSync() {
     CHECK(r0.size() == 1 && r0[0].toMap().value(QStringLiteral("e")).toInt() == 3, "row 0 issue via the worker (%d)", int(r0.size()));
     CHECK(svc.issuesForRow(0, 2).isEmpty() && svc.issuesForRow(0, 3).isEmpty() && !svc.issuesForRow(0, 4).isEmpty(),
           "caret inside the word suppresses it");
-    svc.issuesForCell(t, 0, 0); CHECK(svc.waitIdle(10000), "cell job drained");
-    CHECK(svc.issuesForCell(t, 0, 0).size() == 1, "table cell typo flagged");
+    svc.issuesForRow(cell); CHECK(svc.waitIdle(10000), "cell job drained");
+    CHECK(svc.issuesForRow(cell).size() == 1, "table cell typo flagged");
     CHECK(!svc.issueAt(0, 1).isEmpty() && svc.issueAt(0, 8).isEmpty(), "issueAt hit / miss");
     // Edit → debounce → re-check.
     m.setContent(0, QStringLiteral("The cat sat"));
@@ -4949,16 +4686,10 @@ static void testReplaceTextSpans() {
     m.undo(); m.undo();
     CHECK(m.contentForRow(0) == QStringLiteral("the quikc brown") && m.linkAt(0, 5) == QStringLiteral("https://x")
               && m.hasFormat(0, 10, 15, QStringLiteral("bold")), "undo restores text + spans");
-    const int t = m.insertTable(0, 2, 2);
+    const int t = m.insertDivider(0);
     const QString img = m.contentForRow(t);
     m.replaceText(t, 0, 1, QStringLiteral("x"));
     CHECK(m.contentForRow(t) == img, "opaque row refused");
-    m.tableSetCell(t, 1, 1, QStringLiteral("teh end"));
-    m.tableSetCellFormat(t, 1, 1, 4, 7, QStringLiteral("bold"), true);
-    const int e2 = m.undoHistory().size();
-    m.tableCellReplace(t, 1, 1, 0, 3, QStringLiteral("the"));
-    CHECK(m.tableCell(t, 1, 1) == QStringLiteral("the end") && m.tableCellHasFormat(t, 1, 1, 4, 7, QStringLiteral("bold")), "cell replace keeps the span");
-    CHECK(m.undoHistory().size() == e2 + 1, "cell replace = one entry");
 }
 
 // Probe mode: MN_SPELL_PROBE=1 mn_regression_test < text — prints every
@@ -5033,7 +4764,7 @@ static void testInlineEngine() {
 
 // --- Test 67: inline text ops through the engine (SR-1 step 2) ------------------
 static void testInlineTextOps() {
-    qInfo("[67] inline text ops: rows and cells share one engine (SR-1 step 2)");
+    qInfo("[67] inline text ops through the engine (SR-1 step 2)");
     using namespace mn::inl;
     QString t = QStringLiteral("hello world");
     Spans v{{6, 11, Bold}};
@@ -5053,60 +4784,26 @@ static void testInlineTextOps() {
     CHECK(a.size() == 3 && spansCover(a, 2, 4, Bold) && spansCover(a, 2, 4, Underline) && !spansCover(a, 2, 4, Italic),
           "typing attributes: marks + colour pen");
 
-    // Row / cell parity: the same edit sequence gives the same text and spans.
+    // The model's text ops ride the same engine.
     BlockModel m;
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0);
     m.setContent(0, QStringLiteral("hello world"));
     m.setFormat(0, 6, 11, QStringLiteral("bold"), true);
-    const int tb = m.insertTable(1, 2, 2);
-    m.tableSetCell(tb, 0, 0, QStringLiteral("hello world"));
-    m.tableSetCellFormat(tb, 0, 0, 6, 11, QStringLiteral("bold"), true);
     m.insertText(0, 0, QStringLiteral("Oh, "), 0, QString(), QString());
-    m.tableCellInsert(tb, 0, 0, 0, QStringLiteral("Oh, "));
     m.replaceText(0, 4, 9, QStringLiteral("howdy"));
-    m.tableCellReplace(tb, 0, 0, 4, 9, QStringLiteral("howdy"));
     m.deleteRange(0, 1, 0, 3);
-    m.tableCellDelete(tb, 0, 0, 1, 3);
-    CHECK(m.contentForRow(0) == QStringLiteral("O howdy world") && m.tableCell(tb, 0, 0) == m.contentForRow(0),
-          "row and cell text identical after the same edits");
-    CHECK(m.hasFormat(0, 8, 13, QStringLiteral("bold")) && m.tableCellHasFormat(tb, 0, 0, 8, 13, QStringLiteral("bold"))
-              && !m.hasFormat(0, 7, 13, QStringLiteral("bold")) && !m.tableCellHasFormat(tb, 0, 0, 7, 13, QStringLiteral("bold")),
-          "row and cell spans identical");
-
-    // Cell undo granularity mirrors block typing.
-    const int h0 = m.undoHistory().size();
-    m.tableCellInsert(tb, 1, 1, 0, QStringLiteral("a"));
-    m.tableCellInsert(tb, 1, 1, 1, QStringLiteral("b"));
-    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("ab") && m.undoHistory().size() == h0 + 1,
-          "single-char cell typing coalesces into one entry");
-    m.tableCellDelete(tb, 1, 1, 1, 2);
-    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("a") && m.undoHistory().size() == h0 + 2,
-          "a delete after typing starts its own entry");
-    m.tableCellInsert(tb, 1, 1, 1, QStringLiteral("xyz"));
-    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("axyz") && m.undoHistory().size() == h0 + 3,
-          "a multi-char insert (paste) is its own entry");
-    m.undo();
-    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("a"), "undo removes the paste only");
-    m.undo();
-    CHECK(m.tableCell(tb, 1, 1) == QStringLiteral("ab"), "undo restores the deleted char");
-    m.undo();
-    CHECK(m.tableCell(tb, 1, 1).isEmpty(), "undo removes the typing run");
-
-    // Whole-text replacement clamps spans.
-    m.tableSetCell(tb, 0, 1, QStringLiteral("bold text"));
-    m.tableSetCellFormat(tb, 0, 1, 0, 4, QStringLiteral("bold"), true);
-    m.tableSetCell(tb, 0, 1, QString());
-    m.tableSetCell(tb, 0, 1, QStringLiteral("plain"));
-    CHECK(m.tableCellSpans(tb, 0, 1).isEmpty(), "clearing a cell drops its spans");
+    CHECK(m.contentForRow(0) == QStringLiteral("O howdy world"), "row text after the edit sequence");
+    CHECK(m.hasFormat(0, 8, 13, QStringLiteral("bold")) && !m.hasFormat(0, 7, 13, QStringLiteral("bold")),
+          "the row's spans follow the edits");
     m.setContent(0, QStringLiteral("O howdy"));
     CHECK(m.spansForRow(0).isEmpty(), "shortening a row's text drops spans past its end");
 }
 
 // --- Test 68: inline format ops through the engine (SR-1 step 3) ----------------
 static void testInlineFormatOps() {
-    qInfo("[68] inline format ops: rows and cells share one engine (SR-1 step 3)");
+    qInfo("[68] inline format ops through the engine (SR-1 step 3)");
     using namespace mn::inl;
     const QString t = QStringLiteral("hello world");
     Spans v;
@@ -5144,30 +4841,19 @@ static void testInlineFormatOps() {
     m.insertBlock(0);
     m.setContent(0, QStringLiteral("status "));
     const int rc = m.insertChoiceAt(0, 7);
-    const int tb = m.insertTable(1, 2, 2);
-    m.tableSetCell(tb, 0, 0, QStringLiteral("status "));
-    const int cc = m.tableInsertChoiceAt(tb, 0, 0, 7);
-    CHECK(rc >= 0 && cc >= 0 && m.contentForRow(0) == m.tableCell(tb, 0, 0), "a chip inserted in a row and in a cell");
+    CHECK(rc >= 0, "a chip inserted in a row");
     const int len = m.contentForRow(0).size();
     m.setFormat(0, 0, len, QStringLiteral("bold"), true);
-    m.tableSetCellFormat(tb, 0, 0, 0, len, QStringLiteral("bold"), true);
     m.clearFormat(0, 0, len);
-    m.tableClearCellFormat(tb, 0, 0, 0, len);
-    CHECK(!m.hasFormat(0, 0, len, QStringLiteral("bold")) && !m.tableCellHasFormat(tb, 0, 0, 0, len, QStringLiteral("bold")),
-          "bold cleared in both");
-    CHECK(m.choiceRangesForRow(0).size() == 1 && m.tableChoiceRangesForCell(tb, 0, 0).size() == 1,
-          "the chip survives clear formatting in a row AND in a cell");
-    const QVariantList rf = m.spansForRow(0), cf = m.tableCellSpans(tb, 0, 0);
-    CHECK(rf.size() == 1 && cf.size() == 1
-              && rf[0].toMap().contains(QStringLiteral("u")) && cf[0].toMap().contains(QStringLiteral("u"))
-              && rf[0].toMap().value(QStringLiteral("s")) == cf[0].toMap().value(QStringLiteral("s"))
-              && rf[0].toMap().value(QStringLiteral("e")) == cf[0].toMap().value(QStringLiteral("e")),
-          "row and cell span feeds match, payload included");
+    CHECK(!m.hasFormat(0, 0, len, QStringLiteral("bold")), "bold cleared");
+    CHECK(m.choiceRangesForRow(0).size() == 1, "the chip survives clear formatting");
+    const QVariantList rf = m.spansForRow(0);
+    CHECK(rf.size() == 1 && rf[0].toMap().contains(QStringLiteral("u")), "the row's span feed carries the chip payload");
 }
 
 // --- Test 69: choice chips through the engine (SR-1 step 4) ---------------------
 static void testInlineChoiceOps() {
-    qInfo("[69] choice chips: rows and cells share one engine (SR-1 step 4)");
+    qInfo("[69] choice chips through the engine (SR-1 step 4)");
     using namespace mn::inl;
     const auto K = [](const char* s) { return QString::fromLatin1(s); };
     QJsonObject pay;
@@ -5217,39 +4903,27 @@ static void testInlineChoiceOps() {
           "a deleted selection falls back to the first option");
     CHECK(!setOptions(p2, QVariantList{}, [] { return QString(); }, lab), "an empty option list refuses");
 
-    // Row / cell parity through the model API.
+    // The model API over the engine.
     BlockModel m;
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0);
     m.setContent(0, K("status "));
-    const int tb = m.insertTable(1, 2, 2);
-    m.tableSetCell(tb, 0, 0, K("status "));
-    const auto same = [&] { return m.contentForRow(0) == m.tableCell(tb, 0, 0); };
-    CHECK(m.insertChoiceAt(0, 7) == 7 && m.tableInsertChoiceAt(tb, 0, 0, 7) == 7 && same()
-              && m.contentForRow(0) == K("status To do"), "insert: row and cell match");
+    CHECK(m.insertChoiceAt(0, 7) == 7 && m.contentForRow(0) == K("status To do"), "insert: the chip's label is its text");
     const auto optionId = [&](const QString& json, int i) {
         return QJsonDocument::fromJson(json.toUtf8()).object().value(K("o")).toArray().at(i).toObject().value(K("id")).toString();
     };
     m.setChoiceSelected(0, 7, optionId(m.choiceAt(0, 7), 1));
-    m.tableSetChoiceSelected(tb, 0, 0, 7, optionId(m.tableChoiceAt(tb, 0, 0, 7), 1));
-    CHECK(same() && m.contentForRow(0) == K("status Doing"), "select: row and cell labels match");
+    CHECK(m.contentForRow(0) == K("status Doing"), "select swaps the label");
     CHECK(!m.choiceAddOption(0, 7, K("Blocked"), K("#E05F5F")).isEmpty()
-              && !m.tableChoiceAddOption(tb, 0, 0, 7, K("Blocked"), K("#E05F5F")).isEmpty()
-              && same() && m.contentForRow(0) == K("status Blocked"), "add option selects it in both");
-    CHECK(m.choiceAddOption(0, 99, K("x"), QString()).isEmpty() && m.tableChoiceAddOption(tb, 0, 0, 99, K("x"), QString()).isEmpty(),
-          "no chip at that start: no id in either");
+              && m.contentForRow(0) == K("status Blocked"), "add option selects it");
+    CHECK(m.choiceAddOption(0, 99, K("x"), QString()).isEmpty(), "no chip at that start: no id");
     const QVariantList only{QVariantMap{{K("label"), K("Only")}}};
     m.setChoiceOptions(0, 7, only);
-    m.tableSetChoiceOptions(tb, 0, 0, 7, only);
-    CHECK(same() && m.contentForRow(0) == K("status Only")
-              && m.choiceRangesForRow(0).size() == 1 && m.tableChoiceRangesForCell(tb, 0, 0).size() == 1,
-          "set options: a deleted selection falls back in both");
+    CHECK(m.contentForRow(0) == K("status Only") && m.choiceRangesForRow(0).size() == 1,
+          "set options: a deleted selection falls back");
     m.removeChoiceAt(0, 7);
-    m.tableRemoveChoiceAt(tb, 0, 0, 7);
-    CHECK(same() && m.contentForRow(0) == K("status ")
-              && m.choiceRangesForRow(0).isEmpty() && m.tableChoiceRangesForCell(tb, 0, 0).isEmpty(),
-          "remove: chip and label gone in both");
+    CHECK(m.contentForRow(0) == K("status ") && m.choiceRangesForRow(0).isEmpty(), "remove: chip and label gone");
 }
 
 // --- Test 70: payload-only and language-only edits reach undo (SR-1 step 5) -------
@@ -6271,9 +5945,9 @@ static void testSplitRowInterchange() {
               "blocks copied from a lane paste as plain top-level blocks (%s)", qPrintable(texts(m)));
         m.undo();
 
-        const int t = m.insertTable(7, 2, 2);
-        const QString tablePayload = m.clipboardPayloadForRange(t, 0, t, 0);
-        m.removeBlock(t);
+        const int t = m.insertTableRows(7, 2, 2) - 1;
+        const QString tablePayload = m.clipboardPayloadForRange(t, 0, m.splitRowLast(m.tableRecords(t).last().toInt()), 0);
+        m.gridDeleteTable(t);
         CHECK(ClipboardPaster::pasteBlocks(&m, tablePayload, 2, 0, -1, 0, -1, 0, &cr, &cc, &err) && m.lastPasteRelocated()
                   && m.headerCount(5) > 0 && m.laneForRow(5) == -1 && m.structureValid(),
               "a table pasted into a lane lands below the split row (as a derived table)");
@@ -8061,7 +7735,7 @@ static void testGridTabsAndBoard() {
     m.setContent(q, QStringLiteral("q"));
     const int h2 = m.insertTableRows(q, 2, 2) - 1;
     const QStringList ids = m.gridBlockIds();
-    CHECK(ids.size() == 2 && ids.at(0) == m.idForRow(h1) && ids.at(1) == m.idForRow(h2) && m.tableBlockIds().isEmpty(),
+    CHECK(ids.size() == 2 && ids.at(0) == m.idForRow(h1) && ids.at(1) == m.idForRow(h2),
           "gridBlockIds lists both heads in order; no Table blocks");
     CHECK(m.rowForId(ids.at(1)) == h2 && m.headerCount(m.rowForId(ids.at(1))) > 0, "a tab id resolves to its head record");
     // A board move: set the grouping choice and reorder the row in one group → one undo entry.
@@ -8321,8 +7995,6 @@ int main(int argc, char** argv) {
     testMergeEngine();
     testMergeAssetsAndEdges();
     testCodeBlockInsert();
-    testTableBulkOps();
-    testCellChoiceChips();
     testBlockClipboardRoundTrip();
     testSpecsForRange();
     testClipboardMime();
@@ -8330,7 +8002,6 @@ int main(int argc, char** argv) {
     testPasteGroupUndo();
     testDeleteSelectionRange();
     testMoveBlocks();
-    testTablePasteClears();
     testBareRemoteImage();
     testOpaqueGuards();
     testPasteFences();

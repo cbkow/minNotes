@@ -34,10 +34,6 @@ SpellService::~SpellService() {
     if (worker_.joinable()) worker_.join();
 }
 
-QString SpellService::cellKey(const QString& id, int r, int c) {
-    return id + QLatin1Char(':') + QString::number(r) + QLatin1Char(':') + QString::number(c);
-}
-
 void SpellService::setModel(BlockModel* m) {
     if (m == model_) return;
     for (const auto& c : conns_) QObject::disconnect(c);
@@ -155,30 +151,12 @@ std::vector<std::pair<int,int>> SpellService::excludedSpans(const QVariantList& 
     return out;
 }
 
-// Queue the check(s) for a block id: one job for a text block, one per text
-// cell for a table (typed choice/check body cells skipped).
+// Queue the check for a block id (a table's cells are blocks: one job each).
 void SpellService::scheduleRow(int row, bool front, bool wantSug) {
     if (!model_ || row < 0 || row >= model_->rowCountQml()) return;
     const int type = model_->typeForRow(row);
     const QString id = model_->idForRow(row);
     rowHint_.insert(id, row);
-    if (type == BlockModel::Table) {
-        const int rows = model_->tableRows(row), cols = model_->tableColumns(row), hdr = model_->tableHeaderRows(row);
-        for (int c = 0; c < cols; ++c) {
-            const int kind = model_->tableColumnKind(row, c);
-            for (int r = 0; r < rows; ++r) {
-                if (r >= hdr && kind != 0) continue;
-                Job j; j.gen = gen_; j.key = cellKey(id, r, c);
-                j.text = model_->tableCell(row, r, c);
-                j.excluded = excludedSpans(model_->tableCellSpans(row, r, c));
-                j.wantSuggestions = wantSug;
-                Entry& e = cache_[j.key]; e.pending = true;
-                if (j.text.isEmpty()) { e.checkedText.clear(); e.issues.clear(); e.pending = false; continue; }
-                submit(std::move(j), front);
-            }
-        }
-        return;
-    }
     const bool textish = type == BlockModel::Paragraph || type == BlockModel::Heading || type == BlockModel::Quote
         || type == BlockModel::ListItem || type == BlockModel::TaskListItem || type == BlockModel::OrderedListItem;
     if (!textish) { cache_.remove(id); return; }
@@ -230,10 +208,7 @@ void SpellService::backgroundTick() {
     int done = 0;
     while (passRow_ < n && done < kPassChunk) {
         const int row = passRow_++;
-        const QString id = model_->idForRow(row);
-        const int type = model_->typeForRow(row);
-        const bool have = (type == BlockModel::Table) ? cache_.contains(cellKey(id, 0, 0)) : cache_.contains(id);
-        if (have) continue;
+        if (cache_.contains(model_->idForRow(row))) continue;
         scheduleRow(row, /*front=*/false, /*wantSug=*/false);
         ++done;
     }
@@ -357,32 +332,9 @@ QVariantList SpellService::issuesForRow(int row, int caretCol) {
     return filtered(*it, text, caretCol);
 }
 
-QVariantList SpellService::issuesForCell(int row, int r, int c, int caretCol) {
-    if (!model_ || row < 0 || row >= model_->rowCountQml() || (!checkSpelling_ && !checkGrammar_)) return {};
-    const QString key = cellKey(model_->idForRow(row), r, c);
-    const QString text = model_->tableCell(row, r, c);
-    const auto it = cache_.constFind(key);
-    if (it == cache_.constEnd() || (it->checkedText != text && !it->pending)) {
-        if (!dirty_.contains(model_->idForRow(row))) scheduleRow(row, true, false);
-        return {};
-    }
-    if (it->checkedText != text) return {};
-    return filtered(*it, text, caretCol);
-}
 
 QVariantMap SpellService::issueAt(int row, int col) {
     for (const QVariant& v : issuesForRow(row, -1)) {
-        const QVariantMap m = v.toMap();
-        if (col >= m.value(QStringLiteral("s")).toInt() && col <= m.value(QStringLiteral("e")).toInt()) {
-            if (!m.value(QStringLiteral("suggestionsComputed")).toBool()) scheduleRow(row, true, true);
-            return m;
-        }
-    }
-    return {};
-}
-
-QVariantMap SpellService::cellIssueAt(int row, int r, int c, int col) {
-    for (const QVariant& v : issuesForCell(row, r, c, -1)) {
         const QVariantMap m = v.toMap();
         if (col >= m.value(QStringLiteral("s")).toInt() && col <= m.value(QStringLiteral("e")).toInt()) {
             if (!m.value(QStringLiteral("suggestionsComputed")).toBool()) scheduleRow(row, true, true);

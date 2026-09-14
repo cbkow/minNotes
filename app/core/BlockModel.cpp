@@ -487,7 +487,7 @@ BlockModel::TableGeom BlockModel::buildTableGeom(int head) const {
             const Row& b = rows_[size_t(i)];
             if (b.cell < 0) continue;
             cols = std::max(cols, b.cell + 1);
-            if (b.type == Media || b.type == Divider || b.type == Table || content_[size_t(i)].isEmpty()) continue;
+            if (b.type == Media || b.type == Divider || content_[size_t(i)].isEmpty()) continue;
             if (b.natW < 0) b.natW = static_cast<int32_t>(std::lround(tableTextWidth(content_[size_t(i)])));
             if (widest.size() < size_t(cols)) { widest.resize(size_t(cols), 0.0); measurable.resize(size_t(cols), 0); }
             widest[size_t(b.cell)] = std::max(widest[size_t(b.cell)], b.natW + (rec == head ? 18.0 : 0.0));
@@ -2422,7 +2422,7 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
     const int n = static_cast<int>(rows_.size());
     if (row < 0 || row >= n) return -1;
     const Row src = rows_[size_t(row)];
-    if (src.type == Split || src.type == Table || tableHeadOf(row) >= 0) return -1;   // tables add columns (SR-4)
+    if (src.type == Split || tableHeadOf(row) >= 0) return -1;   // tables add columns (SR-4)
     const float keep = static_cast<float>(std::clamp<qreal>(ratio, 0.05, 0.95));
     const bool newRight = side == 0;
 
@@ -2656,7 +2656,6 @@ BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
     if (s == QLatin1String("task_item")) return TaskListItem;
     if (s == QLatin1String("ordered_item")) return OrderedListItem;
     if (s == QLatin1String("divider"))   return Divider;
-    if (s == QLatin1String("table"))     return Table;
     if (s == QLatin1String("split"))     return Split;
     return Paragraph;
 }
@@ -2671,7 +2670,6 @@ const char* BlockModel::typeToString(uint8_t t) {
     case TaskListItem: return "task_item";
     case OrderedListItem: return "ordered_item";
     case Divider:  return "divider";
-    case Table:    return "table";
     case Split:    return "split";
     default:       return "paragraph";
     }
@@ -2775,8 +2773,6 @@ void BlockModel::loadFromStore() {
             if (const QJsonObject to = o.value(QStringLiteral("table")).toObject(); !to.isEmpty())
                 r.table = QString::fromUtf8(QJsonDocument(to).toJson(QJsonDocument::Compact));
         }
-        if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
-            r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(text).rows()));
         fillMediaMeta(r, text);   // media: dims/video/aspect-param from the descriptor JSON
         for (const QJsonValue& sv : o.value(QStringLiteral("spans")).toArray()) {
             const QJsonObject so = sv.toObject();
@@ -3244,7 +3240,7 @@ int BlockModel::wrapRun(int lo, int hi, int side, qreal ratio) {
     if (lo > hi) std::swap(lo, hi);
     if (lo == hi) return splitIntoColumns(lo, side, ratio);
     for (int i = lo; i <= hi; ++i)
-        if (rows_[size_t(i)].cell >= 0 || rows_[size_t(i)].type == Split || rows_[size_t(i)].type == Table) return -1;
+        if (rows_[size_t(i)].cell >= 0 || rows_[size_t(i)].type == Split) return -1;
     const float keep = static_cast<float>(std::clamp<qreal>(ratio, 0.05, 0.95));
     const bool newRight = side == 0;
     beginTxn(lo, hi);
@@ -3541,7 +3537,7 @@ int BlockModel::moveBeside(int from, int count, int target, int side) {
     for (int k = from; k < from + count; ++k)
         if (rows_[size_t(k)].type == Split) return -1;
     const uint8_t tt = rows_[size_t(target)].type;
-    if (tt == Split || tt == Table || tableHeadOf(target) >= 0) return -1;   // not offered inside tables
+    if (tt == Split || tableHeadOf(target) >= 0) return -1;   // not offered inside tables
     const QString firstId = ids_[size_t(from)];
     const auto band = wholeSplitRows(std::min(from, target), std::max(from + count - 1, target));
     beginTxn(band.first, band.second);
@@ -3644,7 +3640,6 @@ double BlockModel::estimatedHeight(const Row& r, double laneW) const {
         return 12.0 + mediaFrameHeight(r, laneW)
              + (r.isVideo ? kVideoBar : r.isPdf ? kPdfNav : 0.0);
     case Divider: return 24.0;
-    case Table:   return r.param * 34.0 + 58.0;     // param = row count; + 6 top/20 bottom pad (+row button) + header/strip
     case Code:
     case Paragraph:
     default:      return r.param * kLine + kPadV;  // quote/list ≈ paragraph
@@ -4021,7 +4016,6 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         }
         emit dataChanged(index(p.row), index(p.row));   // all roles — type/spans/content may differ
     }
-    tableCacheRow_ = -1;               // a patched row may be a table — drop the parse cache
     if (restructured) reindex(std::vector<double>(layout().heights()));
     ++contentRevision_;
     if (inkTouched) { ++inkRevision_; emit inkChanged(); }
@@ -4614,102 +4608,6 @@ bool BlockModel::makeCodeBlockIfFence(int row) {
     return true;
 }
 
-// === Tables ==============================================================
-// The grid lives as compact JSON in `content`; mutations reserialize and persist
-// through the existing txn chokepoint, so undo/redo/coalescing work unchanged.
-
-const TableGrid& BlockModel::gridFor(int row) const {
-    row = clampRow(row);
-    if (tableCacheRow_ == row && tableCacheRev_ == contentRevision_) return tableCache_;
-    tableCache_ = TableGrid::fromJson(content_[row]);
-    tableCacheRow_ = row;
-    tableCacheRev_ = contentRevision_;
-    return tableCache_;
-}
-
-void BlockModel::mutateTable(int row, const std::function<void(TableGrid&)>& fn,
-                             const QString& coalesce) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Table) return;
-    TableGrid g = TableGrid::fromJson(content_[row]);
-    fn(g);
-    beginTxn(row, row);
-    content_[row] = g.toJson();
-    rows_[row].param = static_cast<uint16_t>(std::clamp(g.rows(), 1, 65535));
-    rows_[row].measured = false;                          // height may change (rows/cols/
-                                                          // wrap/col-width) → re-measure;
-                                                          // the cache (rowMeasured) is stale
-    persistContent(row);
-    tableCacheRow_ = -1;                                  // invalidate the parse cache
-    emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
-    endTxn(coalesce);
-}
-
-int BlockModel::tableRows(int row) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).rows();
-}
-int BlockModel::tableColumns(int row) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).cols();
-}
-int BlockModel::tableHeaderRows(int row) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).headerRows();
-}
-QString BlockModel::tableCell(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return {};
-    return gridFor(row).cellText(r, c);
-}
-int BlockModel::tableColWidth(int row, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).colWidth(c);
-}
-int BlockModel::tableColAlign(int row, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).colAlign(c);
-}
-
-void BlockModel::tableSetCell(int row, int r, int c, const QString& text) {
-    // Spans clamp to the new text, so a cleared cell no longer keeps stale spans.
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        mn::inl::setText(t, v, text);
-        return true;
-    }, QStringLiteral("tcell:%1:%2").arg(r).arg(c));
-}
-void BlockModel::tableSetCellColor(int row, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
-    if (r0 > r1) std::swap(r0, r1);
-    if (c0 > c1) std::swap(c0, c1);
-    mutateTable(row, [&](TableGrid& g){
-        for (int r = r0; r <= r1; ++r)
-            for (int c = c0; c <= c1; ++c)
-                fg ? g.setCellFg(r, c, color) : g.setCellBg(r, c, color);
-    });
-}
-void BlockModel::tableSetRowColor(int row, int r, bool fg, const QString& color) {
-    mutateTable(row, [&](TableGrid& g){ fg ? g.setRowFg(r, color) : g.setRowBg(r, color); });
-}
-void BlockModel::tableSetColColor(int row, int c, bool fg, const QString& color) {
-    mutateTable(row, [&](TableGrid& g){ fg ? g.setColFg(c, color) : g.setColBg(c, color); });
-}
-// Effective colour for rendering: cell wins, then row, then column, then none.
-QString BlockModel::tableCellBg(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    QString v = g.cellBg(r, c);
-    if (v.isEmpty()) v = g.rowBg(r);
-    if (v.isEmpty()) v = g.colBg(c);
-    return v;
-}
-QString BlockModel::tableCellFg(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    QString v = g.cellFg(r, c);
-    if (v.isEmpty()) v = g.rowFg(r);
-    if (v.isEmpty()) v = g.colFg(c);
-    return v;
-}
 // --- cell inline spans (rich text inside table cells) ----------------------
 // Cells persist spans as a JSON array of {s,e,k,u?}; these converters bridge to
 // the Span vector so the block-level span helpers (addSpan/removeSpan/shift…)
@@ -4724,467 +4622,6 @@ std::vector<BlockModel::Span> BlockModel::cellSpansFromJson(const QJsonArray& a)
     }
     return v;
 }
-QJsonArray BlockModel::cellSpansToJson(const std::vector<Span>& v) {
-    QJsonArray a;
-    for (const Span& sp : v) {
-        QJsonObject o;
-        o.insert(QStringLiteral("s"), sp.s);
-        o.insert(QStringLiteral("e"), sp.e);
-        o.insert(QStringLiteral("k"), int(sp.kind));
-        if (spanHasPayload(sp.kind) && !sp.href.isEmpty()) o.insert(QStringLiteral("u"), sp.href);
-        a.append(o);
-    }
-    return a;
-}
-
-void BlockModel::mutateCellInline(int row, int r, int c,
-                                  const std::function<bool(QString&, std::vector<Span>&)>& fn,
-                                  const QString& coalesce) {
-    mutateTable(row, [&](TableGrid& g) {
-        QString t = g.cellText(r, c);
-        std::vector<Span> v = cellSpansFromJson(g.cellSpans(r, c));
-        if (!fn(t, v)) return;
-        g.setCellText(r, c, t);
-        g.setCellSpans(r, c, cellSpansToJson(v));
-    }, coalesce);
-}
-
-QVariantList BlockModel::tableCellSpans(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return {};
-    return mn::inl::spansToVariantList(cellSpansFromJson(gridFor(row).cellSpans(r, c)));
-}
-
-bool BlockModel::tableCellHasFormat(int row, int r, int c, int start, int end, const QString& kind) const {
-    if (rowAt(row).type != Table) return false;
-    const TableGrid& g = gridFor(row);
-    return mn::inl::hasFormat(g.cellText(r, c), cellSpansFromJson(g.cellSpans(r, c)),
-                              start, end, spanKindFromString(kind));
-}
-
-void BlockModel::tableSetCellFormat(int row, int r, int c, int start, int end, const QString& kind, bool on) {
-    const uint8_t k = spanKindFromString(kind);
-    if (!k) return;
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        return mn::inl::setFormat(t, v, start, end, k, on);
-    });
-}
-
-// Same rule as blocks: style + link + colour spans clear; comments and chips survive
-// (a chip's text must stay its label).
-void BlockModel::tableClearCellFormat(int row, int r, int c, int start, int end) {
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        return mn::inl::clearFormat(t, v, start, end);
-    });
-}
-
-// Span-aware cell text edits: the same engine ops as blocks, so formatting stays glued
-// to its characters as the user types. Coalescing mirrors block typing: only
-// single-char inserts ("type") or single-char deletes ("del") join a run, keyed per
-// cell — a paste or a switch between typing and deleting starts a new undo entry.
-void BlockModel::tableCellInsert(int row, int r, int c, int at, const QString& text) {
-    if (text.isEmpty()) return;
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        mn::inl::insertText(t, v, at, text);
-        return true;
-    }, text.size() == 1 ? QStringLiteral("tcell-type:%1:%2").arg(r).arg(c) : QString());
-}
-
-void BlockModel::tableCellReplace(int row, int r, int c, int s, int e, const QString& text) {
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        return mn::inl::replaceRange(t, v, s, e, text);
-    });
-}
-
-void BlockModel::tableCellDelete(int row, int r, int c, int from, int to) {
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        return mn::inl::deleteRange(t, v, from, to);
-    }, to - from == 1 ? QStringLiteral("tcell-del:%1:%2").arg(r).arg(c) : QString());
-}
-
-// --- images inside cells ---------------------------------------------------
-static QString mediaJson(const MediaStore::ImageRef& ref);   // defined below with the media-block helpers
-// Import via MediaStore (sidecar for clipboard bytes, in-place ref for files),
-// stash the {src,w,h} descriptor in cell.media, and widen a too-narrow column
-// to a sensible default so the image isn't squeezed. One undo step.
-bool BlockModel::tableSetCellImageFromClipboard(int row, int r, int c) {
-    if (!mediaStore_ || rowAt(row).type != Table) return false;
-    const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
-    if (!ref.ok()) return false;
-    const QString json = mediaJson(ref);
-    const int target = std::clamp(ref.w, 140, 360);
-    mutateTable(row, [&](TableGrid& g){
-        g.setCellMedia(r, c, json);
-        if (g.colWidth(c) < target) g.setColWidth(c, target);
-    });
-    return true;
-}
-bool BlockModel::tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl,
-                                          bool forceCopy) {
-    if (!mediaStore_ || rowAt(row).type != Table) return false;
-    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, forceCopy);
-    if (!ref.ok()) return false;
-    const QString json = mediaJson(ref);
-    const int target = std::clamp(ref.w, 140, 360);
-    mutateTable(row, [&](TableGrid& g){
-        g.setCellMedia(r, c, json);
-        if (g.colWidth(c) < target) g.setColWidth(c, target);
-    });
-    return true;
-}
-void BlockModel::tableClearCellMedia(int row, int r, int c) {
-    mutateTable(row, [&](TableGrid& g){ g.setCellMedia(r, c, QString()); });
-}
-void BlockModel::tableSetCellMedia(int row, int r, int c, const QString& json) {
-    if (rowAt(row).type != Table) return;
-    mutateTable(row, [&](TableGrid& g){ g.setCellMedia(r, c, json); });
-}
-QString BlockModel::tableCellMedia(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return {};
-    return gridFor(row).cellMedia(r, c);
-}
-QString BlockModel::tableCellMediaUrl(int row, int r, int c) const {
-    if (!mediaStore_ || rowAt(row).type != Table) return {};
-    const QString m = gridFor(row).cellMedia(r, c);
-    if (m.isEmpty()) return {};
-    const QJsonObject o = QJsonDocument::fromJson(m.toUtf8()).object();
-    return mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
-}
-int BlockModel::tableCellMediaW(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    const QString m = gridFor(row).cellMedia(r, c);
-    if (m.isEmpty()) return 0;
-    return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("w")).toInt();
-}
-int BlockModel::tableCellMediaH(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    const QString m = gridFor(row).cellMedia(r, c);
-    if (m.isEmpty()) return 0;
-    return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("h")).toInt();
-}
-int BlockModel::tableCellMediaDw(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    const QString m = gridFor(row).cellMedia(r, c);
-    if (m.isEmpty()) return 0;
-    return QJsonDocument::fromJson(m.toUtf8()).object().value(QStringLiteral("dw")).toInt();
-}
-void BlockModel::tableSetCellImageWidth(int row, int r, int c, int w) {
-    mutateTable(row, [&](TableGrid& g){
-        const QString m = g.cellMedia(r, c);
-        if (m.isEmpty()) return;
-        QJsonObject o = QJsonDocument::fromJson(m.toUtf8()).object();
-        if (w <= 0) o.remove(QStringLiteral("dw"));
-        else        o.insert(QStringLiteral("dw"), std::clamp(w, 40, 4000));
-        g.setCellMedia(r, c, QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
-    }, QStringLiteral("tcimgw:%1:%2").arg(r).arg(c));   // nudge-runs coalesce
-}
-
-void BlockModel::tableInsertRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.insertRow(at); }); }
-void BlockModel::tableInsertColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.insertCol(at); }); }
-void BlockModel::tableDeleteRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.deleteRow(at); }); }
-void BlockModel::tableDeleteColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.deleteCol(at); }); }
-void BlockModel::tableSetColWidth(int row, int c, int w) { mutateTable(row, [&](TableGrid& g){ g.setColWidth(c, w); }); }
-void BlockModel::tableSetColAlign(int row, int c, int a) { mutateTable(row, [&](TableGrid& g){ g.setColAlign(c, a); }); }
-void BlockModel::tableSetHeaderRows(int row, int n)      { mutateTable(row, [&](TableGrid& g){ g.setHeaderRows(n); }); }
-void BlockModel::tableMoveRow(int row, int from, int to)    { mutateTable(row, [&](TableGrid& g){ g.moveRow(from, to); }); }
-void BlockModel::tableMoveColumn(int row, int from, int to) { mutateTable(row, [&](TableGrid& g){ g.moveCol(from, to); }); }
-void BlockModel::tableDuplicateRow(int row, int at)    { mutateTable(row, [&](TableGrid& g){ g.duplicateRow(at); }); }
-void BlockModel::tableDuplicateColumn(int row, int at) { mutateTable(row, [&](TableGrid& g){ g.duplicateCol(at); }); }
-void BlockModel::tableSortByColumn(int row, int c, bool asc) { mutateTable(row, [&](TableGrid& g){ g.sortByColumn(c, asc); }); }
-void BlockModel::tableFillDown(int row, int r0, int c0, int r1, int c1)  { mutateTable(row, [&](TableGrid& g){ g.fillDown(r0, c0, r1, c1); }); }
-void BlockModel::tableFillRight(int row, int r0, int c0, int r1, int c1) { mutateTable(row, [&](TableGrid& g){ g.fillRight(r0, c0, r1, c1); }); }
-
-// ---- choice columns --------------------------------------------------------
-int BlockModel::tableColumnKind(int row, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).colKind(c);
-}
-void BlockModel::tableSetColumnKind(int row, int c, int kind) {
-    mutateTable(row, [&](TableGrid& g){ g.setColKind(c, kind); });
-}
-QVariantList BlockModel::tableColumnOptions(int row, int c) const {
-    QVariantList out;
-    if (rowAt(row).type != Table) return out;
-    for (const TableGrid::Option& o : gridFor(row).colOptions(c)) {
-        QVariantMap m;
-        m.insert(QStringLiteral("id"), o.id);
-        m.insert(QStringLiteral("label"), o.label);
-        m.insert(QStringLiteral("color"), o.color);
-        out.append(m);
-    }
-    return out;
-}
-QString BlockModel::tableAddOption(int row, int c, const QString& label, const QString& color) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Table) return QString();
-    const QString id = makeUlid();
-    mutateTable(row, [&](TableGrid& g){ g.addOption(c, id, label, color); });
-    return id;
-}
-void BlockModel::tableSetColumnOptions(int row, int c, const QVariantList& opts) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Table) return;
-    std::vector<TableGrid::Option> v;
-    v.reserve(opts.size());
-    for (const QVariant& it : opts) {
-        const QVariantMap m = it.toMap();
-        TableGrid::Option o;
-        o.id = m.value(QStringLiteral("id")).toString();
-        if (o.id.isEmpty()) o.id = makeUlid();              // mint id for a newly-added option
-        o.label = m.value(QStringLiteral("label")).toString();
-        o.color = m.value(QStringLiteral("color")).toString();
-        v.push_back(std::move(o));
-    }
-    mutateTable(row, [&](TableGrid& g){ g.setColumnOptions(c, v); });
-}
-void BlockModel::tableRenameOption(int row, int c, const QString& id, const QString& label) {
-    mutateTable(row, [&](TableGrid& g){ g.renameOption(c, id, label); });
-}
-void BlockModel::tableRecolorOption(int row, int c, const QString& id, const QString& color) {
-    mutateTable(row, [&](TableGrid& g){ g.recolorOption(c, id, color); });
-}
-void BlockModel::tableRemoveOption(int row, int c, const QString& id) {
-    mutateTable(row, [&](TableGrid& g){ g.removeOption(c, id); });
-}
-void BlockModel::tableMoveOption(int row, int c, const QString& id, int toIndex) {
-    mutateTable(row, [&](TableGrid& g){ g.moveOption(c, id, toIndex); });
-}
-QString BlockModel::tableCellChoice(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return QString();
-    return gridFor(row).cellChoice(r, c);
-}
-void BlockModel::tableSetCellChoice(int row, int r, int c, const QString& id) {
-    mutateTable(row, [&](TableGrid& g){ g.setCellChoice(r, c, id); });
-}
-QString BlockModel::tableCellChoiceLabel(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return QString();
-    const TableGrid& g = gridFor(row);
-    return g.optionLabel(c, g.cellChoice(r, c));
-}
-QString BlockModel::tableCellChoiceColor(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return QString();
-    const TableGrid& g = gridFor(row);
-    return g.optionColor(c, g.cellChoice(r, c));
-}
-int BlockModel::tableCellCheck(int row, int r, int c) const {
-    if (rowAt(row).type != Table) return 0;
-    return gridFor(row).cellCheck(r, c);
-}
-void BlockModel::tableCycleCellCheck(int row, int r, int c) {
-    mutateTable(row, [&](TableGrid& g){ g.cycleCellCheck(r, c); });
-}
-void BlockModel::tableSetCellCheck(int row, int r, int c, int state) {
-    mutateTable(row, [&](TableGrid& g){ g.setCellCheck(r, c, state); });
-}
-QString BlockModel::tableRowBg(int row, int r) const {
-    if (rowAt(row).type != Table) return QString();
-    return gridFor(row).rowBg(r);
-}
-
-void BlockModel::tablePasteTSV(int row, int r, int c, const QString& tsv) {
-    const TableGrid src = TableGrid::fromTSV(tsv);
-    mutateTable(row, [&](TableGrid& g){
-        while (g.rows() < r + src.rows()) g.insertRow(g.rows());   // grow to fit the paste
-        while (g.cols() < c + src.cols()) g.insertCol(g.cols());
-        for (int i = 0; i < src.rows(); ++i)
-            for (int j = 0; j < src.cols(); ++j) {
-                g.clearCellContents(r + i, c + j);   // nothing stale rides (spans/chip/image)
-                g.setCellText(r + i, c + j, src.cellText(i, j));
-            }
-    });
-}
-
-QString BlockModel::tableRangeTSV(int row, int r0, int c0, int r1, int c1) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
-    const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
-    QString out;
-    for (int r = R0; r <= R1; ++r) {
-        for (int c = C0; c <= C1; ++c) {
-            if (c > C0) out += QLatin1Char('\t');
-            QString t = g.cellText(r, c);
-            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            out += t;
-        }
-        if (r < R1) out += QLatin1Char('\n');
-    }
-    return out;
-}
-
-QString BlockModel::tableRangeHtml(int row, int r0, int c0, int r1, int c1) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
-    const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
-    QString out = QStringLiteral("<table>");
-    for (int r = R0; r <= R1; ++r) {
-        out += QStringLiteral("<tr>");
-        for (int c = C0; c <= C1; ++c)
-            out += QStringLiteral("<td>") + g.cellText(r, c).toHtmlEscaped() + QStringLiteral("</td>");
-        out += QStringLiteral("</tr>");
-    }
-    return out + QStringLiteral("</table>");
-}
-
-void BlockModel::tableClearRange(int row, int r0, int c0, int r1, int c1) {
-    mutateTable(row, [&](TableGrid& g) {
-        const int R0 = std::min(r0, r1), R1 = std::max(r0, r1);
-        const int C0 = std::min(c0, c1), C1 = std::max(c0, c1);
-        for (int r = R0; r <= R1; ++r)
-            for (int c = C0; c <= C1; ++c) g.clearCellContents(r, c);
-    });
-}
-
-// ---- Bulk ops over selection sets (table multi-select, 2026-08-21) --------
-
-namespace {
-// QML index list → sorted unique ints (ascending). Any order, dupes fine.
-std::vector<int> sortedIndexSet(const QVariantList& in) {
-    std::vector<int> v;
-    v.reserve(size_t(in.size()));
-    for (const QVariant& x : in) v.push_back(x.toInt());
-    std::sort(v.begin(), v.end());
-    v.erase(std::unique(v.begin(), v.end()), v.end());
-    return v;
-}
-} // namespace
-
-void BlockModel::tableDeleteRows(int row, const QVariantList& rows) {
-    const std::vector<int> set = sortedIndexSet(rows);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (auto it = set.rbegin(); it != set.rend(); ++it)   // descending: indices stay valid
-            g.deleteRow(*it);                                   // floors at 1 row
-    });
-}
-void BlockModel::tableDeleteColumns(int row, const QVariantList& cols) {
-    const std::vector<int> set = sortedIndexSet(cols);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (auto it = set.rbegin(); it != set.rend(); ++it)
-            g.deleteCol(*it);                                   // floors at 1 col
-    });
-}
-void BlockModel::tableClearRows(int row, const QVariantList& rows) {
-    const std::vector<int> set = sortedIndexSet(rows);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (int r : set)
-            for (int c = 0; c < g.cols(); ++c) g.clearCellContents(r, c);
-    });
-}
-void BlockModel::tableClearColumns(int row, const QVariantList& cols) {
-    const std::vector<int> set = sortedIndexSet(cols);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (int c : set)
-            for (int r = 0; r < g.rows(); ++r) g.clearCellContents(r, c);
-    });
-}
-void BlockModel::tableSetRowsColor(int row, const QVariantList& rows,
-                                   bool fg, const QString& color) {
-    const std::vector<int> set = sortedIndexSet(rows);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (int r : set) fg ? g.setRowFg(r, color) : g.setRowBg(r, color);
-    });
-}
-void BlockModel::tableSetColsColor(int row, const QVariantList& cols,
-                                   bool fg, const QString& color) {
-    const std::vector<int> set = sortedIndexSet(cols);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (int c : set) fg ? g.setColFg(c, color) : g.setColBg(c, color);
-    });
-}
-void BlockModel::tableSetColsAlign(int row, const QVariantList& cols, int a) {
-    const std::vector<int> set = sortedIndexSet(cols);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (int c : set) g.setColAlign(c, a);
-    });
-}
-void BlockModel::tableSetColumnsKind(int row, const QVariantList& cols, int kind) {
-    const std::vector<int> set = sortedIndexSet(cols);
-    if (set.empty()) return;
-    mutateTable(row, [&](TableGrid& g) {
-        for (int c : set) g.setColKind(c, kind);   // per-column cell wipe, as single-kind does
-    });
-}
-
-QString BlockModel::tableRowsTSV(int row, const QVariantList& rows) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    const std::vector<int> set = sortedIndexSet(rows);
-    QString out;
-    bool firstRow = true;
-    for (int r : set) {
-        if (r < 0 || r >= g.rows()) continue;
-        if (!firstRow) out += QLatin1Char('\n');
-        firstRow = false;
-        for (int c = 0; c < g.cols(); ++c) {
-            if (c > 0) out += QLatin1Char('\t');
-            QString t = g.cellDisplay(r, c);
-            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            out += t;
-        }
-    }
-    return out;
-}
-QString BlockModel::tableRowsHtml(int row, const QVariantList& rows) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    const std::vector<int> set = sortedIndexSet(rows);
-    QString out = QStringLiteral("<table>");
-    for (int r : set) {
-        if (r < 0 || r >= g.rows()) continue;
-        out += QStringLiteral("<tr>");
-        for (int c = 0; c < g.cols(); ++c)
-            out += QStringLiteral("<td>") + g.cellDisplay(r, c).toHtmlEscaped() + QStringLiteral("</td>");
-        out += QStringLiteral("</tr>");
-    }
-    return out + QStringLiteral("</table>");
-}
-QString BlockModel::tableColsTSV(int row, const QVariantList& cols) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    const std::vector<int> set = sortedIndexSet(cols);
-    QString out;
-    for (int r = 0; r < g.rows(); ++r) {
-        if (r > 0) out += QLatin1Char('\n');
-        bool firstCol = true;
-        for (int c : set) {
-            if (c < 0 || c >= g.cols()) continue;
-            if (!firstCol) out += QLatin1Char('\t');
-            firstCol = false;
-            QString t = g.cellDisplay(r, c);
-            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            out += t;
-        }
-    }
-    return out;
-}
-QString BlockModel::tableColsHtml(int row, const QVariantList& cols) const {
-    if (rowAt(row).type != Table) return {};
-    const TableGrid& g = gridFor(row);
-    const std::vector<int> set = sortedIndexSet(cols);
-    QString out = QStringLiteral("<table>");
-    for (int r = 0; r < g.rows(); ++r) {
-        out += QStringLiteral("<tr>");
-        for (int c : set) {
-            if (c < 0 || c >= g.cols()) continue;
-            out += QStringLiteral("<td>") + g.cellDisplay(r, c).toHtmlEscaped() + QStringLiteral("</td>");
-        }
-        out += QStringLiteral("</tr>");
-    }
-    return out + QStringLiteral("</table>");
-}
-
-QStringList BlockModel::tableBlockIds() const {
-    QStringList out;
-    for (size_t i = 0; i < rows_.size(); ++i)
-        if (rows_[i].type == Table) out.append(ids_[i]);
-    return out;
-}
-
 QStringList BlockModel::gridBlockIds() const {
     QStringList out;
     const std::vector<int>& heads = tableHeads();
@@ -5673,69 +5110,6 @@ QString BlockModel::idForRow(int row) const {
     return (row >= 0 && row < static_cast<int>(ids_.size())) ? ids_[row] : QString();
 }
 
-int BlockModel::insertTable(int afterRow, int nRows, int nCols) {
-  nRows = std::max(1, nRows); nCols = std::max(1, nCols);
-  const QString json = TableGrid::makeEmpty(nRows, nCols).toJson();
-  return insertReplacingEmpty(afterRow, [&](int after) {
-    const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
-    beginTxn(at, at - 1);                        // empty `before`; after = [at,at]
-    const QString newId = makeUlid();
-    const QString newRank = rankBetween(
-        (at > 0) ? ranks_[at - 1] : QString(),
-        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
-
-    beginInsertRows({}, at, at);
-    Row r{}; r.cell = laneAt(at); r.type = Table; r.param = static_cast<uint16_t>(nRows);
-    rows_.insert(rows_.begin() + at, r);
-    content_.insert(content_.begin() + at, json);
-    ids_.insert(ids_.begin() + at, newId);
-    ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
-    endInsertRows();
-
-    if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
-
-    bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
-    endTxn();
-    return at;
-  });
-}
-
-int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
-  const TableGrid g = TableGrid::fromTSV(tsv);
-  if (g.rows() < 1 || g.cols() < 1) return -1;
-  const QString json = g.toJson();
-  return insertReplacingEmpty(afterRow, [&](int after) {
-    const int at = std::clamp(after + 1, 0, static_cast<int>(rows_.size()));
-    beginTxn(at, at - 1);                         // empty `before`; after = [at,at]
-    const QString newId = makeUlid();
-    const QString newRank = rankBetween(
-        (at > 0) ? ranks_[at - 1] : QString(),
-        (at < static_cast<int>(ranks_.size())) ? ranks_[at] : QString());
-
-    beginInsertRows({}, at, at);
-    Row r{}; r.cell = laneAt(at); r.type = Table; r.param = static_cast<uint16_t>(g.rows());
-    rows_.insert(rows_.begin() + at, r);
-    content_.insert(content_.begin() + at, json);
-    ids_.insert(ids_.begin() + at, newId);
-    ranks_.insert(ranks_.begin() + at, newRank);
-    indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
-    endInsertRows();
-
-    if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
-
-    bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
-    endTxn();
-    return at;
-  });
-}
-
 // === Media ===============================================================
 // The descriptor ({src,w,h}) lives as JSON in `content` (like tables), so undo +
 // persistence reuse the chokepoint. Bytes are never stored here (see MediaStore).
@@ -5910,8 +5284,6 @@ int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
     // and a no-op must not burn an undo entry.
     struct MediaEdit { int row; QString json; };
     std::vector<MediaEdit> mediaEdits;
-    struct CellEdit { int row; std::vector<std::tuple<int, int, QString>> cells; };
-    std::vector<CellEdit> cellEdits;
     int count = 0, lo = -1, hi = -1;
     const int n = static_cast<int>(rows_.size());
     for (int r = 0; r < n; ++r) {
@@ -5939,22 +5311,6 @@ int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
             if (changed)
                 mediaEdits.push_back({r, QString::fromUtf8(
                     QJsonDocument(root).toJson(QJsonDocument::Compact))});
-        } else if (rows_[r].type == Table) {
-            const TableGrid g = TableGrid::fromJson(content_[r]);
-            CellEdit ce{r, {}};
-            for (int tr = 0; tr < g.rows(); ++tr)
-                for (int tc = 0; tc < g.cols(); ++tc) {
-                    const QString desc = g.cellMedia(tr, tc);
-                    if (desc.isEmpty()) continue;
-                    QJsonObject o = QJsonDocument::fromJson(desc.toUtf8()).object();
-                    const QString rel = relFor(o.value(QStringLiteral("src")));
-                    if (rel.isEmpty()) continue;
-                    o.insert(QStringLiteral("src"), rel);
-                    ce.cells.emplace_back(tr, tc, QString::fromUtf8(
-                        QJsonDocument(o).toJson(QJsonDocument::Compact)));
-                    ++count;
-                }
-            if (!ce.cells.empty()) { cellEdits.push_back(std::move(ce)); changed = true; }
         }
         if (changed) { if (lo < 0) lo = r; hi = r; }
     }
@@ -5966,10 +5322,6 @@ int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
         persistContent(me.row);
         emit dataChanged(index(me.row), index(me.row), {ContentRole});
     }
-    for (const CellEdit& ce : cellEdits)
-        mutateTable(ce.row, [&](TableGrid& g) {
-            for (const auto& [tr, tc, json] : ce.cells) g.setCellMedia(tr, tc, json);
-        });
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
@@ -6486,7 +5838,7 @@ BlockModel::Span* BlockModel::choiceSpanAt(int row, int spanStart) {
 int BlockModel::insertChoiceAt(int row, int col) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return -1;
     const uint8_t t = rows_[row].type;
-    if (t == Media || t == Table || t == Divider || t == Code) return -1;
+    if (t == Media || t == Divider || t == Code) return -1;
     QString text = content_[row];
     std::vector<Span> spans = rows_[row].spans;
     const int at = mn::inl::insertChoice(text, spans, col, defaultChoicePayload());
@@ -6514,15 +5866,6 @@ bool BlockModel::editRowChoice(int row, int spanStart, const mn::inl::ChoiceEdit
     if (!mn::inl::editChoice(text, spans, spanStart, edit)) return false;
     commitRowTextAndSpans(row, std::move(text), std::move(spans));
     return true;
-}
-
-bool BlockModel::editCellChoice(int row, int r, int c, int spanStart, const mn::inl::ChoiceEdit& edit) {
-    bool applied = false;
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        applied = mn::inl::editChoice(t, v, spanStart, edit);
-        return applied;
-    });
-    return applied;
 }
 
 QString BlockModel::choiceAt(int row, int col) const {
@@ -6584,83 +5927,6 @@ void BlockModel::removeChoiceAt(int row, int spanStart) {
 QVariantList BlockModel::choiceRangesForRow(int row) const {
     if (rows_.empty()) return {};
     return mn::inl::choiceRanges(rows_[clampRow(row)].spans);
-}
-
-// --- Cell chips (2026-08-21): the same DT-2 chip inside a table TEXT cell.
-// The chip span rides the cell's span list (cellSpans JSON) and every rule
-// carries over: text == label, payload = {"o":[...],"v":id}, spanStart is
-// the address. Typed (choice/check) BODY cells refuse — they render a
-// widget, not text; headers of typed columns are still text and accept.
-// Each op is one mutateTable (one undo entry). Exports need nothing: cell
-// span emitters already pass unknown kinds through as plain label text.
-
-int BlockModel::tableInsertChoiceAt(int row, int r, int c, int col) {
-    if (row < 0 || row >= static_cast<int>(rows_.size())
-        || rows_[row].type != Table || r < 0 || c < 0) return -1;
-    if (tableColumnKind(row, c) != 0 && r >= tableHeaderRows(row)) return -1;
-    if (r >= tableRows(row) || c >= tableColumns(row)) return -1;
-    int out = -1;
-    const QJsonObject payload = defaultChoicePayload();
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        out = mn::inl::insertChoice(t, v, col, payload);
-        return true;
-    });
-    return out;
-}
-
-QString BlockModel::tableChoiceAt(int row, int r, int c, int col) const {
-    if (rows_.empty() || rowAt(row).type != Table) return {};
-    const std::vector<Span> v = cellSpansFromJson(gridFor(row).cellSpans(r, c));
-    const Span* sp = mn::inl::choiceAt(v, col);
-    return sp ? sp->href : QString();
-}
-
-QVariantList BlockModel::tableChoiceRangeAt(int row, int r, int c, int col) const {
-    if (rows_.empty() || rowAt(row).type != Table) return {};
-    const std::vector<Span> v = cellSpansFromJson(gridFor(row).cellSpans(r, c));
-    const Span* sp = mn::inl::choiceAt(v, col);
-    return sp ? QVariantList{ sp->s, sp->e } : QVariantList();
-}
-
-void BlockModel::tableSetChoiceSelected(int row, int r, int c, int spanStart,
-                                        const QString& optionId) {
-    editCellChoice(row, r, c, spanStart, [&](QJsonObject& payload, QString& label) {
-        return mn::inl::selectOption(payload, optionId, label);
-    });
-}
-
-QString BlockModel::tableChoiceAddOption(int row, int r, int c, int spanStart,
-                                         const QString& label, const QString& colorHex) {
-    const QString id = makeUlid();
-    const bool applied = editCellChoice(row, r, c, spanStart, [&](QJsonObject& payload, QString& shown) {
-        mn::inl::addOption(payload, id, label, colorHex, shown);
-        return true;
-    });
-    return applied ? id : QString();
-}
-
-void BlockModel::tableSetChoiceOptions(int row, int r, int c, int spanStart,
-                                       const QVariantList& options) {
-    if (options.isEmpty()) { tableRemoveChoiceAt(row, r, c, spanStart); return; }
-    editCellChoice(row, r, c, spanStart, [&](QJsonObject& payload, QString& label) {
-        return mn::inl::setOptions(payload, options, [] { return makeUlid(); }, label);
-    });
-}
-
-void BlockModel::tableRemoveChoiceAt(int row, int r, int c, int spanStart) {
-    // Its own txn (no coalesce key): a removal never merges into a typing run's undo
-    // entry. Full-cover delete — the span dies with its label.
-    mutateCellInline(row, r, c, [&](QString& t, std::vector<Span>& v) {
-        const Span* sp = mn::inl::choiceAt(v, spanStart);
-        if (!sp) return false;
-        const int s = sp->s, e = sp->e;
-        return mn::inl::deleteRange(t, v, s, e);
-    });
-}
-
-QVariantList BlockModel::tableChoiceRangesForCell(int row, int r, int c) const {
-    if (rows_.empty() || rowAt(row).type != Table) return {};
-    return mn::inl::choiceRanges(cellSpansFromJson(gridFor(row).cellSpans(r, c)));
 }
 
 QString BlockModel::linkAt(int row, int col) const {
@@ -7408,10 +6674,9 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     };
 
     const int n = static_cast<int>(segs.size());
-    // Opaque targets (media/table/divider) hold non-prose content — never write
+    // Opaque targets (media/divider) hold non-prose content — never write
     // text into them; leave them intact and splice everything AFTER instead.
-    const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
-                         || rows_[row].type == Divider);
+    const bool opaque = (rows_[row].type == Media || rows_[row].type == Divider);
 
     QString left, right;
     std::vector<Span> leftS, rightS;
@@ -7552,8 +6817,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     expandTableSpecs(specs);                 // an old Table spec (none from the walker now) lands derived
     if (specs.empty()) return {};
 
-    const bool opaque = (rows_[row].type == Media || rows_[row].type == Table
-                         || rows_[row].type == Divider);
+    const bool opaque = (rows_[row].type == Media || rows_[row].type == Divider);
 
     // A single plain paragraph → splice it INLINE at the caret (so pasting a few
     // styled words from a browser stays in the sentence and keeps its formatting),
@@ -7599,11 +6863,6 @@ BlockModel::BlockSpec BlockModel::specForRow(int row) const {
     if (r.type == Media) {
         sp.type = Media;
         sp.mediaJson = content_[row];
-        return sp;
-    }
-    if (r.type == Table) {
-        sp.type = Table;
-        sp.tableJson = content_[row];
         return sp;
     }
     sp.type = r.type;
@@ -7749,8 +7008,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
     const int anchor = gap - 1;   // the row above the gap, if any
     bool reuse = false;
     if (allowReuseAnchorAbove && anchor >= 0 && (!topLevel || rows_[size_t(anchor)].cell < 0)) {
-        const bool opaque = (rows_[anchor].type == Media || rows_[anchor].type == Table
-                             || rows_[anchor].type == Divider);
+        const bool opaque = (rows_[anchor].type == Media || rows_[anchor].type == Divider);
         reuse = !opaque && content_[anchor].isEmpty()
             && (rows_[anchor].type == Paragraph || rows_[anchor].type == Heading
                 || rows_[anchor].type == Quote || rows_[anchor].type == ListItem);
@@ -7772,7 +7030,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
         persistContent(anchor);
         persistMeta(anchor);
         emit dataChanged(index(anchor), index(anchor), {ContentRole});
-        caretRow = anchor; caretCol = (specs[0].type == Table) ? 0 : content.size();
+        caretRow = anchor; caretCol = content.size();
         startSpec = 1;
     }
 
@@ -7805,7 +7063,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
                                : laneWidthFrom(*incomingRatios, r.cell);
             indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneW));
             made.push_back({id, rk, content, r});
-            caretRow = at; caretCol = (sp.type == Table) ? 0 : content.size();
+            caretRow = at; caretCol = content.size();
         }
         endInsertRows();
         if (doc_.isOpen())
@@ -7934,7 +7192,7 @@ void BlockModel::splitBlock(int row, int col) {
 bool BlockModel::isOpaqueRow(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
     const uint8_t t = rows_[row].type;
-    return t == Media || t == Table || t == Divider;
+    return t == Media || t == Divider;
 }
 
 void BlockModel::insertParagraphRaw(int row) {
@@ -8239,11 +7497,6 @@ QString BlockModel::plainTextForRange(int loRow, int loCol, int hiRow, int hiCol
         const uint8_t t = rows_[r].type;
         if (t == Media || t == Split) continue;              // no honest text form / lanes read in order
         if (t == Divider) { parts << QStringLiteral("---"); continue; }
-        if (t == Table) {
-            const TableGrid& g = gridFor(r);
-            parts << tableRangeTSV(r, 0, 0, g.rows() - 1, g.cols() - 1);
-            continue;
-        }
         const QString& s = content_[r];
         const int len = s.size();
         int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
@@ -8466,7 +7719,7 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
     const bool needTop = specsNeedTopLevel(specs);
 
     auto textish = [](const BlockSpec& sp) {
-        return sp.mediaJson.isEmpty() && sp.type != Table && sp.type != Divider && sp.type != Split;
+        return sp.mediaJson.isEmpty() && sp.type != Divider && sp.type != Split;
     };
     const bool migrate = srcPageWidth > 0 && !qFuzzyCompare(srcPageWidth, pageWidth_);
     // Lay ink for specs[k0..] onto rows firstRow.. (parallel). The FIRST one

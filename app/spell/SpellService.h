@@ -52,14 +52,12 @@ public:
     void setIgnoredRulesJson(const QString& json);
     bool ready() const { return ready_; }
 
-    // Issues for a text block / a table text cell, filtered by the toggles,
-    // the user + ignored words, the ignored rules, and the caret (an issue
-    // under a collapsed caret is withheld — the word is still being typed).
-    // An unchecked key queues a front (visible-first) job and returns [].
+    // Issues for a text block, filtered by the toggles, the user + ignored
+    // words, the ignored rules, and the caret (an issue under a collapsed
+    // caret is withheld — the word is still being typed). An unchecked key
+    // queues a front (visible-first) job and returns [].
     Q_INVOKABLE QVariantList issuesForRow(int row, int caretCol = -1);
-    Q_INVOKABLE QVariantList issuesForCell(int row, int r, int c, int caretCol = -1);
     Q_INVOKABLE QVariantMap issueAt(int row, int col);               // {} = none; upgrades lazy suggestions
-    Q_INVOKABLE QVariantMap cellIssueAt(int row, int r, int c, int col);
     Q_INVOKABLE void flushRow(int row);                              // bypass the debounce (focus-out, after a replace)
     Q_INVOKABLE void requestSuggestions(int row);                    // menu open: suggestions for EVERY issue in the block
     Q_INVOKABLE void addToDictionary(const QString& word);
@@ -105,7 +103,6 @@ private:
         bool pending = false;
         bool suggestionsComputed = true;
     };
-    static QString cellKey(const QString& id, int r, int c);
     void onDataChanged(const QModelIndex& tl, const QModelIndex& br, const QList<int>& roles);
     void markDirty(const QString& id, int row);
     void flushDue();

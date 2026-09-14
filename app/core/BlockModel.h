@@ -493,8 +493,6 @@ public:
     // Replace [s, e) with `text` as ONE transaction, spans shifted delete-then-
     // insert (the spell menu's "replace with suggestion"). Refuses opaque rows.
     Q_INVOKABLE void replaceText(int row, int s, int e, const QString& text);
-    // The table-cell sibling: one mutateTable step, cell spans kept aligned.
-    Q_INVOKABLE void tableCellReplace(int row, int r, int c, int s, int e, const QString& text);
 
     // Smart multi-block paste: split `text` into blocks (blank lines separate;
     // each line gets block-prefix + inline-markdown parsing), splice them at the
@@ -666,21 +664,6 @@ public:
     Q_INVOKABLE void setChoiceOptions(int row, int spanStart, const QVariantList& options);
     Q_INVOKABLE void removeChoiceAt(int row, int spanStart);   // chip + label text (Clear)
     Q_INVOKABLE QVariantList choiceRangesForRow(int row) const;   // [{s,e,color}] overlay feed
-    // Cell variants (2026-08-21): the same chips inside table TEXT cells —
-    // the chip span lives in the cell's span list, addressed (row, r, c,
-    // spanStart). Typed (choice/check) body cells refuse (they render a
-    // widget, not text). One undo step per call, via mutateTable.
-    Q_INVOKABLE int tableInsertChoiceAt(int row, int r, int c, int col);
-    Q_INVOKABLE QString tableChoiceAt(int row, int r, int c, int col) const;
-    Q_INVOKABLE QVariantList tableChoiceRangeAt(int row, int r, int c, int col) const;
-    Q_INVOKABLE void tableSetChoiceSelected(int row, int r, int c, int spanStart,
-                                            const QString& optionId);
-    Q_INVOKABLE QString tableChoiceAddOption(int row, int r, int c, int spanStart,
-                                             const QString& label, const QString& colorHex);
-    Q_INVOKABLE void tableSetChoiceOptions(int row, int r, int c, int spanStart,
-                                           const QVariantList& options);
-    Q_INVOKABLE void tableRemoveChoiceAt(int row, int r, int c, int spanStart);
-    Q_INVOKABLE QVariantList tableChoiceRangesForCell(int row, int r, int c) const;
     Q_INVOKABLE QString linkAt(int row, int col) const;
 
     // --- Comments (tier 3 annotations). A SpanComment span (payload = thread
@@ -757,126 +740,6 @@ public:
     // turn it into an (empty) code block of that language. Returns true if it did.
     Q_INVOKABLE bool makeCodeBlockIfFence(int row);
 
-    // --- Tables ---
-    // The grid lives as compact JSON in the block's `content`; these read a cached
-    // parse and the mutators reserialize + persist through the txn chokepoint, so
-    // undo/redo work unchanged. Cell typing coalesces per cell ("tcell:r:c").
-    // Insert a fresh `nRows`x`nCols` table block after `afterRow` (undoable).
-    Q_INVOKABLE int  insertTable(int afterRow, int nRows, int nCols);
-    // Build a table block from pasted TSV (tabs = columns, newlines = rows) and
-    // insert it after `afterRow`. Returns the new table's row index, or -1.
-    Q_INVOKABLE int  insertTableFromTSV(int afterRow, const QString& tsv);
-    Q_INVOKABLE int  tableRows(int row) const;
-    Q_INVOKABLE int  tableColumns(int row) const;
-    Q_INVOKABLE int  tableHeaderRows(int row) const;
-    Q_INVOKABLE QString tableCell(int row, int r, int c) const;
-    Q_INVOKABLE int  tableColWidth(int row, int c) const;     // 0 = auto-size
-    Q_INVOKABLE int  tableColAlign(int row, int c) const;     // 0 left,1 center,2 right
-    Q_INVOKABLE void tableSetCell(int row, int r, int c, const QString& text);
-    // Cell / row / column colour. fg=true sets text colour, else background.
-    // empty color removes it. tableCellBg/Fg return the EFFECTIVE colour for
-    // rendering (cell → row → column → "" cascade).
-    Q_INVOKABLE void tableSetCellColor(int row, int r0, int c0, int r1, int c1, bool fg, const QString& color);
-    Q_INVOKABLE void tableSetRowColor(int row, int r, bool fg, const QString& color);
-    Q_INVOKABLE void tableSetColColor(int row, int c, bool fg, const QString& color);
-    Q_INVOKABLE QString tableCellBg(int row, int r, int c) const;
-    Q_INVOKABLE QString tableCellFg(int row, int r, int c) const;
-    // Rich text inside a cell — inline spans, mirroring the block-level span API.
-    // tableCellSpans returns [{s,e,k,u?}] for the highlighter; the format ops add/
-    // remove a span over a char range; insert/delete keep spans aligned with text.
-    Q_INVOKABLE QVariantList tableCellSpans(int row, int r, int c) const;
-    Q_INVOKABLE bool tableCellHasFormat(int row, int r, int c, int start, int end, const QString& kind) const;
-    Q_INVOKABLE void tableSetCellFormat(int row, int r, int c, int start, int end, const QString& kind, bool on);
-    Q_INVOKABLE void tableClearCellFormat(int row, int r, int c, int start, int end);
-    Q_INVOKABLE void tableCellInsert(int row, int r, int c, int at, const QString& text);
-    Q_INVOKABLE void tableCellDelete(int row, int r, int c, int from, int to);
-    // Image inside a cell — the descriptor JSON ({src,w,h}) lives in cell.media,
-    // imported through MediaStore exactly like a media block. Setting one widens a
-    // narrow column to a sensible default so the image is visible.
-    Q_INVOKABLE bool tableSetCellImageFromClipboard(int row, int r, int c);
-    Q_INVOKABLE bool tableSetCellImageFromUrl(int row, int r, int c, const QString& fileUrl,
-                                              bool forceCopy = false);
-    Q_INVOKABLE void tableClearCellMedia(int row, int r, int c);
-    // Set the raw cell descriptor directly (no import): the seam for
-    // referenced-in-place fixtures (packer tests) — UI paths go through the
-    // FromUrl/FromClipboard importers above.
-    Q_INVOKABLE void tableSetCellMedia(int row, int r, int c, const QString& json);
-    Q_INVOKABLE QString tableCellMedia(int row, int r, int c) const;     // raw descriptor ("" = none)
-    Q_INVOKABLE QString tableCellMediaUrl(int row, int r, int c) const;  // resolved loadable URL
-    Q_INVOKABLE int tableCellMediaW(int row, int r, int c) const;        // intrinsic width
-    Q_INVOKABLE int tableCellMediaH(int row, int r, int c) const;        // intrinsic height
-    Q_INVOKABLE int tableCellMediaDw(int row, int r, int c) const;       // display-width override (0 = none)
-    Q_INVOKABLE void tableSetCellImageWidth(int row, int r, int c, int w);  // w<=0 clears the override
-    Q_INVOKABLE void tableInsertRow(int row, int at);
-    Q_INVOKABLE void tableInsertColumn(int row, int at);
-    Q_INVOKABLE void tableDeleteRow(int row, int at);
-    Q_INVOKABLE void tableDeleteColumn(int row, int at);
-    Q_INVOKABLE void tableSetColWidth(int row, int c, int w);
-    Q_INVOKABLE void tableSetColAlign(int row, int c, int a);
-    Q_INVOKABLE void tableSetHeaderRows(int row, int n);
-    // Reorder a row / column (`to` is the post-removal index); one undo step.
-    Q_INVOKABLE void tableMoveRow(int row, int from, int to);
-    Q_INVOKABLE void tableMoveColumn(int row, int from, int to);
-    Q_INVOKABLE void tableDuplicateRow(int row, int at);     // copy → insert below
-    Q_INVOKABLE void tableDuplicateColumn(int row, int at);  // copy → insert right
-    // One-shot sort of the body rows by a column (header rows stay pinned).
-    Q_INVOKABLE void tableSortByColumn(int row, int c, bool asc);
-    // Fill the range from its top row / left column (whole cells; one undo step).
-    Q_INVOKABLE void tableFillDown(int row, int r0, int c0, int r1, int c1);
-    Q_INVOKABLE void tableFillRight(int row, int r0, int c0, int r1, int c1);
-    // Choice columns (typed columns): a shared, ordered option set per column;
-    // body cells reference an option by its stable id. All edits go through
-    // mutateTable, so undo / persistence / refresh come for free.
-    Q_INVOKABLE int  tableColumnKind(int row, int c) const;              // 0 text, 1 choice
-    Q_INVOKABLE void tableSetColumnKind(int row, int c, int kind);
-    Q_INVOKABLE QVariantList tableColumnOptions(int row, int c) const;   // [{id,label,color}]
-    Q_INVOKABLE QString tableAddOption(int row, int c, const QString& label, const QString& color);  // → new id
-    // Replace a choice column's whole option set in one step (the modal editor's
-    // Done): each entry is {id,label,color}; a missing/empty id is minted. Preserves
-    // ids so cell selections survive; drops cells whose option was deleted.
-    Q_INVOKABLE void tableSetColumnOptions(int row, int c, const QVariantList& opts);
-    Q_INVOKABLE void tableRenameOption(int row, int c, const QString& id, const QString& label);
-    Q_INVOKABLE void tableRecolorOption(int row, int c, const QString& id, const QString& color);
-    Q_INVOKABLE void tableRemoveOption(int row, int c, const QString& id);
-    Q_INVOKABLE void tableMoveOption(int row, int c, const QString& id, int toIndex);
-    Q_INVOKABLE QString tableCellChoice(int row, int r, int c) const;    // selected option id ("" = none)
-    Q_INVOKABLE void tableSetCellChoice(int row, int r, int c, const QString& id);
-    Q_INVOKABLE QString tableCellChoiceLabel(int row, int r, int c) const;   // selected option's label
-    Q_INVOKABLE QString tableCellChoiceColor(int row, int r, int c) const;   // selected option's colour hex
-    Q_INVOKABLE int  tableCellCheck(int row, int r, int c) const;            // check column: 0/1/2
-    Q_INVOKABLE void tableCycleCellCheck(int row, int r, int c);             // cycle todo→doing→done
-    Q_INVOKABLE void tableSetCellCheck(int row, int r, int c, int state);    // set 0/1/2 (kanban drop)
-    Q_INVOKABLE QString tableRowBg(int row, int r) const;                    // row-level colour ("" = none; kanban card bar)
-    // Paste TSV (tab/newline) into the table at anchor (r,c), growing as needed.
-    Q_INVOKABLE void tablePasteTSV(int row, int r, int c, const QString& tsv);
-    // Serialize an inclusive cell range for the clipboard (TSV + HTML <table>).
-    Q_INVOKABLE QString tableRangeTSV(int row, int r0, int c0, int r1, int c1) const;
-    Q_INVOKABLE QString tableRangeHtml(int row, int r0, int c0, int r1, int c1) const;
-    // Clear every cell in an inclusive range (one undo step).
-    Q_INVOKABLE void tableClearRange(int row, int r0, int c0, int r1, int c1);
-    // --- Bulk ops over SELECTION SETS (table multi-select, 2026-08-21).
-    // Each runs as ONE mutateTable lambda = one undo entry, one reserialize;
-    // index lists may arrive in any order with duplicates (normalized inside;
-    // deletes run descending so indices stay valid). "Clear" = contents
-    // (text/spans/media/choice) — colours are formatting and stay.
-    Q_INVOKABLE void tableDeleteRows(int row, const QVariantList& rows);
-    Q_INVOKABLE void tableDeleteColumns(int row, const QVariantList& cols);
-    Q_INVOKABLE void tableClearRows(int row, const QVariantList& rows);
-    Q_INVOKABLE void tableClearColumns(int row, const QVariantList& cols);
-    Q_INVOKABLE void tableSetRowsColor(int row, const QVariantList& rows,
-                                       bool fg, const QString& color);
-    Q_INVOKABLE void tableSetColsColor(int row, const QVariantList& cols,
-                                       bool fg, const QString& color);
-    Q_INVOKABLE void tableSetColsAlign(int row, const QVariantList& cols, int a);
-    Q_INVOKABLE void tableSetColumnsKind(int row, const QVariantList& cols, int kind);
-    // Clipboard readers for row/column sets: members emitted in ASCENDING
-    // index order regardless of selection order.
-    Q_INVOKABLE QString tableRowsTSV(int row, const QVariantList& rows) const;
-    Q_INVOKABLE QString tableRowsHtml(int row, const QVariantList& rows) const;
-    Q_INVOKABLE QString tableColsTSV(int row, const QVariantList& cols) const;
-    Q_INVOKABLE QString tableColsHtml(int row, const QVariantList& cols) const;
-    // Ordered block ids of every table in the document (for the table-tab strip).
-    Q_INVOKABLE QStringList tableBlockIds() const;
     Q_INVOKABLE QStringList gridBlockIds() const;     // derived tables' head records, in document order (S9: their tabs)
     // Ordered block ids of every inline PDF (for the PDF full-page tab strip).
     Q_INVOKABLE QStringList pdfBlockIds() const;
@@ -1172,7 +1035,6 @@ private:
     // Chip payload edits as one txn through the inline engine (mn::inl::editChoice);
     // a no-op opens no txn. Return whether the chip existed and the edit applied.
     bool editRowChoice(int row, int spanStart, const mn::inl::ChoiceEdit& edit);
-    bool editCellChoice(int row, int r, int c, int spanStart, const mn::inl::ChoiceEdit& edit);
     // Commit new text + spans for `row` as one txn (persist, change signals, relayout).
     void commitRowTextAndSpans(int row, QString&& text, std::vector<Span>&& spans);
     // Forwarders to the inline text engine (InlineText.h) — kept so SR-1 step 1 needs no
@@ -1195,16 +1057,9 @@ private:
     static void shiftSpansDelete(std::vector<Span>& v, int from, int to) {
         mn::inl::shiftSpansDelete(v, from, to);
     }
-    // Table cells store spans as a JSON array ({s,e,k,u?}); convert to/from the
-    // Span vector so the static span helpers above can be reused for cell editing.
+    // The import IR (TableGrid) stores a cell's spans as a JSON array ({s,e,k,u?}):
+    // convert to the Span vector (gridSpecsFromTable).
     static std::vector<Span> cellSpansFromJson(const QJsonArray& a);
-    static QJsonArray cellSpansToJson(const std::vector<Span>& v);
-    // One cell's (text, spans) through the inline text engine inside a single
-    // mutateTable txn. `fn` returns false when it changed nothing. (SR-1 adapter —
-    // retired with the Table block when cells become real blocks.)
-    void mutateCellInline(int row, int r, int c,
-                          const std::function<bool(QString&, std::vector<Span>&)>& fn,
-                          const QString& coalesce = QString());
     // Commit a new span set for `row` as one txn (persist + change signals).
     void commitRowSpans(int row, std::vector<Span>&& spans, const QString& coalesce = QString());
     // Parse inline markdown in `src` into clean text + spans (markers removed),
@@ -1448,12 +1303,6 @@ private:
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
 
-    // Table grid cache: parse the focused table's content JSON once per
-    // (row, contentRevision) so the many per-cell QML queries don't re-parse.
-    const TableGrid& gridFor(int row) const;
-    mutable TableGrid tableCache_;
-    mutable int tableCacheRow_ = -1;
-    mutable int tableCacheRev_ = -1;
     std::unique_ptr<MediaStore> mediaStore_;
     // Remote <img> from pasted HTML: download in the background (block displays
     // the remote URL meanwhile) and swap the descriptor to the sidecar copy.
@@ -1462,10 +1311,6 @@ private:
     void updateMediaDescriptor(const QString& blockId, const QString& json);  // localized → swap in
     // Insert a media block (content = descriptor JSON) after `afterRow`; undoable.
     int insertMedia(int afterRow, const QString& json, uint16_t aspectParam);   // → new row
-    // Apply a mutation to the table at `row` via a lambda, then reserialize to
-    // content, persist, and snapshot (one txn; `coalesce` groups cell typing).
-    void mutateTable(int row, const std::function<void(TableGrid&)>& fn,
-                     const QString& coalesce = QString());
 
     // Undo/redo state.
     std::vector<UndoEntry> undo_;
