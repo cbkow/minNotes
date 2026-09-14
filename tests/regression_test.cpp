@@ -7493,6 +7493,48 @@ static void testLeftPullRanks() {
     QFile::remove(path);
 }
 
+static void testPastedHtmlTables() {
+    qInfo("[96] pasted HTML tables become derived tables; a Table grid converts faithfully (the 2026-09-14 walk)");
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+        m.pasteHtml(0, 5, QStringLiteral("<table><tr><th>Name</th><th>Status</th></tr><tr><td>a</td><td><b>b</b></td></tr></table>"));
+        int head = -1;
+        bool legacy = false;
+        for (int r = 0; r < m.rowCountQml(); ++r) {
+            if (m.typeForRow(r) == BlockModel::Table) legacy = true;
+            if (head < 0 && m.headerCount(r) > 0) head = r;
+        }
+        CHECK(!legacy && head >= 0 && m.gridRowCount(head) == 2 && m.gridCellText(head, 0, 0) == QStringLiteral("Name")
+                  && m.gridCellText(head, 1, 1) == QStringLiteral("b") && m.structureValid(),
+              "an HTML table pastes as a derived table, not a Table block");
+        m.undo();
+        bool gone = true;
+        for (int r = 0; r < m.rowCountQml(); ++r) gone = gone && m.typeForRow(r) != BlockModel::Split;
+        CHECK(gone && m.contentForRow(0) == QStringLiteral("above") && m.structureValid(), "…one undo step");
+    }
+    {
+        TableGrid g = TableGrid::makeEmpty(2, 2);
+        g.setCellText(0, 0, QStringLiteral("Name"));
+        g.setColWidth(0, 200);
+        g.setColKind(1, TableGrid::ColChoice);
+        g.addOption(1, QStringLiteral("o1"), QStringLiteral("Done"), QStringLiteral("#58A65C"));
+        g.setCellChoice(1, 1, QStringLiteral("o1"));
+        g.setCellBg(1, 0, QStringLiteral("#ff0000"));
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        m.spliceSpecsAt(1, BlockModel::gridSpecsFromTable(g.toJson()), false, -1);
+        CHECK(m.headerCount(1) == 1 && m.tableColumnWidth(1, 0) == 200 && m.gridColumnKind(1, 1) == 1
+                  && m.gridCellChoiceLabel(1, 1, 1) == QStringLiteral("Done") && m.gridCellBg(1, 1, 0) == QStringLiteral("#ff0000")
+                  && m.gridCellText(1, 0, 0) == QStringLiteral("Name") && m.structureValid(),
+              "a Table grid converts with its widths, choice column, values and cell colours");
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7699,6 +7741,7 @@ int main(int argc, char** argv) {
     testInsertGridFromTSV();
     testSplitRowExits();
     testLeftPullRanks();
+    testPastedHtmlTables();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

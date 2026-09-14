@@ -1509,6 +1509,99 @@ bool BlockModel::gridCycleCellCheck(int head, int r, int c) {
     return gridSetCellCheck(head, r, c, (gridCellCheck(head, r, c) + 1) % 3);
 }
 
+std::vector<BlockModel::BlockSpec> BlockModel::gridSpecsFromTable(const QString& tableJson) {
+    const TableGrid g = TableGrid::fromJson(tableJson);
+    std::vector<BlockSpec> out;
+    const int rows = g.rows(), cols = std::min(g.cols(), 63);
+    if (rows < 1 || cols < 1) return out;
+    auto compact = [](const QJsonObject& o) {
+        return o.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    };
+    QJsonArray spec;
+    std::vector<QJsonArray> choiceOptions(static_cast<size_t>(cols));
+    for (int c = 0; c < cols; ++c) {
+        QJsonObject col;
+        if (g.colWidth(c) > 0) col.insert(QStringLiteral("w"), g.colWidth(c));
+        if (g.colAlign(c) != 0) col.insert(QStringLiteral("a"), g.colAlign(c));
+        if (!g.colBg(c).isEmpty()) col.insert(QStringLiteral("bg"), g.colBg(c));
+        if (!g.colFg(c).isEmpty()) col.insert(QStringLiteral("fg"), g.colFg(c));
+        if (g.colKind(c) == TableGrid::ColChoice) {
+            for (const TableGrid::Option& o : g.colOptions(c))
+                choiceOptions[size_t(c)].append(QJsonObject{ { QStringLiteral("id"), o.id }, { QStringLiteral("l"), o.label },
+                                                             { QStringLiteral("c"), o.color } });
+            col.insert(QStringLiteral("k"), 1);
+            col.insert(QStringLiteral("o"), choiceOptions[size_t(c)]);
+        } else if (g.colKind(c) == TableGrid::ColCheck) {
+            col.insert(QStringLiteral("k"), 2);
+        }
+        spec.append(col);
+    }
+    const int hc = std::clamp(g.headerRows(), 1, rows);     // a table always has a header
+    const std::vector<float> equal(static_cast<size_t>(cols), 1.0f / static_cast<float>(cols));
+    auto chip = [](BlockSpec& p, const QJsonArray& options, const QString& id) {
+        const QJsonObject payload{ { QStringLiteral("o"), options }, { QStringLiteral("v"), id } };
+        const QString label = mn::inl::sanitizeChoiceLabel(mn::inl::choiceLabelFor(payload, id));
+        p.text = label;
+        p.spans = { { 0, static_cast<int>(label.size()), SpanChoice, mn::inl::encodeChoicePayload(payload) } };
+    };
+    for (int r = 0; r < rows; ++r) {
+        BlockSpec rec;
+        rec.type = Split;
+        rec.ratios = equal;
+        rec.header = r == 0 ? static_cast<uint8_t>(hc) : uint8_t(0);
+        QJsonObject t;
+        if (r == 0) t.insert(QStringLiteral("cols"), spec);
+        if (!g.rowBg(r).isEmpty()) t.insert(QStringLiteral("bg"), g.rowBg(r));
+        if (!g.rowFg(r).isEmpty()) t.insert(QStringLiteral("fg"), g.rowFg(r));
+        QJsonArray cbg, cfg;
+        for (int c = 0; c < cols; ++c) { cbg.append(g.cellBg(r, c)); cfg.append(g.cellFg(r, c)); }
+        while (!cbg.isEmpty() && cbg.last().toString().isEmpty()) cbg.removeLast();
+        while (!cfg.isEmpty() && cfg.last().toString().isEmpty()) cfg.removeLast();
+        if (!cbg.isEmpty()) t.insert(QStringLiteral("cbg"), cbg);
+        if (!cfg.isEmpty()) t.insert(QStringLiteral("cfg"), cfg);
+        rec.table = compact(t);
+        out.push_back(rec);
+        for (int c = 0; c < cols; ++c) {
+            const int kind = r < hc ? TableGrid::ColText : g.colKind(c);
+            const QString media = g.cellMedia(r, c);
+            if (!media.isEmpty()) {
+                BlockSpec m;
+                m.type = Media;
+                m.mediaJson = media;
+                m.cell = static_cast<int8_t>(c);
+                out.push_back(m);
+            }
+            BlockSpec p;
+            p.cell = static_cast<int8_t>(c);
+            if (kind == TableGrid::ColChoice) {
+                const QString id = g.cellChoice(r, c);
+                if (!id.isEmpty() && !g.optionLabel(c, id).isEmpty()) chip(p, choiceOptions[size_t(c)], id);
+            } else if (kind == TableGrid::ColCheck) {
+                if (g.cellCheck(r, c) > 0) chip(p, checkOptions(), QString::number(g.cellCheck(r, c)));
+            } else {
+                p.text = g.cellText(r, c);
+                p.spans = cellSpansFromJson(g.cellSpans(r, c));
+            }
+            if (!media.isEmpty() && p.text.isEmpty()) continue;   // the image fills the cell
+            out.push_back(p);
+        }
+    }
+    return out;
+}
+
+void BlockModel::expandTableSpecs(std::vector<BlockSpec>& specs) {
+    bool any = false;
+    for (const BlockSpec& sp : specs) any = any || (sp.type == Table && sp.mediaJson.isEmpty());
+    if (!any) return;
+    std::vector<BlockSpec> out;
+    for (BlockSpec& sp : specs) {
+        if (sp.type != Table || !sp.mediaJson.isEmpty()) { out.push_back(std::move(sp)); continue; }
+        std::vector<BlockSpec> grid = gridSpecsFromTable(sp.tableJson);
+        std::move(grid.begin(), grid.end(), std::back_inserter(out));
+    }
+    specs.swap(out);
+}
+
 int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
     if (headerCount(head) == 0 || r0 < 0 || c0 < 0 || c0 >= 63) return -1;
     QString t = text;
@@ -6974,6 +7067,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     // paste has no source directory, so relative image srcs don't resolve here.
     std::vector<BlockSpec> specs =
         Importer::specsFromTextDocument(doc, mediaStore_.get(), QString());
+    expandTableSpecs(specs);                 // SR-4: pasted tables land as derived tables
     if (specs.empty()) return {};
 
     const bool opaque = (rows_[row].type == Media || rows_[row].type == Table

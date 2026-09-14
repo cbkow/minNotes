@@ -513,6 +513,11 @@ public:
     // C++ importer seam (QML goes through paste/import invokables).
     std::pair<int,int> insertSpecs(int row, const std::vector<BlockSpec>& specs,
                                    bool allowReuseBlankRow = true);
+    // SR-4: a Table-block grid as a derived table's specs — a head record (header count ≥ 1,
+    // column spec: widths, alignment, colours, kinds + options), a record per row (row/cell
+    // colours) and each cell's blocks (media, then text with spans; choice/check values as chips).
+    static std::vector<BlockSpec> gridSpecsFromTable(const QString& tableJson);
+    static void expandTableSpecs(std::vector<BlockSpec>& specs);   // every Table spec → gridSpecsFromTable
     // Gap-addressed core (the tab-merge program): gap g = between rows g-1
     // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
     // Lanes (SR-3 S8): specs that carry a Split record keep their own structure
