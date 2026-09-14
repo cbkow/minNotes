@@ -7244,7 +7244,7 @@ FocusScope {
 
     // --- Choice-cell option picker (root overlay above the mouse layer) ---
     function openChoicePicker(trow, r, c, vx, vy) {
-        choicePicker.ghead = -1
+        choicePicker.gridHead = -1
         choicePicker.srow = -1; choicePicker.sstart = -1
         choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.row = trow; choicePicker.r = r; choicePicker.c = c
@@ -7253,7 +7253,7 @@ FocusScope {
     }
     // Inline chip variant (DT-2): span address instead of the cell triple.
     function openInlineChoicePicker(brow, s, vx, vy) {
-        choicePicker.ghead = -1
+        choicePicker.gridHead = -1
         choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
         choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.srow = brow; choicePicker.sstart = s
@@ -7267,7 +7267,7 @@ FocusScope {
     function openGridChoicePicker(head, r, c, text) {
         choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
         choicePicker.srow = -1; choicePicker.sstart = -1; choicePicker.sr = -1; choicePicker.sc = -1
-        choicePicker.ghead = head; choicePicker.gr = r; choicePicker.gc = c
+        choicePicker.gridHead = head; choicePicker.gridR = r; choicePicker.gridC = c
         const b = blockModel.gridCellAt(head, r, c)
         const cell = b >= 0 ? root.cellForRow(b) : null
         if (cell && cell.teItem) {
@@ -7278,7 +7278,7 @@ FocusScope {
         choicePicker.open()
     }
     function openCellChoicePicker(trow, r, c, s, vx, vy) {
-        choicePicker.ghead = -1
+        choicePicker.gridHead = -1
         choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
         choicePicker.srow = trow; choicePicker.sstart = s
         choicePicker.sr = r; choicePicker.sc = c

@@ -25,13 +25,13 @@ Popup {
     property int sr: -1
     property int sc: -1
     readonly property bool cellSpanMode: spanMode && sr >= 0
-    // GRID MODE (SR-4 S6b): a typed cell of a derived table — (ghead, gr, gc). The option set is
+    // GRID MODE (SR-4 S6b): a typed cell of a derived table — (gridHead, gridR, gridC). The option set is
     // the column's (the header is authoritative), writes go through grid*. The add field doubles
     // as a type-to-filter: Up/Down move the highlight, Enter chooses it or adds the typed text.
-    property int ghead: -1
-    property int gr: -1
-    property int gc: -1
-    readonly property bool gridMode: ghead >= 0 && !spanMode
+    property int gridHead: -1
+    property int gridR: -1
+    property int gridC: -1
+    readonly property bool gridMode: gridHead >= 0 && !spanMode
     property int hi: 0
     readonly property string filterText: gridMode ? addField.text.trim().toLowerCase() : ""
     readonly property var shown: filterText === "" ? options
@@ -40,8 +40,8 @@ Popup {
     // The table band, so a quick-add (new option + select it) is one undo step.
     function gridGroup(begin) {
         if (!begin) { blockModel.endGroup(); return }
-        const recs = blockModel.tableRecords(ghead)
-        blockModel.beginGroup(ghead, blockModel.splitRowLast(recs[recs.length - 1]))
+        const recs = blockModel.tableRecords(gridHead)
+        blockModel.beginGroup(gridHead, blockModel.splitRowLast(recs[recs.length - 1]))
     }
 
     padding: 4
@@ -59,7 +59,7 @@ Popup {
            JSON.parse((cellSpanMode ? blockModel.tableChoiceAt(srow, sr, sc, sstart)
                                     : blockModel.choiceAt(srow, sstart)) || "{}")) : null
     readonly property var options: gridMode
-        ? (blockModel.contentRevision, blockModel.gridColumnOptions(ghead, gc))
+        ? (blockModel.contentRevision, blockModel.gridColumnOptions(gridHead, gridC))
         : spanMode
         ? ((spanPayload && spanPayload.o)
                ? spanPayload.o.map(function(o) {
@@ -68,7 +68,7 @@ Popup {
         : ((row >= 0)
                ? (blockModel.contentRevision, blockModel.tableColumnOptions(row, c)) : [])
     readonly property string selectedId: gridMode
-        ? (blockModel.contentRevision, blockModel.gridCellChoice(ghead, gr, gc))
+        ? (blockModel.contentRevision, blockModel.gridCellChoice(gridHead, gridR, gridC))
         : spanMode
         ? ((spanPayload && spanPayload.v) ? spanPayload.v : "")
         : ((row >= 0)
@@ -120,7 +120,7 @@ Popup {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         if (picker.gridMode)
-                            blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc, optRow.modelData.id)
+                            blockModel.gridSetCellChoice(picker.gridHead, picker.gridR, picker.gridC, optRow.modelData.id)
                         else if (picker.cellSpanMode)
                             blockModel.tableSetChoiceSelected(picker.srow, picker.sr, picker.sc,
                                                               picker.sstart, optRow.modelData.id)
@@ -152,7 +152,7 @@ Popup {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     if (picker.gridMode)
-                        blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc, "")
+                        blockModel.gridSetCellChoice(picker.gridHead, picker.gridR, picker.gridC, "")
                     else if (picker.cellSpanMode)
                         blockModel.tableRemoveChoiceAt(picker.srow, picker.sr, picker.sc, picker.sstart)
                     else if (picker.spanMode) blockModel.removeChoiceAt(picker.srow, picker.sstart)
@@ -180,13 +180,13 @@ Popup {
                     var name = text.trim()
                     if (picker.gridMode) {                       // choose the highlighted match, else add
                         if (picker.shown.length > 0) {
-                            blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc,
+                            blockModel.gridSetCellChoice(picker.gridHead, picker.gridR, picker.gridC,
                                                          picker.shown[Math.min(picker.hi, picker.shown.length - 1)].id)
                         } else if (name.length > 0) {
                             picker.gridGroup(true)
-                            const id = blockModel.gridAddOption(picker.ghead, picker.gc, name,
+                            const id = blockModel.gridAddOption(picker.gridHead, picker.gridC, name,
                                                                 picker.palette[picker.options.length % picker.palette.length])
-                            if (id !== "") blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc, id)
+                            if (id !== "") blockModel.gridSetCellChoice(picker.gridHead, picker.gridR, picker.gridC, id)
                             picker.gridGroup(false)
                         }
                         text = ""
