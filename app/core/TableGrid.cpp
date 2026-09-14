@@ -526,17 +526,42 @@ TableGrid TableGrid::fromJson(const QString& json) {
 // ---- import / export -------------------------------------------------------
 
 TableGrid TableGrid::fromTSV(const QString& tsv) {
+    // Tabs split cells, newlines split rows; a field that STARTS with a quote is quoted (R-I2 2a,
+    // 2026-09-14): it may hold tabs and newlines, "" is a literal quote — so multi-line cells
+    // round-trip through the app's own TSV. A quote anywhere else is literal.
     TableGrid g;
-    const QStringList lines = tsv.split(QLatin1Char('\n'));
+    std::vector<Cell> row;
+    QString field;
+    bool inQuotes = false;
     int maxCols = 1;
-    for (int i = 0; i < lines.size(); ++i) {
-        if (i == lines.size() - 1 && lines[i].isEmpty()) break;   // trailing newline
-        const QStringList parts = lines[i].split(QLatin1Char('\t'));
-        std::vector<Cell> row;
-        for (const QString& p : parts) row.push_back(Cell{p});
+    auto endField = [&] { row.push_back(Cell{field}); field.clear(); };
+    auto endRow = [&] {
+        endField();
         maxCols = std::max<int>(maxCols, static_cast<int>(row.size()));
         g.cells_.push_back(std::move(row));
+        row.clear();
+    };
+    const int n = tsv.size();
+    for (int i = 0; i < n; ++i) {
+        const QChar ch = tsv.at(i);
+        if (inQuotes) {
+            if (ch == QLatin1Char('"')) {
+                if (i + 1 < n && tsv.at(i + 1) == QLatin1Char('"')) { field += QLatin1Char('"'); ++i; }
+                else inQuotes = false;
+            } else {
+                field += ch;
+            }
+        } else if (ch == QLatin1Char('"') && field.isEmpty()) {
+            inQuotes = true;
+        } else if (ch == QLatin1Char('\t')) {
+            endField();
+        } else if (ch == QLatin1Char('\n')) {
+            endRow();
+        } else if (ch != QLatin1Char('\r')) {
+            field += ch;
+        }
     }
+    if (!field.isEmpty() || !row.empty()) endRow();   // the last line, without a trailing newline
     if (g.cells_.empty()) return makeEmpty(1, 1);
     g.cols_ = maxCols;
     g.headerRows_ = 1;

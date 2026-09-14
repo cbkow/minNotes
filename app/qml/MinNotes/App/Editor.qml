@@ -3061,6 +3061,28 @@ FocusScope {
             }
             return
         }
+        // Derived tables (SR-4 S8c, R-I2): a cell rectangle or a grip-picked row / column set copies
+        // by the CELL grain — the fragment payload, quoted TSV, and one HTML table (included header
+        // rows in <thead>).
+        const rect = root.cellRect
+        const set = root.gridSetLive() ? root.gridSet : null
+        if (rect || set) {
+            const head = rect ? rect.head : set.head
+            const rows = [], cols = []
+            if (rect) {
+                for (let r = rect.r0; r <= rect.r1; ++r) rows.push(r)
+                for (let c = rect.c0; c <= rect.c1; ++c) cols.push(c)
+            } else if (set.kind === "row") {
+                for (let i = 0; i < set.items.length; ++i) rows.push(set.items[i])
+                for (let c = 0; c < blockModel.tableColumnCount(head); ++c) cols.push(c)
+            } else {
+                for (let r = 0; r < blockModel.gridRowCount(head); ++r) rows.push(r)
+                for (let i = 0; i < set.items.length; ++i) cols.push(set.items[i])
+            }
+            clipboard.writeBlocks(blockModel.gridCopyPayload(head, rows, cols), blockModel.gridCellsTSV(head, rows, cols),
+                                  exporter.gridCellsHtml(head, rows, cols), "")
+            return
+        }
         // Document range (or the whole focus row when nothing is selected):
         // every flavour at once via copyRange.
         if (cursor.hasSel) {
@@ -3078,7 +3100,14 @@ FocusScope {
         var json = blockModel.clipboardPayloadForRange(lR, lC, hR, hC)
         var txt  = blockModel.plainTextForRange(lR, lC, hR, hC)
         var html = "", img = ""
-        if (lR === hR) {
+        // A range holding a split row's record — whole layout rows or tables (S8c, R-I2): the text
+        // is markdown (tables as GFM), the HTML the page walker's fragment.
+        let structured = false
+        for (let r = lR; r <= hR && !structured; ++r) structured = blockModel.typeForRow(r) === 10
+        if (structured) {
+            txt = exporter.copyMarkdown(lR, hR)
+            html = exporter.htmlFragment(lR, hR)
+        } else if (lR === hR) {
             var t = blockModel.typeForRow(lR)
             if (t === 7) html = blockModel.tableRangeHtml(lR, 0, 0, blockModel.tableRows(lR) - 1, blockModel.tableColumns(lR) - 1)
             else if (t === 3 && blockModel.mediaKind(lR) === "image") img = blockModel.mediaUrl(lR)

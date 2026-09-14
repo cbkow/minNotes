@@ -1943,7 +1943,7 @@ color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:
 
 } // namespace
 
-QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
+QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiRow, bool fragment) const {
     if (!model_) return {};
     const BlockModel* m = model_;
     // The document's page measure (v3; 760 for pre-v3 docs) — every 760-era
@@ -1969,11 +1969,12 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     // pre/hr can't host children so they get a .blkw wrapper. List items get
     // an inline offset compensating their nesting indent so all numbers
     // align on one ledger line.
-    auto bnum = [](int row) {
-        return QStringLiteral("<span class=\"bnum\">%1</span>").arg(row + 1);
+    // A clipboard FRAGMENT (S8c) carries no numbers, ink or page chrome.
+    auto bnum = [fragment](int row) {
+        return fragment ? QString() : QStringLiteral("<span class=\"bnum\">%1</span>").arg(row + 1);
     };
-    auto bnumLi = [pw](int row, int depth) {
-        return QStringLiteral("<span class=\"bnum\" style=\"left:%1px\">%2</span>")
+    auto bnumLi = [pw, fragment](int row, int depth) {
+        return fragment ? QString() : QStringLiteral("<span class=\"bnum\" style=\"left:%1px\">%2</span>")
             .arg((pw + 12) - 24 * (depth + 1)).arg(row + 1);
     };
     // Page ink rides INSIDE its block element (the positioned ancestor):
@@ -1981,6 +1982,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     // center (pw/2 — 380 in the classic 760 frame), minus the element's
     // own indent.
     auto injectInk = [&](QString blk, int row, double indent) -> QString {
+        if (fragment) return blk;
         const TextInk ti = renderTextInk(m, row);
         if (ti.img.isNull()) return blk;
         if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
@@ -2057,7 +2059,9 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     };
 
     const int count = m->rowCountQml();
-    for (int row = 0; row < count; ++row) {
+    const int first = loRow < 0 ? 0 : std::clamp(loRow, 0, std::max(0, count - 1));
+    const int last = hiRow < 0 ? count - 1 : std::clamp(hiRow, first, count - 1);
+    for (int row = first; row <= last; ++row) {
         const int type = m->typeForRow(row);
         const int lane = m->laneForRow(row);
         closeLanes(lane, row);
@@ -2183,6 +2187,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     }
     closeLanes(-1, count);
     closeListsTo(0);
+    if (fragment) return body;
 
     // Comments section (linked from the superscript refs).
     if (!fn.threadIds.isEmpty()) {
@@ -2336,6 +2341,73 @@ e.preventDefault();});
                "%5</body>\n</html>\n")
         .arg(htmlEscape(m->documentName()), css, toggle, body,
              QLatin1String(kLightbox));
+}
+
+QString Exporter::htmlFragment(int loRow, int hiRow) const {
+    if (!model_) return {};
+    const int n = model_->rowCountQml();
+    if (n <= 0) return {};
+    DataUriSink sink;
+    const int lo = std::clamp(loRow, 0, n - 1);
+    return toHtml(Options{}, sink, lo, std::clamp(hiRow < 0 ? lo : hiRow, lo, n - 1), /*fragment=*/true);
+}
+
+QString Exporter::gridCellsHtml(int head, const QVariantList& rows, const QVariantList& cols) const {
+    if (!model_ || model_->headerCount(head) <= 0) return {};
+    const BlockModel* m = model_;
+    DataUriSink sink;
+    FootnoteCtx fn;
+    const int hc = m->headerCount(head);
+    QString out = QStringLiteral("<table>");
+    bool inHead = false, inBody = false;
+    for (const QVariant& rv : rows) {
+        const int r = rv.toInt();
+        const bool header = r < hc;
+        if (header && !inHead) { out += QStringLiteral("<thead>"); inHead = true; }
+        if (!header && !inBody) {
+            if (inHead) out += QStringLiteral("</thead>");
+            out += QStringLiteral("<tbody>");
+            inBody = true;
+        }
+        out += QStringLiteral("<tr>");
+        for (const QVariant& cv : cols) {
+            const int c = cv.toInt();
+            QString st;
+            const QString bg = m->gridCellBg(head, r, c), fg = m->gridCellFg(head, r, c);
+            if (!bg.isEmpty()) st += QStringLiteral("background:%1;").arg(htmlEscape(bg));
+            if (!fg.isEmpty()) st += QStringLiteral("color:%1;").arg(htmlEscape(fg));
+            switch (m->gridColAlign(head, c)) {
+            case 1: st += QStringLiteral("text-align:center;"); break;
+            case 2: st += QStringLiteral("text-align:right;"); break;
+            default: break;
+            }
+            QStringList parts;
+            if (!header && m->gridColumnKind(head, c) == 2) {
+                parts << taskGlyphHtml(m->gridCellCheck(head, r, c));
+            } else {
+                for (const QVariant& bv : m->gridCellRows(head, r, c)) {
+                    const int b = bv.toInt();
+                    const int t = m->typeForRow(b);
+                    if (t == BlockModel::Media) {
+                        if (m->mediaKind(b) != QLatin1String("image")) continue;
+                        const QString src = sink.addFile(localPathOf(m->mediaUrl(b)), QStringLiteral("img"));
+                        if (!src.isEmpty()) parts << QStringLiteral("<img src=\"%1\" alt=\"\">").arg(src);
+                    } else if (t == BlockModel::Divider) {
+                        parts << QStringLiteral("<hr>");
+                    } else {
+                        parts << emitInlineHtml(m, b, fn);
+                    }
+                }
+            }
+            const QString tag = header ? QStringLiteral("th") : QStringLiteral("td");
+            out += QStringLiteral("<%1%2>%3</%1>").arg(tag, st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st),
+                                                       parts.join(QStringLiteral("<br>")));
+        }
+        out += QStringLiteral("</tr>");
+    }
+    if (inHead && !inBody) out += QStringLiteral("</thead>");
+    if (inBody) out += QStringLiteral("</tbody>");
+    return out + QStringLiteral("</table>");
 }
 
 bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes, bool ufbLinks) {

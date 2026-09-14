@@ -46,6 +46,9 @@ struct Payload {
     std::vector<QString> ink;                       // parallel to specs ("" = none)
     std::vector<BlockModel::ThreadImport> threads;  // SOURCE ids — remapped at paste
     std::vector<Asset> assets;
+    // A cell fragment copied from a table (SR-4 S8c): {cols: [column spec…], header: n} — the
+    // specs are records (no header role) + cells; empty for every other copy.
+    QJsonObject grid;
 };
 
 QByteArray encode(const Payload& p);

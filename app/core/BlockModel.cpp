@@ -7861,11 +7861,16 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
         }
         p.ink.push_back(whole ? inkForRow(r) : QString());
     }
+    return finishClipboardPayload(*this, p);
+}
 
+// The payload's tail every copy grain shares: comment thread bodies for the specs' anchors and
+// the asset snapshot, then the encoding.
+QString BlockModel::finishClipboardPayload(const BlockModel& m, BlockClipboard::Payload& p) {
     // Comment threads: bodies ride with their anchors (SOURCE ids — the
     // paste remints or re-anchors); ghost anchors are stripped.
     QHash<QString, QVariantMap> threads;
-    for (const QVariant& tv : commentThreads()) {
+    for (const QVariant& tv : m.commentThreads()) {
         const QVariantMap m = tv.toMap();
         threads.insert(m.value(QStringLiteral("id")).toString(), m);
     }
@@ -7881,7 +7886,7 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
                 ti.id = it->href;
                 ti.created = th->value(QStringLiteral("created")).toLongLong();
                 ti.resolved = th->value(QStringLiteral("resolved")).toBool();
-                for (const QVariant& mv : commentMessages(it->href)) {
+                for (const QVariant& mv : m.commentMessages(it->href)) {
                     const QVariantMap mm = mv.toMap();
                     ti.messages.push_back({QString(), mm.value(QStringLiteral("body")).toString(),
                                            mm.value(QStringLiteral("created")).toLongLong(),
@@ -7895,7 +7900,7 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
 
     // Asset snapshot: where every collected src's bytes live right now, so a
     // paste after the source tab closes still finds them (no side effects).
-    const AssetTransfer::Source src = AssetTransfer::Source::fromStore(mediaStore_.get());
+    const AssetTransfer::Source src = AssetTransfer::Source::fromStore(m.mediaStore());
     QSet<QString> seen;
     AssetTransfer::forEachSrc(p.specs, [&](const QJsonValue& v, bool isVideo) {
         if (!v.isString()) return;
@@ -7910,6 +7915,109 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
         p.assets.push_back(std::move(a));
     });
     return QString::fromUtf8(BlockClipboard::encode(p));
+}
+
+// A cell's text for TSV: its blocks joined by newlines, media and dividers skipped, a typed body
+// cell as its label / box.
+static QString gridCellPlainText(const BlockModel& m, int head, int r, int c) {
+    if (r >= m.headerCount(head)) {
+        const int kind = m.gridColumnKind(head, c);
+        if (kind == 1) return m.gridCellChoiceLabel(head, r, c);
+        if (kind == 2) {
+            switch (m.gridCellCheck(head, r, c)) {
+            case 1:  return QStringLiteral("[/]");
+            case 2:  return QStringLiteral("[x]");
+            default: return QStringLiteral("[ ]");
+            }
+        }
+    }
+    QStringList parts;
+    for (const QVariant& v : m.gridCellRows(head, r, c)) {
+        const int b = v.toInt();
+        const int t = m.typeForRow(b);
+        if (t == BlockModel::Media || t == BlockModel::Divider) continue;
+        parts << m.contentForRow(b);
+    }
+    return parts.join(QLatin1Char('\n'));
+}
+
+static QString tsvField(QString v) {
+    if (!v.contains(QLatin1Char('\t')) && !v.contains(QLatin1Char('\n')) && !v.contains(QLatin1Char('"'))) return v;
+    v.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    return QLatin1Char('"') + v + QLatin1Char('"');
+}
+
+QString BlockModel::gridCellsTSV(int head, const QVariantList& rows, const QVariantList& cols) const {
+    if (!tableInfo(head)) return {};
+    QStringList lines;
+    for (const QVariant& rv : rows) {
+        QStringList fields;
+        for (const QVariant& cv : cols) fields << tsvField(gridCellPlainText(*this, head, rv.toInt(), cv.toInt()));
+        lines << fields.join(QLatin1Char('\t'));
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+QString BlockModel::gridCopyPayload(int head, const QVariantList& rowsIn, const QVariantList& colsIn) const {
+    const TableInfo* info = tableInfo(head);
+    if (!info || rowsIn.isEmpty() || colsIn.isEmpty()) return {};
+    BlockClipboard::Payload p;
+    p.docPath = docPath_;
+    p.docDir = mediaAnchorDir();
+    p.package = mediaStore_ ? mediaStore_->packageSource() : QString();
+    p.pageWidth = pageWidth_;
+    const int hc = headerCount(head);
+    const QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    QJsonArray cols;
+    for (const QVariant& cv : colsIn) {
+        const int c = cv.toInt();
+        cols.append(c >= 0 && c < spec.size() ? spec.at(c) : QJsonValue(QJsonObject()));
+    }
+    const std::vector<float> equal(size_t(colsIn.size()), 1.0f / static_cast<float>(colsIn.size()));
+    int headerRows = 0;
+    for (const QVariant& rv : rowsIn) {
+        const int r = rv.toInt(), rec = gridRecord(head, r);
+        if (rec < 0) continue;
+        if (r < hc) ++headerRows;
+        BlockSpec rs;
+        rs.type = Split;
+        rs.ratios = equal;
+        const QJsonObject src = QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object();
+        QJsonObject t;
+        for (const char* key : { "bg", "fg" })
+            if (src.contains(QLatin1String(key))) t.insert(QLatin1String(key), src.value(QLatin1String(key)));
+        for (const char* key : { "cbg", "cfg" }) {                      // the cells' own colours, reindexed
+            const QJsonArray all = src.value(QLatin1String(key)).toArray();
+            QJsonArray sub;
+            for (const QVariant& cv : colsIn) sub.append(all.at(cv.toInt()).toString());
+            while (!sub.isEmpty() && sub.last().toString().isEmpty()) sub.removeLast();
+            if (!sub.isEmpty()) t.insert(QLatin1String(key), sub);
+        }
+        rs.table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+        p.specs.push_back(rs);
+        p.ink.push_back(inkForRow(rec));
+        for (int k = 0; k < colsIn.size(); ++k) {
+            const QVariantList blocks = gridCellRows(head, r, colsIn[k].toInt());
+            if (blocks.isEmpty()) {                                        // a ragged cell: the fragment stays rectangular
+                BlockSpec e;
+                e.type = Paragraph;
+                e.cell = static_cast<int8_t>(k);
+                p.specs.push_back(e);
+                p.ink.push_back(QString());
+                continue;
+            }
+            for (const QVariant& bv : blocks) {
+                const int b = bv.toInt();
+                BlockSpec sp = specForRow(b);
+                sp.cell = static_cast<int8_t>(k);
+                p.specs.push_back(sp);
+                p.ink.push_back(inkForRow(b));
+            }
+        }
+    }
+    if (p.specs.empty()) return {};
+    p.grid = QJsonObject{ { QStringLiteral("cols"), cols }, { QStringLiteral("header"), headerRows } };
+    return finishClipboardPayload(*this, p);
 }
 
 std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,

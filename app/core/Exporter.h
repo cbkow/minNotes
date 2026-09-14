@@ -63,13 +63,20 @@ public:
     // loRow < 0 = the whole document, WITH the document-name header;
     // explicit ranges omit it (a pasted fragment shouldn't restate it).
     Q_INVOKABLE QString copyMarkdown(int loRow = -1, int hiRow = -1) const;
+    // Clipboard HTML (SR-4 S8c, R-I2): rows [loRow, hiRow] through the page walker in FRAGMENT mode
+    // (no page chrome, block numbers, ink or comments section; tables with <thead>, layout rows as
+    // flex divs; images as data URIs), and a table's rows × cols sub-grid as one <table> (its header
+    // rows, when included, in <thead> as <th>).
+    Q_INVOKABLE QString htmlFragment(int loRow, int hiRow) const;
+    Q_INVOKABLE QString gridCellsHtml(int head, const QVariantList& rows, const QVariantList& cols) const;
 
     // The fidelity ceiling: color/highlight spans survive, comments render
     // as tinted ranges + a linked comments section, tables keep their
     // colors/chips, video notes become cards. Assets still route through
     // `sink` — exportHtml passes a data-URI sink so the file is
     // SELF-CONTAINED (one .html you can send anywhere).
-    QString toHtml(const Options& opt, AssetSink& sink) const;
+    // loRow/hiRow < 0 = the whole document; fragment = the body of that range alone (htmlFragment).
+    QString toHtml(const Options& opt, AssetSink& sink, int loRow = -1, int hiRow = -1, bool fragment = false) const;
 
     // Export-dialog pre-scan: {videos, videosWithNotes, videoNotes,
     // inkBlocks, sketches}. Cheap — sidecar JSON reads only.

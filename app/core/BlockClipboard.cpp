@@ -124,6 +124,7 @@ QByteArray encode(const Payload& p) {
     for (size_t i = 0; i < p.specs.size(); ++i)
         blocks.push_back(specToJson(p.specs[i], i < p.ink.size() ? p.ink[i] : QString()));
     root.insert(QStringLiteral("blocks"), blocks);
+    if (!p.grid.isEmpty()) root.insert(QStringLiteral("grid"), p.grid);
     QJsonArray threads;
     for (const BlockModel::ThreadImport& t : p.threads) {
         QJsonObject to;
@@ -178,6 +179,7 @@ bool decode(const QByteArray& json, Payload* out, QString* error) {
     p.package = source.value(QStringLiteral("package")).toString();
     p.pageWidth = source.value(QStringLiteral("pageWidth")).toDouble(760);
     if (p.pageWidth <= 0) p.pageWidth = 760;
+    p.grid = root.value(QStringLiteral("grid")).toObject();
     for (const QJsonValue& v : root.value(QStringLiteral("blocks")).toArray()) {
         QString ink;
         p.specs.push_back(specFromJson(v.toObject(), &ink));

@@ -17,6 +17,7 @@
 #include "MediaStore.h"
 
 class QNetworkAccessManager;
+namespace BlockClipboard { struct Payload; }
 
 // The document model: a QAbstractListModel over the SQLite-canonical store
 // (DESIGN.md §3–4). Eager skinny-scan seeds the layout (type/rank) + Fenwick
@@ -313,6 +314,14 @@ public:
     // last paragraph is replaced; a ragged cell is materialized). Typed body cells refuse — they
     // hold one chip. One undo; → the last media block's row, or -1 when nothing landed.
     Q_INVOKABLE int gridInsertMedia(int head, int r, int c, const QVariantList& fileUrls);
+    // Copy by grain (S8c, R-I2 / §4.11). A cell FRAGMENT: the rows × cols sub-grid of a table as
+    // records without the header role plus their cells' blocks (reindexed, a ragged cell filled),
+    // the payload's `grid` carrying the column spec subset and how many of the rows were header
+    // rows — the paste rules (S8d) read it. Its TSV: a cell's blocks joined by newlines (media
+    // skipped), typed cells as their label / box, fields quoted when they hold tabs, newlines or
+    // quotes (TableGrid::fromTSV reads them back).
+    Q_INVOKABLE QString gridCopyPayload(int head, const QVariantList& rows, const QVariantList& cols) const;
+    Q_INVOKABLE QString gridCellsTSV(int head, const QVariantList& rows, const QVariantList& cols) const;
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -544,6 +553,7 @@ public:
     // spliceSpecsAt reproduces faithfully (spans carry ALL payloads —
     // links, colors, choice chips, comment hrefs). The merge snapshot walker.
     BlockSpec specForRow(int row) const;
+    static QString finishClipboardPayload(const BlockModel& m, BlockClipboard::Payload& p);   // threads + assets + encode
     // Replay a comment thread from another document with its history intact.
     // NOT undoable, by the same design as createThread: thread rows are
     // doc-local side tables; span edits are what the undo stack tracks.

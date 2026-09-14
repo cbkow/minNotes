@@ -7822,6 +7822,81 @@ static void testGridTableDocxPdf() {
     QDir(dir).removeRecursively();
 }
 
+static void testCopyByGrain() {
+    qInfo("[101] copy by grain: cell fragments (payload grid, quoted TSV, HTML thead), a range's markdown + HTML fragment (SR-4 S8c)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
+    const int head = m.insertTableRows(0, 3, 3) - 1;
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(head, r, c), QString::fromUtf8(t)); };
+    set(0, 0, "Name"); set(0, 1, "Status"); set(0, 2, "Done");
+    set(1, 0, "a1"); set(1, 1, "b1"); set(1, 2, "c1");
+    set(2, 0, "a2"); set(2, 1, "tab\there"); set(2, 2, "c2");
+    {
+        const int b = m.gridCellAt(head, 1, 1);
+        m.insertBlock(b + 1);
+        m.setContent(b + 1, QStringLiteral("b1x"));
+    }
+    m.gridSetCellColor(head, 2, 0, 2, 0, false, QStringLiteral("#00ff00"));
+    CHECK(m.structureValid() && m.gridCellText(head, 1, 1) == QStringLiteral("b1\nb1x"), "fixture: a 3×3 table with a two-block cell");
+
+    // A body-row rectangle: records without the header role, cells reindexed, the spec subset and 0 header rows.
+    {
+        BlockClipboard::Payload p;
+        QString err;
+        CHECK(BlockClipboard::decode(m.gridCopyPayload(head, { 1, 2 }, { 1, 2 }).toUtf8(), &p, &err), "a fragment payload decodes (%s)", qPrintable(err));
+        int records = 0, cells = 0, maxCell = -1;
+        for (const BlockModel::BlockSpec& sp : p.specs) {
+            if (sp.type == BlockModel::Split) { ++records; if (sp.header != 0) records += 100; }
+            else { ++cells; maxCell = std::max(maxCell, int(sp.cell)); }
+        }
+        CHECK(records == 2 && cells == 5 && maxCell == 1 && p.grid.value(QStringLiteral("header")).toInt() == 0
+                  && p.grid.value(QStringLiteral("cols")).toArray().size() == 2 && p.specs.size() == p.ink.size(),
+              "2 records (no header role), 5 cell blocks reindexed to columns 0–1, grid {cols: 2, header: 0}");
+    }
+    {   // Rows including the header row: header 1; a column set keeps the cells' own colours reindexed.
+        BlockClipboard::Payload p;
+        CHECK(BlockClipboard::decode(m.gridCopyPayload(head, { 0, 1, 2 }, { 0 }).toUtf8(), &p)
+                  && p.grid.value(QStringLiteral("header")).toInt() == 1 && p.specs.size() == 6
+                  && p.specs[4].type == BlockModel::Split && p.specs[4].table.contains(QStringLiteral("#00ff00")),
+              "a column set with the header row: header 1, the coloured cell's colour rides its record");
+    }
+    // TSV: multi-block and tab-holding cells are quoted, and read back.
+    const QString tsv = m.gridCellsTSV(head, { 1, 2 }, { 0, 1 });
+    CHECK(tsv == QStringLiteral("a1\t\"b1\nb1x\"\na2\t\"tab\there\""), "TSV quotes fields with newlines or tabs (%s)", qPrintable(tsv));
+    {
+        const TableGrid g = TableGrid::fromTSV(tsv);
+        CHECK(g.rows() == 2 && g.cols() == 2 && g.cellText(0, 1) == QStringLiteral("b1\nb1x") && g.cellText(1, 1) == QStringLiteral("tab\there"),
+              "fromTSV reads quoted fields back (%dx%d)", g.rows(), g.cols());
+        const TableGrid plain = TableGrid::fromTSV(QStringLiteral("x\ty\n1\t2\n"));
+        CHECK(plain.rows() == 2 && plain.cols() == 2 && plain.cellText(1, 1) == QStringLiteral("2"), "plain TSV parses as before");
+        const TableGrid lit = TableGrid::fromTSV(QStringLiteral("5\" pipe\tok"));
+        CHECK(lit.cellText(0, 0) == QStringLiteral("5\" pipe") && lit.cellText(0, 1) == QStringLiteral("ok"), "a quote mid-field stays literal");
+    }
+    Exporter ex;
+    ex.setModel(&m);
+    const QString cells = ex.gridCellsHtml(head, { 0, 1 }, { 0, 1, 2 });
+    CHECK(cells.count(QStringLiteral("<table")) == 1 && cells.contains(QStringLiteral("<thead>"))
+              && cells.count(QRegularExpression(QStringLiteral("<th[ >]"))) == 3 && cells.count(QRegularExpression(QStringLiteral("<td[ >]"))) == 3
+              && cells.contains(QStringLiteral("b1<br>b1x")),
+          "cell HTML: one table, the header row as <th> in <thead>, a two-block cell joined with <br>");
+    const QString body = ex.gridCellsHtml(head, { 1, 2 }, { 0, 1 });
+    CHECK(!body.contains(QStringLiteral("<thead>")) && body.count(QRegularExpression(QStringLiteral("<td[ >]"))) == 4,
+          "body-only cells: no thead, four <td>");
+    // A whole-document range: markdown text with the GFM table; the HTML fragment has the table and no page chrome.
+    const int last = m.rowCountQml() - 1;
+    const QString md = ex.copyMarkdown(0, last);
+    CHECK(md.contains(QStringLiteral("| Name | Status | Done |")) && md.startsWith(QStringLiteral("before")) && md.contains(QStringLiteral("after")),
+          "range markdown carries the pipe table between its neighbours");
+    const QString frag = ex.htmlFragment(0, last);
+    CHECK(frag.count(QStringLiteral("<table")) == 1 && frag.contains(QStringLiteral("<thead>")) && !frag.contains(QStringLiteral("<style"))
+              && !frag.contains(QStringLiteral("bnum")) && !frag.contains(QStringLiteral("<html")) && frag.contains(QStringLiteral("before</p>"))
+              && frag.indexOf(QStringLiteral("</table>")) < frag.indexOf(QStringLiteral("after</p>")),
+          "the HTML fragment: the table with its thead, no chrome, no block numbers");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8033,6 +8108,7 @@ int main(int argc, char** argv) {
     testLegacyTableSinks();
     testGridTableExports();
     testGridTableDocxPdf();
+    testCopyByGrain();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
