@@ -16,7 +16,7 @@ import QtCore
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth) }
+    Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth); sizePool() }
     // Closing the LAST tab unloads the whole Editor (the docContent Loader goes
     // inactive) — stop the shared decoder/audio deliberately rather than letting
     // child destruction race the decode/audio threads mid-playback.
@@ -4396,9 +4396,21 @@ FocusScope {
     readonly property var poolRows: (blockModel.contentRevision, blockModel.layoutRevision,
         blockModel.visibleBlocks(Math.max(0, flick.contentY - overscanPx),
                                  flick.contentY + flick.height + overscanPx))
-    readonly property int poolSize: Math.min(blockModel.count,
+    // The pool's SIZE is a ListModel that only grows, in chunks of 16 (and shrinks only when the
+    // document has fewer blocks than slots). An int model on the pool Repeater regenerated EVERY
+    // delegate whenever the count changed, and with a table in view (records + cells) the visible
+    // count changed on every scroll step — the 2026-09-14 big-table crawl.
+    readonly property int poolNeed: Math.min(blockModel.count,
         Math.max(poolRows.length, Math.ceil(root.height / 38) + 2 * overscan + 4))
+    readonly property int poolSize: poolModel.count
     readonly property int delegateCount: poolSize
+    ListModel { id: poolModel }
+    function sizePool() {
+        const want = Math.min(blockModel.count, Math.ceil(poolNeed / 16) * 16)
+        while (poolModel.count < want) poolModel.append({ slot: poolModel.count })
+        while (poolModel.count > want && poolModel.count > blockModel.count) poolModel.remove(poolModel.count - 1)
+    }
+    onPoolNeedChanged: sizePool()
     // Which block each pool slot renders. Blocks that stay in view keep their
     // delegate. sync RETURNS the revision and runs inside this binding, so everything
     // reading slotRev before rowForSlot() sees the updated table.
@@ -4508,7 +4520,7 @@ FocusScope {
                      // whole field, text column included — a line that INFORMS
                      // ("a block starts here") and stays put under editing,
                      // unlike zebra parity.
-            model: root.poolSize
+            model: poolModel   // grows by insertion: never a full regenerate
             delegate: Rectangle {
                 required property int index
                 readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
@@ -4540,7 +4552,7 @@ FocusScope {
 
         Repeater {
             id: pool
-            model: root.poolSize
+            model: poolModel   // grows by insertion: never a full regenerate
             delegate: BlockView {
                 required property int index
                 editor: root
@@ -7053,7 +7065,7 @@ FocusScope {
         // (No backing, no own stripes: the rail rides transparently on the
         // desk's zebra — wide tables passing beneath carry their own paper.)
         Repeater {
-            model: root.poolSize
+            model: poolModel   // grows by insertion: never a full regenerate
             delegate: Item {
                 id: rnum
                 required property int index
