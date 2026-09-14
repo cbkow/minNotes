@@ -689,13 +689,11 @@ static void testExportMarkdown() {
     m.insertBlock(5); m.setContent(5, QStringLiteral("int x = 1;"));
     m.makeCodeBlock(5, QStringLiteral("cpp"));
 
-    m.insertTable(5, 2, 2);                                // → row 6
-    const int t = 6;
-    m.tableSetHeaderRows(t, 1);
-    m.tableSetCell(t, 0, 0, QStringLiteral("H1"));
-    m.tableSetCell(t, 0, 1, QStringLiteral("H2"));
-    m.tableSetCell(t, 1, 0, QStringLiteral("a"));
-    m.tableSetCell(t, 1, 1, QStringLiteral("b|pipe"));
+    const int t = m.insertTableRows(5, 2, 2) - 1;          // → row 6: the table's head (one header row)
+    m.setContent(m.gridCellAt(t, 0, 0), QStringLiteral("H1"));
+    m.setContent(m.gridCellAt(t, 0, 1), QStringLiteral("H2"));
+    m.setContent(m.gridCellAt(t, 1, 0), QStringLiteral("a"));
+    m.setContent(m.gridCellAt(t, 1, 1), QStringLiteral("b|pipe"));
 
     Exporter ex;
     ex.setModel(&m);
@@ -863,10 +861,9 @@ static void testExportMarkdown() {
     CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">"))
               && html.contains(QStringLiteral(">int</span> x ")),
           "HTML code block with language class + syntax-coloured spans");
-    // Header-AGNOSTIC exports (user ruling 2026-08-20): every row is a plain
-    // <td> row — the header flag can't be trusted on sheet imports.
-    CHECK(html.contains(QStringLiteral("<td>H1</td>")) && !html.contains(QStringLiteral("<th")),
-          "HTML table rows are header-agnostic (all <td>)");
+    // A table's header rows are <th> in <thead> (SR-4 S8b: the header ROLE is authored, not sniffed).
+    CHECK(html.contains(QStringLiteral("<th")) && html.contains(QStringLiteral("H1")) && html.contains(QStringLiteral("<td")),
+          "HTML table: header cells as <th>, body cells as <td>");
     CHECK(html.contains(QStringLiteral("id=\"c1\"")) && html.contains(QStringLiteral("note body")),
           "comments section carries the thread body");
     CHECK(html.startsWith(QStringLiteral("<!doctype html>")), "self-contained document skeleton");
@@ -2446,9 +2443,9 @@ static void testDocxRoundTrip() {
             cd.text = QStringLiteral("int x;\nint y;"); specs.push_back(cd);
         }
         m.insertSpecs(0, specs, true);
-        // A Table block source still exercises the legacy DOCX emitter (S10 retires it; [100] covers derived tables).
-        const int legacyTable = m.insertTable(m.rowCountQml() - 1, 2, 2);
-        m.tableSetCell(legacyTable, 1, 0, QStringLiteral("cell A"));
+        // A table at the end ([100] covers the table emitter in depth).
+        const int tableHead = m.insertTableRows(m.rowCountQml() - 1, 2, 2) - 1;
+        m.setContent(m.gridCellAt(tableHead, 1, 0), QStringLiteral("cell A"));
         const QString threadId = m.addComment(1, 0, 5);
         m.addCommentMessage(threadId, QStringLiteral("check this wording"));
         m.insertImageFromUrl(m.rowCountQml() - 1,
@@ -3951,154 +3948,6 @@ static void testCodeBlockInsert() {
 // Cell media must ride every exporter like block images do: md collects into
 // .assets (absolute-path fallback when unreachable), DOCX embeds a drawing
 // run in the cell, PDF paints the image in the cell.
-static void testCellMediaExports() {
-    qInfo("[42] exports: table cell images (md assets/fallback, DOCX, PDF)");
-    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_cellexp"));
-    dir.removeRecursively();
-    QDir().mkpath(dir.absolutePath());
-    // A WIDE image (the video-poster shape) — wider than its PDF cell will
-    // be, so the width-clamp/overlap regression (user PDF 2026-08-20) is in
-    // play, in a many-column table with same-cell text + rows below it.
-    const QString extPic = dir.filePath(QStringLiteral("cellpic.png"));
-    { QImage img(1600, 900, QImage::Format_RGB32); img.fill(QColor(255, 0, 200));
-      img.save(extPic, "PNG"); }
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("cells"));
-    const int tRow = m.insertTable(0, 4, 6);
-    m.tableSetCell(tRow, 0, 0, QStringLiteral("head"));
-    m.tableSetCellMedia(tRow, 1, 0,
-        QStringLiteral("{\"src\":\"%1\",\"w\":1600,\"h\":900}").arg(extPic));
-    m.tableSetCell(tRow, 1, 0, QStringLiteral("caption under the shot"));
-    m.tableSetCellMedia(tRow, 0, 1,   // SAME source again → must not duplicate
-        QStringLiteral("{\"src\":\"%1\",\"w\":1600,\"h\":900}").arg(extPic));
-    m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
-    m.tableSetCell(tRow, 2, 0, QStringLiteral("row below"));
-    m.tableSetCell(tRow, 3, 0, QStringLiteral("last row"));
-    Exporter ex;
-    ex.setModel(&m);
-
-    // Markdown: the cell image is collected into .assets like a block image.
-    const QString mdPath = dir.filePath(QStringLiteral("out.md"));
-    CHECK(ex.exportMarkdown(mdPath, false), "md exported");
-    QString md;
-    { QFile f(mdPath); f.open(QIODevice::ReadOnly); md = QString::fromUtf8(f.readAll()); }
-    CHECK(md.contains(QStringLiteral("![](out.assets/cellpic.png)")),
-          "cell image collected into .assets");
-    CHECK(QFileInfo::exists(dir.filePath(QStringLiteral("out.assets/cellpic.png"))),
-          ".assets copy exists");
-    CHECK(!QFileInfo::exists(dir.filePath(QStringLiteral("out.assets/cellpic-2.png"))),
-          "same source in two cells → ONE .assets copy (sink dedups by path)");
-    CHECK(md.contains(QStringLiteral("| --- | --- |\n"))
-              && !md.contains(QStringLiteral("| --- | --- | --- |")),
-          "trailing empty columns dropped at export (6 authored -> 2 shipped)");
-
-    // Markdown fallback: an unreachable source keeps an absolute link (the
-    // block-image rule) instead of silently dropping the image.
-    m.tableSetCellMedia(tRow, 1, 1,
-        QStringLiteral("{\"src\":\"%1\",\"w\":8,\"h\":8}")
-            .arg(dir.filePath(QStringLiteral("missing dir/gone.png"))));
-    const QString md2Path = dir.filePath(QStringLiteral("out2.md"));
-    CHECK(ex.exportMarkdown(md2Path, false), "md re-exported");
-    QString md2;
-    { QFile f(md2Path); f.open(QIODevice::ReadOnly); md2 = QString::fromUtf8(f.readAll()); }
-    CHECK(md2.contains(QStringLiteral("![](file://"))
-              && md2.contains(QStringLiteral("gone.png")),
-          "unreachable cell image falls back to the absolute file URL");
-    m.tableSetCellMedia(tRow, 1, 1, QString());
-    m.tableSetCell(tRow, 1, 1, QStringLiteral("txt"));
-
-    // HTML: authored widths past the page column → percentage shares +
-    // fixed layout (text wraps inside instead of the table running off).
-    m.tableSetColWidth(tRow, 0, 900);
-    m.tableSetColWidth(tRow, 1, 300);
-    const QString htmlPath = dir.filePath(QStringLiteral("out.html"));
-    CHECK(ex.exportHtml(htmlPath, false), "html exported");
-    {
-        QFile f(htmlPath); f.open(QIODevice::ReadOnly);
-        const QString html = QString::fromUtf8(f.readAll());
-        CHECK(html.contains(QStringLiteral(
-                  "table-layout:fixed;width:min(1200px,max(760px,calc(100vw - 152px)))"))
-                  && html.contains(QStringLiteral("width:75.00%"))
-                  && html.contains(QStringLiteral("width:25.00%")),
-              "over-wide table: full width, viewport cap floored at the page");
-        CHECK(html.contains(QStringLiteral("min-width:1000px")),
-              "page never shrinks under the document width (ink stays aligned)");
-        CHECK(html.contains(QStringLiteral(
-                  "--sheetw:calc(min(1200px,max(760px,100vw - 152px)) + 240px)"))
-                  && html.contains(QStringLiteral("--desk:#121211")),
-              "dual-tone ground: sheet band follows the widest table");
-        CHECK(html.contains(QStringLiteral("main td img"))
-                  && !html.contains(QStringLiteral("mn-underlay")),
-              "cell images join the lightbox; block-select stays removed");
-    }
-    m.tableSetColWidth(tRow, 0, 0);
-    m.tableSetColWidth(tRow, 1, 0);
-
-    // ufb deep links (2026-08-21, opt-in): a file-path-printing block gains
-    // a <ufb:///os/…> autolink under its path only when the flag is set.
-    {
-        BlockModel::BlockSpec att; att.type = BlockModel::Media;
-        att.mediaJson = QStringLiteral(
-            "{\"src\":\"%1\",\"kind\":\"file\"}").arg(extPic);   // any real file
-        m.insertSpecs(m.rowCountQml() - 1, {att}, false);
-        const QString u1 = dir.filePath(QStringLiteral("ufb1.md"));
-        const QString u2 = dir.filePath(QStringLiteral("ufb2.md"));
-        CHECK(ex.exportMarkdown(u1, false) && ex.exportMarkdown(u2, false, true),
-              "ufb-flag exports written");
-        QFile f1(u1), f2(u2);
-        f1.open(QIODevice::ReadOnly); f2.open(QIODevice::ReadOnly);
-        const QString md1 = QString::fromUtf8(f1.readAll());
-        const QString md2 = QString::fromUtf8(f2.readAll());
-        CHECK(!md1.contains(QStringLiteral("ufb:///")),
-              "default export carries NO ufb links");
-#if defined(Q_OS_WIN)
-        const QString ufbPrefix = QStringLiteral("<ufb:///win/");
-#else
-        const QString ufbPrefix = QStringLiteral("<ufb:///mac/");
-#endif
-        CHECK(md2.contains(ufbPrefix)
-                  && md2.contains(QStringLiteral("cellpic.png>")),
-              "opt-in export carries the ufb autolink under the path");
-        m.removeBlock(m.rowCountQml() - 1);   // the attachment is the LAST row
-    }
-
-    // DOCX: a drawing run lands inside the table cell; media part shipped.
-    const QString docx = dir.filePath(QStringLiteral("out.docx"));
-    CHECK(ex.exportDocx(docx, false), "docx exported");
-    const QByteArray docXml = mnpkg::readEntry(docx, QStringLiteral("word/document.xml"));
-    const int tblAt = docXml.indexOf("<w:tbl>");
-    const int tblEnd = docXml.indexOf("</w:tbl>");
-    CHECK(tblAt >= 0 && tblEnd > tblAt
-              && docXml.mid(tblAt, tblEnd - tblAt).contains("<w:drawing>"),
-          "DOCX cell carries a drawing run inside w:tbl");
-    CHECK(!mnpkg::readEntry(docx, QStringLiteral("word/media/image1.png")).isEmpty(),
-          "DOCX media part shipped");
-    CHECK(docXml.count("<w:gridCol") == 2,
-          "DOCX grid also drops the trailing empty columns");
-
-    // PDF: the magenta cell image paints (scan page 1 for the fixture color).
-    const QString pdf = dir.filePath(QStringLiteral("out.pdf"));
-    CHECK(ex.exportPdf(pdf, false), "pdf exported");
-    {
-        QPdfDocument pd;
-        CHECK(pd.load(pdf) == QPdfDocument::Error::None && pd.pageCount() >= 1,
-              "pdf loads");
-        const QImage page = pd.render(0, QSize(1000, 1414));
-        int hits = 0;
-        for (int y = 0; y < page.height() && hits < 20; ++y)
-            for (int x = 0; x < page.width() && hits < 20; ++x) {
-                const QColor px = page.pixelColor(x, y);
-                if (px.red() > 200 && px.green() < 80 && px.blue() > 120) ++hits;
-            }
-        CHECK(hits >= 20, "cell image pixels present on the PDF page");
-    }
-    m.closeDocument();
-    if (qEnvironmentVariable("MN_CELL_KEEP").isEmpty()) dir.removeRecursively();
-}
-
 // --- Test 43: table bulk ops over selection sets ---------------------------
 // Every bulk invokable = ONE mutateTable lambda = ONE undo entry; index
 // lists arrive unordered with dupes; deletes run descending; clear = contents
@@ -4350,124 +4199,6 @@ static void testCellChoiceChips() {
 // isCheck/isChoice = !isHeader rule); the DOCX task glyph is a painted
 // image whose docPr name ("mnTask<state>") round-trips the state without
 // importing the raster as media.
-static void testExportChipsTasksCells() {
-    qInfo("[48] exports: chips, cell spans, typed-column header text");
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-
-    //                                                 0123456789
-    m.insertBlock(0); m.setContent(0, QStringLiteral("status is  today"));
-    const int cs = m.insertChoiceAt(0, 10);            // between the spaces
-    CHECK(cs == 10, "inline chip inserted at col 10");
-    m.choiceAddOption(0, cs, QStringLiteral("Urgent"), QStringLiteral("#804000"));
-
-    m.insertBlock(1); m.setContent(1, QStringLiteral("doing thing"));
-    m.setBlockType(1, BlockModel::TaskListItem);
-    m.toggleTask(1);                                   // todo → doing
-
-    m.insertTable(1, 3, 3);                            // → row 2
-    const int t = 2;
-    m.tableSetHeaderRows(t, 1);
-    m.tableSetColumnKind(t, 0, 2);                     // check
-    m.tableSetColumnKind(t, 1, 1);                     // choice
-    m.tableSetCell(t, 0, 0, QStringLiteral("Done?"));
-    m.tableSetCell(t, 0, 1, QStringLiteral("Status"));
-    m.tableSetCell(t, 0, 2, QStringLiteral("Notes"));
-    m.tableSetCellCheck(t, 1, 0, 1);                   // doing
-    const QString oid = m.tableAddOption(t, 1, QStringLiteral("Ship"),
-                                         QStringLiteral("#804000"));
-    m.tableSetCellChoice(t, 1, 1, oid);
-    m.tableSetCell(t, 1, 2, QStringLiteral("bold note"));
-    m.tableSetCellFormat(t, 1, 2, 0, 4, QStringLiteral("bold"), true);
-    const int ccs = m.tableInsertChoiceAt(t, 2, 2, 0); // cell chip, plain col
-    CHECK(ccs == 0, "cell chip inserted in the plain column");
-    m.tableChoiceAddOption(t, 2, 2, ccs, QStringLiteral("Blocked"),
-                           QStringLiteral("#005080"));
-
-    Exporter ex;
-    ex.setModel(&m);
-
-    // Markdown: chips flatten to their labels; cell bold carries; typed
-    // headers are the header TEXT, not a glyph/label.
-    RecordingSink msink;
-    const QString md = ex.toMarkdown(Exporter::Options{}, msink);
-    CHECK(md.contains(QStringLiteral("status is Urgent today")),
-          "md: inline chip flattens to the selected label");
-    CHECK(md.contains(QStringLiteral("| Done? | Status | Notes |")),
-          "md: typed-column header cells stay text");
-    CHECK(md.contains(QStringLiteral("| [/] | Ship | **bold** note |")),
-          "md: check state + choice label + bold cell span");
-    CHECK(md.contains(QStringLiteral("Blocked")),
-          "md: cell chip flattens to its label");
-
-    // HTML: chips are .chip pills with the option color at 0.28 alpha —
-    // inline, in choice columns, and inside plain cells.
-    RecordingSink hsink;
-    const QString html = ex.toHtml(Exporter::Options{}, hsink);
-    CHECK(html.contains(QStringLiteral(
-              "<span class=\"chip\" style=\"background:rgba(128,64,0,0.28)\">Urgent</span>")),
-          "html: inline chip renders as the colored pill");
-    CHECK(html.contains(QStringLiteral(
-              "<span class=\"chip\" style=\"background:rgba(128,64,0,0.28)\">Ship</span>")),
-          "html: choice-column chip keeps its pill");
-    CHECK(html.contains(QStringLiteral(
-              "<span class=\"chip\" style=\"background:rgba(0,80,128,0.28)\">Blocked</span>")),
-          "html: cell chip renders as a pill too");
-    CHECK(html.contains(QStringLiteral("<td>Done?</td>")),
-          "html: check column's header cell is its text");
-    CHECK(html.contains(QStringLiteral("class=\"cb doing\"")),
-          "html: body check cell renders the tri-state glyph");
-    CHECK(html.contains(QStringLiteral("<strong>bold</strong> note")),
-          "html: cell bold span carries");
-
-    // DOCX: painted task glyphs (docPr-tagged, no Unicode fallback), chip
-    // shading on choice cells, cell spans as real runs.
-    const QString docxPath = QDir::temp().filePath(QStringLiteral("mn_chip_test.docx"));
-    QFile::remove(docxPath);
-    CHECK(ex.exportDocx(docxPath, true), "exportDocx wrote the file");
-    {
-        QZipReader zr(docxPath);
-        const QByteArray doc = zr.fileData(QStringLiteral("word/document.xml"));
-        CHECK(doc.contains("mnTask1"), "docx: task glyphs are docPr-tagged images");
-        CHECK(!doc.contains("\xE2\x97\x90") && !doc.contains("\xE2\x98\x90"),
-              "docx: no Unicode ◐/☐ glyph runs remain");
-        CHECK(doc.contains("Done?"), "docx: check column's header cell is its text");
-        // #804000 chip over paper = 0.28·color + 0.72·white = DBCAB8.
-        CHECK(doc.contains("w:fill=\"DBCAB8\""),
-              "docx: choice cell + inline chip shade with the paper blend");
-        CHECK(doc.contains("<w:b/>"), "docx: cell bold span emits a real run");
-    }
-    // Round-trip: the painted glyph must re-import as task STATE, never as
-    // a media block.
-    {
-        BlockModel m2;
-        m2.newDocument();
-        while (m2.rowCountQml() > 0) m2.removeBlock(0);
-        m2.insertBlock(0);
-        CHECK(Importer::importDocxFile(docxPath, &m2), "docx re-imported");
-        int taskRow = -1, mediaRows = 0;
-        for (int r = 0; r < m2.rowCountQml(); ++r) {
-            if (m2.typeForRow(r) == BlockModel::TaskListItem) taskRow = r;
-            if (m2.typeForRow(r) == BlockModel::Media) ++mediaRows;
-        }
-        CHECK(taskRow >= 0 && m2.taskStateForRow(taskRow) == BlockModel::TaskDoing
-                  && m2.contentForRow(taskRow) == QStringLiteral("doing thing"),
-              "docx round-trip: docPr sniff restores the task, spacer stripped");
-        CHECK(mediaRows == 0, "docx round-trip: glyph rasters never become media");
-        m2.closeDocument();
-    }
-    QFile::remove(docxPath);
-
-    // PDF: the doc (chips + typed columns + cell spans) renders and writes.
-    const QString pdfPath = QDir::temp().filePath(QStringLiteral("mn_chip_test.pdf"));
-    QFile::remove(pdfPath);
-    CHECK(ex.exportPdf(pdfPath, true), "exportPdf wrote the file");
-    CHECK(QFileInfo(pdfPath).size() > 0, "pdf is non-empty");
-    QFile::remove(pdfPath);
-    m.closeDocument();
-}
-
 // =============================================================================
 // 0.5.0 — selection hardening, rich clipboard, block move
 // =============================================================================
@@ -8590,10 +8321,8 @@ int main(int argc, char** argv) {
     testMergeEngine();
     testMergeAssetsAndEdges();
     testCodeBlockInsert();
-    testCellMediaExports();
     testTableBulkOps();
     testCellChoiceChips();
-    testExportChipsTasksCells();
     testBlockClipboardRoundTrip();
     testSpecsForRange();
     testClipboardMime();

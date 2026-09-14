@@ -74,64 +74,6 @@ QString ufbLinkFor(const QString& path) {
          + QString::fromLatin1(QUrl::toPercentEncoding(norm, "/"));
 }
 
-// Effective column count for a table export: TRAILING fully-empty plain
-// columns (no text, no media, in any row — header included) drop at export
-// time. Sheet imports formatted to the sheet edge shouldn't ship 20 blank
-// pipes per row; the document itself is untouched. Interior empty columns
-// and typed (check/choice) columns are deliberate structure and stay.
-int exportCols(const BlockModel* m, int row) {
-    int cols = m->tableColumns(row);
-    const int rows = m->tableRows(row);
-    while (cols > 1) {
-        const int c = cols - 1;
-        if (m->tableColumnKind(row, c) != 0) break;
-        bool empty = true;
-        for (int r = 0; r < rows && empty; ++r)
-            if (!m->tableCell(row, r, c).isEmpty()
-                || !m->tableCellMedia(row, r, c).isEmpty())
-                empty = false;
-        if (!empty) break;
-        --cols;
-    }
-    return cols;
-}
-
-// The app's column-width rule, mirrored for export (user ruling 2026-08-20:
-// exports give copy the room the app does). Manual widths pass through; an
-// auto column is CONTENT-MEASURED — the widest cell line plus padding —
-// clamped [48, 360] exactly like BlockTable.recomputeAutoW. Falls back to
-// the app's 160 default only for a column with nothing measurable.
-int exportColWidth(const BlockModel* m, int row, int c) {
-    const int manual = m->tableColWidth(row, c);
-    if (manual > 0) return manual;
-    static const QFontMetricsF fm = [] {
-        QFont f(QStringLiteral("Aspekta"));
-        f.setPixelSize(14);                    // the app's body size
-        return QFontMetricsF(f);
-    }();
-    const int rows = m->tableRows(row);
-    const int hdr = m->tableHeaderRows(row);
-    const int kind = m->tableColumnKind(row, c);
-    qreal mw = 0;
-    // Header rows stay text in every column kind; body cells only carry
-    // measurable text in a text column. Row 0 reserves the sort-glyph slot.
-    const int textRows = (kind == 0) ? rows : hdr;
-    for (int r = 0; r < textRows; ++r) {
-        const qreal pad = (r == 0 && hdr > 0) ? 18 : 0;
-        const QStringList lines = m->tableCell(row, r, c).split(QLatin1Char('\n'));
-        for (const QString& ln : lines)
-            mw = std::max(mw, fm.horizontalAdvance(ln) + pad);
-    }
-    if (kind == 1) {   // choice: fit the widest option chip
-        for (const QVariant& ov : m->tableColumnOptions(row, c)) {
-            const QString label = ov.toMap().value(QStringLiteral("label")).toString();
-            mw = std::max(mw, fm.horizontalAdvance(label) + 10);
-        }
-    }
-    if (mw <= 0) return 160;                   // nothing measurable: app default
-    return int(std::lround(std::clamp(mw + 2 * 8 + 6, 48.0, 360.0)));
-}
-
 // Escape markdown punctuation in plain prose. NOT applied inside code spans
 // or code blocks. Line-start-only hazards ('#'/'>' openers) are left alone:
 // the autoformat triggers already convert such content to real blocks, so
@@ -285,8 +227,7 @@ struct FootnoteCtx {
     }
 };
 
-// Text + spans → markdown with markers, footnote refs recorded. Shared by
-// body blocks (spansForRow) and table cells (tableCellSpans, 2026-08-22).
+// Text + spans → markdown with markers, footnote refs recorded (spansForRow).
 QString emitInlineSpans(const QString& text, const QVariantList& spans,
                         FootnoteCtx& fn) {
     const int len = text.size();
@@ -392,73 +333,6 @@ QString emitInlineSpans(const QString& text, const QVariantList& spans,
 
 QString emitInline(const BlockModel* m, int row, FootnoteCtx& fn) {
     return emitInlineSpans(m->contentForRow(row), m->spansForRow(row), fn);
-}
-
-// ---------- table ----------
-
-QString cellMd(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& sink) {
-    QString out;
-    // Header cells stay TEXT in every column kind (the app's rule —
-    // BlockTable's isCheck/isChoice are !isHeader), so the typed branches
-    // only apply to body rows.
-    const bool header = r < m->tableHeaderRows(row);
-    const int kind = header ? 0 : m->tableColumnKind(row, c);
-    if (kind == 2) {
-        switch (m->tableCellCheck(row, r, c)) {
-        case 1:  out = QStringLiteral("[/]"); break;
-        case 2:  out = QStringLiteral("[x]"); break;
-        default: out = QStringLiteral("[ ]"); break;
-        }
-    } else if (kind == 1) {
-        out = escapeMd(m->tableCellChoiceLabel(row, r, c));
-    } else {
-        if (!m->tableCellMedia(row, r, c).isEmpty()) {
-            const QString p = localPathOf(m->tableCellMediaUrl(row, r, c));
-            if (!p.isEmpty()) {
-                // The block-image rule (emitMedia): collect into .assets;
-                // an unreachable source keeps its mapped absolute link
-                // instead of silently dropping the image.
-                const QString rel = sink.addFile(p, QFileInfo(p).completeBaseName());
-                out += QStringLiteral("![](%1) ")
-                           .arg(mdFileDest(rel.isEmpty() ? p : rel));
-            }
-        }
-        // Cell spans ride the same walker as body text (cells can't carry
-        // comment spans, so the throwaway footnote ctx never numbers).
-        FootnoteCtx cellFn;
-        out += emitInlineSpans(m->tableCell(row, r, c),
-                               m->tableCellSpans(row, r, c), cellFn);
-    }
-    out.replace(QStringLiteral("|"), QStringLiteral("\\|"));
-    out.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
-    return out;
-}
-
-QString emitTable(const BlockModel* m, int row, Exporter::AssetSink& sink) {
-    const int rows = m->tableRows(row), cols = exportCols(m, row);
-    const int hdr = m->tableHeaderRows(row);
-    if (rows <= 0 || cols <= 0) return {};
-    QString out;
-    // Pipe tables require a header row: use the table's first header row, or
-    // synthesize an empty one. Extra header rows fall through to the body
-    // (documented lossiness).
-    out += QStringLiteral("|");
-    for (int c = 0; c < cols; ++c)
-        out += QStringLiteral(" %1 |").arg(hdr > 0 ? cellMd(m, row, 0, c, sink) : QString());
-    out += QStringLiteral("\n|");
-    for (int c = 0; c < cols; ++c) {
-        switch (m->tableColAlign(row, c)) {
-        case 1:  out += QStringLiteral(" :---: |"); break;
-        case 2:  out += QStringLiteral(" ---: |"); break;
-        default: out += QStringLiteral(" --- |"); break;
-        }
-    }
-    for (int r = (hdr > 0 ? 1 : 0); r < rows; ++r) {
-        out += QStringLiteral("\n|");
-        for (int c = 0; c < cols; ++c)
-            out += QStringLiteral(" %1 |").arg(cellMd(m, row, r, c, sink));
-    }
-    return out;
 }
 
 // ---------- media ----------
@@ -997,9 +871,6 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
         case BlockModel::Divider:
             block = QStringLiteral("---");
             break;
-        case BlockModel::Table:
-            block = emitTable(m, row, sink);
-            break;
         case BlockModel::Split:
             block = emitGridTable(m, row, opt, sink, fn);
             break;
@@ -1339,117 +1210,6 @@ QString taskGlyphHtml(int state) {
     case BlockModel::TaskDone:  return QStringLiteral("<span class=\"cb done\"></span>");
     default:                    return QStringLiteral("<span class=\"cb\"></span>");
     }
-}
-
-QString cellHtml(const BlockModel* m, int row, int r, int c, Exporter::AssetSink& sink) {
-    // Header cells stay TEXT in every column kind (the app's rule —
-    // BlockTable's isCheck/isChoice are !isHeader).
-    const bool header = r < m->tableHeaderRows(row);
-    const int kind = header ? 0 : m->tableColumnKind(row, c);
-    if (kind == 2) return taskGlyphHtml(m->tableCellCheck(row, r, c));
-    if (kind == 1) {
-        const QString label = m->tableCellChoiceLabel(row, r, c);
-        if (label.isEmpty()) return {};
-        const QString col = m->tableCellChoiceColor(row, r, c);
-        const QColor cc(col);
-        const QString bg = cc.isValid()
-            ? QStringLiteral("rgba(%1,%2,%3,0.28)").arg(cc.red()).arg(cc.green()).arg(cc.blue())
-            : QStringLiteral("#333333");
-        return QStringLiteral("<span class=\"chip\" style=\"background:%1\">%2</span>")
-            .arg(bg, htmlEscape(label));
-    }
-    QString out;
-    if (!m->tableCellMedia(row, r, c).isEmpty()) {
-        const QString p = localPathOf(m->tableCellMediaUrl(row, r, c));
-        const QString src = sink.addFile(p, QFileInfo(p).completeBaseName());
-        if (!src.isEmpty())
-            out += QStringLiteral("<img src=\"%1\" alt=\"\"><br>").arg(src);
-    }
-    // Cell spans (formatting + cell chips) ride the body walker; cells
-    // can't carry comment spans, so the throwaway ctx never numbers.
-    FootnoteCtx cellFn;
-    return out + emitInlineHtmlSpans(m, m->tableCell(row, r, c),
-                                     m->tableCellSpans(row, r, c), cellFn);
-}
-
-QString emitTableHtml(const BlockModel* m, int row, Exporter::AssetSink& sink) {
-    const int rows = m->tableRows(row), cols = exportCols(m, row);
-    if (rows <= 0 || cols <= 0) return {};
-    auto cellStyle = [&](int r, int c) {
-        QString st;
-        const QString bg = m->tableCellBg(row, r, c);
-        const QString fg = m->tableCellFg(row, r, c);
-        if (!bg.isEmpty()) st += QStringLiteral("background:%1;").arg(htmlEscape(bg));
-        if (!fg.isEmpty()) st += QStringLiteral("color:%1;").arg(htmlEscape(fg));
-        switch (m->tableColAlign(row, c)) {
-        case 1: st += QStringLiteral("text-align:center;"); break;
-        case 2: st += QStringLiteral("text-align:right;"); break;
-        default: break;
-        }
-        return st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st);
-    };
-    // Column widths authored in the app (drag-resized; 0 = auto) carry into
-    // the export as a colgroup: set columns hold their width, auto columns
-    // keep flexing. When EVERY column is authored the table goes
-    // table-layout:fixed so the widths are exact (content wraps inside,
-    // matching the app), not just minimums.
-    //
-    // Viewport cap (user rulings 2026-08-20): a table wider than the page
-    // column keeps its FULL authored width — the in-app extend-past-the-page
-    // behavior; HTML has a whole viewport to spend, and squeezing 26 columns
-    // into the page measure leaves no room for copy. It only shrinks when
-    // the BROWSER is narrower than the table: width:min(authored, viewport
-    // minus the page's left offset), table-layout:fixed + percentage shares,
-    // so text wraps inside (td overflow-wrap) and cell images clamp (the
-    // global img max-width) instead of the page scrolling sideways.
-    QString colTags;
-    int authored = 0;
-    double total = 0;
-    for (int c = 0; c < cols; ++c) {
-        const int w = m->tableColWidth(row, c);
-        total += exportColWidth(m, row, c);   // app-measured, not a flat 160
-        if (w > 0) {
-            colTags += QStringLiteral("<col style=\"width:%1px\">").arg(w);
-            ++authored;
-        } else {
-            colTags += QStringLiteral("<col>");
-        }
-    }
-    QString out;
-    const double pw = std::max<double>(400.0, m->pageWidth());
-    if (total > pw) {
-        colTags.clear();
-        for (int c = 0; c < cols; ++c)
-            colTags += QStringLiteral("<col style=\"width:%1%\">")
-                           .arg(exportColWidth(m, row, c) / total * 100.0, 0, 'f', 2);
-        // 152 = main's 120px left padding + 32px right breathing room.
-        // Floor at the page measure (user ruling 2026-08-20): the viewport
-        // cap never squeezes a table below the page column — geometry stays
-        // put on narrow windows (scroll, don't reflow) so ink aligns.
-        out = QStringLiteral(
-            "<table style=\"table-layout:fixed;"
-            "width:min(%1px,max(%2px,calc(100vw - 152px)))\">")
-                  .arg(int(total)).arg(int(pw));
-        out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
-    } else {
-        out = (authored == cols && authored > 0)
-            ? QStringLiteral("<table style=\"table-layout:fixed\">")
-            : QStringLiteral("<table>");
-        if (authored > 0)
-            out += QStringLiteral("<colgroup>%1</colgroup>").arg(colTags);
-    }
-    // Header-AGNOSTIC (user ruling 2026-08-20): the flag can't be trusted on
-    // sheet imports (row 0 is often data), so styled exports emit every row
-    // as a plain data row — authored cell colours still carry.
-    for (int r = 0; r < rows; ++r) {
-        out += QStringLiteral("<tr>");
-        for (int c = 0; c < cols; ++c)
-            out += QStringLiteral("<td%1>%2</td>")
-                       .arg(cellStyle(r, c), cellHtml(m, row, r, c, sink));
-        out += QStringLiteral("</tr>");
-    }
-    out += QStringLiteral("</table>");
-    return out;
 }
 
 // Note thumbs export as LAYERS when possible: the clean frame at the base
@@ -2156,12 +1916,6 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         case BlockModel::Divider:
             body += injectInk(QStringLiteral("<div class=\"blkw\">%1<hr></div>\n").arg(bnum(row)), row, 0);
             break;
-        case BlockModel::Table:
-            // Wrapped so wide tables can BREAK OUT of the prose measure
-            // while small ones still fill the column — see .tablewrap.
-            body += injectInk(QStringLiteral("<div class=\"tablewrap\">%1%2</div>\n")
-                        .arg(bnum(row), emitTableHtml(m, row, sink)), row, 0);
-            break;
         case BlockModel::Media: {
             QString media = emitMediaHtml(m, row, opt, sink, inkLayers);
             // Number the figure (first tag) — the notes section below it
@@ -2262,17 +2016,10 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     {
         qreal widest = 0;
         for (int r = 0; r < m->rowCountQml(); ++r) {
-            if (m->typeForRow(r) == BlockModel::Split && m->headerCount(r) > 0) {   // a derived table
-                const int gc = gridExportCols(m, r);
-                qreal t = 0;
-                for (int c = 0; c < gc; ++c) t += m->tableColumnWidth(r, c);
-                widest = std::max(widest, t);
-                continue;
-            }
-            if (m->typeForRow(r) != BlockModel::Table) continue;
-            const int tc = exportCols(m, r);
+            if (m->typeForRow(r) != BlockModel::Split || m->headerCount(r) == 0) continue;   // a table's head
+            const int gc = gridExportCols(m, r);
             qreal t = 0;
-            for (int c = 0; c < tc; ++c) t += exportColWidth(m, r, c);
+            for (int c = 0; c < gc; ++c) t += m->tableColumnWidth(r, c);
             widest = std::max(widest, t);
         }
         if (widest > pw)
@@ -2836,121 +2583,6 @@ void docxHeading(DocxCtx& c, QXmlStreamWriter& w, int row, int level) {
     docxPara(c, w, row, rp);
 }
 
-void docxTable(DocxCtx& c, QXmlStreamWriter& w, int row) {
-    const BlockModel* m = c.m;
-    const int rows = m->tableRows(row), cols = exportCols(m, row);
-    if (rows <= 0 || cols <= 0) return;
-    w.writeStartElement(QStringLiteral("w:tbl"));
-    w.writeStartElement(QStringLiteral("w:tblPr"));
-    w.writeStartElement(QStringLiteral("w:tblBorders"));
-    for (const char* side : {"top", "left", "bottom", "right", "insideH", "insideV"}) {
-        w.writeStartElement(QStringLiteral("w:") + QLatin1String(side));
-        w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("single"));
-        w.writeAttribute(QStringLiteral("w:sz"), QStringLiteral("4"));
-        w.writeAttribute(QStringLiteral("w:color"), QStringLiteral("999999"));
-        w.writeEndElement();
-    }
-    w.writeEndElement();
-    w.writeEndElement();
-    // Authored column widths carry through (px → dxa ≈ ×15); auto = 2000.
-    // Normalized to the printable page (≈9360 dxa, letter with 1" margins)
-    // when they'd overflow — a 26-column sheet import was a 90cm table.
-    std::vector<double> colDxa(size_t(cols), 0.0);
-    {
-        double total = 0;
-        for (int cix = 0; cix < cols; ++cix) {
-            colDxa[size_t(cix)] = exportColWidth(m, row, cix) * 15.0;   // app-measured
-            total += colDxa[size_t(cix)];
-        }
-        constexpr double kPageDxa = 9360.0;
-        if (total > kPageDxa)
-            for (double& d : colDxa) d *= kPageDxa / total;
-    }
-    w.writeStartElement(QStringLiteral("w:tblGrid"));
-    for (int cix = 0; cix < cols; ++cix) {
-        w.writeStartElement(QStringLiteral("w:gridCol"));
-        w.writeAttribute(QStringLiteral("w:w"),
-                         QString::number(int(colDxa[size_t(cix)])));
-        w.writeEndElement();
-    }
-    w.writeEndElement();
-    for (int r = 0; r < rows; ++r) {
-        w.writeStartElement(QStringLiteral("w:tr"));
-        for (int cix = 0; cix < cols; ++cix) {
-            w.writeStartElement(QStringLiteral("w:tc"));
-            w.writeStartElement(QStringLiteral("w:tcPr"));
-            // Header-AGNOSTIC (user ruling 2026-08-20): only AUTHORED cell
-            // colours shade — the header flag can't be trusted on sheet
-            // imports, so no row gets promoted styling.
-            const QString bg = m->tableCellBg(row, r, cix);
-            if (!bg.isEmpty()) {
-                w.writeStartElement(QStringLiteral("w:shd"));
-                w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("clear"));
-                w.writeAttribute(QStringLiteral("w:fill"),
-                    QString(bg).remove(QLatin1Char('#')).toUpper());
-                w.writeEndElement();
-            }
-            w.writeEndElement();
-            // Header cells stay TEXT in every column kind (the app's rule —
-            // BlockTable's isCheck/isChoice are !isHeader).
-            const bool header = r < m->tableHeaderRows(row);
-            const int kind = header ? 0 : m->tableColumnKind(row, cix);
-            QString cell;
-            DocxRunProps rp;
-            if (kind == 2) {
-                // Painted glyph (2026-08-22) — same raster as the PDF,
-                // instead of font-fallback Unicode.
-                w.writeStartElement(QStringLiteral("w:p"));
-                docxTaskGlyphRun(c, w, m->tableCellCheck(row, r, cix), false);
-                w.writeEndElement();
-                w.writeEndElement();   // w:tc
-                continue;
-            }
-            if (kind == 1) {
-                cell = m->tableCellChoiceLabel(row, r, cix);
-                // The option color carries as run shading (2026-08-22),
-                // the paper take on the app's chip.
-                if (!cell.isEmpty())
-                    rp.highlight =
-                        chipOnPaper(m->tableCellChoiceColor(row, r, cix)).name();
-            } else {
-                cell = m->tableCell(row, r, cix);
-            }
-            // Cell image (plain columns only, like the other emitters):
-            // its own paragraph above the text, capped to the column width.
-            if (kind == 0 && !m->tableCellMedia(row, r, cix).isEmpty()) {
-                const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
-                if (!img.isNull() && img.width() > 0) {
-                    const int dwOv = m->tableCellMediaDw(row, r, cix);
-                    double dispW = dwOv > 0 ? dwOv : img.width();
-                    // Cap to the (normalized) cell width, dxa → px.
-                    dispW = std::min(dispW,
-                                     std::max(8.0, colDxa[size_t(cix)] / 15.0 - 10.0));
-                    docxImagePara(c, w, docxAddImage(c, img),
-                                  int(dispW),
-                                  int(dispW * img.height() / double(img.width())));
-                }
-            }
-            const QString fg = m->tableCellFg(row, r, cix);
-            if (!fg.isEmpty()) rp.color = fg;
-            if (kind == 0) {
-                // Cell spans (formatting + cell chips) ride the body run
-                // walker (2026-08-22); header cells of typed columns land
-                // here too and typed cells have no span list to carry.
-                w.writeStartElement(QStringLiteral("w:p"));
-                docxSpanRuns(c, w, cell, m->tableCellSpans(row, r, cix), rp);
-                w.writeEndElement();
-            } else {
-                docxPlainPara(w, cell, rp);
-            }
-            w.writeEndElement();   // w:tc
-        }
-        w.writeEndElement();       // w:tr
-    }
-    w.writeEndElement();           // w:tbl
-    docxPlainPara(w, QString(), {});   // spacer after the table
-}
-
 void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
     const BlockModel* m = c.m;
     const QString kind = m->mediaKind(row);
@@ -3368,9 +3000,6 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                     pw.writeEndElement();
                     pw.writeEndElement();
                 });
-                break;
-            case BlockModel::Table:
-                docxTable(c, w, row);
                 break;
             case BlockModel::Media:
                 docxMedia(c, w, row);
@@ -3854,123 +3483,6 @@ void pdfCode(PdfCtx& c, int row, PdfCodeEmitter& ce) {
     c.toEnd();
 }
 
-void pdfTable(PdfCtx& c, int row) {
-    const BlockModel* m = c.m;
-    const int rows = m->tableRows(row), cols = exportCols(m, row);
-    if (rows <= 0 || cols <= 0) return;
-    QTextTableFormat tf;
-    tf.setBorder(0.5);
-    tf.setBorderBrush(kPdfBorder);
-    tf.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-    tf.setBorderCollapse(true);
-    tf.setCellPadding(4);
-    tf.setCellSpacing(0);
-    // NO setHeaderRowCount (user ruling 2026-08-20): Qt re-renders the header
-    // row — shading, bold and all — at the top of EVERY page a long table
-    // spans, and a sheet-import's "header" is often just its first data row.
-    // The header keeps its shading once, where it actually is.
-    tf.setTopMargin(6); tf.setBottomMargin(6);
-    // Real column constraints: authored widths (160 when auto), normalized
-    // to the content width. Without them Qt distributes by content whim AND
-    // an image wider than its actual cell gets width-clamped by the layout
-    // while keeping the explicit height — squeezed aspect + paint bleeding
-    // over the rows below (user PDF, 2026-08-20). colWpt below is the true
-    // per-column budget the cell images cap against.
-    std::vector<qreal> colWpt(size_t(cols), 0.0);
-    {
-        qreal total = 0;
-        for (int cix = 0; cix < cols; ++cix) {
-            colWpt[size_t(cix)] = exportColWidth(m, row, cix);   // app-measured
-            total += colWpt[size_t(cix)];
-        }
-        const qreal scale = (total > c.contentW) ? c.contentW / total : 1.0;
-        QList<QTextLength> cons;
-        cons.reserve(cols);
-        for (int cix = 0; cix < cols; ++cix) {
-            colWpt[size_t(cix)] *= scale;
-            // Layout units, NOT image-format units — only QTextImageFormat
-            // sizes carry the imgFmt dpi pre-multiplier.
-            cons.append(QTextLength(QTextLength::FixedLength, colWpt[size_t(cix)]));
-        }
-        tf.setColumnWidthConstraints(cons);
-    }
-    if (c.first) { c.first = false; }
-    QTextTable* t = c.cur.insertTable(rows, cols, tf);
-    // Header-AGNOSTIC (user ruling 2026-08-20): only AUTHORED cell colours
-    // shade; no row gets promoted bold/fill — the header flag can't be
-    // trusted on sheet imports.
-    for (int r = 0; r < rows; ++r) {
-        for (int cix = 0; cix < cols; ++cix) {
-            QTextTableCell cell = t->cellAt(r, cix);
-            const QString bg = m->tableCellBg(row, r, cix);
-            if (!bg.isEmpty()) {
-                QTextCharFormat cf = cell.format();
-                cf.setBackground(QColor(bg));
-                cell.setFormat(cf);
-            }
-            QTextCursor cc = cell.firstCursorPosition();
-            // Header cells stay TEXT in every column kind (the app's rule —
-            // BlockTable's isCheck/isChoice are !isHeader).
-            const bool header = r < m->tableHeaderRows(row);
-            const int kind = header ? 0 : m->tableColumnKind(row, cix);
-            QTextCharFormat rf;
-            rf.setForeground(kPdfText);
-            rf.setFontPointSize(9.5);
-            const QString fg = m->tableCellFg(row, r, cix);
-            if (!fg.isEmpty()) rf.setForeground(QColor(fg));
-            if (kind == 2) {   // check column → painted glyph (font-fallback-proof)
-                QTextImageFormat gf;
-                QImage g = taskGlyphImage(m->tableCellCheck(row, r, cix));
-                gf.setName(pdfAddImage(c, g));
-                gf.setWidth(11 * c.imgFmt); gf.setHeight(11 * c.imgFmt);
-                cc.insertImage(gf);
-            } else if (kind == 1) {
-                // The option color carries as run shading (2026-08-22),
-                // the paper take on the app's chip.
-                const QString label = m->tableCellChoiceLabel(row, r, cix);
-                QTextCharFormat chf = rf;
-                if (!label.isEmpty())
-                    chf.setBackground(
-                        chipOnPaper(m->tableCellChoiceColor(row, r, cix)));
-                cc.insertText(label, chf);
-            } else {
-                if (!m->tableCellMedia(row, r, cix).isEmpty()) {
-                    const QImage img(localPathOf(m->tableCellMediaUrl(row, r, cix)));
-                    if (!img.isNull() && img.width() > 0) {
-                        const int dwOv = m->tableCellMediaDw(row, r, cix);
-                        qreal dispW = dwOv > 0 ? dwOv : img.width();
-                        // Cap to the cell's TRUE width (the constraint above,
-                        // minus padding+border) — an image wider than its
-                        // cell gets width-clamped by the layout while the
-                        // explicit height stays → squeezed + overlap.
-                        dispW = std::min(dispW,
-                                         std::max(8.0, colWpt[size_t(cix)] - 10.0));
-                        qreal dispH = dispW * img.height() / qreal(img.width());
-                        // A cell is a single layout line — keep the image
-                        // safely inside one page (the pdfInsertImage rule).
-                        const qreal maxH = c.contentH - 80;
-                        if (maxH > 0 && dispH > maxH) {
-                            dispW *= maxH / dispH; dispH = maxH;
-                        }
-                        QTextImageFormat f;
-                        f.setName(pdfAddImage(c, img));
-                        f.setWidth(dispW * c.imgFmt);
-                        f.setHeight(dispH * c.imgFmt);
-                        cc.insertImage(f);
-                        if (!m->tableCell(row, r, cix).isEmpty())
-                            cc.insertBlock();   // text under the image
-                    }
-                }
-                // Cell spans (formatting + cell chips) ride the body run
-                // walker (2026-08-22).
-                pdfSpanRuns(c, cc, m->tableCell(row, r, cix),
-                            m->tableCellSpans(row, r, cix), rf);
-            }
-        }
-    }
-    c.toEnd();
-}
-
 // Reference lines under posters (the DOCX typography: bold name, mono path,
 // mono kind·meta).
 void pdfRefLines(PdfCtx& c, const QString& name, const QString& path,
@@ -4365,10 +3877,6 @@ void buildPdfDoc(PdfCtx& c) {
             c.cur.insertImage(f);
             break;
         }
-        case BlockModel::Table:
-            endList();
-            pdfTable(c, row);
-            break;
         case BlockModel::Media:
             endList();
             pdfMedia(c, row);
