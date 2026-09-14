@@ -852,6 +852,89 @@ QString Exporter::toMarkdown(const Options& opt, AssetSink& sink) const {
 // The markdown walker over rows [lo, hi] — toMarkdown is the whole document
 // with the document-name header; Copy as Markdown reuses it for ranges
 // (no header — a pasted fragment shouldn't restate the doc's name).
+namespace {
+
+// Derived tables (SR-4 S8b). A table's columns for export: trailing columns with nothing in any row
+// drop, typed columns stay (the exportCols rule).
+int gridExportCols(const BlockModel* m, int head) {
+    int cols = m->tableColumnCount(head);
+    const int rows = m->gridRowCount(head);
+    while (cols > 1) {
+        const int c = cols - 1;
+        if (m->gridColumnKind(head, c) != 0) break;
+        bool empty = true;
+        for (int r = 0; r < rows && empty; ++r)
+            if (!m->gridCellText(head, r, c).isEmpty()) empty = false;
+        if (!empty) break;
+        --cols;
+    }
+    return cols;
+}
+
+// The table's last block (the end of its last row).
+int gridTableLast(const BlockModel* m, int head) {
+    const QVariantList recs = m->tableRecords(head);
+    return recs.isEmpty() ? head : m->splitRowLast(recs.back().toInt());
+}
+
+// One pipe-table cell (R-I5 5b): the cell's blocks joined with <br>, list items as "• ", images as
+// ![](), a check cell as its box. Header cells stay text in every column kind.
+QString gridCellMd(const BlockModel* m, int head, int r, int c, const Exporter::Options& opt,
+                   Exporter::AssetSink& sink, FootnoteCtx& fn) {
+    const int kind = r < m->headerCount(head) ? 0 : m->gridColumnKind(head, c);
+    QString out;
+    if (kind == 2) {
+        switch (m->gridCellCheck(head, r, c)) {
+        case 1:  out = QStringLiteral("[/]"); break;
+        case 2:  out = QStringLiteral("[x]"); break;
+        default: out = QStringLiteral("[ ]"); break;
+        }
+    } else {
+        QStringList parts;
+        for (const QVariant& v : m->gridCellRows(head, r, c)) {
+            const int b = v.toInt();
+            const int t = m->typeForRow(b);
+            if (t == BlockModel::Media) parts << emitMedia(m, b, opt, sink);
+            else if (t == BlockModel::Divider) parts << QStringLiteral("---");
+            else if (t == BlockModel::Code) parts << QStringLiteral("`%1`").arg(m->contentForRow(b));
+            else if (BlockModel::isListType(static_cast<uint8_t>(t))) parts << QStringLiteral("• ") + emitInline(m, b, fn);
+            else parts << emitInline(m, b, fn);
+        }
+        while (!parts.isEmpty() && parts.last().isEmpty()) parts.removeLast();
+        out = parts.join(QStringLiteral("<br>"));
+    }
+    out.replace(QStringLiteral("|"), QStringLiteral("\\|"));
+    out.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+    return out;
+}
+
+// A derived table as GFM (R-I5 5b): the first header row is the pipe table's header; further header
+// rows are body rows.
+QString emitGridTable(const BlockModel* m, int head, const Exporter::Options& opt,
+                      Exporter::AssetSink& sink, FootnoteCtx& fn) {
+    const int rows = m->gridRowCount(head), cols = gridExportCols(m, head);
+    if (rows <= 0 || cols <= 0) return {};
+    QString out = QStringLiteral("|");
+    for (int c = 0; c < cols; ++c)
+        out += QStringLiteral(" %1 |").arg(gridCellMd(m, head, 0, c, opt, sink, fn));
+    out += QStringLiteral("\n|");
+    for (int c = 0; c < cols; ++c) {
+        switch (m->gridColAlign(head, c)) {
+        case 1:  out += QStringLiteral(" :---: |"); break;
+        case 2:  out += QStringLiteral(" ---: |"); break;
+        default: out += QStringLiteral(" --- |"); break;
+        }
+    }
+    for (int r = 1; r < rows; ++r) {
+        out += QStringLiteral("\n|");
+        for (int c = 0; c < cols; ++c)
+            out += QStringLiteral(" %1 |").arg(gridCellMd(m, head, r, c, opt, sink, fn));
+    }
+    return out;
+}
+
+} // namespace
+
 QString Exporter::markdownRange(int lo, int hi, const Options& opt,
                                 AssetSink& sink, bool withHeader) const {
     const BlockModel* m = model_;
@@ -866,7 +949,9 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
 
     for (int row = lo; row <= hi; ++row) {
         const int type = m->typeForRow(row);
-        if (type == BlockModel::Split) continue;   // lanes stack in reading order (R-I5 5b)
+        // Layout rows' lanes stack in reading order (R-I5 5b); a table's head emits the whole table.
+        const bool gridHead = type == BlockModel::Split && m->headerCount(row) > 0;
+        if (type == BlockModel::Split && !gridHead) continue;
         const bool isList = BlockModel::isListType(static_cast<uint8_t>(type));
         QString block;
 
@@ -915,6 +1000,9 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
         case BlockModel::Table:
             block = emitTable(m, row, sink);
             break;
+        case BlockModel::Split:
+            block = emitGridTable(m, row, opt, sink, fn);
+            break;
         case BlockModel::Media:
             block = emitMedia(m, row, opt, sink);
             break;
@@ -939,6 +1027,7 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
             doc += (prevWasList && isList) ? QStringLiteral("\n") : QStringLiteral("\n\n");
         doc += block;
         prevWasList = isList;
+        if (gridHead) row = std::max(row, gridTableLast(m, row));   // its rows and cells are in the table
     }
 
     // Footnote bodies (comment threads), in first-reference order.
@@ -1716,6 +1805,10 @@ main li,main figure,main .tablewrap,main .blkw,main .lanes{position:relative}
 .lanes{display:flex;gap:24px;align-items:flex-start}
 .lane{min-width:0}
 .lane .bnum{display:none}
+td .bnum,th .bnum{display:none}
+td>:first-child,th>:first-child{margin-top:0}
+td>:last-child,th>:last-child{margin-bottom:0}
+td img:not(.ink),th img:not(.ink){max-width:100%!important;height:auto}
 .lane pre{width:auto;min-width:0;overflow-x:auto}
 .lane img:not(.ink){max-width:100%!important;height:auto}
 .bnum{position:absolute;left:772px;top:4px;width:calc(100vw - 932px);   /* 932 = the 836
@@ -1764,7 +1857,7 @@ border:solid var(--bright);border-width:0 2px 2px 0;transform:rotate(45deg)}
 table{border-collapse:collapse;width:max-content;min-width:100%;font-size:14px;
 background:var(--bg)}
 td,th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word}
-th{background:#252525;color:var(--bright)}
+th{font-weight:inherit}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright)}
 .cmt{background:rgba(1,137,241,.13);position:relative}
 .cmt.resolved{background:rgba(140,140,140,.12)}   /* settled conversation */
@@ -1915,31 +2008,98 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     // blocks hide theirs (the app's rail numbers top entries only).
     int openLane = -1;
     bool inLanes = false;
-    auto closeLanes = [&](int nextLane) {      // close what the next row doesn't continue
+    // Derived tables (SR-4 S8b, R-I5 5a/5c): the same walk writes a table's rows as <tr>s and its cells as
+    // <th> (header rows, in <thead>) or <td> holding their real blocks. tableHead = the table being written.
+    int tableHead = -1, tableCols = 0, cellsInRow = 0;
+    bool rowIsHeader = false, inTbody = false;
+    auto cellTag = [&]() { return rowIsHeader ? QStringLiteral("th") : QStringLiteral("td"); };
+    auto closeLanes = [&](int nextLane, int nextRow) {   // close what the next row doesn't continue
         if (!inLanes) return;
         if (openLane >= 0 && nextLane != openLane) {
             closeListsTo(0);
-            body += QStringLiteral("</div>\n");
+            body += tableHead >= 0 ? QStringLiteral("</%1>\n").arg(cellTag()) : QStringLiteral("</div>\n");
             openLane = -1;
         }
-        if (nextLane < 0) { body += QStringLiteral("</div>\n"); inLanes = false; }
+        if (nextLane < 0) {
+            if (tableHead >= 0) {
+                for (; cellsInRow < tableCols; ++cellsInRow)          // a ragged row's missing cells
+                    body += QStringLiteral("<%1></%1>").arg(cellTag());
+                body += QStringLiteral("</tr>\n");
+                if (nextRow >= m->rowCountQml() || m->tableHeadOf(nextRow) != tableHead) {
+                    body += inTbody ? QStringLiteral("</tbody></table></div>\n") : QStringLiteral("</thead></table></div>\n");
+                    tableHead = -1;
+                }
+            } else {
+                body += QStringLiteral("</div>\n");
+            }
+            inLanes = false;
+        }
+    };
+    // A table's wrapper, <table> and colgroup: the app's px columns; wider than the page, percentage shares
+    // under the viewport cap (the emitTableHtml rules).
+    auto openGridTable = [&](int head) {
+        const int cols = gridExportCols(m, head);
+        double total = 0;
+        for (int c = 0; c < cols; ++c) total += m->tableColumnWidth(head, c);
+        const double pageW = std::max<double>(400.0, m->pageWidth());
+        QString colTags, open;
+        if (total > pageW) {
+            for (int c = 0; c < cols; ++c)
+                colTags += QStringLiteral("<col style=\"width:%1%\">").arg(m->tableColumnWidth(head, c) / total * 100.0, 0, 'f', 2);
+            open = QStringLiteral("<table style=\"table-layout:fixed;width:min(%1px,max(%2px,calc(100vw - 152px)))\">")
+                       .arg(int(total)).arg(int(pageW));
+        } else {
+            for (int c = 0; c < cols; ++c)
+                colTags += QStringLiteral("<col style=\"width:%1px\">").arg(qRound(m->tableColumnWidth(head, c)));
+            open = QStringLiteral("<table style=\"table-layout:fixed;width:%1px;min-width:0\">").arg(qRound(total));
+        }
+        return QStringLiteral("<div class=\"tablewrap\">%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags);
     };
 
     const int count = m->rowCountQml();
     for (int row = 0; row < count; ++row) {
         const int type = m->typeForRow(row);
         const int lane = m->laneForRow(row);
-        closeLanes(lane);
+        closeLanes(lane, row);
         if (type == BlockModel::Split) {
             closeListsTo(0);
-            body += QStringLiteral("<div class=\"lanes\">%1\n").arg(bnum(row));
+            const int th = m->tableHeadOf(row);
+            if (th >= 0) {
+                if (th == row) { body += openGridTable(row); inTbody = false; }
+                tableHead = th;
+                tableCols = gridExportCols(m, th);
+                rowIsHeader = m->gridRowOf(row) < m->headerCount(th);
+                if (!rowIsHeader && !inTbody) { body += QStringLiteral("</thead><tbody>\n"); inTbody = true; }
+                cellsInRow = 0;
+                body += QStringLiteral("<tr>\n");
+            } else {
+                body += QStringLiteral("<div class=\"lanes\">%1\n").arg(bnum(row));
+            }
             inLanes = true;
             continue;
         }
         if (lane >= 0 && lane != openLane) {
-            const QVariantList ratios = m->splitRatios(m->splitRowOf(row));
-            const double share = lane < ratios.size() ? ratios[lane].toDouble() : 0.5;
-            body += QStringLiteral("<div class=\"lane\" style=\"flex:%1 1 0\">\n").arg(std::lround(share * 1000));
+            if (tableHead >= 0) {
+                if (lane >= tableCols) continue;                     // a trimmed trailing column holds nothing
+                for (; cellsInRow < lane; ++cellsInRow)
+                    body += QStringLiteral("<%1></%1>").arg(cellTag());
+                const int r = m->gridRowOf(row);
+                QString st;
+                const QString bg = m->gridCellBg(tableHead, r, lane), fg = m->gridCellFg(tableHead, r, lane);
+                if (!bg.isEmpty()) st += QStringLiteral("background:%1;").arg(htmlEscape(bg));
+                if (!fg.isEmpty()) st += QStringLiteral("color:%1;").arg(htmlEscape(fg));
+                switch (m->gridColAlign(tableHead, lane)) {
+                case 1: st += QStringLiteral("text-align:center;"); break;
+                case 2: st += QStringLiteral("text-align:right;"); break;
+                default: break;
+                }
+                body += QStringLiteral("<%1%2>\n").arg(cellTag(), st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st));
+                ++cellsInRow;
+            } else {
+                const QVariantList ratios = m->splitRatios(m->splitRowOf(row));
+                const double share = lane < ratios.size() ? ratios[lane].toDouble() : 0.5;
+                body += QStringLiteral("<div class=\"lane\" style=\"flex:%1 1 0\">\n").arg(std::lround(share * 1000));
+            }
             openLane = lane;
         }
         if (!BlockModel::isListType(static_cast<uint8_t>(type)))
@@ -2009,6 +2169,11 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         }
         case BlockModel::Paragraph:
         default: {
+            if (tableHead >= 0 && lane >= 0 && m->gridRowOf(row) >= m->headerCount(tableHead)
+                && m->gridColumnKind(tableHead, lane) == 2) {       // a check cell: its box
+                body += taskGlyphHtml(m->gridCellCheck(tableHead, m->gridRowOf(row), lane)) + QLatin1Char('\n');
+                break;
+            }
             const QString inl = emitInlineHtml(m, row, fn);
             body += injectInk(QStringLiteral("<p>%1%2</p>\n")
                         .arg(bnum(row), inl.isEmpty() ? QStringLiteral("&nbsp;") : inl), row, 0);
@@ -2016,7 +2181,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         }
         }
     }
-    closeLanes(-1);
+    closeLanes(-1, count);
     closeListsTo(0);
 
     // Comments section (linked from the superscript refs).
@@ -2092,6 +2257,13 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     {
         qreal widest = 0;
         for (int r = 0; r < m->rowCountQml(); ++r) {
+            if (m->typeForRow(r) == BlockModel::Split && m->headerCount(r) > 0) {   // a derived table
+                const int gc = gridExportCols(m, r);
+                qreal t = 0;
+                for (int c = 0; c < gc; ++c) t += m->tableColumnWidth(r, c);
+                widest = std::max(widest, t);
+                continue;
+            }
             if (m->typeForRow(r) != BlockModel::Table) continue;
             const int tc = exportCols(m, r);
             qreal t = 0;

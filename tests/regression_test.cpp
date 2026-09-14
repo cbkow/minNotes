@@ -7667,6 +7667,60 @@ static void testLegacyTableSinks() {
     }
 }
 
+static void testGridTableExports() {
+    qInfo("[99] derived tables export: GFM header + <br> cells, HTML thead/th + px widths + colours + alignment (SR-4 S8b)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
+    const int head = m.insertTableRows(0, 3, 3) - 1;               // 0 before · table · after
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(head, r, c), QString::fromUtf8(t)); };
+    set(0, 0, "Name"); set(0, 1, "Status"); set(0, 2, "Done");
+    set(1, 0, "a1");   set(1, 1, "b1");
+    set(2, 0, "a2");   set(2, 1, "b2");
+    {
+        const int b = m.gridCellAt(head, 1, 1);
+        m.insertBlock(b + 1);
+        m.setContent(b + 1, QStringLiteral("b1x"));
+    }
+    m.gridSetColAlign(head, 1, 1);
+    m.setTableColumnWidth(head, 0, 200);
+    m.gridSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#ff0000"));
+    CHECK(m.gridSetColumnKind(head, 2, 2) && m.gridSetCellCheck(head, 1, 2, 2), "fixture: a check column, one box done");
+    CHECK(m.structureValid() && m.gridCellRows(head, 1, 1).size() == 2 && m.gridCellText(head, 1, 1) == QStringLiteral("b1\nb1x"),
+          "fixture: a 3×3 table with a two-block cell");
+
+    Exporter ex;
+    ex.setModel(&m);
+    RecordingSink ms;
+    const QString md = ex.toMarkdown(Exporter::Options{}, ms);
+    CHECK(md.contains(QStringLiteral("| Name | Status | Done |\n| --- | :---: | --- |\n| a1 | b1<br>b1x | [x] |\n| a2 | b2 | [ ] |")),
+          "Markdown: a pipe table — header row, alignment, a two-block cell joined with <br>, check boxes (%s)", qPrintable(md));
+    CHECK(md.indexOf(QStringLiteral("before")) < md.indexOf(QStringLiteral("| Name"))
+              && md.indexOf(QStringLiteral("| a2")) < md.indexOf(QStringLiteral("after"))
+              && md.count(QStringLiteral("Name")) == 1 && md.count(QStringLiteral("b1x")) == 1,
+          "Markdown: the table sits between its neighbours and its cells don't repeat as paragraphs");
+
+    RecordingSink hs;
+    const QString html = ex.toHtml(Exporter::Options{}, hs);
+    const int wrap = html.indexOf(QStringLiteral("<div class=\"tablewrap\">")), thead = html.indexOf(QStringLiteral("<thead>"));
+    const int nameAt = html.indexOf(QStringLiteral("Name</p>")), tbody = html.indexOf(QStringLiteral("</thead><tbody>"));
+    const int endT = html.indexOf(QStringLiteral("</tbody></table></div>")), afterAt = html.indexOf(QStringLiteral("after</p>"));
+    CHECK(wrap >= 0 && wrap < thead && thead < nameAt && nameAt < tbody && tbody < endT && endT < afterAt,
+          "HTML: the header row in <thead>, the body in <tbody>, the table closed before the next block");
+    CHECK(html.count(QStringLiteral("<table")) == 1 && html.count(QStringLiteral("<tr>")) == 3
+              && html.count(QRegularExpression(QStringLiteral("<th[ >]"))) == 3 && html.count(QRegularExpression(QStringLiteral("<td[ >]"))) == 6,
+          "HTML: one table, three rows, header cells <th>, body cells <td>");
+    CHECK(html.contains(QStringLiteral("<col style=\"width:200px\">")) && html.contains(QStringLiteral("<td style=\"background:#ff0000;\">"))
+              && html.contains(QStringLiteral("text-align:center;")) && html.contains(QStringLiteral("class=\"cb done\"")),
+          "HTML: px column widths, the cell colour, the column alignment, the check glyph");
+    const int b1 = html.indexOf(QStringLiteral("b1</p>")), b1x = html.indexOf(QStringLiteral("b1x</p>"));
+    CHECK(b1 >= 0 && b1 < b1x && !html.mid(b1, b1x - b1).contains(QStringLiteral("</td>"))
+              && html.count(QStringLiteral("<div")) == html.count(QStringLiteral("</div>")),
+          "HTML: a cell's blocks are real paragraphs in one <td>; divs balanced");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7876,6 +7930,7 @@ int main(int argc, char** argv) {
     testPastedHtmlTables();
     testTableGripsAndDrops();
     testLegacyTableSinks();
+    testGridTableExports();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
