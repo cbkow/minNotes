@@ -41,8 +41,6 @@ QJsonObject specToJson(const BlockModel::BlockSpec& sp, const QString& ink) {
     if (!sp.lang.isEmpty()) o.insert(QStringLiteral("lang"), sp.lang);
     if (!sp.mediaJson.isEmpty()) {
         putJsonOrRaw(o, QStringLiteral("media"), sp.mediaJson);
-    } else if (sp.type == BlockModel::Table) {
-        putJsonOrRaw(o, QStringLiteral("table"), sp.tableJson);
     } else {
         o.insert(QStringLiteral("text"), sp.text);
         if (!sp.spans.empty()) {
@@ -79,13 +77,9 @@ BlockModel::BlockSpec specFromJson(const QJsonObject& o, QString* ink) {
     sp.depth = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("depth")).toInt(), 0, 255));
     sp.lang = o.value(QStringLiteral("lang")).toString();
     const QString media = takeJsonOrRaw(o, QStringLiteral("media"));
-    const QString table = takeJsonOrRaw(o, QStringLiteral("table"));
     if (!media.isEmpty()) {
         sp.type = BlockModel::Media;
         sp.mediaJson = media;
-    } else if (sp.type == BlockModel::Table || !table.isEmpty()) {
-        sp.type = BlockModel::Table;
-        sp.tableJson = table;
     } else {
         sp.text = o.value(QStringLiteral("text")).toString();
         const int len = sp.text.size();

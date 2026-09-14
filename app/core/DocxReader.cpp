@@ -1,7 +1,6 @@
 #include "DocxReader.h"
 #include "MediaStore.h"
 #include "PackageFormat.h"
-#include "TableGrid.h"
 
 #include <QHash>
 #include <QImage>

@@ -305,10 +305,8 @@ std::vector<BlockModel::BlockSpec> OdfReader::readOds(const QString& path) {
             h.text = name;
             specs.push_back(std::move(h));
         }
-        BlockModel::BlockSpec t;
-        t.type = BlockModel::Table;
-        t.tableJson = grid.toJson();
-        specs.push_back(std::move(t));
+        for (BlockModel::BlockSpec& sp : BlockModel::gridSpecsFromTable(grid.toJson()))   // the grid IR → records + cells
+            specs.push_back(std::move(sp));
     }
     return specs;
 }
@@ -372,12 +370,8 @@ std::vector<BlockModel::BlockSpec> OdfReader::readOdt(const QString& path,
             specs.push_back(std::move(sp));
         } else if (q == QLatin1String("table:table")) {
             TableGrid grid;
-            if (readOdfTable(xml, grid)) {
-                BlockModel::BlockSpec t;
-                t.type = BlockModel::Table;
-                t.tableJson = grid.toJson();
-                specs.push_back(std::move(t));
-            }
+            if (readOdfTable(xml, grid))
+                for (BlockModel::BlockSpec& sp : BlockModel::gridSpecsFromTable(grid.toJson())) specs.push_back(std::move(sp));
         } else if (q == QLatin1String("draw:image") && store) {
             const QString href =
                 xml.attributes().value(QLatin1String("xlink:href")).toString();

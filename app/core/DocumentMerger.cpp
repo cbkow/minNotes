@@ -4,7 +4,6 @@
 #include "MediaStore.h"
 #include "PackageExporter.h"
 #include "PackageFormat.h"
-#include "TableGrid.h"
 #include "../notes/annotation_io.h"
 
 #include <QDir>
@@ -47,8 +46,7 @@ DocumentMerger::MergeJob DocumentMerger::planMerge(BlockModel* src, BlockModel* 
     // Pristine-empty source (the fresh scratch tab): success, nothing to do.
     if (n == 1 && job.ink[0].isEmpty()) {
         const BlockModel::BlockSpec& sp = job.specs[0];
-        if (sp.type == BlockModel::Paragraph && sp.text.isEmpty()
-            && sp.mediaJson.isEmpty() && sp.tableJson.isEmpty()) {
+        if (sp.type == BlockModel::Paragraph && sp.text.isEmpty() && sp.mediaJson.isEmpty()) {
             job.noop = true;
             return job;
         }

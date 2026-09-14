@@ -3,7 +3,6 @@
 #include "Document.h"
 #include "MediaStore.h"
 #include "PackageFormat.h"
-#include "TableGrid.h"
 #include "../notes/annotation_io.h"
 
 #include <QCoreApplication>
@@ -163,17 +162,6 @@ PackageExporter::PackPlan PackageExporter::buildPackPlan(BlockModel* m,
                          resolveNoExtract(store, root.value(QStringLiteral("src")), pkgEntries),
                          isVideo, includeVideos);
             }
-        } else if (t == BlockModel::Table) {
-            const TableGrid g = TableGrid::fromJson(m->contentForRow(r));
-            for (int tr = 0; tr < g.rows(); ++tr)
-                for (int tc = 0; tc < g.cols(); ++tc) {
-                    const QString desc = g.cellMedia(tr, tc);
-                    if (desc.isEmpty()) continue;
-                    const QJsonObject o = QJsonDocument::fromJson(desc.toUtf8()).object();
-                    planItem(plan, taken,
-                             resolveNoExtract(store, o.value(QStringLiteral("src")), pkgEntries),
-                             /*isVideo*/false, includeVideos);
-                }
         }
     }
     return plan;
@@ -210,21 +198,6 @@ bool PackageExporter::prepareDb(BlockModel* m, const PackPlan& plan,
             if (changed)
                 d2.updateContent(bm.id, QString::fromUtf8(
                     QJsonDocument(root).toJson(QJsonDocument::Compact)));
-        } else if (bm.type == QLatin1String("table")) {
-            TableGrid g = TableGrid::fromJson(d2.contentFor(bm.id));
-            bool changed = false;
-            for (int tr = 0; tr < g.rows(); ++tr)
-                for (int tc = 0; tc < g.cols(); ++tc) {
-                    const QString desc = g.cellMedia(tr, tc);
-                    if (desc.isEmpty()) continue;
-                    QJsonObject o = QJsonDocument::fromJson(desc.toUtf8()).object();
-                    if (rewriteSrc(o, store, plan, pkgEntries)) {
-                        g.setCellMedia(tr, tc, QString::fromUtf8(
-                            QJsonDocument(o).toJson(QJsonDocument::Compact)));
-                        changed = true;
-                    }
-                }
-            if (changed) d2.updateContent(bm.id, g.toJson());
         }
     }
     d2.checkpoint();

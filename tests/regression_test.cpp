@@ -1876,21 +1876,25 @@ static void testPackageExporter() {
     CHECK(m.mediaKind(img1) == QLatin1String("image")
               && m.mediaKind(img2) == QLatin1String("image"),
           "fixture images inserted (abs-src descriptors)");
-    const int tRow = m.insertTable(img2, 2, 2);
-    CHECK(tRow > 0, "table inserted");
-    m.tableSetCellMedia(tRow, 1, 0, absImageJson(picB));
-    CHECK(m.tableCellMedia(tRow, 1, 0).contains(QStringLiteral("pic.png")),
-          "table cell abs-src descriptor set");
     // Hand-built video descriptor (absolute src — the referenced-in-place shape).
     {
         BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
         sp.mediaJson = QStringLiteral(
             "{\"src\":\"%1\",\"w\":320,\"h\":240,\"kind\":\"video\","
             "\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(clip);
-        m.insertSpecs(tRow, {sp}, false);
+        m.insertSpecs(img2, {sp}, false);
     }
-    const int vRow = tRow + 1;
+    const int vRow = img2 + 1;
     CHECK(m.mediaKind(vRow) == QStringLiteral("video"), "video row landed");
+    // A table after the video, with an image block inside cell (1,0).
+    const int tHead = m.insertTableRows(vRow, 2, 2) - 1;
+    CHECK(tHead > vRow && m.headerCount(tHead) > 0, "table inserted");
+    {
+        BlockModel::BlockSpec cm; cm.type = BlockModel::Media; cm.mediaJson = absImageJson(picB);
+        m.spliceSpecsAt(m.gridCellAt(tHead, 1, 0) + 1, {cm}, false, 0);
+    }
+    CHECK(m.gridCellText(tHead, 1, 0).contains(QStringLiteral("pic.png")),
+          "table cell abs-src descriptor set");
 
     // Plan: videos detected; excluded by default option…
     const auto planNoVid = PackageExporter::buildPackPlan(&m, /*includeVideos*/false);
@@ -1942,8 +1946,8 @@ static void testPackageExporter() {
               "media row %d resolves INSIDE the package dir", r);
         resolved.insert(QFileInfo(p).fileName());
     }
-    CHECK(mediaRows == 3 && resolved.contains(QStringLiteral("clip.mp4")),
-          "all three media rows resolve (imgs + video)");
+    CHECK(mediaRows == 4 && resolved.contains(QStringLiteral("clip.mp4")),
+          "all four media rows resolve (imgs + the cell's image + video), %d", mediaRows);
     // Byte-exact through the STORE path, collisions kept distinct.
     {
         QFile o(picB), p(ext + QStringLiteral("/.minnotes/pic.png"));
@@ -1957,7 +1961,7 @@ static void testPackageExporter() {
     }
     // Table cell media rewrote to the packaged copy.
     {
-        const QString desc = m2.tableCellMedia(tRow, 1, 0);
+        const QString desc = m2.gridCellText(tHead, 1, 0);
         CHECK(desc.contains(QStringLiteral(".minnotes/pic")),
               "table cell descriptor rewrote to the packaged src");
     }
@@ -3776,9 +3780,12 @@ static void testMergeAssetsAndEdges() {
         ext.mediaJson = QStringLiteral("{\"src\":\"%1\",\"w\":8,\"h\":8}").arg(extPic);
         src.insertSpecs(2, {ext}, false);                                  // row 3
     }
-    const int tRow = src.insertTable(3, 2, 2);                             // row 4
-    src.tableSetCellMedia(tRow, 0, 0,
-        QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN));
+    const int tHead = src.insertTableRows(3, 2, 2) - 1;                    // row 4: the table's head
+    {   // an image block inside cell (0,0) — the rows are derived: 2 records, 4 cells + the media
+        BlockModel::BlockSpec cm; cm.type = BlockModel::Media;
+        cm.mediaJson = QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN);
+        src.spliceSpecsAt(src.gridCellAt(tHead, 0, 0) + 1, {cm}, false, 0);
+    }
     const int srcN = src.rowCountQml();
 
     BlockModel dest;
@@ -3793,8 +3800,7 @@ static void testMergeAssetsAndEdges() {
     int f = -1, l = -1; QString err;
     CHECK(DocumentMerger::mergeDocuments(&src, &dest, dest.rowCountQml(), &f, &l, &err),
           "asset merge succeeded (%s)", qPrintable(err));
-    // The 2×2 Table block lands derived: 2 records, a Media block for the image cell, 3 paragraphs → 5 more rows.
-    CHECK(f == 1 && l == srcN + 5 && dest.rowCountQml() == 1 + srcN + 5,
+    CHECK(f == 1 && l == srcN && dest.rowCountQml() == 1 + srcN,
           "merged at the end (%d..%d)", f, l);
     CHECK(dest.contentForRow(2).contains(QStringLiteral(".minnotes/") + pic2),
           "collided image renamed -2 in the descriptor");
@@ -3812,7 +3818,7 @@ static void testMergeAssetsAndEdges() {
     CHECK(dest.contentForRow(4).contains(extPic),
           "absolute (linked) ref passed through untouched");
     CHECK(dest.headerCount(5) > 0 && dest.gridCellText(5, 0, 0).contains(QStringLiteral(".minnotes/") + pic2),
-          "table cell image followed the copy (a Media block in the derived cell)");
+          "table cell image followed the copy (the Media block in the cell)");
 
     // Package-view source: entries splice straight out of the archive; the
     // byte-identical same-name video is REUSED without a second copy.
@@ -4508,10 +4514,8 @@ static void testBlockClipboardRoundTrip() {
     BlockModel::BlockSpec div; div.type = BlockModel::Divider;
     BlockModel::BlockSpec media; media.type = BlockModel::Media;
     media.mediaJson = QStringLiteral("{\"src\":\".minnotes/a.png\",\"w\":4,\"h\":3}");
-    BlockModel::BlockSpec table; table.type = BlockModel::Table;
-    table.tableJson = TableGrid::makeEmpty(2, 2).toJson();
     p.specs = { h, code, li, task, text(BlockModel::Quote, QStringLiteral("q")),
-                text(BlockModel::OrderedListItem, QStringLiteral("o")), para, div, media, table };
+                text(BlockModel::OrderedListItem, QStringLiteral("o")), para, div, media };
     p.ink.assign(p.specs.size(), QString());
     p.ink[0] = QStringLiteral("{\"strokes\":[{\"pts\":[1,2]}]}");
     BlockModel::ThreadImport ti; ti.id = QStringLiteral("01THREAD"); ti.created = 42; ti.resolved = true;
@@ -4537,7 +4541,6 @@ static void testBlockClipboardRoundTrip() {
     CHECK(same, "every type / level / task / depth / lang / span (incl. payloads) round-trips");
     CHECK(QJsonDocument::fromJson(q.specs[8].mediaJson.toUtf8()).object().value(QStringLiteral("src")).toString()
               == QStringLiteral(".minnotes/a.png"), "media descriptor round-trips as JSON");
-    CHECK(TableGrid::fromJson(q.specs[9].tableJson).rows() == 2, "table JSON round-trips");
     CHECK(q.ink[0].contains(QStringLiteral("strokes")) && q.ink[1].isEmpty(), "ink present/absent per row");
     CHECK(q.threads.size() == 1 && q.threads[0].id == QStringLiteral("01THREAD")
               && q.threads[0].resolved && q.threads[0].messages.size() == 1
@@ -8019,15 +8022,12 @@ static void testPasteRouter() {
     CHECK(r(none, At{}) == QLatin1String("nothing"), "an empty clipboard pastes nothing");
     In blocks; blocks.hasBlocks = true; blocks.hasHtml = true; blocks.text = QStringLiteral("t");
     CHECK(r(blocks, At{}) == QLatin1String("blocks"), "our own blocks beat HTML and text");
-    At legacy; legacy.legacyCell = true;
-    CHECK(r(blocks, legacy) == QLatin1String("legacyCellType"), "…but not into a legacy cell: its text is typed");
     At code; code.codeBlock = true;
-    CHECK(r(blocks, code) == QLatin1String("codeVerbatim"), "…nor into a code block: verbatim text");
+    CHECK(r(blocks, code) == QLatin1String("codeVerbatim"), "…but not into a code block: verbatim text");
     In tsv; tsv.text = QStringLiteral("a\tb\nc\td");
-    CHECK(r(tsv, legacy) == QLatin1String("legacyCellTsv") && r(tsv, At{}) == QLatin1String("tableFromTsv"),
-          "tabular text: cells in a legacy cell, a new table at top level");
+    CHECK(r(tsv, At{}) == QLatin1String("tableFromTsv"), "tabular text: a new table at top level");
     At inTable; inTable.inTable = true;
-    CHECK(r(tsv, inTable) == QLatin1String("gridTsv"), "…and a cell fill in a derived table");
+    CHECK(r(tsv, inTable) == QLatin1String("gridTsv"), "…and a cell fill in a table");
     In prose; prose.text = QStringLiteral("hello\nworld");
     CHECK(r(prose, At{}) == QLatin1String("text") && r(prose, inTable) == QLatin1String("gridTsv") && r(prose, code) == QLatin1String("codeVerbatim"),
           "plain text: smart paste; newlines fill cells in a table; verbatim in code");
@@ -8038,11 +8038,9 @@ static void testPasteRouter() {
     In copyImage = html; copyImage.hasImage = true; copyImage.bareRemoteImage = true;
     CHECK(r(copyImage, At{}) == QLatin1String("raster"), "a browser's Copy Image (bare remote img + raster) takes the raster");
     In files; files.urls = 2; files.hasImage = true;
-    CHECK(r(files, At{}) == QLatin1String("urls") && r(files, legacy) == QLatin1String("legacyCellUrl"), "copied files beat a raster");
+    CHECK(r(files, At{}) == QLatin1String("urls"), "copied files beat a raster");
     In raster; raster.hasImage = true;
-    CHECK(r(raster, At{}) == QLatin1String("raster") && r(raster, legacy) == QLatin1String("legacyCellRaster"), "a raster alone lands as media");
-    In htmlOnly; htmlOnly.hasHtml = true;
-    CHECK(r(htmlOnly, legacy) == QLatin1String("nothing"), "rich text with no plain form: nothing for a legacy cell");
+    CHECK(r(raster, At{}) == QLatin1String("raster"), "a raster alone lands as media");
     At sketch; sketch.sketchTab = true;
     CHECK(r(files, sketch) == QLatin1String("sketchUrls") && r(raster, sketch) == QLatin1String("sketchRaster") && r(tsv, sketch) == QLatin1String("nothing"),
           "a sketch tab takes images only");

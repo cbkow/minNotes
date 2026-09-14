@@ -1,7 +1,6 @@
 #include "AssetTransfer.h"
 #include "MediaStore.h"
 #include "PackageFormat.h"
-#include "TableGrid.h"
 #include "../notes/annotation_io.h"
 
 #include <QDir>
@@ -71,15 +70,6 @@ void AssetTransfer::forEachSrc(const std::vector<BlockModel::BlockSpec>& specs,
                 fn(root.value(QStringLiteral("src")),
                    root.value(QStringLiteral("kind")).toString() == QLatin1String("video"));
             }
-        } else if (!sp.tableJson.isEmpty()) {
-            const TableGrid g = TableGrid::fromJson(sp.tableJson);
-            for (int tr = 0; tr < g.rows(); ++tr)
-                for (int tc = 0; tc < g.cols(); ++tc) {
-                    const QString desc = g.cellMedia(tr, tc);
-                    if (desc.isEmpty()) continue;
-                    fn(QJsonDocument::fromJson(desc.toUtf8()).object()
-                           .value(QStringLiteral("src")), /*isVideo*/false);
-                }
         }
     }
 }
@@ -272,17 +262,6 @@ void AssetTransfer::rewriteSpecs(std::vector<BlockModel::BlockSpec>& specs,
         if (!sp.mediaJson.isEmpty()) {
             const QString r = rewriteMediaJson(sp.mediaJson, map);
             if (!r.isEmpty()) sp.mediaJson = r;
-        } else if (!sp.tableJson.isEmpty()) {
-            TableGrid g = TableGrid::fromJson(sp.tableJson);
-            bool changed = false;
-            for (int tr = 0; tr < g.rows(); ++tr)
-                for (int tc = 0; tc < g.cols(); ++tc) {
-                    const QString desc = g.cellMedia(tr, tc);
-                    if (desc.isEmpty()) continue;
-                    const QString r = rewriteMediaJson(desc, map);
-                    if (!r.isEmpty()) { g.setCellMedia(tr, tc, r); changed = true; }
-                }
-            if (changed) sp.tableJson = g.toJson();
         }
     }
 }

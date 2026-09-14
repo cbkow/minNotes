@@ -50,8 +50,7 @@ public:
     // as a pure decision over what the clipboard holds and where the caret is — testable headless.
     // Returns one action name; the editor performs it and, when a flavour yields nothing, masks it
     // in the input and asks again. Actions: nothing · sketchUrls · sketchRaster · blocks ·
-    // legacyCellUrl · legacyCellTsv · legacyCellType · legacyCellRaster · codeVerbatim · html ·
-    // urls · raster · gridTsv · tableFromTsv · text.
+    // codeVerbatim · html · urls · raster · gridTsv · tableFromTsv · text.
     struct PasteInput {
         bool hasBlocks = false;        // a non-empty x-mnd-blocks payload
         bool hasHtml = false;
@@ -63,9 +62,8 @@ public:
     };
     struct PasteTarget {
         bool sketchTab = false;        // a sketch tab is open
-        bool legacyCell = false;       // the Table block's cell cursor is active
         bool codeBlock = false;        // the caret is in a code block (no multi-block selection)
-        bool inTable = false;          // the caret is in a derived table's cell
+        bool inTable = false;          // the caret is in a table's cell
     };
     static QString route(const PasteInput& in, const PasteTarget& at);
     // Rectangular grid signal for a plain-text paste: every non-empty line carries the SAME
