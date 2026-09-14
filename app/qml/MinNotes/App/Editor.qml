@@ -2079,6 +2079,40 @@ FocusScope {
     // Home / End: to the beginning / end of the WHOLE document.
     // ⌘A (2026-09-09): the whole document as one range — anchor at the top,
     // focus at the end of the last row (col 0 on an opaque row). No scroll.
+    // ⌘A (SR-0 A8): in a lane the block → its cell → the split row (a table: the whole table) →
+    // the document, one rung per press. At top level straight to the document (= today).
+    function selectAllLadder() {
+        const row = cursor.focusRow
+        const lane = blockModel.laneForRow(row)
+        if (lane < 0) { selectAllDocument(); return }
+        const rec = blockModel.splitRowOf(row), head = blockModel.tableHeadOf(row)
+        let first = row, last = row
+        while (first - 1 > rec && blockModel.laneForRow(first - 1) === lane) --first
+        while (last + 1 < blockModel.count && blockModel.laneForRow(last + 1) === lane
+               && blockModel.splitRowOf(last + 1) === rec) ++last
+        const rungs = [[row, row], [first, last]]
+        if (head >= 0) {
+            const recs = blockModel.tableRecords(head)
+            rungs.push([blockModel.nextLeaf(head), blockModel.splitRowLast(recs[recs.length - 1])])
+        } else {
+            rungs.push([blockModel.nextLeaf(rec), blockModel.splitRowLast(rec)])
+        }
+        for (let i = 0; i < rungs.length; ++i) {
+            const a = rungs[i][0], b = rungs[i][1]
+            const endCol = cursor.opaque(b) ? 0 : blockModel.contentForRow(b).length
+            const whole = cursor.loRow === a && cursor.loCol === 0 && cursor.hiRow === b && cursor.hiCol >= endCol
+                          && (cursor.hasSel || (a === b && endCol === 0))
+            if (cursor.loRow >= a && cursor.hiRow <= b && !whole) {
+                cursor.clearMarks()
+                cursor.anchorRow = a; cursor.anchorCol = 0
+                cursor.focusRow = b; cursor.focusCol = endCol
+                cursor.goalX = -1
+                cursor.sync()
+                return
+            }
+        }
+        selectAllDocument()
+    }
     function selectAllDocument() {
         var n = blockModel.count
         if (n === 0) return
@@ -2717,6 +2751,7 @@ FocusScope {
             return
         }
         if (root.activeFrameId !== "") return   // table studio but no cell focus
+        if (root.typedCellHere() > 0) return    // a typed table cell holds its column's chip only
         if (cursor.hasSel) cursor.deleteSelection()
         var row = cursor.focusRow
         var s = blockModel.insertChoiceAt(row, cursor.focusCol)
@@ -3377,7 +3412,7 @@ FocusScope {
             else if (event.text.length === 1 && event.text >= " ") tcur.type(event.text)
             event.accepted = true
         }
-        else if (cmd && k === Qt.Key_A) { root.selectAllDocument(); event.accepted = true }
+        else if (cmd && k === Qt.Key_A) { root.selectAllLadder(); event.accepted = true }
         else if (cmd && (k === Qt.Key_Return || k === Qt.Key_Enter) && blockModel.tableHeadOf(cursor.focusRow) >= 0) {
             if (!event.isAutoRepeat) root.tableInsertRowBelow()   // ⌘Enter: a row below, caret in the same column
             event.accepted = true
@@ -3414,7 +3449,14 @@ FocusScope {
         }
         else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(shift, event.isAutoRepeat); event.accepted = true }
         else if (event.text.length === 1 && event.text >= " " && !cmd && root.typedCellHere() > 0) {
-            event.accepted = true               // a typed table cell takes values, not text (its picker: S6b)
+            // §4.14: a typed table cell takes values, not text. In a choice cell Space opens the
+            // picker and a character opens it filtered ("d" + Enter picks "Doing").
+            if (root.typedCellHere() === 1 && !event.isAutoRepeat) {
+                const row = cursor.focusRow
+                root.openGridChoicePicker(blockModel.tableHeadOf(row), blockModel.gridRowOf(row),
+                                          blockModel.gridColumnOf(row), event.text === " " ? "" : event.text)
+            }
+            event.accepted = true
         }
         else if (event.text.length === 1 && event.text >= " ") { cursor.insertChar(event.text); event.accepted = true }
     }
@@ -3691,7 +3733,15 @@ FocusScope {
                 } else {
                     const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
                     const r = blockModel.gridRowOf(row), rows = blockModel.gridRowCount(head)
-                    switch (rand(5)) {
+                    switch (rand(6)) {
+                    case 5: {   // ⌘A climbs to the whole table (block → cell → table), then collapse
+                        cursor.setCaret(row, 0)
+                        for (let k = 0; k < 3 && !root.selectionIsTable(); ++k) root.selectAllLadder()
+                        ++checks
+                        if (!root.selectionIsTable()) fail("⌘A from table cell " + row + " never selected the table")
+                        cursor.setCaret(row, 0)
+                        break
+                    }
                     case 0: case 1:
                         root.tableEnter(false)
                         ++checks
@@ -4235,6 +4285,23 @@ FocusScope {
                     return
                 }
                 mouse.lastDblClickMs = 0
+                {   // SR-4 §4.14: a typed table cell — a click opens a choice cell's picker; a click on a
+                    // check cell's box cycles it. The caret parks at the cell's start.
+                    const gh = blockModel.tableHeadOf(h.row)
+                    const gc = gh >= 0 && !blockModel.isHeaderRow(h.row) ? blockModel.gridColumnOf(h.row) : -1
+                    const gk = gc >= 0 ? blockModel.gridColumnKind(gh, gc) : 0
+                    if (gk === 1) {
+                        cursor.setCaret(h.row, 0)
+                        root.openGridChoicePicker(gh, blockModel.gridRowOf(h.row), gc, "")
+                        return
+                    }
+                    const gcell = gk === 2 ? root.cellForRow(h.row) : null
+                    if (gcell && m.x >= gcell.colLeft - 2 && m.x <= gcell.colLeft + 18) {
+                        cursor.setCaret(h.row, 0)
+                        blockModel.gridCycleCellCheck(gh, blockModel.gridRowOf(h.row), gc)
+                        return
+                    }
+                }
                 // Inline choice chip (DT-2) → picker; the press never places
                 // the caret (chips are atomic — the caret parks after it).
                 {
@@ -7177,6 +7244,7 @@ FocusScope {
 
     // --- Choice-cell option picker (root overlay above the mouse layer) ---
     function openChoicePicker(trow, r, c, vx, vy) {
+        choicePicker.ghead = -1
         choicePicker.srow = -1; choicePicker.sstart = -1
         choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.row = trow; choicePicker.r = r; choicePicker.c = c
@@ -7185,6 +7253,7 @@ FocusScope {
     }
     // Inline chip variant (DT-2): span address instead of the cell triple.
     function openInlineChoicePicker(brow, s, vx, vy) {
+        choicePicker.ghead = -1
         choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
         choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.srow = brow; choicePicker.sstart = s
@@ -7193,7 +7262,23 @@ FocusScope {
     }
     // Cell-chip variant (2026-08-21): a chip span INSIDE a table text cell —
     // span address plus the cell coords.
+    // A derived table's choice cell (SR-4 S6b): the picker under the cell, the add field
+    // prefilled with `text` (the typed character that opened it, or "").
+    function openGridChoicePicker(head, r, c, text) {
+        choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
+        choicePicker.srow = -1; choicePicker.sstart = -1; choicePicker.sr = -1; choicePicker.sc = -1
+        choicePicker.ghead = head; choicePicker.gr = r; choicePicker.gc = c
+        const b = blockModel.gridCellAt(head, r, c)
+        const cell = b >= 0 ? root.cellForRow(b) : null
+        if (cell && cell.teItem) {
+            const pt = cell.teItem.mapToItem(root, 0, cell.teItem.height + 4)
+            root.choiceX = pt.x; root.choiceY = pt.y
+        }
+        choicePicker.prefill(text)
+        choicePicker.open()
+    }
     function openCellChoicePicker(trow, r, c, s, vx, vy) {
+        choicePicker.ghead = -1
         choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
         choicePicker.srow = trow; choicePicker.sstart = s
         choicePicker.sr = r; choicePicker.sc = c

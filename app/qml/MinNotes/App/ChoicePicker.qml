@@ -25,6 +25,24 @@ Popup {
     property int sr: -1
     property int sc: -1
     readonly property bool cellSpanMode: spanMode && sr >= 0
+    // GRID MODE (SR-4 S6b): a typed cell of a derived table — (ghead, gr, gc). The option set is
+    // the column's (the header is authoritative), writes go through grid*. The add field doubles
+    // as a type-to-filter: Up/Down move the highlight, Enter chooses it or adds the typed text.
+    property int ghead: -1
+    property int gr: -1
+    property int gc: -1
+    readonly property bool gridMode: ghead >= 0 && !spanMode
+    property int hi: 0
+    readonly property string filterText: gridMode ? addField.text.trim().toLowerCase() : ""
+    readonly property var shown: filterText === "" ? options
+        : options.filter(function(o) { return o.label.toLowerCase().indexOf(picker.filterText) >= 0 })
+    function prefill(text) { addField.text = text; hi = 0 }
+    // The table band, so a quick-add (new option + select it) is one undo step.
+    function gridGroup(begin) {
+        if (!begin) { blockModel.endGroup(); return }
+        const recs = blockModel.tableRecords(ghead)
+        blockModel.beginGroup(ghead, blockModel.splitRowLast(recs[recs.length - 1]))
+    }
 
     padding: 4
     focus: true   // the Popup must hold focus or its TextInput can't receive keystrokes
@@ -34,20 +52,24 @@ Popup {
     // seen as "outside" and would dismiss it before it's visible. CloseOnPressOutside
     // still closes it on a fresh click elsewhere.
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    onOpened: if (picker.options.length === 0) addField.forceActiveFocus()
+    onOpened: if (picker.gridMode || picker.options.length === 0) addField.forceActiveFocus()
 
     readonly property var spanPayload: spanMode
         ? (blockModel.contentRevision,
            JSON.parse((cellSpanMode ? blockModel.tableChoiceAt(srow, sr, sc, sstart)
                                     : blockModel.choiceAt(srow, sstart)) || "{}")) : null
-    readonly property var options: spanMode
+    readonly property var options: gridMode
+        ? (blockModel.contentRevision, blockModel.gridColumnOptions(ghead, gc))
+        : spanMode
         ? ((spanPayload && spanPayload.o)
                ? spanPayload.o.map(function(o) {
                      return { id: o.id, label: o.l, color: o.c || "" } })
                : [])
         : ((row >= 0)
                ? (blockModel.contentRevision, blockModel.tableColumnOptions(row, c)) : [])
-    readonly property string selectedId: spanMode
+    readonly property string selectedId: gridMode
+        ? (blockModel.contentRevision, blockModel.gridCellChoice(ghead, gr, gc))
+        : spanMode
         ? ((spanPayload && spanPayload.v) ? spanPayload.v : "")
         : ((row >= 0)
                ? (blockModel.contentRevision, blockModel.tableCellChoice(row, r, c)) : "")
@@ -65,12 +87,13 @@ Popup {
         spacing: 1
 
         Repeater {
-            model: picker.options
+            model: picker.shown
             delegate: Rectangle {
                 id: optRow
                 required property var modelData
+                required property int index
                 width: parent.width; height: 26; radius: 0
-                color: rowHover.hovered ? Theme.colors.surfaceHover : "transparent"
+                color: rowHover.hovered || (picker.gridMode && index === picker.hi) ? Theme.colors.surfaceHover : "transparent"
                 HoverHandler { id: rowHover }
 
                 Rectangle {   // option colour dot
@@ -96,7 +119,9 @@ Popup {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        if (picker.cellSpanMode)
+                        if (picker.gridMode)
+                            blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc, optRow.modelData.id)
+                        else if (picker.cellSpanMode)
                             blockModel.tableSetChoiceSelected(picker.srow, picker.sr, picker.sc,
                                                               picker.sstart, optRow.modelData.id)
                         else if (picker.spanMode)
@@ -126,7 +151,9 @@ Popup {
                 id: clearMA; anchors.fill: parent; hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (picker.cellSpanMode)
+                    if (picker.gridMode)
+                        blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc, "")
+                    else if (picker.cellSpanMode)
                         blockModel.tableRemoveChoiceAt(picker.srow, picker.sr, picker.sc, picker.sstart)
                     else if (picker.spanMode) blockModel.removeChoiceAt(picker.srow, picker.sstart)
                     else blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, "")
@@ -146,8 +173,26 @@ Popup {
                 clip: true
                 color: Theme.colors.text
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                onTextChanged: picker.hi = 0
+                Keys.onUpPressed: if (picker.gridMode) picker.hi = Math.max(0, picker.hi - 1)
+                Keys.onDownPressed: if (picker.gridMode) picker.hi = Math.min(picker.shown.length - 1, picker.hi + 1)
                 onAccepted: {
                     var name = text.trim()
+                    if (picker.gridMode) {                       // choose the highlighted match, else add
+                        if (picker.shown.length > 0) {
+                            blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc,
+                                                         picker.shown[Math.min(picker.hi, picker.shown.length - 1)].id)
+                        } else if (name.length > 0) {
+                            picker.gridGroup(true)
+                            const id = blockModel.gridAddOption(picker.ghead, picker.gc, name,
+                                                                picker.palette[picker.options.length % picker.palette.length])
+                            if (id !== "") blockModel.gridSetCellChoice(picker.ghead, picker.gr, picker.gc, id)
+                            picker.gridGroup(false)
+                        }
+                        text = ""
+                        picker.close()
+                        return
+                    }
                     if (name.length === 0) return
                     var col = picker.palette[picker.options.length % picker.palette.length]
                     if (picker.spanMode) {
@@ -174,8 +219,9 @@ Popup {
                 }
             }
         }
-        Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+        Rectangle { visible: !picker.gridMode; width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // open the full option editor (rename / colour / reorder / delete)
+            visible: !picker.gridMode                     // derived tables: the column editor lands with S9
             width: parent.width; height: 24; radius: 0
             color: editMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {
