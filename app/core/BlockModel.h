@@ -189,6 +189,12 @@ public:
     // A top-level empty paragraph under the whole split row holding `row` (under `row`
     // itself at top level), one undo step. Returns its row.
     Q_INVOKABLE int insertParagraphBelow(int row);
+    // Ways out of split rows (the 2026-09-14 walk): a paragraph above the split row holding row
+    // (or above row at top level); and exitLane — Enter on an empty last block of a layout lane
+    // removes it (unless it's the lane's only block) and lands in a paragraph below the split row
+    // (an empty one already there is reused). One undo each; → the paragraph's row, or -1.
+    Q_INVOKABLE int insertParagraphAbove(int row);
+    Q_INVOKABLE int exitLane(int row);
     // --- Split rows (SR-3). A Split record is followed by its lanes' blocks.
     Q_INVOKABLE int laneForRow(int row) const;       // the lane a block sits in; -1 = top level
     Q_INVOKABLE int splitRowOf(int row) const;       // the record of the split row containing row, or -1

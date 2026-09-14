@@ -1320,6 +1320,14 @@ FocusScope {
                 root.tableEnter(repeat === true)
                 return
             }
+            // A lane's double Enter (2026-09-14 walk): Enter on an empty last block of a layout lane
+            // leaves the split row — the block goes (unless it's the lane's only one) and the caret
+            // lands in a paragraph below. Shift+Enter still adds a block; a held key never exits.
+            if (!shift && repeat !== true && lt === 0 && blockModel.laneForRow(focusRow) >= 0
+                && blockModel.tableHeadOf(focusRow) < 0 && blockModel.contentForRow(focusRow).length === 0) {
+                const out = blockModel.exitLane(focusRow)
+                if (out >= 0) { setCaret(out, 0); root.ensureVisible(out); return }
+            }
             var leftRow = focusRow
             blockModel.splitBlock(focusRow, focusCol)
             setCaret(focusRow + 1, 0)
@@ -1738,6 +1746,15 @@ FocusScope {
     // --- Central navigation. Uses the focus block's text layout for vertical
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
+    // An arrow run off the document's end (or start) inside a split row or table would trap the
+    // caret (2026-09-14 walk): a paragraph appears below (or above) the row and the caret moves in.
+    function leaveSplitRowAtEdge(down, shift) {
+        if (shift || blockModel.splitRowOf(cursor.focusRow) < 0) return
+        const p = down ? blockModel.insertParagraphBelow(cursor.focusRow) : blockModel.insertParagraphAbove(cursor.focusRow)
+        if (p < 0) return
+        cursor.setCaret(p, 0)
+        root.ensureVisible(p)
+    }
     function navRight(shift) {
         cursor.resetGoalX(); cursor.clearMarks()
         var fb = root.focusBlockItem, n = blockModel.count
@@ -1749,7 +1766,7 @@ FocusScope {
         }
         else {                               // the next block in reading order (records skipped)
             const nx = blockModel.nextLeaf(cursor.focusRow)
-            if (nx < 0) return
+            if (nx < 0) { root.leaveSplitRowAtEdge(true, shift); return }
             if (blockModel.typeForRow(nx) === 7) root.enterTable(nx, true)
             else cursor.move(nx, 0, shift)
         }
@@ -1763,7 +1780,7 @@ FocusScope {
         }
         else {                               // the previous block in reading order (records skipped)
             const pv = blockModel.prevLeaf(cursor.focusRow)
-            if (pv < 0) return
+            if (pv < 0) { root.leaveSplitRowAtEdge(false, shift); return }
             if (blockModel.typeForRow(pv) === 7) root.enterTable(pv, false)
             else cursor.move(pv, blockModel.contentForRow(pv).length, shift)
         }
@@ -2122,7 +2139,7 @@ FocusScope {
             cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX - textLeft, r.y + lh * 1.5), shift)
         else {                                                  // the block below: in the lane, else the row below at goal-x
             const below = blockModel.leafBelow(cursor.focusRow, cursor.goalX)
-            if (below < 0) return
+            if (below < 0) { root.leaveSplitRowAtEdge(true, shift); return }
             if (blockModel.typeForRow(below) === 7) root.enterTable(below, true)
             else cursor.move(below, colAtGoalX(below, 2), shift)
         }
@@ -2139,7 +2156,7 @@ FocusScope {
             cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX - textLeft, r.y - lh * 0.5), shift)
         else {                                                  // the block above: in the lane, else the row above at goal-x
             const above = blockModel.leafAbove(cursor.focusRow, cursor.goalX)
-            if (above < 0) return
+            if (above < 0) { root.leaveSplitRowAtEdge(false, shift); return }
             if (blockModel.typeForRow(above) === 7) { root.enterTable(above, false); return }
             var prev = cellForRow(above)
             var yLast = (prev && !prev.isMedia) ? prev.teItem.contentHeight - 2 : 0

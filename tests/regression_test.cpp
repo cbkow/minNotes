@@ -7431,6 +7431,43 @@ static void testInsertGridFromTSV() {
     CHECK(m.insertGridFromTSV(0, QString()) == -1 && m.rowCountQml() == 2, "an empty grid makes nothing");
 }
 
+static void testSplitRowExits() {
+    qInfo("[94] ways out of split rows: a lane's double Enter, a paragraph above (the 2026-09-14 walk)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 5; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+    m.splitIntoColumns(1, 0, 0.5);
+    m.insertBlock(3);
+    m.setContent(3, QStringLiteral("q"));
+    m.setContent(4, QStringLiteral("a1"));
+    m.insertBlock(4);                                        // an empty last block in lane 0
+    // 0 p0 · 1 A · 2 p1(l0) · 3 q(l0) · 4 ·(l0) · 5 a1(l1) · 6 p2 · 7 p3 · 8 p4
+    CHECK(m.laneForRow(4) == 0 && m.contentForRow(4).isEmpty() && m.laneForRow(5) == 1 && m.rowCountQml() == 9,
+          "fixture: an empty last block in lane 0");
+    CHECK(m.exitLane(2) == -1 && m.exitLane(5) == -1 && m.exitLane(6) == -1, "only an empty last block of a layout lane exits");
+    const int out = m.exitLane(4);
+    CHECK(out == 5 && m.laneForRow(5) == -1 && m.contentForRow(5).isEmpty() && m.contentForRow(4) == QStringLiteral("a1")
+              && m.contentForRow(6) == QStringLiteral("p2") && m.rowCountQml() == 9 && m.structureValid(),
+          "Enter on it leaves the split row: the empty block goes, a paragraph lands below (%d)", out);
+    m.undo();
+    CHECK(m.laneForRow(4) == 0 && m.contentForRow(4).isEmpty() && m.contentForRow(6) == QStringLiteral("p2")
+              && m.rowCountQml() == 9 && m.structureValid(), "…one undo step");
+
+    BlockModel e;
+    e.newDocument();
+    while (e.rowCountQml() > 0) e.removeBlock(0);
+    e.insertBlock(0); e.setContent(0, QStringLiteral("x"));
+    e.splitIntoColumns(0, 0, 0.5);                           // 0 A · 1 x(l0) · 2 ·(l1), the document's end
+    const int below = e.exitLane(2);
+    CHECK(below == 3 && e.rowCountQml() == 4 && e.laneForRow(2) == 1 && e.laneForRow(3) == -1 && e.structureValid(),
+          "a lane's only (empty) block stays; the caret still gets a paragraph below the row");
+    CHECK(e.exitLane(2) == 3 && e.rowCountQml() == 4, "an empty paragraph already below is reused");
+    const int above = e.insertParagraphAbove(1);
+    CHECK(above == 0 && e.laneForRow(0) == -1 && e.typeForRow(1) == BlockModel::Split && e.structureValid(),
+          "insertParagraphAbove puts a paragraph above the split row");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7635,6 +7672,7 @@ int main(int argc, char** argv) {
     testTableKeysModel();
     testTableSelectionOps();
     testInsertGridFromTSV();
+    testSplitRowExits();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

@@ -1168,6 +1168,37 @@ int BlockModel::gridExitRow(int head) {
     return rec;
 }
 
+// === Ways out of split rows (2026-09-14 walk) ===============================
+int BlockModel::insertParagraphAbove(int row) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return -1;
+    row = std::clamp(row, 0, n - 1);
+    const int rec = splitRowOf(row);
+    const int at = rec >= 0 ? rec : row;
+    beginTxn(at, at - 1);
+    spliceSpecsAt(at, { BlockSpec{} }, /*allowReuseAnchorAbove=*/false, /*lane=*/-1);
+    endTxn();
+    return at;
+}
+
+int BlockModel::exitLane(int row) {
+    const int n = static_cast<int>(rows_.size());
+    if (row < 0 || row >= n || rows_[size_t(row)].cell < 0 || tableHeadOf(row) >= 0) return -1;
+    if (rows_[size_t(row)].type != Paragraph || !content_[size_t(row)].isEmpty()) return -1;
+    const int rec = splitRowOf(row), lane = rows_[size_t(row)].cell;
+    if (rec < 0 || laneLast(rec, lane) != row) return -1;
+    const bool only = laneFirst(rec, lane) == row;
+    const auto band = wholeSplitRows(rec, rec);
+    beginTxn(band.first, band.second);
+    if (!only) removeBlock(row);                     // the lane keeps its other blocks
+    const int below = splitRowEnd(rec) + 1;
+    const bool reuse = below < static_cast<int>(rows_.size()) && rows_[size_t(below)].cell < 0
+                       && rows_[size_t(below)].type == Paragraph && content_[size_t(below)].isEmpty();
+    if (!reuse) spliceSpecsAt(below, { BlockSpec{} }, /*allowReuseAnchorAbove=*/false, /*lane=*/-1);
+    endTxn();
+    return below;
+}
+
 // === Typed columns (SR-4 S4) ================================================
 static const QJsonArray& checkOptions() {
     static const QJsonArray opts = [] {
