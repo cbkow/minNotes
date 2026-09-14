@@ -340,15 +340,18 @@ const mn::LayoutIndex& BlockModel::layout() const {
 void BlockModel::reindex(std::vector<double> heights) {
     pendingHeights_ = std::move(heights);
     indexDirty_ = true;
+    tablesDirty_ = true;
 }
 
 void BlockModel::indexInsert(std::size_t at, double h) {
+    tablesDirty_ = true;
     if (!indexDirty_) { pendingHeights_ = layout_.heights(); indexDirty_ = true; }
     at = std::min(at, pendingHeights_.size());
     pendingHeights_.insert(pendingHeights_.begin() + static_cast<std::ptrdiff_t>(at), h);
 }
 
 void BlockModel::indexErase(std::size_t at) {
+    tablesDirty_ = true;
     if (!indexDirty_) { pendingHeights_ = layout_.heights(); indexDirty_ = true; }
     if (at < pendingHeights_.size())
         pendingHeights_.erase(pendingHeights_.begin() + static_cast<std::ptrdiff_t>(at));
@@ -389,17 +392,159 @@ QVariantList BlockModel::splitRatios(int row) const {
 }
 
 bool BlockModel::structureValid() const {
-    for (const Row& r : rows_)
+    for (const Row& r : rows_) {
         if (r.type == Split && r.cell >= 0) return false;       // I3: no record inside a lane
+        if (r.header > 0 && r.type != Split) return false;      // SR-4: only records head tables
+    }
     mn::LayoutIndex probe;
     if (!probe.reset(layoutEntries(), std::vector<double>(rows_.size(), 1.0))) return false;   // I1
+    const std::vector<int>& heads = tableHeads();
     for (size_t s = 0; s < probe.topCount(); ++s) {
         const size_t rec = probe.flatOfSlot(s);
         if (rows_[rec].type != Split) continue;
         const int lanes = probe.cellCount(rec);
+        if (heads[rec] >= 0) { if (lanes < 1) return false; continue; }   // table rows: C ≥ 1, ragged
         if (lanes < 2 || static_cast<int>(rows_[rec].ratios.size()) != lanes) return false;   // I2, I4
     }
     return true;
+}
+
+// === Derived tables (SR-4) ================================================
+const std::vector<int>& BlockModel::tableHeads() const {
+    if (!tablesDirty_ && tableHeads_.size() == rows_.size()) return tableHeads_;
+    tableHeads_.assign(rows_.size(), -1);
+    int cur = -1;
+    for (size_t i = 0; i < rows_.size(); ++i) {
+        const Row& r = rows_[i];
+        if (r.cell < 0) cur = r.type != Split ? -1 : r.header > 0 ? static_cast<int>(i) : cur;
+        tableHeads_[i] = cur;
+    }
+    tablesDirty_ = false;
+    return tableHeads_;
+}
+
+std::pair<int,int> BlockModel::splitRunBand(int record) const {
+    const int n = static_cast<int>(rows_.size());
+    int lo = record;
+    for (int b = record - 1; b >= 0; --b) {
+        if (rows_[size_t(b)].cell >= 0) continue;
+        if (rows_[size_t(b)].type != Split) break;
+        lo = b;
+    }
+    int hi = splitRowEnd(record);
+    while (hi + 1 < n && rows_[size_t(hi + 1)].type == Split && rows_[size_t(hi + 1)].cell < 0) hi = splitRowEnd(hi + 1);
+    return { lo, hi };
+}
+
+int BlockModel::tableHeadOf(int row) const {
+    return (row >= 0 && row < static_cast<int>(rows_.size())) ? tableHeads()[size_t(row)] : -1;
+}
+
+int BlockModel::headerCount(int row) const {
+    return (row >= 0 && row < static_cast<int>(rows_.size()) && rows_[size_t(row)].type == Split
+            && rows_[size_t(row)].cell < 0) ? rows_[size_t(row)].header : 0;
+}
+
+bool BlockModel::isHeaderRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    const int rec = rows_[size_t(row)].cell >= 0 ? splitRowOf(row) : row;
+    const int head = tableHeadOf(rec);
+    if (rec < 0 || head < 0) return false;
+    int k = 0;
+    for (int r = head; r < rec; r = splitRowEnd(r) + 1) ++k;
+    return k < rows_[size_t(head)].header;
+}
+
+QVariantList BlockModel::tableRecords(int head) const {
+    if (headerCount(head) == 0) return {};
+    const int n = static_cast<int>(rows_.size());
+    QVariantList out;
+    for (int r = head; r < n && rows_[size_t(r)].type == Split && rows_[size_t(r)].cell < 0
+                       && (r == head || rows_[size_t(r)].header == 0); r = splitRowEnd(r) + 1)
+        out << r;
+    return out;
+}
+
+int BlockModel::tableColumnCount(int head) const {
+    if (headerCount(head) == 0) return 0;
+    int cols = static_cast<int>(QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8())
+                                    .object().value(QStringLiteral("cols")).toArray().size());
+    for (const QVariant& v : tableRecords(head)) {
+        const int rec = v.toInt();
+        for (int i = rec + 1; i <= splitRowEnd(rec); ++i) cols = std::max(cols, rows_[size_t(i)].cell + 1);
+    }
+    return cols;
+}
+
+bool BlockModel::setHeaderRole(int record, int count) {
+    const int n = static_cast<int>(rows_.size());
+    if (record < 0 || record >= n || rows_[size_t(record)].type != Split || rows_[size_t(record)].cell >= 0) return false;
+    count = std::clamp(count, 0, 255);
+    if (rows_[size_t(record)].header == count) return true;
+    // The tables above and below regroup around it: the band is the whole run of split rows.
+    const auto [lo, hi] = splitRunBand(record);
+    beginTxn(lo, hi);
+    Row& r = rows_[size_t(record)];
+    QJsonObject t = QJsonDocument::fromJson(r.table.toUtf8()).object();
+    if (count > 0 && !t.contains(QStringLiteral("cols"))) {
+        int lanes = 0;
+        for (int i = record + 1; i <= splitRowEnd(record); ++i) lanes = std::max(lanes, rows_[size_t(i)].cell + 1);
+        QJsonArray cols;
+        for (int c = 0; c < lanes; ++c) cols.append(QJsonObject());   // auto-width text columns
+        t.insert(QStringLiteral("cols"), cols);
+    } else if (count == 0) {
+        t.remove(QStringLiteral("cols"));
+    }
+    r.header = static_cast<uint8_t>(count);
+    r.table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+    tablesDirty_ = true;
+    persistMeta(record);
+    normalizeStructure(lo, hi);                       // rows leaving a table follow layout rules
+    tablesDirty_ = true;
+    bumpLayout();
+    ++contentRevision_;
+    const int last = std::min(hi, static_cast<int>(rows_.size()) - 1);
+    if (lo <= last) emit dataChanged(index(lo), index(last));
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+int BlockModel::insertTableRows(int afterRow, int nRows, int nCols) {
+    const int n = static_cast<int>(rows_.size());
+    nRows = std::clamp(nRows, 1, 10000);
+    nCols = std::clamp(nCols, 1, 63);
+    int gap = n == 0 ? 0 : std::clamp(afterRow, -1, n - 1) + 1;
+    while (gap < n && rows_[size_t(gap)].cell >= 0) ++gap;   // never inside a split row
+    beginTxn(gap, gap - 1);
+    QString prev = gap > 0 ? ranks_[size_t(gap - 1)] : QString();
+    const QString next = gap < n ? ranks_[size_t(gap)] : QString();
+    const std::vector<float> equal(static_cast<size_t>(nCols), 1.0f / static_cast<float>(nCols));
+    QJsonArray cols;
+    for (int c = 0; c < nCols; ++c) cols.append(QJsonObject());
+    const QString headAttrs = QString::fromUtf8(
+        QJsonDocument(QJsonObject{ { QStringLiteral("cols"), cols } }).toJson(QJsonDocument::Compact));
+    int at = gap;
+    auto put = [&](const Row& r) {
+        const QString rk = rankBetween(prev, next);
+        insertRowRaw(at++, r, rk);
+        prev = rk;
+    };
+    for (int k = 0; k < nRows; ++k) {
+        Row rec{}; rec.type = Split; rec.param = 1; rec.ratios = equal;
+        if (k == 0) { rec.header = 1; rec.table = headAttrs; }
+        put(rec);
+        for (int c = 0; c < nCols; ++c) {
+            Row p{}; p.type = Paragraph; p.param = 1; p.cell = static_cast<int8_t>(c);
+            put(p);
+        }
+    }
+    tablesDirty_ = true;
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return gap + 1;
 }
 
 // Surviving lanes' ratios. runLane = each surviving lane's ORIGINAL lane number,
@@ -452,8 +597,16 @@ BlockModel::StructurePlan BlockModel::planStructure(const std::vector<Row>& rows
         p.cell[k] = -1;
         if (rows[lo + k].type == Split) p.ratios[k] = rows[lo + k].ratios;
     }
+    // SR-4: table rows (a head, or adjacent below one) may have a single lane and keep
+    // their ratios as they are. Is the window's first record already inside a table?
+    bool inTable = false;
+    for (size_t b = lo; b-- > 0;) {
+        if (rows[b].cell >= 0) continue;
+        if (rows[b].type != Split) break;
+        if (rows[b].header > 0) { inTable = true; break; }
+    }
     for (size_t i = lo; i < lo + m;) {
-        if (rows[i].type != Split) { ++i; continue; }
+        if (rows[i].type != Split) { if (rows[i].cell < 0) inTable = false; ++i; continue; }
         size_t j = i + 1;
         while (j < lo + m && rows[j].cell >= 0 && rows[j].type != Split) ++j;
         std::vector<int> runLane;
@@ -463,11 +616,13 @@ BlockModel::StructurePlan BlockModel::planStructure(const std::vector<Row>& rows
             p.cell[c - lo] = static_cast<int8_t>(std::min<int>(static_cast<int>(runLane.size()) - 1, 63));
         }
         const int lanes = std::min<int>(static_cast<int>(runLane.size()), 64);
-        if (lanes < 2) {                    // no blocks, or one lane: the record goes
+        const bool tableRow = inTable || rows[i].header > 0;
+        if (lanes < (tableRow ? 1 : 2)) {   // no blocks, or a layout row with one lane: the record goes
             p.remove[i - lo] = 1;
             for (size_t c = i + 1; c < j; ++c) p.cell[c - lo] = -1;
         } else {
-            p.ratios[i - lo] = survivingLaneRatios(rows[i].ratios, runLane, lanes);
+            inTable = tableRow;
+            p.ratios[i - lo] = tableRow ? rows[i].ratios : survivingLaneRatios(rows[i].ratios, runLane, lanes);
         }
         i = j;
     }
@@ -559,7 +714,7 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
     const int n = static_cast<int>(rows_.size());
     if (row < 0 || row >= n) return -1;
     const Row src = rows_[size_t(row)];
-    if (src.type == Split || src.type == Table) return -1;
+    if (src.type == Split || src.type == Table || tableHeadOf(row) >= 0) return -1;   // tables add columns (SR-4)
     const float keep = static_cast<float>(std::clamp<qreal>(ratio, 0.05, 0.95));
     const bool newRight = side == 0;
 
@@ -888,9 +1043,14 @@ void BlockModel::loadFromStore() {
         // Structure is validated as a whole after the scan (repairStructure).
         if (const QJsonValue cv = o.value(QStringLiteral("cell")); cv.isDouble())
             r.cell = static_cast<int8_t>(std::clamp(cv.toInt(), 0, 63));
-        if (r.type == Split)
+        if (r.type == Split) {
             for (const QJsonValue& rv : o.value(QStringLiteral("ratios")).toArray())
                 r.ratios.push_back(static_cast<float>(rv.toDouble()));
+            // SR-4: a head's header count and a record's table attrs.
+            r.header = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("header")).toInt(0), 0, 255));
+            if (const QJsonObject to = o.value(QStringLiteral("table")).toObject(); !to.isEmpty())
+                r.table = QString::fromUtf8(QJsonDocument(to).toJson(QJsonDocument::Compact));
+        }
         if (r.type == Table)   // content is the grid JSON; param = row count for height estimate
             r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(text).rows()));
         fillMediaMeta(r, text);   // media: dims/video/aspect-param from the descriptor JSON
@@ -1213,7 +1373,7 @@ void BlockModel::insertRowRaw(int at, const Row& r, const QString& rank) {
     endInsertRows();
     if (doc_.isOpen())
         doc_.appendBlock(id, rank, r.depth, QString::fromLatin1(typeToString(r.type)),
-                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), QString());
+                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), QString());
 }
 
 std::vector<float> BlockModel::clampedRatios(std::vector<float> ratios) const {
@@ -1239,8 +1399,9 @@ std::vector<float> BlockModel::clampedRatios(std::vector<float> ratios) const {
 }
 
 bool BlockModel::setSplitRatios(int record, const QVariantList& ratios) {
-    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split) return false;
-    if (ratios.size() != static_cast<qsizetype>(rows_[size_t(record)].ratios.size())) return false;
+    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split
+        || tableHeadOf(record) >= 0) return false;
+    if (ratios.size() !=static_cast<qsizetype>(rows_[size_t(record)].ratios.size())) return false;
     std::vector<float> r;
     for (const QVariant& v : ratios) r.push_back(static_cast<float>(v.toDouble()));
     r = clampedRatios(std::move(r));
@@ -1268,7 +1429,8 @@ qreal BlockModel::dividerX(int record, int divider) const {
 QVariantList BlockModel::dividerChain(int record, int divider) const {
     const int n = static_cast<int>(rows_.size());
     if (record < 0 || record >= n || rows_[size_t(record)].type != Split
-        || divider < 0 || divider + 1 >= static_cast<int>(rows_[size_t(record)].ratios.size())) return {};
+        || divider < 0 || divider + 1 >= static_cast<int>(rows_[size_t(record)].ratios.size())
+        || tableHeadOf(record) >= 0) return {};
     const double x = dividerX(record, divider);
     auto dividerAt = [&](int rec) {
         const int lanes = static_cast<int>(rows_[size_t(rec)].ratios.size());
@@ -1279,7 +1441,7 @@ QVariantList BlockModel::dividerChain(int record, int divider) const {
     QVariantList out{ record, divider };
     for (int above = record - 1; above >= 0;) {                   // the adjacent layout rows above …
         const int rec = rows_[size_t(above)].cell >= 0 ? splitRowOf(above) : -1;
-        if (rec < 0) break;
+        if (rec < 0 || tableHeadOf(rec) >= 0) break;                // the chain stops at a table
         const int k = dividerAt(rec);
         if (k < 0) break;
         out.prepend(k);
@@ -1287,6 +1449,7 @@ QVariantList BlockModel::dividerChain(int record, int divider) const {
         above = rec - 1;
     }
     for (int below = splitRowEnd(record) + 1; below < n && rows_[size_t(below)].type == Split;) {   // … and below
+        if (tableHeadOf(below) >= 0) break;
         const int k = dividerAt(below);
         if (k < 0) break;
         out << below << k;
@@ -1298,7 +1461,7 @@ QVariantList BlockModel::dividerChain(int record, int divider) const {
 bool BlockModel::moveDivider(int record, int divider, qreal pageX, bool alone) {
     const QVariantList chain = alone ? QVariantList{ record, divider } : dividerChain(record, divider);
     if (chain.size() < 2 || record < 0 || record >= static_cast<int>(rows_.size())
-        || rows_[size_t(record)].type != Split) return false;
+        || rows_[size_t(record)].type != Split || tableHeadOf(record) >= 0) return false;
     struct Change { int rec; std::vector<float> ratios; };
     std::vector<Change> changes;
     for (qsizetype i = 0; i + 1 < chain.size(); i += 2) {
@@ -1425,7 +1588,7 @@ void BlockModel::replaceBand(int lo, int hi, const std::vector<Row>& nr,
                 persistMeta(i);
             } else {
                 doc_.appendBlock(ni[k], nk[k], r.depth, QString::fromLatin1(typeToString(r.type)),
-                                 attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), nc[k]);
+                                 attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), nc[k]);
             }
         }
     ++layoutRevision_;
@@ -1436,7 +1599,8 @@ void BlockModel::replaceBand(int lo, int hi, const std::vector<Row>& nr,
 }
 
 int BlockModel::alignLanes(int record) {
-    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split) return -1;
+    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split
+        || tableHeadOf(record) >= 0) return -1;
     const int end = splitRowEnd(record);
     const int lanes = static_cast<int>(rows_[size_t(record)].ratios.size());
     std::vector<std::vector<int>> laneRows(static_cast<size_t>(lanes));
@@ -1481,7 +1645,8 @@ int BlockModel::mergeRowsIntoLanes(int loRow, int hiRow) {
     const int lanes = static_cast<int>(rows_[size_t(first)].ratios.size());
     std::vector<int> recs;
     for (int r = first; r <= lastRec; r = splitRowEnd(r) + 1) {   // adjacent split rows only
-        if (r >= n || rows_[size_t(r)].type != Split || static_cast<int>(rows_[size_t(r)].ratios.size()) != lanes) return -1;
+        if (r >= n || rows_[size_t(r)].type != Split || static_cast<int>(rows_[size_t(r)].ratios.size()) != lanes
+            || tableHeadOf(r) >= 0) return -1;
         recs.push_back(r);
     }
     if (recs.back() != lastRec) return -1;
@@ -1509,6 +1674,7 @@ QVariantList BlockModel::collapseEmptyLane(int row, bool forward) {
     const int rec = splitRowOf(row);
     const int lane = r.cell;
     if (rec < 0 || laneFirst(rec, lane) != row || laneLast(rec, lane) != row) return {};
+    if (tableHeadOf(rec) >= 0) return {};              // a table cell refills: net no-op (A4)
     const int lanes = static_cast<int>(rows_[size_t(rec)].ratios.size());
     const int prevEnd = lane > 0 ? laneLast(rec, lane - 1) : -1;
     const int nextStart = lane + 1 < lanes ? laneFirst(rec, lane + 1) : -1;
@@ -1631,7 +1797,7 @@ int BlockModel::moveBeside(int from, int count, int target, int side) {
     for (int k = from; k < from + count; ++k)
         if (rows_[size_t(k)].type == Split) return -1;
     const uint8_t tt = rows_[size_t(target)].type;
-    if (tt == Split || tt == Table) return -1;
+    if (tt == Split || tt == Table || tableHeadOf(target) >= 0) return -1;   // not offered inside tables
     const QString firstId = ids_[size_t(from)];
     const auto band = wholeSplitRows(std::min(from, target), std::max(from + count - 1, target));
     beginTxn(band.first, band.second);
@@ -1893,7 +2059,8 @@ bool BlockModel::matchMarkdownPrefix(const QString& content, BlockType& type, in
 
 QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
                               const std::vector<Span>& spans, uint8_t taskState,
-                              int cell, const std::vector<float>& ratios) const {
+                              int cell, const std::vector<float>& ratios,
+                              uint8_t header, const QString& table) const {
     QJsonObject o;
     if (type == Heading && level > 0) o.insert(QStringLiteral("level"), level);
     if (type == TaskListItem) o.insert(QStringLiteral("state"), taskState);
@@ -1904,6 +2071,9 @@ QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
         for (float f : ratios) ra.append(std::round(double(f) * 10000.0) / 10000.0);
         o.insert(QStringLiteral("ratios"), ra);
     }
+    if (type == Split && header > 0) o.insert(QStringLiteral("header"), header);
+    if (type == Split && !table.isEmpty())
+        o.insert(QStringLiteral("table"), QJsonDocument::fromJson(table.toUtf8()).object());
     if (!spans.empty()) {
         QJsonArray arr;
         for (const Span& sp : spans) {
@@ -1923,7 +2093,7 @@ void BlockModel::persistMeta(int row) {
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
-                    attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), r.depth);
+                    attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), r.depth);
 }
 
 // === Undo / redo: region-snapshot transactions ===========================
@@ -1936,6 +2106,8 @@ BlockModel::BlockSnap BlockModel::snapAt(int row) const {
     s.lang = rows_[row].lang;
     s.cell = rows_[row].cell;
     s.ratios = rows_[row].ratios;
+    s.header = rows_[row].header;
+    s.table = rows_[row].table;
     s.ink = inkByBlock_.value(s.id);   // "" when uninked (the common case)
     return s;
 }
@@ -1988,6 +2160,8 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     for (const BlockSnap& s : snaps) {
         Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans; r.lang = s.lang;
         r.cell = s.cell; r.ratios = s.ratios;
+        r.header = s.header; r.table = s.table;
+        tablesDirty_ = true;
         r.taskState = s.taskState;
         r.depth = s.depth;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
@@ -1997,7 +2171,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         ids_.insert(ids_.begin() + at, s.id);
         ranks_.insert(ranks_.begin() + at, s.rank);
         if (doc_.isOpen()) {
-            const QString attrs = attrsJson(s.type, s.level, s.lang, s.spans, s.taskState, s.cell, s.ratios);
+            const QString attrs = attrsJson(s.type, s.level, s.lang, s.spans, s.taskState, s.cell, s.ratios, s.header, s.table);
             const QString type = QString::fromLatin1(typeToString(s.type));
             if (oldIds.contains(s.id)) {   // survived: content/meta/rank may all have changed (incl. reorder)
                 doc_.updateContent(s.id, s.content);
@@ -2060,6 +2234,8 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         Row& r = rows_[p.row];
         if (r.type != s.type || r.cell != s.cell) restructured = true;
         r.cell = s.cell; r.ratios = s.ratios;
+        r.header = s.header; r.table = s.table;
+        tablesDirty_ = true;
         r.type = s.type; r.level = s.level; r.lang = s.lang;
         r.taskState = s.taskState; r.depth = s.depth; r.spans = s.spans;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
@@ -2078,7 +2254,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         if (doc_.isOpen()) {
             doc_.updateContent(s.id, s.content);
             doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),
-                            attrsJson(s.type, s.level, s.lang, s.spans, s.taskState, s.cell, s.ratios),
+                            attrsJson(s.type, s.level, s.lang, s.spans, s.taskState, s.cell, s.ratios, s.header, s.table),
                             s.depth);
             doc_.updateRank(s.id, s.rank);
         }
@@ -2125,6 +2301,7 @@ void BlockModel::endTxn(const QString& coalesce) {
             || x.level != y.level || x.taskState != y.taskState || x.depth != y.depth
             || x.content != y.content || x.lang != y.lang
             || x.cell != y.cell || x.ratios != y.ratios
+            || x.header != y.header || x.table != y.table
             || x.spans.size() != y.spans.size()
             || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
         for (size_t j = 0; j < x.spans.size(); ++j)
@@ -2584,7 +2761,7 @@ int BlockModel::insertDivider(int afterRow) {
     indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
     endInsertRows();
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QStringLiteral("divider"), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), QString());
+        doc_.appendBlock(newId, newRank, 0, QStringLiteral("divider"), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), QString());
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
@@ -3279,7 +3456,7 @@ int BlockModel::insertSketch(int afterRow) {
     endInsertRows();
 
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), json);
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
 
     bumpLayout();
     ++contentRevision_;
@@ -3724,7 +3901,7 @@ int BlockModel::insertTable(int afterRow, int nRows, int nCols) {
     endInsertRows();
 
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), json);
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
 
     bumpLayout();
     ++contentRevision_;
@@ -3756,7 +3933,7 @@ int BlockModel::insertTableFromTSV(int afterRow, const QString& tsv) {
     endInsertRows();
 
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), json);
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
 
     bumpLayout();
     ++contentRevision_;
@@ -3808,7 +3985,7 @@ int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectPa
     endInsertRows();
 
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), json);
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
 
     bumpLayout();
     ++contentRevision_;
@@ -5388,7 +5565,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
         if (doc_.isOpen())
             for (const NewBlk& b : made)
                 doc_.appendBlock(b.id, b.rank, 0, QString::fromLatin1(typeToString(b.type)),
-                                 attrsJson(b.type, b.level, b.lang, b.spans, b.taskState, b.cell, std::vector<float>{}), b.content);
+                                 attrsJson(b.type, b.level, b.lang, b.spans, b.taskState, b.cell, std::vector<float>{}, 0, QString()), b.content);
     };
 
     // A leading fence merges only into an EMPTY row (it becomes the code
@@ -5490,6 +5667,8 @@ BlockModel::BlockSpec BlockModel::specForRow(int row) const {
     const Row& r = rows_[row];
     sp.cell = r.cell;
     sp.ratios = r.ratios;
+    sp.header = r.header;
+    sp.table = r.table;
     if (r.type == Media) {
         sp.type = Media;
         sp.mediaJson = content_[row];
@@ -5567,6 +5746,7 @@ bool BlockModel::sanitizeSpecStructure(std::vector<BlockSpec>& specs) {
         rows[k].type = specs[k].type;
         rows[k].cell = specs[k].cell;
         rows[k].ratios = specs[k].ratios;
+        rows[k].header = specs[k].type == Split ? specs[k].header : 0;
     }
     const StructurePlan p = planStructure(rows, 0, rows.size() - 1);
     bool kept = false;
@@ -5574,6 +5754,7 @@ bool BlockModel::sanitizeSpecStructure(std::vector<BlockSpec>& specs) {
         if (p.remove[k]) { specs[k] = BlockSpec{}; continue; }
         specs[k].cell = p.cell[k];
         specs[k].ratios = (specs[k].type == Split) ? p.ratios[k] : std::vector<float>{};
+        if (specs[k].type != Split) { specs[k].header = 0; specs[k].table.clear(); }
         if (specs[k].type == Split) kept = true;
     }
     return kept;
@@ -5626,7 +5807,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
                 ? static_cast<uint16_t>(std::clamp<int>(sp.text.count(QLatin1Char('\n')) + 1, 1, 65535))
                 : 1;
             r.spans = sp.spans;
-            if (sp.type == Split) r.ratios = sp.ratios;
+            if (sp.type == Split) { r.ratios = sp.ratios; r.header = sp.header; r.table = sp.table; }
             content = sp.text;
         }
     };
@@ -5688,7 +5869,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
         if (doc_.isOpen())
             for (const NewBlk& b : made)
                 doc_.appendBlock(b.id, b.rank, b.r.depth, QString::fromLatin1(typeToString(b.r.type)),
-                                 attrsJson(b.r.type, b.r.level, b.r.lang, b.r.spans, b.r.taskState, b.r.cell, b.r.ratios), b.content);
+                                 attrsJson(b.r.type, b.r.level, b.r.lang, b.r.spans, b.r.taskState, b.r.cell, b.r.ratios, b.r.header, b.r.table), b.content);
     }
 
     bumpLayout();
@@ -5830,7 +6011,7 @@ void BlockModel::insertParagraphRaw(int row) {
     endInsertRows();
 
     if (doc_.isOpen())
-        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), QString());
+        doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), QString());
 }
 
 void BlockModel::insertBlock(int row) {
@@ -5865,7 +6046,7 @@ void BlockModel::duplicateBlock(int row) {
 
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)),
-                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), text);
+                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), text);
 
     bumpLayout();
     ++contentRevision_;
@@ -6060,7 +6241,7 @@ std::vector<BlockModel::BlockSpec> BlockModel::specsForRange(int loRow, int loCo
     loRow = band.lo; loCol = band.loCol; hiRow = band.hi; hiCol = band.hiCol;
     for (int r = loRow; r <= hiRow; ++r) {
         BlockSpec sp = specForRow(r);
-        if (!band.keepLanes) { sp.cell = -1; sp.ratios.clear(); }
+        if (!band.keepLanes) { sp.cell = -1; sp.ratios.clear(); sp.header = 0; sp.table.clear(); }
         if (isOpaqueRow(r)) { out.push_back(std::move(sp)); continue; }   // whole-in
         const int len = sp.text.size();
         int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
@@ -6353,7 +6534,7 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
     std::vector<QString> ink;
     for (int r = loRow; r <= hiRow; ++r) {
         specs.push_back(specForRow(r));
-        if (!band.keepLanes) { specs.back().cell = -1; specs.back().ratios.clear(); }
+        if (!band.keepLanes) { specs.back().cell = -1; specs.back().ratios.clear(); specs.back().header = 0; specs.back().table.clear(); }
         ink.push_back(inkForRow(r));
     }
     const int gap = spliceGapFor(hiRow + 1, specs);

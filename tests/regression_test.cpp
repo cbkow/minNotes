@@ -6694,6 +6694,124 @@ static void testSplitRowExports() {
     QDir(dir).removeRecursively();
 }
 
+static void testTableModel() {
+    qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
+    auto fresh = [](BlockModel& m) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+        m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+    };
+    auto cacheMatches = [](const BlockModel& m) {       // the cache vs a fresh derivation off the public API
+        int cur = -1;
+        for (int r = 0; r < m.rowCountQml(); ++r) {
+            int want = -1;
+            if (m.laneForRow(r) >= 0) want = cur;
+            else if (m.typeForRow(r) == BlockModel::Split) { if (m.headerCount(r) > 0) cur = r; want = cur; }
+            else cur = -1;
+            if (m.tableHeadOf(r) != want) return false;
+        }
+        return true;
+    };
+    {
+        BlockModel m;
+        fresh(m);
+        const int first = m.insertTableRows(0, 3, 2);
+        // 0 above · 1 H · 2 · 3 · 4 B1 · 5 · 6 · 7 B2 · 8 · 9 · 10 below
+        CHECK(first == 2 && m.rowCountQml() == 11 && m.structureValid(),
+              "insertTableRows makes a head and two body rows of two cells (%d, %d)", first, m.rowCountQml());
+        CHECK(m.headerCount(1) == 1 && m.headerCount(4) == 0 && m.tableHeadOf(1) == 1 && m.tableHeadOf(9) == 1
+                  && m.tableHeadOf(0) == -1 && m.tableHeadOf(10) == -1 && cacheMatches(m),
+              "every record and cell of the table resolves to its head");
+        CHECK(m.tableRecords(1) == (QVariantList{ 1, 4, 7 }) && m.tableColumnCount(1) == 2, "tableRecords / tableColumnCount");
+        CHECK(m.isHeaderRow(1) && m.isHeaderRow(3) && !m.isHeaderRow(4) && !m.isHeaderRow(8), "the header count marks the header rows");
+        m.undo();
+        CHECK(m.rowCountQml() == 2 && m.structureValid() && cacheMatches(m), "one undo removes the table");
+        m.redo();
+        CHECK(m.rowCountQml() == 11 && m.headerCount(1) == 1 && m.structureValid() && cacheMatches(m),
+              "redo brings it back with its header role");
+
+        BlockModel::BlockSpec brk;
+        m.spliceSpecsAt(7, { brk }, false, -1);
+        // 7 break · 8 B2 · 9 · 10
+        CHECK(m.typeForRow(7) == BlockModel::Paragraph && m.tableHeadOf(8) == -1 && m.tableHeadOf(10) == -1
+                  && m.tableHeadOf(6) == 1 && m.structureValid() && cacheMatches(m),
+              "a break leaves the rows below it headerless: layout");
+        m.removeBlock(7);
+        CHECK(m.tableHeadOf(7) == 1 && m.tableHeadOf(9) == 1 && m.tableRecords(1).size() == 3 && m.structureValid()
+                  && cacheMatches(m), "removing the break rejoins them losslessly");
+
+        CHECK(m.setHeaderRole(7, 1) && m.tableHeadOf(8) == 7 && m.tableRecords(1).size() == 2
+                  && m.tableRecords(7) == (QVariantList{ 7 }) && cacheMatches(m),
+              "assigning a header mid-table starts a new table");
+        m.undo();
+        CHECK(m.headerCount(7) == 0 && m.tableHeadOf(8) == 1 && cacheMatches(m), "…one undo step");
+
+        m.removeBlock(9);
+        CHECK(m.rowCountQml() == 10 && m.structureValid() && m.tableHeadOf(8) == 1 && m.laneForRow(8) == 0
+                  && m.contentForRow(9) == QStringLiteral("below") && m.tableColumnCount(1) == 2 && cacheMatches(m),
+              "a table row may be ragged: a row one cell short stays a table row");
+        m.undo();
+        CHECK(m.rowCountQml() == 11 && m.structureValid() && cacheMatches(m), "…one undo step");
+
+        CHECK(m.splitIntoColumns(2, 0, 0.5) == -1 && !m.setSplitRatios(1, { 0.3, 0.7 }) && m.alignLanes(1) == -1
+                  && m.mergeRowsIntoLanes(1, 4) == -1 && m.moveBeside(0, 1, 2, 0) == -1 && m.structureValid(),
+              "layout-only operations refuse table rows");
+    }
+    {   // Unassigning a one-column table's header: layout rules take over, and one-lane rows unwrap
+        BlockModel m;
+        fresh(m);
+        m.insertTableRows(0, 2, 1);
+        m.setContent(2, QStringLiteral("h"));
+        m.setContent(4, QStringLiteral("b"));
+        // 0 above · 1 H · 2 h · 3 B · 4 b · 5 below
+        CHECK(m.rowCountQml() == 6 && m.structureValid() && m.tableHeadOf(4) == 1, "a one-column table is valid");
+        CHECK(m.setHeaderRole(1, 0) && m.rowCountQml() == 4 && m.contentForRow(1) == QStringLiteral("h")
+                  && m.laneForRow(1) == -1 && m.contentForRow(2) == QStringLiteral("b") && m.structureValid() && cacheMatches(m),
+              "unassigning its header unwraps the one-lane rows into their blocks");
+        m.undo();
+        CHECK(m.rowCountQml() == 6 && m.headerCount(1) == 1 && m.tableHeadOf(4) == 1 && m.structureValid() && cacheMatches(m),
+              "…one undo step");
+    }
+    {   // Persistence, load repair, and the clipboard
+        const QString dir = QDir::tempPath() + QStringLiteral("/mn_table_model");
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString path = dir + QStringLiteral("/table.mnd");
+        BlockModel m;
+        fresh(m);
+        m.insertTableRows(0, 3, 2);
+        m.setContent(2, QStringLiteral("Name"));
+        m.setContent(5, QStringLiteral("a"));
+        CHECK(m.saveAs(path), "the document saves");
+        {
+            BlockModel m2;
+            CHECK(m2.openDocument(path) && m2.structureValid() && !m2.dirty() && m2.headerCount(1) == 1
+                      && m2.tableHeadOf(9) == 1 && m2.tableColumnCount(1) == 2
+                      && m2.contentForRow(2) == QStringLiteral("Name") && cacheMatches(m2),
+                  "a table round-trips through save");
+        }
+        int cr = -1, cc = -1; QString err;
+        const QString payload = m.clipboardPayloadForRange(1, 0, 9, 0);
+        CHECK(ClipboardPaster::pasteBlocks(&m, payload, 10, 5, -1, 0, -1, 0, &cr, &cc, &err)
+                  && m.headerCount(11) == 1 && m.tableHeadOf(19) == 11 && m.tableHeadOf(9) == 1
+                  && m.tableColumnCount(11) == 2 && m.structureValid() && cacheMatches(m),
+              "a copied table pastes as a table: the header role travels (%s)", qPrintable(err));
+
+        auto sh = [](int off, const char* type, const char* attrs) {
+            return qMakePair(off, qMakePair(QString::fromLatin1(type), QString::fromLatin1(attrs)));
+        };
+        const QString oneLane = dir + QStringLiteral("/one-lane.mnd");
+        writeSplitFixture(oneLane, 6, { sh(1, "split", "{\"header\":1,\"ratios\":[1]}"), sh(2, "paragraph", "{\"cell\":0}"),
+                                        sh(3, "split", "{\"ratios\":[1]}"), sh(4, "paragraph", "{\"cell\":0}") });
+        BlockModel m3;
+        CHECK(m3.openDocument(oneLane) && m3.structureValid() && !m3.dirty() && m3.rowCountQml() == 6
+                  && m3.headerCount(1) == 1 && m3.tableHeadOf(4) == 1 && m3.typeForRow(3) == BlockModel::Split,
+              "load keeps a table's one-lane rows (a layout row would unwrap)");
+        QDir(dir).removeRecursively();
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -6889,6 +7007,7 @@ int main(int argc, char** argv) {
     testLaneDrops();
     testSplitRowInterchange();
     testSplitRowExports();
+    testTableModel();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

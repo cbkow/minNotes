@@ -65,6 +65,8 @@ QJsonObject specToJson(const BlockModel::BlockSpec& sp, const QString& ink) {
         for (float f : sp.ratios) ratios.push_back(double(f));
         o.insert(QStringLiteral("ratios"), ratios);
     }
+    if (sp.header > 0) o.insert(QStringLiteral("header"), int(sp.header));
+    if (!sp.table.isEmpty()) putJsonOrRaw(o, QStringLiteral("table_attrs"), sp.table);
     if (!ink.isEmpty()) putJsonOrRaw(o, QStringLiteral("ink"), ink);
     return o;
 }
@@ -101,6 +103,8 @@ BlockModel::BlockSpec specFromJson(const QJsonObject& o, QString* ink) {
     sp.cell = static_cast<int8_t>(std::clamp(o.value(QStringLiteral("cell")).toInt(-1), -1, 63));
     for (const QJsonValue& v : o.value(QStringLiteral("ratios")).toArray())
         sp.ratios.push_back(static_cast<float>(v.toDouble()));
+    sp.header = static_cast<uint8_t>(std::clamp(o.value(QStringLiteral("header")).toInt(0), 0, 255));
+    sp.table = takeJsonOrRaw(o, QStringLiteral("table_attrs"));
     if (ink) *ink = takeJsonOrRaw(o, QStringLiteral("ink"));
     return sp;
 }

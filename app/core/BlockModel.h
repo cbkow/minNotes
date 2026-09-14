@@ -195,6 +195,15 @@ public:
     Q_INVOKABLE int laneCount(int row) const;        // lanes of a Split record; 0 otherwise
     Q_INVOKABLE QVariantList splitRatios(int row) const;
     Q_INVOKABLE bool structureValid() const;         // the D1 invariants (PLAN-SR3), for tests and the probe
+    // Derived tables (SR-4): a Split record with a header count heads a table — itself plus
+    // the adjacent split rows below it, until a non-split row or the next head. Never stored.
+    Q_INVOKABLE int tableHeadOf(int row) const;       // head record of the table holding row (record or cell block), or -1
+    Q_INVOKABLE int headerCount(int row) const;       // a head's header row count; 0 otherwise
+    Q_INVOKABLE bool isHeaderRow(int row) const;      // row (record or cell block) sits in one of its table's header rows
+    Q_INVOKABLE QVariantList tableRecords(int head) const;   // the table's records, top to bottom
+    Q_INVOKABLE int tableColumnCount(int head) const; // max(the head's column spec, the widest row)
+    Q_INVOKABLE bool setHeaderRole(int record, int count);   // assign (count ≥ 1) / unassign (0); one undo
+    Q_INVOKABLE int insertTableRows(int afterRow, int nRows, int nCols);   // head + body rows; → the first cell's row
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -390,6 +399,8 @@ public:
         QString mediaJson;          // Media blocks (descriptor)
         int8_t cell = -1;           // split rows (SR-3): the lane, when the list carries its record
         std::vector<float> ratios;  // a Split record's lane fractions
+        uint8_t header = 0;         // SR-4: a record's header row count (a table head)
+        QString table;              // SR-4: a record's table attrs (compact JSON)
     };
     // Insert specs into/after `row` (the pasteHtml tail, extracted): folds
     // the first spec into a blank simple row when allowed, rank-chains the
@@ -935,6 +946,8 @@ private:
         std::vector<Span> spans;   // travels with the row on insert/erase
         int8_t cell = -1;          // split rows (SR-3): the lane this block sits in; -1 = top level
         std::vector<float> ratios; // a Split record's lane fractions (sum 1); empty otherwise
+        uint8_t header = 0;        // SR-4: a Split record heading a table — its header row count; 0 = none
+        QString table;             // SR-4: a Split record's table attrs (compact JSON: a head's column spec, row/cell colours)
     };
 
     // Full, restorable state of one block — the unit an undo transaction snaps.
@@ -948,6 +961,8 @@ private:
         std::vector<Span> spans;
         int8_t cell = -1;           // split-row structure travels with the snap, so
         std::vector<float> ratios;  // every undo path restores it for free
+        uint8_t header = 0;         // … and so does the table role (SR-4)
+        QString table;
     };
     // A sparse per-row change: this row's snap swapped before↔after in place.
     // Only born from non-structural bands (same ids, same count) — see endTxn.
@@ -1031,7 +1046,8 @@ private:
     // --- Undo internals ---
     // cell/ratios are mandatory so no writer can silently drop split-row structure.
     QString attrsJson(uint8_t type, uint8_t level, const QString& lang, const std::vector<Span>& spans,
-                      uint8_t taskState, int cell, const std::vector<float>& ratios) const;
+                      uint8_t taskState, int cell, const std::vector<float>& ratios,
+                      uint8_t header, const QString& table) const;
     BlockSnap snapAt(int row) const;
     std::vector<BlockSnap> snapshotRange(int lo, int hi) const;
     // Replace the current rows [lo, lo+oldCount) with `snaps` (in-memory + DB +
@@ -1190,6 +1206,12 @@ private:
     struct CopyBand { int lo, loCol, hi, hiCol; bool keepLanes; };
     CopyBand copyBand(int loRow, int loCol, int hiRow, int hiCol) const;
     static bool sanitizeSpecStructure(std::vector<BlockSpec>& specs);
+    // SR-4 grouping cache: per row, its table's head record or -1. Dirtied with the index
+    // (any structural change), by undo apply, and by setHeaderRole.
+    mutable std::vector<int> tableHeads_;
+    mutable bool tablesDirty_ = true;
+    const std::vector<int>& tableHeads() const;
+    std::pair<int,int> splitRunBand(int record) const;   // adjacent top-level split rows around record
     bool lastPasteRelocated_ = false;
 public:
     std::pair<int,int> wholeSplitRows(int lo, int hi) const;   // widen a band to whole split rows
