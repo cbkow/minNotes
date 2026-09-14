@@ -820,8 +820,6 @@ Item {
         // and margins alike) — one row treatment, not two widths.
         visible: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
                  && !(cell.inTable && editor.cellRect !== null)
-                 // a lane block whose split row is selected whole rides its record's full-field band
-                 && !(cell.inLane && (blockModel.contentRevision, blockModel.splitRowOf(cell.logicalRow)) >= cursor.loRow)
         z: -0.5                                  // above the block rules + focus fill, below text + rects
         radius: 0
         color: Theme.colors.selectionBand

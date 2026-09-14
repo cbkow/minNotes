@@ -493,14 +493,6 @@ FocusScope {
     property real pullPressX: 0               // page-relative
     property real pullPreviewX: 0             // page-relative
     readonly property real laneHotBand: 8
-    // A press on the pull strip waits for its first move: sideways pulls a lane, anything else is a click
-    // or a selection drag from the press point (Shift presses never arm).
-    property bool pullArmed: false
-    property int  pullArmRow: -1
-    property int  pullArmSide: -1
-    property int  pullArmMods: 0
-    property real pullArmX: 0                 // content coords
-    property real pullArmY: 0
     // Table grips (SR-4 S7b, SR-0 §4.12): hover bands outside the grid — beside each row in the left
     // margin, above the first row in its pocket. A click picks a row / column set (Shift spans, ⌘
     // toggles); past the 4 px threshold a row grip starts the rail's drag (a header row carries its
@@ -1226,18 +1218,10 @@ FocusScope {
         property int anchorCol: 0
         readonly property bool anchorFirst: anchorRow < focusRow
                                             || (anchorRow === focusRow && anchorCol <= focusCol)
-        readonly property int _lo: anchorFirst ? anchorRow : focusRow
-        readonly property int _loC: anchorFirst ? anchorCol : focusCol
-        readonly property int _hi: anchorFirst ? focusRow : anchorRow
-        readonly property int _hiC: anchorFirst ? focusCol : anchorCol
-        // SR-0 §4.9 row ranges: ends in different top-level rows (not one table) take the split rows and
-        // tables they reach into whole — [lo, hi] widened, or null. Every reader of the selection (washes,
-        // copy, delete, the run menu, the rail drag) sees the widened range.
-        readonly property var _span: (blockModel.contentRevision, root.rowRangeSpan(_lo, _hi))
-        readonly property int loRow: _span ? _span[0] : _lo
-        readonly property int loCol: _span && _span[0] !== _lo ? 0 : _loC
-        readonly property int hiRow: _span ? _span[1] : _hi
-        readonly property int hiCol: _span && _span[1] !== _hi ? blockModel.contentForRow(_span[1]).length : _hiC
+        readonly property int loRow: anchorFirst ? anchorRow : focusRow
+        readonly property int loCol: anchorFirst ? anchorCol : focusCol
+        readonly property int hiRow: anchorFirst ? focusRow : anchorRow
+        readonly property int hiCol: anchorFirst ? focusCol : anchorCol
         readonly property bool hasSel: loRow !== hiRow || loCol !== hiCol
 
         // Sticky goal-x for vertical nav: the x the caret aims for across a RUN
@@ -1954,35 +1938,6 @@ FocusScope {
         const col = cursor.focusCol
         blockModel.deleteRange(row, blockModel.contentForRow(row).length, next, 0)   // pull the next block up
         cursor.setCaret(row, col)
-    }
-    // SR-0 §4.9: a selection from row lo to row hi whose ends sit in different top-level rows (and not in
-    // one table) is a row range — an end inside a split row widens to the whole split row, an end inside a
-    // table to the whole table; an end in a top-level block stays where it is. → [lo, hi], or null when
-    // nothing widens (one block, one cell, one split row, one table: the finer grains).
-    function rowRangeSpan(lo, hi) {
-        if (lo < 0 || hi < 0 || lo >= hi || hi >= blockModel.count) return null
-        const sl = blockModel.splitRowOf(lo), sh = blockModel.splitRowOf(hi)
-        const tl = sl >= 0 ? sl : lo, th = sh >= 0 ? sh : hi
-        if (tl === th) return null
-        const hl = blockModel.tableHeadOf(tl), hh = blockModel.tableHeadOf(th)
-        if (hl >= 0 && hl === hh) return null
-        let a = lo, b = hi
-        if (sl >= 0 || blockModel.typeForRow(lo) === 10) a = hl >= 0 ? hl : tl
-        if (sh >= 0 || blockModel.typeForRow(hi) === 10) {
-            const recs = hh >= 0 ? blockModel.tableRecords(hh) : [th]
-            b = blockModel.splitRowLast(recs[recs.length - 1])
-        }
-        return a === lo && b === hi ? null : [a, b]
-    }
-    // The caret work of a press, for a press on the pull strip that turned out not to be a pull.
-    function edgePressCaret(px, py, mods, drag) {
-        const h = hitTest(px, py)
-        if (mods & Qt.ShiftModifier) cursor.move(h.row, h.col, true)
-        else {
-            if (h.row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
-            cursor.setCaret(h.row, h.col)
-        }
-        if (drag) { dragging = true; dragX = px; dragViewY = py - flick.contentY }
     }
     // --- Lane gestures (SR-3 S7b) ---
     // The lane gap under a page-relative x in the split row holding `row`: {record, index}, or null.
@@ -3930,15 +3885,7 @@ FocusScope {
                 flick.grabToImage(function(res) { res.saveToFile(arg.substring("--pool-probe=".length).replace(/[^\/]*$/, "") + "frozen.png") })
             }
         }
-        function next(phaseDone) {
-            if (phaseDone) {
-                let tables = 0
-                for (let i = 0; i < blockModel.count; ++i) if (blockModel.headerCount(i) > 0) ++tables
-                console.log("POOL-PROBE PHASE", phase, "done at step", step, "blocks", blockModel.count, "tables", tables,
-                            "checks", checks, "maxVisibleRows", maxRows)
-                ++phase; phaseStep = 0
-            } else ++phaseStep
-        }
+        function next(phaseDone) { if (phaseDone) { ++phase; phaseStep = 0 } else ++phaseStep }
         onTriggered: {
             verify()
             verifyFrozen()
@@ -4120,22 +4067,7 @@ FocusScope {
                 } else {
                     const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
                     const r = blockModel.gridRowOf(row), rows = blockModel.gridRowCount(head)
-                    switch (rand(13)) {
-                    case 12: {   // SR-0 §4.9: a row range reaching into a table from above takes the whole table
-                        const recs = blockModel.tableRecords(head), last = blockModel.splitRowLast(recs[recs.length - 1])
-                        const above = head - 1
-                        if (above < 0 || blockModel.laneForRow(above) >= 0 || blockModel.typeForRow(above) === 10) break
-                        const mid = blockModel.gridCellAt(head, Math.floor(recs.length / 2), 0)
-                        if (mid < 0) break
-                        cursor.setCaret(above, 0)
-                        cursor.move(mid, 0, true)
-                        ++checks
-                        if (cursor.loRow !== above || cursor.hiRow !== last)
-                            fail("a range from row " + above + " into table " + head + " spans " + cursor.loRow + "–" + cursor.hiRow
-                                 + ", not the whole table to " + last)
-                        cursor.setCaret(mid, 0)
-                        break
-                    }
+                    switch (rand(12)) {
                     case 9: {   // S7b: grip picks — a row span (Shift); Delete clears its cells, the rows stay
                         const rowsBefore = blockModel.gridRowCount(head)
                         const a = rand(rowsBefore), z = rand(rowsBefore)
@@ -4754,11 +4686,7 @@ FocusScope {
                                           (m.modifiers & Qt.AltModifier) !== 0)
                     return
                 }
-                if (root.pullHoverRow >= 0 && !(m.modifiers & Qt.ShiftModifier)) {
-                    root.pullArmed = true; root.pullArmRow = root.pullHoverRow; root.pullArmSide = root.pullHoverSide
-                    root.pullArmMods = m.modifiers; root.pullArmX = m.x; root.pullArmY = m.y
-                    return
-                }
+                if (root.pullHoverRow >= 0) { root.beginPull(root.pullHoverRow, root.pullHoverSide, m.x - root.leftEdge); return }
                 // Click into a table cell → place the table caret; arm drag for
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
@@ -4858,20 +4786,6 @@ FocusScope {
                 root.dragX = m.x; root.dragViewY = m.y - flick.contentY
             }
             onPositionChanged: (m) => {
-                if (root.pullArmed) {   // the pull strip's press decides on its first move
-                    const dx = Math.abs(m.x - root.pullArmX), dy = Math.abs(m.y - root.pullArmY)
-                    if (Math.max(dx, dy) <= 4) return
-                    root.pullArmed = false
-                    if (dx > dy) {
-                        root.beginPull(root.pullArmRow, root.pullArmSide, root.pullArmX - root.leftEdge)
-                        root.updatePull(m.x - root.leftEdge)
-                    } else {
-                        root.edgePressCaret(root.pullArmX, root.pullArmY, root.pullArmMods, true)
-                        const eh = root.hitTest(m.x, m.y)
-                        cursor.move(eh.row, eh.col, true)
-                    }
-                    return
-                }
                 if (root.dividerDragging) { root.updateDividerDrag(m.x - root.leftEdge); return }
                 if (root.pulling) { root.updatePull(m.x - root.leftEdge); return }
                 if (root.blockDragging) {
@@ -5021,11 +4935,7 @@ FocusScope {
                         if (!root.gripDragging) root.gripTableRow = -1
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
-                if (root.pullArmed) {   // a click on the pull strip: the caret goes there
-                    root.pullArmed = false
-                    root.edgePressCaret(root.pullArmX, root.pullArmY, root.pullArmMods, false)
-                }
-                else if (root.gridGripPressed) {
+                if (root.gridGripPressed) {
                     root.gridGripPressed = false
                     root.gridGripClick(root.gridGripPressHead, root.gridGripPressKind, root.gridGripPressIndex, root.gridGripPressMods)
                 }
@@ -5038,7 +4948,7 @@ FocusScope {
                 else root.dragging = false
             }
             onCanceled: {
-                root.gridGripPressed = false; root.gridColDragging = false; root.gridColGap = -1; root.pullArmed = false
+                root.gridGripPressed = false; root.gridColDragging = false; root.gridColGap = -1
                 root.cancelDividerDrag(); root.cancelPull()
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
                 else {
