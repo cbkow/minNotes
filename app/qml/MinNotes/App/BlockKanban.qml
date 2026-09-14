@@ -12,9 +12,41 @@ import QtQuick
 // MouseAreas directly; nothing here routes through the central handler.
 Item {
     id: kb
-    property int  logicalRow: -1
+    property int  logicalRow: -1           // a Table block's row (legacy; S10 retires it) …
+    property int  head: -1                 // … or a derived table's head record (SR-4 S9)
     property int  groupCol: -1
     property bool active: false
+    // One accessor set over both table kinds: the board reads through these only.
+    readonly property bool grid: head >= 0
+    function colKind(c) { return grid ? blockModel.gridColumnKind(head, c) : blockModel.tableColumnKind(logicalRow, c) }
+    function hdrRows() { return grid ? blockModel.headerCount(head) : blockModel.tableHeaderRows(logicalRow) }
+    function nRows() { return grid ? blockModel.gridRowCount(head) : blockModel.tableRows(logicalRow) }
+    function nCols() { return grid ? blockModel.tableColumnCount(head) : blockModel.tableColumns(logicalRow) }
+    function options() { return grid ? blockModel.gridColumnOptions(head, groupCol) : blockModel.tableColumnOptions(logicalRow, groupCol) }
+    function cellCheck(r, c) { return grid ? blockModel.gridCellCheck(head, r, c) : blockModel.tableCellCheck(logicalRow, r, c) }
+    function cellChoice(r, c) { return grid ? blockModel.gridCellChoice(head, r, c) : blockModel.tableCellChoice(logicalRow, r, c) }
+    function cellChoiceLabel(r, c) { return grid ? blockModel.gridCellChoiceLabel(head, r, c) : blockModel.tableCellChoiceLabel(logicalRow, r, c) }
+    function cellChoiceColor(r, c) { return grid ? blockModel.gridCellChoiceColor(head, r, c) : blockModel.tableCellChoiceColor(logicalRow, r, c) }
+    function cellText(r, c) { return grid ? blockModel.gridCellText(head, r, c) : blockModel.tableCell(logicalRow, r, c) }
+    function cellImageUrl(r, c) {          // a derived cell's first image block; a legacy cell's media
+        if (!grid) return blockModel.tableCellMedia(logicalRow, r, c) !== "" ? blockModel.tableCellMediaUrl(logicalRow, r, c) : ""
+        const blocks = blockModel.gridCellRows(head, r, c)
+        for (let i = 0; i < blocks.length; ++i)
+            if (blockModel.typeForRow(blocks[i]) === 3 && blockModel.mediaKind(blocks[i]) === "image") return blockModel.mediaUrl(blocks[i])
+        return ""
+    }
+    function rowBg(r) { return grid ? blockModel.gridRowBg(head, r) : blockModel.tableRowBg(logicalRow, r) }
+    function setCheck(r, state) { if (grid) blockModel.gridSetCellCheck(head, r, groupCol, state); else blockModel.tableSetCellCheck(logicalRow, r, groupCol, state) }
+    function setChoice(r, id) { if (grid) blockModel.gridSetCellChoice(head, r, groupCol, id); else blockModel.tableSetCellChoice(logicalRow, r, groupCol, id) }
+    function moveRow(from, to) { if (grid) blockModel.gridMoveRow(head, from, to); else blockModel.tableMoveRow(logicalRow, from, to) }
+    function insertRow(at) { if (grid) blockModel.gridInsertRow(head, at); else blockModel.tableInsertRow(logicalRow, at) }
+    function setTitle(r, t) { if (grid) blockModel.gridPasteTSV(head, r, titleCol, t); else blockModel.tableSetCell(logicalRow, r, titleCol, t) }
+    // One undo step over the table: its whole band for a derived table.
+    function groupBegin() {
+        if (!grid) { blockModel.beginGroup(logicalRow, logicalRow); return }
+        const recs = blockModel.tableRecords(head)
+        blockModel.beginGroup(head, blockModel.splitRowLast(recs[recs.length - 1]))
+    }
     property bool suspended: false         // resize in flight → covers drop their render
     signal showGrid()                      // emitted when the board can't render
     signal openCard(int r, int c)          // double-click → the grid, cell focused
@@ -37,21 +69,20 @@ Item {
     property var lanes: []
     property int titleCol: -1              // the card-title column (first text col)
     function recompute() {
-        if (!active || groupCol < 0 || logicalRow < 0) { lanes = []; return }
-        var row = logicalRow
-        var kind = blockModel.tableColumnKind(row, groupCol)
+        if (!active || groupCol < 0 || (logicalRow < 0 && head < 0)) { lanes = []; return }
+        var kind = colKind(groupCol)
         if (kind === 0) {                  // column reverted to text (undo / edit)
             lanes = []
             if (active) kb.showGrid()
             return
         }
-        var hdr = blockModel.tableHeaderRows(row)
-        var nr = blockModel.tableRows(row)
-        var nc = blockModel.tableColumns(row)
+        var hdr = hdrRows()
+        var nr = nRows()
+        var nc = nCols()
         // Card title column: the first text column that isn't the grouping one.
         var tc = -1
         for (var c = 0; c < nc; ++c)
-            if (c !== groupCol && blockModel.tableColumnKind(row, c) === 0) { tc = c; break }
+            if (c !== groupCol && colKind(c) === 0) { tc = c; break }
         kb.titleCol = tc
         var ls = []
         if (kind === 2) {
@@ -59,7 +90,7 @@ Item {
                   {key: "1", label: "Doing", color: "", cards: []},
                   {key: "2", label: "Done",  color: "", cards: []}]
         } else {
-            var opts = blockModel.tableColumnOptions(row, groupCol)
+            var opts = options()
             for (var i = 0; i < opts.length; ++i)
                 ls.push({key: opts[i].id, label: opts[i].label, color: opts[i].color, cards: []})
             ls.push({key: "", label: "No status", color: "", cards: []})
@@ -68,11 +99,10 @@ Item {
         for (var li = 0; li < ls.length; ++li) byKey[ls[li].key] = ls[li]
         var cardW = laneW - 16
         for (var r = hdr; r < nr; ++r) {
-            var key = kind === 2 ? String(blockModel.tableCellCheck(row, r, groupCol))
-                                 : blockModel.tableCellChoice(row, r, groupCol)
+            var key = kind === 2 ? String(cellCheck(r, groupCol)) : cellChoice(r, groupCol)
             var lane = byKey[key] !== undefined ? byKey[key] : byKey[""]
             if (lane === undefined) continue
-            var title = tc >= 0 ? blockModel.tableCell(row, r, tc) : ""
+            var title = tc >= 0 ? cellText(r, tc) : ""
             // The card carries the WHOLE row: the row's first cell image as a
             // cover (height precomputed from the intrinsic dims, so drag
             // geometry never waits on an async load) + one field line per
@@ -81,28 +111,26 @@ Item {
             var imgUrl = "", imgH = 0
             var fields = []
             for (var c2 = 0; c2 < nc; ++c2) {
-                if (imgUrl === "" && blockModel.tableCellMedia(row, r, c2) !== "") {
-                    imgUrl = blockModel.tableCellMediaUrl(row, r, c2)
-                    imgH = Math.round(cardW * 9 / 16)   // 16:9 cover; crop fills the rest
+                if (imgUrl === "") {
+                    imgUrl = cellImageUrl(r, c2)
+                    if (imgUrl !== "") imgH = Math.round(cardW * 9 / 16)   // 16:9 cover; crop fills the rest
                 }
                 if (c2 === groupCol || c2 === tc) continue
-                var k2 = blockModel.tableColumnKind(row, c2)
+                var k2 = colKind(c2)
                 if (k2 === 1) {
-                    if (blockModel.tableCellChoice(row, r, c2) !== "")
-                        fields.push({kind: 1, text: blockModel.tableCellChoiceLabel(row, r, c2),
-                                     color: blockModel.tableCellChoiceColor(row, r, c2), check: 0})
+                    if (cellChoice(r, c2) !== "")
+                        fields.push({kind: 1, text: cellChoiceLabel(r, c2), color: cellChoiceColor(r, c2), check: 0})
                 } else if (k2 === 2) {
-                    fields.push({kind: 2, text: hdr > 0 ? blockModel.tableCell(row, 0, c2) : "",
-                                 color: "", check: blockModel.tableCellCheck(row, r, c2)})
+                    fields.push({kind: 2, text: hdr > 0 ? cellText(0, c2) : "", color: "", check: cellCheck(r, c2)})
                 } else {
-                    var t2 = blockModel.tableCell(row, r, c2)
+                    var t2 = cellText(r, c2)
                     if (t2.trim().length > 0)
                         fields.push({kind: 0, text: t2.split("\n")[0], color: "", check: 0})
                 }
             }
             var ch = imgH + cardPad + titleH + fields.length * fieldH + cardPad
             lane.cards.push({r: r, h: ch, imgUrl: imgUrl, imgH: imgH, fields: fields,
-                             bar: blockModel.tableRowBg(row, r),   // row colour → card edge bar
+                             bar: rowBg(r),   // row colour → card edge bar
                              title: title.length > 0 ? title.split("\n")[0]
                                                      : "Row " + (r - hdr + 1)})
         }
@@ -119,6 +147,7 @@ Item {
     onActiveChanged: recompute()
     onGroupColChanged: recompute()
     onLogicalRowChanged: recompute()
+    onHeadChanged: recompute()
     Component.onCompleted: recompute()
     Connections {
         target: blockModel
@@ -163,7 +192,7 @@ Item {
     function commitCardDrop() {
         if (dragRow >= 0 && dropLane >= 0 && dropLane < lanes.length) {
             var lane = lanes[dropLane]
-            var kind = blockModel.tableColumnKind(logicalRow, groupCol)
+            var kind = colKind(groupCol)
             // Insertion target among the lane's cards with the dragged card taken
             // out (its rendered slot would shift everything below it by one).
             var rowsIn = [], dragPos = -1
@@ -182,10 +211,10 @@ Item {
                 to = idx < rowsIn.length ? rowsIn[idx] : rowsIn[rowsIn.length - 1] + 1
                 if (to > dragRow) to -= 1
             }
-            blockModel.beginGroup(logicalRow, logicalRow)
-            if (kind === 2) blockModel.tableSetCellCheck(logicalRow, dragRow, groupCol, parseInt(lane.key))
-            else if (kind === 1) blockModel.tableSetCellChoice(logicalRow, dragRow, groupCol, lane.key)
-            if (to >= 0 && to !== dragRow) blockModel.tableMoveRow(logicalRow, dragRow, to)
+            groupBegin()
+            if (kind === 2) setCheck(dragRow, parseInt(lane.key))
+            else if (kind === 1) setChoice(dragRow, lane.key)
+            if (to >= 0 && to !== dragRow) moveRow(dragRow, to)
             blockModel.endGroup()
         }
         dragRow = -1; _armedRow = -1; dropLane = -1; dropIdx = -1
@@ -198,21 +227,19 @@ Item {
     function addCard(li) {
         if (li < 0 || li >= lanes.length) return
         var lane = lanes[li]
-        var row = logicalRow
-        var at = lane.cards.length > 0 ? lane.cards[lane.cards.length - 1].r + 1
-                                       : blockModel.tableRows(row)
-        var kind = blockModel.tableColumnKind(row, groupCol)
-        blockModel.beginGroup(row, row)
-        blockModel.tableInsertRow(row, at)
-        if (kind === 2) blockModel.tableSetCellCheck(row, at, groupCol, parseInt(lane.key))
-        else if (lane.key !== "") blockModel.tableSetCellChoice(row, at, groupCol, lane.key)
+        var at = lane.cards.length > 0 ? lane.cards[lane.cards.length - 1].r + 1 : nRows()
+        var kind = colKind(groupCol)
+        groupBegin()
+        insertRow(at)
+        if (kind === 2) setCheck(at, parseInt(lane.key))
+        else if (lane.key !== "") setChoice(at, lane.key)
         blockModel.endGroup()
         if (titleCol >= 0) editRow = at
     }
     function commitTitle(r, t) {
         if (editRow < 0) return
         editRow = -1
-        if (titleCol >= 0 && t.length > 0) blockModel.tableSetCell(logicalRow, r, titleCol, t)
+        if (titleCol >= 0 && t.length > 0) setTitle(r, t)
         kb.editClosed()
     }
     function cancelEdit() {

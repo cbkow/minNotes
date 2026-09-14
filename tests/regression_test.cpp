@@ -8320,6 +8320,42 @@ static void testImportCapAndPackages() {
     dir.removeRecursively();
 }
 
+static void testGridTabsAndBoard() {
+    qInfo("[107] derived tables' tab ids; a board card move (choice + reorder) is one undo entry (SR-4 S9a)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("p"));
+    const int h1 = m.insertTableRows(0, 3, 2) - 1;
+    const int last1 = m.splitRowLast(m.tableRecords(h1).back().toInt());
+    const int q = m.insertParagraphBelow(last1);      // top level (insertBlock after a lane block joins the lane)
+    m.setContent(q, QStringLiteral("q"));
+    const int h2 = m.insertTableRows(q, 2, 2) - 1;
+    const QStringList ids = m.gridBlockIds();
+    CHECK(ids.size() == 2 && ids.at(0) == m.idForRow(h1) && ids.at(1) == m.idForRow(h2) && m.tableBlockIds().isEmpty(),
+          "gridBlockIds lists both heads in order; no Table blocks");
+    CHECK(m.rowForId(ids.at(1)) == h2 && m.headerCount(m.rowForId(ids.at(1))) > 0, "a tab id resolves to its head record");
+    // A board move: set the grouping choice and reorder the row in one group → one undo entry.
+    m.setContent(m.gridCellAt(h1, 1, 0), QStringLiteral("A")); m.setContent(m.gridCellAt(h1, 2, 0), QStringLiteral("B"));
+    CHECK(m.gridSetColumnKind(h1, 1, 1), "column 1 becomes a choice column");
+    const QString doing = m.gridAddOption(h1, 1, QStringLiteral("Doing"), QStringLiteral("#123456"));
+    const int entries = m.undoHistory().size();
+    const QVariantList recs = m.tableRecords(h1);
+    CHECK(m.gridCellChoice(h1, 2, 1).isEmpty() && m.gridCellText(h1, 2, 1).isEmpty(), "fixture: row 2's choice cell starts empty");
+    m.beginGroup(h1, m.splitRowLast(recs.back().toInt()));
+    m.gridSetCellChoice(h1, 2, 1, doing);
+    m.gridMoveRow(h1, 2, 1);
+    m.endGroup();
+    CHECK(m.gridCellText(h1, 1, 0) == QStringLiteral("B") && m.gridCellChoiceLabel(h1, 1, 1) == QStringLiteral("Doing")
+              && m.undoHistory().size() == entries + 1 && m.structureValid(),
+          "the card moved to the lane and above A, one undo entry");
+    m.undo();
+    CHECK(m.gridCellText(h1, 1, 0) == QStringLiteral("A") && m.gridCellText(h1, 2, 0) == QStringLiteral("B"),
+          "…undo restores the order (row1='%s' row2='%s')", qPrintable(m.gridCellText(h1, 1, 0)), qPrintable(m.gridCellText(h1, 2, 0)));
+    CHECK(m.gridCellChoice(h1, 2, 1).isEmpty() && m.gridCellChoice(h1, 1, 1).isEmpty(),
+          "…and the choice (r2='%s' r1='%s')", qPrintable(m.gridCellChoice(h1, 2, 1)), qPrintable(m.gridCellChoice(h1, 1, 1)));
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8537,6 +8573,7 @@ int main(int argc, char** argv) {
     testForeignTables();
     testOfficeTables();
     testImportCapAndPackages();
+    testGridTabsAndBoard();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

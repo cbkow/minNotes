@@ -154,6 +154,33 @@ FocusScope {
         var r = blockModel.rowForId(activeTableId)
         if (r >= 0) { cursor.setCaret(r, 0); tcur.place(0, 0, 0) }
     }
+    // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
+    // tab shows the board; a table with no grouping column stays in the document.
+    property string activeGridId: ""
+    readonly property int activeGridHead: (blockModel.layoutRevision, blockModel.contentRevision,
+        activeGridId === "" ? -1 : blockModel.rowForId(activeGridId))
+    onActiveGridHeadChanged: if (activeGridId !== "" && (activeGridHead < 0 || blockModel.headerCount(activeGridHead) <= 0)) activeGridId = ""
+    function firstGroupColOf(head) {
+        for (var c = 0; c < blockModel.tableColumnCount(head); ++c) {
+            var k = blockModel.gridColumnKind(head, c)
+            if (k === 1 || k === 2) return c
+        }
+        return -1
+    }
+    // The board's grouping column kind / option moves / editor, for either table kind.
+    function boardKind() {
+        if (boardCol < 0) return 0
+        return activeGridHead >= 0 ? blockModel.gridColumnKind(activeGridHead, boardCol)
+             : activeTableRow >= 0 ? blockModel.tableColumnKind(activeTableRow, boardCol) : 0
+    }
+    function moveBoardOption(key, toIndex) {
+        if (activeGridHead >= 0) blockModel.gridMoveOption(activeGridHead, boardCol, key, toIndex)
+        else blockModel.tableMoveOption(activeTableRow, boardCol, key, toIndex)
+    }
+    function openBoardOptions() {
+        if (activeGridHead >= 0) choiceEditor.open2Grid(activeGridHead, boardCol)
+        else openChoiceEditor(activeTableRow, boardCol)
+    }
     // Active PDF tab (full-page scroll view); "" = not in a PDF tab. Tables and
     // PDFs are mutually exclusive full-frame modes — setActiveTab keeps one set.
     property string activePdfId: ""
@@ -218,6 +245,7 @@ FocusScope {
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
     // active state across table, PDF, video and sketch tabs.
     readonly property string activeFrameId: activeTableId !== "" ? activeTableId
+                                          : activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
     function setActiveTab(id) {
@@ -233,7 +261,7 @@ FocusScope {
         var t = inspector ? inspector.drawTool : "type"
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
-            activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
+            activeTableId = ""; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
         }
         var r = blockModel.rowForId(id)
         if (blockModel.typeForRow(r) === 7) {
@@ -241,16 +269,29 @@ FocusScope {
             // "Select may stay armed" parenthetical): tables select with
             // the cell cursor, so Select is as dead as the draw tools.
             if (t !== "type") inspector.drawTool = "type"
-            activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeTableId = id
+            activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = ""; activeTableId = id
             var pc = boardPref(id)               // this table's remembered view
             if (pc >= 0) { boardCol = pc; boardMode = true }
         }
+        else if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a derived table (S9)
+            var gc = boardPref(id)
+            if (gc < 0 || (blockModel.gridColumnKind(r, gc) !== 1 && blockModel.gridColumnKind(r, gc) !== 2)) gc = firstGroupColOf(r)
+            if (gc < 0) {                        // no grouping column: the grid frame lands with S9b — stay in the document
+                activeTableId = ""; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""
+                landInCell(r, 0, 0)
+                Toasts.show(qsTr("Add a choice or checkmark column to view this table as a board"))
+                return
+            }
+            if (t !== "type") inspector.drawTool = "type"
+            activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = id
+            boardCol = gc; boardMode = true
+        }
         else if (blockModel.mediaKind(r) === "video") {
             if (t === "text") inspector.drawTool = "select"
-            activeTableId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
+            activeTableId = ""; activeGridId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
         }
-        else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
-        else { activeTableId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
+        else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
+        else { activeTableId = ""; activeGridId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
     }
     // Switching documents (new/open/save-as) resets the model; drop all per-doc
     // UI state so nothing points at the old doc's blocks (closes frame tabs /
@@ -375,7 +416,18 @@ FocusScope {
     // reverting) remembers "grid" for this table; plain tab switches don't.
     function showGridView() {
         boardMode = false
-        saveBoardPref(activeTableId, -1)
+        saveBoardPref(activeTableId !== "" ? activeTableId : activeGridId, -1)
+    }
+    // Leaving the board: the legacy tab shows its grid; a derived table's tab returns to the
+    // document at the table until the grid frame lands (S9b).
+    function leaveBoard() {
+        if (activeGridHead >= 0) {
+            const gh = activeGridHead
+            showGridView(); setActiveTab("")
+            landInCell(gh, 0, 0)
+            return
+        }
+        showGridView()
     }
     // Kanban board: the active table tab rendered as a board grouped by a
     // choice/check column. View state only (not persisted, not undoable).
@@ -391,8 +443,9 @@ FocusScope {
     // The first choice/check column of the active table (−1 none) — the default
     // grouping for the grid view's "Board view" toggle.
     readonly property int firstGroupCol: {
-        if (activeTableRow < 0) return -1
         var rev = blockModel.contentRevision
+        if (activeGridHead >= 0) return firstGroupColOf(activeGridHead)
+        if (activeTableRow < 0) return -1
         for (var c = 0; c < blockModel.tableColumns(activeTableRow); ++c) {
             var k = blockModel.tableColumnKind(activeTableRow, c)
             if (k === 1 || k === 2) return c
@@ -5492,7 +5545,7 @@ FocusScope {
     // mode like the table frame — no document mouse layer above it). ---
     Flickable {
         id: boardFrame
-        visible: root.activeTableRow >= 0 && root.boardMode
+        visible: (root.activeTableRow >= 0 || root.activeGridHead >= 0) && root.boardMode
         anchors.fill: parent
         anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
         contentWidth: Math.max(width, boardView.implicitWidth + 40)
@@ -5507,10 +5560,17 @@ FocusScope {
             width: implicitWidth; height: implicitHeight
             active: boardFrame.visible
             logicalRow: root.activeTableRow
+            head: root.activeGridHead
             groupCol: root.boardCol
-            onShowGrid: root.showGridView()      // grouping column vanished → grid
+            onShowGrid: root.leaveBoard()        // grouping column vanished → grid (or the document, S9a)
             onEditClosed: root.forceActiveFocus()
             onOpenCard: (r, c) => {              // double-click → grid, cell focused
+                if (root.activeGridHead >= 0) {
+                    const gh = root.activeGridHead
+                    root.showGridView(); root.setActiveTab("")
+                    root.landInCell(gh, r, c); root.forceActiveFocus()
+                    return
+                }
                 root.showGridView()
                 tcur.place(r, c, 0)
                 root.forceActiveFocus()
@@ -5574,7 +5634,7 @@ FocusScope {
         // Option ops only make sense on a real choice option (not check lanes,
         // not the trailing "No status" lane).
         readonly property bool optionLane: lane !== null && root.boardCol >= 0
-            && blockModel.tableColumnKind(root.activeTableRow, root.boardCol) === 1
+            && (blockModel.contentRevision, root.boardKind()) === 1
             && lane.key !== ""
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -5586,21 +5646,19 @@ FocusScope {
             LaneMenuRow { text: "Add card"; onActivated: boardView.addCard(laneMenu.li) }
             LaneMenuRow { visible: laneMenu.optionLane && laneMenu.li > 0
                           text: "Move lane left"
-                          onActivated: blockModel.tableMoveOption(root.activeTableRow, root.boardCol,
-                                                                  laneMenu.lane.key, laneMenu.li - 1) }
+                          onActivated: root.moveBoardOption(laneMenu.lane.key, laneMenu.li - 1) }
             LaneMenuRow { visible: laneMenu.optionLane && laneMenu.li < boardView.lanes.length - 2
                           text: "Move lane right"
-                          onActivated: blockModel.tableMoveOption(root.activeTableRow, root.boardCol,
-                                                                  laneMenu.lane.key, laneMenu.li + 1) }
+                          onActivated: root.moveBoardOption(laneMenu.lane.key, laneMenu.li + 1) }
             LaneMenuRow { visible: laneMenu.lane !== null && root.boardCol >= 0
-                                   && blockModel.tableColumnKind(root.activeTableRow, root.boardCol) === 1
+                                   && (blockModel.contentRevision, root.boardKind()) === 1
                           text: "Edit options…"
-                          onActivated: root.openChoiceEditor(root.activeTableRow, root.boardCol) }
+                          onActivated: root.openBoardOptions() }
         }
     }
     Rectangle {   // table-tab toolbar: the family flat-button strip above the frame
         id: tableTabBar
-        visible: root.activeTableRow >= 0
+        visible: root.activeTableRow >= 0 || root.activeGridHead >= 0
         anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
         height: Theme.dim.toolStripHeight
         color: Theme.colors.surface
@@ -5622,7 +5680,7 @@ FocusScope {
                 labelSize: Theme.font.sizeChrome
                 labelColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
                 iconColor: labelColor
-                onClicked: { root.showGridView(); root.forceActiveFocus() }
+                onClicked: { root.leaveBoard(); root.forceActiveFocus() }
             }
             FlatButton {
                 iconName: "kanban"; text: "Board"
@@ -5638,7 +5696,7 @@ FocusScope {
                 tooltipSide: "right"
                 onClicked: {
                     if (!root.boardMode)
-                        root.openBoard(root.activeTableRow,
+                        root.openBoard(root.activeGridHead >= 0 ? root.activeGridHead : root.activeTableRow,
                                        root.boardCol >= 0 ? root.boardCol : root.firstGroupCol)
                     root.forceActiveFocus()
                 }
@@ -7948,7 +8006,9 @@ FocusScope {
         x: Math.max(8, Math.min(root.choiceX, root.width - width - 8))
         y: Math.max(8, Math.min(root.choiceY, root.height - height - 8))
         onClosed: root.forceActiveFocus()
-        onEditOptions: choicePicker.cellSpanMode
+        onEditOptions: choicePicker.gridMode
+                           ? choiceEditor.open2Grid(choicePicker.gridHead, choicePicker.gridC)
+                       : choicePicker.cellSpanMode
                            ? choiceEditor.open2CellSpan(choicePicker.srow, choicePicker.sr,
                                                         choicePicker.sc, choicePicker.sstart)
                        : choicePicker.spanMode
@@ -8200,6 +8260,10 @@ FocusScope {
                 MenuRow { visible: blockMenu.gridOne && (clipboard.hasBlocks() || clipboard.hasHtml() || clipboard.readText().length > 0)
                           text: "Paste into cells"
                           onActivated: root.pasteIntoCellsAt(root.menuRow) }
+                MenuRow { visible: blockMenu.gridOne && (blockModel.contentRevision, root.firstGroupColOf(blockMenu.gridHead)) >= 0
+                          scope: "table"; text: "View as board"
+                          onActivated: root.openBoard(blockMenu.gridHead, (blockMenu.gridColKind === 1 || blockMenu.gridColKind === 2)
+                                                                          ? blockMenu.gridC : root.firstGroupColOf(blockMenu.gridHead)) }
                 MenuRow { visible: blockMenu.gridOne; scope: "table"; text: "Delete table"; danger: true
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteTable(h); return null }) }
                 Rectangle { visible: blockMenu.gridOne; width: parent.width; height: 1; color: Theme.colors.divider }
@@ -8356,6 +8420,8 @@ FocusScope {
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 1); return [r, c] }) }
                 MenuRow { visible: blockMenu.gridColKind !== 2; scope: "column"; text: "Make checkmark column"
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 2); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridColKind === 1; scope: "column"; text: "Edit options…"
+                          onActivated: choiceEditor.open2Grid(blockMenu.gridHead, blockMenu.gridC) }
                 MenuRow { visible: blockMenu.gridColKind !== 0; scope: "column"; text: "Make text column"; danger: true
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 0); return [r, c] }) }
                 Rectangle { visible: blockMenu.gridCols > 1; width: parent.width; height: 1; color: Theme.colors.divider }

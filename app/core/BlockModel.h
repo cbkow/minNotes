@@ -862,6 +862,7 @@ public:
     Q_INVOKABLE QString tableColsHtml(int row, const QVariantList& cols) const;
     // Ordered block ids of every table in the document (for the table-tab strip).
     Q_INVOKABLE QStringList tableBlockIds() const;
+    Q_INVOKABLE QStringList gridBlockIds() const;     // derived tables' head records, in document order (S9: their tabs)
     // Ordered block ids of every inline PDF (for the PDF full-page tab strip).
     Q_INVOKABLE QStringList pdfBlockIds() const;
     // Ordered block ids of every video (for the video-studio tab strip).

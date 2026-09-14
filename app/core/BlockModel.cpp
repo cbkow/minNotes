@@ -3993,8 +3993,8 @@ void BlockModel::endTxn(const QString& coalesce) {
             if (it == beforeAt.constEnd()) { perm = false; break; }
             BlockSnap x = txnBefore_[size_t(it.value())];
             x.rank = after[i].rank;
-            perm = snapEq(x, after[i]);
-        }
+            if (!snapEq(x, after[i])) { perm = false; break; }   // any content change: a full entry (a board
+        }                                                        // move changes a cell AND the order — S9a)
         if (perm)
             for (size_t i = 0; i < after.size(); ++i) {
                 permB.push_back({ txnBefore_[i].id, txnBefore_[i].rank });
@@ -5055,6 +5055,14 @@ QStringList BlockModel::tableBlockIds() const {
     QStringList out;
     for (size_t i = 0; i < rows_.size(); ++i)
         if (rows_[i].type == Table) out.append(ids_[i]);
+    return out;
+}
+
+QStringList BlockModel::gridBlockIds() const {
+    QStringList out;
+    const std::vector<int>& heads = tableHeads();
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (heads[i] == static_cast<int>(i)) out.append(ids_[i]);
     return out;
 }
 

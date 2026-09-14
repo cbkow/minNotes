@@ -219,9 +219,8 @@ Popup {
                 }
             }
         }
-        Rectangle { visible: !picker.gridMode; width: parent.width; height: 1; color: Theme.colors.divider }
-        Rectangle {   // open the full option editor (rename / colour / reorder / delete)
-            visible: !picker.gridMode                     // derived tables: the column editor lands with S9
+        Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+        Rectangle {   // open the full option editor (rename / colour / reorder / delete); grid mode too (S9)
             width: parent.width; height: 24; radius: 0
             color: editMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {

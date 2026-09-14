@@ -55,7 +55,21 @@ Popup {
     property int sc: -1
     readonly property bool cellSpanMode: spanMode && sr >= 0
 
+    // A derived table's column (SR-4 S9): ghead ≥ 0 → the grid* option sink.
+    property int ghead: -1
+    function open2Grid(head, col) {
+        editor.ghead = head; editor.c = col
+        editor.row = -1; editor.srow = -1; editor.sstart = -1
+        editor.sr = -1; editor.sc = -1
+        draft.clear()
+        var gopts = blockModel.gridColumnOptions(head, col)
+        for (var gi = 0; gi < gopts.length; ++gi)
+            draft.append({ oid: gopts[gi].id, label: gopts[gi].label, color: gopts[gi].color })
+        editor.editingColor = -1; editor.customOpen = false
+        editor.open()
+    }
     function open2(trow, col) {
+        editor.ghead = -1
         editor.row = trow; editor.c = col
         editor.srow = -1; editor.sstart = -1
         editor.sr = -1; editor.sc = -1
@@ -67,6 +81,7 @@ Popup {
         editor.open()
     }
     function open2Span(brow, s) {
+        editor.ghead = -1
         editor.srow = brow; editor.sstart = s
         editor.row = -1; editor.c = -1
         editor.sr = -1; editor.sc = -1
@@ -79,6 +94,7 @@ Popup {
         editor.open()
     }
     function open2CellSpan(trow, r, c, s) {
+        editor.ghead = -1
         editor.srow = trow; editor.sstart = s
         editor.sr = r; editor.sc = c
         editor.row = -1; editor.c = -1
@@ -102,7 +118,8 @@ Popup {
             if (o.label.trim().length === 0) continue   // drop blank-labelled options
             arr.push({ id: o.oid, label: o.label, color: o.color })
         }
-        if (editor.cellSpanMode)
+        if (editor.ghead >= 0) blockModel.gridSetColumnOptions(editor.ghead, editor.c, arr)
+        else if (editor.cellSpanMode)
             blockModel.tableSetChoiceOptions(editor.srow, editor.sr, editor.sc, editor.sstart, arr)
         else if (editor.spanMode) blockModel.setChoiceOptions(editor.srow, editor.sstart, arr)
         else blockModel.tableSetColumnOptions(editor.row, editor.c, arr)
