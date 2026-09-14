@@ -387,6 +387,7 @@ public:
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so
     // the Flickable arm can compensate contentY when an off-screen block settles.
     Q_INVOKABLE void setMeasuredHeight(int row, qreal h);
+    Q_INVOKABLE void flushLayoutSpike();   // emit a coalesced measure-back spike now (the probe verifies synchronously)
     // Width sibling of the height report (tables only — soft measure-once
     // cache; see maxContentWidth).
     Q_INVOKABLE void setMeasuredWidth(int row, qreal w);
@@ -1346,6 +1347,7 @@ private:
     mutable QHash<int, TableGeom> geoms_;               // keyed by head record
     mutable bool tableGeomDirty_ = true;
     mutable std::size_t geomRows_ = 0;
+    bool layoutSpikePending_ = false;                   // a coalesced layoutChangedSpike is queued (measure-backs)
     const TableGeom* tableGeom(int head) const;         // nullptr unless head is a table head
     TableGeom buildTableGeom(int head) const;
     // S3a: a table as a grid of existing rows. Cell entries: v ≥ 0 keeps flat row v (its id);

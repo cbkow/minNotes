@@ -3865,6 +3865,7 @@ FocusScope {
         function rand(n) { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n }
         function fail(msg) { if (++fails <= 40) console.log("POOL-PROBE FAIL", "step", step, "phase", phase, msg) }
         function verify() {
+            blockModel.flushLayoutSpike()   // measure-back spikes are coalesced to the next turn; the checks read now
             var byRow = ({})
             for (var i = 0; i < pool.count; ++i) {
                 var c = pool.itemAt(i)

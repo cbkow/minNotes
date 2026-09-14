@@ -107,42 +107,35 @@ Item {
             width: (blockModel.layoutRevision, blockModel.tableColumnWidth(cell.tableHead, index))
             height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
             color: bg !== "" ? bg : cell.headerCell ? Theme.colors.surfaceHover : "transparent"
-            Rectangle {   // A7 (S6c): this cell sits in the editor's cell rectangle
-                readonly property var rect: editor.cellRect
-                visible: rect !== null && rect.head === cell.tableHead && cell.gridRow >= rect.r0 && cell.gridRow <= rect.r1
-                         && index >= rect.c0 && index <= rect.c1
-                anchors.fill: parent
-                color: Theme.colors.selectionBg
+            // ONE wash per cell (2026-09-14: four stacked rectangles cost a big table's scroll), by
+            // priority: a file drop / the column a grip drag moves (accent) > the hovered block-menu
+            // item's target (accent, error when destructive) > the cell rectangle / a grip-picked set
+            // (selection). 0 = none.
+            readonly property bool inSet: {
+                const s = editor.gridSet
+                return s !== null && s.head === cell.tableHead && s.rev === blockModel.contentRevision
+                    && (s.kind === "row" ? s.items.indexOf(cell.gridRow) >= 0 : s.items.indexOf(index) >= 0)
             }
-            Rectangle {   // S7b: a grip-picked row or column set
-                readonly property var s: editor.gridSet
-                visible: s !== null && s.head === cell.tableHead && s.rev === blockModel.contentRevision
-                         && (s.kind === "row" ? s.items.indexOf(cell.gridRow) >= 0 : s.items.indexOf(index) >= 0)
-                anchors.fill: parent
-                color: Theme.colors.selectionBg
+            readonly property int wash: {
+                if (editor.dropGridHead === cell.tableHead && editor.dropGridR === cell.gridRow && editor.dropGridC === index) return 4
+                if (editor.gridColDragging && editor.gridGripPressHead === cell.tableHead && editor.gridGripPressIndex === index) return 3
+                const sc = editor.menuHiScope, t = editor.menuGrid
+                if (t !== null && t.head === cell.tableHead
+                    && (sc === "table" || (sc === "row" && cell.gridRow === t.r) || (sc === "column" && index === t.c)
+                        || (sc === "set" && inSet))) return 2
+                const rect = editor.cellRect
+                if (rect !== null && rect.head === cell.tableHead && cell.gridRow >= rect.r0 && cell.gridRow <= rect.r1
+                    && index >= rect.c0 && index <= rect.c1) return 1
+                return inSet ? 1 : 0
             }
-            Rectangle {   // S7b: the column a grip drag moves; the cell files are dragged over
-                readonly property bool moving: editor.gridColDragging && editor.gridGripPressHead === cell.tableHead
-                                               && editor.gridGripPressIndex === index
-                readonly property bool dropping: editor.dropGridHead === cell.tableHead && editor.dropGridR === cell.gridRow
-                                                 && editor.dropGridC === index
-                visible: moving || dropping
+            Rectangle {
+                visible: parent.wash > 0
                 anchors.fill: parent
-                color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, dropping ? 0.16 : 0.14)
-                border.width: dropping ? 2 : 0
+                readonly property color tone: parent.wash === 2 && editor.menuHiDanger ? Theme.colors.error : Theme.colors.accent
+                color: parent.wash === 1 ? Theme.colors.selectionBg
+                     : Qt.rgba(tone.r, tone.g, tone.b, parent.wash === 4 ? 0.16 : 0.14)
+                border.width: parent.wash === 4 ? 2 : 0
                 border.color: Theme.colors.accent
-            }
-            Rectangle {   // S7b: the hovered block-menu item's target — the table, the column, the row, or the set
-                readonly property string sc: editor.menuHiScope
-                readonly property var t: editor.menuGrid
-                readonly property var s: editor.gridSet
-                visible: t !== null && t.head === cell.tableHead
-                         && (sc === "table" || (sc === "row" && cell.gridRow === t.r) || (sc === "column" && index === t.c)
-                             || (sc === "set" && s !== null && s.head === cell.tableHead
-                                 && (s.kind === "row" ? s.items.indexOf(cell.gridRow) >= 0 : s.items.indexOf(index) >= 0)))
-                readonly property color tone: editor.menuHiDanger ? Theme.colors.error : Theme.colors.accent
-                anchors.fill: parent
-                color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
             }
             Rectangle {   // the column's right border — accent while hovered
                 readonly property bool hot: cell.hotColumn === index
@@ -267,9 +260,12 @@ Item {
     // highlight spans — overlay rects below the selection (same trick
     // as the code chips: a char-format background would paint above
     // the selection, so selecting highlighted text showed nothing).
+    // The overlay rect arrays below are fresh JS arrays on every re-evaluation, and a Repeater
+    // regenerates on any new model object — so each Repeater takes the constant 0 while its array
+    // is empty (the common case: only a real array resets it), and records compute nothing.
     property var hlRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision
-        if (!cell.active || cell.isMedia) return []
+        if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.highlightRangesForRow(cell.logicalRow)
         var out = []
         for (var i = 0; i < ranges.length; ++i) {
@@ -279,7 +275,7 @@ Item {
         return out
     }
     Repeater {
-        model: cell.hlRects
+        model: cell.hlRects.length ? cell.hlRects : 0
         delegate: Rectangle {
             required property int index
             readonly property var h: cell.hlRects[index]
@@ -298,7 +294,7 @@ Item {
     property var commentRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision
                 + blockModel.commentsRevision
-        if (!cell.active || cell.isMedia) return []
+        if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.commentRangesForRow(cell.logicalRow)
         var out = []
         for (var i = 0; i < ranges.length; ++i) {
@@ -309,7 +305,7 @@ Item {
         return out
     }
     Repeater {
-        model: cell.commentRects
+        model: cell.commentRects.length ? cell.commentRects : 0
         delegate: Rectangle {
             required property int index
             readonly property var cr2: cell.commentRects[index]
@@ -331,7 +327,7 @@ Item {
     // under a collapsed caret is withheld while the word is typed.
     property var spellRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision + spell.revision
-        if (!cell.active || cell.isMedia || te.btype === 2 || te.btype === 6 || te.btype === 7) return []
+        if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6 || te.btype === 7) return []
         if (!spell.checkSpelling && !spell.checkGrammar) return []
         var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
         var issues = spell.issuesForRow(cell.logicalRow, caret)
@@ -344,7 +340,7 @@ Item {
         return out
     }
     Repeater {
-        model: cell.spellRects
+        model: cell.spellRects.length ? cell.spellRects : 0
         delegate: Image {
             required property int index
             readonly property var sr: cell.spellRects[index]
@@ -361,7 +357,7 @@ Item {
     // background (that paints inside the TextEdit, above selection).
     property var codeRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision
-        if (!cell.active || cell.isMedia) return []
+        if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.codeRangesForRow(cell.logicalRow)
         var out = []
         for (var i = 0; i < ranges.length; ++i) {
@@ -371,7 +367,7 @@ Item {
         return out
     }
     Repeater {
-        model: cell.codeRects
+        model: cell.codeRects.length ? cell.codeRects : 0
         delegate: Rectangle {
             required property int index
             readonly property rect rr: cell.codeRects[index]
@@ -392,7 +388,7 @@ Item {
     // behind it.
     property var choiceRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision
-        if (!cell.active || cell.isMedia) return []
+        if (!cell.active || cell.isMedia || cell.isRecord) return []
         if (cell.colKind === 2) return []   // a check cell shows its checkbox, not the chip
         var ranges = blockModel.choiceRangesForRow(cell.logicalRow)
         var out = []
@@ -404,7 +400,7 @@ Item {
         return out
     }
     Repeater {
-        model: cell.choiceRects
+        model: cell.choiceRects.length ? cell.choiceRects : 0
         delegate: Rectangle {
             required property int index
             readonly property var cr: cell.choiceRects[index]
@@ -430,14 +426,14 @@ Item {
         var dep = blockModel.contentRevision + blockModel.layoutRevision   // re-eval triggers
         // Opaque rows (media/table/divider) show membership via the
         // wash rectangle below, never via text rects over a hidden te.
-        if (!cell.inSel || cell.isMedia || te.btype === 6 || te.btype === 7) return []
+        if (!cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6 || te.btype === 7) return []
         if (cell.inTable && editor.cellRect !== null) return []   // a cell rectangle washes whole cells (the record)
         var sp = (cell.logicalRow === cursor.loRow) ? Math.min(cursor.loCol, te.length) : 0
         var ep = (cell.logicalRow === cursor.hiRow) ? Math.min(cursor.hiCol, te.length) : te.length
         return editor.selectionRects(te, sp, ep)
     }
     Repeater {
-        model: cell.selRects
+        model: cell.selRects.length ? cell.selRects : 0
         delegate: Rectangle {
             required property int index
             readonly property rect rr: cell.selRects[index]

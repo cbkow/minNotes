@@ -197,7 +197,9 @@ Item {
         anchors.fill: parent
         visible: !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended
         source: (mb.isVideo || mb.isFile || mb.isPdf || mb.isSketch) ? "" : mb.url
-        asynchronous: true; cache: false
+        // cache:true (2026-09-14): media sources are content-addressed, so a URL never changes
+        // its bytes; without it every delegate recycle re-decoded the image on the reader thread.
+        asynchronous: true; cache: true
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
         smooth: true

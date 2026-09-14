@@ -6759,7 +6759,24 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
         emit heightSettled(static_cast<int>(layout().topOf(static_cast<std::size_t>(row))), delta);
     // Bump on the BLOCK's change, not the row's: in a lane that isn't the tallest the
     // row keeps its height, but the blocks below it in that lane still move.
-    if (delta != 0.0 || h != before) bumpLayout();
+    // The revision moves NOW (readers see the new layout at once); the spike that fans out to
+    // every pooled delegate is coalesced to one per event-loop turn — a scroll step reveals many
+    // rows that measure back together, and each spike re-evaluates every layout binding in the
+    // pool (a big table's cells made that a crawl).
+    if (delta != 0.0 || h != before) {
+        ++layoutRevision_;
+        refreshMaxContentWidth();
+        if (!layoutSpikePending_) {
+            layoutSpikePending_ = true;
+            QMetaObject::invokeMethod(this, [this] { flushLayoutSpike(); }, Qt::QueuedConnection);
+        }
+    }
+}
+
+void BlockModel::flushLayoutSpike() {
+    if (!layoutSpikePending_) return;
+    layoutSpikePending_ = false;
+    emit layoutChangedSpike();
 }
 
 qreal BlockModel::mediaDisplayHeight(int row) const {
