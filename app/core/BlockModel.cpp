@@ -526,7 +526,13 @@ std::vector<BlockModel::GridRow> BlockModel::gridOf(int head) const {
             const int c = rows_[size_t(i)].cell;
             if (c < 0) continue;
             if (static_cast<int>(gr.cells.size()) <= c) gr.cells.resize(size_t(c) + 1);
-            gr.cells[size_t(c)].push_back(i);
+            gr.cells[size_t(c)].blocks.push_back(i);
+        }
+        const QJsonObject t = QJsonDocument::fromJson(rows_[size_t(gr.rec)].table.toUtf8()).object();
+        const QJsonArray cbg = t.value(QStringLiteral("cbg")).toArray(), cfg = t.value(QStringLiteral("cfg")).toArray();
+        for (size_t c = 0; c < gr.cells.size(); ++c) {
+            gr.cells[c].bg = cbg.at(qsizetype(c)).toString();
+            gr.cells[c].fg = cfg.at(qsizetype(c)).toString();
         }
         grid.push_back(std::move(gr));
     }
@@ -597,8 +603,7 @@ int BlockModel::refillTableCells(int lo, int hi) {
     return inserted;
 }
 
-void BlockModel::rebuildTable(int head, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount) {
-    const auto [lo, hi] = tableBand(head);
+void BlockModel::rebuildTable(int lo, int hi, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount) {
     std::vector<Row> nr;
     std::vector<QString> ni, nc;
     auto emptyParagraph = [&](int c) {
@@ -614,6 +619,12 @@ void BlockModel::rebuildTable(int head, const std::vector<GridRow>& grid, const 
         QJsonObject t = QJsonDocument::fromJson(rec.table.toUtf8()).object();
         t.remove(QStringLiteral("cols"));
         if (k == 0) t.insert(QStringLiteral("cols"), cols);         // the head: role + column spec
+        QJsonArray cbg, cfg;                                         // cell colours ride their cells
+        for (const GridCell& cell : gr.cells) { cbg.append(cell.bg); cfg.append(cell.fg); }
+        while (!cbg.isEmpty() && cbg.last().toString().isEmpty()) cbg.removeLast();
+        while (!cfg.isEmpty() && cfg.last().toString().isEmpty()) cfg.removeLast();
+        if (cbg.isEmpty()) t.remove(QStringLiteral("cbg")); else t.insert(QStringLiteral("cbg"), cbg);
+        if (cfg.isEmpty()) t.remove(QStringLiteral("cfg")); else t.insert(QStringLiteral("cfg"), cfg);
         rec.header = k == 0 ? static_cast<uint8_t>(std::clamp(headerCount, 1, 255)) : uint8_t(0);
         rec.table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
         rec.cell = -1;
@@ -621,8 +632,8 @@ void BlockModel::rebuildTable(int head, const std::vector<GridRow>& grid, const 
         rec.ratios.assign(size_t(cells), 1.0f / static_cast<float>(cells));
         nr.push_back(rec); ni.push_back(recId); nc.push_back(QString());
         for (int c = 0; c < cells; ++c) {
-            if (c >= static_cast<int>(gr.cells.size()) || gr.cells[size_t(c)].empty()) { emptyParagraph(c); continue; }
-            for (int v : gr.cells[size_t(c)]) {
+            if (c >= static_cast<int>(gr.cells.size()) || gr.cells[size_t(c)].blocks.empty()) { emptyParagraph(c); continue; }
+            for (int v : gr.cells[size_t(c)].blocks) {
                 const bool copy = v <= -2;
                 const int i = copy ? -v - 2 : v;
                 Row b = rows_[size_t(i)];
@@ -641,7 +652,7 @@ bool BlockModel::commitGrid(int head, const std::vector<GridRow>& grid, const QJ
     if (grid.empty()) return false;
     const auto [lo, hi] = tableBand(head);
     beginTxn(lo, hi);
-    rebuildTable(head, grid, cols, headerCount);
+    rebuildTable(lo, hi, grid, cols, headerCount);
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
@@ -653,10 +664,11 @@ static QJsonArray tableColsOf(const QString& table) {
     return QJsonDocument::fromJson(table.toUtf8()).object().value(QStringLiteral("cols")).toArray();
 }
 
-// A copy of a cell's entries (every block copied, new ids).
-static std::vector<int> copiedCell(const std::vector<int>& cell) {
-    std::vector<int> out;
-    for (int v : cell) out.push_back(v >= 0 ? -v - 2 : v);
+// A copy of a cell: every block copied (new ids), its colours too.
+BlockModel::GridCell BlockModel::copiedCell(const GridCell& cell) {
+    GridCell out = cell;
+    for (int& v : out.blocks)
+        if (v >= 0) v = -v - 2;
     return out;
 }
 
@@ -706,7 +718,7 @@ bool BlockModel::gridInsertColumn(int head, int at) {
     std::vector<GridRow> grid = gridOf(head);
     if (grid.empty() || at < 0 || tableColumnCount(head) >= 63) return false;
     for (GridRow& gr : grid)
-        if (at <= static_cast<int>(gr.cells.size())) gr.cells.insert(gr.cells.begin() + at, std::vector<int>{});
+        if (at <= static_cast<int>(gr.cells.size())) gr.cells.insert(gr.cells.begin() + at, GridCell{});
     QJsonArray cols = tableColsOf(rows_[size_t(head)].table);
     while (cols.size() < at) cols.append(QJsonObject());
     cols.insert(at, QJsonObject());
@@ -735,7 +747,7 @@ bool BlockModel::gridMoveColumn(int head, int from, int to) {
     for (GridRow& gr : grid) {
         if (gr.cells.size() <= size_t(from)) continue;          // a ragged row without that cell
         if (gr.cells.size() < need) gr.cells.resize(need);
-        std::vector<int> moved = gr.cells[size_t(from)];
+        GridCell moved = gr.cells[size_t(from)];
         gr.cells.erase(gr.cells.begin() + from);
         gr.cells.insert(gr.cells.begin() + to, moved);
     }
@@ -773,7 +785,7 @@ bool BlockModel::gridClearCells(int head, int r0, int c0, int r1, int c1) {
     if (c0 > c1) std::swap(c0, c1);
     for (int r = std::max(0, r0); r <= r1 && r < static_cast<int>(grid.size()); ++r)
         for (int c = std::max(0, c0); c <= c1 && c < static_cast<int>(grid[size_t(r)].cells.size()); ++c)
-            grid[size_t(r)].cells[size_t(c)].clear();
+            grid[size_t(r)].cells[size_t(c)].blocks.clear();           // contents only: colours stay
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
@@ -785,8 +797,8 @@ bool BlockModel::gridFillDown(int head, int r0, int c0, int r1, int c1) {
     if (r0 > r1) std::swap(r0, r1);
     if (c0 > c1) std::swap(c0, c1);
     for (int c = std::max(0, c0); c <= c1; ++c) {
-        const std::vector<int> src = c < static_cast<int>(grid[size_t(r0)].cells.size()) ? grid[size_t(r0)].cells[size_t(c)]
-                                                                                       : std::vector<int>{};
+        const GridCell src = c < static_cast<int>(grid[size_t(r0)].cells.size()) ? grid[size_t(r0)].cells[size_t(c)]
+                                                                               : GridCell{};
         for (int r = r0 + 1; r <= r1; ++r) {
             auto& cells = grid[size_t(r)].cells;
             if (static_cast<int>(cells.size()) <= c) cells.resize(size_t(c) + 1);
@@ -805,11 +817,304 @@ bool BlockModel::gridFillRight(int head, int r0, int c0, int r1, int c1) {
     c0 = std::max(0, c0);
     for (int r = std::max(0, r0); r <= r1 && r < rows; ++r) {
         auto& cells = grid[size_t(r)].cells;
-        const std::vector<int> src = c0 < static_cast<int>(cells.size()) ? cells[size_t(c0)] : std::vector<int>{};
+        const GridCell src = c0 < static_cast<int>(cells.size()) ? cells[size_t(c0)] : GridCell{};
         if (static_cast<int>(cells.size()) <= c1) cells.resize(size_t(c1) + 1);
         for (int c = c0 + 1; c <= c1; ++c) cells[size_t(c)] = copiedCell(src);
     }
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
+}
+
+// === Colours, alignment, bulk ops, sort, label join (SR-4 S3b) =============
+static std::vector<int> gridIndexSet(const QVariantList& list, int bound) {
+    std::vector<int> out;
+    for (const QVariant& v : list) {
+        bool ok = false;
+        const int i = v.toInt(&ok);
+        if (ok && i >= 0 && i < bound) out.push_back(i);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+static void setAttrString(QJsonObject& o, const QString& key, const QString& value) {
+    if (value.isEmpty()) o.remove(key);
+    else o.insert(key, value);
+}
+
+static void setLaneString(QJsonObject& t, const QString& key, int c, const QString& value) {
+    QJsonArray a = t.value(key).toArray();
+    while (a.size() <= c) a.append(QString());
+    a[c] = value;
+    while (!a.isEmpty() && a.last().toString().isEmpty()) a.removeLast();
+    if (a.isEmpty()) t.remove(key);
+    else t.insert(key, a);
+}
+
+bool BlockModel::editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn) {
+    const QVariantList recs = tableRecords(head);
+    if (recs.isEmpty()) return false;
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    for (int r = 0; r < recs.size(); ++r) {
+        const int rec = recs[r].toInt();
+        QJsonObject t = QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object();
+        const QJsonObject was = t;
+        fn(r, rec, t);
+        if (t == was) continue;
+        rows_[size_t(rec)].table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+        persistMeta(rec);
+    }
+    ++contentRevision_;
+    emit dataChanged(index(lo), index(hi));
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+QString BlockModel::gridColour(int head, int r, int c, bool fg) const {
+    const int rec = gridRecord(head, r);
+    if (rec < 0 || c < 0) return {};
+    const QJsonObject t = QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object();
+    QString v = t.value(fg ? QStringLiteral("cfg") : QStringLiteral("cbg")).toArray().at(c).toString();
+    if (v.isEmpty()) v = t.value(fg ? QStringLiteral("fg") : QStringLiteral("bg")).toString();
+    if (v.isEmpty())
+        v = tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(fg ? QStringLiteral("fg") : QStringLiteral("bg")).toString();
+    return v;
+}
+
+QString BlockModel::gridCellBg(int head, int r, int c) const { return gridColour(head, r, c, false); }
+QString BlockModel::gridCellFg(int head, int r, int c) const { return gridColour(head, r, c, true); }
+
+QString BlockModel::gridRowBg(int head, int r) const {
+    const int rec = gridRecord(head, r);
+    return rec < 0 ? QString()
+                   : QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object().value(QStringLiteral("bg")).toString();
+}
+
+int BlockModel::gridColAlign(int head, int c) const {
+    if (headerCount(head) == 0 || c < 0) return 0;
+    return tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(QStringLiteral("a")).toInt(0);
+}
+
+bool BlockModel::gridSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
+    if (r0 > r1) std::swap(r0, r1);
+    if (c0 > c1) std::swap(c0, c1);
+    if (c1 < 0 || c0 >= 63) return false;
+    return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
+        if (r < r0 || r > r1) return;
+        for (int c = std::max(0, c0); c <= std::min(c1, 62); ++c)
+            setLaneString(t, fg ? QStringLiteral("cfg") : QStringLiteral("cbg"), c, color);
+    });
+}
+
+bool BlockModel::gridSetRowsColor(int head, const QVariantList& rows, bool fg, const QString& color) {
+    const std::vector<int> set = gridIndexSet(rows, gridRowCount(head));
+    if (set.empty()) return false;
+    return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
+        if (std::binary_search(set.begin(), set.end(), r)) setAttrString(t, fg ? QStringLiteral("fg") : QStringLiteral("bg"), color);
+    });
+}
+
+bool BlockModel::gridSetColsColor(int head, const QVariantList& cols, bool fg, const QString& color) {
+    const std::vector<int> set = gridIndexSet(cols, 63);
+    if (set.empty()) return false;
+    return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
+        if (r != 0) return;
+        QJsonArray spec = t.value(QStringLiteral("cols")).toArray();
+        for (int c : set) {
+            while (spec.size() <= c) spec.append(QJsonObject());
+            QJsonObject col = spec[c].toObject();
+            setAttrString(col, fg ? QStringLiteral("fg") : QStringLiteral("bg"), color);
+            spec[c] = col;
+        }
+        t.insert(QStringLiteral("cols"), spec);
+    });
+}
+
+bool BlockModel::gridSetColsAlign(int head, const QVariantList& cols, int align) {
+    const std::vector<int> set = gridIndexSet(cols, 63);
+    if (set.empty()) return false;
+    align = std::clamp(align, 0, 2);
+    return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
+        if (r != 0) return;
+        QJsonArray spec = t.value(QStringLiteral("cols")).toArray();
+        for (int c : set) {
+            while (spec.size() <= c) spec.append(QJsonObject());
+            QJsonObject col = spec[c].toObject();
+            if (align == 0) col.remove(QStringLiteral("a"));
+            else col.insert(QStringLiteral("a"), align);
+            spec[c] = col;
+        }
+        t.insert(QStringLiteral("cols"), spec);
+    });
+}
+
+bool BlockModel::gridSetRowColor(int head, int r, bool fg, const QString& color) { return gridSetRowsColor(head, { r }, fg, color); }
+bool BlockModel::gridSetColColor(int head, int c, bool fg, const QString& color) { return gridSetColsColor(head, { c }, fg, color); }
+bool BlockModel::gridSetColAlign(int head, int c, int align) { return gridSetColsAlign(head, { c }, align); }
+
+bool BlockModel::gridDeleteRows(int head, const QVariantList& rows) {
+    std::vector<GridRow> grid = gridOf(head);
+    const std::vector<int> set = gridIndexSet(rows, static_cast<int>(grid.size()));
+    if (set.empty()) return false;
+    const int hc = headerCount(head);
+    if (set.front() < hc) return gridDeleteTable(head);         // no orphaned table elements
+    if (static_cast<int>(grid.size()) - hc <= static_cast<int>(set.size())) return false;
+    for (auto it = set.rbegin(); it != set.rend(); ++it) grid.erase(grid.begin() + *it);
+    return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), hc);
+}
+
+bool BlockModel::gridDeleteColumns(int head, const QVariantList& cols) {
+    std::vector<GridRow> grid = gridOf(head);
+    const int count = tableColumnCount(head);
+    const std::vector<int> set = gridIndexSet(cols, count);
+    if (grid.empty() || set.empty() || static_cast<int>(set.size()) >= count) return false;
+    for (GridRow& gr : grid) {
+        for (auto it = set.rbegin(); it != set.rend(); ++it)
+            if (*it < static_cast<int>(gr.cells.size())) gr.cells.erase(gr.cells.begin() + *it);
+        if (gr.cells.empty()) gr.cells.resize(1);
+    }
+    QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    for (auto it = set.rbegin(); it != set.rend(); ++it)
+        if (*it < spec.size()) spec.removeAt(*it);
+    return commitGrid(head, grid, spec, rows_[size_t(head)].header);
+}
+
+bool BlockModel::gridClearRows(int head, const QVariantList& rows) {
+    std::vector<GridRow> grid = gridOf(head);
+    const std::vector<int> set = gridIndexSet(rows, static_cast<int>(grid.size()));
+    if (set.empty()) return false;
+    for (int r : set)
+        for (GridCell& cell : grid[size_t(r)].cells) cell.blocks.clear();
+    return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
+}
+
+bool BlockModel::gridClearColumns(int head, const QVariantList& cols) {
+    std::vector<GridRow> grid = gridOf(head);
+    const std::vector<int> set = gridIndexSet(cols, tableColumnCount(head));
+    if (grid.empty() || set.empty()) return false;
+    for (GridRow& gr : grid)
+        for (int c : set)
+            if (c < static_cast<int>(gr.cells.size())) gr.cells[size_t(c)].blocks.clear();
+    return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
+}
+
+bool BlockModel::gridSortByColumn(int head, int c, bool asc) {
+    std::vector<GridRow> grid = gridOf(head);
+    const int hc = std::min(headerCount(head), static_cast<int>(grid.size()));
+    if (c < 0 || static_cast<int>(grid.size()) - hc < 2) return false;
+    auto text = [&](const GridRow& gr) {
+        if (c >= static_cast<int>(gr.cells.size())) return QString();
+        QStringList parts;
+        for (int v : gr.cells[size_t(c)].blocks) parts << content_[size_t(v)];
+        return parts.join(QLatin1Char('\n'));
+    };
+    auto less = [](const QString& x, const QString& y) {
+        bool okx = false, oky = false;
+        const double nx = x.toDouble(&okx), ny = y.toDouble(&oky);
+        if (okx && oky) return nx < ny;                          // numeric when both sides parse
+        if (okx != oky) return okx;                              // numbers before text
+        return QString::compare(x, y, Qt::CaseInsensitive) < 0;
+    };
+    std::vector<std::pair<QString, GridRow>> body;
+    for (size_t i = size_t(hc); i < grid.size(); ++i) body.push_back({ text(grid[i]), grid[i] });
+    std::stable_sort(body.begin(), body.end(), [&](const auto& a, const auto& b) {
+        return asc ? less(a.first, b.first) : less(b.first, a.first);
+    });
+    bool changed = false;
+    for (size_t k = 0; k < body.size(); ++k) changed = changed || body[k].second.rec != grid[size_t(hc) + k].rec;
+    if (!changed) return true;
+    for (size_t k = 0; k < body.size(); ++k) grid[size_t(hc) + k] = std::move(body[k].second);
+    return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
+}
+
+bool BlockModel::joinTableByLabel(int target, int source) {
+    const std::vector<GridRow> tg = gridOf(target);
+    std::vector<GridRow> sg = gridOf(source);
+    if (tg.empty() || sg.empty()) return false;
+    auto label = [&](const GridRow& gr, int c) {
+        if (c >= static_cast<int>(gr.cells.size())) return QString();
+        QStringList parts;
+        for (int v : gr.cells[size_t(c)].blocks) parts << content_[size_t(v)];
+        return parts.join(QLatin1Char('\n')).trimmed().toCaseFolded();
+    };
+    const int targetCols = tableColumnCount(target), sourceCols = tableColumnCount(source);
+    std::vector<char> used(size_t(targetCols), 0);
+    std::vector<int> map(size_t(sourceCols), -1);
+    for (int s = 0; s < sourceCols; ++s) {                       // labels, duplicates in order
+        const QString l = label(sg[0], s);
+        if (l.isEmpty()) continue;
+        for (int t = 0; t < targetCols; ++t)
+            if (!used[size_t(t)] && label(tg[0], t) == l) { map[size_t(s)] = t; used[size_t(t)] = 1; break; }
+    }
+    for (int s = 0; s < sourceCols; ++s)                         // unlabeled columns: by position
+        if (map[size_t(s)] < 0 && label(sg[0], s).isEmpty() && s < targetCols && !used[size_t(s)]) {
+            map[size_t(s)] = s;
+            used[size_t(s)] = 1;
+        }
+    QJsonArray cols = tableColsOf(rows_[size_t(target)].table);
+    while (cols.size() < targetCols) cols.append(QJsonObject());
+    const QJsonArray sourceSpec = tableColsOf(rows_[size_t(source)].table);
+    int next = targetCols;
+    for (int s = 0; s < sourceCols; ++s)                         // unmatched source columns append
+        if (map[size_t(s)] < 0) {
+            map[size_t(s)] = next++;
+            cols.append(s < sourceSpec.size() ? sourceSpec.at(s) : QJsonValue(QJsonObject()));
+        }
+    std::vector<GridRow> grid = tg;
+    for (const GridRow& gr : sg) {
+        GridRow joined;
+        joined.rec = gr.rec;
+        for (int s = 0; s < static_cast<int>(gr.cells.size()); ++s) {
+            const int t = map[size_t(s)];
+            if (static_cast<int>(joined.cells.size()) <= t) joined.cells.resize(size_t(t) + 1);
+            joined.cells[size_t(t)] = gr.cells[size_t(s)];
+        }
+        grid.push_back(std::move(joined));
+    }
+    const int lo = target, hi = tableBand(source).second;
+    beginTxn(lo, hi);
+    rebuildTable(lo, hi, grid, cols, rows_[size_t(target)].header);
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+void BlockModel::applyPermutation(int lo, const std::vector<std::pair<QString, QString>>& order) {
+    const int m = static_cast<int>(order.size());
+    if (lo < 0 || lo + m > static_cast<int>(rows_.size())) return;
+    QHash<QString, int> at;
+    for (int i = lo; i < lo + m; ++i) at.insert(ids_[size_t(i)], i);
+    const std::vector<double> oldHeights = layout().heights();
+    std::vector<Row> nr;
+    std::vector<QString> nc;
+    std::vector<double> heights = oldHeights;
+    for (int k = 0; k < m; ++k) {
+        const auto it = at.constFind(order[size_t(k)].first);
+        if (it == at.constEnd()) return;                         // never expected: leave the doc alone
+        nr.push_back(rows_[size_t(it.value())]);
+        nc.push_back(content_[size_t(it.value())]);
+        if (size_t(lo + k) < heights.size() && size_t(it.value()) < oldHeights.size())
+            heights[size_t(lo + k)] = oldHeights[size_t(it.value())];
+    }
+    applying_ = true;
+    beginResetModel();
+    for (int k = 0; k < m; ++k) {
+        const size_t i = size_t(lo + k);
+        rows_[i] = nr[size_t(k)];
+        content_[i] = nc[size_t(k)];
+        ids_[i] = order[size_t(k)].first;
+        ranks_[i] = order[size_t(k)].second;
+        if (doc_.isOpen()) doc_.updateRank(ids_[i], ranks_[i]);
+    }
+    reindex(std::move(heights));
+    endResetModel();
+    ++layoutRevision_; ++contentRevision_;
+    emit modelReset(); emit layoutChangedSpike(); emit contentChangedSpike();
+    applying_ = false;
 }
 
 bool BlockModel::setTableColumnWidth(int head, int column, qreal width) {
@@ -896,6 +1201,13 @@ bool BlockModel::setHeaderRole(int record, int count) {
     if (record < 0 || record >= n || rows_[size_t(record)].type != Split || rows_[size_t(record)].cell >= 0) return false;
     count = std::clamp(count, 0, 255);
     if (rows_[size_t(record)].header == count) return true;
+    // A9: unassigning a head right below another table joins it explicitly — by label.
+    if (count == 0) {
+        int prev = record - 1;
+        while (prev >= 0 && rows_[size_t(prev)].cell >= 0) --prev;
+        const int target = prev >= 0 && rows_[size_t(prev)].type == Split ? tableHeadOf(prev) : -1;
+        if (target >= 0) return joinTableByLabel(target, record);
+    }
     // The tables above and below regroup around it: the band is the whole run of split rows.
     const auto [lo, hi] = splitRunBand(record);
     beginTxn(lo, hi);
@@ -2803,7 +3115,31 @@ void BlockModel::endTxn(const QString& coalesce) {
     if (sparse)
         for (size_t i = 0; i < after.size(); ++i)
             if (txnBefore_[i].id != after[i].id) { sparse = false; break; }
-    if (sparse) {
+    // T2 (SR-4): a band whose blocks only changed order (and so rank) — a sort, a row
+    // move — stores the two (id, rank) orders instead of two snapshots of every block.
+    std::vector<std::pair<QString, QString>> permB, permA;
+    if (!sparse && txnBefore_.size() == after.size() && after.size() > 1) {
+        QHash<QString, int> beforeAt;
+        beforeAt.reserve(static_cast<int>(txnBefore_.size()));
+        for (size_t i = 0; i < txnBefore_.size(); ++i) beforeAt.insert(txnBefore_[i].id, static_cast<int>(i));
+        bool perm = beforeAt.size() == static_cast<int>(after.size());
+        for (size_t i = 0; perm && i < after.size(); ++i) {
+            const auto it = beforeAt.constFind(after[i].id);
+            if (it == beforeAt.constEnd()) { perm = false; break; }
+            BlockSnap x = txnBefore_[size_t(it.value())];
+            x.rank = after[i].rank;
+            perm = snapEq(x, after[i]);
+        }
+        if (perm)
+            for (size_t i = 0; i < after.size(); ++i) {
+                permB.push_back({ txnBefore_[i].id, txnBefore_[i].rank });
+                permA.push_back({ after[i].id, after[i].rank });
+            }
+    }
+    if (!permB.empty()) {
+        e.permBefore = std::move(permB);
+        e.permAfter = std::move(permA);
+    } else if (sparse) {
         for (size_t i = 0; i < after.size(); ++i) {
             if (snapEq(txnBefore_[i], after[i])) continue;
             e.patches.push_back({txnLo_ + static_cast<int>(i),
@@ -2874,7 +3210,9 @@ void BlockModel::undo() {
     awaitingAfter_ = false;
     const UndoEntry e = undo_[undoCur_];          // copy (applySnapshot won't touch undo_, but be safe)
     // Pure width entries carry no snaps — skip the (view-resetting) apply.
-    if (!e.before.empty() || !e.after.empty())
+    if (!e.permBefore.empty())
+        applyPermutation(e.lo, e.permBefore);
+    else if (!e.before.empty() || !e.after.empty())
         applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
     else if (!e.patches.empty())
         applyPatches(e.patches, /*beforeSide=*/true);
@@ -2892,7 +3230,9 @@ void BlockModel::redo() {
         if (undo_[i].parent == undoCur_) { child = i; break; }
     if (child < 0) return;
     const UndoEntry e = undo_[child];
-    if (!e.before.empty() || !e.after.empty())
+    if (!e.permAfter.empty())
+        applyPermutation(e.lo, e.permAfter);
+    else if (!e.before.empty() || !e.after.empty())
         applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
     else if (!e.patches.empty())
         applyPatches(e.patches, /*beforeSide=*/false);
@@ -3003,6 +3343,7 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         return tr("Page width %1").arg(int(std::lround(e.widthAfter)));
     const auto& b = e.before;
     const auto& a = e.after;
+    if (!e.permBefore.empty()) return tr("Reorder rows");
     if (a.size() > b.size()) {
         const int n = int(a.size() - b.size());
         return n == 1 ? tr("Insert block") : tr("Insert %1 blocks").arg(n);

@@ -6984,6 +6984,168 @@ static void testTableStructureOps() {
     QFile::remove(path);
 }
 
+static void testTableAttrsBulkSort() {
+    qInfo("[88] table colours, alignment, bulk ops, sort with order-only undo, and the label join (SR-4 step 3b)");
+    auto gridText = [](const BlockModel& m, int head) {
+        QStringList rows;
+        for (int r = 0; r < m.gridRowCount(head); ++r) {
+            QStringList cells;
+            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+                QStringList parts;
+                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                    const QString t = m.contentForRow(v.toInt());
+                    parts << (t.isEmpty() ? QStringLiteral("·") : t);
+                }
+                cells << parts.join(QLatin1Char('+'));
+            }
+            rows << cells.join(QLatin1Char(' '));
+        }
+        return rows.join(QStringLiteral(" | "));
+    };
+    auto fill = [](BlockModel& m, int head, const QList<QStringList>& rows) {
+        for (int r = 0; r < rows.size(); ++r)
+            for (int c = 0; c < rows[r].size(); ++c) m.setContent(m.gridCellAt(head, r, c), rows[r][c]);
+    };
+    auto fresh = [&](BlockModel& m) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+        m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+        m.insertTableRows(0, 3, 3);
+        fill(m, 1, { { "A", "B", "C" }, { "a1", "b1", "c1" }, { "a2", "b2", "c2" } });
+    };
+    const QString start = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2");
+    {   // Colours and alignment
+        BlockModel m;
+        fresh(m);
+        const QString red = QStringLiteral("#ff0000"), green = QStringLiteral("#00ff00"), blue = QStringLiteral("#0000ff");
+        CHECK(m.gridSetCellColor(1, 1, 1, 1, 1, false, red) && m.gridSetRowColor(1, 2, false, green)
+                  && m.gridSetColColor(1, 2, false, blue), "colours set");
+        CHECK(m.gridCellBg(1, 1, 1) == red && m.gridCellBg(1, 2, 0) == green && m.gridCellBg(1, 0, 2) == blue
+                  && m.gridCellBg(1, 2, 2) == green && m.gridCellBg(1, 1, 0).isEmpty() && m.gridRowBg(1, 2) == green,
+              "a cell colour beats its row's, a row's beats its column's");
+        m.undo();
+        CHECK(m.gridCellBg(1, 0, 2).isEmpty() && m.gridCellBg(1, 1, 1) == red, "each colour change is one undo step");
+        CHECK(m.gridSetCellColor(1, 1, 0, 1, 0, true, blue) && m.gridCellFg(1, 1, 0) == blue && m.gridCellBg(1, 1, 0).isEmpty(),
+              "text colours are their own layer");
+        m.undo();
+        CHECK(m.gridInsertColumn(1, 0) && m.gridCellBg(1, 1, 2) == red && m.gridCellBg(1, 1, 1).isEmpty()
+                  && m.gridCellBg(1, 2, 0) == green && m.structureValid(),
+              "a cell colour moves with its cell when a column goes in before it");
+        m.undo();
+        CHECK(m.gridMoveColumn(1, 1, 0) && m.gridCellBg(1, 1, 0) == red && m.gridCellBg(1, 1, 1).isEmpty(),
+              "…and when its column moves");
+        m.undo();
+        CHECK(m.gridDuplicateRow(1, 1) && m.gridCellBg(1, 2, 1) == red && m.gridCellBg(1, 3, 0) == green,
+              "a duplicated row copies its cell colours; the row colour stays with its row");
+        m.undo();
+        CHECK(m.gridClearCells(1, 1, 1, 1, 1) && m.gridCellBg(1, 1, 1) == red, "clearing a cell keeps its colour");
+        m.undo();
+
+        CHECK(m.gridSetColAlign(1, 2, 2) && m.gridColAlign(1, 2) == 2 && m.gridColAlign(1, 0) == 0, "column alignment");
+        CHECK(m.gridMoveColumn(1, 2, 0) && m.gridColAlign(1, 0) == 2, "…travels with its column");
+        m.undo();
+
+        const QString path = QDir::tempPath() + QStringLiteral("/mn_table_attrs.mnd");
+        QFile::remove(path);
+        CHECK(m.saveAs(path), "the document saves");
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && m2.gridCellBg(1, 1, 1) == red && m2.gridCellBg(1, 2, 2) == green
+                  && m2.gridColAlign(1, 2) == 2 && m2.structureValid(),
+              "colours and alignment come back after reopening");
+        QFile::remove(path);
+    }
+    {   // Bulk ops on row / column sets
+        BlockModel m;
+        fresh(m);
+        m.gridInsertRow(1, 3);
+        const QString four = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2 | · · ·");
+        CHECK(gridText(m, 1) == four, "fixture: three body rows");
+        CHECK(m.gridDeleteRows(1, { 1, 3 }) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2") && m.structureValid(),
+              "delete a row set (%s)", qPrintable(gridText(m, 1)));
+        m.undo();
+        CHECK(gridText(m, 1) == four, "…one undo step");
+        CHECK(!m.gridDeleteRows(1, { 1, 2, 3 }) && gridText(m, 1) == four, "a set taking every body row is refused");
+        CHECK(m.gridDeleteRows(1, { 0, 2 }) && m.rowCountQml() == 2 && m.structureValid(), "a set holding a header row deletes the table");
+        m.undo();
+        CHECK(m.gridDeleteColumns(1, { 0, 2 }) && gridText(m, 1) == QStringLiteral("B | b1 | b2 | ·") && m.structureValid(),
+              "delete a column set (%s)", qPrintable(gridText(m, 1)));
+        m.undo();
+        CHECK(!m.gridDeleteColumns(1, { 0, 1, 2 }), "a set taking every column is refused");
+        CHECK(m.gridClearRows(1, { 1 }) && gridText(m, 1) == QStringLiteral("A B C | · · · | a2 b2 c2 | · · ·"), "clear a row set");
+        m.undo();
+        CHECK(m.gridClearColumns(1, { 1 }) && gridText(m, 1) == QStringLiteral("A · C | a1 · c1 | a2 · c2 | · · ·"), "clear a column set");
+        m.undo();
+        const QString teal = QStringLiteral("#008080");
+        CHECK(m.gridSetRowsColor(1, { 1, 2 }, false, teal) && m.gridRowBg(1, 1) == teal && m.gridRowBg(1, 2) == teal
+                  && m.gridRowBg(1, 3).isEmpty(), "colour a row set");
+        m.undo();
+        CHECK(m.gridRowBg(1, 1).isEmpty() && m.gridRowBg(1, 2).isEmpty(), "…one undo step");
+        CHECK(m.gridSetColsAlign(1, { 0, 1 }, 1) && m.gridColAlign(1, 0) == 1 && m.gridColAlign(1, 1) == 1 && m.gridColAlign(1, 2) == 0,
+              "align a column set");
+        m.undo();
+        CHECK(gridText(m, 1) == four && m.gridColAlign(1, 0) == 0 && m.structureValid(), "…undone");
+    }
+    {   // Sort
+        const QString dir = QDir::tempPath() + QStringLiteral("/mn_table_sort");
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+        m.insertTableRows(0, 5, 2);
+        fill(m, 1, { { "N", "X" }, { "10", "r1" }, { "9", "r2" }, { "b", "r3" }, { "A", "r4" } });
+        const QString unsorted = QStringLiteral("N X | 10 r1 | 9 r2 | b r3 | A r4");
+        const QString idR1 = m.idForRow(m.gridCellAt(1, 1, 1));
+        const int entries = m.undoHistory().size();
+        CHECK(m.gridSortByColumn(1, 0, true) && gridText(m, 1) == QStringLiteral("N X | 9 r2 | 10 r1 | A r4 | b r3")
+                  && m.gridRowOf(m.rowForId(idR1)) == 2 && m.structureValid(),
+              "sort ascending: numbers numerically, then text case-insensitively; blocks keep their ids (%s)",
+              qPrintable(gridText(m, 1)));
+        CHECK(m.undoHistory().size() == entries + 1
+                  && m.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Reorder rows"),
+              "…one undo step, stored as the two row orders (T2), not snapshots of every cell");
+        m.undo();
+        CHECK(gridText(m, 1) == unsorted && m.structureValid(), "undo restores the order (%s)", qPrintable(gridText(m, 1)));
+        m.redo();
+        CHECK(gridText(m, 1) == QStringLiteral("N X | 9 r2 | 10 r1 | A r4 | b r3"), "redo sorts again");
+        m.undo();
+        CHECK(m.gridSortByColumn(1, 0, false) && gridText(m, 1) == QStringLiteral("N X | b r3 | A r4 | 10 r1 | 9 r2"),
+              "sort descending (%s)", qPrintable(gridText(m, 1)));
+        m.undo();
+        CHECK(m.gridMoveRow(1, 4, 1) && gridText(m, 1) == QStringLiteral("N X | A r4 | 10 r1 | 9 r2 | b r3"), "move a body row");
+        m.undo();
+        const QString path = dir + QStringLiteral("/sort.mnd");
+        CHECK(m.saveAs(path), "the document saves after the undone reorders");
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && gridText(m2, 1) == unsorted && m2.structureValid(),
+              "undone reorders persist their restored ranks (%s)", qPrintable(gridText(m2, 1)));
+        QDir(dir).removeRecursively();
+    }
+    {   // A9: unassigning a head right below another table joins it by label
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+        m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+        m.insertTableRows(0, 2, 2);                          // X at 1 … 6
+        fill(m, 1, { { "Name", "Status" }, { "n1", "s1" } });
+        const int y = m.splitRowLast(m.tableRecords(1).back().toInt()) + 1;
+        m.insertTableRows(y - 1, 2, 3);                      // Y right below X
+        fill(m, y, { { "status", "Name", "Extra" }, { "s2", "n2", "e2" } });
+        CHECK(m.headerCount(y) == 1 && m.tableHeadOf(y + 5) == y && m.tableRecords(1).size() == 2, "fixture: two adjacent tables");
+        CHECK(m.setHeaderRole(y, 0) && m.tableRecords(1).size() == 4 && m.tableColumnCount(1) == 3
+                  && gridText(m, 1) == QStringLiteral("Name Status | n1 s1 | Name status Extra | n2 s2 e2") && m.structureValid(),
+              "its columns match the table above by label (case-insensitive); an unmatched column appends (%s)",
+              qPrintable(gridText(m, 1)));
+        m.undo();
+        CHECK(m.headerCount(y) == 1 && gridText(m, y) == QStringLiteral("status Name Extra | s2 n2 e2")
+                  && gridText(m, 1) == QStringLiteral("Name Status | n1 s1") && m.structureValid(),
+              "…one undo step (%s)", qPrintable(gridText(m, y)));
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7182,6 +7344,7 @@ int main(int argc, char** argv) {
     testTableModel();
     testTableGeometry();
     testTableStructureOps();
+    testTableAttrsBulkSort();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

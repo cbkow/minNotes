@@ -235,6 +235,29 @@ public:
     Q_INVOKABLE bool gridClearCells(int head, int r0, int c0, int r1, int c1);
     Q_INVOKABLE bool gridFillDown(int head, int r0, int c0, int r1, int c1);
     Q_INVOKABLE bool gridFillRight(int head, int r0, int c0, int r1, int c1);
+    // Colours and alignment (S3b). Cell colours live on the row's record (lane-indexed),
+    // row colours on the record, column colours and alignment in the head's spec. The
+    // resolved colour is the cell's, else the row's, else the column's.
+    Q_INVOKABLE QString gridCellBg(int head, int r, int c) const;
+    Q_INVOKABLE QString gridCellFg(int head, int r, int c) const;
+    Q_INVOKABLE QString gridRowBg(int head, int r) const;       // the row's own colour ("" = none)
+    Q_INVOKABLE int gridColAlign(int head, int c) const;        // 0 left, 1 center, 2 right
+    Q_INVOKABLE bool gridSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color);
+    Q_INVOKABLE bool gridSetRowColor(int head, int r, bool fg, const QString& color);
+    Q_INVOKABLE bool gridSetColColor(int head, int c, bool fg, const QString& color);
+    Q_INVOKABLE bool gridSetColAlign(int head, int c, int align);
+    // Bulk ops on row / column sets, one undo each. A set holding a header row deletes
+    // the table; a set that would take every body row or every column is refused.
+    Q_INVOKABLE bool gridDeleteRows(int head, const QVariantList& rows);
+    Q_INVOKABLE bool gridDeleteColumns(int head, const QVariantList& cols);
+    Q_INVOKABLE bool gridClearRows(int head, const QVariantList& rows);
+    Q_INVOKABLE bool gridClearColumns(int head, const QVariantList& cols);
+    Q_INVOKABLE bool gridSetRowsColor(int head, const QVariantList& rows, bool fg, const QString& color);
+    Q_INVOKABLE bool gridSetColsColor(int head, const QVariantList& cols, bool fg, const QString& color);
+    Q_INVOKABLE bool gridSetColsAlign(int head, const QVariantList& cols, int align);
+    // Stable sort of the body rows by a column's text: numeric when both parse, numbers
+    // before text, text case-insensitive. The undo entry records the two row orders (T2).
+    Q_INVOKABLE bool gridSortByColumn(int head, int c, bool asc);
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -1010,6 +1033,9 @@ private:
         int lo = 0;
         std::vector<BlockSnap> before, after;
         std::vector<UndoPatch> patches;
+        // T2 (SR-4): a band whose blocks only changed order — a sort, a row move — keeps
+        // (id, rank) in band order on each side instead of two full snapshots.
+        std::vector<std::pair<QString, QString>> permBefore, permAfter;
         int cRowB = 0, cColB = 0, aRowB = 0, aColB = 0;   // caret before
         int cRowA = 0, cColA = 0, aRowA = 0, aColA = 0;   // caret after
         int parent = -1;
@@ -1256,15 +1282,23 @@ private:
     // S3a: a table as a grid of existing rows. Cell entries: v ≥ 0 keeps flat row v (its id);
     // v ≤ -2 is a copy of flat row -v-2 (a new id). rec ≥ 0 keeps (or, with copy, copies) that
     // record; rec = -1 is a new record. An empty cell refills with an empty paragraph.
-    struct GridRow { int rec = -1; bool copy = false; std::vector<std::vector<int>> cells; };
+    struct GridCell { std::vector<int> blocks; QString bg, fg; };   // a cell's blocks + its colours
+    struct GridRow { int rec = -1; bool copy = false; std::vector<GridCell> cells; };
+    static GridCell copiedCell(const GridCell& cell);
     std::vector<GridRow> gridOf(int head) const;
     int gridRecord(int head, int r) const;                       // the record of row r, or -1
     std::pair<int,int> tableBand(int head) const;                // head … the last record's last block
     // Replace the table's band with `grid` (inside the caller's txn). The first row takes
     // `headerCount` and the column spec `cols`.
-    void rebuildTable(int head, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount);
+    void rebuildTable(int lo, int hi, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount);
     bool commitGrid(int head, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount);
     int refillTableCells(int lo, int hi);                        // A4 for tables; → rows inserted
+    // S3b: record-attr edits over a table (one txn; sparse undo), colour resolution,
+    // the explicit label join (A9), and T2 permutation undo.
+    bool editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn);
+    QString gridColour(int head, int r, int c, bool fg) const;
+    bool joinTableByLabel(int target, int source);
+    void applyPermutation(int lo, const std::vector<std::pair<QString, QString>>& order);
     static double tableLaneWidth(const TableGeom& g, int cell) {
         return cell >= 0 && static_cast<std::size_t>(cell) < g.w.size() ? g.w[static_cast<std::size_t>(cell)] : 160.0;
     }
