@@ -2439,7 +2439,7 @@ static void testDocxRoundTrip() {
             cd.text = QStringLiteral("int x;\nint y;"); specs.push_back(cd);
         }
         m.insertSpecs(0, specs, true);
-        // The source table stays a Table block until S8b moves the DOCX exporter to derived tables.
+        // A Table block source still exercises the legacy DOCX emitter (S10 retires it; [100] covers derived tables).
         const int legacyTable = m.insertTable(m.rowCountQml() - 1, 2, 2);
         m.tableSetCell(legacyTable, 1, 0, QStringLiteral("cell A"));
         const QString threadId = m.addComment(1, 0, 5);
@@ -7721,6 +7721,94 @@ static void testGridTableExports() {
           "HTML: a cell's blocks are real paragraphs in one <td>; divs balanced");
 }
 
+static void testGridTableDocxPdf() {
+    qInfo("[100] derived tables export: DOCX one table w/ tblHeader + widths + shading + alignment, reimports; PDF one table (SR-4 S8b)");
+    const QString dir = QDir::tempPath() + QStringLiteral("/mn_grid_exports");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
+    const int head = m.insertTableRows(0, 3, 3) - 1;
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(head, r, c), QString::fromUtf8(t)); };
+    set(0, 0, "Name"); set(0, 1, "Status"); set(0, 2, "Done");
+    set(1, 0, "alpha"); set(1, 1, "bravo");
+    set(2, 0, "charlie"); set(2, 1, "delta");
+    {
+        const int b = m.gridCellAt(head, 1, 1);
+        m.insertBlock(b + 1);
+        m.setContent(b + 1, QStringLiteral("echo"));
+    }
+    m.gridSetColAlign(head, 1, 1);
+    m.setTableColumnWidth(head, 0, 200);
+    m.gridSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#ff0000"));
+    CHECK(m.gridSetColumnKind(head, 2, 2) && m.gridSetCellCheck(head, 1, 2, 2) && m.structureValid()
+              && m.gridCellRows(head, 1, 1).size() == 2,
+          "fixture: a 3×3 table with a two-block cell and a check column");
+
+    Exporter ex;
+    ex.setModel(&m);
+    const QString docxPath = dir + QStringLiteral("/grid.docx");
+    CHECK(ex.exportDocx(docxPath, false), "DOCX exports");
+    {
+        QZipReader zr(docxPath);
+        const QByteArray doc = zr.fileData(QStringLiteral("word/document.xml"));
+        QXmlStreamReader xr(doc);
+        while (!xr.atEnd()) xr.readNext();
+        CHECK(!xr.hasError(), "DOCX: document.xml is well-formed (%s)", qPrintable(xr.errorString()));
+        CHECK(doc.count("<w:tbl>") == 1 && doc.count("<w:tr>") == 3 && doc.count("<w:tblHeader/>") == 1
+                  && doc.count("<w:tc>") == 9,
+              "DOCX: one table, three rows, the header row marked to repeat, nine cells");
+        CHECK(doc.contains("<w:gridCol w:w=\"3000\" w:type=\"dxa\"/>") && doc.contains("w:fill=\"FF0000\"")
+                  && doc.contains("<w:jc w:val=\"center\"/>") && doc.contains("mnTask"),
+              "DOCX: the 200 px column as 3000 dxa, the cell shading, the column alignment, the check glyph");
+        const qsizetype b = doc.indexOf(">bravo<"), e = doc.indexOf(">echo<");
+        CHECK(b > 0 && b < e && !doc.mid(b, e - b).contains("</w:tc>") && doc.indexOf(">before<") < doc.indexOf("<w:tbl>")
+                  && doc.indexOf("</w:tbl>") < doc.indexOf(">after<"),
+              "DOCX: a cell's blocks are paragraphs in one cell; the table sits between its neighbours");
+    }
+    {
+        BlockModel back;
+        back.newDocument();
+        while (back.rowCountQml() > 0) back.removeBlock(0);
+        back.insertBlock(0);
+        CHECK(Importer::importDocxFile(docxPath, &back), "the DOCX imports back");
+        const int h = findTableHead(back);
+        CHECK(h >= 0 && back.gridRowCount(h) == 3 && back.gridCellText(h, 0, 0) == QStringLiteral("Name")
+                  && back.gridCellText(h, 2, 0) == QStringLiteral("charlie") && back.gridCellText(h, 1, 1).contains(QStringLiteral("bravo")),
+              "…as one derived table with its cells");
+    }
+
+    QBuffer buf;
+    buf.open(QIODevice::ReadWrite);
+    CHECK(ex.toPdf(Exporter::Options{}, buf), "PDF exports");
+    const QString pdfPath = dir + QStringLiteral("/grid.pdf");
+    { QFile pf(pdfPath); if (pf.open(QIODevice::WriteOnly)) pf.write(buf.data()); }
+    {
+        QPdfDocument pdoc;
+        CHECK(pdoc.load(pdfPath) == QPdfDocument::Error::None && pdoc.pageCount() == 1, "PDF: re-reads as one page");
+        const QString all = pdoc.getAllText(0).text();
+        auto rectOf = [&](const QString& word) {
+            QString pat;
+            for (QChar ch : word) pat += QRegularExpression::escape(QString(ch)) + QStringLiteral("\\s*");
+            const auto mt = QRegularExpression(pat).match(all);
+            return mt.hasMatch() ? pdoc.getSelectionAtIndex(0, int(mt.capturedStart()), int(mt.capturedLength())).boundingRectangle()
+                                 : QRectF();
+        };
+        const QRectF name = rectOf(QStringLiteral("Name")), alpha = rectOf(QStringLiteral("alpha")), bravo = rectOf(QStringLiteral("bravo"));
+        const QRectF echo = rectOf(QStringLiteral("echo")), charlie = rectOf(QStringLiteral("charlie")), after = rectOf(QStringLiteral("after"));
+        CHECK(!name.isNull() && !alpha.isNull() && !bravo.isNull() && !echo.isNull() && !charlie.isNull() && !after.isNull(),
+              "PDF: every cell's text extracts (%s)", qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(200)));
+        if (!alpha.isNull() && !bravo.isNull() && !echo.isNull() && !charlie.isNull() && !after.isNull())
+            CHECK(bravo.left() > alpha.right() && std::abs(bravo.top() - alpha.top()) < 4 && echo.top() > bravo.bottom() - 1
+                      && charlie.top() > echo.top() && std::abs(charlie.left() - alpha.left()) < 4 && after.top() > charlie.bottom(),
+                  "PDF: cells side by side in a row, a cell's second block below its first, rows stacked, the next block below");
+    }
+    QDir(dir).removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7931,6 +8019,7 @@ int main(int argc, char** argv) {
     testTableGripsAndDrops();
     testLegacyTableSinks();
     testGridTableExports();
+    testGridTableDocxPdf();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
