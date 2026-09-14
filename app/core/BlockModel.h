@@ -205,6 +205,25 @@ public:
     // new lane on the right, 1 = on the left; ratio = the block's share. Returns the
     // new paragraph's row, or -1 (records and tables don't split).
     Q_INVOKABLE int splitIntoColumns(int row, int side, qreal ratio);
+    // --- Lane gestures and commands (SR-3 S7). One undo step each. No lane goes below
+    // kMinLaneWidth at the page measure (a page too narrow for that gets equal lanes).
+    static constexpr double kMinLaneWidth = 120.0;
+    Q_INVOKABLE bool setSplitRatios(int record, const QVariantList& ratios);
+    Q_INVOKABLE qreal dividerX(int record, int divider) const;   // page-relative centre of the gap after lane `divider`
+    // The dividers at the same x in the adjacent layout rows above and below, top to
+    // bottom, as [record, divider, …] pairs (SR-0 §4.12 aligned dividers).
+    Q_INVOKABLE QVariantList dividerChain(int record, int divider) const;
+    // Move a divider to page-relative x; unless `alone`, its aligned chain moves with it.
+    Q_INVOKABLE bool moveDivider(int record, int divider, qreal pageX, bool alone);
+    // Pull from the boundary with a run selected: the top-level run [lo, hi] becomes one
+    // lane of a new split row beside a new empty paragraph. Returns the paragraph's row, or -1.
+    Q_INVOKABLE int wrapRun(int lo, int hi, int side, qreal ratio);
+    // Align lanes: re-split a split row into paired rows — one block per lane per row, a
+    // shorter lane filled with empty paragraphs. Returns the first record's row, or -1.
+    Q_INVOKABLE int alignLanes(int record);
+    // Merge rows into lanes: the adjacent split rows from loRow's to hiRow's, all with the
+    // same lane count, become one split row. Returns its record's row, or -1.
+    Q_INVOKABLE int mergeRowsIntoLanes(int loRow, int hiRow);
 
     // --- Row data, for the Flickable arm (ListView uses roles) ---
     Q_INVOKABLE int typeForRow(int row) const;
@@ -1140,6 +1159,12 @@ private:
     int splitRowEnd(int record) const;                         // a record's last lane block
     int8_t laneAt(int at) const;                               // the lane a block inserted at `at` joins
     void removeRowRaw(int row);                                // erase one row everywhere (no txn)
+    void insertRowRaw(int at, const Row& r, const QString& rank);   // a new empty-content row everywhere (no txn)
+    std::vector<float> clampedRatios(std::vector<float> ratios) const;   // normalized, no lane under kMinLaneWidth
+    // Replace rows [lo, hi] with a rebuilt sequence (inside the caller's txn): fresh ranks,
+    // surviving ids keep their heights and ink, dropped ids are deleted, only changes persist.
+    void replaceBand(int lo, int hi, const std::vector<Row>& rows,
+                     const std::vector<QString>& ids, const std::vector<QString>& contents);
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
 

@@ -562,19 +562,6 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
     const float keep = static_cast<float>(std::clamp<qreal>(ratio, 0.05, 0.95));
     const bool newRight = side == 0;
 
-    auto insertRow = [&](int at, const Row& r, const QString& rank) {
-        const QString id = makeUlid();
-        beginInsertRows({}, at, at);
-        rows_.insert(rows_.begin() + at, r);
-        content_.insert(content_.begin() + at, QString());
-        ids_.insert(ids_.begin() + at, id);
-        ranks_.insert(ranks_.begin() + at, rank);
-        indexInsert(static_cast<size_t>(at), r.type == Split ? 0.0 : estimatedHeight(r, laneWidthForInsert(at, r.cell)));
-        endInsertRows();
-        if (doc_.isOpen())
-            doc_.appendBlock(id, rank, r.depth, QString::fromLatin1(typeToString(r.type)),
-                             attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), QString());
-    };
     Row fresh{}; fresh.type = Paragraph; fresh.param = 1;
     int freshRow = -1;
 
@@ -586,16 +573,16 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
         Row rec{}; rec.type = Split; rec.param = 1;
         rec.ratios = newRight ? std::vector<float>{keep, 1.0f - keep} : std::vector<float>{1.0f - keep, keep};
         const QString recRank = rankBetween(above, ranks_[size_t(row)]);
-        insertRow(row, rec, recRank);                              // the block is now at row + 1
+        insertRowRaw(row, rec, recRank);                              // the block is now at row + 1
         rows_[size_t(row + 1)].cell = newRight ? 0 : 1;
         persistMeta(row + 1);
         fresh.cell = newRight ? 1 : 0;
         if (newRight) {
             freshRow = row + 2;
-            insertRow(freshRow, fresh, rankBetween(ranks_[size_t(row + 1)], below));
+            insertRowRaw(freshRow, fresh, rankBetween(ranks_[size_t(row + 1)], below));
         } else {
             freshRow = row + 1;
-            insertRow(freshRow, fresh, rankBetween(recRank, ranks_[size_t(row + 2)]));
+            insertRowRaw(freshRow, fresh, rankBetween(recRank, ranks_[size_t(row + 2)]));
         }
         rederiveMedia(row, row + 2);                  // the block now lays out at a lane's width
         emit dataChanged(index(row), index(row + 2));
@@ -624,11 +611,11 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
         fresh.cell = static_cast<int8_t>(newLane);
         if (newRight) {
             freshRow = last + 1;
-            insertRow(freshRow, fresh, rankBetween(ranks_[size_t(last)],
+            insertRowRaw(freshRow, fresh, rankBetween(ranks_[size_t(last)],
                       last + 1 < static_cast<int>(rows_.size()) ? ranks_[size_t(last + 1)] : QString()));
         } else {
             freshRow = first;
-            insertRow(freshRow, fresh, rankBetween(ranks_[size_t(first - 1)], ranks_[size_t(first)]));
+            insertRowRaw(freshRow, fresh, rankBetween(ranks_[size_t(first - 1)], ranks_[size_t(first)]));
         }
         rederiveMedia(rec, band.second + 1);          // the split lane narrowed
         emit dataChanged(index(rec), index(band.second + 1));
@@ -1210,6 +1197,308 @@ int BlockModel::leafAbove(int row, qreal pageX) const {
     const int before = (rec >= 0 ? rec : row) - 1;
     if (before < 0) return -1;
     return entryLeaf(rows_[size_t(before)].cell >= 0 ? splitRowOf(before) : before, pageX, false);
+}
+
+// === Lane gestures and commands (SR-3 S7) ===================================
+
+void BlockModel::insertRowRaw(int at, const Row& r, const QString& rank) {
+    const QString id = makeUlid();
+    beginInsertRows({}, at, at);
+    rows_.insert(rows_.begin() + at, r);
+    content_.insert(content_.begin() + at, QString());
+    ids_.insert(ids_.begin() + at, id);
+    ranks_.insert(ranks_.begin() + at, rank);
+    indexInsert(static_cast<size_t>(at), r.type == Split ? 0.0 : estimatedHeight(r, laneWidthForInsert(at, r.cell)));
+    endInsertRows();
+    if (doc_.isOpen())
+        doc_.appendBlock(id, rank, r.depth, QString::fromLatin1(typeToString(r.type)),
+                         attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), QString());
+}
+
+std::vector<float> BlockModel::clampedRatios(std::vector<float> ratios) const {
+    const int lanes = static_cast<int>(ratios.size());
+    if (lanes == 0) return ratios;
+    const std::vector<float> equal(static_cast<size_t>(lanes), 1.0f / static_cast<float>(lanes));
+    const double avail = std::max(0.0, contentWidth_ - kLaneGap * double(lanes - 1));
+    const double minShare = avail > 0.0 ? kMinLaneWidth / avail : 1.0;
+    if (minShare * lanes >= 1.0) return equal;             // too narrow for the minimum: equal lanes
+    double sum = 0.0;
+    for (float& f : ratios) { if (!(f > 0.0f)) f = 0.0f; sum += f; }
+    if (sum <= 0.0) return equal;
+    double deficit = 0.0, spare = 0.0;
+    for (float& f : ratios) {
+        f = static_cast<float>(f / sum);
+        if (f < minShare) deficit += minShare - f; else spare += f - minShare;
+    }
+    if (deficit > 1e-9)                                     // lift narrow lanes; the wide ones pay pro rata
+        for (float& f : ratios)
+            f = f < minShare ? static_cast<float>(minShare)
+                             : static_cast<float>(f - (f - minShare) / spare * deficit);
+    return ratios;
+}
+
+bool BlockModel::setSplitRatios(int record, const QVariantList& ratios) {
+    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split) return false;
+    if (ratios.size() != static_cast<qsizetype>(rows_[size_t(record)].ratios.size())) return false;
+    std::vector<float> r;
+    for (const QVariant& v : ratios) r.push_back(static_cast<float>(v.toDouble()));
+    r = clampedRatios(std::move(r));
+    if (r == rows_[size_t(record)].ratios) return true;
+    const int end = splitRowEnd(record);
+    beginTxn(record, record);
+    rows_[size_t(record)].ratios = r;
+    persistMeta(record);
+    rederiveMedia(record, end);
+    emit dataChanged(index(record), index(end));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+qreal BlockModel::dividerX(int record, int divider) const {
+    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split) return 0.0;
+    const std::vector<float>& ratios = rows_[size_t(record)].ratios;
+    if (divider < 0 || divider + 1 >= static_cast<int>(ratios.size())) return 0.0;
+    return laneLeftFrom(ratios, divider) + laneWidthFrom(ratios, divider) + kLaneGap / 2.0;
+}
+
+QVariantList BlockModel::dividerChain(int record, int divider) const {
+    const int n = static_cast<int>(rows_.size());
+    if (record < 0 || record >= n || rows_[size_t(record)].type != Split
+        || divider < 0 || divider + 1 >= static_cast<int>(rows_[size_t(record)].ratios.size())) return {};
+    const double x = dividerX(record, divider);
+    auto dividerAt = [&](int rec) {
+        const int lanes = static_cast<int>(rows_[size_t(rec)].ratios.size());
+        for (int k = 0; k + 1 < lanes; ++k)
+            if (std::abs(dividerX(rec, k) - x) <= 1.0) return k;
+        return -1;
+    };
+    QVariantList out{ record, divider };
+    for (int above = record - 1; above >= 0;) {                   // the adjacent layout rows above …
+        const int rec = rows_[size_t(above)].cell >= 0 ? splitRowOf(above) : -1;
+        if (rec < 0) break;
+        const int k = dividerAt(rec);
+        if (k < 0) break;
+        out.prepend(k);
+        out.prepend(rec);
+        above = rec - 1;
+    }
+    for (int below = splitRowEnd(record) + 1; below < n && rows_[size_t(below)].type == Split;) {   // … and below
+        const int k = dividerAt(below);
+        if (k < 0) break;
+        out << below << k;
+        below = splitRowEnd(below) + 1;
+    }
+    return out;
+}
+
+bool BlockModel::moveDivider(int record, int divider, qreal pageX, bool alone) {
+    const QVariantList chain = alone ? QVariantList{ record, divider } : dividerChain(record, divider);
+    if (chain.size() < 2 || record < 0 || record >= static_cast<int>(rows_.size())
+        || rows_[size_t(record)].type != Split) return false;
+    struct Change { int rec; std::vector<float> ratios; };
+    std::vector<Change> changes;
+    for (qsizetype i = 0; i + 1 < chain.size(); i += 2) {
+        const int rec = chain[i].toInt(), k = chain[i + 1].toInt();
+        std::vector<float> ratios = rows_[size_t(rec)].ratios;
+        if (k < 0 || k + 1 >= static_cast<int>(ratios.size())) continue;
+        const double avail = std::max(1.0, contentWidth_ - kLaneGap * double(ratios.size() - 1));
+        const double wl = ratios[size_t(k)] * avail, wr = ratios[size_t(k + 1)] * avail;
+        const double lo = kMinLaneWidth - wl, hi = wr - kMinLaneWidth;   // neither lane under the minimum
+        const double delta = lo <= hi ? std::clamp(pageX - dividerX(rec, k), lo, hi) : 0.0;
+        ratios[size_t(k)] = static_cast<float>((wl + delta) / avail);
+        ratios[size_t(k + 1)] = static_cast<float>((wr - delta) / avail);
+        if (ratios != rows_[size_t(rec)].ratios) changes.push_back({ rec, std::move(ratios) });
+    }
+    if (changes.empty()) return false;
+    const int lo = changes.front().rec, hi = splitRowEnd(changes.back().rec);
+    beginTxn(lo, hi);
+    for (Change& c : changes) {
+        rows_[size_t(c.rec)].ratios = std::move(c.ratios);
+        persistMeta(c.rec);
+        rederiveMedia(c.rec, splitRowEnd(c.rec));
+    }
+    emit dataChanged(index(lo), index(hi));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+int BlockModel::wrapRun(int lo, int hi, int side, qreal ratio) {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0) return -1;
+    lo = std::clamp(lo, 0, n - 1);
+    hi = std::clamp(hi, 0, n - 1);
+    if (lo > hi) std::swap(lo, hi);
+    if (lo == hi) return splitIntoColumns(lo, side, ratio);
+    for (int i = lo; i <= hi; ++i)
+        if (rows_[size_t(i)].cell >= 0 || rows_[size_t(i)].type == Split || rows_[size_t(i)].type == Table) return -1;
+    const float keep = static_cast<float>(std::clamp<qreal>(ratio, 0.05, 0.95));
+    const bool newRight = side == 0;
+    beginTxn(lo, hi);
+    Row rec{}; rec.type = Split; rec.param = 1;
+    rec.ratios = clampedRatios(newRight ? std::vector<float>{keep, 1.0f - keep} : std::vector<float>{1.0f - keep, keep});
+    const QString recRank = rankBetween(lo > 0 ? ranks_[size_t(lo - 1)] : QString(), ranks_[size_t(lo)]);
+    insertRowRaw(lo, rec, recRank);                           // the run is now [lo+1, hi+1]
+    for (int i = lo + 1; i <= hi + 1; ++i) {
+        rows_[size_t(i)].cell = newRight ? 0 : 1;
+        persistMeta(i);
+    }
+    Row fresh{}; fresh.type = Paragraph; fresh.param = 1; fresh.cell = newRight ? 1 : 0;
+    int freshRow;
+    if (newRight) {
+        freshRow = hi + 2;
+        insertRowRaw(freshRow, fresh, rankBetween(ranks_[size_t(hi + 1)],
+                     hi + 2 < static_cast<int>(rows_.size()) ? ranks_[size_t(hi + 2)] : QString()));
+    } else {
+        freshRow = lo + 1;
+        insertRowRaw(freshRow, fresh, rankBetween(recRank, ranks_[size_t(lo + 1)]));
+    }
+    rederiveMedia(lo, hi + 2);
+    emit dataChanged(index(lo), index(hi + 2));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return freshRow;
+}
+
+void BlockModel::replaceBand(int lo, int hi, const std::vector<Row>& nr,
+                             const std::vector<QString>& ni, const std::vector<QString>& nc) {
+    const int n = static_cast<int>(rows_.size());
+    const std::vector<double> oldHeights = layout().heights();
+    QHash<QString, double> heightById;
+    QSet<QString> oldIds;
+    for (int i = lo; i <= hi; ++i) {
+        oldIds.insert(ids_[size_t(i)]);
+        if (size_t(i) < oldHeights.size()) heightById.insert(ids_[size_t(i)], oldHeights[size_t(i)]);
+    }
+    const QSet<QString> newIds(ni.begin(), ni.end());
+    for (int i = lo; i <= hi; ++i)
+        if (!newIds.contains(ids_[size_t(i)])) {
+            dropBlockInk(ids_[size_t(i)]);
+            if (doc_.isOpen()) doc_.deleteBlock(ids_[size_t(i)]);
+        }
+    const QString nextRank = hi + 1 < n ? ranks_[size_t(hi + 1)] : QString();
+    std::vector<QString> nk;
+    QString prevRank = lo > 0 ? ranks_[size_t(lo - 1)] : QString();
+    for (size_t k = 0; k < nr.size(); ++k) { prevRank = rankBetween(prevRank, nextRank); nk.push_back(prevRank); }
+
+    beginResetModel();
+    rows_.erase(rows_.begin() + lo, rows_.begin() + hi + 1);
+    ids_.erase(ids_.begin() + lo, ids_.begin() + hi + 1);
+    ranks_.erase(ranks_.begin() + lo, ranks_.begin() + hi + 1);
+    content_.erase(content_.begin() + lo, content_.begin() + hi + 1);
+    rows_.insert(rows_.begin() + lo, nr.begin(), nr.end());
+    ids_.insert(ids_.begin() + lo, ni.begin(), ni.end());
+    ranks_.insert(ranks_.begin() + lo, nk.begin(), nk.end());
+    content_.insert(content_.begin() + lo, nc.begin(), nc.end());
+    const std::vector<double> lw = laneWidths();
+    std::vector<double> heights;
+    heights.reserve(rows_.size());
+    for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
+        if (i < lo) { heights.push_back(i < static_cast<int>(oldHeights.size()) ? oldHeights[size_t(i)] : 0.0); continue; }
+        const int k = i - lo;
+        if (k < static_cast<int>(nr.size())) {
+            const Row& r = rows_[size_t(i)];
+            heights.push_back(r.type == Media ? estimatedHeight(r, lw[size_t(i)])   // media re-derive for its lane
+                                              : heightById.value(ids_[size_t(i)], estimatedHeight(r, lw[size_t(i)])));
+        } else {
+            const int old = i - static_cast<int>(nr.size()) + (hi - lo + 1);
+            heights.push_back(old < static_cast<int>(oldHeights.size()) ? oldHeights[size_t(old)] : 0.0);
+        }
+    }
+    reindex(std::move(heights));
+    endResetModel();
+
+    if (doc_.isOpen())
+        for (size_t k = 0; k < nr.size(); ++k) {
+            const int i = lo + static_cast<int>(k);
+            const Row& r = rows_[size_t(i)];
+            if (oldIds.contains(ni[k])) {
+                doc_.updateRank(ni[k], nk[k]);
+                persistMeta(i);
+            } else {
+                doc_.appendBlock(ni[k], nk[k], r.depth, QString::fromLatin1(typeToString(r.type)),
+                                 attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios), nc[k]);
+            }
+        }
+    ++layoutRevision_;
+    ++contentRevision_;
+    emit modelReset();
+    emit layoutChangedSpike();
+    emit contentChangedSpike();
+}
+
+int BlockModel::alignLanes(int record) {
+    if (record < 0 || record >= static_cast<int>(rows_.size()) || rows_[size_t(record)].type != Split) return -1;
+    const int end = splitRowEnd(record);
+    const int lanes = static_cast<int>(rows_[size_t(record)].ratios.size());
+    std::vector<std::vector<int>> laneRows(static_cast<size_t>(lanes));
+    for (int i = record + 1; i <= end; ++i)
+        if (rows_[size_t(i)].cell >= 0 && rows_[size_t(i)].cell < lanes) laneRows[size_t(rows_[size_t(i)].cell)].push_back(i);
+    size_t pairs = 0;
+    for (const auto& l : laneRows) pairs = std::max(pairs, l.size());
+    if (pairs <= 1) return record;                            // already one block per lane
+    std::vector<Row> nr;
+    std::vector<QString> ni, nc;
+    for (size_t j = 0; j < pairs; ++j) {
+        Row rec = rows_[size_t(record)];
+        nr.push_back(rec);
+        ni.push_back(j == 0 ? ids_[size_t(record)] : makeUlid());
+        nc.push_back(QString());
+        for (int c = 0; c < lanes; ++c) {
+            if (j < laneRows[size_t(c)].size()) {
+                const int i = laneRows[size_t(c)][j];
+                nr.push_back(rows_[size_t(i)]);
+                ni.push_back(ids_[size_t(i)]);
+                nc.push_back(content_[size_t(i)]);
+            } else {                                          // a shorter lane: an empty paragraph keeps the pair
+                Row p{}; p.type = Paragraph; p.param = 1; p.cell = static_cast<int8_t>(c);
+                nr.push_back(p);
+                ni.push_back(makeUlid());
+                nc.push_back(QString());
+            }
+        }
+    }
+    beginTxn(record, end);
+    replaceBand(record, end, nr, ni, nc);
+    endTxn();
+    return record;
+}
+
+int BlockModel::mergeRowsIntoLanes(int loRow, int hiRow) {
+    const int n = static_cast<int>(rows_.size());
+    if (loRow < 0 || hiRow < 0 || loRow >= n || hiRow >= n) return -1;
+    if (loRow > hiRow) std::swap(loRow, hiRow);
+    const int first = splitRowOf(loRow), lastRec = splitRowOf(hiRow);
+    if (first < 0 || lastRec <= first) return -1;
+    const int lanes = static_cast<int>(rows_[size_t(first)].ratios.size());
+    std::vector<int> recs;
+    for (int r = first; r <= lastRec; r = splitRowEnd(r) + 1) {   // adjacent split rows only
+        if (r >= n || rows_[size_t(r)].type != Split || static_cast<int>(rows_[size_t(r)].ratios.size()) != lanes) return -1;
+        recs.push_back(r);
+    }
+    if (recs.back() != lastRec) return -1;
+    const int end = splitRowEnd(lastRec);
+    std::vector<Row> nr{ rows_[size_t(first)] };
+    std::vector<QString> ni{ ids_[size_t(first)] }, nc{ QString() };
+    for (int c = 0; c < lanes; ++c)
+        for (int rec : recs)
+            for (int i = rec + 1; i <= splitRowEnd(rec); ++i)
+                if (rows_[size_t(i)].cell == c) {
+                    nr.push_back(rows_[size_t(i)]);
+                    ni.push_back(ids_[size_t(i)]);
+                    nc.push_back(content_[size_t(i)]);
+                }
+    beginTxn(first, end);
+    replaceBand(first, end, nr, ni, nc);
+    endTxn();
+    return first;
 }
 
 QVariantList BlockModel::collapseEmptyLane(int row, bool forward) {

@@ -6255,6 +6255,102 @@ static void testSplitRowMoves() {
           "a split row can't move into another split row's lanes");
 }
 
+static void testLaneGestures() {
+    qInfo("[81] lane gestures: ratios with a minimum width, aligned dividers, wrap a run, align and merge rows (SR-3 step 7a)");
+    auto near = [](double a, double b) { return std::abs(a - b) < 0.005; };
+    auto fresh = [](BlockModel& m, int n) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < n; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+        m.setContentWidth(760);
+    };
+    const double avail2 = 760.0 - BlockModel::kLaneGap;   // two lanes
+    {
+        BlockModel m;
+        fresh(m, 6);
+        m.splitIntoColumns(1, 0, 0.5);                    // 0 p0 · 1 A[p1 | ""] · 4 p2 …
+        CHECK(m.setSplitRatios(1, {0.9, 0.1}), "ratios can be set");
+        const QVariantList r = m.splitRatios(1);
+        CHECK(near(r[1].toDouble(), BlockModel::kMinLaneWidth / avail2) && near(r[0].toDouble() + r[1].toDouble(), 1.0),
+              "…but no lane goes under the minimum width");
+        m.undo();
+        CHECK(near(m.splitRatios(1)[0].toDouble(), 0.5), "…one undo step");
+
+        CHECK(std::abs(m.dividerX(1, 0) - (0.5 * avail2 + BlockModel::kLaneGap / 2)) < 0.5, "a divider sits in the middle of its gap");
+        CHECK(m.moveDivider(1, 0, 300.0, true) && near(m.splitRatios(1)[0].toDouble(), (0.5 * avail2 - 80.0) / avail2),
+              "dragging a divider resizes the lanes on either side of it");
+        CHECK(m.moveDivider(1, 0, 0.0, true) && near(m.splitRatios(1)[0].toDouble(), BlockModel::kMinLaneWidth / avail2),
+              "…and stops at the minimum width");
+        m.setSplitRatios(1, {0.5, 0.5});
+
+        m.splitIntoColumns(4, 0, 0.5);                    // B right below A: 4 B[p2 | ""] · 7 p3 …
+        const QVariantList chain = m.dividerChain(1, 0);
+        CHECK(chain.size() == 4 && chain[0].toInt() == 1 && chain[2].toInt() == 4, "dividers at the same x in adjacent rows form a chain");
+        const int e0 = m.undoHistory().size();
+        CHECK(m.moveDivider(1, 0, 300.0, false)
+                  && near(m.splitRatios(1)[0].toDouble(), m.splitRatios(4)[0].toDouble())
+                  && m.splitRatios(4)[0].toDouble() < 0.49 && m.undoHistory().size() == e0 + 1,
+              "dragging one moves the aligned dividers with it, as one undo step");
+        m.undo();
+        CHECK(near(m.splitRatios(1)[0].toDouble(), 0.5) && near(m.splitRatios(4)[0].toDouble(), 0.5), "…undone together");
+        CHECK(m.moveDivider(4, 0, 500.0, true) && near(m.splitRatios(1)[0].toDouble(), 0.5) && m.splitRatios(4)[0].toDouble() > 0.51,
+              "alone, a divider moves by itself");
+
+        // 0 p0 · 1 A[2 p1 | 3 ""] · 4 B[5 p2 | 6 ""] · 7 p3 · 8 p4 · 9 p5
+        const int wrapped = m.wrapRun(7, 8, 1, 0.6);
+        CHECK(wrapped == 8 && m.typeForRow(7) == BlockModel::Split && m.laneForRow(8) == 0 && m.contentForRow(8).isEmpty()
+                  && m.contentForRow(9) == QStringLiteral("p3") && m.laneForRow(9) == 1 && m.laneForRow(10) == 1
+                  && near(m.splitRatios(7)[1].toDouble(), 0.6) && m.structureValid(),
+              "pulling with a run selected wraps the run into one lane beside a new empty lane");
+        m.undo();
+        CHECK(m.typeForRow(7) != BlockModel::Split && m.contentForRow(7) == QStringLiteral("p3") && m.structureValid(), "…one undo step");
+    }
+    {   // Align lanes
+        BlockModel m;
+        fresh(m, 4);
+        m.splitIntoColumns(1, 0, 0.5);                    // 0 p0 · 1 A[2 p1 | 3 ""] · 4 p2 · 5 p3
+        m.insertBlock(3);                                 // A[2 p1, 3 new | 4 ""]
+        m.setContent(3, QStringLiteral("q"));
+        const int before = m.rowCountQml();
+        CHECK(m.alignLanes(1) == 1 && m.rowCountQml() == before + 2, "aligning lanes adds a paired row");
+        CHECK(m.typeForRow(4) == BlockModel::Split && m.contentForRow(2) == QStringLiteral("p1") && m.laneForRow(3) == 1
+                  && m.contentForRow(5) == QStringLiteral("q") && m.laneForRow(5) == 0
+                  && m.laneForRow(6) == 1 && m.contentForRow(6).isEmpty() && near(m.splitRatios(4)[0].toDouble(), 0.5)
+                  && m.structureValid(),
+              "…one block per lane per row, the short lane filled with an empty paragraph, same ratios");
+        m.undo();
+        CHECK(m.rowCountQml() == before && m.laneForRow(3) == 0 && m.contentForRow(3) == QStringLiteral("q") && m.structureValid(),
+              "…one undo step");
+    }
+    {   // Merge rows into lanes
+        BlockModel m;
+        fresh(m, 5);
+        m.splitIntoColumns(1, 0, 0.5);                    // 0 p0 · 1 A[2 p1 | 3 ""] · 4 p2 · 5 p3 · 6 p4
+        m.splitIntoColumns(4, 0, 0.5);                    // 4 B[5 p2 | 6 ""] · 7 p3 · 8 p4
+        m.setContent(3, QStringLiteral("a1"));
+        m.setContent(6, QStringLiteral("b1"));
+        CHECK(m.mergeRowsIntoLanes(2, 5) == 1 && m.rowCountQml() == 8, "merging two adjacent layout rows makes one");
+        CHECK(m.typeForRow(1) == BlockModel::Split && m.laneCount(1) == 2 && m.contentForRow(3) == QStringLiteral("p2")
+                  && m.laneForRow(3) == 0 && m.contentForRow(4) == QStringLiteral("a1") && m.laneForRow(4) == 1
+                  && m.contentForRow(5) == QStringLiteral("b1") && m.structureValid(),
+              "…each lane holds its column's blocks in order");
+        const QString path = QDir::tempPath() + QStringLiteral("/mn_lane_gestures.mnd");
+        QFile::remove(path);
+        CHECK(m.saveAs(path), "the merged document saves");
+        {
+            BlockModel m2;
+            CHECK(m2.openDocument(path) && m2.rowCountQml() == 8 && m2.contentForRow(4) == QStringLiteral("a1")
+                      && m2.laneForRow(5) == 1 && m2.structureValid() && !m2.dirty(),
+                  "…and reopens with the same order and lanes, unrepaired");
+        }
+        QFile::remove(path);
+        m.undo();
+        CHECK(m.rowCountQml() == 9 && m.typeForRow(4) == BlockModel::Split && m.structureValid(), "…undone in one step");
+        m.insertParagraphBelow(2);                        // a top-level row between A and B
+        CHECK(m.mergeRowsIntoLanes(2, 6) == -1, "rows with a top-level row between them don't merge");
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -6446,6 +6542,7 @@ int main(int argc, char** argv) {
     testSplitRowEditing();
     testEmptiedBlockPersists();
     testSplitRowMoves();
+    testLaneGestures();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
