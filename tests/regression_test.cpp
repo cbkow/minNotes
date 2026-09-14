@@ -8007,6 +8007,48 @@ static void testPasteRules() {
     }
 }
 
+static void testPasteRouter() {
+    qInfo("[103] the paste router: which clipboard flavour wins where (SR-4 S8d2, R-I9 8a)");
+    using In = ClipboardPaster::PasteInput;
+    using At = ClipboardPaster::PasteTarget;
+    auto r = [](const In& in, const At& at) { return ClipboardPaster::route(in, at); };
+    In none;
+    CHECK(r(none, At{}) == QLatin1String("nothing"), "an empty clipboard pastes nothing");
+    In blocks; blocks.hasBlocks = true; blocks.hasHtml = true; blocks.text = QStringLiteral("t");
+    CHECK(r(blocks, At{}) == QLatin1String("blocks"), "our own blocks beat HTML and text");
+    At legacy; legacy.legacyCell = true;
+    CHECK(r(blocks, legacy) == QLatin1String("legacyCellType"), "…but not into a legacy cell: its text is typed");
+    At code; code.codeBlock = true;
+    CHECK(r(blocks, code) == QLatin1String("codeVerbatim"), "…nor into a code block: verbatim text");
+    In tsv; tsv.text = QStringLiteral("a\tb\nc\td");
+    CHECK(r(tsv, legacy) == QLatin1String("legacyCellTsv") && r(tsv, At{}) == QLatin1String("tableFromTsv"),
+          "tabular text: cells in a legacy cell, a new table at top level");
+    At inTable; inTable.inTable = true;
+    CHECK(r(tsv, inTable) == QLatin1String("gridTsv"), "…and a cell fill in a derived table");
+    In prose; prose.text = QStringLiteral("hello\nworld");
+    CHECK(r(prose, At{}) == QLatin1String("text") && r(prose, inTable) == QLatin1String("gridTsv") && r(prose, code) == QLatin1String("codeVerbatim"),
+          "plain text: smart paste; newlines fill cells in a table; verbatim in code");
+    In noTable = tsv; noTable.noTable = true;
+    CHECK(r(noTable, At{}) == QLatin1String("text"), "a tabular text that failed to make a table pastes as text");
+    In html; html.hasHtml = true; html.text = QStringLiteral("x");
+    CHECK(r(html, At{}) == QLatin1String("html") && r(html, code) == QLatin1String("codeVerbatim"), "HTML wins over text, except in code");
+    In copyImage = html; copyImage.hasImage = true; copyImage.bareRemoteImage = true;
+    CHECK(r(copyImage, At{}) == QLatin1String("raster"), "a browser's Copy Image (bare remote img + raster) takes the raster");
+    In files; files.urls = 2; files.hasImage = true;
+    CHECK(r(files, At{}) == QLatin1String("urls") && r(files, legacy) == QLatin1String("legacyCellUrl"), "copied files beat a raster");
+    In raster; raster.hasImage = true;
+    CHECK(r(raster, At{}) == QLatin1String("raster") && r(raster, legacy) == QLatin1String("legacyCellRaster"), "a raster alone lands as media");
+    In htmlOnly; htmlOnly.hasHtml = true;
+    CHECK(r(htmlOnly, legacy) == QLatin1String("nothing"), "rich text with no plain form: nothing for a legacy cell");
+    At sketch; sketch.sketchTab = true;
+    CHECK(r(files, sketch) == QLatin1String("sketchUrls") && r(raster, sketch) == QLatin1String("sketchRaster") && r(tsv, sketch) == QLatin1String("nothing"),
+          "a sketch tab takes images only");
+    CHECK(ClipboardPaster::looksTabular(QStringLiteral("a\tb\nc\td\n")) && !ClipboardPaster::looksTabular(QStringLiteral("a\tb\nc"))
+              && !ClipboardPaster::looksTabular(QStringLiteral("a\tb\n\nc\td")) && !ClipboardPaster::looksTabular(QStringLiteral("a\tb"))
+              && !ClipboardPaster::looksTabular(QStringLiteral("a\tb\tc\nd\te")),
+          "looksTabular: equal tab counts across ≥ 2 rows, no blank interior lines, one row or ragged rows aren't a grid");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8220,6 +8262,7 @@ int main(int argc, char** argv) {
     testGridTableDocxPdf();
     testCopyByGrain();
     testPasteRules();
+    testPasteRouter();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

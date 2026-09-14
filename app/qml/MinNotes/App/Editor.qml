@@ -3177,183 +3177,126 @@ FocusScope {
                   : n === 1 ? qsTr("Copied block as Markdown")
                             : qsTr("Copied %1 blocks as Markdown").arg(n))
     }
+    // Paste (SR-4 S8d2, R-I9 8a): the C++ router (ClipboardPaster::route) decides which flavour
+    // wins for this clipboard and caret; this executes it. A flavour that yields nothing is masked
+    // and the router asked again (the old fall-through chain, made explicit).
     function doPaste() {
         // URLs + raster bytes on the SAME clipboard = the screen-capture-app
         // signature (Finder copies carry URLs only). The URL then points at
         // the app's temp file — force the sidecar copy even if the path
         // looks stable, in every URL branch below.
-        var ephemeralUrls = clipboard.hasImage()
-        // --- Into an active sketch tab: images (copied from our app or outside)
-        // drop onto the canvas as an image element; nothing else has a target. ---
-        if (root.activeSketchRow >= 0) {
-            var su = clipboard.readUrls()              // copied image file(s)
-            if (su.length > 0) {
-                var anyS = false
-                for (var si = 0; si < su.length; ++si)
-                    if (blockModel.sketchAddImageFromUrl(root.activeSketchRow, su[si], ephemeralUrls)) anyS = true
-                if (anyS) return
+        const ephemeralUrls = clipboard.hasImage()
+        const urls = clipboard.readUrls()
+        const html = clipboard.hasHtml() ? clipboard.readHtml() : ""
+        const payload = clipboard.hasBlocks() ? clipboard.readBlocks() : ""
+        const txt = clipboard.readText()
+        const input = { hasBlocks: payload.length > 0, hasHtml: html.length > 0, hasImage: clipboard.hasImage(),
+                        bareRemoteImage: html.length > 0 && blockModel.htmlIsBareRemoteImage(html),
+                        noTable: false, urls: urls.length, text: txt }
+        const target = { sketchTab: root.activeSketchRow >= 0, legacyCell: tcur.active,
+                         codeBlock: blockModel.typeForRow(cursor.focusRow) === 2 && (!cursor.hasSel || cursor.loRow === cursor.hiRow),
+                         inTable: blockModel.tableHeadOf(cursor.focusRow) >= 0 }
+        for (let guard = 0; guard < 8; ++guard) {
+            const action = paster.routePaste(input, target)
+            switch (action) {
+            case "nothing":
+                return
+            case "sketchUrls": {   // images (copied from our app or outside) drop onto the canvas
+                let any = false
+                for (let i = 0; i < urls.length; ++i)
+                    if (blockModel.sketchAddImageFromUrl(root.activeSketchRow, urls[i], ephemeralUrls)) any = true
+                if (any) return
+                input.urls = 0
+                continue
             }
-            if (clipboard.hasImage())                  // raster (screenshot / Copy image)
+            case "sketchRaster":
                 blockModel.sketchAddImageFromClipboard(root.activeSketchRow)
-            return
-        }
-        // --- Our own blocks flavour (0.5.0): a faithful block run. Not into a
-        // table cell (the plain flavour of the same copy is the right thing
-        // there) and not into a code block (verbatim text wins below). The
-        // paster deletes the selection itself, inside ONE undo entry, and
-        // reports back through onPasteFinished (synchronously unless assets
-        // must be copied across documents). ---
-        if (clipboard.hasBlocks() && !tcur.active
-            && !(blockModel.typeForRow(cursor.focusRow) === 2
-                 && (!cursor.hasSel || cursor.loRow === cursor.hiRow))) {
-            var payload = clipboard.readBlocks()
-            if (payload.length > 0) {
+                return
+            case "blocks":   // our own flavour: the paster deletes the selection itself, ONE undo entry, reports via onPasteFinished
                 if (cursor.hasSel) {
-                    var pe = cursor.effectiveRange()
-                    paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol,
-                                      pe.lR, pe.lC, pe.hR, pe.hC, root.pasteIntoCells)
+                    const pe = cursor.effectiveRange()
+                    paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol, pe.lR, pe.lC, pe.hR, pe.hC, root.pasteIntoCells)
                 } else {
                     paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol, -1, 0, -1, 0, root.pasteIntoCells)
                 }
                 return
-            }
-        }
-        // --- Into a table cell: a copied file drops into the focused cell; then
-        // TEXT (TSV → cells, else typed) beats a raster — Excel for Mac puts a
-        // picture of the range beside its TSV; a raster only wins when the
-        // clipboard has neither text nor html (screenshot / Copy Image). ---
-        if (tcur.active) {
-            var cu = clipboard.readUrls()              // copied image file (Finder/Preview)
-            if (cu.length > 0 && blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, cu[0], ephemeralUrls)) {
-                cursor.sync(); return
-            }
-            var ct = clipboard.readText()
-            if (ct.length > 0) {
-                if (ct.indexOf("\t") >= 0 || ct.indexOf("\n") >= 0)
-                    blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, ct)
-                else tcur.type(ct)
+            case "legacyCellUrl":   // a copied image file into the Table block's focused cell
+                if (blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, urls[0], ephemeralUrls)) { cursor.sync(); return }
+                input.urls = 0
+                continue
+            case "legacyCellTsv":
+                blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, txt)
                 return
-            }
-            if (clipboard.hasHtml()) return            // rich text with no plain form: nothing for a cell
-            if (clipboard.hasImage() &&                // raster image (screenshot / Copy Image)
-                blockModel.tableSetCellImageFromClipboard(cursor.focusRow, tcur.cr, tcur.cc)) {
-                cursor.sync(); return
-            }
-            return
-        }
-        // --- Into a CODE block: paste VERBATIM (user-caught 2026-08-21).
-        // No HTML flavoring (editors put HTML on the clipboard), no markdown
-        // prefix parsing (a "# comment" is not a heading), no TSV table
-        // detection (tab-indented code is not a table); newlines and blank
-        // lines land in the block exactly as copied. ---
-        // (A selection spanning several blocks keeps the normal flow.)
-        if (blockModel.typeForRow(cursor.focusRow) === 2
-            && (!cursor.hasSel || cursor.loRow === cursor.hiRow)) {
-            var codeTxt = clipboard.readText()
-            if (codeTxt.length > 0) {
+            case "legacyCellType":
+                tcur.type(txt)
+                return
+            case "legacyCellRaster":
+                if (blockModel.tableSetCellImageFromClipboard(cursor.focusRow, tcur.cr, tcur.cc)) cursor.sync()
+                return
+            case "codeVerbatim": {   // user-caught 2026-08-21: no HTML flavouring, no markdown prefixes, no table detection
                 if (cursor.hasSel) cursor.deleteSelection()
-                codeTxt = codeTxt.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-                var ccol = cursor.focusCol
-                blockModel.insertText(cursor.focusRow, ccol, codeTxt)
-                cursor.setCaret(cursor.focusRow, ccol + codeTxt.length)
+                const code = txt.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                const ccol = cursor.focusCol
+                blockModel.insertText(cursor.focusRow, ccol, code)
+                cursor.setCaret(cursor.focusRow, ccol + code.length)
                 root.ensureVisible(cursor.focusRow)
                 return
             }
-            // nothing textual on the clipboard → the media branches below
-        }
-        // --- Rich HTML (Word / Google Docs / Excel / web) → structured blocks:
-        // headings/lists/paragraphs + bold/italic/underline/strike/links, tables
-        // → Table blocks. Falls through if the HTML yields nothing usable (e.g. a
-        // bare image wrapper → handled as media below). ---
-        if (clipboard.hasHtml()) {
-            var html = clipboard.readHtml()
-            // Browser "Copy Image": the HTML is a bare remote <img> and the
-            // pixels are right here on the clipboard — take the raster below
-            // instead of a background download that may never succeed.
-            var bareImg = html && html.length > 0 && clipboard.hasImage()
-                          && blockModel.htmlIsBareRemoteImage(html)
-            if (html && html.length > 0 && !bareImg) {
-                var hg = root.pasteGroupBegin()
-                // A cell rectangle's anchor is its top-left cell (S8d: a table-only clipboard fills from it).
-                const hrect = root.cellRect
+            case "html": {   // Word / Docs / Excel / web → structured blocks; a table-only clipboard into a cell fills it (S8d)
+                const hg = root.pasteGroupBegin()
+                const hrect = root.cellRect   // a cell rectangle's anchor is its top-left cell
                 const hanchor = hrect ? blockModel.gridCellAt(hrect.head, hrect.r0, hrect.c0) : cursor.focusRow
-                var hc = blockModel.pasteHtml(hanchor >= 0 ? hanchor : cursor.focusRow, hanchor >= 0 && hrect ? 0 : cursor.focusCol, html)
+                const hc = blockModel.pasteHtml(hanchor >= 0 ? hanchor : cursor.focusRow, hanchor >= 0 && hrect ? 0 : cursor.focusCol, html)
                 root.pasteGroupEnd(hg)
                 if (hc && hc.length === 2) { cursor.setCaret(hc[0], hc[1]); root.ensureVisible(hc[0]); return }
+                input.hasHtml = false   // nothing usable (e.g. a bare image wrapper): the media flavours next
+                continue
             }
-        }
-        // --- Copied file(s) (Finder / Preview "Copy") → import as media, exactly
-        // like a drag-drop: image/video/pdf render, anything else → a file chip.
-        // (Preview copies an image as a file URL, not raster bytes — without this
-        // it would fall through to pasting the path as text.) ---
-        var urls = clipboard.readUrls()
-        if (urls.length > 0) {
-            // Inserting media moves the caret onto it → leaving the text block, so
-            // consume its inline md first (in-place text/HTML paste above must NOT
-            // do this — it would shift focusCol; here the caret goes to a new block).
-            blockModel.commitMarkdown(cursor.focusRow)
-            var afterRow = cursor.focusRow, anyU = false
-            for (var i = 0; i < urls.length; ++i) {
-                var nrU = blockModel.insertMediaFromUrl(afterRow, urls[i], ephemeralUrls)
-                if (nrU >= 0) { afterRow = nrU; anyU = true }
+            case "urls": {   // copied file(s) → media, like a drop; the caret leaves its block, so commit its inline md first
+                blockModel.commitMarkdown(cursor.focusRow)
+                let afterRow = cursor.focusRow, any = false
+                for (let i = 0; i < urls.length; ++i) {
+                    const nr = blockModel.insertMediaFromUrl(afterRow, urls[i], ephemeralUrls)
+                    if (nr >= 0) { afterRow = nr; any = true }
+                }
+                if (any) { cursor.setCaret(afterRow, 0); root.ensureVisible(afterRow); return }
+                input.urls = 0
+                continue
             }
-            if (anyU) { cursor.setCaret(afterRow, 0); root.ensureVisible(afterRow); return }
-        }
-        // --- Raster image on the clipboard (screenshot, "Copy Image") → media block. ---
-        if (clipboard.hasImage()) {
-            blockModel.commitMarkdown(cursor.focusRow)   // caret moves to the new media → consume inline md
-            var imgRow = blockModel.insertImageFromClipboard(cursor.focusRow)
-            if (imgRow >= 0) {
-                cursor.setCaret(imgRow, 0); root.ensureVisible(imgRow)
+            case "raster": {   // a screenshot / Copy Image → a media block
+                blockModel.commitMarkdown(cursor.focusRow)
+                const imgRow = blockModel.insertImageFromClipboard(cursor.focusRow)
+                if (imgRow >= 0) { cursor.setCaret(imgRow, 0); root.ensureVisible(imgRow); return }
+                input.hasImage = false
+                continue
+            }
+            case "gridTsv": {   // SR-4 A5: fill cells from the anchor (a rectangle's top-left), growing the table
+                const gh = blockModel.tableHeadOf(cursor.focusRow), rect = root.cellRect
+                const gland = blockModel.gridPasteTSV(gh, rect ? rect.r0 : blockModel.gridRowOf(cursor.focusRow),
+                                                      rect ? rect.c0 : blockModel.gridColumnOf(cursor.focusRow), txt)
+                if (gland >= 0) { cursor.setCaret(gland, blockModel.contentForRow(gland).length); root.ensureVisible(gland) }
+                return
+            }
+            case "tableFromTsv": {   // rectangular TSV → a derived table below the caret's block
+                const tg = root.pasteGroupBegin()
+                blockModel.commitMarkdown(cursor.focusRow)
+                const tr = blockModel.insertGridFromTSV(cursor.focusRow, txt)
+                root.pasteGroupEnd(tg)
+                if (tr >= 0) { cursor.setCaret(tr, blockModel.contentForRow(tr).length); root.ensureVisible(tr); return }
+                input.noTable = true
+                continue
+            }
+            case "text": {   // smart paste: blocks, markdown prefixes, inline marks, fences — one undo step
+                const tg = root.pasteGroupBegin()
+                const caret = blockModel.pasteText(cursor.focusRow, cursor.focusCol, txt)
+                root.pasteGroupEnd(tg)
+                if (caret && caret.length === 2) { cursor.setCaret(caret[0], caret[1]); root.ensureVisible(caret[0]) }
+                return
+            }
+            default:
                 return
             }
         }
-        // --- Plain text. ---
-        var txt = clipboard.readText()
-        if (txt.length === 0) return
-        // SR-4 A5: text with tabs or newlines pasted in a table cell fills cells from the anchor (a
-        // rectangle's top-left), growing the table as needed — one undo step.
-        if (blockModel.tableHeadOf(cursor.focusRow) >= 0 && (txt.indexOf("\t") >= 0 || txt.indexOf("\n") >= 0)) {
-            const gh = blockModel.tableHeadOf(cursor.focusRow), rect = root.cellRect
-            const gland = blockModel.gridPasteTSV(gh, rect ? rect.r0 : blockModel.gridRowOf(cursor.focusRow),
-                                                  rect ? rect.c0 : blockModel.gridColumnOf(cursor.focusRow), txt)
-            if (gland >= 0) { cursor.setCaret(gland, blockModel.contentForRow(gland).length); root.ensureVisible(gland) }
-            return
-        }
-        var tg = root.pasteGroupBegin()
-        if (root.looksTabular(txt)) {                       // rectangular TSV → table block
-            blockModel.commitMarkdown(cursor.focusRow)      // caret moves to the new table → consume inline md
-            var tr = blockModel.insertGridFromTSV(cursor.focusRow, txt)   // SR-4 S7a: a derived table
-            root.pasteGroupEnd(tg)
-            if (tr >= 0) { cursor.setCaret(tr, blockModel.contentForRow(tr).length); root.ensureVisible(tr); return }
-            tg = false
-        }
-        // Smart paste: blocks (blank lines separate) + per-line markdown prefixes +
-        // inline **bold**/*italic*/`code`/~~strike~~/[links] + ``` fences, all as
-        // one undo step.
-        var caret = blockModel.pasteText(cursor.focusRow, cursor.focusCol, txt)
-        root.pasteGroupEnd(tg)
-        if (caret && caret.length === 2) {
-            cursor.setCaret(caret[0], caret[1]); root.ensureVisible(caret[0])
-        }
-    }
-    // Rectangular grid signal for paste→table: every non-empty line carries the
-    // SAME number of tabs (>=1), across >=2 rows. The strict equal-column check
-    // avoids misreading tab-indented prose/code as a table (HTML from Excel is the
-    // precise path, handled later); a single-row tabbed paste stays plain text.
-    function looksTabular(txt) {
-        if (txt.indexOf("\t") < 0) return false
-        var lines = txt.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")
-        while (lines.length && lines[lines.length - 1] === "") lines.pop()
-        if (lines.length < 2) return false
-        var cols = -1
-        for (var i = 0; i < lines.length; ++i) {
-            if (lines[i] === "") return false        // a blank interior line → not a grid
-            var t = lines[i].split("\t").length - 1
-            if (t < 1) return false
-            if (cols < 0) cols = t; else if (t !== cols) return false
-        }
-        return true
     }
     function doCut() {
         doCopy()

@@ -13,6 +13,67 @@ ClipboardPaster::~ClipboardPaster() {
     if (worker_.joinable()) worker_.join();
 }
 
+bool ClipboardPaster::looksTabular(const QString& text) {
+    if (!text.contains(QLatin1Char('\t'))) return false;
+    QString t = text;
+    t.replace(QStringLiteral("\r\n"), QStringLiteral("\n")).replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    QStringList lines = t.split(QLatin1Char('\n'));
+    while (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
+    if (lines.size() < 2) return false;
+    int cols = -1;
+    for (const QString& line : lines) {
+        if (line.isEmpty()) return false;                     // a blank interior line → not a grid
+        const int tabs = static_cast<int>(line.count(QLatin1Char('\t')));
+        if (tabs < 1) return false;
+        if (cols < 0) cols = tabs; else if (tabs != cols) return false;
+    }
+    return true;
+}
+
+QString ClipboardPaster::route(const PasteInput& in, const PasteTarget& at) {
+    const bool hasText = !in.text.isEmpty();
+    const bool gridText = in.text.contains(QLatin1Char('\t')) || in.text.contains(QLatin1Char('\n'));
+    // A sketch tab takes images (files or raster) onto its canvas; nothing else has a target.
+    if (at.sketchTab) return in.urls > 0 ? QStringLiteral("sketchUrls") : in.hasImage ? QStringLiteral("sketchRaster") : QStringLiteral("nothing");
+    // Our own blocks: a faithful run — not into a legacy cell (its plain flavour is right there), not
+    // into a code block (verbatim text wins).
+    if (in.hasBlocks && !at.legacyCell && !at.codeBlock) return QStringLiteral("blocks");
+    // The Table block's cell: a file, then TEXT beats a raster (Excel puts a picture beside its TSV).
+    if (at.legacyCell) {
+        if (in.urls > 0) return QStringLiteral("legacyCellUrl");
+        if (hasText) return gridText ? QStringLiteral("legacyCellTsv") : QStringLiteral("legacyCellType");
+        if (in.hasHtml) return QStringLiteral("nothing");
+        return in.hasImage ? QStringLiteral("legacyCellRaster") : QStringLiteral("nothing");
+    }
+    // A code block: text verbatim (no HTML, no markdown prefixes, no table detection).
+    if (at.codeBlock && hasText) return QStringLiteral("codeVerbatim");
+    // Rich HTML → structured blocks, unless it's a browser's Copy Image (the raster is right here).
+    if (in.hasHtml && !(in.bareRemoteImage && in.hasImage)) return QStringLiteral("html");
+    if (in.urls > 0) return QStringLiteral("urls");
+    if (in.hasImage) return QStringLiteral("raster");
+    if (!hasText) return QStringLiteral("nothing");
+    if (at.inTable && gridText) return QStringLiteral("gridTsv");                 // A5: fill cells from the anchor
+    if (!in.noTable && looksTabular(in.text)) return QStringLiteral("tableFromTsv");
+    return QStringLiteral("text");
+}
+
+QString ClipboardPaster::routePaste(const QVariantMap& input, const QVariantMap& target) const {
+    PasteInput in;
+    in.hasBlocks = input.value(QStringLiteral("hasBlocks")).toBool();
+    in.hasHtml = input.value(QStringLiteral("hasHtml")).toBool();
+    in.hasImage = input.value(QStringLiteral("hasImage")).toBool();
+    in.bareRemoteImage = input.value(QStringLiteral("bareRemoteImage")).toBool();
+    in.noTable = input.value(QStringLiteral("noTable")).toBool();
+    in.urls = input.value(QStringLiteral("urls")).toInt();
+    in.text = input.value(QStringLiteral("text")).toString();
+    PasteTarget at;
+    at.sketchTab = target.value(QStringLiteral("sketchTab")).toBool();
+    at.legacyCell = target.value(QStringLiteral("legacyCell")).toBool();
+    at.codeBlock = target.value(QStringLiteral("codeBlock")).toBool();
+    at.inTable = target.value(QStringLiteral("inTable")).toBool();
+    return route(in, at);
+}
+
 ClipboardPaster::Job ClipboardPaster::planPaste(BlockModel* dest, const QString& json,
                                                 int row, int col,
                                                 int selLo, int selLoCol, int selHi, int selHiCol, bool intoCells) {

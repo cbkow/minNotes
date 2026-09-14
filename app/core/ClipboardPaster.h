@@ -46,6 +46,33 @@ public:
                                 bool intoCells = false);
     Q_INVOKABLE void cancel() { cancel_ = true; }
 
+    // The paste ROUTER (SR-4 S8d2, R-I9 8a): the order doPaste tries the clipboard's flavours in,
+    // as a pure decision over what the clipboard holds and where the caret is — testable headless.
+    // Returns one action name; the editor performs it and, when a flavour yields nothing, masks it
+    // in the input and asks again. Actions: nothing · sketchUrls · sketchRaster · blocks ·
+    // legacyCellUrl · legacyCellTsv · legacyCellType · legacyCellRaster · codeVerbatim · html ·
+    // urls · raster · gridTsv · tableFromTsv · text.
+    struct PasteInput {
+        bool hasBlocks = false;        // a non-empty x-mnd-blocks payload
+        bool hasHtml = false;
+        bool hasImage = false;         // raster bytes
+        bool bareRemoteImage = false;  // the HTML is a lone remote <img> (a browser's Copy Image)
+        bool noTable = false;          // a tabular text already failed to make a table
+        int urls = 0;                  // copied files
+        QString text;
+    };
+    struct PasteTarget {
+        bool sketchTab = false;        // a sketch tab is open
+        bool legacyCell = false;       // the Table block's cell cursor is active
+        bool codeBlock = false;        // the caret is in a code block (no multi-block selection)
+        bool inTable = false;          // the caret is in a derived table's cell
+    };
+    static QString route(const PasteInput& in, const PasteTarget& at);
+    // Rectangular grid signal for a plain-text paste: every non-empty line carries the SAME
+    // number of tabs (≥ 1) across ≥ 2 rows — tab-indented prose or code isn't a table.
+    static bool looksTabular(const QString& text);
+    Q_INVOKABLE QString routePaste(const QVariantMap& input, const QVariantMap& target) const;
+
     // Synchronous core (headless tests): the same plan → copy → apply.
     static bool pasteBlocks(BlockModel* dest, const QString& json, int row, int col,
                             int selLo, int selLoCol, int selHi, int selHiCol,
