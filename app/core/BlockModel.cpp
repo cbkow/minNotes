@@ -1752,6 +1752,18 @@ void BlockModel::promoteGridSpecs(std::vector<BlockSpec>& specs, const QJsonArra
     }
 }
 
+void BlockModel::promoteGridRuns(std::vector<BlockSpec>& specs) {
+    bool inRun = false;
+    for (BlockSpec& sp : specs) {
+        if (sp.type == Split && sp.cell < 0) {
+            if (!inRun && sp.header == 0) sp.header = 1;
+            inRun = true;
+        } else if (sp.cell < 0) {
+            inRun = false;
+        }
+    }
+}
+
 // The pasted value of a cell for a typed column: its first block's text (a chip's text is its label).
 static QString gridValueLabel(const std::vector<BlockModel::BlockSpec>& blocks) {
     for (const BlockModel::BlockSpec& sp : blocks)
@@ -7096,6 +7108,40 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks,
     endTxn(text.size() == 1 ? QStringLiteral("type") : QString());   // coalesce typing
 }
 
+// A GFM pipe table starting at line i (R-I3 3e): a row of |cells| followed by a delimiter row of
+// |---|:---:|; rows continue while lines hold a pipe. → the row after the table, or -1.
+static int gfmTableAt(const QStringList& lines, int i, std::vector<QStringList>* rows, std::vector<int>* align) {
+    static const QRegularExpression delim(QStringLiteral("^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)*\\|?\\s*$"));
+    auto isRow = [](const QString& s) { return s.trimmed().startsWith(QLatin1Char('|')) || s.count(QLatin1Char('|')) >= 2; };
+    auto split = [](const QString& s) {
+        QString t = s.trimmed();
+        if (t.startsWith(QLatin1Char('|'))) t.remove(0, 1);
+        if (t.endsWith(QLatin1Char('|')) && !t.endsWith(QLatin1String("\\|"))) t.chop(1);
+        QStringList cells;
+        QString cur;
+        for (int k = 0; k < t.size(); ++k) {
+            if (t.at(k) == QLatin1Char('\\') && k + 1 < t.size() && t.at(k + 1) == QLatin1Char('|')) { cur += QLatin1Char('|'); ++k; }
+            else if (t.at(k) == QLatin1Char('|')) { cells << cur.trimmed(); cur.clear(); }
+            else cur += t.at(k);
+        }
+        cells << cur.trimmed();
+        return cells;
+    };
+    if (i + 1 >= lines.size() || !isRow(lines[i]) || !delim.match(lines[i + 1]).hasMatch()) return -1;
+    const QStringList head = split(lines[i]);
+    const QStringList marks = split(lines[i + 1]);
+    if (head.isEmpty() || marks.size() != head.size()) return -1;
+    rows->clear(); align->clear();
+    rows->push_back(head);
+    for (const QString& m : marks) {
+        const bool l = m.startsWith(QLatin1Char(':')), r = m.endsWith(QLatin1Char(':'));
+        align->push_back(l && r ? 1 : r ? 2 : 0);
+    }
+    int j = i + 2;
+    for (; j < lines.size() && isRow(lines[j]) && !lines[j].trimmed().isEmpty(); ++j) rows->push_back(split(lines[j]));
+    return j;
+}
+
 QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
 
@@ -7104,6 +7150,66 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     QString t = text;
     t.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     t.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+
+    // A GFM pipe table inside the paste (S8e, R-I3 3e) → a derived table with a header and
+    // alignment, the prose before and after it pasted around it, one undo step.
+    {
+        const QStringList all = t.split(QLatin1Char('\n'));
+        for (int i = 0; i < all.size(); ++i) {
+            std::vector<QStringList> rows;
+            std::vector<int> align;
+            const int end = gfmTableAt(all, i, &rows, &align);
+            if (end < 0) continue;
+            const int nc = std::min<int>(63, static_cast<int>(rows.front().size()));
+            std::vector<BlockSpec> specs;
+            const std::vector<float> equal(size_t(nc), 1.0f / static_cast<float>(nc));
+            QJsonArray cols;
+            for (int c = 0; c < nc; ++c) {
+                QJsonObject col;
+                if (align[size_t(c)] != 0) col.insert(QStringLiteral("a"), align[size_t(c)]);
+                cols.append(col);
+            }
+            for (size_t r = 0; r < rows.size(); ++r) {
+                BlockSpec rec;
+                rec.type = Split;
+                rec.ratios = equal;
+                rec.header = r == 0 ? 1 : 0;
+                if (r == 0) rec.table = QString::fromUtf8(QJsonDocument(QJsonObject{ { QStringLiteral("cols"), cols } }).toJson(QJsonDocument::Compact));
+                specs.push_back(rec);
+                for (int c = 0; c < nc; ++c) {
+                    BlockSpec cell;
+                    cell.type = Paragraph;
+                    cell.cell = static_cast<int8_t>(c);
+                    const QString raw = c < rows[r].size() ? rows[r].at(c) : QString();
+                    QString clean;
+                    std::vector<Span> sp;
+                    if (convertMarkdown(raw, {}, clean, sp)) { cell.text = clean; cell.spans = sp; }
+                    else cell.text = raw;
+                    specs.push_back(std::move(cell));
+                }
+            }
+            const QString before = all.mid(0, i).join(QLatin1Char('\n')), after = all.mid(end).join(QLatin1Char('\n'));
+            beginTxn(row, row);
+            int caretRow = row, caretCol = col;
+            if (!before.trimmed().isEmpty()) {
+                const QVariantList c1 = pasteText(row, col, before);
+                if (c1.size() == 2) { caretRow = c1.at(0).toInt(); caretCol = c1.at(1).toInt(); }
+            }
+            const bool blank = caretRow >= 0 && caretRow < static_cast<int>(rows_.size()) && rows_[size_t(caretRow)].type == Paragraph
+                               && content_[size_t(caretRow)].isEmpty();
+            const auto land = insertSpecs(caretRow, specs, /*allowReuseBlankRow=*/blank);
+            caretRow = land.first; caretCol = land.second;
+            if (!after.trimmed().isEmpty()) {
+                const int p = insertParagraphBelow(caretRow);
+                if (p >= 0) {
+                    const QVariantList c2 = pasteText(p, 0, after);
+                    if (c2.size() == 2) { caretRow = c2.at(0).toInt(); caretCol = c2.at(1).toInt(); }
+                }
+            }
+            endTxn();
+            return QVariantList{ caretRow, caretCol };
+        }
+    }
     // A segment is one block-to-be: a non-blank line, or a whole ``` fence
     // (0.5.0): the fence's lines travel VERBATIM (blank lines kept, no
     // markdown parsing), the opener's tag is the language; an unclosed fence
@@ -7287,21 +7393,19 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     // The frame-tree walker lives in Importer (shared with the file importers);
     // paste has no source directory, so relative image srcs don't resolve here.
     std::vector<BlockSpec> specs =
-        Importer::specsFromTextDocument(doc, mediaStore_.get(), QString());
+        Importer::specsFromTextDocument(doc, mediaStore_.get(), QString(), Importer::htmlHeaderRowsPerTable(html));
     // A table-only clipboard (Excel, a copied web table) into a table cell (S8d, R-I3): no header
-    // (Excel writes none) → fill by position from the caret's cell; a <thead> → append by label.
-    if (specs.size() == 1 && specs[0].type == Table && specs[0].mediaJson.isEmpty() && tableHeadOf(row) >= 0
-        && rows_[size_t(row)].cell >= 0) {
-        const int head = tableHeadOf(row);
-        const int headerRows = TableGrid::fromJson(specs[0].tableJson).headerRows();
+    // detected (Excel writes none) → fill by position from the caret's cell; a <thead> or <th>
+    // rows → append by label. The walker leaves the detected count on the first record.
+    if (tableHeadOf(row) >= 0 && rows_[size_t(row)].cell >= 0) {
         GridPaste grid;
-        if (parseGridSpecs(gridSpecsFromTable(specs[0].tableJson), QJsonArray(), headerRows, &grid)) {
-            grid.header = headerRows;                                // gridSpecsFromTable forces ≥ 1
-            const int land = pasteGrid(head, gridRowOf(row), gridColumnOf(row), grid, false);
+        if (parseGridSpecs(specs, QJsonArray(), 0, &grid)) {
+            const int land = pasteGrid(tableHeadOf(row), gridRowOf(row), gridColumnOf(row), grid, false);
             if (land >= 0) return QVariantList{ land, static_cast<int>(content_[size_t(land)].size()) };
         }
     }
-    expandTableSpecs(specs);                 // SR-4: pasted tables land as derived tables
+    promoteGridRuns(specs);                  // a pasted table always has a head
+    expandTableSpecs(specs);                 // an old Table spec (none from the walker now) lands derived
     if (specs.empty()) return {};
 
     const bool opaque = (rows_[row].type == Media || rows_[row].type == Table

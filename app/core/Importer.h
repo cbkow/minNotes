@@ -134,8 +134,13 @@ public:
     // Walk `doc`'s frame tree into BlockSpecs (BlockModel::insertSpecs's IR).
     // `store` receives embedded/local images (null = skip images). `baseDir`
     // resolves relative image srcs (a file import's directory; empty for paste).
+    // `thHeaders` (SR-4 S8e, R-I3 3a): per <table> in document order, the count of leading rows
+    // made only of <th> cells — from htmlHeaderRowsPerTable on the raw HTML, which QTextDocument
+    // can't tell apart from <td>. Tables come out as derived-table specs (records + cells).
     static std::vector<BlockModel::BlockSpec> specsFromTextDocument(
-        QTextDocument& doc, MediaStore* store, const QString& baseDir = QString());
+        QTextDocument& doc, MediaStore* store, const QString& baseDir = QString(),
+        const QList<int>& thHeaders = QList<int>());
+    static QList<int> htmlHeaderRowsPerTable(const QString& html);
 
 private:
     // One file's parsed output — built on the worker, applied on the GUI.

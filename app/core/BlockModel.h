@@ -554,6 +554,9 @@ public:
     static bool parseGridSpecs(const std::vector<BlockSpec>& specs, const QJsonArray& colsHint, int headerHint, GridPaste* out);
     int pasteGrid(int head, int r, int c, const GridPaste& grid, bool forceFill);
     static void promoteGridSpecs(std::vector<BlockSpec>& specs, const QJsonArray& cols, int headerRows);
+    // Importer output (S8e): every run of records + cells that starts without a header role gets
+    // one (first row the header) — a file's table always has a head. Never for a payload (layout rows).
+    static void promoteGridRuns(std::vector<BlockSpec>& specs);
     // Gap-addressed core (the tab-merge program): gap g = between rows g-1
     // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
     // Lanes (SR-3 S8): specs that carry a Split record keep their own structure

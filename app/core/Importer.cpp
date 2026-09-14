@@ -174,6 +174,7 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         QTextDocument doc;
         doc.setMarkdown(text, QTextDocument::MarkdownDialectGitHub);
         out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath());
+        BlockModel::promoteGridRuns(out.specs);   // a file's table always has a head (R-I4: first row when none detected)
         for (auto& sp : out.specs) {
             if (sp.type == BlockModel::TaskListItem && sp.text.startsWith(kDoingSentinel)) {
                 sp.text.remove(0, 1);
@@ -188,7 +189,8 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         if (!ok) return out;
         QTextDocument doc;
         doc.setHtml(html);
-        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath());
+        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath(), htmlHeaderRowsPerTable(html));
+        BlockModel::promoteGridRuns(out.specs);
         out.ok = true;
     } else if (fmt == QLatin1String("csv") || fmt == QLatin1String("tsv")) {
         bool ok = false;
@@ -215,7 +217,8 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         if (html.isEmpty()) return out;
         QTextDocument doc;
         doc.setHtml(html);
-        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath());
+        out.specs = specsFromTextDocument(doc, store, QFileInfo(path).absolutePath(), htmlHeaderRowsPerTable(html));
+        BlockModel::promoteGridRuns(out.specs);
         // Cocoa's writer leaves trailing spaces on paragraphs — trim them
         // (and clamp spans), code blocks excepted.
         for (auto& sp : out.specs) {
@@ -413,11 +416,54 @@ bool Importer::importHtmlFile(const QString& path, BlockModel* m) {
     return applySpecs(m, buildFileSpecs(path, QStringLiteral("html"), m->mediaStore()));
 }
 
+QList<int> Importer::htmlHeaderRowsPerTable(const QString& html) {
+    // Leading <tr>s whose cells are all <th> head the table (R-I3 3a); a <thead> is Qt's job.
+    // A raw scan, like htmlIsBareRemoteImage: tags only, no parse.
+    // Outer tables only (the walker flattens nested ones), so the tags are walked with a depth.
+    QList<int> out;
+    static const QRegularExpression tagRe(QStringLiteral("<(/?)(table|tr|td|th)\\b"), QRegularExpression::CaseInsensitiveOption);
+    int depth = 0, hdr = 0;
+    bool counting = false, rowOpen = false, rowAny = false, rowAllTh = true;
+    auto closeRow = [&] {
+        if (!rowOpen) return;
+        rowOpen = false;
+        if (counting) {
+            if (rowAny && rowAllTh) ++hdr;
+            else counting = false;
+        }
+    };
+    auto it = tagRe.globalMatch(html);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        const bool close = !m.captured(1).isEmpty();
+        const QString tag = m.captured(2).toLower();
+        if (tag == QLatin1String("table")) {
+            if (!close) {
+                if (++depth == 1) { hdr = 0; counting = true; rowOpen = false; }
+            } else if (depth > 0) {
+                if (depth == 1) { closeRow(); out << hdr; }
+                --depth;
+            }
+            continue;
+        }
+        if (depth != 1) continue;                       // a nested table's rows aren't the outer table's
+        if (tag == QLatin1String("tr")) {
+            if (close) closeRow();
+            else { closeRow(); rowOpen = true; rowAny = false; rowAllTh = true; }
+        } else if (!close && rowOpen) {                 // td / th
+            rowAny = true;
+            if (tag == QLatin1String("td")) rowAllTh = false;
+        }
+    }
+    return out;
+}
+
 std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
-        QTextDocument& doc, MediaStore* store, const QString& baseDir) {
+        QTextDocument& doc, MediaStore* store, const QString& baseDir, const QList<int>& thHeaders) {
     using Spec = BlockModel::BlockSpec;
     using Span = BlockModel::Span;
     std::vector<Spec> specs;
+    std::vector<Spec>* out = &specs;   // buildText writes here: the document, or a table cell's blocks
 
     // Consecutive code-line blocks (each source line is its own QTextBlock)
     // coalesce into ONE Code spec. Any non-code block breaks the chain, so
@@ -440,7 +486,7 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
         if (bf.hasProperty(QTextFormat::BlockTrailingHorizontalRulerWidth)) {
             prevCode = false;
             Spec sp; sp.type = BlockModel::Divider;
-            specs.push_back(std::move(sp));
+            out->push_back(std::move(sp));
             return;
         }
 
@@ -452,11 +498,11 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
             QString line = b.text();
             line.replace(QChar(0xFFFC), QString());
             if (prevCode && prevCodeLang == lang
-                && !specs.empty() && specs.back().type == BlockModel::Code) {
-                specs.back().text += QLatin1Char('\n') + line;
+                && !out->empty() && out->back().type == BlockModel::Code) {
+                out->back().text += QLatin1Char('\n') + line;
             } else {
                 Spec sp; sp.type = BlockModel::Code; sp.lang = lang; sp.text = line;
-                specs.push_back(std::move(sp));
+                out->push_back(std::move(sp));
             }
             prevCode = true; prevCodeLang = lang;
             return;
@@ -497,7 +543,7 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
             if (!text.trimmed().isEmpty()) {
                 Spec sp; sp.type = btype; sp.level = blevel; sp.taskState = btask;
                 sp.depth = bdepth; sp.text = text; sp.spans = spans;
-                specs.push_back(std::move(sp));
+                out->push_back(std::move(sp));
             }
             text.clear(); spans.clear();
         };
@@ -530,12 +576,12 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
                     flushText();
                     Spec sp; sp.type = BlockModel::Media;
                     sp.mediaJson = MediaStore::imageDescriptorJson(ref);
-                    specs.push_back(std::move(sp));
+                    out->push_back(std::move(sp));
                 } else if (src.startsWith(QLatin1String("http"))) {   // remote → fetched after insert
                     flushText();
                     Spec sp; sp.type = BlockModel::Media;
                     sp.mediaJson = MediaStore::remoteImageDescriptorJson(src);
-                    specs.push_back(std::move(sp));
+                    out->push_back(std::move(sp));
                 }
                 continue;
             }
@@ -571,31 +617,118 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
         flushText();
     };
 
-    // A QTextTable → Table block spec (cell text joined per cell; <thead> rows
-    // become the grid's header rows).
+    // A QTextTable → derived-table specs (SR-4 S8e, R-I3): a record per row plus each cell's blocks
+    // through the same walker (lists, spans, links, images — 3d). Header rows = <thead> (Qt's
+    // headerRowCount) or the raw HTML's <th>-only leading rows (3a); a merged cell's content sits in
+    // its origin and the covered positions stay empty (3b); a nested table flattens into one
+    // paragraph per inner row, its cells joined by " · " (3c); fixed column widths, cell backgrounds
+    // and block alignment carry (4c). The first record's header count is the DETECTED one (0 =
+    // none: a paste into a cell fills by position; a file import promotes it, promoteGridRuns).
+    // Columns cap at 63 (a cell index is an int8).
+    int tableIx = 0;
+    auto plainCellText = [](const QTextTableCell& cell) {
+        QString txt;
+        for (auto bit = cell.begin(); !bit.atEnd(); ++bit) {
+            const QTextBlock cb = bit.currentBlock();
+            if (!cb.isValid()) continue;
+            QString bt = cb.text(); bt.replace(QChar(0xFFFC), QString());
+            if (bt.isEmpty()) continue;
+            if (!txt.isEmpty()) txt += QLatin1Char(' ');
+            txt += bt;
+        }
+        return txt;
+    };
     auto buildTable = [&](QTextTable* t) {
         prevCode = false;
-        const int nr = t->rows(), nc = t->columns();
+        const int nr = t->rows(), nc = std::min(t->columns(), 63);
         if (nr < 1 || nc < 1) return;
-        TableGrid g = TableGrid::makeEmpty(nr, nc);
-        g.setHeaderRows(std::clamp(t->format().headerRowCount(), 0, nr));
+        int hdr = std::clamp(t->format().headerRowCount(), 0, nr);
+        if (tableIx < thHeaders.size()) hdr = std::max(hdr, std::clamp(thHeaders.at(tableIx), 0, nr));
+        ++tableIx;
+        std::vector<int> width(size_t(nc), 0), align(size_t(nc), 0);
+        const QList<QTextLength> cons = t->format().columnWidthConstraints();
+        for (int c = 0; c < nc; ++c)
+            if (c < cons.size() && cons.at(c).type() == QTextLength::FixedLength && cons.at(c).rawValue() > 0)
+                width[size_t(c)] = int(std::lround(cons.at(c).rawValue()));
+        const size_t nrS = static_cast<size_t>(nr), ncS = static_cast<size_t>(nc);   // not size_t(n): a vexing parse
+        std::vector<std::vector<std::vector<Spec>>> cells(nrS, std::vector<std::vector<Spec>>(ncS));
+        std::vector<std::vector<QString>> bg(nrS, std::vector<QString>(ncS));
         for (int r = 0; r < nr; ++r)
             for (int c = 0; c < nc; ++c) {
-                QTextTableCell cell = t->cellAt(r, c);
-                if (!cell.isValid()) continue;
-                QString ct;
-                for (auto bit = cell.begin(); !bit.atEnd(); ++bit) {
-                    const QTextBlock cb = bit.currentBlock();
-                    if (!cb.isValid()) continue;
-                    QString bt = cb.text(); bt.replace(QChar(0xFFFC), QString());
-                    if (bt.isEmpty()) continue;
-                    if (!ct.isEmpty()) ct += QLatin1Char(' ');
-                    ct += bt;
+                const QTextTableCell cell = t->cellAt(r, c);
+                if (!cell.isValid() || cell.row() != r || cell.column() != c) continue;   // covered by a span: empty
+                const QTextCharFormat cf = cell.format();
+                if (cf.hasProperty(QTextFormat::BackgroundBrush)) {
+                    const QColor bc = cf.background().color();
+                    if (bc.alpha() > 0 && bc != QColor(Qt::white)) bg[size_t(r)][size_t(c)] = bc.name();
                 }
-                g.setCellText(r, c, ct);
+                if (align[size_t(c)] == 0) {
+                    const Qt::Alignment a = cell.firstCursorPosition().block().blockFormat().alignment();
+                    if (a & Qt::AlignHCenter) align[size_t(c)] = 1;
+                    else if (a & Qt::AlignRight) align[size_t(c)] = 2;
+                }
+                std::vector<Spec> blocks;
+                out = &blocks;
+                for (auto it = cell.begin(); !it.atEnd(); ++it) {
+                    if (QTextFrame* child = it.currentFrame()) {
+                        if (QTextTable* inner = qobject_cast<QTextTable*>(child)) {   // 3c: one paragraph per inner row
+                            prevCode = false;
+                            for (int ir = 0; ir < inner->rows(); ++ir) {
+                                QStringList parts;
+                                for (int ic = 0; ic < inner->columns(); ++ic) {
+                                    const QTextTableCell ic2 = inner->cellAt(ir, ic);
+                                    if (!ic2.isValid() || ic2.row() != ir || ic2.column() != ic) continue;
+                                    parts << plainCellText(ic2);
+                                }
+                                Spec p; p.type = BlockModel::Paragraph; p.text = parts.join(QStringLiteral(" · "));
+                                out->push_back(std::move(p));
+                            }
+                        } else {
+                            prevCode = false;
+                            for (auto jt = child->begin(); !jt.atEnd(); ++jt) {
+                                const QTextBlock b = jt.currentBlock();
+                                if (b.isValid()) buildText(b);
+                            }
+                        }
+                    } else {
+                        const QTextBlock b = it.currentBlock();
+                        if (b.isValid()) buildText(b);
+                    }
+                }
+                out = &specs;
+                prevCode = false;
+                cells[size_t(r)][size_t(c)] = std::move(blocks);
             }
-        Spec sp; sp.type = BlockModel::Table; sp.tableJson = g.toJson();
-        specs.push_back(std::move(sp));
+        QJsonArray cols;
+        for (int c = 0; c < nc; ++c) {
+            QJsonObject col;
+            if (width[size_t(c)] > 0) col.insert(QStringLiteral("w"), width[size_t(c)]);
+            if (align[size_t(c)] != 0) col.insert(QStringLiteral("a"), align[size_t(c)]);
+            cols.append(col);
+        }
+        const std::vector<float> equal(size_t(nc), 1.0f / static_cast<float>(nc));
+        for (int r = 0; r < nr; ++r) {
+            Spec rec;
+            rec.type = BlockModel::Split;
+            rec.ratios = equal;
+            rec.header = r == 0 ? static_cast<uint8_t>(hdr) : uint8_t(0);
+            QJsonObject tj;
+            if (r == 0) tj.insert(QStringLiteral("cols"), cols);
+            QJsonArray cbg;
+            for (int c = 0; c < nc; ++c) cbg.append(bg[size_t(r)][size_t(c)]);
+            while (!cbg.isEmpty() && cbg.last().toString().isEmpty()) cbg.removeLast();
+            if (!cbg.isEmpty()) tj.insert(QStringLiteral("cbg"), cbg);
+            rec.table = tj.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(tj).toJson(QJsonDocument::Compact));
+            specs.push_back(std::move(rec));
+            for (int c = 0; c < nc; ++c) {
+                std::vector<Spec>& blocks = cells[size_t(r)][size_t(c)];
+                if (blocks.empty()) { Spec e; e.type = BlockModel::Paragraph; blocks.push_back(std::move(e)); }
+                for (Spec& b : blocks) {
+                    b.cell = static_cast<int8_t>(c);
+                    specs.push_back(std::move(b));
+                }
+            }
+        }
     };
 
     // Walk the frame tree so table cells aren't flattened into loose blocks.

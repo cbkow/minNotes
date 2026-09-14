@@ -21,6 +21,9 @@
 #include "BlockClipboard.h"
 #include "Clipboard.h"
 #include "ClipboardPaster.h"
+#include <QTextFrame>
+#include <QTextTable>
+#include <QTextLength>
 #include <QClipboard>
 #include "SpellTokenizer.h"
 #include "SpellEngine.h"
@@ -1542,8 +1545,9 @@ static void testImporterWalker() {
             "<table><thead><tr><th>H</th></tr></thead>"
             "<tbody><tr><td>c</td></tr></tbody></table>"));
         const std::vector<Spec> s = Importer::specsFromTextDocument(d, nullptr);
-        CHECK(s.size() == 10, "HTML fixture → 10 specs (got %d)", int(s.size()));
-        if (s.size() == 10) {
+        // 9 blocks + the table as records and cells (SR-4 S8e): record · H · record · c.
+        CHECK(s.size() == 13, "HTML fixture → 13 specs (got %d)", int(s.size()));
+        if (s.size() == 13) {
             CHECK(s[0].type == BlockModel::OrderedListItem && s[0].depth == 0
                       && s[1].type == BlockModel::OrderedListItem,
                   "<ol> items → OrderedListItem");
@@ -1566,10 +1570,9 @@ static void testImporterWalker() {
             bool anyColor = false;
             for (const auto& x : s[8].spans) anyColor |= (x.kind == BlockModel::SpanFgColor);
             CHECK(!anyColor, "explicit BLACK fg is skipped (browser default ink)");
-            CHECK(s[9].type == BlockModel::Table
-                      && TableGrid::fromJson(s[9].tableJson).headerRows() == 1
-                      && TableGrid::fromJson(s[9].tableJson).cellText(1, 0) == QStringLiteral("c"),
-                  "<thead> → headerRows 1, body cell intact");
+            CHECK(s[9].type == BlockModel::Split && s[9].header == 1 && s[10].cell == 0 && s[10].text == QStringLiteral("H")
+                      && s[11].type == BlockModel::Split && s[11].header == 0 && s[12].text == QStringLiteral("c"),
+                  "<thead> → the first record's header count 1, body cell intact (a derived table)");
         }
     }
 
@@ -8049,6 +8052,102 @@ static void testPasteRouter() {
           "looksTabular: equal tab counts across ≥ 2 rows, no blank interior lines, one row or ragged rows aren't a grid");
 }
 
+static void testForeignTables() {
+    qInfo("[104] foreign tables: th pre-scan, merged cells origin-only, nested flatten, rich cells, widths/alignment, GFM pipe (SR-4 S8e)");
+    const QString html = QStringLiteral(
+        "<p>intro</p>"
+        "<table><colgroup><col width=\"120\"><col><col></colgroup>"
+        "<tr><th width=\"120\">Name</th><th style=\"text-align:center\">Qty</th><th>Notes</th></tr>"
+        "<tr><td>a1</td><td colspan=\"2\">wide</td></tr>"
+        "<tr><td style=\"background:#ff0000\"><b>bold</b> text<ul><li>one</li><li>two</li></ul></td><td>7</td>"
+        "<td><table><tr><td>x</td><td>y</td></tr></table></td></tr></table>"
+        "<p>outro</p>");
+    {
+        QTextDocument doc;
+        doc.setHtml(html);
+        const QList<int> th = Importer::htmlHeaderRowsPerTable(html);
+        CHECK(th.size() == 1 && th.at(0) == 1, "the <th> pre-scan: 1 header row on the outer table; the nested one isn't counted (%d tables)", int(th.size()));
+        const std::vector<BlockModel::BlockSpec> specs = Importer::specsFromTextDocument(doc, nullptr, QString(), th);
+        int records = 0, firstRec = -1;
+        for (size_t k = 0; k < specs.size(); ++k)
+            if (specs[k].type == BlockModel::Split) { ++records; if (firstRec < 0) firstRec = int(k); }
+        CHECK(records == 3 && firstRec == 1 && specs[size_t(firstRec)].header == 1 && specs.back().text == QStringLiteral("outro"),
+              "the walker emits 3 records after the intro, the first with header 1 (%d records)", records);
+        BlockModel::GridPaste g;
+        std::vector<BlockModel::BlockSpec> tableOnly(specs.begin() + firstRec, specs.end() - 1);
+        CHECK(BlockModel::parseGridSpecs(tableOnly, QJsonArray(), 0, &g) && g.rows.size() == 3 && g.rows[0].size() == 3,
+              "…a 3×3 grid");
+        if (g.rows.size() == 3 && g.rows[0].size() == 3) {
+            CHECK(g.rows[1][1].size() == 1 && g.rows[1][1][0].text == QStringLiteral("wide") && g.rows[1][2].size() == 1 && g.rows[1][2][0].text.isEmpty(),
+                  "a colspan cell keeps its content in the origin; the covered cell is empty");
+            CHECK(g.rows[2][0].size() == 3 && g.rows[2][0][0].text == QStringLiteral("bold text") && !g.rows[2][0][0].spans.empty()
+                      && g.rows[2][0][1].type == BlockModel::ListItem && g.rows[2][0][2].text == QStringLiteral("two"),
+                  "a rich cell: a paragraph with a bold span and two list items");
+            CHECK(g.rows[2][2].size() == 1 && g.rows[2][2][0].text == QStringLiteral("x · y"), "a nested table flattens to 'x · y'");
+            const QJsonObject c0 = g.cols.at(0).toObject(), c1 = g.cols.at(1).toObject();
+            QString consDesc;   // what Qt's HTML importer made of the widths (for the message)
+            for (QTextFrame* f : doc.rootFrame()->childFrames())
+                if (QTextTable* tt = qobject_cast<QTextTable*>(f)) {
+                    for (const QTextLength& L : tt->format().columnWidthConstraints())
+                        consDesc += QStringLiteral("[%1:%2]").arg(int(L.type())).arg(L.rawValue());
+                    break;
+                }
+            CHECK(c0.value(QStringLiteral("w")).toInt() == 120 && c1.value(QStringLiteral("a")).toInt() == 1,
+                  "an authored width (120) and a centered column carry (w=%d a=%d; Qt constraints %s)",
+                  c0.value(QStringLiteral("w")).toInt(), c1.value(QStringLiteral("a")).toInt(), qPrintable(consDesc));
+            CHECK(specs[size_t(firstRec)].table.contains(QStringLiteral("\"cols\"")) && tableOnly[0].table.isEmpty() == false,
+                  "the first record carries the column spec");
+        }
+    }
+    {   // Pasted into a document: a derived table with those properties, between the prose.
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(m.pasteHtml(0, 0, html).size() == 2, "the HTML pastes");
+        const int h = findTableHead(m);
+        CHECK(h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 3 && m.tableColumnCount(h) == 3
+                  && m.tableColumnWidth(h, 0) == 120 && m.gridColAlign(h, 1) == 1 && m.gridCellBg(h, 2, 0) == QStringLiteral("#ff0000")
+                  && m.gridCellRows(h, 2, 0).size() == 3 && m.gridCellText(h, 1, 2).isEmpty() && m.structureValid(),
+              "…a 3×3 derived table with its width, alignment, cell colour and a three-block cell");
+        CHECK(m.contentForRow(0) == QStringLiteral("intro") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("outro"),
+              "…the prose lands around it");
+    }
+    {   // A headerless web table into a cell fills; a th-headed one appends by label.
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        const int h = m.insertTableRows(0, 2, 2) - 1;
+        m.setContent(m.gridCellAt(h, 0, 0), QStringLiteral("Name"));
+        m.setContent(m.gridCellAt(h, 0, 1), QStringLiteral("Qty"));
+        CHECK(m.pasteHtml(m.gridCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><td>n1</td><td>q1</td></tr></table>")).size() == 2
+                  && m.gridRowCount(h) == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("n1") && m.gridCellText(h, 1, 1) == QStringLiteral("q1"),
+              "a headerless table into a cell fills by position");
+        CHECK(m.pasteHtml(m.gridCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><th>Qty</th><th>Name</th></tr><tr><td>q2</td><td>n2</td></tr></table>")).size() == 2
+                  && m.gridRowCount(h) == 3 && m.gridCellText(h, 2, 0) == QStringLiteral("n2") && m.gridCellText(h, 2, 1) == QStringLiteral("q2") && m.structureValid(),
+              "a <th>-headed table (no thead) into a cell appends by label, columns swapped back");
+    }
+    {   // GFM pipe table in plain text, prose around it.
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        const QVariantList c = m.pasteText(0, 0, QStringLiteral("before\n| A | B |\n|:---:|---:|\n| **x** | y\\|z |\n| 1 | 2 |\nafter"));
+        const int h = findTableHead(m);
+        CHECK(c.size() == 2 && h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 3 && m.tableColumnCount(h) == 2
+                  && m.gridColAlign(h, 0) == 1 && m.gridColAlign(h, 1) == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("x")
+                  && m.hasFormat(m.gridCellAt(h, 1, 0), 0, 1, QStringLiteral("bold")) && m.gridCellText(h, 1, 1) == QStringLiteral("y|z")
+                  && m.structureValid(),
+              "a GFM pipe table pastes as a derived table: header, alignment, inline markdown, escaped pipes");
+        CHECK(m.contentForRow(0) == QStringLiteral("before") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("after")
+                  && m.tableHeadOf(m.rowCountQml() - 1) < 0,
+              "…prose before and after it as paragraphs");
+        m.undo();
+        CHECK(m.rowCountQml() == 1 && m.contentForRow(0).isEmpty(), "…one undo step");
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8263,6 +8362,7 @@ int main(int argc, char** argv) {
     testCopyByGrain();
     testPasteRules();
     testPasteRouter();
+    testForeignTables();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
