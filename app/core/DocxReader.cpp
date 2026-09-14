@@ -418,9 +418,9 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
 // A w:tbl → a derived table (SR-4 S8e2, R-I4 4b/4c): each cell's paragraphs through
 // parseParagraph in full mode (spans, lists, images, comments) into the cell's own block list;
 // w:tblHeader rows → the header count (0 when none: the importer promotes the first row);
-// gridSpan → the origin holds the content, covered cells stay empty; a vMerge continuation is an
+// tableSpan → the origin holds the content, covered cells stay empty; a vMerge continuation is an
 // empty cell (3b); a nested w:tbl flattens into one paragraph per inner row, cells joined by " · "
-// (3c, the E5 corruption); w:gridCol widths (dxa → px), w:shd fills and w:jc alignment carry.
+// (3c, the E5 corruption); w:tableCol widths (dxa → px), w:shd fills and w:jc alignment carry.
 struct DocxCell {
     std::vector<BlockModel::BlockSpec> blocks;
     QString bg;
@@ -448,7 +448,7 @@ DocxCell readDocxCell(QXmlStreamReader& xml, Ctx& c, int depth) {
         if (t == QXmlStreamReader::EndElement && xml.name() == QLatin1String("tc")) break;
         if (t != QXmlStreamReader::StartElement) continue;
         const auto n = xml.name();
-        if (n == QLatin1String("gridSpan")) {
+        if (n == QLatin1String("tableSpan")) {
             cell.span = std::max(1, xml.attributes().value(QLatin1String("w:val")).toInt());
         } else if (n == QLatin1String("vMerge")) {
             const auto v = xml.attributes().value(QLatin1String("w:val"));
@@ -490,7 +490,7 @@ DocxTable readDocxTable(QXmlStreamReader& xml, Ctx& c, int depth) {
         if (tk == QXmlStreamReader::EndElement && xml.name() == QLatin1String("tbl")) break;
         if (tk != QXmlStreamReader::StartElement) continue;
         const auto n = xml.name();
-        if (n == QLatin1String("gridCol")) {
+        if (n == QLatin1String("tableCol")) {
             t.widths.push_back(int(std::lround(xml.attributes().value(QLatin1String("w:w")).toDouble() / 15.0)));
         } else if (n == QLatin1String("tr")) {
             t.rows.emplace_back();

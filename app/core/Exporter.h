@@ -68,7 +68,7 @@ public:
     // flex divs; images as data URIs), and a table's rows × cols sub-grid as one <table> (its header
     // rows, when included, in <thead> as <th>).
     Q_INVOKABLE QString htmlFragment(int loRow, int hiRow) const;
-    Q_INVOKABLE QString gridCellsHtml(int head, const QVariantList& rows, const QVariantList& cols) const;
+    Q_INVOKABLE QString tableCellsHtml(int head, const QVariantList& rows, const QVariantList& cols) const;
 
     // The fidelity ceiling: color/highlight spans survive, comments render
     // as tinted ranges + a linked comments section, tables keep their

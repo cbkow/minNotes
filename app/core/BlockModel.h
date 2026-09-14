@@ -223,7 +223,7 @@ public:
     static constexpr double kTablePocket = 32.0;
     Q_INVOKABLE qreal tablePadTop(int row) const;
     Q_INVOKABLE qreal tablePadBottom(int row) const;
-    Q_INVOKABLE QString gridCellText(int head, int r, int c) const;   // the cell's blocks' text, joined
+    Q_INVOKABLE QString tableCellText(int head, int r, int c) const;   // the cell's blocks' text, joined
     // T3 sticky header: for the table whose row covers content y (and has body rows),
     // {head, headerTop, headerBottom, tableBottom, headerRows: [records]}; {} otherwise.
     Q_INVOKABLE QVariantMap tableStickyAt(qreal y) const;
@@ -234,70 +234,70 @@ public:
     // row always carries the header count and column spec; an emptied cell refills with
     // one empty paragraph. Row/column deletes refuse the last body row / last column; a
     // header row's delete removes the table.
-    Q_INVOKABLE int gridRowCount(int head) const;
-    Q_INVOKABLE int gridCellCount(int head, int r) const;       // this row's own cells (rows may be ragged)
-    Q_INVOKABLE QVariantList gridCellRows(int head, int r, int c) const;   // the cell's blocks, flat rows
-    Q_INVOKABLE int gridCellAt(int head, int r, int c) const;   // the cell's first block, or -1
-    Q_INVOKABLE int gridRowOf(int row) const;                   // a record's or cell block's row in its table, or -1
-    Q_INVOKABLE int gridColumnOf(int row) const;                // a cell block's column, or -1
-    Q_INVOKABLE bool gridInsertRow(int head, int at);           // copies the divisions of the row above (or below at 0)
-    Q_INVOKABLE bool gridDeleteRow(int head, int r);
-    Q_INVOKABLE bool gridMoveRow(int head, int from, int to);
-    Q_INVOKABLE bool gridDuplicateRow(int head, int r);         // the copy lands below
-    Q_INVOKABLE bool gridInsertColumn(int head, int at);
-    Q_INVOKABLE bool gridDeleteColumn(int head, int c);
-    Q_INVOKABLE bool gridMoveColumn(int head, int from, int to);
-    Q_INVOKABLE bool gridDuplicateColumn(int head, int c);      // the copy lands to the right
-    Q_INVOKABLE bool gridDeleteTable(int head);
-    Q_INVOKABLE bool gridClearCells(int head, int r0, int c0, int r1, int c1);
-    Q_INVOKABLE bool gridFillDown(int head, int r0, int c0, int r1, int c1);
-    Q_INVOKABLE bool gridFillRight(int head, int r0, int c0, int r1, int c1);
+    Q_INVOKABLE int tableRowCount(int head) const;
+    Q_INVOKABLE int tableCellCount(int head, int r) const;       // this row's own cells (rows may be ragged)
+    Q_INVOKABLE QVariantList tableCellRows(int head, int r, int c) const;   // the cell's blocks, flat rows
+    Q_INVOKABLE int tableCellAt(int head, int r, int c) const;   // the cell's first block, or -1
+    Q_INVOKABLE int tableRowOf(int row) const;                   // a record's or cell block's row in its table, or -1
+    Q_INVOKABLE int tableColumnOf(int row) const;                // a cell block's column, or -1
+    Q_INVOKABLE bool tableInsertRow(int head, int at);           // copies the divisions of the row above (or below at 0)
+    Q_INVOKABLE bool tableDeleteRow(int head, int r);
+    Q_INVOKABLE bool tableMoveRow(int head, int from, int to);
+    Q_INVOKABLE bool tableDuplicateRow(int head, int r);         // the copy lands below
+    Q_INVOKABLE bool tableInsertColumn(int head, int at);
+    Q_INVOKABLE bool tableDeleteColumn(int head, int c);
+    Q_INVOKABLE bool tableMoveColumn(int head, int from, int to);
+    Q_INVOKABLE bool tableDuplicateColumn(int head, int c);      // the copy lands to the right
+    Q_INVOKABLE bool deleteTable(int head);
+    Q_INVOKABLE bool tableClearCells(int head, int r0, int c0, int r1, int c1);
+    Q_INVOKABLE bool tableFillDown(int head, int r0, int c0, int r1, int c1);
+    Q_INVOKABLE bool tableFillRight(int head, int r0, int c0, int r1, int c1);
     // Colours and alignment (S3b). Cell colours live on the row's record (lane-indexed),
     // row colours on the record, column colours and alignment in the head's spec. The
     // resolved colour is the cell's, else the row's, else the column's.
-    Q_INVOKABLE QString gridCellBg(int head, int r, int c) const;
-    Q_INVOKABLE QString gridCellFg(int head, int r, int c) const;
-    Q_INVOKABLE QString gridRowBg(int head, int r) const;       // the row's own colour ("" = none)
-    Q_INVOKABLE int gridColAlign(int head, int c) const;        // 0 left, 1 center, 2 right
-    Q_INVOKABLE bool gridSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color);
-    Q_INVOKABLE bool gridSetRowColor(int head, int r, bool fg, const QString& color);
-    Q_INVOKABLE bool gridSetColColor(int head, int c, bool fg, const QString& color);
-    Q_INVOKABLE bool gridSetColAlign(int head, int c, int align);
+    Q_INVOKABLE QString tableCellBg(int head, int r, int c) const;
+    Q_INVOKABLE QString tableCellFg(int head, int r, int c) const;
+    Q_INVOKABLE QString tableRowBg(int head, int r) const;       // the row's own colour ("" = none)
+    Q_INVOKABLE int tableColAlign(int head, int c) const;        // 0 left, 1 center, 2 right
+    Q_INVOKABLE bool tableSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color);
+    Q_INVOKABLE bool tableSetRowColor(int head, int r, bool fg, const QString& color);
+    Q_INVOKABLE bool tableSetColColor(int head, int c, bool fg, const QString& color);
+    Q_INVOKABLE bool tableSetColAlign(int head, int c, int align);
     // Bulk ops on row / column sets, one undo each. A set holding a header row deletes
     // the table; a set that would take every body row or every column is refused.
-    Q_INVOKABLE bool gridDeleteRows(int head, const QVariantList& rows);
-    Q_INVOKABLE bool gridDeleteColumns(int head, const QVariantList& cols);
-    Q_INVOKABLE bool gridClearRows(int head, const QVariantList& rows);
-    Q_INVOKABLE bool gridClearColumns(int head, const QVariantList& cols);
-    Q_INVOKABLE bool gridSetRowsColor(int head, const QVariantList& rows, bool fg, const QString& color);
-    Q_INVOKABLE bool gridSetColsColor(int head, const QVariantList& cols, bool fg, const QString& color);
-    Q_INVOKABLE bool gridSetColsAlign(int head, const QVariantList& cols, int align);
+    Q_INVOKABLE bool tableDeleteRows(int head, const QVariantList& rows);
+    Q_INVOKABLE bool tableDeleteColumns(int head, const QVariantList& cols);
+    Q_INVOKABLE bool tableClearRows(int head, const QVariantList& rows);
+    Q_INVOKABLE bool tableClearColumns(int head, const QVariantList& cols);
+    Q_INVOKABLE bool tableSetRowsColor(int head, const QVariantList& rows, bool fg, const QString& color);
+    Q_INVOKABLE bool tableSetColsColor(int head, const QVariantList& cols, bool fg, const QString& color);
+    Q_INVOKABLE bool tableSetColsAlign(int head, const QVariantList& cols, int align);
     // Stable sort of the body rows by a column's text: numeric when both parse, numbers
     // before text, text case-insensitive. The undo entry records the two row orders (T2).
-    Q_INVOKABLE bool gridSortByColumn(int head, int c, bool asc);
+    Q_INVOKABLE bool tableSortByColumn(int head, int c, bool asc);
     // Typed columns (S4): one chip primitive. A column's kind (0 text, 1 choice, 2 check)
     // and choice options live in the head's spec; a typed body cell is one paragraph whose
     // text is a single chip carrying the column's options (an empty paragraph = no value;
     // check state 0 "To do" is the empty cell). Header rows stay text. Converting text →
     // choice harvests the distinct values as options (T1); option edits sweep the column's
     // chips in one undo step.
-    Q_INVOKABLE int gridColumnKind(int head, int c) const;
-    Q_INVOKABLE bool gridSetColumnKind(int head, int c, int kind);
-    Q_INVOKABLE bool gridSetColumnsKind(int head, const QVariantList& cols, int kind);
-    Q_INVOKABLE QVariantList gridColumnOptions(int head, int c) const;   // [{id, label, color}]
-    Q_INVOKABLE QString gridAddOption(int head, int c, const QString& label, const QString& color);   // → id
-    Q_INVOKABLE bool gridRenameOption(int head, int c, const QString& id, const QString& label);
-    Q_INVOKABLE bool gridRecolorOption(int head, int c, const QString& id, const QString& color);
-    Q_INVOKABLE bool gridMoveOption(int head, int c, const QString& id, int toIndex);
-    Q_INVOKABLE bool gridRemoveOption(int head, int c, const QString& id);
-    Q_INVOKABLE bool gridSetColumnOptions(int head, int c, const QVariantList& options);
-    Q_INVOKABLE QString gridCellChoice(int head, int r, int c) const;        // selected id, "" = none
-    Q_INVOKABLE QString gridCellChoiceLabel(int head, int r, int c) const;
-    Q_INVOKABLE QString gridCellChoiceColor(int head, int r, int c) const;
-    Q_INVOKABLE bool gridSetCellChoice(int head, int r, int c, const QString& id);   // "" clears
-    Q_INVOKABLE int gridCellCheck(int head, int r, int c) const;             // 0 / 1 / 2
-    Q_INVOKABLE bool gridSetCellCheck(int head, int r, int c, int state);
-    Q_INVOKABLE bool gridCycleCellCheck(int head, int r, int c);              // To do → Doing → Done → To do
+    Q_INVOKABLE int tableColumnKind(int head, int c) const;
+    Q_INVOKABLE bool tableSetColumnKind(int head, int c, int kind);
+    Q_INVOKABLE bool tableSetColumnsKind(int head, const QVariantList& cols, int kind);
+    Q_INVOKABLE QVariantList tableColumnOptions(int head, int c) const;   // [{id, label, color}]
+    Q_INVOKABLE QString tableAddOption(int head, int c, const QString& label, const QString& color);   // → id
+    Q_INVOKABLE bool tableRenameOption(int head, int c, const QString& id, const QString& label);
+    Q_INVOKABLE bool tableRecolorOption(int head, int c, const QString& id, const QString& color);
+    Q_INVOKABLE bool tableMoveOption(int head, int c, const QString& id, int toIndex);
+    Q_INVOKABLE bool tableRemoveOption(int head, int c, const QString& id);
+    Q_INVOKABLE bool tableSetColumnOptions(int head, int c, const QVariantList& options);
+    Q_INVOKABLE QString tableCellChoice(int head, int r, int c) const;        // selected id, "" = none
+    Q_INVOKABLE QString tableCellChoiceLabel(int head, int r, int c) const;
+    Q_INVOKABLE QString tableCellChoiceColor(int head, int r, int c) const;
+    Q_INVOKABLE bool tableSetCellChoice(int head, int r, int c, const QString& id);   // "" clears
+    Q_INVOKABLE int tableCellCheck(int head, int r, int c) const;             // 0 / 1 / 2
+    Q_INVOKABLE bool tableSetCellCheck(int head, int r, int c, int state);
+    Q_INVOKABLE bool tableCycleCellCheck(int head, int r, int c);              // To do → Doing → Done → To do
     // T6 (S9c): a TIMECODE column (kind 3) — plain text cells that normalize to SMPTE timecode at the
     // column's frame rate (`fps` in the spec, 24 by default): a frame count becomes "hh:mm:ss:ff", a
     // timecode its canonical form (drop-frame for 29.97 / 59.94), anything else stays. Normalized when
@@ -308,36 +308,36 @@ public:
     Q_INVOKABLE void setHiddenRecords(const QVariantList& records);  // replaces the fold set (records by row)
     Q_INVOKABLE void clearHiddenRecords();
     Q_INVOKABLE int hiddenRecordCount(int head) const;
-    Q_INVOKABLE QVariantList gridFilterRecords(int head, const QString& text) const;   // body records with NO cell containing text
-    Q_INVOKABLE double gridColumnFps(int head, int c) const;
-    Q_INVOKABLE bool gridSetColumnFps(int head, int c, double fps);         // re-normalizes the column
+    Q_INVOKABLE QVariantList tableFilterRecords(int head, const QString& text) const;   // body records with NO cell containing text
+    Q_INVOKABLE double tableColumnFps(int head, int c) const;
+    Q_INVOKABLE bool tableSetColumnFps(int head, int c, double fps);         // re-normalizes the column
     Q_INVOKABLE QString timecodeForFrames(int frames, double fps) const;
     Q_INVOKABLE int framesForTimecode(const QString& text, double fps) const;   // -1 when unreadable
     // Keys (S6a). tabTarget in a table walks cells in reading order and returns
     // kTabAppendsRow past the table's last cell (A3). An empty last body row exits the table
     // as a paragraph below it (A1; one undo; → the paragraph's row, or -1).
     static constexpr int kTabAppendsRow = -2;
-    Q_INVOKABLE bool gridRowIsEmpty(int head, int r) const;
-    Q_INVOKABLE int gridExitRow(int head);
+    Q_INVOKABLE bool tableRowIsEmpty(int head, int r) const;
+    Q_INVOKABLE int tableExitRow(int head);
     // A5 (S6c): tab/newline text pasted into a table fills cells by position from (r0, c0),
     // replacing each target cell's blocks with its value (typed columns adopt options by label,
     // adding unknown ones) and growing rows/columns as needed. One undo; → the last cell's block.
-    Q_INVOKABLE int gridPasteTSV(int head, int r0, int c0, const QString& text);
+    Q_INVOKABLE int tablePasteTSV(int head, int r0, int c0, const QString& text);
     // A tabular plain-text paste outside a table (S7a): a new table below afterRow holding the
     // grid, its first row the header. One undo; → the first cell's block, or -1.
     Q_INVOKABLE int insertGridFromTSV(int afterRow, const QString& tsv);
     // Files dropped on a table cell (S7b): media blocks appended to the cell in order (an empty
     // last paragraph is replaced; a ragged cell is materialized). Typed body cells refuse — they
     // hold one chip. One undo; → the last media block's row, or -1 when nothing landed.
-    Q_INVOKABLE int gridInsertMedia(int head, int r, int c, const QVariantList& fileUrls);
+    Q_INVOKABLE int tableInsertMedia(int head, int r, int c, const QVariantList& fileUrls);
     // Copy by grain (S8c, R-I2 / §4.11). A cell FRAGMENT: the rows × cols sub-grid of a table as
     // records without the header role plus their cells' blocks (reindexed, a ragged cell filled),
     // the payload's `grid` carrying the column spec subset and how many of the rows were header
     // rows — the paste rules (S8d) read it. Its TSV: a cell's blocks joined by newlines (media
     // skipped), typed cells as their label / box, fields quoted when they hold tabs, newlines or
     // quotes (TableGrid::fromTSV reads them back).
-    Q_INVOKABLE QString gridCopyPayload(int head, const QVariantList& rows, const QVariantList& cols) const;
-    Q_INVOKABLE QString gridCellsTSV(int head, const QVariantList& rows, const QVariantList& cols) const;
+    Q_INVOKABLE QString tableCopyPayload(int head, const QVariantList& rows, const QVariantList& cols) const;
+    Q_INVOKABLE QString tableCellsTSV(int head, const QVariantList& rows, const QVariantList& cols) const;
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -543,7 +543,7 @@ public:
     // SR-4: the import IR (a TableGrid, as JSON) as a table's specs — a head record (header count ≥ 1,
     // column spec: widths, alignment, colours, kinds + options), a record per row (row/cell colours)
     // and each cell's blocks (media, then text with spans; choice/check values as chips).
-    static std::vector<BlockSpec> gridSpecsFromTable(const QString& tableJson);
+    static std::vector<BlockSpec> tableSpecsFromGrid(const QString& tableJson);
     // Paste rules (S8d, §4.11: "position without a header, labels with one"). A GRID is specs of
     // Split records (any header role) plus their cells' blocks — a cell fragment, a copied table,
     // a foreign table. parseGridSpecs reads one (false when the specs hold anything else); the
@@ -736,7 +736,7 @@ public:
     // turn it into an (empty) code block of that language. Returns true if it did.
     Q_INVOKABLE bool makeCodeBlockIfFence(int row);
 
-    Q_INVOKABLE QStringList gridBlockIds() const;     // derived tables' head records, in document order (S9: their tabs)
+    Q_INVOKABLE QStringList tableBlockIds() const;     // derived tables' head records, in document order (S9: their tabs)
     // Ordered block ids of every inline PDF (for the PDF full-page tab strip).
     Q_INVOKABLE QStringList pdfBlockIds() const;
     // Ordered block ids of every video (for the video-studio tab strip).
@@ -1054,7 +1054,7 @@ private:
         mn::inl::shiftSpansDelete(v, from, to);
     }
     // The import IR (TableGrid) stores a cell's spans as a JSON array ({s,e,k,u?}):
-    // convert to the Span vector (gridSpecsFromTable).
+    // convert to the Span vector (tableSpecsFromGrid).
     static std::vector<Span> cellSpansFromJson(const QJsonArray& a);
     // Commit a new span set for `row` as one txn (persist + change signals).
     void commitRowSpans(int row, std::vector<Span>&& spans, const QString& coalesce = QString());
@@ -1256,8 +1256,8 @@ private:
     struct GridCell { std::vector<int> blocks; QString bg, fg; };   // a cell's blocks + its colours
     struct GridRow { int rec = -1; bool copy = false; std::vector<GridCell> cells; };
     static GridCell copiedCell(const GridCell& cell);
-    std::vector<GridRow> gridOf(int head) const;
-    int gridRecord(int head, int r) const;                       // the record of row r, or -1
+    std::vector<GridRow> tableOf(int head) const;
+    int tableRecord(int head, int r) const;                       // the record of row r, or -1
     std::pair<int,int> tableBand(int head) const;                // head … the last record's last block
     // Replace the table's band with `grid` (inside the caller's txn). The first row takes
     // `headerCount` and the column spec `cols`.
@@ -1267,7 +1267,7 @@ private:
     // S3b: record-attr edits over a table (one txn; sparse undo), colour resolution,
     // the explicit label join (A9), and T2 permutation undo.
     bool editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn);
-    QString gridColour(int head, int r, int c, bool fg) const;
+    QString tableColour(int head, int r, int c, bool fg) const;
     bool joinTableByLabel(int target, int source);
     void applyPermutation(int lo, const std::vector<std::pair<QString, QString>>& order);
     // S4 typed cells (inside the caller's txn).

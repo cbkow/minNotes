@@ -5,7 +5,7 @@
 #include <vector>
 
 // The table IMPORT IR (SR-4 S10): a pure 2D grid plus column metadata that the
-// CSV/TSV/XLSX/ODS readers build and BlockModel::gridSpecsFromTable turns into a
+// CSV/TSV/XLSX/ODS readers build and BlockModel::tableSpecsFromGrid turns into a
 // table's records and cells. Knows nothing about blocks, Qt UI, or undo; the
 // grid-paste path also reads TSV through it.
 //

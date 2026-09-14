@@ -50,7 +50,7 @@ public:
     // as a pure decision over what the clipboard holds and where the caret is — testable headless.
     // Returns one action name; the editor performs it and, when a flavour yields nothing, masks it
     // in the input and asks again. Actions: nothing · sketchUrls · sketchRaster · blocks ·
-    // codeVerbatim · html · urls · raster · gridTsv · tableFromTsv · text.
+    // codeVerbatim · html · urls · raster · tableTsv · tableFromTsv · text.
     struct PasteInput {
         bool hasBlocks = false;        // a non-empty x-mnd-blocks payload
         bool hasHtml = false;

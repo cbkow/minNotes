@@ -32,7 +32,7 @@ bool ClipboardPaster::looksTabular(const QString& text) {
 
 QString ClipboardPaster::route(const PasteInput& in, const PasteTarget& at) {
     const bool hasText = !in.text.isEmpty();
-    const bool gridText = in.text.contains(QLatin1Char('\t')) || in.text.contains(QLatin1Char('\n'));
+    const bool tableText = in.text.contains(QLatin1Char('\t')) || in.text.contains(QLatin1Char('\n'));
     // A sketch tab takes images (files or raster) onto its canvas; nothing else has a target.
     if (at.sketchTab) return in.urls > 0 ? QStringLiteral("sketchUrls") : in.hasImage ? QStringLiteral("sketchRaster") : QStringLiteral("nothing");
     // Our own blocks: a faithful run — not into a code block (verbatim text wins).
@@ -44,7 +44,7 @@ QString ClipboardPaster::route(const PasteInput& in, const PasteTarget& at) {
     if (in.urls > 0) return QStringLiteral("urls");
     if (in.hasImage) return QStringLiteral("raster");
     if (!hasText) return QStringLiteral("nothing");
-    if (at.inTable && gridText) return QStringLiteral("gridTsv");                 // A5: fill cells from the anchor
+    if (at.inTable && tableText) return QStringLiteral("tableTsv");                 // A5: fill cells from the anchor
     if (!in.noTable && looksTabular(in.text)) return QStringLiteral("tableFromTsv");
     return QStringLiteral("text");
 }
@@ -197,7 +197,7 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
         if (head >= 0 && dest->laneForRow(row) >= 0
             && BlockModel::parseGridSpecs(job.payload.specs, cols, fragment ? header : 0, &grid)) {
             if (fragment) grid.header = header;
-            const int land = dest->pasteGrid(head, dest->gridRowOf(row), dest->gridColumnOf(row), grid, job.intoCells);
+            const int land = dest->pasteGrid(head, dest->tableRowOf(row), dest->tableColumnOf(row), grid, job.intoCells);
             if (land >= 0) { caret = { land, static_cast<int>(dest->contentForRow(land).size()) }; routed = true; }
         } else if (fragment) {
             BlockModel::promoteGridSpecs(job.payload.specs, cols, header);

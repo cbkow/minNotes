@@ -3,7 +3,7 @@ import QtQuick.Controls
 
 // Modal editor for a choice column's option set. Edits a LOCAL draft (a ListModel)
 // so Cancel discards and Done commits the whole set in ONE step via
-// BlockModel.gridSetColumnOptions (one undo entry). Existing option
+// BlockModel.tableSetColumnOptions (one undo entry). Existing option
 // ids are preserved, so cell selections survive a rename/recolor/reorder; deleting
 // an option drops only the cells that referenced it. Colours: a curated swatch grid
 // plus a full HSV picker (ColorPickerInline) for a custom colour.
@@ -56,7 +56,7 @@ Popup {
         editor.ghead = head; editor.c = col
         editor.srow = -1; editor.sstart = -1
         draft.clear()
-        var gopts = blockModel.gridColumnOptions(head, col)
+        var gopts = blockModel.tableColumnOptions(head, col)
         for (var gi = 0; gi < gopts.length; ++gi)
             draft.append({ oid: gopts[gi].id, label: gopts[gi].label, color: gopts[gi].color })
         editor.editingColor = -1; editor.customOpen = false
@@ -86,7 +86,7 @@ Popup {
             if (o.label.trim().length === 0) continue   // drop blank-labelled options
             arr.push({ id: o.oid, label: o.label, color: o.color })
         }
-        if (editor.ghead >= 0) blockModel.gridSetColumnOptions(editor.ghead, editor.c, arr)
+        if (editor.ghead >= 0) blockModel.tableSetColumnOptions(editor.ghead, editor.c, arr)
         else if (editor.spanMode) blockModel.setChoiceOptions(editor.srow, editor.sstart, arr)
         editor.close()
     }

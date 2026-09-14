@@ -479,7 +479,7 @@ std::vector<BlockModel::BlockSpec> XlsxReader::read(const QString& xlsxPath,
             h.text = s.name;
             specs.push_back(std::move(h));
         }
-        for (BlockModel::BlockSpec& sp : BlockModel::gridSpecsFromTable(grid.toJson()))   // the grid IR → records + cells
+        for (BlockModel::BlockSpec& sp : BlockModel::tableSpecsFromGrid(grid.toJson()))   // the grid IR → records + cells
             specs.push_back(std::move(sp));
     }
     return specs;

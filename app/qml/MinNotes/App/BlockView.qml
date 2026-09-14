@@ -43,17 +43,17 @@ Item {
     readonly property int tableHead: active ? (blockModel.contentRevision, blockModel.tableHeadOf(logicalRow)) : -1
     readonly property bool inTable: tableHead >= 0
     readonly property bool isTableRecord: isRecord && inTable
-    readonly property int gridRow: inTable ? (blockModel.contentRevision, blockModel.gridRowOf(logicalRow)) : -1
-    readonly property int gridCol: inTable && !isRecord ? (blockModel.contentRevision, blockModel.gridColumnOf(logicalRow)) : -1
+    readonly property int tableRow: inTable ? (blockModel.contentRevision, blockModel.tableRowOf(logicalRow)) : -1
+    readonly property int tableCol: inTable && !isRecord ? (blockModel.contentRevision, blockModel.tableColumnOf(logicalRow)) : -1
     readonly property bool headerCell: inTable && (blockModel.contentRevision, blockModel.isHeaderRow(logicalRow))
-    readonly property int colKind: gridCol >= 0 && !headerCell
-        ? (blockModel.contentRevision, blockModel.gridColumnKind(tableHead, gridCol)) : 0
-    readonly property int colAlign: gridCol >= 0 ? (blockModel.contentRevision, blockModel.gridColAlign(tableHead, gridCol)) : 0
-    readonly property string cellFg: gridCol >= 0
-        ? (blockModel.contentRevision, blockModel.gridCellFg(tableHead, gridRow, gridCol)) : ""
+    readonly property int colKind: tableCol >= 0 && !headerCell
+        ? (blockModel.contentRevision, blockModel.tableColumnKind(tableHead, tableCol)) : 0
+    readonly property int colAlign: tableCol >= 0 ? (blockModel.contentRevision, blockModel.tableColAlign(tableHead, tableCol)) : 0
+    readonly property string cellFg: tableCol >= 0
+        ? (blockModel.contentRevision, blockModel.tableCellFg(tableHead, tableRow, tableCol)) : ""
     readonly property int checkState: colKind === 2
-        ? (blockModel.contentRevision, blockModel.gridCellCheck(tableHead, gridRow, gridCol)) : 0
-    readonly property real cellInset: gridCol >= 0 ? 8 : 0   // a table cell's text sits inside its column
+        ? (blockModel.contentRevision, blockModel.tableCellCheck(tableHead, tableRow, tableCol)) : 0
+    readonly property real cellInset: tableCol >= 0 ? 8 : 0   // a table cell's text sits inside its column
 
     // A record draws the dividers between its lanes: a hairline centred in each gap,
     // the full height of the row (S7 makes them draggable).
@@ -99,7 +99,7 @@ Item {
         model: cell.isTableRecord ? (blockModel.contentRevision, blockModel.tableColumnCount(cell.tableHead)) : 0
         delegate: Rectangle {
             required property int index
-            readonly property string bg: (blockModel.contentRevision, blockModel.gridCellBg(cell.tableHead, cell.gridRow, index))
+            readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(cell.tableHead, cell.tableRow, index))
             x: editor.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(cell.tableHead, index))
             y: cell.padTop
             width: (blockModel.layoutRevision, blockModel.tableColumnWidth(cell.tableHead, index))
@@ -110,19 +110,19 @@ Item {
             // item's target (accent, error when destructive) > the cell rectangle / a grip-picked set
             // (selection). 0 = none.
             readonly property bool inSet: {
-                const s = editor.gridSet
+                const s = editor.tableSet
                 return s !== null && s.head === cell.tableHead && s.rev === blockModel.contentRevision
-                    && (s.kind === "row" ? s.items.indexOf(cell.gridRow) >= 0 : s.items.indexOf(index) >= 0)
+                    && (s.kind === "row" ? s.items.indexOf(cell.tableRow) >= 0 : s.items.indexOf(index) >= 0)
             }
             readonly property int wash: {
-                if (editor.dropGridHead === cell.tableHead && editor.dropGridR === cell.gridRow && editor.dropGridC === index) return 4
-                if (editor.gridColDragging && editor.gridGripPressHead === cell.tableHead && editor.gridGripPressIndex === index) return 3
+                if (editor.dropGridHead === cell.tableHead && editor.dropGridR === cell.tableRow && editor.dropGridC === index) return 4
+                if (editor.tableColDragging && editor.tableGripPressHead === cell.tableHead && editor.tableGripPressIndex === index) return 3
                 const sc = editor.menuHiScope, t = editor.menuGrid
                 if (t !== null && t.head === cell.tableHead
-                    && (sc === "table" || (sc === "row" && cell.gridRow === t.r) || (sc === "column" && index === t.c)
+                    && (sc === "table" || (sc === "row" && cell.tableRow === t.r) || (sc === "column" && index === t.c)
                         || (sc === "set" && inSet))) return 2
                 const rect = editor.cellRect
-                if (rect !== null && rect.head === cell.tableHead && cell.gridRow >= rect.r0 && cell.gridRow <= rect.r1
+                if (rect !== null && rect.head === cell.tableHead && cell.tableRow >= rect.r0 && cell.tableRow <= rect.r1
                     && index >= rect.c0 && index <= rect.c1) return 1
                 return inSet ? 1 : 0
             }
@@ -149,7 +149,7 @@ Item {
         color: Theme.colors.border
     }
     Rectangle {   // the top edge, on the table's first row
-        visible: cell.isTableRecord && cell.gridRow === 0
+        visible: cell.isTableRecord && cell.tableRow === 0
         x: editor.leftEdge; y: cell.padTop; height: 1
         width: (blockModel.layoutRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
@@ -157,21 +157,21 @@ Item {
     // Grips (SR-4 S7b): the hovered row's pill in the left margin, the hovered column's in the pocket
     // above the first row; accent while pressed or dragged.
     Rectangle {
-        readonly property bool live: editor.gridGripPressed && editor.gridGripPressKind === "row"
-            && editor.gridGripPressHead === cell.tableHead && editor.gridGripPressIndex === cell.gridRow
-        visible: cell.isTableRecord && (live || (editor.gridGripKind === "row" && editor.gridGripHead === cell.tableHead
-                                                 && editor.gridGripIndex === cell.gridRow))
+        readonly property bool live: editor.tableGripPressed && editor.tableGripPressKind === "row"
+            && editor.tableGripPressHead === cell.tableHead && editor.tableGripPressIndex === cell.tableRow
+        visible: cell.isTableRecord && (live || (editor.tableGripKind === "row" && editor.tableGripHead === cell.tableHead
+                                                 && editor.tableGripIndex === cell.tableRow))
         x: editor.leftEdge - 13; y: cell.padTop; width: 8
         height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
         color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover
         border.width: 1; border.color: live ? Theme.colors.accent : Theme.colors.border
     }
     Rectangle {
-        readonly property bool live: (editor.gridColDragging || (editor.gridGripPressed && editor.gridGripPressKind === "col"))
-            && editor.gridGripPressHead === cell.tableHead
-        readonly property int col: !cell.isTableRecord || cell.gridRow !== 0 ? -1
-            : live ? editor.gridGripPressIndex
-            : editor.gridGripKind === "col" && editor.gridGripHead === cell.tableHead ? editor.gridGripIndex : -1
+        readonly property bool live: (editor.tableColDragging || (editor.tableGripPressed && editor.tableGripPressKind === "col"))
+            && editor.tableGripPressHead === cell.tableHead
+        readonly property int col: !cell.isTableRecord || cell.tableRow !== 0 ? -1
+            : live ? editor.tableGripPressIndex
+            : editor.tableGripKind === "col" && editor.tableGripHead === cell.tableHead ? editor.tableGripIndex : -1
         visible: col >= 0
         x: editor.leftEdge + (blockModel.layoutRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
         width: (blockModel.layoutRevision, col >= 0 ? blockModel.tableColumnWidth(cell.tableHead, col) : 0)

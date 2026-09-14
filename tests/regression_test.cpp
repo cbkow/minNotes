@@ -142,7 +142,7 @@ static void testUndoRedoHeights() {
     BlockModel m;
     buildDoc(m);
     // The table's first cell block stands in for "the table" (a record's height is derived).
-    const int t0 = m.gridCellAt(findTableHead(m), 0, 0);
+    const int t0 = m.tableCellAt(findTableHead(m), 0, 0);
     CHECK(t0 >= 2, "table built at row >= 1 (cell row %d)", t0);
 
     // Simulate the view measuring every row: paragraphs 30px, the table cell 200px.
@@ -154,7 +154,7 @@ static void testUndoRedoHeights() {
     // Delete paragraph "A" at row 0 (a DIFFERENT row than the table), then undo.
     m.removeBlock(0);
     m.undo();
-    const int t1 = m.gridCellAt(findTableHead(m), 0, 0);
+    const int t1 = m.tableCellAt(findTableHead(m), 0, 0);
     CHECK(m.rowCountQml() >= 4, "undo restored the removed block");
     CHECK(m.rowMeasured(t1), "table still flagged measured after undo");
     CHECK(qFuzzyCompare(m.heightForRow(t1), TABLE_H),
@@ -165,7 +165,7 @@ static void testUndoRedoHeights() {
 
     // Redo the deletion: the table is untouched → keeps its measured height.
     m.redo();
-    const int t2 = m.gridCellAt(findTableHead(m), 0, 0);
+    const int t2 = m.tableCellAt(findTableHead(m), 0, 0);
     CHECK(m.rowMeasured(t2) && qFuzzyCompare(m.heightForRow(t2), TABLE_H),
           "table height preserved after redo (got %.1f, want 200)", m.heightForRow(t2));
 }
@@ -691,10 +691,10 @@ static void testExportMarkdown() {
     m.makeCodeBlock(5, QStringLiteral("cpp"));
 
     const int t = m.insertTableRows(5, 2, 2) - 1;          // → row 6: the table's head (one header row)
-    m.setContent(m.gridCellAt(t, 0, 0), QStringLiteral("H1"));
-    m.setContent(m.gridCellAt(t, 0, 1), QStringLiteral("H2"));
-    m.setContent(m.gridCellAt(t, 1, 0), QStringLiteral("a"));
-    m.setContent(m.gridCellAt(t, 1, 1), QStringLiteral("b|pipe"));
+    m.setContent(m.tableCellAt(t, 0, 0), QStringLiteral("H1"));
+    m.setContent(m.tableCellAt(t, 0, 1), QStringLiteral("H2"));
+    m.setContent(m.tableCellAt(t, 1, 0), QStringLiteral("a"));
+    m.setContent(m.tableCellAt(t, 1, 1), QStringLiteral("b|pipe"));
 
     Exporter ex;
     ex.setModel(&m);
@@ -817,7 +817,7 @@ static void testExportMarkdown() {
         CHECK(doc.contains("Courier New") && doc.contains("w:color")
                   && doc.contains("EFEFEF"),
               "code block exports as colored runs with the code identity");
-        CHECK(doc.contains("w:tbl") && doc.contains("w:gridCol"),
+        CHECK(doc.contains("w:tbl") && doc.contains("w:tableCol"),
               "table exports with a grid");
         CHECK(!zr.fileData(QStringLiteral("word/media/image1.png")).isEmpty()
                   || !zr.fileData(QStringLiteral("word/media/image1.jpeg")).isEmpty(),
@@ -1693,11 +1693,11 @@ static void testImportFileCores() {
         BlockModel m; freshModel(m);
         imp.setModel(&m);
         CHECK(imp.importFile(p), "csv import succeeded");
-        CHECK(m.headerCount(0) == 1 && m.gridRowCount(0) == 3 && m.structureValid(),
+        CHECK(m.headerCount(0) == 1 && m.tableRowCount(0) == 3 && m.structureValid(),
               "csv: a table from row 0, blank row consumed (SR-4 S8a)");
-        CHECK(m.gridCellText(0, 1, 0) == QStringLiteral("Doe, Jane")
-                  && m.gridCellText(0, 1, 1) == QStringLiteral("line1\nline2")
-                  && m.gridCellText(0, 2, 1) == QStringLiteral("cell"),
+        CHECK(m.tableCellText(0, 1, 0) == QStringLiteral("Doe, Jane")
+                  && m.tableCellText(0, 1, 1) == QStringLiteral("line1\nline2")
+                  && m.tableCellText(0, 2, 1) == QStringLiteral("cell"),
               "csv: RFC-4180 quoting held (comma + newline in cells)");
         m.closeDocument();
     }
@@ -1889,9 +1889,9 @@ static void testPackageExporter() {
     CHECK(tHead > vRow && m.headerCount(tHead) > 0, "table inserted");
     {
         BlockModel::BlockSpec cm; cm.type = BlockModel::Media; cm.mediaJson = absImageJson(picB);
-        m.spliceSpecsAt(m.gridCellAt(tHead, 1, 0) + 1, {cm}, false, 0);
+        m.spliceSpecsAt(m.tableCellAt(tHead, 1, 0) + 1, {cm}, false, 0);
     }
-    CHECK(m.gridCellText(tHead, 1, 0).contains(QStringLiteral("pic.png")),
+    CHECK(m.tableCellText(tHead, 1, 0).contains(QStringLiteral("pic.png")),
           "table cell abs-src descriptor set");
 
     // Plan: videos detected; excluded by default option…
@@ -1959,7 +1959,7 @@ static void testPackageExporter() {
     }
     // Table cell media rewrote to the packaged copy.
     {
-        const QString desc = m2.gridCellText(tHead, 1, 0);
+        const QString desc = m2.tableCellText(tHead, 1, 0);
         CHECK(desc.contains(QStringLiteral(".minnotes/pic")),
               "table cell descriptor rewrote to the packaged src");
     }
@@ -2407,7 +2407,7 @@ static void testNotionImport() {
 
     BlockModel m2;
     CHECK(m2.openDocument(dest + QStringLiteral("/Tasks.mnd")), "database opens");
-    CHECK(m2.headerCount(0) > 0 && m2.gridCellText(0, 1, 0) == QStringLiteral("Ship it"),
+    CHECK(m2.headerCount(0) > 0 && m2.tableCellText(0, 1, 0) == QStringLiteral("Ship it"),
           "csv database → a derived table doc");
     m2.closeDocument();
     dir.removeRecursively();
@@ -2446,7 +2446,7 @@ static void testDocxRoundTrip() {
         m.insertSpecs(0, specs, true);
         // A table at the end ([100] covers the table emitter in depth).
         const int tableHead = m.insertTableRows(m.rowCountQml() - 1, 2, 2) - 1;
-        m.setContent(m.gridCellAt(tableHead, 1, 0), QStringLiteral("cell A"));
+        m.setContent(m.tableCellAt(tableHead, 1, 0), QStringLiteral("cell A"));
         const QString threadId = m.addComment(1, 0, 5);
         m.addCommentMessage(threadId, QStringLiteral("check this wording"));
         m.insertImageFromUrl(m.rowCountQml() - 1,
@@ -2491,7 +2491,7 @@ static void testDocxRoundTrip() {
     }
     CHECK(codeRow >= 0 && m2.contentForRow(codeRow) == QStringLiteral("int x;\nint y;"),
           "code block (Courier+EFEFEF) coalesced back to one block");
-    CHECK(tableRow >= 0 && m2.gridCellText(tableRow, 1, 0) == QStringLiteral("cell A"),
+    CHECK(tableRow >= 0 && m2.tableCellText(tableRow, 1, 0) == QStringLiteral("cell A"),
           "table cell text (a DOCX table imports as a derived table)");
     CHECK(mediaRow >= 0 && QFileInfo::exists(m2.mediaLocalPath(mediaRow)),
           "image re-imported into the sidecar");
@@ -2683,9 +2683,9 @@ static void testCollectMedia() {
     {   // the same picture again, as an image block inside cell (0,0)
         BlockModel::BlockSpec cm; cm.type = BlockModel::Media;
         cm.mediaJson = QStringLiteral("{\"src\":\"%1\",\"w\":12,\"h\":10}").arg(pic);
-        m.spliceSpecsAt(m.gridCellAt(tHead, 0, 0) + 1, {cm}, false, 0);
+        m.spliceSpecsAt(m.tableCellAt(tHead, 0, 0) + 1, {cm}, false, 0);
     }
-    const int cellImg = m.gridCellAt(tHead, 0, 0) + 1;
+    const int cellImg = m.tableCellAt(tHead, 0, 0) + 1;
     CHECK(m.mediaKind(imgRow) == QLatin1String("image")
               && m.mediaKind(vidRow) == QLatin1String("video") && tHead > 0 && m.mediaKind(cellImg) == QLatin1String("image"),
           "collect fixtures in place");
@@ -3095,8 +3095,8 @@ static void testExportPdf() {
     m.insertBlock(++r); m.setContent(r, QStringLiteral("int x = 1;"));
     m.makeCodeBlock(r, QStringLiteral("cpp"));
     const int tHead = m.insertTableRows(r, 2, 2) - 1;
-    m.setContent(m.gridCellAt(tHead, 0, 0), QStringLiteral("H1"));
-    m.setContent(m.gridCellAt(tHead, 1, 0), QStringLiteral("cell body"));
+    m.setContent(m.tableCellAt(tHead, 0, 0), QStringLiteral("H1"));
+    m.setContent(m.tableCellAt(tHead, 1, 0), QStringLiteral("cell body"));
     r = m.splitRowLast(m.tableRecords(tHead).last().toInt());   // the table's last row
     {   // pdf media block with ink on page 3
         BlockModel::BlockSpec sp; sp.type = BlockModel::Media;
@@ -3465,18 +3465,18 @@ static void testNewImportFormats() {
             if (m.typeForRow(r) == BlockModel::Heading) ++headings;
         }
         CHECK(tables == 2 && headings == 2 && m.structureValid(), "two sheets → two headed (derived) tables");
-        CHECK(m.gridCellText(tRow, 0, 0) == QStringLiteral("Name")
-                  && m.gridCellText(tRow, 0, 1) == QStringLiteral("Qty"),
+        CHECK(m.tableCellText(tRow, 0, 0) == QStringLiteral("Name")
+                  && m.tableCellText(tRow, 0, 1) == QStringLiteral("Qty"),
               "shared strings resolved");
-        CHECK(m.gridCellText(tRow, 2, 0) == QStringLiteral("rich run")
-                  && m.gridCellText(tRow, 2, 2) == QStringLiteral("42")
-                  && m.gridCellText(tRow, 1, 0).isEmpty(),
+        CHECK(m.tableCellText(tRow, 2, 0) == QStringLiteral("rich run")
+                  && m.tableCellText(tRow, 2, 2) == QStringLiteral("42")
+                  && m.tableCellText(tRow, 1, 0).isEmpty(),
               "rich-run si, numeric cell, sparse row gap");
         CHECK(m.tableColumnCount(tRow) == 3,
               "style-only cell (Z1, formatting to the sheet edge) adds no column");
         // A cell image is a Media block in the cell (its text = the descriptor).
         auto onlyMedia = [&](int r, int c) {
-            const QVariantList blocks = m.gridCellRows(tRow, r, c);
+            const QVariantList blocks = m.tableCellRows(tRow, r, c);
             return blocks.size() == 1 && m.typeForRow(blocks.front().toInt()) == BlockModel::Media
                 && m.contentForRow(blocks.front().toInt()).contains(QStringLiteral(".minnotes/"));
         };
@@ -3513,12 +3513,12 @@ static void testNewImportFormats() {
         for (int r = 0; r < m.rowCountQml(); ++r)
             if (m.typeForRow(r) == BlockModel::Heading) ++headings;
         CHECK(tRow >= 0 && headings == 0, "single sheet → table, NO heading");
-        CHECK(m.tableColumnCount(tRow) == 3 && m.gridRowCount(tRow) == 1,
+        CHECK(m.tableColumnCount(tRow) == 3 && m.tableRowCount(tRow) == 1,
               "repeats expanded, sheet-edge padding trimmed (%dx%d)",
-              m.gridRowCount(tRow), m.tableColumnCount(tRow));
-        CHECK(m.gridCellText(tRow, 0, 0) == QStringLiteral("dup")
-                  && m.gridCellText(tRow, 0, 1) == QStringLiteral("dup")
-                  && m.gridCellText(tRow, 0, 2) == QStringLiteral("end"),
+              m.tableRowCount(tRow), m.tableColumnCount(tRow));
+        CHECK(m.tableCellText(tRow, 0, 0) == QStringLiteral("dup")
+                  && m.tableCellText(tRow, 0, 1) == QStringLiteral("dup")
+                  && m.tableCellText(tRow, 0, 2) == QStringLiteral("end"),
               "column repeat duplicated the value");
         m.closeDocument();
     }
@@ -3594,9 +3594,9 @@ static void testNewImportFormats() {
         m.insertBlock(0);
         CHECK(Importer::importCsvFile(csv, &m), "padded csv imported");
         const int tRow = findTableHead(m);
-        CHECK(tRow >= 0 && m.tableColumnCount(tRow) == 2 && m.gridRowCount(tRow) == 2,
+        CHECK(tRow >= 0 && m.tableColumnCount(tRow) == 2 && m.tableRowCount(tRow) == 2,
               "trailing empty cols+rows trimmed (%dx%d)",
-              m.gridRowCount(tRow), m.tableColumnCount(tRow));
+              m.tableRowCount(tRow), m.tableColumnCount(tRow));
         m.closeDocument();
     }
     dir.removeRecursively();
@@ -3631,7 +3631,7 @@ static void testMergeEngine() {
     // A 2×2 table: rows 3..8 (2 records + 4 cells) — every row after it sits 5 further down
     // than a one-row block would (`grow` below).
     const int tHead = src.insertTableRows(2, 2, 2) - 1;
-    src.setContent(src.gridCellAt(tHead, 0, 0), QStringLiteral("c00"));
+    src.setContent(src.tableCellAt(tHead, 0, 0), QStringLiteral("c00"));
     const int tEnd = src.splitRowLast(src.tableRecords(tHead).last().toInt());   // row 8
     {   // choice chip: text == selected label, payload in the span
         BlockModel::BlockSpec ch;
@@ -3674,7 +3674,7 @@ static void testMergeEngine() {
               && dest.languageForRow(3) == QStringLiteral("py")
               && dest.contentForRow(3) == QStringLiteral("x = 1\ny = 2"),
           "code block + language rode along");
-    CHECK(dest.headerCount(4) > 0 && dest.gridRowCount(4) == 2 && dest.gridCellText(4, 0, 0) == QStringLiteral("c00")
+    CHECK(dest.headerCount(4) > 0 && dest.tableRowCount(4) == 2 && dest.tableCellText(4, 0, 0) == QStringLiteral("c00")
               && dest.structureValid(),
           "table content rode along");
     {
@@ -3789,7 +3789,7 @@ static void testMergeAssetsAndEdges() {
     {   // an image block inside cell (0,0) — the rows are derived: 2 records, 4 cells + the media
         BlockModel::BlockSpec cm; cm.type = BlockModel::Media;
         cm.mediaJson = QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN);
-        src.spliceSpecsAt(src.gridCellAt(tHead, 0, 0) + 1, {cm}, false, 0);
+        src.spliceSpecsAt(src.tableCellAt(tHead, 0, 0) + 1, {cm}, false, 0);
     }
     const int srcN = src.rowCountQml();
 
@@ -3822,7 +3822,7 @@ static void testMergeAssetsAndEdges() {
           "video copied with its .qcview sidecar tree");
     CHECK(dest.contentForRow(4).contains(extPic),
           "absolute (linked) ref passed through untouched");
-    CHECK(dest.headerCount(5) > 0 && dest.gridCellText(5, 0, 0).contains(QStringLiteral(".minnotes/") + pic2),
+    CHECK(dest.headerCount(5) > 0 && dest.tableCellText(5, 0, 0).contains(QStringLiteral(".minnotes/") + pic2),
           "table cell image followed the copy (the Media block in the cell)");
 
     // Package-view source: entries splice straight out of the archive; the
@@ -4084,8 +4084,8 @@ static void testSpecsForRange() {
     const QString plain = m.plainTextForRange(0, 0, 2, 3);
     CHECK(plain == QStringLiteral("abcdef\nxyz"), "plain text skips the image (got '%s')", qPrintable(plain));
     const int t = m.insertTableRows(2, 2, 2) - 1;
-    m.setContent(m.gridCellAt(t, 0, 0), QStringLiteral("h1")); m.setContent(m.gridCellAt(t, 1, 1), QStringLiteral("v"));
-    const QString withTable = m.plainTextForRange(2, 0, m.gridCellAt(t, 1, 1), 1);
+    m.setContent(m.tableCellAt(t, 0, 0), QStringLiteral("h1")); m.setContent(m.tableCellAt(t, 1, 1), QStringLiteral("v"));
+    const QString withTable = m.plainTextForRange(2, 0, m.tableCellAt(t, 1, 1), 1);
     CHECK(withTable.startsWith(QStringLiteral("xyz\nh1")) && withTable.endsWith(QStringLiteral("v")),
           "a table's cells contribute their text in order (got '%s')", qPrintable(withTable));
     // Chip cut in half is dropped, whole chip travels.
@@ -4615,7 +4615,7 @@ static void testSpellServiceSync() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0); m.setContent(0, QStringLiteral("Teh cat sat"));
     m.insertBlock(1); m.setContent(1, QStringLiteral("the the end"));
-    const int cell = m.gridCellAt(m.insertTableRows(1, 2, 2) - 1, 0, 0);   // a table cell is a block
+    const int cell = m.tableCellAt(m.insertTableRows(1, 2, 2) - 1, 0, 0);   // a table cell is a block
     m.setContent(cell, QStringLiteral("quikc"));
     SpellService svc(QStringLiteral("test"));
     svc.setModel(&m);
@@ -5946,7 +5946,7 @@ static void testSplitRowInterchange() {
 
         const int t = m.insertTableRows(7, 2, 2) - 1;
         const QString tablePayload = m.clipboardPayloadForRange(t, 0, m.splitRowLast(m.tableRecords(t).last().toInt()), 0);
-        m.gridDeleteTable(t);
+        m.deleteTable(t);
         CHECK(ClipboardPaster::pasteBlocks(&m, tablePayload, 2, 0, -1, 0, -1, 0, &cr, &cc, &err) && m.lastPasteRelocated()
                   && m.headerCount(5) > 0 && m.laneForRow(5) == -1 && m.structureValid(),
               "a table pasted into a lane lands below the split row (as a derived table)");
@@ -6072,7 +6072,7 @@ static void testSplitRowExports() {
         while (!xr.atEnd()) xr.readNext();
         CHECK(!xr.hasError(), "DOCX: document.xml is well-formed (%s)", qPrintable(xr.errorString()));
         CHECK(doc.count("<w:tbl>") == 1 && doc.count("<w:tc>") == 2 && doc.contains("<w:tblLayout w:type=\"fixed\"/>")
-                  && doc.contains("<w:gridCol w:w=\"2610\" w:type=\"dxa\"/>") && doc.contains("<w:gridCol w:w=\"6750\" w:type=\"dxa\"/>"),
+                  && doc.contains("<w:tableCol w:w=\"2610\" w:type=\"dxa\"/>") && doc.contains("<w:tableCol w:w=\"6750\" w:type=\"dxa\"/>"),
               "DOCX: a borderless fixed one-row table, lane widths from the ratios");
         const qsizetype dq = doc.indexOf(">q<"), da1 = doc.indexOf(">a1<"), dend = doc.indexOf("</w:tbl>"), dp2 = doc.indexOf(">p2<");
         CHECK(doc.indexOf(">p1<") < dq && dq < da1 && da1 < dend && dend < dp2 && doc.indexOf("<w:tbl>") < doc.indexOf(">p1<"),
@@ -6284,13 +6284,13 @@ static void testTableGeometry() {
 
 static void testTableStructureOps() {
     qInfo("[87] table structure: rows and columns inserted, deleted, moved, duplicated; clear, fill, refill (SR-4 step 3a)");
-    auto gridText = [](const BlockModel& m, int head) {
+    auto tableText = [](const BlockModel& m, int head) {
         QStringList rows;
-        for (int r = 0; r < m.gridRowCount(head); ++r) {
+        for (int r = 0; r < m.tableRowCount(head); ++r) {
             QStringList cells;
-            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+            for (int c = 0; c < m.tableCellCount(head, r); ++c) {
                 QStringList parts;
-                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                for (const QVariant& v : m.tableCellRows(head, r, c)) {
                     const QString t = m.contentForRow(v.toInt());
                     parts << (t.isEmpty() ? QStringLiteral("·") : t);
                 }
@@ -6308,116 +6308,116 @@ static void testTableStructureOps() {
         m.insertTableRows(0, 3, 3);
         const char* text[3][3] = { { "A", "B", "C" }, { "a1", "b1", "c1" }, { "a2", "b2", "c2" } };
         for (int r = 0; r < 3; ++r)
-            for (int c = 0; c < 3; ++c) m.setContent(m.gridCellAt(1, r, c), QString::fromLatin1(text[r][c]));
+            for (int c = 0; c < 3; ++c) m.setContent(m.tableCellAt(1, r, c), QString::fromLatin1(text[r][c]));
     };
     const QString start = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2");
     BlockModel m;
     fresh(m);
-    CHECK(gridText(m, 1) == start && m.gridRowOf(m.gridCellAt(1, 2, 1)) == 2 && m.gridColumnOf(m.gridCellAt(1, 2, 1)) == 1
-              && m.gridRowOf(0) == -1 && m.gridColumnOf(0) == -1,
-          "grid addressing: rows × cells (%s)", qPrintable(gridText(m, 1)));
-    const QString idB1 = m.idForRow(m.gridCellAt(1, 1, 1));
+    CHECK(tableText(m, 1) == start && m.tableRowOf(m.tableCellAt(1, 2, 1)) == 2 && m.tableColumnOf(m.tableCellAt(1, 2, 1)) == 1
+              && m.tableRowOf(0) == -1 && m.tableColumnOf(0) == -1,
+          "grid addressing: rows × cells (%s)", qPrintable(tableText(m, 1)));
+    const QString idB1 = m.idForRow(m.tableCellAt(1, 1, 1));
 
-    CHECK(m.gridInsertColumn(1, 1) && gridText(m, 1) == QStringLiteral("A · B C | a1 · b1 c1 | a2 · b2 c2")
-              && m.tableColumnCount(1) == 4 && m.structureValid() && m.gridRowOf(m.rowForId(idB1)) == 1
-              && m.gridColumnOf(m.rowForId(idB1)) == 2,
-          "insert a column: every row gains an empty cell; blocks keep their ids (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableInsertColumn(1, 1) && tableText(m, 1) == QStringLiteral("A · B C | a1 · b1 c1 | a2 · b2 c2")
+              && m.tableColumnCount(1) == 4 && m.structureValid() && m.tableRowOf(m.rowForId(idB1)) == 1
+              && m.tableColumnOf(m.rowForId(idB1)) == 2,
+          "insert a column: every row gains an empty cell; blocks keep their ids (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(gridText(m, 1) == start && m.tableColumnCount(1) == 3 && m.structureValid(), "…one undo step");
+    CHECK(tableText(m, 1) == start && m.tableColumnCount(1) == 3 && m.structureValid(), "…one undo step");
 
-    CHECK(m.gridDeleteColumn(1, 0) && gridText(m, 1) == QStringLiteral("B C | b1 c1 | b2 c2") && m.structureValid(),
-          "delete a column (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableDeleteColumn(1, 0) && tableText(m, 1) == QStringLiteral("B C | b1 c1 | b2 c2") && m.structureValid(),
+          "delete a column (%s)", qPrintable(tableText(m, 1)));
     m.undo();
 
     m.setTableColumnWidth(1, 2, 300);
-    CHECK(m.gridMoveColumn(1, 2, 0) && gridText(m, 1) == QStringLiteral("C A B | c1 a1 b1 | c2 a2 b2")
+    CHECK(m.tableMoveColumn(1, 2, 0) && tableText(m, 1) == QStringLiteral("C A B | c1 a1 b1 | c2 a2 b2")
               && m.tableColumnWidth(1, 0) == 300 && m.structureValid(),
-          "move a column: its cells and its manual width travel (%s)", qPrintable(gridText(m, 1)));
+          "move a column: its cells and its manual width travel (%s)", qPrintable(tableText(m, 1)));
     m.undo();
     m.undo();
 
     const int before = m.rowCountQml();
-    CHECK(m.gridDuplicateColumn(1, 1) && gridText(m, 1) == QStringLiteral("A B B C | a1 b1 b1 c1 | a2 b2 b2 c2")
-              && m.rowCountQml() == before + 3 && m.rowForId(idB1) == m.gridCellAt(1, 1, 1) && m.structureValid(),
-          "duplicate a column: copies land to the right with new ids (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableDuplicateColumn(1, 1) && tableText(m, 1) == QStringLiteral("A B B C | a1 b1 b1 c1 | a2 b2 b2 c2")
+              && m.rowCountQml() == before + 3 && m.rowForId(idB1) == m.tableCellAt(1, 1, 1) && m.structureValid(),
+          "duplicate a column: copies land to the right with new ids (%s)", qPrintable(tableText(m, 1)));
     m.undo();
 
-    CHECK(m.gridInsertRow(1, 1) && gridText(m, 1) == QStringLiteral("A B C | · · · | a1 b1 c1 | a2 b2 c2")
+    CHECK(m.tableInsertRow(1, 1) && tableText(m, 1) == QStringLiteral("A B C | · · · | a1 b1 c1 | a2 b2 c2")
               && m.headerCount(1) == 1 && m.structureValid(),
-          "insert a row: it copies the row above's divisions (%s)", qPrintable(gridText(m, 1)));
+          "insert a row: it copies the row above's divisions (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(m.gridDuplicateRow(1, 2) && gridText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2 | a2 b2 c2") && m.structureValid(),
-          "duplicate a row below itself (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableDuplicateRow(1, 2) && tableText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2 | a2 b2 c2") && m.structureValid(),
+          "duplicate a row below itself (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(m.gridMoveRow(1, 2, 1) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2 | a1 b1 c1") && m.structureValid(),
-          "move a body row (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableMoveRow(1, 2, 1) && tableText(m, 1) == QStringLiteral("A B C | a2 b2 c2 | a1 b1 c1") && m.structureValid(),
+          "move a body row (%s)", qPrintable(tableText(m, 1)));
     m.undo();
     const qreal autoW0 = m.tableColumnWidth(1, 0);          // column 0 has text: its auto width
     m.setTableColumnWidth(1, 0, 250);
-    CHECK(m.gridMoveRow(1, 0, 2) && gridText(m, 1) == QStringLiteral("a1 b1 c1 | a2 b2 c2 | A B C") && m.headerCount(1) == 1
+    CHECK(m.tableMoveRow(1, 0, 2) && tableText(m, 1) == QStringLiteral("a1 b1 c1 | a2 b2 c2 | A B C") && m.headerCount(1) == 1
               && m.tableColumnWidth(1, 0) == 250 && m.tableRecords(1).size() == 3 && m.structureValid(),
-          "move the header row down: the header role and column spec stay with the first row (%s)", qPrintable(gridText(m, 1)));
+          "move the header row down: the header role and column spec stay with the first row (%s)", qPrintable(tableText(m, 1)));
     m.undo();
     m.undo();
-    CHECK(gridText(m, 1) == start && m.tableColumnWidth(1, 0) == autoW0, "…the header move and the width undone (%s, %.0f)",
-          qPrintable(gridText(m, 1)), m.tableColumnWidth(1, 0));
+    CHECK(tableText(m, 1) == start && m.tableColumnWidth(1, 0) == autoW0, "…the header move and the width undone (%s, %.0f)",
+          qPrintable(tableText(m, 1)), m.tableColumnWidth(1, 0));
 
-    CHECK(m.gridDeleteRow(1, 1) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2") && m.structureValid(), "delete a body row");
-    CHECK(!m.gridDeleteRow(1, 1) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2"), "the last body row can't be deleted");
+    CHECK(m.tableDeleteRow(1, 1) && tableText(m, 1) == QStringLiteral("A B C | a2 b2 c2") && m.structureValid(), "delete a body row");
+    CHECK(!m.tableDeleteRow(1, 1) && tableText(m, 1) == QStringLiteral("A B C | a2 b2 c2"), "the last body row can't be deleted");
     m.undo();
-    CHECK(m.gridDeleteRow(1, 0) && m.rowCountQml() == 2 && m.contentForRow(1) == QStringLiteral("below") && m.structureValid(),
+    CHECK(m.tableDeleteRow(1, 0) && m.rowCountQml() == 2 && m.contentForRow(1) == QStringLiteral("below") && m.structureValid(),
           "\"delete row\" on the header row deletes the table");
     m.undo();
-    CHECK(gridText(m, 1) == start && m.structureValid(), "…the table delete undone (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == start && m.structureValid(), "…the table delete undone (%s)", qPrintable(tableText(m, 1)));
 
-    CHECK(m.gridClearCells(1, 1, 0, 2, 1) && gridText(m, 1) == QStringLiteral("A B C | · · c1 | · · c2") && m.structureValid(),
-          "clear a cell rectangle: each cell keeps one empty paragraph (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableClearCells(1, 1, 0, 2, 1) && tableText(m, 1) == QStringLiteral("A B C | · · c1 | · · c2") && m.structureValid(),
+          "clear a cell rectangle: each cell keeps one empty paragraph (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(m.gridFillDown(1, 1, 0, 2, 1) && gridText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a1 b1 c2") && m.structureValid(),
-          "fill down (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableFillDown(1, 1, 0, 2, 1) && tableText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a1 b1 c2") && m.structureValid(),
+          "fill down (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(m.gridFillRight(1, 1, 0, 1, 2) && gridText(m, 1) == QStringLiteral("A B C | a1 a1 a1 | a2 b2 c2") && m.structureValid(),
-          "fill right (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableFillRight(1, 1, 0, 1, 2) && tableText(m, 1) == QStringLiteral("A B C | a1 a1 a1 | a2 b2 c2") && m.structureValid(),
+          "fill right (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(gridText(m, 1) == start, "…the fill undone (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == start, "…the fill undone (%s)", qPrintable(tableText(m, 1)));
 
-    const int b1 = m.gridCellAt(1, 1, 1);
+    const int b1 = m.tableCellAt(1, 1, 1);
     m.insertBlock(b1 + 1);                                  // a second block in cell (1, 1)
     m.setContent(b1 + 1, QStringLiteral("x"));
-    CHECK(gridText(m, 1) == QStringLiteral("A B C | a1 b1+x c1 | a2 b2 c2") && m.structureValid(), "a cell can hold two blocks");
-    CHECK(m.gridMoveColumn(1, 1, 2) && gridText(m, 1) == QStringLiteral("A C B | a1 c1 b1+x | a2 c2 b2") && m.structureValid(),
-          "…and they move together, in order (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == QStringLiteral("A B C | a1 b1+x c1 | a2 b2 c2") && m.structureValid(), "a cell can hold two blocks");
+    CHECK(m.tableMoveColumn(1, 1, 2) && tableText(m, 1) == QStringLiteral("A C B | a1 c1 b1+x | a2 c2 b2") && m.structureValid(),
+          "…and they move together, in order (%s)", qPrintable(tableText(m, 1)));
     m.undo();
     m.undo();
     m.undo();
 
-    m.removeBlock(m.gridCellAt(1, 1, 1));
-    CHECK(gridText(m, 1) == QStringLiteral("A B C | a1 · c1 | a2 b2 c2") && m.gridColumnOf(m.gridCellAt(1, 1, 2)) == 2
+    m.removeBlock(m.tableCellAt(1, 1, 1));
+    CHECK(tableText(m, 1) == QStringLiteral("A B C | a1 · c1 | a2 b2 c2") && m.tableColumnOf(m.tableCellAt(1, 1, 2)) == 2
               && m.structureValid(),
-          "removing a cell's only block refills the cell instead of shifting the columns (%s)", qPrintable(gridText(m, 1)));
+          "removing a cell's only block refills the cell instead of shifting the columns (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(gridText(m, 1) == start && m.structureValid(), "…one undo step (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == start && m.structureValid(), "…one undo step (%s)", qPrintable(tableText(m, 1)));
 
     const QString path = QDir::tempPath() + QStringLiteral("/mn_table_ops.mnd");
     QFile::remove(path);
-    m.gridInsertColumn(1, 3);
-    m.gridDuplicateRow(1, 1);
+    m.tableInsertColumn(1, 3);
+    m.tableDuplicateRow(1, 1);
     CHECK(m.saveAs(path), "the document saves");
     BlockModel m2;
-    CHECK(m2.openDocument(path) && m2.structureValid() && !m2.dirty() && gridText(m2, 1) == gridText(m, 1),
-          "the rebuilt table round-trips through save (%s)", qPrintable(gridText(m2, 1)));
+    CHECK(m2.openDocument(path) && m2.structureValid() && !m2.dirty() && tableText(m2, 1) == tableText(m, 1),
+          "the rebuilt table round-trips through save (%s)", qPrintable(tableText(m2, 1)));
     QFile::remove(path);
 }
 
 static void testTableAttrsBulkSort() {
     qInfo("[88] table colours, alignment, bulk ops, sort with order-only undo, and the label join (SR-4 step 3b)");
-    auto gridText = [](const BlockModel& m, int head) {
+    auto tableText = [](const BlockModel& m, int head) {
         QStringList rows;
-        for (int r = 0; r < m.gridRowCount(head); ++r) {
+        for (int r = 0; r < m.tableRowCount(head); ++r) {
             QStringList cells;
-            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+            for (int c = 0; c < m.tableCellCount(head, r); ++c) {
                 QStringList parts;
-                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                for (const QVariant& v : m.tableCellRows(head, r, c)) {
                     const QString t = m.contentForRow(v.toInt());
                     parts << (t.isEmpty() ? QStringLiteral("·") : t);
                 }
@@ -6429,7 +6429,7 @@ static void testTableAttrsBulkSort() {
     };
     auto fill = [](BlockModel& m, int head, const QList<QStringList>& rows) {
         for (int r = 0; r < rows.size(); ++r)
-            for (int c = 0; c < rows[r].size(); ++c) m.setContent(m.gridCellAt(head, r, c), rows[r][c]);
+            for (int c = 0; c < rows[r].size(); ++c) m.setContent(m.tableCellAt(head, r, c), rows[r][c]);
     };
     auto fresh = [&](BlockModel& m) {
         m.newDocument();
@@ -6444,72 +6444,72 @@ static void testTableAttrsBulkSort() {
         BlockModel m;
         fresh(m);
         const QString red = QStringLiteral("#ff0000"), green = QStringLiteral("#00ff00"), blue = QStringLiteral("#0000ff");
-        CHECK(m.gridSetCellColor(1, 1, 1, 1, 1, false, red) && m.gridSetRowColor(1, 2, false, green)
-                  && m.gridSetColColor(1, 2, false, blue), "colours set");
-        CHECK(m.gridCellBg(1, 1, 1) == red && m.gridCellBg(1, 2, 0) == green && m.gridCellBg(1, 0, 2) == blue
-                  && m.gridCellBg(1, 2, 2) == green && m.gridCellBg(1, 1, 0).isEmpty() && m.gridRowBg(1, 2) == green,
+        CHECK(m.tableSetCellColor(1, 1, 1, 1, 1, false, red) && m.tableSetRowColor(1, 2, false, green)
+                  && m.tableSetColColor(1, 2, false, blue), "colours set");
+        CHECK(m.tableCellBg(1, 1, 1) == red && m.tableCellBg(1, 2, 0) == green && m.tableCellBg(1, 0, 2) == blue
+                  && m.tableCellBg(1, 2, 2) == green && m.tableCellBg(1, 1, 0).isEmpty() && m.tableRowBg(1, 2) == green,
               "a cell colour beats its row's, a row's beats its column's");
         m.undo();
-        CHECK(m.gridCellBg(1, 0, 2).isEmpty() && m.gridCellBg(1, 1, 1) == red, "each colour change is one undo step");
-        CHECK(m.gridSetCellColor(1, 1, 0, 1, 0, true, blue) && m.gridCellFg(1, 1, 0) == blue && m.gridCellBg(1, 1, 0).isEmpty(),
+        CHECK(m.tableCellBg(1, 0, 2).isEmpty() && m.tableCellBg(1, 1, 1) == red, "each colour change is one undo step");
+        CHECK(m.tableSetCellColor(1, 1, 0, 1, 0, true, blue) && m.tableCellFg(1, 1, 0) == blue && m.tableCellBg(1, 1, 0).isEmpty(),
               "text colours are their own layer");
         m.undo();
-        CHECK(m.gridInsertColumn(1, 0) && m.gridCellBg(1, 1, 2) == red && m.gridCellBg(1, 1, 1).isEmpty()
-                  && m.gridCellBg(1, 2, 0) == green && m.structureValid(),
+        CHECK(m.tableInsertColumn(1, 0) && m.tableCellBg(1, 1, 2) == red && m.tableCellBg(1, 1, 1).isEmpty()
+                  && m.tableCellBg(1, 2, 0) == green && m.structureValid(),
               "a cell colour moves with its cell when a column goes in before it");
         m.undo();
-        CHECK(m.gridMoveColumn(1, 1, 0) && m.gridCellBg(1, 1, 0) == red && m.gridCellBg(1, 1, 1).isEmpty(),
+        CHECK(m.tableMoveColumn(1, 1, 0) && m.tableCellBg(1, 1, 0) == red && m.tableCellBg(1, 1, 1).isEmpty(),
               "…and when its column moves");
         m.undo();
-        CHECK(m.gridDuplicateRow(1, 1) && m.gridCellBg(1, 2, 1) == red && m.gridCellBg(1, 3, 0) == green,
+        CHECK(m.tableDuplicateRow(1, 1) && m.tableCellBg(1, 2, 1) == red && m.tableCellBg(1, 3, 0) == green,
               "a duplicated row copies its cell colours; the row colour stays with its row");
         m.undo();
-        CHECK(m.gridClearCells(1, 1, 1, 1, 1) && m.gridCellBg(1, 1, 1) == red, "clearing a cell keeps its colour");
+        CHECK(m.tableClearCells(1, 1, 1, 1, 1) && m.tableCellBg(1, 1, 1) == red, "clearing a cell keeps its colour");
         m.undo();
 
-        CHECK(m.gridSetColAlign(1, 2, 2) && m.gridColAlign(1, 2) == 2 && m.gridColAlign(1, 0) == 0, "column alignment");
-        CHECK(m.gridMoveColumn(1, 2, 0) && m.gridColAlign(1, 0) == 2, "…travels with its column");
+        CHECK(m.tableSetColAlign(1, 2, 2) && m.tableColAlign(1, 2) == 2 && m.tableColAlign(1, 0) == 0, "column alignment");
+        CHECK(m.tableMoveColumn(1, 2, 0) && m.tableColAlign(1, 0) == 2, "…travels with its column");
         m.undo();
 
         const QString path = QDir::tempPath() + QStringLiteral("/mn_table_attrs.mnd");
         QFile::remove(path);
         CHECK(m.saveAs(path), "the document saves");
         BlockModel m2;
-        CHECK(m2.openDocument(path) && m2.gridCellBg(1, 1, 1) == red && m2.gridCellBg(1, 2, 2) == green
-                  && m2.gridColAlign(1, 2) == 2 && m2.structureValid(),
+        CHECK(m2.openDocument(path) && m2.tableCellBg(1, 1, 1) == red && m2.tableCellBg(1, 2, 2) == green
+                  && m2.tableColAlign(1, 2) == 2 && m2.structureValid(),
               "colours and alignment come back after reopening");
         QFile::remove(path);
     }
     {   // Bulk ops on row / column sets
         BlockModel m;
         fresh(m);
-        m.gridInsertRow(1, 3);
+        m.tableInsertRow(1, 3);
         const QString four = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2 | · · ·");
-        CHECK(gridText(m, 1) == four, "fixture: three body rows");
-        CHECK(m.gridDeleteRows(1, { 1, 3 }) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2") && m.structureValid(),
-              "delete a row set (%s)", qPrintable(gridText(m, 1)));
+        CHECK(tableText(m, 1) == four, "fixture: three body rows");
+        CHECK(m.tableDeleteRows(1, { 1, 3 }) && tableText(m, 1) == QStringLiteral("A B C | a2 b2 c2") && m.structureValid(),
+              "delete a row set (%s)", qPrintable(tableText(m, 1)));
         m.undo();
-        CHECK(gridText(m, 1) == four, "…one undo step");
-        CHECK(!m.gridDeleteRows(1, { 1, 2, 3 }) && gridText(m, 1) == four, "a set taking every body row is refused");
-        CHECK(m.gridDeleteRows(1, { 0, 2 }) && m.rowCountQml() == 2 && m.structureValid(), "a set holding a header row deletes the table");
+        CHECK(tableText(m, 1) == four, "…one undo step");
+        CHECK(!m.tableDeleteRows(1, { 1, 2, 3 }) && tableText(m, 1) == four, "a set taking every body row is refused");
+        CHECK(m.tableDeleteRows(1, { 0, 2 }) && m.rowCountQml() == 2 && m.structureValid(), "a set holding a header row deletes the table");
         m.undo();
-        CHECK(m.gridDeleteColumns(1, { 0, 2 }) && gridText(m, 1) == QStringLiteral("B | b1 | b2 | ·") && m.structureValid(),
-              "delete a column set (%s)", qPrintable(gridText(m, 1)));
+        CHECK(m.tableDeleteColumns(1, { 0, 2 }) && tableText(m, 1) == QStringLiteral("B | b1 | b2 | ·") && m.structureValid(),
+              "delete a column set (%s)", qPrintable(tableText(m, 1)));
         m.undo();
-        CHECK(!m.gridDeleteColumns(1, { 0, 1, 2 }), "a set taking every column is refused");
-        CHECK(m.gridClearRows(1, { 1 }) && gridText(m, 1) == QStringLiteral("A B C | · · · | a2 b2 c2 | · · ·"), "clear a row set");
+        CHECK(!m.tableDeleteColumns(1, { 0, 1, 2 }), "a set taking every column is refused");
+        CHECK(m.tableClearRows(1, { 1 }) && tableText(m, 1) == QStringLiteral("A B C | · · · | a2 b2 c2 | · · ·"), "clear a row set");
         m.undo();
-        CHECK(m.gridClearColumns(1, { 1 }) && gridText(m, 1) == QStringLiteral("A · C | a1 · c1 | a2 · c2 | · · ·"), "clear a column set");
+        CHECK(m.tableClearColumns(1, { 1 }) && tableText(m, 1) == QStringLiteral("A · C | a1 · c1 | a2 · c2 | · · ·"), "clear a column set");
         m.undo();
         const QString teal = QStringLiteral("#008080");
-        CHECK(m.gridSetRowsColor(1, { 1, 2 }, false, teal) && m.gridRowBg(1, 1) == teal && m.gridRowBg(1, 2) == teal
-                  && m.gridRowBg(1, 3).isEmpty(), "colour a row set");
+        CHECK(m.tableSetRowsColor(1, { 1, 2 }, false, teal) && m.tableRowBg(1, 1) == teal && m.tableRowBg(1, 2) == teal
+                  && m.tableRowBg(1, 3).isEmpty(), "colour a row set");
         m.undo();
-        CHECK(m.gridRowBg(1, 1).isEmpty() && m.gridRowBg(1, 2).isEmpty(), "…one undo step");
-        CHECK(m.gridSetColsAlign(1, { 0, 1 }, 1) && m.gridColAlign(1, 0) == 1 && m.gridColAlign(1, 1) == 1 && m.gridColAlign(1, 2) == 0,
+        CHECK(m.tableRowBg(1, 1).isEmpty() && m.tableRowBg(1, 2).isEmpty(), "…one undo step");
+        CHECK(m.tableSetColsAlign(1, { 0, 1 }, 1) && m.tableColAlign(1, 0) == 1 && m.tableColAlign(1, 1) == 1 && m.tableColAlign(1, 2) == 0,
               "align a column set");
         m.undo();
-        CHECK(gridText(m, 1) == four && m.gridColAlign(1, 0) == 0 && m.structureValid(), "…undone");
+        CHECK(tableText(m, 1) == four && m.tableColAlign(1, 0) == 0 && m.structureValid(), "…undone");
     }
     {   // Sort
         const QString dir = QDir::tempPath() + QStringLiteral("/mn_table_sort");
@@ -6522,30 +6522,30 @@ static void testTableAttrsBulkSort() {
         m.insertTableRows(0, 5, 2);
         fill(m, 1, { { "N", "X" }, { "10", "r1" }, { "9", "r2" }, { "b", "r3" }, { "A", "r4" } });
         const QString unsorted = QStringLiteral("N X | 10 r1 | 9 r2 | b r3 | A r4");
-        const QString idR1 = m.idForRow(m.gridCellAt(1, 1, 1));
+        const QString idR1 = m.idForRow(m.tableCellAt(1, 1, 1));
         const int entries = m.undoHistory().size();
-        CHECK(m.gridSortByColumn(1, 0, true) && gridText(m, 1) == QStringLiteral("N X | 9 r2 | 10 r1 | A r4 | b r3")
-                  && m.gridRowOf(m.rowForId(idR1)) == 2 && m.structureValid(),
+        CHECK(m.tableSortByColumn(1, 0, true) && tableText(m, 1) == QStringLiteral("N X | 9 r2 | 10 r1 | A r4 | b r3")
+                  && m.tableRowOf(m.rowForId(idR1)) == 2 && m.structureValid(),
               "sort ascending: numbers numerically, then text case-insensitively; blocks keep their ids (%s)",
-              qPrintable(gridText(m, 1)));
+              qPrintable(tableText(m, 1)));
         CHECK(m.undoHistory().size() == entries + 1
                   && m.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Reorder rows"),
               "…one undo step, stored as the two row orders (T2), not snapshots of every cell");
         m.undo();
-        CHECK(gridText(m, 1) == unsorted && m.structureValid(), "undo restores the order (%s)", qPrintable(gridText(m, 1)));
+        CHECK(tableText(m, 1) == unsorted && m.structureValid(), "undo restores the order (%s)", qPrintable(tableText(m, 1)));
         m.redo();
-        CHECK(gridText(m, 1) == QStringLiteral("N X | 9 r2 | 10 r1 | A r4 | b r3"), "redo sorts again");
+        CHECK(tableText(m, 1) == QStringLiteral("N X | 9 r2 | 10 r1 | A r4 | b r3"), "redo sorts again");
         m.undo();
-        CHECK(m.gridSortByColumn(1, 0, false) && gridText(m, 1) == QStringLiteral("N X | b r3 | A r4 | 10 r1 | 9 r2"),
-              "sort descending (%s)", qPrintable(gridText(m, 1)));
+        CHECK(m.tableSortByColumn(1, 0, false) && tableText(m, 1) == QStringLiteral("N X | b r3 | A r4 | 10 r1 | 9 r2"),
+              "sort descending (%s)", qPrintable(tableText(m, 1)));
         m.undo();
-        CHECK(m.gridMoveRow(1, 4, 1) && gridText(m, 1) == QStringLiteral("N X | A r4 | 10 r1 | 9 r2 | b r3"), "move a body row");
+        CHECK(m.tableMoveRow(1, 4, 1) && tableText(m, 1) == QStringLiteral("N X | A r4 | 10 r1 | 9 r2 | b r3"), "move a body row");
         m.undo();
         const QString path = dir + QStringLiteral("/sort.mnd");
         CHECK(m.saveAs(path), "the document saves after the undone reorders");
         BlockModel m2;
-        CHECK(m2.openDocument(path) && gridText(m2, 1) == unsorted && m2.structureValid(),
-              "undone reorders persist their restored ranks (%s)", qPrintable(gridText(m2, 1)));
+        CHECK(m2.openDocument(path) && tableText(m2, 1) == unsorted && m2.structureValid(),
+              "undone reorders persist their restored ranks (%s)", qPrintable(tableText(m2, 1)));
         QDir(dir).removeRecursively();
     }
     {   // A9: unassigning a head right below another table joins it by label
@@ -6561,25 +6561,25 @@ static void testTableAttrsBulkSort() {
         fill(m, y, { { "status", "Name", "Extra" }, { "s2", "n2", "e2" } });
         CHECK(m.headerCount(y) == 1 && m.tableHeadOf(y + 5) == y && m.tableRecords(1).size() == 2, "fixture: two adjacent tables");
         CHECK(m.setHeaderRole(y, 0) && m.tableRecords(1).size() == 4 && m.tableColumnCount(1) == 3
-                  && gridText(m, 1) == QStringLiteral("Name Status | n1 s1 | Name status Extra | n2 s2 e2") && m.structureValid(),
+                  && tableText(m, 1) == QStringLiteral("Name Status | n1 s1 | Name status Extra | n2 s2 e2") && m.structureValid(),
               "its columns match the table above by label (case-insensitive); an unmatched column appends (%s)",
-              qPrintable(gridText(m, 1)));
+              qPrintable(tableText(m, 1)));
         m.undo();
-        CHECK(m.headerCount(y) == 1 && gridText(m, y) == QStringLiteral("status Name Extra | s2 n2 e2")
-                  && gridText(m, 1) == QStringLiteral("Name Status | n1 s1") && m.structureValid(),
-              "…one undo step (%s)", qPrintable(gridText(m, y)));
+        CHECK(m.headerCount(y) == 1 && tableText(m, y) == QStringLiteral("status Name Extra | s2 n2 e2")
+                  && tableText(m, 1) == QStringLiteral("Name Status | n1 s1") && m.structureValid(),
+              "…one undo step (%s)", qPrintable(tableText(m, y)));
     }
 }
 
 static void testTypedColumns() {
     qInfo("[89] typed table columns: choice and check cells as chips, T1 harvest, header-authoritative option sweeps (SR-4 step 4)");
-    auto gridText = [](const BlockModel& m, int head) {
+    auto tableText = [](const BlockModel& m, int head) {
         QStringList rows;
-        for (int r = 0; r < m.gridRowCount(head); ++r) {
+        for (int r = 0; r < m.tableRowCount(head); ++r) {
             QStringList cells;
-            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+            for (int c = 0; c < m.tableCellCount(head, r); ++c) {
                 QStringList parts;
-                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                for (const QVariant& v : m.tableCellRows(head, r, c)) {
                     const QString t = m.contentForRow(v.toInt());
                     parts << (t.isEmpty() ? QStringLiteral("·") : t);
                 }
@@ -6591,10 +6591,10 @@ static void testTypedColumns() {
     };
     auto fill = [](BlockModel& m, int head, const QList<QStringList>& rows) {
         for (int r = 0; r < rows.size(); ++r)
-            for (int c = 0; c < rows[r].size(); ++c) m.setContent(m.gridCellAt(head, r, c), rows[r][c]);
+            for (int c = 0; c < rows[r].size(); ++c) m.setContent(m.tableCellAt(head, r, c), rows[r][c]);
     };
     auto optionId = [](const BlockModel& m, int head, int c, const QString& label) {
-        for (const QVariant& v : m.gridColumnOptions(head, c))
+        for (const QVariant& v : m.tableColumnOptions(head, c))
             if (v.toMap().value(QStringLiteral("label")).toString() == label) return v.toMap().value(QStringLiteral("id")).toString();
         return QString();
     };
@@ -6609,58 +6609,58 @@ static void testTypedColumns() {
     m.insertTableRows(0, 5, 2);
     fill(m, 1, { { "Name", "Status" }, { "a", "Doing" }, { "b", "Done" }, { "c", "doing" }, { "d", "" } });
     const QString texts = QStringLiteral("Name Status | a Doing | b Done | c doing | d ·");
-    CHECK(gridText(m, 1) == texts && m.gridColumnKind(1, 1) == 0, "fixture: a text column");
+    CHECK(tableText(m, 1) == texts && m.tableColumnKind(1, 1) == 0, "fixture: a text column");
 
-    CHECK(m.gridSetColumnKind(1, 1, 1) && m.gridColumnKind(1, 1) == 1 && m.gridColumnOptions(1, 1).size() == 2
+    CHECK(m.tableSetColumnKind(1, 1, 1) && m.tableColumnKind(1, 1) == 1 && m.tableColumnOptions(1, 1).size() == 2
               && optionId(m, 1, 1, QStringLiteral("Doing")).size() > 0 && optionId(m, 1, 1, QStringLiteral("Done")).size() > 0,
           "text → choice harvests the distinct values as options, first appearance first, case-insensitively (T1) [%s]",
-          qPrintable([&] { QStringList l; for (const QVariant& v : m.gridColumnOptions(1, 1)) l << v.toMap().value(QStringLiteral("label")).toString(); return l.join(QLatin1Char(',')); }()));
+          qPrintable([&] { QStringList l; for (const QVariant& v : m.tableColumnOptions(1, 1)) l << v.toMap().value(QStringLiteral("label")).toString(); return l.join(QLatin1Char(',')); }()));
     const QString doing = optionId(m, 1, 1, QStringLiteral("Doing")), done = optionId(m, 1, 1, QStringLiteral("Done"));
-    CHECK(m.gridCellChoice(1, 1, 1) == doing && m.gridCellChoice(1, 3, 1) == doing && m.gridCellChoiceLabel(1, 3, 1) == QStringLiteral("Doing")
-              && m.gridCellChoice(1, 2, 1) == done && m.gridCellChoice(1, 4, 1).isEmpty()
-              && m.contentForRow(m.gridCellAt(1, 0, 1)) == QStringLiteral("Status") && m.gridCellChoice(1, 0, 1).isEmpty()
-              && !m.choiceAt(m.gridCellAt(1, 2, 1), 0).isEmpty() && m.structureValid(),
-          "every body cell keeps its value as a chip; the header stays text (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableCellChoice(1, 1, 1) == doing && m.tableCellChoice(1, 3, 1) == doing && m.tableCellChoiceLabel(1, 3, 1) == QStringLiteral("Doing")
+              && m.tableCellChoice(1, 2, 1) == done && m.tableCellChoice(1, 4, 1).isEmpty()
+              && m.contentForRow(m.tableCellAt(1, 0, 1)) == QStringLiteral("Status") && m.tableCellChoice(1, 0, 1).isEmpty()
+              && !m.choiceAt(m.tableCellAt(1, 2, 1), 0).isEmpty() && m.structureValid(),
+          "every body cell keeps its value as a chip; the header stays text (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(gridText(m, 1) == texts && m.gridColumnKind(1, 1) == 0 && m.choiceAt(m.gridCellAt(1, 2, 1), 0).isEmpty(),
-          "…one undo step (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == texts && m.tableColumnKind(1, 1) == 0 && m.choiceAt(m.tableCellAt(1, 2, 1), 0).isEmpty(),
+          "…one undo step (%s)", qPrintable(tableText(m, 1)));
     m.redo();
 
-    CHECK(m.gridRenameOption(1, 1, done, QStringLiteral("Shipped")) && m.contentForRow(m.gridCellAt(1, 2, 1)) == QStringLiteral("Shipped")
-              && m.gridCellChoiceLabel(1, 2, 1) == QStringLiteral("Shipped") && m.gridCellChoice(1, 2, 1) == done,
+    CHECK(m.tableRenameOption(1, 1, done, QStringLiteral("Shipped")) && m.contentForRow(m.tableCellAt(1, 2, 1)) == QStringLiteral("Shipped")
+              && m.tableCellChoiceLabel(1, 2, 1) == QStringLiteral("Shipped") && m.tableCellChoice(1, 2, 1) == done,
           "renaming an option rewrites every chip that selects it");
     m.undo();
-    CHECK(m.contentForRow(m.gridCellAt(1, 2, 1)) == QStringLiteral("Done"), "…one undo step");
-    CHECK(m.gridRecolorOption(1, 1, doing, QStringLiteral("#123456")) && m.gridCellChoiceColor(1, 1, 1) == QStringLiteral("#123456")
-              && m.gridCellChoiceColor(1, 3, 1) == QStringLiteral("#123456"), "recolouring an option sweeps its chips");
-    const QString blocked = m.gridAddOption(1, 1, QStringLiteral("Blocked"), QStringLiteral("#D9534F"));
-    const QJsonObject payload = QJsonDocument::fromJson(m.choiceAt(m.gridCellAt(1, 2, 1), 0).toUtf8()).object();
-    CHECK(!blocked.isEmpty() && m.gridColumnOptions(1, 1).size() == 3 && payload.value(QStringLiteral("o")).toArray().size() == 3,
+    CHECK(m.contentForRow(m.tableCellAt(1, 2, 1)) == QStringLiteral("Done"), "…one undo step");
+    CHECK(m.tableRecolorOption(1, 1, doing, QStringLiteral("#123456")) && m.tableCellChoiceColor(1, 1, 1) == QStringLiteral("#123456")
+              && m.tableCellChoiceColor(1, 3, 1) == QStringLiteral("#123456"), "recolouring an option sweeps its chips");
+    const QString blocked = m.tableAddOption(1, 1, QStringLiteral("Blocked"), QStringLiteral("#D9534F"));
+    const QJsonObject payload = QJsonDocument::fromJson(m.choiceAt(m.tableCellAt(1, 2, 1), 0).toUtf8()).object();
+    CHECK(!blocked.isEmpty() && m.tableColumnOptions(1, 1).size() == 3 && payload.value(QStringLiteral("o")).toArray().size() == 3,
           "adding an option reaches every chip's option set (the header is authoritative)");
-    CHECK(m.gridSetCellChoice(1, 4, 1, blocked) && m.gridCellChoiceLabel(1, 4, 1) == QStringLiteral("Blocked"), "set a cell's value");
-    CHECK(m.gridMoveOption(1, 1, blocked, 0) && m.gridSortByColumn(1, 1, true)
-              && gridText(m, 1) == QStringLiteral("Name Status | d Blocked | a Doing | c Doing | b Done"),
-          "a choice column sorts by option order (%s)", qPrintable(gridText(m, 1)));
+    CHECK(m.tableSetCellChoice(1, 4, 1, blocked) && m.tableCellChoiceLabel(1, 4, 1) == QStringLiteral("Blocked"), "set a cell's value");
+    CHECK(m.tableMoveOption(1, 1, blocked, 0) && m.tableSortByColumn(1, 1, true)
+              && tableText(m, 1) == QStringLiteral("Name Status | d Blocked | a Doing | c Doing | b Done"),
+          "a choice column sorts by option order (%s)", qPrintable(tableText(m, 1)));
     m.undo();
     m.undo();
-    CHECK(m.gridRemoveOption(1, 1, doing) && m.gridCellChoice(1, 1, 1).isEmpty() && m.gridCellChoice(1, 3, 1).isEmpty()
-              && m.contentForRow(m.gridCellAt(1, 1, 1)).isEmpty() && m.gridCellChoice(1, 2, 1) == done
-              && m.gridColumnOptions(1, 1).size() == 2,
+    CHECK(m.tableRemoveOption(1, 1, doing) && m.tableCellChoice(1, 1, 1).isEmpty() && m.tableCellChoice(1, 3, 1).isEmpty()
+              && m.contentForRow(m.tableCellAt(1, 1, 1)).isEmpty() && m.tableCellChoice(1, 2, 1) == done
+              && m.tableColumnOptions(1, 1).size() == 2,
           "removing an option clears the cells that selected it");
     m.undo();
-    CHECK(m.gridCellChoice(1, 1, 1) == doing, "…one undo step");
+    CHECK(m.tableCellChoice(1, 1, 1) == doing, "…one undo step");
 
-    CHECK(m.gridSetColumnKind(1, 0, 2) && m.gridColumnKind(1, 0) == 2 && m.gridCellCheck(1, 1, 0) == 0
-              && m.contentForRow(m.gridCellAt(1, 1, 0)).isEmpty() && m.contentForRow(m.gridCellAt(1, 0, 0)) == QStringLiteral("Name"),
+    CHECK(m.tableSetColumnKind(1, 0, 2) && m.tableColumnKind(1, 0) == 2 && m.tableCellCheck(1, 1, 0) == 0
+              && m.contentForRow(m.tableCellAt(1, 1, 0)).isEmpty() && m.contentForRow(m.tableCellAt(1, 0, 0)) == QStringLiteral("Name"),
           "text → check: cells start To do; the header stays text");
-    CHECK(m.gridCycleCellCheck(1, 1, 0) && m.gridCellCheck(1, 1, 0) == 1 && m.gridCycleCellCheck(1, 1, 0)
-              && m.gridCellCheck(1, 1, 0) == 2 && m.contentForRow(m.gridCellAt(1, 1, 0)) == QStringLiteral("Done")
-              && m.gridCycleCellCheck(1, 1, 0) && m.gridCellCheck(1, 1, 0) == 0,
+    CHECK(m.tableCycleCellCheck(1, 1, 0) && m.tableCellCheck(1, 1, 0) == 1 && m.tableCycleCellCheck(1, 1, 0)
+              && m.tableCellCheck(1, 1, 0) == 2 && m.contentForRow(m.tableCellAt(1, 1, 0)) == QStringLiteral("Done")
+              && m.tableCycleCellCheck(1, 1, 0) && m.tableCellCheck(1, 1, 0) == 0,
           "a check cell cycles To do → Doing → Done → To do");
-    CHECK(m.gridSetCellCheck(1, 3, 0, 2) && m.gridCellCheck(1, 3, 0) == 2, "set a check state");
+    CHECK(m.tableSetCellCheck(1, 3, 0, 2) && m.tableCellCheck(1, 3, 0) == 2, "set a check state");
 
-    CHECK(m.gridSetColumnKind(1, 1, 0) && m.gridColumnKind(1, 1) == 0 && m.contentForRow(m.gridCellAt(1, 2, 1)) == QStringLiteral("Done")
-              && m.choiceAt(m.gridCellAt(1, 2, 1), 0).isEmpty(),
+    CHECK(m.tableSetColumnKind(1, 1, 0) && m.tableColumnKind(1, 1) == 0 && m.contentForRow(m.tableCellAt(1, 2, 1)) == QStringLiteral("Done")
+              && m.choiceAt(m.tableCellAt(1, 2, 1), 0).isEmpty(),
           "choice → text keeps each label as plain text");
     m.undo();
 
@@ -6668,8 +6668,8 @@ static void testTypedColumns() {
     CHECK(m.saveAs(path), "the document saves");
     {
         BlockModel m2;
-        CHECK(m2.openDocument(path) && m2.gridColumnKind(1, 1) == 1 && m2.gridColumnKind(1, 0) == 2
-                  && m2.gridCellChoice(1, 1, 1) == doing && m2.gridCellCheck(1, 3, 0) == 2 && m2.gridColumnOptions(1, 1).size() == 3
+        CHECK(m2.openDocument(path) && m2.tableColumnKind(1, 1) == 1 && m2.tableColumnKind(1, 0) == 2
+                  && m2.tableCellChoice(1, 1, 1) == doing && m2.tableCellCheck(1, 3, 0) == 2 && m2.tableColumnOptions(1, 1).size() == 3
                   && m2.structureValid(),
               "kinds, options, and values come back after reopening");
     }
@@ -6681,18 +6681,18 @@ static void testTypedColumns() {
         j.insertBlock(0); j.setContent(0, QStringLiteral("above"));
         j.insertTableRows(0, 2, 1);                          // X: Status / Done
         fill(j, 1, { { "Status" }, { "Done" } });
-        j.gridSetColumnKind(1, 0, 1);
+        j.tableSetColumnKind(1, 0, 1);
         const int y = j.splitRowLast(j.tableRecords(1).back().toInt()) + 1;
         j.insertTableRows(y - 1, 3, 1);                      // Y: Status / Done / Review
         fill(j, y, { { "Status" }, { "Done" }, { "Review" } });
-        j.gridSetColumnKind(y, 0, 1);
-        const QString xDone = j.gridCellChoice(1, 1, 0), yDone = j.gridCellChoice(y, 1, 0);
+        j.tableSetColumnKind(y, 0, 1);
+        const QString xDone = j.tableCellChoice(1, 1, 0), yDone = j.tableCellChoice(y, 1, 0);
         CHECK(!xDone.isEmpty() && !yDone.isEmpty() && xDone != yDone, "fixture: two tables with their own option ids");
-        CHECK(j.setHeaderRole(y, 0) && j.gridRowCount(1) == 5 && j.gridCellChoice(1, 3, 0) == xDone
-                  && j.gridCellChoiceLabel(1, 4, 0) == QStringLiteral("Review") && j.gridColumnOptions(1, 0).size() == 2
-                  && QJsonDocument::fromJson(j.choiceAt(j.gridCellAt(1, 1, 0), 0).toUtf8()).object().value(QStringLiteral("o")).toArray().size() == 2
+        CHECK(j.setHeaderRole(y, 0) && j.tableRowCount(1) == 5 && j.tableCellChoice(1, 3, 0) == xDone
+                  && j.tableCellChoiceLabel(1, 4, 0) == QStringLiteral("Review") && j.tableColumnOptions(1, 0).size() == 2
+                  && QJsonDocument::fromJson(j.choiceAt(j.tableCellAt(1, 1, 0), 0).toUtf8()).object().value(QStringLiteral("o")).toArray().size() == 2
                   && j.structureValid(),
-              "joined chips adopt the table's id for a matching label and add the unknown one (%s)", qPrintable(gridText(j, 1)));
+              "joined chips adopt the table's id for a matching label and add the unknown one (%s)", qPrintable(tableText(j, 1)));
     }
     QDir(dir).removeRecursively();
 }
@@ -6716,7 +6716,7 @@ static void testTablePocketAndSticky() {
               && near(m.yForRow(13), m.yForRow(10) + m.heightForRow(10)),
           "cells start below the top pocket; the next row starts below the bottom one");
     CHECK(m.blockAt(5, m.yForRow(1) + 4) == 2 && m.rowForY(m.yForRow(1) + 4) == 1, "a point in the pocket resolves to the row's first block");
-    CHECK(m.gridCellText(1, 0, 0) == QStringLiteral("Name"), "gridCellText");
+    CHECK(m.tableCellText(1, 0, 0) == QStringLiteral("Name"), "tableCellText");
 
     const QVariantMap st = m.tableStickyAt(m.yForRow(7) + 1);
     CHECK(st.value(QStringLiteral("head")).toInt() == 1
@@ -6755,33 +6755,33 @@ static void testTableKeysModel() {
           "Shift+Tab walks back, out above the table from its first cell");
 
     m.setContent(8, QStringLiteral("x"));
-    CHECK(!m.gridRowIsEmpty(1, 2) && m.gridExitRow(1) == -1 && m.gridRowCount(1) == 3, "a last row with content doesn't exit");
+    CHECK(!m.tableRowIsEmpty(1, 2) && m.tableExitRow(1) == -1 && m.tableRowCount(1) == 3, "a last row with content doesn't exit");
     m.setContent(8, QString());
-    CHECK(m.gridRowIsEmpty(1, 2) && m.gridRowIsEmpty(1, 0) && m.gridRowIsEmpty(1, 1), "gridRowIsEmpty: rows of empty paragraphs");
-    const int p = m.gridExitRow(1);
-    CHECK(p == 7 && m.gridRowCount(1) == 2 && m.rowCountQml() == 9 && m.laneForRow(7) == -1
+    CHECK(m.tableRowIsEmpty(1, 2) && m.tableRowIsEmpty(1, 0) && m.tableRowIsEmpty(1, 1), "tableRowIsEmpty: rows of empty paragraphs");
+    const int p = m.tableExitRow(1);
+    CHECK(p == 7 && m.tableRowCount(1) == 2 && m.rowCountQml() == 9 && m.laneForRow(7) == -1
               && m.typeForRow(7) == BlockModel::Paragraph && m.contentForRow(8) == QStringLiteral("below") && m.structureValid(),
           "an empty last body row exits: the row goes, a paragraph lands below the table (%d)", p);
     m.undo();
-    CHECK(m.gridRowCount(1) == 3 && m.rowCountQml() == 11 && m.structureValid(), "…one undo step");
+    CHECK(m.tableRowCount(1) == 3 && m.rowCountQml() == 11 && m.structureValid(), "…one undo step");
 
     BlockModel h;
     h.newDocument();
     while (h.rowCountQml() > 0) h.removeBlock(0);
     h.insertBlock(0);
     h.insertTableRows(0, 1, 2);                              // a header-only table
-    CHECK(h.gridRowIsEmpty(1, 0) && h.gridExitRow(1) == -1 && h.gridRowCount(1) == 1, "header rows never exit");
+    CHECK(h.tableRowIsEmpty(1, 0) && h.tableExitRow(1) == -1 && h.tableRowCount(1) == 1, "header rows never exit");
 }
 
 static void testTableSelectionOps() {
     qInfo("[92] table selection edits: cell rectangles clear, row ranges take a table whole, TSV fills cells (SR-4 step 6c)");
-    auto gridText = [](const BlockModel& m, int head) {
+    auto tableText = [](const BlockModel& m, int head) {
         QStringList rows;
-        for (int r = 0; r < m.gridRowCount(head); ++r) {
+        for (int r = 0; r < m.tableRowCount(head); ++r) {
             QStringList cells;
-            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+            for (int c = 0; c < m.tableCellCount(head, r); ++c) {
                 QStringList parts;
-                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                for (const QVariant& v : m.tableCellRows(head, r, c)) {
                     const QString t = m.contentForRow(v.toInt());
                     parts << (t.isEmpty() ? QStringLiteral("·") : t);
                 }
@@ -6799,37 +6799,37 @@ static void testTableSelectionOps() {
     m.insertTableRows(0, 3, 3);
     const char* text[3][3] = { { "A", "B", "C" }, { "a1", "b1", "c1" }, { "a2", "b2", "c2" } };
     for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c) m.setContent(m.gridCellAt(1, r, c), QString::fromLatin1(text[r][c]));
+        for (int c = 0; c < 3; ++c) m.setContent(m.tableCellAt(1, r, c), QString::fromLatin1(text[r][c]));
     const QString start = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2");
 
-    const QVariantList land = m.deleteSelectionRange(m.gridCellAt(1, 1, 0), 0, m.gridCellAt(1, 2, 1), 2);
-    CHECK(gridText(m, 1) == QStringLiteral("A B C | · · c1 | · · c2") && m.gridRowCount(1) == 3 && land.size() == 2
-              && land[0].toInt() == m.gridCellAt(1, 1, 0) && m.structureValid(),
-          "deleting a selection across cells clears the cell rectangle; rows and columns stay (%s)", qPrintable(gridText(m, 1)));
+    const QVariantList land = m.deleteSelectionRange(m.tableCellAt(1, 1, 0), 0, m.tableCellAt(1, 2, 1), 2);
+    CHECK(tableText(m, 1) == QStringLiteral("A B C | · · c1 | · · c2") && m.tableRowCount(1) == 3 && land.size() == 2
+              && land[0].toInt() == m.tableCellAt(1, 1, 0) && m.structureValid(),
+          "deleting a selection across cells clears the cell rectangle; rows and columns stay (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(gridText(m, 1) == start, "…one undo step");
-    m.deleteSelectionRange(m.gridCellAt(1, 2, 2), 1, m.gridCellAt(1, 0, 1), 0);
-    CHECK(gridText(m, 1) == QStringLiteral("A · · | a1 · · | a2 · ·") && m.structureValid(),
-          "…whichever way round the ends are (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == start, "…one undo step");
+    m.deleteSelectionRange(m.tableCellAt(1, 2, 2), 1, m.tableCellAt(1, 0, 1), 0);
+    CHECK(tableText(m, 1) == QStringLiteral("A · · | a1 · · | a2 · ·") && m.structureValid(),
+          "…whichever way round the ends are (%s)", qPrintable(tableText(m, 1)));
     m.undo();
 
-    m.deleteSelectionRange(0, 2, m.gridCellAt(1, 1, 1), 1);
+    m.deleteSelectionRange(0, 2, m.tableCellAt(1, 1, 1), 1);
     CHECK(m.rowCountQml() == 2 && m.contentForRow(0) == QStringLiteral("ab") && m.contentForRow(1) == QStringLiteral("below")
               && m.structureValid(),
           "a row range reaching into a table takes the whole table (%d rows)", m.rowCountQml());
     m.undo();
-    CHECK(gridText(m, 1) == start && m.contentForRow(0) == QStringLiteral("above"), "…one undo step");
+    CHECK(tableText(m, 1) == start && m.contentForRow(0) == QStringLiteral("above"), "…one undo step");
 
-    CHECK(m.gridPasteTSV(1, 2, 2, QStringLiteral("p\tq\nr\ts\n")) >= 0
-              && gridText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a2 b2 p q | · · r s") && m.tableColumnCount(1) == 4
+    CHECK(m.tablePasteTSV(1, 2, 2, QStringLiteral("p\tq\nr\ts\n")) >= 0
+              && tableText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a2 b2 p q | · · r s") && m.tableColumnCount(1) == 4
               && m.structureValid(),
-          "a TSV paste fills cells from the anchor and grows the table (%s)", qPrintable(gridText(m, 1)));
+          "a TSV paste fills cells from the anchor and grows the table (%s)", qPrintable(tableText(m, 1)));
     m.undo();
-    CHECK(gridText(m, 1) == start && m.tableColumnCount(1) == 3, "…one undo step (%s)", qPrintable(gridText(m, 1)));
+    CHECK(tableText(m, 1) == start && m.tableColumnCount(1) == 3, "…one undo step (%s)", qPrintable(tableText(m, 1)));
 
-    m.gridSetColumnKind(1, 0, 1);                              // options a1, a2
-    CHECK(m.gridPasteTSV(1, 1, 0, QStringLiteral("a2\nnew")) >= 0 && m.gridCellChoiceLabel(1, 1, 0) == QStringLiteral("a2")
-              && m.gridCellChoiceLabel(1, 2, 0) == QStringLiteral("new") && m.gridColumnOptions(1, 0).size() == 3 && m.structureValid(),
+    m.tableSetColumnKind(1, 0, 1);                              // options a1, a2
+    CHECK(m.tablePasteTSV(1, 1, 0, QStringLiteral("a2\nnew")) >= 0 && m.tableCellChoiceLabel(1, 1, 0) == QStringLiteral("a2")
+              && m.tableCellChoiceLabel(1, 2, 0) == QStringLiteral("new") && m.tableColumnOptions(1, 0).size() == 3 && m.structureValid(),
           "pasted values in a choice column adopt matching options and add the rest");
 }
 
@@ -6842,8 +6842,8 @@ static void testInsertGridFromTSV() {
     m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
     const int first = m.insertGridFromTSV(0, QStringLiteral("Name\tStatus\r\na\tb\nc\td\n"));
     const int head = first - 1;
-    CHECK(first == 2 && m.headerCount(head) == 1 && m.gridRowCount(head) == 3 && m.tableColumnCount(head) == 2
-              && m.gridCellText(head, 0, 1) == QStringLiteral("Status") && m.gridCellText(head, 2, 0) == QStringLiteral("c")
+    CHECK(first == 2 && m.headerCount(head) == 1 && m.tableRowCount(head) == 3 && m.tableColumnCount(head) == 2
+              && m.tableCellText(head, 0, 1) == QStringLiteral("Status") && m.tableCellText(head, 2, 0) == QStringLiteral("c")
               && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("below") && m.structureValid(),
           "the grid lands below the row as a table with a header row");
     m.undo();
@@ -6922,8 +6922,8 @@ static void testPastedHtmlTables() {
         m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
         m.pasteHtml(0, 5, QStringLiteral("<table><tr><th>Name</th><th>Status</th></tr><tr><td>a</td><td><b>b</b></td></tr></table>"));
         const int head = findTableHead(m);
-        CHECK(head >= 0 && m.gridRowCount(head) == 2 && m.gridCellText(head, 0, 0) == QStringLiteral("Name")
-                  && m.gridCellText(head, 1, 1) == QStringLiteral("b") && m.structureValid(),
+        CHECK(head >= 0 && m.tableRowCount(head) == 2 && m.tableCellText(head, 0, 0) == QStringLiteral("Name")
+                  && m.tableCellText(head, 1, 1) == QStringLiteral("b") && m.structureValid(),
               "an HTML table pastes as a table");
         m.undo();
         bool gone = true;
@@ -6942,10 +6942,10 @@ static void testPastedHtmlTables() {
         m.newDocument();
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0);
-        m.spliceSpecsAt(1, BlockModel::gridSpecsFromTable(g.toJson()), false, -1);
-        CHECK(m.headerCount(1) == 1 && m.tableColumnWidth(1, 0) == 200 && m.gridColumnKind(1, 1) == 1
-                  && m.gridCellChoiceLabel(1, 1, 1) == QStringLiteral("Done") && m.gridCellBg(1, 1, 0) == QStringLiteral("#ff0000")
-                  && m.gridCellText(1, 0, 0) == QStringLiteral("Name") && m.structureValid(),
+        m.spliceSpecsAt(1, BlockModel::tableSpecsFromGrid(g.toJson()), false, -1);
+        CHECK(m.headerCount(1) == 1 && m.tableColumnWidth(1, 0) == 200 && m.tableColumnKind(1, 1) == 1
+                  && m.tableCellChoiceLabel(1, 1, 1) == QStringLiteral("Done") && m.tableCellBg(1, 1, 0) == QStringLiteral("#ff0000")
+                  && m.tableCellText(1, 0, 0) == QStringLiteral("Name") && m.structureValid(),
               "a Table grid converts with its widths, choice column, values and cell colours");
     }
 }
@@ -6964,8 +6964,8 @@ static void testTableGripsAndDrops() {
         m.insertBlock(0); m.setContent(0, QStringLiteral("p0"));
         m.insertBlock(1); m.setContent(1, QStringLiteral("p1"));
         const int head = m.insertTableRows(0, 3, 2) - 1;
-        m.setContent(m.gridCellAt(head, 0, 0), QStringLiteral("H"));
-        m.setContent(m.gridCellAt(head, 2, 1), QStringLiteral("z"));
+        m.setContent(m.tableCellAt(head, 0, 0), QStringLiteral("H"));
+        m.setContent(m.tableCellAt(head, 2, 1), QStringLiteral("z"));
         return head;
     };
     {
@@ -6976,11 +6976,11 @@ static void testTableGripsAndDrops() {
         CHECK(head == 1 && count == 9 && m.rowCountQml() == 11, "fixture: p0 · a 3-row table · p1");
         m.moveBlocks(head, count, m.rowCountQml() - count, -1);        // the table's run, below p1
         CHECK(m.contentForRow(0) == QStringLiteral("p0") && m.contentForRow(1) == QStringLiteral("p1")
-                  && m.headerCount(2) == 1 && m.gridRowCount(2) == 3 && m.gridCellText(2, 0, 0) == QStringLiteral("H")
-                  && m.gridCellText(2, 2, 1) == QStringLiteral("z") && m.structureValid(),
+                  && m.headerCount(2) == 1 && m.tableRowCount(2) == 3 && m.tableCellText(2, 0, 0) == QStringLiteral("H")
+                  && m.tableCellText(2, 2, 1) == QStringLiteral("z") && m.structureValid(),
               "the header row's run carries the whole table, header and cells intact");
         m.undo();
-        CHECK(m.headerCount(1) == 1 && m.gridRowCount(1) == 3 && m.contentForRow(10) == QStringLiteral("p1") && m.structureValid(),
+        CHECK(m.headerCount(1) == 1 && m.tableRowCount(1) == 3 && m.contentForRow(10) == QStringLiteral("p1") && m.structureValid(),
               "…one undo step puts it back");
     }
     {
@@ -6989,31 +6989,31 @@ static void testTableGripsAndDrops() {
         const int rec = m.tableRecords(head).back().toInt();
         m.moveBlocks(rec, m.splitRowLast(rec) - rec + 1, 0, -1);      // the last body row, above p0
         CHECK(m.typeForRow(0) == BlockModel::Split && m.tableHeadOf(0) < 0 && m.headerCount(4) == 1
-                  && m.gridRowCount(4) == 2 && m.structureValid(),
+                  && m.tableRowCount(4) == 2 && m.structureValid(),
               "a body row dropped outside its table leaves it and becomes a layout row");
     }
     {
         BlockModel m;
         const int head = fresh(m);
-        const int land = m.gridInsertMedia(head, 1, 0, QVariantList{ url });
-        const QVariantList cell = m.gridCellRows(head, 1, 0);
+        const int land = m.tableInsertMedia(head, 1, 0, QVariantList{ url });
+        const QVariantList cell = m.tableCellRows(head, 1, 0);
         CHECK(land >= 0 && cell.size() == 1 && cell.front().toInt() == land && m.typeForRow(land) == BlockModel::Media
-                  && m.gridColumnOf(land) == 0 && m.structureValid(),
+                  && m.tableColumnOf(land) == 0 && m.structureValid(),
               "a file dropped on an empty cell replaces its empty paragraph");
         m.undo();
-        const QVariantList back = m.gridCellRows(head, 1, 0);
+        const QVariantList back = m.tableCellRows(head, 1, 0);
         CHECK(back.size() == 1 && m.typeForRow(back.front().toInt()) == BlockModel::Paragraph && m.structureValid(),
               "…one undo step");
-        const int x = m.gridCellAt(head, 1, 1);
+        const int x = m.tableCellAt(head, 1, 1);
         m.setContent(x, QStringLiteral("x"));
-        CHECK(m.gridInsertMedia(head, 1, 1, QVariantList{ url, url }) >= 0 && m.gridCellRows(head, 1, 1).size() == 3
-                  && m.contentForRow(m.gridCellAt(head, 1, 1)) == QStringLiteral("x") && m.structureValid(),
+        CHECK(m.tableInsertMedia(head, 1, 1, QVariantList{ url, url }) >= 0 && m.tableCellRows(head, 1, 1).size() == 3
+                  && m.contentForRow(m.tableCellAt(head, 1, 1)) == QStringLiteral("x") && m.structureValid(),
               "two files dropped on a cell with text append after it, in order");
         m.undo();
-        CHECK(m.gridCellRows(head, 1, 1).size() == 1, "…both in one undo step");
-        CHECK(m.gridSetColumnKind(head, 0, 1) && m.gridInsertMedia(head, 2, 0, QVariantList{ url }) < 0,
+        CHECK(m.tableCellRows(head, 1, 1).size() == 1, "…both in one undo step");
+        CHECK(m.tableSetColumnKind(head, 0, 1) && m.tableInsertMedia(head, 2, 0, QVariantList{ url }) < 0,
               "a typed body cell refuses a drop");
-        CHECK(m.gridInsertMedia(head, 0, 0, QVariantList{ url }) >= 0 && m.gridCellText(head, 0, 0).contains(QStringLiteral("H"))
+        CHECK(m.tableInsertMedia(head, 0, 0, QVariantList{ url }) >= 0 && m.tableCellText(head, 0, 0).contains(QStringLiteral("H"))
                   && m.structureValid(),
               "a header cell over a typed column takes it (header rows are text)");
     }
@@ -7033,13 +7033,13 @@ static void testLegacyTableSinks() {
         BlockModel::BlockSpec a; a.type = BlockModel::Paragraph; a.text = QStringLiteral("before");
         BlockModel::BlockSpec b; b.type = BlockModel::Paragraph; b.text = QStringLiteral("after");
         std::vector<BlockModel::BlockSpec> specs{ a };
-        for (BlockModel::BlockSpec& sp : BlockModel::gridSpecsFromTable(g.toJson())) specs.push_back(std::move(sp));
+        for (BlockModel::BlockSpec& sp : BlockModel::tableSpecsFromGrid(g.toJson())) specs.push_back(std::move(sp));
         specs.push_back(b);
         CHECK(specs.size() == 11, "the grid IR becomes 3 records × (1 + 2 cells) = 9 specs");
         m.insertSpecs(0, specs, true);
         const int head = findTableHead(m), lastRow = m.rowCountQml() - 1;
-        CHECK(m.contentForRow(0) == QStringLiteral("before") && head == 1 && m.gridRowCount(head) == 3
-                  && m.gridCellText(head, 0, 0) == QStringLiteral("H") && m.gridCellText(head, 2, 1) == QStringLiteral("z")
+        CHECK(m.contentForRow(0) == QStringLiteral("before") && head == 1 && m.tableRowCount(head) == 3
+                  && m.tableCellText(head, 0, 0) == QStringLiteral("H") && m.tableCellText(head, 2, 1) == QStringLiteral("z")
                   && m.contentForRow(lastRow) == QStringLiteral("after") && m.laneForRow(lastRow) < 0 && m.structureValid(),
               "a table between paragraphs: the paragraph after it at top level");
     }
@@ -7062,7 +7062,7 @@ static void testLegacyTableSinks() {
         const qint64 ms = timer.elapsed();
         qInfo("  3001 x 4 csv -> %d blocks in %lld ms", m.rowCountQml(), ms);
         const int head = findTableHead(m);
-        CHECK(head == 0 && m.gridRowCount(head) == 3001 && m.gridCellText(head, 3000, 0) == QStringLiteral("2999")
+        CHECK(head == 0 && m.tableRowCount(head) == 3001 && m.tableCellText(head, 3000, 0) == QStringLiteral("2999")
                   && m.structureValid(),
               "…as one derived table, the last row in place");
         CHECK(ms < 8000, "…in near-linear time (%lld ms; a regrouping per inserted row was O(n^2))", ms);
@@ -7072,9 +7072,9 @@ static void testLegacyTableSinks() {
         int sink = 0;
         for (int k = 0; k < 4000; ++k) {
             const int r = (k * 7919) % 3001;
-            const int b = m.gridCellAt(head, r, k % 4);
-            sink += m.gridRowOf(b) + m.tableColumnCount(head) + m.gridColumnKind(head, k % 4)
-                  + m.gridCellBg(head, r, k % 4).size() + (m.isHeaderRow(b) ? 1 : 0) + m.gridCellCheck(head, r, k % 4);
+            const int b = m.tableCellAt(head, r, k % 4);
+            sink += m.tableRowOf(b) + m.tableColumnCount(head) + m.tableColumnKind(head, k % 4)
+                  + m.tableCellBg(head, r, k % 4).size() + (m.isHeaderRow(b) ? 1 : 0) + m.tableCellCheck(head, r, k % 4);
         }
         const qint64 lookupMs = timer.elapsed();
         qInfo("  4000 x 6 cell lookups in %lld ms (sink %d)", lookupMs, sink);
@@ -7091,20 +7091,20 @@ static void testGridTableExports() {
     m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
     m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
     const int head = m.insertTableRows(0, 3, 3) - 1;               // 0 before · table · after
-    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(head, r, c), QString::fromUtf8(t)); };
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.tableCellAt(head, r, c), QString::fromUtf8(t)); };
     set(0, 0, "Name"); set(0, 1, "Status"); set(0, 2, "Done");
     set(1, 0, "a1");   set(1, 1, "b1");
     set(2, 0, "a2");   set(2, 1, "b2");
     {
-        const int b = m.gridCellAt(head, 1, 1);
+        const int b = m.tableCellAt(head, 1, 1);
         m.insertBlock(b + 1);
         m.setContent(b + 1, QStringLiteral("b1x"));
     }
-    m.gridSetColAlign(head, 1, 1);
+    m.tableSetColAlign(head, 1, 1);
     m.setTableColumnWidth(head, 0, 200);
-    m.gridSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#ff0000"));
-    CHECK(m.gridSetColumnKind(head, 2, 2) && m.gridSetCellCheck(head, 1, 2, 2), "fixture: a check column, one box done");
-    CHECK(m.structureValid() && m.gridCellRows(head, 1, 1).size() == 2 && m.gridCellText(head, 1, 1) == QStringLiteral("b1\nb1x"),
+    m.tableSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#ff0000"));
+    CHECK(m.tableSetColumnKind(head, 2, 2) && m.tableSetCellCheck(head, 1, 2, 2), "fixture: a check column, one box done");
+    CHECK(m.structureValid() && m.tableCellRows(head, 1, 1).size() == 2 && m.tableCellText(head, 1, 1) == QStringLiteral("b1\nb1x"),
           "fixture: a 3×3 table with a two-block cell");
 
     Exporter ex;
@@ -7148,20 +7148,20 @@ static void testGridTableDocxPdf() {
     m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
     m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
     const int head = m.insertTableRows(0, 3, 3) - 1;
-    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(head, r, c), QString::fromUtf8(t)); };
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.tableCellAt(head, r, c), QString::fromUtf8(t)); };
     set(0, 0, "Name"); set(0, 1, "Status"); set(0, 2, "Done");
     set(1, 0, "alpha"); set(1, 1, "bravo");
     set(2, 0, "charlie"); set(2, 1, "delta");
     {
-        const int b = m.gridCellAt(head, 1, 1);
+        const int b = m.tableCellAt(head, 1, 1);
         m.insertBlock(b + 1);
         m.setContent(b + 1, QStringLiteral("echo"));
     }
-    m.gridSetColAlign(head, 1, 1);
+    m.tableSetColAlign(head, 1, 1);
     m.setTableColumnWidth(head, 0, 200);
-    m.gridSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#ff0000"));
-    CHECK(m.gridSetColumnKind(head, 2, 2) && m.gridSetCellCheck(head, 1, 2, 2) && m.structureValid()
-              && m.gridCellRows(head, 1, 1).size() == 2,
+    m.tableSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#ff0000"));
+    CHECK(m.tableSetColumnKind(head, 2, 2) && m.tableSetCellCheck(head, 1, 2, 2) && m.structureValid()
+              && m.tableCellRows(head, 1, 1).size() == 2,
           "fixture: a 3×3 table with a two-block cell and a check column");
 
     Exporter ex;
@@ -7177,7 +7177,7 @@ static void testGridTableDocxPdf() {
         CHECK(doc.count("<w:tbl>") == 1 && doc.count("<w:tr>") == 3 && doc.count("<w:tblHeader/>") == 1
                   && doc.count("<w:tc>") == 9,
               "DOCX: one table, three rows, the header row marked to repeat, nine cells");
-        CHECK(doc.contains("<w:gridCol w:w=\"3000\" w:type=\"dxa\"/>") && doc.contains("w:fill=\"FF0000\"")
+        CHECK(doc.contains("<w:tableCol w:w=\"3000\" w:type=\"dxa\"/>") && doc.contains("w:fill=\"FF0000\"")
                   && doc.contains("<w:jc w:val=\"center\"/>") && doc.contains("mnTask"),
               "DOCX: the 200 px column as 3000 dxa, the cell shading, the column alignment, the check glyph");
         const qsizetype b = doc.indexOf(">bravo<"), e = doc.indexOf(">echo<");
@@ -7192,8 +7192,8 @@ static void testGridTableDocxPdf() {
         back.insertBlock(0);
         CHECK(Importer::importDocxFile(docxPath, &back), "the DOCX imports back");
         const int h = findTableHead(back);
-        CHECK(h >= 0 && back.gridRowCount(h) == 3 && back.gridCellText(h, 0, 0) == QStringLiteral("Name")
-                  && back.gridCellText(h, 2, 0) == QStringLiteral("charlie") && back.gridCellText(h, 1, 1).contains(QStringLiteral("bravo")),
+        CHECK(h >= 0 && back.tableRowCount(h) == 3 && back.tableCellText(h, 0, 0) == QStringLiteral("Name")
+                  && back.tableCellText(h, 2, 0) == QStringLiteral("charlie") && back.tableCellText(h, 1, 1).contains(QStringLiteral("bravo")),
               "…as one derived table with its cells");
     }
 
@@ -7233,23 +7233,23 @@ static void testCopyByGrain() {
     m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
     m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
     const int head = m.insertTableRows(0, 3, 3) - 1;
-    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(head, r, c), QString::fromUtf8(t)); };
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.tableCellAt(head, r, c), QString::fromUtf8(t)); };
     set(0, 0, "Name"); set(0, 1, "Status"); set(0, 2, "Done");
     set(1, 0, "a1"); set(1, 1, "b1"); set(1, 2, "c1");
     set(2, 0, "a2"); set(2, 1, "tab\there"); set(2, 2, "c2");
     {
-        const int b = m.gridCellAt(head, 1, 1);
+        const int b = m.tableCellAt(head, 1, 1);
         m.insertBlock(b + 1);
         m.setContent(b + 1, QStringLiteral("b1x"));
     }
-    m.gridSetCellColor(head, 2, 0, 2, 0, false, QStringLiteral("#00ff00"));
-    CHECK(m.structureValid() && m.gridCellText(head, 1, 1) == QStringLiteral("b1\nb1x"), "fixture: a 3×3 table with a two-block cell");
+    m.tableSetCellColor(head, 2, 0, 2, 0, false, QStringLiteral("#00ff00"));
+    CHECK(m.structureValid() && m.tableCellText(head, 1, 1) == QStringLiteral("b1\nb1x"), "fixture: a 3×3 table with a two-block cell");
 
     // A body-row rectangle: records without the header role, cells reindexed, the spec subset and 0 header rows.
     {
         BlockClipboard::Payload p;
         QString err;
-        CHECK(BlockClipboard::decode(m.gridCopyPayload(head, { 1, 2 }, { 1, 2 }).toUtf8(), &p, &err), "a fragment payload decodes (%s)", qPrintable(err));
+        CHECK(BlockClipboard::decode(m.tableCopyPayload(head, { 1, 2 }, { 1, 2 }).toUtf8(), &p, &err), "a fragment payload decodes (%s)", qPrintable(err));
         int records = 0, cells = 0, maxCell = -1;
         for (const BlockModel::BlockSpec& sp : p.specs) {
             if (sp.type == BlockModel::Split) { ++records; if (sp.header != 0) records += 100; }
@@ -7261,13 +7261,13 @@ static void testCopyByGrain() {
     }
     {   // Rows including the header row: header 1; a column set keeps the cells' own colours reindexed.
         BlockClipboard::Payload p;
-        CHECK(BlockClipboard::decode(m.gridCopyPayload(head, { 0, 1, 2 }, { 0 }).toUtf8(), &p)
+        CHECK(BlockClipboard::decode(m.tableCopyPayload(head, { 0, 1, 2 }, { 0 }).toUtf8(), &p)
                   && p.grid.value(QStringLiteral("header")).toInt() == 1 && p.specs.size() == 6
                   && p.specs[4].type == BlockModel::Split && p.specs[4].table.contains(QStringLiteral("#00ff00")),
               "a column set with the header row: header 1, the coloured cell's colour rides its record");
     }
     // TSV: multi-block and tab-holding cells are quoted, and read back.
-    const QString tsv = m.gridCellsTSV(head, { 1, 2 }, { 0, 1 });
+    const QString tsv = m.tableCellsTSV(head, { 1, 2 }, { 0, 1 });
     CHECK(tsv == QStringLiteral("a1\t\"b1\nb1x\"\na2\t\"tab\there\""), "TSV quotes fields with newlines or tabs (%s)", qPrintable(tsv));
     {
         const TableGrid g = TableGrid::fromTSV(tsv);
@@ -7280,12 +7280,12 @@ static void testCopyByGrain() {
     }
     Exporter ex;
     ex.setModel(&m);
-    const QString cells = ex.gridCellsHtml(head, { 0, 1 }, { 0, 1, 2 });
+    const QString cells = ex.tableCellsHtml(head, { 0, 1 }, { 0, 1, 2 });
     CHECK(cells.count(QStringLiteral("<table")) == 1 && cells.contains(QStringLiteral("<thead>"))
               && cells.count(QRegularExpression(QStringLiteral("<th[ >]"))) == 3 && cells.count(QRegularExpression(QStringLiteral("<td[ >]"))) == 3
               && cells.contains(QStringLiteral("b1<br>b1x")),
           "cell HTML: one table, the header row as <th> in <thead>, a two-block cell joined with <br>");
-    const QString body = ex.gridCellsHtml(head, { 1, 2 }, { 0, 1 });
+    const QString body = ex.tableCellsHtml(head, { 1, 2 }, { 0, 1 });
     CHECK(!body.contains(QStringLiteral("<thead>")) && body.count(QRegularExpression(QStringLiteral("<td[ >]"))) == 4,
           "body-only cells: no thead, four <td>");
     // A whole-document range: markdown text with the GFM table; the HTML fragment has the table and no page chrome.
@@ -7309,75 +7309,75 @@ static void testPasteRules() {
         m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
         const int head = m.insertTableRows(0, 3, 3) - 1;
         const char* names[3] = { "Name", "Status", "Done" };
-        for (int c = 0; c < 3; ++c) m.setContent(m.gridCellAt(head, 0, c), QString::fromUtf8(names[c]));
+        for (int c = 0; c < 3; ++c) m.setContent(m.tableCellAt(head, 0, c), QString::fromUtf8(names[c]));
         for (int r = 1; r < 3; ++r)
             for (int c = 0; c < 3; ++c)
-                m.setContent(m.gridCellAt(head, r, c), QStringLiteral("%1%2%3").arg(QLatin1String(prefix)).arg(r).arg(c));
+                m.setContent(m.tableCellAt(head, r, c), QStringLiteral("%1%2%3").arg(QLatin1String(prefix)).arg(r).arg(c));
         return head;
     };
     BlockModel src;
     const int sh = fresh(src, "s");
     {
-        const int b = src.gridCellAt(sh, 1, 1);                     // a two-block cell
+        const int b = src.tableCellAt(sh, 1, 1);                     // a two-block cell
         src.insertBlock(b + 1);
         src.setContent(b + 1, QStringLiteral("s11b"));
     }
-    const QString bodyFrag = src.gridCopyPayload(sh, { 1, 2 }, { 1, 2 });      // headerless 2×2
-    const QString headed = src.gridCopyPayload(sh, { 0, 1, 2 }, { 2, 0 });     // header + 2 rows, columns Done, Name
+    const QString bodyFrag = src.tableCopyPayload(sh, { 1, 2 }, { 1, 2 });      // headerless 2×2
+    const QString headed = src.tableCopyPayload(sh, { 0, 1, 2 }, { 2, 0 });     // header + 2 rows, columns Done, Name
     int cr = -1, cc = -1;
     QString err;
     {   // Fill by position from the caret's cell, the two-block cell landing whole.
         BlockModel m;
         const int h = fresh(m, "t");
-        const int anchor = m.gridCellAt(h, 1, 1);
+        const int anchor = m.tableCellAt(h, 1, 1);
         const int entries = m.undoHistory().size();
         CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, anchor, 0, -1, 0, -1, 0, &cr, &cc, &err), "a headerless fragment pastes into a cell (%s)", qPrintable(err));
-        CHECK(m.gridRowCount(h) == 3 && m.tableColumnCount(h) == 3 && m.gridCellText(h, 1, 1) == QStringLiteral("s11\ns11b")
-                  && m.gridCellText(h, 1, 2) == QStringLiteral("s12") && m.gridCellText(h, 2, 2) == QStringLiteral("s22")
-                  && m.gridCellText(h, 1, 0) == QStringLiteral("t10") && m.structureValid(),
+        CHECK(m.tableRowCount(h) == 3 && m.tableColumnCount(h) == 3 && m.tableCellText(h, 1, 1) == QStringLiteral("s11\ns11b")
+                  && m.tableCellText(h, 1, 2) == QStringLiteral("s12") && m.tableCellText(h, 2, 2) == QStringLiteral("s22")
+                  && m.tableCellText(h, 1, 0) == QStringLiteral("t10") && m.structureValid(),
               "…fills the 2×2 from (1,1) by position; the rest of the table untouched");
-        CHECK(m.gridColumnOf(cr) == 2 && m.gridRowOf(cr) == 2, "…the caret lands in the last written cell");
+        CHECK(m.tableColumnOf(cr) == 2 && m.tableRowOf(cr) == 2, "…the caret lands in the last written cell");
         CHECK(m.undoHistory().size() == entries + 1, "…one undo entry");
         m.undo();
-        CHECK(m.gridCellText(h, 1, 1) == QStringLiteral("t11") && m.structureValid(), "…undo restores the cells");
+        CHECK(m.tableCellText(h, 1, 1) == QStringLiteral("t11") && m.structureValid(), "…undo restores the cells");
     }
     {   // Fill past the edge grows the table; a cell rectangle's top-left is the anchor.
         BlockModel m;
         const int h = fresh(m, "t");
-        const int a = m.gridCellAt(h, 2, 2), z = m.gridCellAt(h, 2, 2);
+        const int a = m.tableCellAt(h, 2, 2), z = m.tableCellAt(h, 2, 2);
         Q_UNUSED(z);
         CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, a, 0, -1, 0, -1, 0, &cr, &cc, &err)
-                  && m.gridRowCount(h) == 4 && m.tableColumnCount(h) == 4 && m.gridCellText(h, 3, 3) == QStringLiteral("s22") && m.structureValid(),
-              "a fill past the last row and column grows the table (%dx%d)", m.gridRowCount(h), m.tableColumnCount(h));
+                  && m.tableRowCount(h) == 4 && m.tableColumnCount(h) == 4 && m.tableCellText(h, 3, 3) == QStringLiteral("s22") && m.structureValid(),
+              "a fill past the last row and column grows the table (%dx%d)", m.tableRowCount(h), m.tableColumnCount(h));
     }
     {   // A headered fragment appends by label: columns Done/Name map to the target's, rows land below the caret's row.
         BlockModel m;
         const int h = fresh(m, "t");
-        const int anchor = m.gridCellAt(h, 1, 0);
+        const int anchor = m.tableCellAt(h, 1, 0);
         CHECK(ClipboardPaster::pasteBlocks(&m, headed, anchor, 0, -1, 0, -1, 0, &cr, &cc, &err), "a headered fragment pastes into a table (%s)", qPrintable(err));
-        CHECK(m.gridRowCount(h) == 5 && m.tableColumnCount(h) == 3
-                  && m.gridCellText(h, 2, 0) == QStringLiteral("s10") && m.gridCellText(h, 2, 2) == QStringLiteral("s12")
-                  && m.gridCellText(h, 2, 1).isEmpty() && m.gridCellText(h, 4, 0) == QStringLiteral("t20") && m.structureValid(),
+        CHECK(m.tableRowCount(h) == 5 && m.tableColumnCount(h) == 3
+                  && m.tableCellText(h, 2, 0) == QStringLiteral("s10") && m.tableCellText(h, 2, 2) == QStringLiteral("s12")
+                  && m.tableCellText(h, 2, 1).isEmpty() && m.tableCellText(h, 4, 0) == QStringLiteral("t20") && m.structureValid(),
               "…two rows inserted below row 1, columns matched by label (Done → col 2, Name → col 0), Status empty");
         m.undo();
-        CHECK(m.gridRowCount(h) == 3, "…one undo step");
+        CHECK(m.tableRowCount(h) == 3, "…one undo step");
     }
     {   // An unmatched source column is appended, with its header text; from a header row the rows go to the end.
         BlockModel m;
         const int h = fresh(m, "t");
-        m.setContent(m.gridCellAt(h, 0, 2), QStringLiteral("Other"));
-        CHECK(ClipboardPaster::pasteBlocks(&m, headed, m.gridCellAt(h, 0, 0), 0, -1, 0, -1, 0, &cr, &cc, &err)
-                  && m.tableColumnCount(h) == 4 && m.gridCellText(h, 0, 3) == QStringLiteral("Done")
-                  && m.gridRowCount(h) == 5 && m.gridCellText(h, 3, 3) == QStringLiteral("s12") && m.gridCellText(h, 3, 0) == QStringLiteral("s10")
+        m.setContent(m.tableCellAt(h, 0, 2), QStringLiteral("Other"));
+        CHECK(ClipboardPaster::pasteBlocks(&m, headed, m.tableCellAt(h, 0, 0), 0, -1, 0, -1, 0, &cr, &cc, &err)
+                  && m.tableColumnCount(h) == 4 && m.tableCellText(h, 0, 3) == QStringLiteral("Done")
+                  && m.tableRowCount(h) == 5 && m.tableCellText(h, 3, 3) == QStringLiteral("s12") && m.tableCellText(h, 3, 0) == QStringLiteral("s10")
                   && m.structureValid(),
               "…'Done' has no match: a new column with that header; rows appended at the end from the header row");
     }
     {   // Paste into cells: the header row pastes as content, by position.
         BlockModel m;
         const int h = fresh(m, "t");
-        CHECK(ClipboardPaster::pasteBlocks(&m, headed, m.gridCellAt(h, 1, 1), 0, -1, 0, -1, 0, &cr, &cc, &err, /*intoCells=*/true)
-                  && m.gridRowCount(h) == 4 && m.gridCellText(h, 1, 1) == QStringLiteral("Done") && m.gridCellText(h, 1, 2) == QStringLiteral("Name")
-                  && m.gridCellText(h, 3, 2) == QStringLiteral("s20") && m.structureValid(),
+        CHECK(ClipboardPaster::pasteBlocks(&m, headed, m.tableCellAt(h, 1, 1), 0, -1, 0, -1, 0, &cr, &cc, &err, /*intoCells=*/true)
+                  && m.tableRowCount(h) == 4 && m.tableCellText(h, 1, 1) == QStringLiteral("Done") && m.tableCellText(h, 1, 2) == QStringLiteral("Name")
+                  && m.tableCellText(h, 3, 2) == QStringLiteral("s20") && m.structureValid(),
               "Paste into cells fills by position with the header row as content");
     }
     {   // Outside a table a fragment becomes a table: first row the header, the column spec carried.
@@ -7386,26 +7386,26 @@ static void testPasteRules() {
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0); m.setContent(0, QStringLiteral("p"));
         src.setTableColumnWidth(sh, 1, 222);
-        const QString frag = src.gridCopyPayload(sh, { 1, 2 }, { 1, 2 });
+        const QString frag = src.tableCopyPayload(sh, { 1, 2 }, { 1, 2 });
         CHECK(ClipboardPaster::pasteBlocks(&m, frag, 0, 1, -1, 0, -1, 0, &cr, &cc, &err), "a fragment pastes outside a table (%s)", qPrintable(err));
         const int h = findTableHead(m);
-        CHECK(h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 2 && m.tableColumnCount(h) == 2
-                  && m.gridCellText(h, 0, 0) == QStringLiteral("s11\ns11b") && m.tableColumnWidth(h, 0) == 222 && m.structureValid(),
+        CHECK(h >= 0 && m.headerCount(h) == 1 && m.tableRowCount(h) == 2 && m.tableColumnCount(h) == 2
+                  && m.tableCellText(h, 0, 0) == QStringLiteral("s11\ns11b") && m.tableColumnWidth(h, 0) == 222 && m.structureValid(),
               "…a new 2×2 table, its first row the header, the copied column width kept");
     }
     {   // A typed target column adopts by label; a foreign table-only HTML paste fills (no thead) or appends (thead).
         BlockModel m;
         const int h = fresh(m, "t");
-        m.gridSetColumnKind(h, 2, 1);
-        CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, m.gridCellAt(h, 1, 1), 0, -1, 0, -1, 0, &cr, &cc, &err)
-                  && m.gridCellChoiceLabel(h, 1, 2) == QStringLiteral("s12") && m.gridColumnOptions(h, 2).size() == 4,
-              "a choice column adopts pasted values as options by label (2 harvested + 2 pasted = %d)", int(m.gridColumnOptions(h, 2).size()));
-        const QVariantList land = m.pasteHtml(m.gridCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><td>x1</td><td>x2</td></tr></table>"));
-        CHECK(land.size() == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("x1") && m.gridCellText(h, 1, 1) == QStringLiteral("x2")
-                  && m.gridRowCount(h) == 3 && m.structureValid(),
+        m.tableSetColumnKind(h, 2, 1);
+        CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, m.tableCellAt(h, 1, 1), 0, -1, 0, -1, 0, &cr, &cc, &err)
+                  && m.tableCellChoiceLabel(h, 1, 2) == QStringLiteral("s12") && m.tableColumnOptions(h, 2).size() == 4,
+              "a choice column adopts pasted values as options by label (2 harvested + 2 pasted = %d)", int(m.tableColumnOptions(h, 2).size()));
+        const QVariantList land = m.pasteHtml(m.tableCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><td>x1</td><td>x2</td></tr></table>"));
+        CHECK(land.size() == 2 && m.tableCellText(h, 1, 0) == QStringLiteral("x1") && m.tableCellText(h, 1, 1) == QStringLiteral("x2")
+                  && m.tableRowCount(h) == 3 && m.structureValid(),
               "an Excel-style table (no header) into a cell fills by position");
-        CHECK(m.pasteHtml(m.gridCellAt(h, 2, 0), 0, QStringLiteral("<table><thead><tr><th>Status</th></tr></thead><tr><td>st</td></tr></table>")).size() == 2
-                  && m.gridRowCount(h) == 4 && m.gridCellText(h, 3, 1) == QStringLiteral("st") && m.gridCellText(h, 3, 0).isEmpty() && m.structureValid(),
+        CHECK(m.pasteHtml(m.tableCellAt(h, 2, 0), 0, QStringLiteral("<table><thead><tr><th>Status</th></tr></thead><tr><td>st</td></tr></table>")).size() == 2
+                  && m.tableRowCount(h) == 4 && m.tableCellText(h, 3, 1) == QStringLiteral("st") && m.tableCellText(h, 3, 0).isEmpty() && m.structureValid(),
               "a table with a thead into a cell appends by label");
     }
 }
@@ -7424,9 +7424,9 @@ static void testPasteRouter() {
     In tsv; tsv.text = QStringLiteral("a\tb\nc\td");
     CHECK(r(tsv, At{}) == QLatin1String("tableFromTsv"), "tabular text: a new table at top level");
     At inTable; inTable.inTable = true;
-    CHECK(r(tsv, inTable) == QLatin1String("gridTsv"), "…and a cell fill in a table");
+    CHECK(r(tsv, inTable) == QLatin1String("tableTsv"), "…and a cell fill in a table");
     In prose; prose.text = QStringLiteral("hello\nworld");
-    CHECK(r(prose, At{}) == QLatin1String("text") && r(prose, inTable) == QLatin1String("gridTsv") && r(prose, code) == QLatin1String("codeVerbatim"),
+    CHECK(r(prose, At{}) == QLatin1String("text") && r(prose, inTable) == QLatin1String("tableTsv") && r(prose, code) == QLatin1String("codeVerbatim"),
           "plain text: smart paste; newlines fill cells in a table; verbatim in code");
     In noTable = tsv; noTable.noTable = true;
     CHECK(r(noTable, At{}) == QLatin1String("text"), "a tabular text that failed to make a table pastes as text");
@@ -7501,9 +7501,9 @@ static void testForeignTables() {
         m.insertBlock(0);
         CHECK(m.pasteHtml(0, 0, html).size() == 2, "the HTML pastes");
         const int h = findTableHead(m);
-        CHECK(h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 3 && m.tableColumnCount(h) == 3
-                  && m.tableColumnWidth(h, 0) == 120 && m.gridColAlign(h, 1) == 1 && m.gridCellBg(h, 2, 0) == QStringLiteral("#ff0000")
-                  && m.gridCellRows(h, 2, 0).size() == 3 && m.gridCellText(h, 1, 2).isEmpty() && m.structureValid(),
+        CHECK(h >= 0 && m.headerCount(h) == 1 && m.tableRowCount(h) == 3 && m.tableColumnCount(h) == 3
+                  && m.tableColumnWidth(h, 0) == 120 && m.tableColAlign(h, 1) == 1 && m.tableCellBg(h, 2, 0) == QStringLiteral("#ff0000")
+                  && m.tableCellRows(h, 2, 0).size() == 3 && m.tableCellText(h, 1, 2).isEmpty() && m.structureValid(),
               "…a 3×3 derived table with its width, alignment, cell colour and a three-block cell");
         CHECK(m.contentForRow(0) == QStringLiteral("intro") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("outro"),
               "…the prose lands around it");
@@ -7514,13 +7514,13 @@ static void testForeignTables() {
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0);
         const int h = m.insertTableRows(0, 2, 2) - 1;
-        m.setContent(m.gridCellAt(h, 0, 0), QStringLiteral("Name"));
-        m.setContent(m.gridCellAt(h, 0, 1), QStringLiteral("Qty"));
-        CHECK(m.pasteHtml(m.gridCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><td>n1</td><td>q1</td></tr></table>")).size() == 2
-                  && m.gridRowCount(h) == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("n1") && m.gridCellText(h, 1, 1) == QStringLiteral("q1"),
+        m.setContent(m.tableCellAt(h, 0, 0), QStringLiteral("Name"));
+        m.setContent(m.tableCellAt(h, 0, 1), QStringLiteral("Qty"));
+        CHECK(m.pasteHtml(m.tableCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><td>n1</td><td>q1</td></tr></table>")).size() == 2
+                  && m.tableRowCount(h) == 2 && m.tableCellText(h, 1, 0) == QStringLiteral("n1") && m.tableCellText(h, 1, 1) == QStringLiteral("q1"),
               "a headerless table into a cell fills by position");
-        CHECK(m.pasteHtml(m.gridCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><th>Qty</th><th>Name</th></tr><tr><td>q2</td><td>n2</td></tr></table>")).size() == 2
-                  && m.gridRowCount(h) == 3 && m.gridCellText(h, 2, 0) == QStringLiteral("n2") && m.gridCellText(h, 2, 1) == QStringLiteral("q2") && m.structureValid(),
+        CHECK(m.pasteHtml(m.tableCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><th>Qty</th><th>Name</th></tr><tr><td>q2</td><td>n2</td></tr></table>")).size() == 2
+                  && m.tableRowCount(h) == 3 && m.tableCellText(h, 2, 0) == QStringLiteral("n2") && m.tableCellText(h, 2, 1) == QStringLiteral("q2") && m.structureValid(),
               "a <th>-headed table (no thead) into a cell appends by label, columns swapped back");
     }
     {   // GFM pipe table in plain text, prose around it.
@@ -7530,9 +7530,9 @@ static void testForeignTables() {
         m.insertBlock(0);
         const QVariantList c = m.pasteText(0, 0, QStringLiteral("before\n| A | B |\n|:---:|---:|\n| **x** | y\\|z |\n| 1 | 2 |\nafter"));
         const int h = findTableHead(m);
-        CHECK(c.size() == 2 && h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 3 && m.tableColumnCount(h) == 2
-                  && m.gridColAlign(h, 0) == 1 && m.gridColAlign(h, 1) == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("x")
-                  && m.hasFormat(m.gridCellAt(h, 1, 0), 0, 1, QStringLiteral("bold")) && m.gridCellText(h, 1, 1) == QStringLiteral("y|z")
+        CHECK(c.size() == 2 && h >= 0 && m.headerCount(h) == 1 && m.tableRowCount(h) == 3 && m.tableColumnCount(h) == 2
+                  && m.tableColAlign(h, 0) == 1 && m.tableColAlign(h, 1) == 2 && m.tableCellText(h, 1, 0) == QStringLiteral("x")
+                  && m.hasFormat(m.tableCellAt(h, 1, 0), 0, 1, QStringLiteral("bold")) && m.tableCellText(h, 1, 1) == QStringLiteral("y|z")
                   && m.structureValid(),
               "a GFM pipe table pastes as a derived table: header, alignment, inline markdown, escaped pipes");
         CHECK(m.contentForRow(0) == QStringLiteral("before") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("after")
@@ -7544,7 +7544,7 @@ static void testForeignTables() {
 }
 
 static void testOfficeTables() {
-    qInfo("[105] office tables: DOCX rich cells, tblHeader, gridSpan/vMerge, widths, jc, nested; XLSX widths + alignment (SR-4 S8e2)");
+    qInfo("[105] office tables: DOCX rich cells, tblHeader, tableSpan/vMerge, widths, jc, nested; XLSX widths + alignment (SR-4 S8e2)");
     QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_office_tables"));
     dir.removeRecursively();
     QDir().mkpath(dir.absolutePath());
@@ -7559,14 +7559,14 @@ static void testOfficeTables() {
         w.addCompressed(QStringLiteral("word/document.xml"), QByteArray(
             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
             "<w:p><w:r><w:t>before</w:t></w:r></w:p>"
-            "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"1500\"/><w:gridCol w:w=\"1500\"/></w:tblGrid>"
+            "<w:tbl><w:tblGrid><w:tableCol w:w=\"3000\"/><w:tableCol w:w=\"1500\"/><w:tableCol w:w=\"1500\"/></w:tblGrid>"
             "<w:tr><w:trPr><w:tblHeader/></w:trPr>"
             "<w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc>"
             "<w:tc><w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Qty</w:t></w:r></w:p></w:tc>"
             "<w:tc><w:p><w:r><w:t>Notes</w:t></w:r></w:p></w:tc></w:tr>"
             "<w:tr><w:tc><w:tcPr><w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r><w:r><w:t> text</w:t></w:r></w:p>"
             "<w:p><w:r><w:t>second</w:t></w:r></w:p></w:tc>"
-            "<w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>wide</w:t></w:r></w:p></w:tc></w:tr>"
+            "<w:tc><w:tcPr><w:tableSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>wide</w:t></w:r></w:p></w:tc></w:tr>"
             "<w:tr><w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>tall</w:t></w:r></w:p></w:tc>"
             "<w:tc><w:p><w:r><w:t>7</w:t></w:r></w:p></w:tc>"
             "<w:tc><w:tbl><w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>y</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr>"
@@ -7583,20 +7583,20 @@ static void testOfficeTables() {
         m.insertBlock(0);
         CHECK(Importer::importDocxFile(docx, &m), "docx imported");
         const int h = findTableHead(m);
-        CHECK(h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 4 && m.tableColumnCount(h) == 3 && m.structureValid(),
-              "a 4×3 derived table with 1 header row (tblHeader) (%d rows, %d cols)", h >= 0 ? m.gridRowCount(h) : -1, h >= 0 ? m.tableColumnCount(h) : -1);
+        CHECK(h >= 0 && m.headerCount(h) == 1 && m.tableRowCount(h) == 4 && m.tableColumnCount(h) == 3 && m.structureValid(),
+              "a 4×3 derived table with 1 header row (tblHeader) (%d rows, %d cols)", h >= 0 ? m.tableRowCount(h) : -1, h >= 0 ? m.tableColumnCount(h) : -1);
         if (h >= 0) {
-            CHECK(m.tableColumnWidth(h, 0) == 200 && m.tableColumnWidth(h, 1) == 100 && m.gridColAlign(h, 1) == 1,
-                  "gridCol widths (3000 dxa → 200 px) and w:jc center carry (w0=%g w1=%g a1=%d)",
-                  m.tableColumnWidth(h, 0), m.tableColumnWidth(h, 1), m.gridColAlign(h, 1));
-            CHECK(m.gridCellRows(h, 1, 0).size() == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("bold text\nsecond")
-                      && m.hasFormat(m.gridCellAt(h, 1, 0), 0, 4, QStringLiteral("bold")) && m.gridCellBg(h, 1, 0) == QStringLiteral("#ff0000"),
+            CHECK(m.tableColumnWidth(h, 0) == 200 && m.tableColumnWidth(h, 1) == 100 && m.tableColAlign(h, 1) == 1,
+                  "tableCol widths (3000 dxa → 200 px) and w:jc center carry (w0=%g w1=%g a1=%d)",
+                  m.tableColumnWidth(h, 0), m.tableColumnWidth(h, 1), m.tableColAlign(h, 1));
+            CHECK(m.tableCellRows(h, 1, 0).size() == 2 && m.tableCellText(h, 1, 0) == QStringLiteral("bold text\nsecond")
+                      && m.hasFormat(m.tableCellAt(h, 1, 0), 0, 4, QStringLiteral("bold")) && m.tableCellBg(h, 1, 0) == QStringLiteral("#ff0000"),
                   "a rich cell: two paragraphs, a bold span, its shading");
-            CHECK(m.gridCellText(h, 1, 1) == QStringLiteral("wide") && m.gridCellText(h, 1, 2).isEmpty(),
-                  "gridSpan: the origin holds the content, the covered cell is empty");
-            CHECK(m.gridCellText(h, 2, 0) == QStringLiteral("tall") && m.gridCellText(h, 3, 0).isEmpty() && m.gridCellText(h, 3, 1) == QStringLiteral("8"),
+            CHECK(m.tableCellText(h, 1, 1) == QStringLiteral("wide") && m.tableCellText(h, 1, 2).isEmpty(),
+                  "tableSpan: the origin holds the content, the covered cell is empty");
+            CHECK(m.tableCellText(h, 2, 0) == QStringLiteral("tall") && m.tableCellText(h, 3, 0).isEmpty() && m.tableCellText(h, 3, 1) == QStringLiteral("8"),
                   "vMerge: the continuation cell is empty, its neighbours intact");
-            CHECK(m.gridCellText(h, 2, 2) == QStringLiteral("x · y"), "a nested table flattens to 'x · y' (E5)");
+            CHECK(m.tableCellText(h, 2, 2) == QStringLiteral("x · y"), "a nested table flattens to 'x · y' (E5)");
             CHECK(m.contentForRow(0) == QStringLiteral("before") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("after"),
                   "the prose lands around the table");
         }
@@ -7633,9 +7633,9 @@ static void testOfficeTables() {
         CHECK(Importer::importXlsxFile(xlsx, &m), "xlsx imported");
         const int h = findTableHead(m);
         CHECK(h >= 0 && m.tableColumnCount(h) == 3 && m.tableColumnWidth(h, 0) == 145 && m.tableColumnWidth(h, 1) != 89
-                  && m.gridColAlign(h, 1) == 1 && m.gridColAlign(h, 2) == 2 && m.gridColAlign(h, 0) == 0,
+                  && m.tableColAlign(h, 1) == 1 && m.tableColAlign(h, 2) == 2 && m.tableColAlign(h, 0) == 0,
               "xlsx: a custom width carries (20 chars → 145 px), a default-width column stays auto, body-cell alignment sets the column (w0=%g a1=%d a2=%d)",
-              h >= 0 ? m.tableColumnWidth(h, 0) : -1.0, h >= 0 ? m.gridColAlign(h, 1) : -1, h >= 0 ? m.gridColAlign(h, 2) : -1);
+              h >= 0 ? m.tableColumnWidth(h, 0) : -1.0, h >= 0 ? m.tableColAlign(h, 1) : -1, h >= 0 ? m.tableColAlign(h, 2) : -1);
         m.closeDocument();
     }
     dir.removeRecursively();
@@ -7698,7 +7698,7 @@ static void testImportCapAndPackages() {
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0); m.setContent(0, QStringLiteral("doc"));
         const int head = m.insertTableRows(0, 2, 2) - 1;
-        const int land = m.gridInsertMedia(head, 1, 0, QVariantList{ QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString() });
+        const int land = m.tableInsertMedia(head, 1, 0, QVariantList{ QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString() });
         CHECK(land >= 0 && m.typeForRow(land) == BlockModel::Media, "a cell image in the table");
         QString err;
         CHECK(PackageExporter::packDocument(&m, pkg, true, &err), "the document packs (%s)", qPrintable(err));
@@ -7706,7 +7706,7 @@ static void testImportCapAndPackages() {
         BlockModel v;
         CHECK(v.openDocument(pkg), "the package opens");
         const int vh = findTableHead(v);
-        const QVariantList cell = vh >= 0 ? v.gridCellRows(vh, 1, 0) : QVariantList();
+        const QVariantList cell = vh >= 0 ? v.tableCellRows(vh, 1, 0) : QVariantList();
         CHECK(vh >= 0 && cell.size() == 1 && v.typeForRow(cell.front().toInt()) == BlockModel::Media
                   && !v.mediaLocalPath(cell.front().toInt()).isEmpty() && QFileInfo::exists(v.mediaLocalPath(cell.front().toInt())),
               "…and the cell's image resolves from the package");
@@ -7726,29 +7726,29 @@ static void testGridTabsAndBoard() {
     const int q = m.insertParagraphBelow(last1);      // top level (insertBlock after a lane block joins the lane)
     m.setContent(q, QStringLiteral("q"));
     const int h2 = m.insertTableRows(q, 2, 2) - 1;
-    const QStringList ids = m.gridBlockIds();
+    const QStringList ids = m.tableBlockIds();
     CHECK(ids.size() == 2 && ids.at(0) == m.idForRow(h1) && ids.at(1) == m.idForRow(h2),
-          "gridBlockIds lists both heads in order; no Table blocks");
+          "tableBlockIds lists both heads in order; no Table blocks");
     CHECK(m.rowForId(ids.at(1)) == h2 && m.headerCount(m.rowForId(ids.at(1))) > 0, "a tab id resolves to its head record");
     // A board move: set the grouping choice and reorder the row in one group → one undo entry.
-    m.setContent(m.gridCellAt(h1, 1, 0), QStringLiteral("A")); m.setContent(m.gridCellAt(h1, 2, 0), QStringLiteral("B"));
-    CHECK(m.gridSetColumnKind(h1, 1, 1), "column 1 becomes a choice column");
-    const QString doing = m.gridAddOption(h1, 1, QStringLiteral("Doing"), QStringLiteral("#123456"));
+    m.setContent(m.tableCellAt(h1, 1, 0), QStringLiteral("A")); m.setContent(m.tableCellAt(h1, 2, 0), QStringLiteral("B"));
+    CHECK(m.tableSetColumnKind(h1, 1, 1), "column 1 becomes a choice column");
+    const QString doing = m.tableAddOption(h1, 1, QStringLiteral("Doing"), QStringLiteral("#123456"));
     const int entries = m.undoHistory().size();
     const QVariantList recs = m.tableRecords(h1);
-    CHECK(m.gridCellChoice(h1, 2, 1).isEmpty() && m.gridCellText(h1, 2, 1).isEmpty(), "fixture: row 2's choice cell starts empty");
+    CHECK(m.tableCellChoice(h1, 2, 1).isEmpty() && m.tableCellText(h1, 2, 1).isEmpty(), "fixture: row 2's choice cell starts empty");
     m.beginGroup(h1, m.splitRowLast(recs.back().toInt()));
-    m.gridSetCellChoice(h1, 2, 1, doing);
-    m.gridMoveRow(h1, 2, 1);
+    m.tableSetCellChoice(h1, 2, 1, doing);
+    m.tableMoveRow(h1, 2, 1);
     m.endGroup();
-    CHECK(m.gridCellText(h1, 1, 0) == QStringLiteral("B") && m.gridCellChoiceLabel(h1, 1, 1) == QStringLiteral("Doing")
+    CHECK(m.tableCellText(h1, 1, 0) == QStringLiteral("B") && m.tableCellChoiceLabel(h1, 1, 1) == QStringLiteral("Doing")
               && m.undoHistory().size() == entries + 1 && m.structureValid(),
           "the card moved to the lane and above A, one undo entry");
     m.undo();
-    CHECK(m.gridCellText(h1, 1, 0) == QStringLiteral("A") && m.gridCellText(h1, 2, 0) == QStringLiteral("B"),
-          "…undo restores the order (row1='%s' row2='%s')", qPrintable(m.gridCellText(h1, 1, 0)), qPrintable(m.gridCellText(h1, 2, 0)));
-    CHECK(m.gridCellChoice(h1, 2, 1).isEmpty() && m.gridCellChoice(h1, 1, 1).isEmpty(),
-          "…and the choice (r2='%s' r1='%s')", qPrintable(m.gridCellChoice(h1, 2, 1)), qPrintable(m.gridCellChoice(h1, 1, 1)));
+    CHECK(m.tableCellText(h1, 1, 0) == QStringLiteral("A") && m.tableCellText(h1, 2, 0) == QStringLiteral("B"),
+          "…undo restores the order (row1='%s' row2='%s')", qPrintable(m.tableCellText(h1, 1, 0)), qPrintable(m.tableCellText(h1, 2, 0)));
+    CHECK(m.tableCellChoice(h1, 2, 1).isEmpty() && m.tableCellChoice(h1, 1, 1).isEmpty(),
+          "…and the choice (r2='%s' r1='%s')", qPrintable(m.tableCellChoice(h1, 2, 1)), qPrintable(m.tableCellChoice(h1, 1, 1)));
 }
 
 static void testTimecodeColumns() {
@@ -7758,7 +7758,7 @@ static void testTimecodeColumns() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0);
     const int h = m.insertTableRows(0, 4, 2) - 1;
-    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(h, r, c), QString::fromUtf8(t)); };
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.tableCellAt(h, r, c), QString::fromUtf8(t)); };
     set(0, 0, "Shot"); set(0, 1, "In");
     set(1, 0, "a"); set(1, 1, "86400");
     set(2, 0, "b"); set(2, 1, "00:00:10:00");
@@ -7769,25 +7769,25 @@ static void testTimecodeColumns() {
     // 29.97 drop-frame: 30 minutes = 54000 nominal frames minus 2 per minute except every tenth (27 × 2).
     CHECK(m.timecodeForFrames(53946, 29.97) == QStringLiteral("00:30:00;00") && m.framesForTimecode(QStringLiteral("00:30:00;00"), 29.97) == 53946,
           "…and at 29.97 drop-frame (%s, %d)", qPrintable(m.timecodeForFrames(53946, 29.97)), m.framesForTimecode(QStringLiteral("00:30:00;00"), 29.97));
-    CHECK(m.gridSetColumnKind(h, 1, 3) && m.gridColumnKind(h, 1) == 3 && m.gridColumnFps(h, 1) == 24.0
-              && m.gridCellText(h, 1, 1) == QStringLiteral("01:00:00:00") && m.gridCellText(h, 2, 1) == QStringLiteral("00:00:10:00")
-              && m.gridCellText(h, 3, 1) == QStringLiteral("tbd") && m.gridCellText(h, 0, 1) == QStringLiteral("In"),
+    CHECK(m.tableSetColumnKind(h, 1, 3) && m.tableColumnKind(h, 1) == 3 && m.tableColumnFps(h, 1) == 24.0
+              && m.tableCellText(h, 1, 1) == QStringLiteral("01:00:00:00") && m.tableCellText(h, 2, 1) == QStringLiteral("00:00:10:00")
+              && m.tableCellText(h, 3, 1) == QStringLiteral("tbd") && m.tableCellText(h, 0, 1) == QStringLiteral("In"),
           "making the column timecode normalizes frame counts, keeps timecodes and junk, header untouched (%s / %s)",
-          qPrintable(m.gridCellText(h, 1, 1)), qPrintable(m.gridCellText(h, 3, 1)));
-    m.setContent(m.gridCellAt(h, 3, 1), QStringLiteral("48"));
-    m.commitMarkdown(m.gridCellAt(h, 3, 1));
-    CHECK(m.gridCellText(h, 3, 1) == QStringLiteral("00:00:02:00"), "leaving a cell normalizes what was typed (%s)", qPrintable(m.gridCellText(h, 3, 1)));
+          qPrintable(m.tableCellText(h, 1, 1)), qPrintable(m.tableCellText(h, 3, 1)));
+    m.setContent(m.tableCellAt(h, 3, 1), QStringLiteral("48"));
+    m.commitMarkdown(m.tableCellAt(h, 3, 1));
+    CHECK(m.tableCellText(h, 3, 1) == QStringLiteral("00:00:02:00"), "leaving a cell normalizes what was typed (%s)", qPrintable(m.tableCellText(h, 3, 1)));
     m.undo();
-    CHECK(m.gridCellText(h, 3, 1) == QStringLiteral("48"), "…as its own undo step");
+    CHECK(m.tableCellText(h, 3, 1) == QStringLiteral("48"), "…as its own undo step");
     m.redo();
-    CHECK(m.gridSortByColumn(h, 1, true) && m.gridCellText(h, 1, 0) == QStringLiteral("c") && m.gridCellText(h, 2, 0) == QStringLiteral("b")
-              && m.gridCellText(h, 3, 0) == QStringLiteral("a"),
+    CHECK(m.tableSortByColumn(h, 1, true) && m.tableCellText(h, 1, 0) == QStringLiteral("c") && m.tableCellText(h, 2, 0) == QStringLiteral("b")
+              && m.tableCellText(h, 3, 0) == QStringLiteral("a"),
           "sorting a timecode column orders by frames (c 48 < b 240 < a 86400)");
-    CHECK(m.gridSetColumnFps(h, 1, 25) && m.gridColumnFps(h, 1) == 25.0 && m.gridCellText(h, 3, 1) == QStringLiteral("01:00:00:00"),
+    CHECK(m.tableSetColumnFps(h, 1, 25) && m.tableColumnFps(h, 1) == 25.0 && m.tableCellText(h, 3, 1) == QStringLiteral("01:00:00:00"),
           "a frame-rate change re-normalizes: the timecode text stays (frames are what's read back)");
-    CHECK(m.gridPasteTSV(h, 1, 1, QStringLiteral("100")) >= 0 && m.gridCellText(h, 1, 1) == QStringLiteral("00:00:04:00"),
-          "a pasted frame count normalizes at 25 fps (%s)", qPrintable(m.gridCellText(h, 1, 1)));
-    CHECK(m.gridSetColumnKind(h, 1, 0) && m.gridColumnKind(h, 1) == 0 && m.gridCellText(h, 1, 1) == QStringLiteral("00:00:04:00"),
+    CHECK(m.tablePasteTSV(h, 1, 1, QStringLiteral("100")) >= 0 && m.tableCellText(h, 1, 1) == QStringLiteral("00:00:04:00"),
+          "a pasted frame count normalizes at 25 fps (%s)", qPrintable(m.tableCellText(h, 1, 1)));
+    CHECK(m.tableSetColumnKind(h, 1, 0) && m.tableColumnKind(h, 1) == 0 && m.tableCellText(h, 1, 1) == QStringLiteral("00:00:04:00"),
           "back to text keeps the timecode strings");
 }
 
@@ -7798,7 +7798,7 @@ static void testRowFilter() {
     while (m.rowCountQml() > 0) m.removeBlock(0);
     m.insertBlock(0);
     const int h = m.insertTableRows(0, 4, 2) - 1;
-    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(h, r, c), QString::fromUtf8(t)); };
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.tableCellAt(h, r, c), QString::fromUtf8(t)); };
     set(0, 0, "Shot"); set(0, 1, "Note");
     set(1, 0, "apple"); set(1, 1, "red");
     set(2, 0, "pear");  set(2, 1, "green");
@@ -7806,24 +7806,24 @@ static void testRowFilter() {
     for (int r = 0; r < m.rowCountQml(); ++r) m.setMeasuredHeight(r, 20);   // every block 20 px
     const double before = m.totalHeight();
     const QVariantList recs = m.tableRecords(h);
-    const QVariantList hide = m.gridFilterRecords(h, QStringLiteral("red"));
+    const QVariantList hide = m.tableFilterRecords(h, QStringLiteral("red"));
     CHECK(hide.size() == 1 && hide[0].toInt() == recs[2].toInt(), "'red' keeps apple and plum (case-insensitive), folds pear");
-    CHECK(m.gridFilterRecords(h, QStringLiteral("")).isEmpty() && m.gridFilterRecords(h, QStringLiteral("shot")).size() == 3,
+    CHECK(m.tableFilterRecords(h, QStringLiteral("")).isEmpty() && m.tableFilterRecords(h, QStringLiteral("shot")).size() == 3,
           "an empty filter folds nothing; the header never counts as a match");
     m.setHiddenRecords(hide);
     const int pear = recs[2].toInt();
-    CHECK(m.rowHidden(pear) && m.rowHidden(m.gridCellAt(h, 2, 0)) && !m.rowHidden(recs[1].toInt()) && m.hiddenRecordCount(h) == 1,
+    CHECK(m.rowHidden(pear) && m.rowHidden(m.tableCellAt(h, 2, 0)) && !m.rowHidden(recs[1].toInt()) && m.hiddenRecordCount(h) == 1,
           "the record and its cells read as hidden; neighbours don't");
     CHECK(m.totalHeight() == before - 20 && m.heightForRow(pear) == 0 && m.yForRow(recs[3].toInt()) == m.yForRow(pear),
           "a folded record has no extent: the next record sits where it was (%g → %g)", before, m.totalHeight());
-    CHECK(m.gridCellText(h, 2, 0) == QStringLiteral("pear") && m.rowCountQml() == recs.size() * 3 + 1,
+    CHECK(m.tableCellText(h, 2, 0) == QStringLiteral("pear") && m.rowCountQml() == recs.size() * 3 + 1,
           "the document is untouched: the row is still there for copy / export (%d rows)", m.rowCountQml());
     set(1, 1, "crimson");                                            // an edit rebuilds nothing structural…
     m.insertParagraphBelow(m.rowCountQml() - 1);                     // …but this does (index reset)
     CHECK(m.rowHidden(pear) && m.heightForRow(pear) == 0 && m.hiddenRecordCount(h) == 1,
           "the fold survives a structural rebuild (keyed by block id)");
     const double afterInsert = m.totalHeight();                      // the new paragraph at its estimate
-    m.setMeasuredHeight(m.gridCellAt(h, 2, 0), 60);                  // a delegate reports while folded
+    m.setMeasuredHeight(m.tableCellAt(h, 2, 0), 60);                  // a delegate reports while folded
     CHECK(m.heightForRow(pear) == 0 && m.totalHeight() == afterInsert,
           "heights reported into a folded row don't move the layout (%g)", m.totalHeight());
     m.clearHiddenRecords();

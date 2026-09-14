@@ -16,28 +16,28 @@ Item {
     property int  groupCol: -1
     property bool active: false
     // The board reads the table through these only.
-    function colKind(c) { return blockModel.gridColumnKind(head, c) }
+    function colKind(c) { return blockModel.tableColumnKind(head, c) }
     function hdrRows() { return blockModel.headerCount(head) }
-    function nRows() { return blockModel.gridRowCount(head) }
+    function nRows() { return blockModel.tableRowCount(head) }
     function nCols() { return blockModel.tableColumnCount(head) }
-    function options() { return blockModel.gridColumnOptions(head, groupCol) }
-    function cellCheck(r, c) { return blockModel.gridCellCheck(head, r, c) }
-    function cellChoice(r, c) { return blockModel.gridCellChoice(head, r, c) }
-    function cellChoiceLabel(r, c) { return blockModel.gridCellChoiceLabel(head, r, c) }
-    function cellChoiceColor(r, c) { return blockModel.gridCellChoiceColor(head, r, c) }
-    function cellText(r, c) { return blockModel.gridCellText(head, r, c) }
+    function options() { return blockModel.tableColumnOptions(head, groupCol) }
+    function cellCheck(r, c) { return blockModel.tableCellCheck(head, r, c) }
+    function cellChoice(r, c) { return blockModel.tableCellChoice(head, r, c) }
+    function cellChoiceLabel(r, c) { return blockModel.tableCellChoiceLabel(head, r, c) }
+    function cellChoiceColor(r, c) { return blockModel.tableCellChoiceColor(head, r, c) }
+    function cellText(r, c) { return blockModel.tableCellText(head, r, c) }
     function cellImageUrl(r, c) {          // the cell's first image block
-        const blocks = blockModel.gridCellRows(head, r, c)
+        const blocks = blockModel.tableCellRows(head, r, c)
         for (let i = 0; i < blocks.length; ++i)
             if (blockModel.typeForRow(blocks[i]) === 3 && blockModel.mediaKind(blocks[i]) === "image") return blockModel.mediaUrl(blocks[i])
         return ""
     }
-    function rowBg(r) { return blockModel.gridRowBg(head, r) }
-    function setCheck(r, state) { blockModel.gridSetCellCheck(head, r, groupCol, state) }
-    function setChoice(r, id) { blockModel.gridSetCellChoice(head, r, groupCol, id) }
-    function moveRow(from, to) { blockModel.gridMoveRow(head, from, to) }
-    function insertRow(at) { blockModel.gridInsertRow(head, at) }
-    function setTitle(r, t) { blockModel.gridPasteTSV(head, r, titleCol, t) }
+    function rowBg(r) { return blockModel.tableRowBg(head, r) }
+    function setCheck(r, state) { blockModel.tableSetCellCheck(head, r, groupCol, state) }
+    function setChoice(r, id) { blockModel.tableSetCellChoice(head, r, groupCol, id) }
+    function moveRow(from, to) { blockModel.tableMoveRow(head, from, to) }
+    function insertRow(at) { blockModel.tableInsertRow(head, at) }
+    function setTitle(r, t) { blockModel.tablePasteTSV(head, r, titleCol, t) }
     // One undo step over the table: its whole band.
     function groupBegin() {
         const recs = blockModel.tableRecords(head)

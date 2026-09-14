@@ -200,7 +200,7 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
                                                   : TableGrid::fromCSV(text);
         g.trimTrailingEmpty();   // "a,b,,,," padding never reaches the doc
         if (g.rows() >= 1 && g.cols() >= 1)   // the grid IR → a table's records and cells (S10)
-            for (BlockModel::BlockSpec& sp : BlockModel::gridSpecsFromTable(g.toJson())) out.specs.push_back(std::move(sp));
+            for (BlockModel::BlockSpec& sp : BlockModel::tableSpecsFromGrid(g.toJson())) out.specs.push_back(std::move(sp));
         out.ok = true;
     } else if (fmt == QLatin1String("docx")) {
         DocxReader::Result res = DocxReader::read(path, store);

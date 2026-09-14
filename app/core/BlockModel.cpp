@@ -533,9 +533,9 @@ qreal BlockModel::tablePadBottom(int row) const {
     return row >= 0 && size_t(row) < li.size() ? li.entry(size_t(row)).padBottom : 0.0;
 }
 
-QString BlockModel::gridCellText(int head, int r, int c) const {
+QString BlockModel::tableCellText(int head, int r, int c) const {
     QStringList parts;
-    for (const QVariant& v : gridCellRows(head, r, c)) parts << content_[size_t(v.toInt())];
+    for (const QVariant& v : tableCellRows(head, r, c)) parts << content_[size_t(v.toInt())];
     return parts.join(QLatin1Char('\n'));
 }
 
@@ -578,7 +578,7 @@ qreal BlockModel::tableWidth(int head) const {
 }
 
 // === Grid addressing and structure (SR-4 S3a) ==============================
-int BlockModel::gridRecord(int head, int r) const {
+int BlockModel::tableRecord(int head, int r) const {
     const TableInfo* info = tableInfo(head);
     return info && r >= 0 && r < static_cast<int>(info->records.size()) ? info->records[size_t(r)] : -1;
 }
@@ -589,7 +589,7 @@ std::pair<int,int> BlockModel::tableBand(int head) const {
     return { head, splitRowEnd(recs.back().toInt()) };
 }
 
-std::vector<BlockModel::GridRow> BlockModel::gridOf(int head) const {
+std::vector<BlockModel::GridRow> BlockModel::tableOf(int head) const {
     std::vector<GridRow> grid;
     for (const QVariant& v : tableRecords(head)) {
         GridRow gr;
@@ -611,21 +611,21 @@ std::vector<BlockModel::GridRow> BlockModel::gridOf(int head) const {
     return grid;
 }
 
-int BlockModel::gridRowCount(int head) const {
+int BlockModel::tableRowCount(int head) const {
     const TableInfo* info = tableInfo(head);
     return info ? static_cast<int>(info->records.size()) : 0;
 }
 
-int BlockModel::gridCellCount(int head, int r) const {
-    const int rec = gridRecord(head, r);
+int BlockModel::tableCellCount(int head, int r) const {
+    const int rec = tableRecord(head, r);
     if (rec < 0) return 0;
     int cells = 0;
     for (int i = rec + 1; i <= splitRowEnd(rec); ++i) cells = std::max(cells, rows_[size_t(i)].cell + 1);
     return cells;
 }
 
-QVariantList BlockModel::gridCellRows(int head, int r, int c) const {
-    const int rec = gridRecord(head, r);
+QVariantList BlockModel::tableCellRows(int head, int r, int c) const {
+    const int rec = tableRecord(head, r);
     QVariantList out;
     if (rec < 0) return out;
     for (int i = rec + 1; i <= splitRowEnd(rec); ++i)
@@ -633,17 +633,17 @@ QVariantList BlockModel::gridCellRows(int head, int r, int c) const {
     return out;
 }
 
-int BlockModel::gridCellAt(int head, int r, int c) const {
-    const QVariantList rows = gridCellRows(head, r, c);
+int BlockModel::tableCellAt(int head, int r, int c) const {
+    const QVariantList rows = tableCellRows(head, r, c);
     return rows.isEmpty() ? -1 : rows.front().toInt();
 }
 
-int BlockModel::gridRowOf(int row) const {
+int BlockModel::tableRowOf(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || tableHeadOf(row) < 0) return -1;
     return tableRowIndex_[size_t(row)];
 }
 
-int BlockModel::gridColumnOf(int row) const {
+int BlockModel::tableColumnOf(int row) const {
     return (row >= 0 && row < static_cast<int>(rows_.size()) && tableHeadOf(row) >= 0) ? rows_[size_t(row)].cell : -1;
 }
 
@@ -744,8 +744,8 @@ BlockModel::GridCell BlockModel::copiedCell(const GridCell& cell) {
     return out;
 }
 
-bool BlockModel::gridInsertRow(int head, int at) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableInsertRow(int head, int at) {
+    std::vector<GridRow> grid = tableOf(head);
     if (grid.empty()) return false;
     at = std::clamp(at, 0, static_cast<int>(grid.size()));
     GridRow fresh;
@@ -754,18 +754,18 @@ bool BlockModel::gridInsertRow(int head, int at) {
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridDeleteRow(int head, int r) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableDeleteRow(int head, int r) {
+    std::vector<GridRow> grid = tableOf(head);
     const int rows = static_cast<int>(grid.size()), hc = headerCount(head);
     if (r < 0 || r >= rows) return false;
-    if (r < hc) return gridDeleteTable(head);                   // "Delete row" on a header row = the table
+    if (r < hc) return deleteTable(head);                   // "Delete row" on a header row = the table
     if (rows - hc <= 1) return false;                           // the last body row stays
     grid.erase(grid.begin() + r);
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), hc);
 }
 
-bool BlockModel::gridMoveRow(int head, int from, int to) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableMoveRow(int head, int from, int to) {
+    std::vector<GridRow> grid = tableOf(head);
     const int rows = static_cast<int>(grid.size());
     if (from < 0 || from >= rows) return false;
     to = std::clamp(to, 0, rows - 1);
@@ -776,8 +776,8 @@ bool BlockModel::gridMoveRow(int head, int from, int to) {
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridDuplicateRow(int head, int r) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableDuplicateRow(int head, int r) {
+    std::vector<GridRow> grid = tableOf(head);
     if (r < 0 || r >= static_cast<int>(grid.size())) return false;
     GridRow copy = grid[size_t(r)];
     copy.copy = true;
@@ -786,8 +786,8 @@ bool BlockModel::gridDuplicateRow(int head, int r) {
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridInsertColumn(int head, int at) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableInsertColumn(int head, int at) {
+    std::vector<GridRow> grid = tableOf(head);
     if (grid.empty() || at < 0 || tableColumnCount(head) >= 63) return false;
     for (GridRow& gr : grid)
         if (at <= static_cast<int>(gr.cells.size())) gr.cells.insert(gr.cells.begin() + at, GridCell{});
@@ -797,8 +797,8 @@ bool BlockModel::gridInsertColumn(int head, int at) {
     return commitGrid(head, grid, cols, rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridDeleteColumn(int head, int c) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableDeleteColumn(int head, int c) {
+    std::vector<GridRow> grid = tableOf(head);
     if (grid.empty() || c < 0 || c >= tableColumnCount(head) || tableColumnCount(head) <= 1) return false;
     for (GridRow& gr : grid) {
         if (c < static_cast<int>(gr.cells.size())) gr.cells.erase(gr.cells.begin() + c);
@@ -809,8 +809,8 @@ bool BlockModel::gridDeleteColumn(int head, int c) {
     return commitGrid(head, grid, cols, rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridMoveColumn(int head, int from, int to) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableMoveColumn(int head, int from, int to) {
+    std::vector<GridRow> grid = tableOf(head);
     const int cols = tableColumnCount(head);
     if (grid.empty() || from < 0 || from >= cols) return false;
     to = std::clamp(to, 0, cols - 1);
@@ -831,8 +831,8 @@ bool BlockModel::gridMoveColumn(int head, int from, int to) {
     return commitGrid(head, grid, spec, rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridDuplicateColumn(int head, int c) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableDuplicateColumn(int head, int c) {
+    std::vector<GridRow> grid = tableOf(head);
     if (grid.empty() || c < 0 || c >= tableColumnCount(head) || tableColumnCount(head) >= 63) return false;
     for (GridRow& gr : grid)
         if (c < static_cast<int>(gr.cells.size()))
@@ -843,15 +843,15 @@ bool BlockModel::gridDuplicateColumn(int head, int c) {
     return commitGrid(head, grid, cols, rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridDeleteTable(int head) {
+bool BlockModel::deleteTable(int head) {
     const auto [lo, hi] = tableBand(head);
     if (lo < 0) return false;
     removeBlocks(lo, hi);
     return true;
 }
 
-bool BlockModel::gridClearCells(int head, int r0, int c0, int r1, int c1) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableClearCells(int head, int r0, int c0, int r1, int c1) {
+    std::vector<GridRow> grid = tableOf(head);
     if (grid.empty()) return false;
     if (r0 > r1) std::swap(r0, r1);
     if (c0 > c1) std::swap(c0, c1);
@@ -861,8 +861,8 @@ bool BlockModel::gridClearCells(int head, int r0, int c0, int r1, int c1) {
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridFillDown(int head, int r0, int c0, int r1, int c1) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableFillDown(int head, int r0, int c0, int r1, int c1) {
+    std::vector<GridRow> grid = tableOf(head);
     const int rows = static_cast<int>(grid.size());
     if (rows == 0) return false;
     r0 = std::clamp(r0, 0, rows - 1); r1 = std::clamp(r1, 0, rows - 1);
@@ -880,8 +880,8 @@ bool BlockModel::gridFillDown(int head, int r0, int c0, int r1, int c1) {
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridFillRight(int head, int r0, int c0, int r1, int c1) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableFillRight(int head, int r0, int c0, int r1, int c1) {
+    std::vector<GridRow> grid = tableOf(head);
     const int rows = static_cast<int>(grid.size());
     if (rows == 0) return false;
     if (r0 > r1) std::swap(r0, r1);
@@ -897,7 +897,7 @@ bool BlockModel::gridFillRight(int head, int r0, int c0, int r1, int c1) {
 }
 
 // === Colours, alignment, bulk ops, sort, label join (SR-4 S3b) =============
-static std::vector<int> gridIndexSet(const QVariantList& list, int bound) {
+static std::vector<int> tableIndexSet(const QVariantList& list, int bound) {
     std::vector<int> out;
     for (const QVariant& v : list) {
         bool ok = false;
@@ -944,8 +944,8 @@ bool BlockModel::editTableAttrs(int head, const std::function<void(int r, int re
     return true;
 }
 
-QString BlockModel::gridColour(int head, int r, int c, bool fg) const {
-    const int rec = gridRecord(head, r);
+QString BlockModel::tableColour(int head, int r, int c, bool fg) const {
+    const int rec = tableRecord(head, r);
     if (rec < 0 || c < 0) return {};
     const QJsonObject t = QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object();
     QString v = t.value(fg ? QStringLiteral("cfg") : QStringLiteral("cbg")).toArray().at(c).toString();
@@ -955,21 +955,21 @@ QString BlockModel::gridColour(int head, int r, int c, bool fg) const {
     return v;
 }
 
-QString BlockModel::gridCellBg(int head, int r, int c) const { return gridColour(head, r, c, false); }
-QString BlockModel::gridCellFg(int head, int r, int c) const { return gridColour(head, r, c, true); }
+QString BlockModel::tableCellBg(int head, int r, int c) const { return tableColour(head, r, c, false); }
+QString BlockModel::tableCellFg(int head, int r, int c) const { return tableColour(head, r, c, true); }
 
-QString BlockModel::gridRowBg(int head, int r) const {
-    const int rec = gridRecord(head, r);
+QString BlockModel::tableRowBg(int head, int r) const {
+    const int rec = tableRecord(head, r);
     return rec < 0 ? QString()
                    : QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object().value(QStringLiteral("bg")).toString();
 }
 
-int BlockModel::gridColAlign(int head, int c) const {
+int BlockModel::tableColAlign(int head, int c) const {
     const TableGeom* tg = c >= 0 ? tableGeom(head) : nullptr;   // the parsed spec, cached with the geometry
     return tg ? tg->spec.at(c).toObject().value(QStringLiteral("a")).toInt(0) : 0;
 }
 
-bool BlockModel::gridSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
+bool BlockModel::tableSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
     if (r0 > r1) std::swap(r0, r1);
     if (c0 > c1) std::swap(c0, c1);
     if (c1 < 0 || c0 >= 63) return false;
@@ -980,16 +980,16 @@ bool BlockModel::gridSetCellColor(int head, int r0, int c0, int r1, int c1, bool
     });
 }
 
-bool BlockModel::gridSetRowsColor(int head, const QVariantList& rows, bool fg, const QString& color) {
-    const std::vector<int> set = gridIndexSet(rows, gridRowCount(head));
+bool BlockModel::tableSetRowsColor(int head, const QVariantList& rows, bool fg, const QString& color) {
+    const std::vector<int> set = tableIndexSet(rows, tableRowCount(head));
     if (set.empty()) return false;
     return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
         if (std::binary_search(set.begin(), set.end(), r)) setAttrString(t, fg ? QStringLiteral("fg") : QStringLiteral("bg"), color);
     });
 }
 
-bool BlockModel::gridSetColsColor(int head, const QVariantList& cols, bool fg, const QString& color) {
-    const std::vector<int> set = gridIndexSet(cols, 63);
+bool BlockModel::tableSetColsColor(int head, const QVariantList& cols, bool fg, const QString& color) {
+    const std::vector<int> set = tableIndexSet(cols, 63);
     if (set.empty()) return false;
     return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
         if (r != 0) return;
@@ -1004,8 +1004,8 @@ bool BlockModel::gridSetColsColor(int head, const QVariantList& cols, bool fg, c
     });
 }
 
-bool BlockModel::gridSetColsAlign(int head, const QVariantList& cols, int align) {
-    const std::vector<int> set = gridIndexSet(cols, 63);
+bool BlockModel::tableSetColsAlign(int head, const QVariantList& cols, int align) {
+    const std::vector<int> set = tableIndexSet(cols, 63);
     if (set.empty()) return false;
     align = std::clamp(align, 0, 2);
     return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
@@ -1022,25 +1022,25 @@ bool BlockModel::gridSetColsAlign(int head, const QVariantList& cols, int align)
     });
 }
 
-bool BlockModel::gridSetRowColor(int head, int r, bool fg, const QString& color) { return gridSetRowsColor(head, { r }, fg, color); }
-bool BlockModel::gridSetColColor(int head, int c, bool fg, const QString& color) { return gridSetColsColor(head, { c }, fg, color); }
-bool BlockModel::gridSetColAlign(int head, int c, int align) { return gridSetColsAlign(head, { c }, align); }
+bool BlockModel::tableSetRowColor(int head, int r, bool fg, const QString& color) { return tableSetRowsColor(head, { r }, fg, color); }
+bool BlockModel::tableSetColColor(int head, int c, bool fg, const QString& color) { return tableSetColsColor(head, { c }, fg, color); }
+bool BlockModel::tableSetColAlign(int head, int c, int align) { return tableSetColsAlign(head, { c }, align); }
 
-bool BlockModel::gridDeleteRows(int head, const QVariantList& rows) {
-    std::vector<GridRow> grid = gridOf(head);
-    const std::vector<int> set = gridIndexSet(rows, static_cast<int>(grid.size()));
+bool BlockModel::tableDeleteRows(int head, const QVariantList& rows) {
+    std::vector<GridRow> grid = tableOf(head);
+    const std::vector<int> set = tableIndexSet(rows, static_cast<int>(grid.size()));
     if (set.empty()) return false;
     const int hc = headerCount(head);
-    if (set.front() < hc) return gridDeleteTable(head);         // no orphaned table elements
+    if (set.front() < hc) return deleteTable(head);         // no orphaned table elements
     if (static_cast<int>(grid.size()) - hc <= static_cast<int>(set.size())) return false;
     for (auto it = set.rbegin(); it != set.rend(); ++it) grid.erase(grid.begin() + *it);
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), hc);
 }
 
-bool BlockModel::gridDeleteColumns(int head, const QVariantList& cols) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableDeleteColumns(int head, const QVariantList& cols) {
+    std::vector<GridRow> grid = tableOf(head);
     const int count = tableColumnCount(head);
-    const std::vector<int> set = gridIndexSet(cols, count);
+    const std::vector<int> set = tableIndexSet(cols, count);
     if (grid.empty() || set.empty() || static_cast<int>(set.size()) >= count) return false;
     for (GridRow& gr : grid) {
         for (auto it = set.rbegin(); it != set.rend(); ++it)
@@ -1053,18 +1053,18 @@ bool BlockModel::gridDeleteColumns(int head, const QVariantList& cols) {
     return commitGrid(head, grid, spec, rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridClearRows(int head, const QVariantList& rows) {
-    std::vector<GridRow> grid = gridOf(head);
-    const std::vector<int> set = gridIndexSet(rows, static_cast<int>(grid.size()));
+bool BlockModel::tableClearRows(int head, const QVariantList& rows) {
+    std::vector<GridRow> grid = tableOf(head);
+    const std::vector<int> set = tableIndexSet(rows, static_cast<int>(grid.size()));
     if (set.empty()) return false;
     for (int r : set)
         for (GridCell& cell : grid[size_t(r)].cells) cell.blocks.clear();
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridClearColumns(int head, const QVariantList& cols) {
-    std::vector<GridRow> grid = gridOf(head);
-    const std::vector<int> set = gridIndexSet(cols, tableColumnCount(head));
+bool BlockModel::tableClearColumns(int head, const QVariantList& cols) {
+    std::vector<GridRow> grid = tableOf(head);
+    const std::vector<int> set = tableIndexSet(cols, tableColumnCount(head));
     if (grid.empty() || set.empty()) return false;
     for (GridRow& gr : grid)
         for (int c : set)
@@ -1072,8 +1072,8 @@ bool BlockModel::gridClearColumns(int head, const QVariantList& cols) {
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
-bool BlockModel::gridSortByColumn(int head, int c, bool asc) {
-    std::vector<GridRow> grid = gridOf(head);
+bool BlockModel::tableSortByColumn(int head, int c, bool asc) {
+    std::vector<GridRow> grid = tableOf(head);
     const int hc = std::min(headerCount(head), static_cast<int>(grid.size()));
     if (c < 0 || static_cast<int>(grid.size()) - hc < 2) return false;
     auto text = [&](const GridRow& gr) {
@@ -1122,8 +1122,8 @@ bool BlockModel::gridSortByColumn(int head, int c, bool asc) {
 }
 
 bool BlockModel::joinTableByLabel(int target, int source) {
-    const std::vector<GridRow> tg = gridOf(target);
-    std::vector<GridRow> sg = gridOf(source);
+    const std::vector<GridRow> tg = tableOf(target);
+    std::vector<GridRow> sg = tableOf(source);
     if (tg.empty() || sg.empty()) return false;
     auto label = [&](const GridRow& gr, int c) {
         if (c >= static_cast<int>(gr.cells.size())) return QString();
@@ -1177,8 +1177,8 @@ bool BlockModel::joinTableByLabel(int target, int source) {
 }
 
 // === Table keys (SR-4 S6a) ==================================================
-bool BlockModel::gridRowIsEmpty(int head, int r) const {
-    const int rec = gridRecord(head, r);
+bool BlockModel::tableRowIsEmpty(int head, int r) const {
+    const int rec = tableRecord(head, r);
     if (rec < 0) return false;
     for (int i = rec + 1; i <= splitRowEnd(rec); ++i) {
         const uint8_t t = rows_[size_t(i)].type;
@@ -1187,11 +1187,11 @@ bool BlockModel::gridRowIsEmpty(int head, int r) const {
     return true;
 }
 
-int BlockModel::gridExitRow(int head) {
-    const int rows = gridRowCount(head), r = rows - 1;
-    if (rows < 1 || r < headerCount(head) || !gridRowIsEmpty(head, r)) return -1;   // header rows never exit
+int BlockModel::tableExitRow(int head) {
+    const int rows = tableRowCount(head), r = rows - 1;
+    if (rows < 1 || r < headerCount(head) || !tableRowIsEmpty(head, r)) return -1;   // header rows never exit
     const auto [lo, hi] = tableBand(head);
-    const int rec = gridRecord(head, r);
+    const int rec = tableRecord(head, r);
     beginTxn(lo, hi);
     removeBlocks(rec, splitRowEnd(rec));
     spliceSpecsAt(rec, { BlockSpec{} }, /*allowReuseAnchorAbove=*/false, /*lane=*/-1);   // a paragraph below the table
@@ -1295,13 +1295,13 @@ void BlockModel::writePlainValue(int block, const QString& text) {
     emit dataChanged(index(block), index(block), { ContentRole });
 }
 
-int BlockModel::gridColumnKind(int head, int c) const {
+int BlockModel::tableColumnKind(int head, int c) const {
     const TableGeom* tg = c >= 0 ? tableGeom(head) : nullptr;   // the parsed spec, cached with the geometry
     return tg ? tg->spec.at(c).toObject().value(QStringLiteral("k")).toInt(0) : 0;
 }
 
-QVariantList BlockModel::gridColumnOptions(int head, int c) const {
-    const int kind = gridColumnKind(head, c);
+QVariantList BlockModel::tableColumnOptions(int head, int c) const {
+    const int kind = tableColumnKind(head, c);
     const QJsonArray opts = kind == 2 ? checkOptions()
                           : tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(QStringLiteral("o")).toArray();
     QVariantList out;
@@ -1340,7 +1340,7 @@ int BlockModel::framesForTimecode(const QString& text, double fps) const {
     return f.isValid() ? f.parse(t) : -1;
 }
 
-double BlockModel::gridColumnFps(int head, int c) const {
+double BlockModel::tableColumnFps(int head, int c) const {
     const TableGeom* tg = c >= 0 ? tableGeom(head) : nullptr;
     const double fps = tg ? tg->spec.at(c).toObject().value(QStringLiteral("fps")).toDouble(0) : 0;
     return fps > 0 ? fps : 24.0;
@@ -1351,12 +1351,12 @@ bool BlockModel::normalizeTimecodeCell(int block) {
     const Row& r = rows_[size_t(block)];
     if (r.cell < 0 || r.type != Paragraph) return false;
     const int head = tableHeadOf(block);
-    if (head < 0 || isHeaderRow(block) || gridColumnKind(head, r.cell) != 3) return false;
+    if (head < 0 || isHeaderRow(block) || tableColumnKind(head, r.cell) != 3) return false;
     const QString text = content_[size_t(block)].trimmed();
     if (text.isEmpty()) return false;
-    const int frames = framesForTimecode(text, gridColumnFps(head, r.cell));
+    const int frames = framesForTimecode(text, tableColumnFps(head, r.cell));
     if (frames < 0) return false;
-    const QString canon = timecodeForFrames(frames, gridColumnFps(head, r.cell));
+    const QString canon = timecodeForFrames(frames, tableColumnFps(head, r.cell));
     if (canon.isEmpty() || canon == content_[size_t(block)]) return false;
     writePlainValue(block, canon);
     return true;
@@ -1395,7 +1395,7 @@ int BlockModel::hiddenRecordCount(int head) const {
     return n;
 }
 
-QVariantList BlockModel::gridFilterRecords(int head, const QString& text) const {
+QVariantList BlockModel::tableFilterRecords(int head, const QString& text) const {
     QVariantList out;
     const QString needle = text.trimmed();
     if (needle.isEmpty() || headerCount(head) == 0) return out;
@@ -1403,26 +1403,26 @@ QVariantList BlockModel::gridFilterRecords(int head, const QString& text) const 
     const QVariantList recs = tableRecords(head);                    // grid row r ↔ recs[r]
     for (int r = hc; r < recs.size(); ++r) {
         bool hit = false;
-        for (int c = 0; c < nc && !hit; ++c) hit = gridCellText(head, r, c).contains(needle, Qt::CaseInsensitive);
+        for (int c = 0; c < nc && !hit; ++c) hit = tableCellText(head, r, c).contains(needle, Qt::CaseInsensitive);
         if (!hit) out.append(recs[r]);
     }
     return out;
 }
 
-bool BlockModel::gridSetColumnFps(int head, int c, double fps) {
+bool BlockModel::tableSetColumnFps(int head, int c, double fps) {
     if (headerCount(head) == 0 || c < 0 || c >= tableColumnCount(head) || fps <= 0) return false;
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     while (spec.size() <= c) spec.append(QJsonObject());
     QJsonObject col = spec[c].toObject();
     col.insert(QStringLiteral("fps"), fps);
     spec[c] = col;
-    std::vector<GridRow> grid = gridOf(head);
+    std::vector<GridRow> grid = tableOf(head);
     const auto [lo, hi] = tableBand(head);
     beginTxn(lo, hi);
     rebuildTable(lo, hi, grid, spec, headerCount(head));
     tableGeomDirty_ = true;
-    if (gridColumnKind(head, c) == 3)
-        for (int r = headerCount(head); r < gridRowCount(head); ++r) normalizeTimecodeCell(gridCellAt(head, r, c));
+    if (tableColumnKind(head, c) == 3)
+        for (int r = headerCount(head); r < tableRowCount(head); ++r) normalizeTimecodeCell(tableCellAt(head, r, c));
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
@@ -1430,14 +1430,14 @@ bool BlockModel::gridSetColumnFps(int head, int c, double fps) {
     return true;
 }
 
-bool BlockModel::gridSetColumnKind(int head, int c, int kind) {
+bool BlockModel::tableSetColumnKind(int head, int c, int kind) {
     if (headerCount(head) == 0 || c < 0 || c >= tableColumnCount(head)) return false;
     kind = std::clamp(kind, 0, 3);
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     while (spec.size() <= c) spec.append(QJsonObject());
     QJsonObject col = spec[c].toObject();
     if (col.value(QStringLiteral("k")).toInt(0) == kind) return true;
-    std::vector<GridRow> grid = gridOf(head);
+    std::vector<GridRow> grid = tableOf(head);
     const int hc = std::min(headerCount(head), static_cast<int>(grid.size()));
     auto valueOf = [&](const GridCell& cell) {
         if (cell.blocks.empty()) return QString();
@@ -1478,7 +1478,7 @@ bool BlockModel::gridSetColumnKind(int head, int c, int kind) {
     rebuildTable(lo, hi, grid, spec, headerCount(head));
     tableGeomDirty_ = true;                                  // the spec (and its cached parse) changed
     if (kind == 3)                                           // T6: frame counts / timecodes → canonical
-        for (int r = headerCount(head); r < gridRowCount(head); ++r) normalizeTimecodeCell(gridCellAt(head, r, c));
+        for (int r = headerCount(head); r < tableRowCount(head); ++r) normalizeTimecodeCell(tableCellAt(head, r, c));
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
@@ -1486,20 +1486,20 @@ bool BlockModel::gridSetColumnKind(int head, int c, int kind) {
     return true;
 }
 
-bool BlockModel::gridSetColumnsKind(int head, const QVariantList& cols, int kind) {
-    const std::vector<int> set = gridIndexSet(cols, tableColumnCount(head));
+bool BlockModel::tableSetColumnsKind(int head, const QVariantList& cols, int kind) {
+    const std::vector<int> set = tableIndexSet(cols, tableColumnCount(head));
     if (set.empty()) return false;
     const auto [lo, hi] = tableBand(head);
     beginTxn(lo, hi);                                        // one undo step for the set
     bool ok = true;
-    for (int c : set) ok = gridSetColumnKind(head, c, kind) && ok;
+    for (int c : set) ok = tableSetColumnKind(head, c, kind) && ok;
     endTxn();
     return ok;
 }
 
 bool BlockModel::sweepColumnOptions(int head, int c, const QJsonArray& options,
                                     const std::function<QString(const QString&)>& remap) {
-    if (gridColumnKind(head, c) != 1) return false;
+    if (tableColumnKind(head, c) != 1) return false;
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     QJsonObject col = spec[c].toObject();
     col.insert(QStringLiteral("o"), options);
@@ -1510,9 +1510,9 @@ bool BlockModel::sweepColumnOptions(int head, int c, const QJsonArray& options,
     t.insert(QStringLiteral("cols"), spec);
     rows_[size_t(head)].table = QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
     persistMeta(head);
-    const int hc = headerCount(head), rows = gridRowCount(head);
+    const int hc = headerCount(head), rows = tableRowCount(head);
     for (int r = hc; r < rows; ++r) {
-        const int b = gridCellAt(head, r, c);
+        const int b = tableCellAt(head, r, c);
         const QJsonObject p = chipPayloadOf(b);
         if (b < 0 || p.isEmpty()) continue;
         writeCellValue(b, options, remap(p.value(QStringLiteral("v")).toString()));
@@ -1528,8 +1528,8 @@ static QJsonArray columnOptionsOf(const QString& table, int c) {
     return tableColsOf(table).at(c).toObject().value(QStringLiteral("o")).toArray();
 }
 
-QString BlockModel::gridAddOption(int head, int c, const QString& label, const QString& color) {
-    if (gridColumnKind(head, c) != 1) return {};
+QString BlockModel::tableAddOption(int head, int c, const QString& label, const QString& color) {
+    if (tableColumnKind(head, c) != 1) return {};
     const QString clean = mn::inl::sanitizeChoiceLabel(label);
     if (clean.isEmpty()) return {};
     QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
@@ -1538,7 +1538,7 @@ QString BlockModel::gridAddOption(int head, int c, const QString& label, const Q
     return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; }) ? id : QString();
 }
 
-bool BlockModel::gridRenameOption(int head, int c, const QString& id, const QString& label) {
+bool BlockModel::tableRenameOption(int head, int c, const QString& id, const QString& label) {
     const QString clean = mn::inl::sanitizeChoiceLabel(label);
     QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
     if (clean.isEmpty() || !optionsHave(opts, id)) return false;
@@ -1549,7 +1549,7 @@ bool BlockModel::gridRenameOption(int head, int c, const QString& id, const QStr
     return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; });
 }
 
-bool BlockModel::gridRecolorOption(int head, int c, const QString& id, const QString& color) {
+bool BlockModel::tableRecolorOption(int head, int c, const QString& id, const QString& color) {
     QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
     if (!optionsHave(opts, id)) return false;
     for (qsizetype i = 0; i < opts.size(); ++i) {
@@ -1559,7 +1559,7 @@ bool BlockModel::gridRecolorOption(int head, int c, const QString& id, const QSt
     return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; });
 }
 
-bool BlockModel::gridMoveOption(int head, int c, const QString& id, int toIndex) {
+bool BlockModel::tableMoveOption(int head, int c, const QString& id, int toIndex) {
     QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
     qsizetype from = -1;
     for (qsizetype i = 0; i < opts.size(); ++i)
@@ -1573,7 +1573,7 @@ bool BlockModel::gridMoveOption(int head, int c, const QString& id, int toIndex)
     return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; });
 }
 
-bool BlockModel::gridRemoveOption(int head, int c, const QString& id) {
+bool BlockModel::tableRemoveOption(int head, int c, const QString& id) {
     QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
     if (!optionsHave(opts, id)) return false;
     for (qsizetype i = opts.size() - 1; i >= 0; --i)
@@ -1581,8 +1581,8 @@ bool BlockModel::gridRemoveOption(int head, int c, const QString& id) {
     return sweepColumnOptions(head, c, opts, [&](const QString& v) { return v == id ? QString() : v; });
 }
 
-bool BlockModel::gridSetColumnOptions(int head, int c, const QVariantList& options) {
-    if (gridColumnKind(head, c) != 1) return false;
+bool BlockModel::tableSetColumnOptions(int head, int c, const QVariantList& options) {
+    if (tableColumnKind(head, c) != 1) return false;
     QJsonArray opts;
     for (const QVariant& v : options) {
         const QVariantMap m = v.toMap();
@@ -1596,33 +1596,33 @@ bool BlockModel::gridSetColumnOptions(int head, int c, const QVariantList& optio
     return sweepColumnOptions(head, c, opts, [&](const QString& v) { return optionsHave(opts, v) ? v : QString(); });
 }
 
-QString BlockModel::gridCellChoice(int head, int r, int c) const {
-    return chipPayloadOf(gridCellAt(head, r, c)).value(QStringLiteral("v")).toString();
+QString BlockModel::tableCellChoice(int head, int r, int c) const {
+    return chipPayloadOf(tableCellAt(head, r, c)).value(QStringLiteral("v")).toString();
 }
 
-QString BlockModel::gridCellChoiceLabel(int head, int r, int c) const {
-    const QJsonObject p = chipPayloadOf(gridCellAt(head, r, c));
+QString BlockModel::tableCellChoiceLabel(int head, int r, int c) const {
+    const QJsonObject p = chipPayloadOf(tableCellAt(head, r, c));
     return p.isEmpty() ? QString() : mn::inl::choiceLabelFor(p, p.value(QStringLiteral("v")).toString());
 }
 
-QString BlockModel::gridCellChoiceColor(int head, int r, int c) const {
-    const QJsonObject p = chipPayloadOf(gridCellAt(head, r, c));
+QString BlockModel::tableCellChoiceColor(int head, int r, int c) const {
+    const QJsonObject p = chipPayloadOf(tableCellAt(head, r, c));
     return p.isEmpty() ? QString() : mn::inl::choiceColorFor(p, p.value(QStringLiteral("v")).toString());
 }
 
 int BlockModel::ensureGridCell(int head, int r, int c) {
-    int b = gridCellAt(head, r, c);
+    int b = tableCellAt(head, r, c);
     if (b >= 0) return b;
-    std::vector<GridRow> grid = gridOf(head);
+    std::vector<GridRow> grid = tableOf(head);
     if (r < 0 || r >= static_cast<int>(grid.size()) || c < 0 || c >= 63) return -1;
     if (static_cast<int>(grid[size_t(r)].cells.size()) <= c) grid[size_t(r)].cells.resize(size_t(c) + 1);
     const auto [lo, hi] = tableBand(head);
     rebuildTable(lo, hi, grid, tableColsOf(rows_[size_t(head)].table), headerCount(head));
-    return gridCellAt(head, r, c);
+    return tableCellAt(head, r, c);
 }
 
-bool BlockModel::gridSetCellChoice(int head, int r, int c, const QString& id) {
-    if (gridColumnKind(head, c) != 1 || r < headerCount(head)) return false;
+bool BlockModel::tableSetCellChoice(int head, int r, int c, const QString& id) {
+    if (tableColumnKind(head, c) != 1 || r < headerCount(head)) return false;
     const QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
     if (!id.isEmpty() && !optionsHave(opts, id)) return false;
     const auto [lo, hi] = tableBand(head);
@@ -1636,12 +1636,12 @@ bool BlockModel::gridSetCellChoice(int head, int r, int c, const QString& id) {
     return b >= 0;
 }
 
-int BlockModel::gridCellCheck(int head, int r, int c) const {
-    return std::clamp(chipPayloadOf(gridCellAt(head, r, c)).value(QStringLiteral("v")).toString().toInt(), 0, 2);
+int BlockModel::tableCellCheck(int head, int r, int c) const {
+    return std::clamp(chipPayloadOf(tableCellAt(head, r, c)).value(QStringLiteral("v")).toString().toInt(), 0, 2);
 }
 
-bool BlockModel::gridSetCellCheck(int head, int r, int c, int state) {
-    if (gridColumnKind(head, c) != 2 || r < headerCount(head)) return false;
+bool BlockModel::tableSetCellCheck(int head, int r, int c, int state) {
+    if (tableColumnKind(head, c) != 2 || r < headerCount(head)) return false;
     state = std::clamp(state, 0, 2);
     const auto [lo, hi] = tableBand(head);
     beginTxn(lo, hi);
@@ -1654,11 +1654,11 @@ bool BlockModel::gridSetCellCheck(int head, int r, int c, int state) {
     return b >= 0;
 }
 
-bool BlockModel::gridCycleCellCheck(int head, int r, int c) {
-    return gridSetCellCheck(head, r, c, (gridCellCheck(head, r, c) + 1) % 3);
+bool BlockModel::tableCycleCellCheck(int head, int r, int c) {
+    return tableSetCellCheck(head, r, c, (tableCellCheck(head, r, c) + 1) % 3);
 }
 
-std::vector<BlockModel::BlockSpec> BlockModel::gridSpecsFromTable(const QString& tableJson) {
+std::vector<BlockModel::BlockSpec> BlockModel::tableSpecsFromGrid(const QString& tableJson) {
     const TableGrid g = TableGrid::fromJson(tableJson);
     std::vector<BlockSpec> out;
     const int rows = g.rows(), cols = std::min(g.cols(), 63);
@@ -1738,7 +1738,7 @@ std::vector<BlockModel::BlockSpec> BlockModel::gridSpecsFromTable(const QString&
     return out;
 }
 
-int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
+int BlockModel::tablePasteTSV(int head, int r0, int c0, const QString& text) {
     if (headerCount(head) == 0 || r0 < 0 || c0 < 0 || c0 >= 63) return -1;
     QString t = text;
     t.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
@@ -1746,7 +1746,7 @@ int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
     while (t.endsWith(QLatin1Char('\n'))) t.chop(1);
     const TableGrid src = TableGrid::fromTSV(t);
     const int rows = src.rows(), cols = std::min(src.cols(), 63 - c0);
-    std::vector<GridRow> grid = gridOf(head);
+    std::vector<GridRow> grid = tableOf(head);
     if (rows <= 0 || cols <= 0 || grid.empty() || r0 >= static_cast<int>(grid.size())) return -1;
     const size_t widest = size_t(c0 + cols);
     while (grid.size() < size_t(r0 + rows)) {                  // grow rows, copying the last row's divisions
@@ -1770,21 +1770,21 @@ int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
     for (int i = 0; i < rows; ++i)
         for (int j = 0; j < cols; ++j) {
             const int r = r0 + i, c = c0 + j;
-            if (gridCellAt(head, r, c) < 0) continue;
+            if (tableCellAt(head, r, c) < 0) continue;
             const QString v = src.cellText(i, j);
-            const int kind = r < hc ? 0 : gridColumnKind(head, c);
+            const int kind = r < hc ? 0 : tableColumnKind(head, c);
             if (kind == 1) {                                    // adopt a matching option, else add one
                 QString id = optionIdByLabel(columnOptionsOf(rows_[size_t(head)].table, c), v);
-                if (id.isEmpty() && !v.trimmed().isEmpty()) id = gridAddOption(head, c, v, QStringLiteral("#8A8A8A"));
-                writeCellValue(gridCellAt(head, r, c), columnOptionsOf(rows_[size_t(head)].table, c), id);
+                if (id.isEmpty() && !v.trimmed().isEmpty()) id = tableAddOption(head, c, v, QStringLiteral("#8A8A8A"));
+                writeCellValue(tableCellAt(head, r, c), columnOptionsOf(rows_[size_t(head)].table, c), id);
             } else if (kind == 2) {
                 const QString id = optionIdByLabel(checkOptions(), v);
-                writeCellValue(gridCellAt(head, r, c), checkOptions(), id == QStringLiteral("0") ? QString() : id);
+                writeCellValue(tableCellAt(head, r, c), checkOptions(), id == QStringLiteral("0") ? QString() : id);
             } else {
-                writePlainValue(gridCellAt(head, r, c), v);
-                if (kind == 3) normalizeTimecodeCell(gridCellAt(head, r, c));
+                writePlainValue(tableCellAt(head, r, c), v);
+                if (kind == 3) normalizeTimecodeCell(tableCellAt(head, r, c));
             }
-            land = gridCellAt(head, r, c);
+            land = tableCellAt(head, r, c);
         }
     bumpLayout();
     ++contentRevision_;
@@ -1807,9 +1807,9 @@ int BlockModel::insertGridFromTSV(int afterRow, const QString& tsv) {
     beginTxn(gap, gap - 1);
     const int first = insertTableRows(afterRow, g.rows(), std::min(g.cols(), 63));
     const int head = first - 1;
-    gridPasteTSV(head, 0, 0, t);
+    tablePasteTSV(head, 0, 0, t);
     endTxn();
-    return gridCellAt(head, 0, 0);
+    return tableCellAt(head, 0, 0);
 }
 
 bool BlockModel::parseGridSpecs(const std::vector<BlockSpec>& specs, const QJsonArray& colsHint, int headerHint, GridPaste* out) {
@@ -1867,7 +1867,7 @@ void BlockModel::promoteGridRuns(std::vector<BlockSpec>& specs) {
 }
 
 // The pasted value of a cell for a typed column: its first block's text (a chip's text is its label).
-static QString gridValueLabel(const std::vector<BlockModel::BlockSpec>& blocks) {
+static QString tableValueLabel(const std::vector<BlockModel::BlockSpec>& blocks) {
     for (const BlockModel::BlockSpec& sp : blocks)
         if (sp.mediaJson.isEmpty() && sp.type != BlockModel::Split) return sp.text.trimmed();
     return {};
@@ -1875,16 +1875,16 @@ static QString gridValueLabel(const std::vector<BlockModel::BlockSpec>& blocks) 
 
 void BlockModel::writeCellSpecs(int head, int r, int c, const std::vector<BlockSpec>& blocks) {
     const int hc = headerCount(head);
-    const int kind = r < hc ? 0 : gridColumnKind(head, c);
+    const int kind = r < hc ? 0 : tableColumnKind(head, c);
     if (kind == 1) {                                               // adopt a matching option, else add one
-        const QString v = gridValueLabel(blocks);
+        const QString v = tableValueLabel(blocks);
         QString id = optionIdByLabel(columnOptionsOf(rows_[size_t(head)].table, c), v);
-        if (id.isEmpty() && !v.isEmpty()) id = gridAddOption(head, c, v, QStringLiteral("#8A8A8A"));
+        if (id.isEmpty() && !v.isEmpty()) id = tableAddOption(head, c, v, QStringLiteral("#8A8A8A"));
         writeCellValue(ensureGridCell(head, r, c), columnOptionsOf(rows_[size_t(head)].table, c), id);
         return;
     }
     if (kind == 2) {
-        QString v = gridValueLabel(blocks);
+        QString v = tableValueLabel(blocks);
         if (v == QLatin1String("[x]") || v == QLatin1String("[X]")) v = QStringLiteral("Done");
         else if (v == QLatin1String("[/]")) v = QStringLiteral("Doing");
         else if (v == QLatin1String("[ ]") || v == QLatin1String("[]")) v = QStringLiteral("To do");
@@ -1892,7 +1892,7 @@ void BlockModel::writeCellSpecs(int head, int r, int c, const std::vector<BlockS
         writeCellValue(ensureGridCell(head, r, c), checkOptions(), id == QStringLiteral("0") ? QString() : id);
         return;
     }
-    gridClearCells(head, r, c, r, c);                              // → one empty paragraph
+    tableClearCells(head, r, c, r, c);                              // → one empty paragraph
     const int b = ensureGridCell(head, r, c);
     if (b < 0) return;
     std::vector<BlockSpec> in;
@@ -1905,7 +1905,7 @@ void BlockModel::writeCellSpecs(int head, int r, int c, const std::vector<BlockS
     }
     if (in.empty()) return;
     spliceSpecsAt(b + 1, in, /*allowReuseAnchorAbove=*/true, c);   // folds into the empty paragraph
-    if (kind == 3) normalizeTimecodeCell(gridCellAt(head, r, c));
+    if (kind == 3) normalizeTimecodeCell(tableCellAt(head, r, c));
 }
 
 int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool forceFill) {
@@ -1919,7 +1919,7 @@ int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool fo
         const int hc = headerCount(head);
         auto fold = [](const QString& s) { return s.trimmed().toCaseFolded(); };
         std::vector<QString> target;
-        for (int k = 0; k < tableColumnCount(head); ++k) target.push_back(fold(gridCellText(head, 0, k)));
+        for (int k = 0; k < tableColumnCount(head); ++k) target.push_back(fold(tableCellText(head, 0, k)));
         std::vector<char> used(target.size(), 0);
         std::vector<int> map(size_t(width), -1);
         std::vector<QString> srcLabel(static_cast<size_t>(width));   // not size_t(width): a vexing parse
@@ -1941,9 +1941,9 @@ int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool fo
         for (int j = 0; j < width; ++j) {                          // unmatched: a new column, its header and kind
             if (map[size_t(j)] >= 0) continue;
             const int nc = tableColumnCount(head);
-            if (!gridInsertColumn(head, nc)) continue;
+            if (!tableInsertColumn(head, nc)) continue;
             map[size_t(j)] = nc;
-            if (const int hb = gridCellAt(head, 0, nc); hb >= 0 && !srcLabel[size_t(j)].isEmpty()) writePlainValue(hb, srcLabel[size_t(j)]);
+            if (const int hb = tableCellAt(head, 0, nc); hb >= 0 && !srcLabel[size_t(j)].isEmpty()) writePlainValue(hb, srcLabel[size_t(j)]);
             const QJsonObject col = grid.cols.at(j).toObject();
             const int kind = col.value(QStringLiteral("k")).toInt(0);
             if (kind == 1) {
@@ -1954,31 +1954,31 @@ int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool fo
                                             { QStringLiteral("label"), o.value(QStringLiteral("l")).toString() },
                                             { QStringLiteral("color"), o.value(QStringLiteral("c")).toString() } };
                 }
-                gridSetColumnKind(head, nc, 1);
-                if (!options.isEmpty()) gridSetColumnOptions(head, nc, options);
+                tableSetColumnKind(head, nc, 1);
+                if (!options.isEmpty()) tableSetColumnOptions(head, nc, options);
             } else if (kind == 2) {
-                gridSetColumnKind(head, nc, 2);
+                tableSetColumnKind(head, nc, 2);
             }
         }
-        const int at = r < hc ? gridRowCount(head) : r + 1;
+        const int at = r < hc ? tableRowCount(head) : r + 1;
         const int n = static_cast<int>(grid.rows.size()) - grid.header;
         for (int i = 0; i < n; ++i) {
-            if (!gridInsertRow(head, at + i)) break;
+            if (!tableInsertRow(head, at + i)) break;
             for (int j = 0; j < width; ++j) {
                 if (map[size_t(j)] < 0) continue;
                 writeCellSpecs(head, at + i, map[size_t(j)], grid.rows[size_t(grid.header + i)][size_t(j)]);
-                land = gridCellAt(head, at + i, map[size_t(j)]);
+                land = tableCellAt(head, at + i, map[size_t(j)]);
             }
         }
     } else {
         // Fill by position from (r, c); header rows paste as content.
         const int n = static_cast<int>(grid.rows.size());
-        while (gridRowCount(head) < r + n) if (!gridInsertRow(head, gridRowCount(head))) break;
-        while (tableColumnCount(head) < c + width) if (!gridInsertColumn(head, tableColumnCount(head))) break;
-        for (int i = 0; i < n && r + i < gridRowCount(head); ++i)
+        while (tableRowCount(head) < r + n) if (!tableInsertRow(head, tableRowCount(head))) break;
+        while (tableColumnCount(head) < c + width) if (!tableInsertColumn(head, tableColumnCount(head))) break;
+        for (int i = 0; i < n && r + i < tableRowCount(head); ++i)
             for (int j = 0; j < width && c + j < tableColumnCount(head); ++j) {
                 writeCellSpecs(head, r + i, c + j, grid.rows[size_t(i)][size_t(j)]);
-                land = gridCellAt(head, r + i, c + j);
+                land = tableCellAt(head, r + i, c + j);
             }
     }
     bumpLayout();
@@ -1988,16 +1988,16 @@ int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool fo
     return land;
 }
 
-int BlockModel::gridInsertMedia(int head, int r, int c, const QVariantList& fileUrls) {
-    if (headerCount(head) <= 0 || r < 0 || r >= gridRowCount(head) || c < 0 || c >= 63 || fileUrls.isEmpty()) return -1;
-    if (r >= headerCount(head) && gridColumnKind(head, c) != 0) return -1;   // a typed body cell holds one chip
+int BlockModel::tableInsertMedia(int head, int r, int c, const QVariantList& fileUrls) {
+    if (headerCount(head) <= 0 || r < 0 || r >= tableRowCount(head) || c < 0 || c >= 63 || fileUrls.isEmpty()) return -1;
+    if (r >= headerCount(head) && tableColumnKind(head, c) != 0) return -1;   // a typed body cell holds one chip
     const auto [lo, hi] = tableBand(head);
     beginTxn(lo, hi);
-    const bool ragged = gridCellAt(head, r, c) < 0;
+    const bool ragged = tableCellAt(head, r, c) < 0;
     int last = -1;
     if (ensureGridCell(head, r, c) >= 0) {
         for (const QVariant& u : fileUrls) {
-            const QVariantList blocks = gridCellRows(head, r, c);
+            const QVariantList blocks = tableCellRows(head, r, c);
             if (blocks.isEmpty()) break;
             const int nr = insertMediaFromUrl(blocks.back().toInt(), u.toString());   // joins the cell's lane
             if (nr >= 0) last = nr;
@@ -2010,7 +2010,7 @@ int BlockModel::gridInsertMedia(int head, int r, int c, const QVariantList& file
 
 void BlockModel::adaptJoinedChips(int head, int firstJoined) {
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
-    const int rows = gridRowCount(head), hc = headerCount(head);
+    const int rows = tableRowCount(head), hc = headerCount(head);
     bool specChanged = false;
     for (int c = 0; c < spec.size(); ++c) {
         QJsonObject col = spec[c].toObject();
@@ -2020,7 +2020,7 @@ void BlockModel::adaptJoinedChips(int head, int firstJoined) {
         const int optionsBefore = static_cast<int>(opts.size());
         std::vector<std::pair<int, QString>> writes;
         for (int r = std::max(firstJoined, hc); r < rows; ++r) {
-            const int b = gridCellAt(head, r, c);
+            const int b = tableCellAt(head, r, c);
             const QJsonObject p = chipPayloadOf(b);
             if (b < 0 || p.isEmpty()) continue;
             const QString v = p.value(QStringLiteral("v")).toString();
@@ -2039,7 +2039,7 @@ void BlockModel::adaptJoinedChips(int head, int firstJoined) {
             spec[c] = col;
             specChanged = true;
             for (int r = hc; r < std::max(firstJoined, hc); ++r) {    // the table's own chips: the grown set
-                const int b = gridCellAt(head, r, c);
+                const int b = tableCellAt(head, r, c);
                 const QJsonObject p = chipPayloadOf(b);
                 if (b >= 0 && !p.isEmpty()) writeCellValue(b, opts, p.value(QStringLiteral("v")).toString());
             }
@@ -4598,7 +4598,7 @@ std::vector<BlockModel::Span> BlockModel::cellSpansFromJson(const QJsonArray& a)
     }
     return v;
 }
-QStringList BlockModel::gridBlockIds() const {
+QStringList BlockModel::tableBlockIds() const {
     QStringList out;
     const std::vector<int>& heads = tableHeads();
     for (size_t i = 0; i < rows_.size(); ++i)
@@ -6221,7 +6221,7 @@ void BlockModel::commitMarkdown(int row) {
     const uint8_t t = rows_[row].type;
     if (t != Paragraph && t != Quote && t != ListItem && t != TaskListItem) return;   // where inline md renders
     // T6: leaving a timecode cell normalizes it (its own undo step, like the markdown commit).
-    if (rows_[row].cell >= 0 && tableHeadOf(row) >= 0 && gridColumnKind(tableHeadOf(row), rows_[row].cell) == 3) {
+    if (rows_[row].cell >= 0 && tableHeadOf(row) >= 0 && tableColumnKind(tableHeadOf(row), rows_[row].cell) == 3) {
         const auto [lo, hi] = tableBand(tableHeadOf(row));
         beginTxn(lo, hi);
         const bool changed = normalizeTimecodeCell(row);
@@ -6785,7 +6785,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     if (tableHeadOf(row) >= 0 && rows_[size_t(row)].cell >= 0) {
         GridPaste grid;
         if (parseGridSpecs(specs, QJsonArray(), 0, &grid)) {
-            const int land = pasteGrid(tableHeadOf(row), gridRowOf(row), gridColumnOf(row), grid, false);
+            const int land = pasteGrid(tableHeadOf(row), tableRowOf(row), tableColumnOf(row), grid, false);
             if (land >= 0) return QVariantList{ land, static_cast<int>(content_[size_t(land)].size()) };
         }
     }
@@ -7274,10 +7274,10 @@ QVariantList BlockModel::deleteSelectionRange(int loRow, int loCol, int hiRow, i
     const int headLo = tableHeadOf(loRow), headHi = tableHeadOf(hiRow);
     const int cellLo = rows_[size_t(loRow)].cell, cellHi = rows_[size_t(hiRow)].cell;
     if (headLo >= 0 && headLo == headHi && cellLo >= 0 && cellHi >= 0 && (recLo != recHi || cellLo != cellHi)) {
-        const int ra = gridRowOf(loRow), rb = gridRowOf(hiRow);
+        const int ra = tableRowOf(loRow), rb = tableRowOf(hiRow);
         const int r0 = std::min(ra, rb), c0 = std::min(cellLo, cellHi);
-        gridClearCells(headLo, r0, c0, std::max(ra, rb), std::max(cellLo, cellHi));
-        return QVariantList{ std::max(0, gridCellAt(headLo, r0, c0)), 0 };
+        tableClearCells(headLo, r0, c0, std::max(ra, rb), std::max(cellLo, cellHi));
+        return QVariantList{ std::max(0, tableCellAt(headLo, r0, c0)), 0 };
     }
     if (recLo >= 0 && recLo == recHi && rows_[size_t(loRow)].cell != rows_[size_t(hiRow)].cell)
         return clearLanes(recLo, rows_[size_t(loRow)].cell, rows_[size_t(hiRow)].cell);
@@ -7561,12 +7561,12 @@ QString BlockModel::finishClipboardPayload(const BlockModel& m, BlockClipboard::
 
 // A cell's text for TSV: its blocks joined by newlines, media and dividers skipped, a typed body
 // cell as its label / box.
-static QString gridCellPlainText(const BlockModel& m, int head, int r, int c) {
+static QString tableCellPlainText(const BlockModel& m, int head, int r, int c) {
     if (r >= m.headerCount(head)) {
-        const int kind = m.gridColumnKind(head, c);
-        if (kind == 1) return m.gridCellChoiceLabel(head, r, c);
+        const int kind = m.tableColumnKind(head, c);
+        if (kind == 1) return m.tableCellChoiceLabel(head, r, c);
         if (kind == 2) {
-            switch (m.gridCellCheck(head, r, c)) {
+            switch (m.tableCellCheck(head, r, c)) {
             case 1:  return QStringLiteral("[/]");
             case 2:  return QStringLiteral("[x]");
             default: return QStringLiteral("[ ]");
@@ -7574,7 +7574,7 @@ static QString gridCellPlainText(const BlockModel& m, int head, int r, int c) {
         }
     }
     QStringList parts;
-    for (const QVariant& v : m.gridCellRows(head, r, c)) {
+    for (const QVariant& v : m.tableCellRows(head, r, c)) {
         const int b = v.toInt();
         const int t = m.typeForRow(b);
         if (t == BlockModel::Media || t == BlockModel::Divider) continue;
@@ -7589,18 +7589,18 @@ static QString tsvField(QString v) {
     return QLatin1Char('"') + v + QLatin1Char('"');
 }
 
-QString BlockModel::gridCellsTSV(int head, const QVariantList& rows, const QVariantList& cols) const {
+QString BlockModel::tableCellsTSV(int head, const QVariantList& rows, const QVariantList& cols) const {
     if (!tableInfo(head)) return {};
     QStringList lines;
     for (const QVariant& rv : rows) {
         QStringList fields;
-        for (const QVariant& cv : cols) fields << tsvField(gridCellPlainText(*this, head, rv.toInt(), cv.toInt()));
+        for (const QVariant& cv : cols) fields << tsvField(tableCellPlainText(*this, head, rv.toInt(), cv.toInt()));
         lines << fields.join(QLatin1Char('\t'));
     }
     return lines.join(QLatin1Char('\n'));
 }
 
-QString BlockModel::gridCopyPayload(int head, const QVariantList& rowsIn, const QVariantList& colsIn) const {
+QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const QVariantList& colsIn) const {
     const TableInfo* info = tableInfo(head);
     if (!info || rowsIn.isEmpty() || colsIn.isEmpty()) return {};
     BlockClipboard::Payload p;
@@ -7618,7 +7618,7 @@ QString BlockModel::gridCopyPayload(int head, const QVariantList& rowsIn, const 
     const std::vector<float> equal(size_t(colsIn.size()), 1.0f / static_cast<float>(colsIn.size()));
     int headerRows = 0;
     for (const QVariant& rv : rowsIn) {
-        const int r = rv.toInt(), rec = gridRecord(head, r);
+        const int r = rv.toInt(), rec = tableRecord(head, r);
         if (rec < 0) continue;
         if (r < hc) ++headerRows;
         BlockSpec rs;
@@ -7639,7 +7639,7 @@ QString BlockModel::gridCopyPayload(int head, const QVariantList& rowsIn, const 
         p.specs.push_back(rs);
         p.ink.push_back(inkForRow(rec));
         for (int k = 0; k < colsIn.size(); ++k) {
-            const QVariantList blocks = gridCellRows(head, r, colsIn[k].toInt());
+            const QVariantList blocks = tableCellRows(head, r, colsIn[k].toInt());
             if (blocks.isEmpty()) {                                        // a ragged cell: the fragment stays rectangular
                 BlockSpec e;
                 e.type = Paragraph;
