@@ -141,13 +141,14 @@ bool DocumentMerger::applyMerge(BlockModel* dest, MergeJob& job,
         const int row = dest->rowForId(job.anchorId);
         gap = (row >= 0) ? row + 1 : std::min(job.gap, destN);
     }
+    gap = dest->mergeGapFor(gap);   // never inside or between split rows (R-I6 6c)
 
     // The fold-eligibility mirror of spliceSpecsAt: the outer band must
     // COVER the anchor when the first spec will consume it, or undo could
-    // not restore the blank row.
+    // not restore the blank row. A merge lands top-level: never into a lane.
     const int anchor = gap - 1;
     bool willFold = false;
-    if (anchor >= 0) {
+    if (anchor >= 0 && dest->laneForRow(anchor) < 0) {
         const int t = dest->typeForRow(anchor);
         willFold = (t == BlockModel::Paragraph || t == BlockModel::Heading
                     || t == BlockModel::Quote || t == BlockModel::ListItem)
@@ -155,7 +156,7 @@ bool DocumentMerger::applyMerge(BlockModel* dest, MergeJob& job,
     }
 
     dest->beginGroup(willFold ? anchor : gap, gap - 1);
-    dest->spliceSpecsAt(gap, job.specs, /*allowReuseAnchorAbove=*/true);
+    dest->spliceSpecsAt(gap, job.specs, /*allowReuseAnchorAbove=*/true, /*lane=*/-1);
     const int firstRow = willFold ? anchor : gap;
     const int lastRow = firstRow + static_cast<int>(job.specs.size()) - 1;
     const bool migrate = !qFuzzyCompare(job.srcWidth, job.destWidth);

@@ -557,10 +557,7 @@ FocusScope {
     // Tab merge snaps below a run of adjacent split rows (R-I6 6c): a merge never lands
     // between two split rows or inside one.
     function mergeGapForY(cy) {
-        let g = gapForY(cy)
-        while (g > 0 && g < blockModel.count && blockModel.typeForRow(g) === 10 && blockModel.laneForRow(g - 1) >= 0)
-            g = blockModel.splitRowLast(g) + 1
-        return g
+        return blockModel.mergeGapFor(gapForY(cy))
     }
     // Where a drag (of blocks or files) would land at content point (cx, cy), SR-3 S7c:
     // the side edge of a block (→ a new lane beside it), a gap inside the lane under the
@@ -1117,6 +1114,8 @@ FocusScope {
                 return
             }
             if (cr >= 0) { cursor.setCaret(cr, Math.max(0, cc)); root.ensureVisible(cr) }
+            if (blockModel.lastPasteRelocated())
+                Toasts.show(qsTr("Pasted below the split row — split rows and tables can't go inside a lane"))
         }
     }
 

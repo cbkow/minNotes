@@ -388,6 +388,8 @@ public:
         std::vector<Span> spans;
         QString tableJson;          // Table blocks
         QString mediaJson;          // Media blocks (descriptor)
+        int8_t cell = -1;           // split rows (SR-3): the lane, when the list carries its record
+        std::vector<float> ratios;  // a Split record's lane fractions
     };
     // Insert specs into/after `row` (the pasteHtml tail, extracted): folds
     // the first spec into a blank simple row when allowed, rank-chains the
@@ -397,8 +399,18 @@ public:
                                    bool allowReuseBlankRow = true);
     // Gap-addressed core (the tab-merge program): gap g = between rows g-1
     // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
+    // Lanes (SR-3 S8): specs that carry a Split record keep their own structure
+    // (sanitized — a record the D1 plan would drop becomes an empty paragraph,
+    // so spec indices stay parallel to ink); those, tables, and lane = -1 land
+    // at a top-level gap, moved below a split row the gap is inside
+    // (spliceGapFor). Otherwise the rows join the lane above the gap.
     std::pair<int,int> spliceSpecsAt(int gap, const std::vector<BlockSpec>& specs,
-                                     bool allowReuseAnchorAbove = true);
+                                     bool allowReuseAnchorAbove = true, int lane = kInheritLane);
+    int spliceGapFor(int gap, const std::vector<BlockSpec>& specs, int lane = kInheritLane) const;
+    static bool specsNeedTopLevel(const std::vector<BlockSpec>& specs);
+    // Tab merge (R-I6 6c): a gap inside a split row, or between two adjacent
+    // split rows, snaps below the run.
+    Q_INVOKABLE int mergeGapFor(int gap) const;
     // Inverse of the spec sink: one row → a BlockSpec that insertSpecs /
     // spliceSpecsAt reproduces faithfully (spans carry ALL payloads —
     // links, colors, choice chips, comment hrefs). The merge snapshot walker.
@@ -430,8 +442,11 @@ public:
     // and the caret block's tail rides the last text-ish spec. `ink` is
     // parallel to `specs` (width-migrated from srcPageWidth; never overwrites
     // ink the target row already has). Returns {caretRow, caretCol}.
+    // Split rows and tables pasted with the caret in a lane land below its
+    // split row (lastPasteRelocated → the editor's Toast).
     std::pair<int,int> pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
                                     const std::vector<QString>& ink, qreal srcPageWidth);
+    Q_INVOKABLE bool lastPasteRelocated() const { return lastPasteRelocated_; }
     // Browser "Copy Image" shape: the HTML is nothing but one remote <img>.
     // The raster on the same clipboard is then the better source (Importer).
     Q_INVOKABLE bool htmlIsBareRemoteImage(const QString& html) const;
@@ -1170,7 +1185,15 @@ private:
     // A4 inside the running txn: make [lo, hi] (widened to whole split rows) valid —
     // collapse emptied lanes (width to the left), unwrap one-lane rows, drop empty records.
     void normalizeStructure(int lo, int hi);
+    // Copy grain (SR-3 S8): a range inside one lane copies as plain blocks; any
+    // other range touching a split row widens to whole split rows and keeps them.
+    struct CopyBand { int lo, loCol, hi, hiCol; bool keepLanes; };
+    CopyBand copyBand(int loRow, int loCol, int hiRow, int hiCol) const;
+    static bool sanitizeSpecStructure(std::vector<BlockSpec>& specs);
+    bool lastPasteRelocated_ = false;
+public:
     std::pair<int,int> wholeSplitRows(int lo, int hi) const;   // widen a band to whole split rows
+private:
     int splitRowEnd(int record) const;                         // a record's last lane block
     int8_t laneAt(int at) const;                               // the lane a block inserted at `at` joins
     void removeRowRaw(int row);                                // erase one row everywhere (no txn)

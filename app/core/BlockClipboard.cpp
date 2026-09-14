@@ -59,6 +59,12 @@ QJsonObject specToJson(const BlockModel::BlockSpec& sp, const QString& ink) {
             o.insert(QStringLiteral("spans"), spans);
         }
     }
+    if (sp.cell >= 0) o.insert(QStringLiteral("cell"), int(sp.cell));
+    if (!sp.ratios.empty()) {
+        QJsonArray ratios;
+        for (float f : sp.ratios) ratios.push_back(double(f));
+        o.insert(QStringLiteral("ratios"), ratios);
+    }
     if (!ink.isEmpty()) putJsonOrRaw(o, QStringLiteral("ink"), ink);
     return o;
 }
@@ -91,6 +97,10 @@ BlockModel::BlockSpec specFromJson(const QJsonObject& o, QString* ink) {
             sp.spans.push_back({s, e, k, so.value(QStringLiteral("u")).toString()});
         }
     }
+    // Lanes are sanitized where the specs land (BlockModel::spliceSpecsAt).
+    sp.cell = static_cast<int8_t>(std::clamp(o.value(QStringLiteral("cell")).toInt(-1), -1, 63));
+    for (const QJsonValue& v : o.value(QStringLiteral("ratios")).toArray())
+        sp.ratios.push_back(static_cast<float>(v.toDouble()));
     if (ink) *ink = takeJsonOrRaw(o, QStringLiteral("ink"));
     return sp;
 }

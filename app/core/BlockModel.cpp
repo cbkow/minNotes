@@ -38,6 +38,7 @@
 #include <QDateTime>
 #include <functional>
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include "PackageFormat.h"   // mnpkg::atomicReplace — the save write-back primitive
@@ -5487,6 +5488,8 @@ BlockModel::BlockSpec BlockModel::specForRow(int row) const {
     BlockSpec sp;
     if (row < 0 || row >= static_cast<int>(rows_.size())) return sp;
     const Row& r = rows_[row];
+    sp.cell = r.cell;
+    sp.ratios = r.ratios;
     if (r.type == Media) {
         sp.type = Media;
         sp.mediaJson = content_[row];
@@ -5530,11 +5533,78 @@ std::pair<int,int> BlockModel::insertSpecs(int row, const std::vector<BlockSpec>
 // rows g-1 and g, so 0 = top of document and count = the end — addresses
 // insertSpecs (gap = row+1) never could. The blank-anchor fold only ever
 // looks ABOVE the gap, matching the paste convention.
-std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpec>& specs,
-                                             bool allowReuseAnchorAbove) {
+bool BlockModel::specsNeedTopLevel(const std::vector<BlockSpec>& specs) {
+    for (const BlockSpec& sp : specs)
+        if (sp.type == Split || (sp.type == Table && sp.mediaJson.isEmpty())) return true;
+    return false;
+}
+
+int BlockModel::spliceGapFor(int gap, const std::vector<BlockSpec>& specs, int lane) const {
     const int n = static_cast<int>(rows_.size());
-    if (specs.empty()) return { std::clamp(gap - 1, 0, std::max(0, n - 1)), 0 };
     gap = std::clamp(gap, 0, n);
+    if (lane != -1 && !specsNeedTopLevel(specs)) return gap;
+    while (gap < n && rows_[size_t(gap)].cell >= 0) ++gap;   // inside a split row → below it
+    return gap;
+}
+
+int BlockModel::mergeGapFor(int gap) const {
+    const int n = static_cast<int>(rows_.size());
+    gap = std::clamp(gap, 0, n);
+    for (;;) {
+        while (gap < n && rows_[size_t(gap)].cell >= 0) ++gap;
+        if (gap > 0 && gap < n && rows_[size_t(gap)].type == Split && rows_[size_t(gap - 1)].cell >= 0) {
+            gap = splitRowEnd(gap) + 1;                         // between two split rows: past the next
+            continue;
+        }
+        return gap;
+    }
+}
+
+bool BlockModel::sanitizeSpecStructure(std::vector<BlockSpec>& specs) {
+    if (specs.empty()) return false;
+    std::vector<Row> rows(specs.size());
+    for (size_t k = 0; k < specs.size(); ++k) {
+        rows[k].type = specs[k].type;
+        rows[k].cell = specs[k].cell;
+        rows[k].ratios = specs[k].ratios;
+    }
+    const StructurePlan p = planStructure(rows, 0, rows.size() - 1);
+    bool kept = false;
+    for (size_t k = 0; k < specs.size(); ++k) {
+        if (p.remove[k]) { specs[k] = BlockSpec{}; continue; }
+        specs[k].cell = p.cell[k];
+        specs[k].ratios = (specs[k].type == Split) ? p.ratios[k] : std::vector<float>{};
+        if (specs[k].type == Split) kept = true;
+    }
+    return kept;
+}
+
+BlockModel::CopyBand BlockModel::copyBand(int loRow, int loCol, int hiRow, int hiCol) const {
+    CopyBand b{ loRow, loCol, hiRow, hiCol, false };
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0 || loRow < 0 || hiRow >= n || loRow > hiRow) return b;
+    const Row& lo = rows_[size_t(loRow)];
+    const Row& hi = rows_[size_t(hiRow)];
+    if (lo.cell >= 0 && lo.cell == hi.cell && splitRowOf(loRow) == splitRowOf(hiRow)) return b;
+    const auto [wlo, whi] = wholeSplitRows(loRow, hiRow);
+    if (wlo != loRow) { b.lo = wlo; b.loCol = 0; }
+    if (whi != hiRow) { b.hi = whi; b.hiCol = std::numeric_limits<int>::max(); }
+    for (int r = b.lo; r <= b.hi && !b.keepLanes; ++r) b.keepLanes = rows_[size_t(r)].type == Split;
+    if (b.keepLanes && rows_[size_t(b.hi)].cell >= 0) b.hiCol = std::numeric_limits<int>::max();  // blocks in lanes copy whole
+    return b;
+}
+
+std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpec>& specsIn,
+                                             bool allowReuseAnchorAbove, int lane) {
+    const int n = static_cast<int>(rows_.size());
+    if (specsIn.empty()) return { std::clamp(gap - 1, 0, std::max(0, n - 1)), 0 };
+    const bool topLevel = lane == -1 || specsNeedTopLevel(specsIn);
+    gap = spliceGapFor(gap, specsIn, lane);
+    bool carriesSplit = false;
+    for (const BlockSpec& sp : specsIn) carriesSplit = carriesSplit || sp.type == Split;
+    std::vector<BlockSpec> sanitized;
+    if (carriesSplit) { sanitized = specsIn; sanitizeSpecStructure(sanitized); }
+    const std::vector<BlockSpec>& specs = carriesSplit ? sanitized : specsIn;
 
     // Turn a spec into (Row, content). depth/lang carry through (their former
     // silent drop at appendBlock was the latent paste bug this extraction
@@ -5556,13 +5626,14 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
                 ? static_cast<uint16_t>(std::clamp<int>(sp.text.count(QLatin1Char('\n')) + 1, 1, 65535))
                 : 1;
             r.spans = sp.spans;
+            if (sp.type == Split) r.ratios = sp.ratios;
             content = sp.text;
         }
     };
 
     const int anchor = gap - 1;   // the row above the gap, if any
     bool reuse = false;
-    if (allowReuseAnchorAbove && anchor >= 0) {
+    if (allowReuseAnchorAbove && anchor >= 0 && (!topLevel || rows_[size_t(anchor)].cell < 0)) {
         const bool opaque = (rows_[anchor].type == Media || rows_[anchor].type == Table
                              || rows_[anchor].type == Divider);
         reuse = !opaque && content_[anchor].isEmpty()
@@ -5602,7 +5673,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
             const int at = first + k;
             const BlockSpec& sp = specs[startSpec + k];
             Row r; QString content; specRow(sp, r, content);
-            r.cell = laneAt(at);
+            r.cell = carriesSplit ? sp.cell : topLevel ? int8_t(-1) : laneAt(at);
             const QString id = makeUlid();
             const QString rk = rankBetween(prevRank, nextRank); prevRank = rk;
             rows_.insert(rows_.begin() + at, r);
@@ -5985,8 +6056,11 @@ std::vector<BlockModel::BlockSpec> BlockModel::specsForRange(int loRow, int loCo
     }
     loRow = std::clamp(loRow, 0, n - 1);
     hiRow = std::clamp(hiRow, 0, n - 1);
+    const CopyBand band = copyBand(loRow, loCol, hiRow, hiCol);
+    loRow = band.lo; loCol = band.loCol; hiRow = band.hi; hiCol = band.hiCol;
     for (int r = loRow; r <= hiRow; ++r) {
         BlockSpec sp = specForRow(r);
+        if (!band.keepLanes) { sp.cell = -1; sp.ratios.clear(); }
         if (isOpaqueRow(r)) { out.push_back(std::move(sp)); continue; }   // whole-in
         const int len = sp.text.size();
         int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
@@ -6017,10 +6091,12 @@ QString BlockModel::plainTextForRange(int loRow, int loCol, int hiRow, int hiCol
     }
     loRow = std::clamp(loRow, 0, n - 1);
     hiRow = std::clamp(hiRow, 0, n - 1);
+    const CopyBand band = copyBand(loRow, loCol, hiRow, hiCol);
+    loRow = band.lo; loCol = band.loCol; hiRow = band.hi; hiCol = band.hiCol;
     QStringList parts;
     for (int r = loRow; r <= hiRow; ++r) {
         const uint8_t t = rows_[r].type;
-        if (t == Media) continue;                            // no honest text form
+        if (t == Media || t == Split) continue;              // no honest text form / lanes read in order
         if (t == Divider) { parts << QStringLiteral("---"); continue; }
         if (t == Table) {
             const TableGrid& g = gridFor(r);
@@ -6045,6 +6121,8 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
     }
     loRow = std::clamp(loRow, 0, n - 1);
     hiRow = std::clamp(hiRow, 0, n - 1);
+    const CopyBand band = copyBand(loRow, loCol, hiRow, hiCol);     // the grain specsForRange copies
+    loRow = band.lo; loCol = band.loCol; hiRow = band.hi; hiCol = band.hiCol;
 
     BlockClipboard::Payload p;
     p.docPath = docPath_;
@@ -6119,13 +6197,15 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
 
 std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
                                             const std::vector<QString>& ink, qreal srcPageWidth) {
+    lastPasteRelocated_ = false;
     const int n = static_cast<int>(rows_.size());
     if (n == 0) return { 0, 0 };
     row = std::clamp(row, 0, n - 1);
     if (specs.empty()) return { row, std::clamp(col, 0, static_cast<int>(content_[row].size())) };
+    const bool needTop = specsNeedTopLevel(specs);
 
     auto textish = [](const BlockSpec& sp) {
-        return sp.mediaJson.isEmpty() && sp.type != Table && sp.type != Divider;
+        return sp.mediaJson.isEmpty() && sp.type != Table && sp.type != Divider && sp.type != Split;
     };
     const bool migrate = srcPageWidth > 0 && !qFuzzyCompare(srcPageWidth, pageWidth_);
     // Lay ink for specs[k0..] onto rows firstRow.. (parallel). The FIRST one
@@ -6150,6 +6230,21 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
         emit contentChangedSpike();
     };
 
+    // A split row or a table can't sit in a lane: with the caret in one, the
+    // whole paste lands below its split row (SR-3 S8; the editor Toasts it).
+    // Callers' undo bands must cover the whole split row (ClipboardPaster).
+    if (needTop && splitRowOf(row) >= 0) {
+        const int gap = splitRowEnd(splitRowOf(row)) + 1;
+        beginTxn(gap, gap - 1);
+        const auto caret = spliceSpecsAt(gap, specs, /*allowReuseAnchorAbove=*/false, -1);
+        layInk(gap, 0, specs.size(), false);
+        lastPasteRelocated_ = true;
+        finish();
+        endTxn();
+        return caret;
+    }
+    const int spliceLane = needTop ? -1 : kInheritLane;
+
     // Opaque target, or an opaque first spec into a non-empty row: everything
     // lands AFTER the row. An opaque first spec into an EMPTY simple row folds
     // into it (spliceSpecsAt's anchor reuse).
@@ -6159,7 +6254,7 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
             && (rows_[row].type == Paragraph || rows_[row].type == Heading
                 || rows_[row].type == Quote || rows_[row].type == ListItem);
         if (emptySimple) beginTxn(row, row); else beginTxn(row + 1, row);
-        const auto caret = spliceSpecsAt(row + 1, specs, /*allowReuseAnchorAbove=*/emptySimple);
+        const auto caret = spliceSpecsAt(row + 1, specs, /*allowReuseAnchorAbove=*/emptySimple, spliceLane);
         layInk(emptySimple ? row : row + 1, 0, specs.size(), false);
         finish();
         endTxn();
@@ -6231,7 +6326,7 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
                 tailSpec = true;
             }
         }
-        spliceSpecsAt(row + 1, rest, /*allowReuseAnchorAbove=*/false);
+        spliceSpecsAt(row + 1, rest, /*allowReuseAnchorAbove=*/false, spliceLane);
         caretRow = row + 1 + static_cast<int>(lastIdx);
         Q_UNUSED(tailSpec);
         layInk(row + 1, 1, specs.size(), false);
@@ -6252,13 +6347,20 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
     loRow = std::clamp(loRow, 0, n - 1);
     hiRow = std::clamp(hiRow, 0, n - 1);
     if (loRow > hiRow) std::swap(loRow, hiRow);
+    const CopyBand band = copyBand(loRow, 0, hiRow, 0);   // copy grain: one lane, or whole split rows
+    loRow = band.lo; hiRow = band.hi;
     std::vector<BlockSpec> specs;
     std::vector<QString> ink;
-    for (int r = loRow; r <= hiRow; ++r) { specs.push_back(specForRow(r)); ink.push_back(inkForRow(r)); }
-    beginTxn(hiRow + 1, hiRow);                  // empty before; after = the copies
-    spliceSpecsAt(hiRow + 1, specs, /*allowReuseAnchorAbove=*/false);
+    for (int r = loRow; r <= hiRow; ++r) {
+        specs.push_back(specForRow(r));
+        if (!band.keepLanes) { specs.back().cell = -1; specs.back().ratios.clear(); }
+        ink.push_back(inkForRow(r));
+    }
+    const int gap = spliceGapFor(hiRow + 1, specs);
+    beginTxn(gap, gap - 1);                      // empty before; after = the copies
+    spliceSpecsAt(gap, specs, /*allowReuseAnchorAbove=*/false);
     for (size_t k = 0; k < ink.size(); ++k)
-        if (!ink[k].isEmpty()) setBlockInk(hiRow + 1 + static_cast<int>(k), ink[k]);
+        if (!ink[k].isEmpty()) setBlockInk(gap + static_cast<int>(k), ink[k]);
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();

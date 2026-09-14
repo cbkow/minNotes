@@ -120,8 +120,10 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
     // ONE undo entry: selection delete + splice + ink. Band in pre-mutation
     // coordinates covers the selection and the target row; the paste's
     // inserted rows land inside [lo, hi + delta].
-    const int lo = withSel ? std::min(job.selLo, row) : row;
-    const int hi = withSel ? std::max(job.selHi, row) : row;
+    // Whole split rows (SR-3 S8): a split row or table pasted into a lane lands
+    // below its split row, which the band must reach.
+    const auto [lo, hi] = dest->wholeSplitRows(withSel ? std::min(job.selLo, row) : row,
+                                               withSel ? std::max(job.selHi, row) : row);
     dest->beginGroup(lo, hi);
     if (withSel) {
         const QVariantList land = dest->deleteSelectionRange(job.selLo, job.selLoCol,
@@ -131,7 +133,7 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
     const auto caret = dest->pasteSpecsAt(row, col, job.payload.specs, job.payload.ink,
                                           job.payload.pageWidth);
     dest->endGroup();
-    dest->localizeRemoteMedia(row, row + static_cast<int>(job.payload.specs.size()));
+    dest->localizeRemoteMedia(row, std::max(caret.first, row + static_cast<int>(job.payload.specs.size())));
 
     if (caretRow) *caretRow = caret.first;
     if (caretCol) *caretCol = caret.second;

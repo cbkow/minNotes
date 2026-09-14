@@ -6427,6 +6427,178 @@ static void testLaneDrops() {
     }
 }
 
+static void testSplitRowInterchange() {
+    qInfo("[83] interchange for split rows: specs carry lanes, copy by grain, paste and merge routing (SR-3 step 8a)");
+    auto fresh = [](BlockModel& m) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < 5; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+        m.splitIntoColumns(1, 0, 0.5);
+        m.insertBlock(3);
+        m.setContent(3, QStringLiteral("q"));
+        m.setContent(4, QStringLiteral("a1"));
+        m.setSplitRatios(1, { 0.25, 0.75 });
+        // 0 p0 · 1 A[.25|.75] · 2 p1(l0) · 3 q(l0) · 4 a1(l1) · 5 p2 · 6 p3 · 7 p4
+    };
+    auto texts = [](const BlockModel& m) {
+        QStringList out;
+        for (int r = 0; r < m.rowCountQml(); ++r)
+            out << (m.typeForRow(r) == BlockModel::Split ? QStringLiteral("#")
+                    : m.contentForRow(r) + (m.laneForRow(r) >= 0 ? QStringLiteral("/%1").arg(m.laneForRow(r)) : QString()));
+        return out.join(QLatin1Char(' '));
+    };
+    {   // Specs and the payload codec
+        BlockModel m;
+        fresh(m);
+        const BlockModel::BlockSpec rec = m.specForRow(1), lb = m.specForRow(4);
+        CHECK(rec.type == BlockModel::Split && rec.cell == -1 && rec.ratios.size() == 2 && lb.cell == 1,
+              "specForRow carries a record's ratios and a lane block's lane");
+        BlockClipboard::Payload p;
+        p.specs = { rec, m.specForRow(2), lb };
+        p.ink = { QString(), QString(), QString() };
+        BlockClipboard::Payload back;
+        CHECK(BlockClipboard::decode(BlockClipboard::encode(p), &back) && back.specs.size() == 3
+                  && back.specs[0].type == BlockModel::Split && back.specs[0].ratios.size() == 2
+                  && std::abs(back.specs[0].ratios[1] - 0.75f) < 1e-6f && back.specs[1].cell == 0 && back.specs[2].cell == 1
+                  && back.specs[0].cell == -1,
+              "the clipboard payload carries lanes and ratios");
+    }
+    {   // Copy grain
+        BlockModel m;
+        fresh(m);
+        auto inLane = m.specsForRange(2, 0, 3, 1);
+        CHECK(inLane.size() == 2 && inLane[0].cell == -1 && inLane[1].cell == -1
+                  && inLane[0].text == QStringLiteral("p1") && inLane[1].text == QStringLiteral("q"),
+              "blocks copied inside one lane travel as plain blocks");
+        auto cross = m.specsForRange(3, 1, 4, 1);
+        CHECK(cross.size() == 4 && cross[0].type == BlockModel::Split && cross[1].cell == 0 && cross[3].cell == 1
+                  && cross[3].text == QStringLiteral("a1") && cross[1].text == QStringLiteral("p1"),
+              "a copy across lanes takes the whole split row, whole blocks");
+        auto spill = m.specsForRange(4, 1, 6, 1);
+        CHECK(spill.size() == 6 && spill[0].type == BlockModel::Split && spill[4].cell == -1
+                  && spill[5].text == QStringLiteral("p"),
+              "a copy leaving a split row takes it whole and keeps the slice at its other end");
+        CHECK(m.plainTextForRange(3, 0, 4, 2) == QStringLiteral("p1\nq\na1"),
+              "plain text of a split row reads its lanes in order, without the record");
+    }
+    {   // Paste routing
+        BlockModel m;
+        fresh(m);
+        const QString rowPayload = m.clipboardPayloadForRange(1, 0, 4, 2);
+        const QString lanePayload = m.clipboardPayloadForRange(2, 0, 3, 1);
+        const QString before = texts(m);
+        int cr = -1, cc = -1; QString err;
+        CHECK(ClipboardPaster::pasteBlocks(&m, rowPayload, 6, 2, -1, 0, -1, 0, &cr, &cc, &err)
+                  && !m.lastPasteRelocated(), "a split row pastes at a top-level block (%s)", qPrintable(err));
+        CHECK(texts(m) == QStringLiteral("p0 # p1/0 q/0 a1/1 p2 p3 # p1/0 q/0 a1/1 p4") && m.structureValid()
+                  && m.splitRatios(7).size() == 2 && std::abs(m.splitRatios(7)[0].toDouble() - 0.25) < 0.001 && cr == 10,
+              "…below it, lanes and ratios intact (%s)", qPrintable(texts(m)));
+        m.undo();
+        CHECK(texts(m) == before && m.structureValid(), "…one undo step");
+        m.redo();
+        CHECK(m.rowCountQml() == 12 && m.structureValid(), "…and redo");
+        m.undo();
+
+        CHECK(ClipboardPaster::pasteBlocks(&m, rowPayload, 3, 1, -1, 0, -1, 0, &cr, &cc, &err) && m.lastPasteRelocated(),
+              "a split row pasted with the caret in a lane is relocated");
+        CHECK(texts(m) == QStringLiteral("p0 # p1/0 q/0 a1/1 # p1/0 q/0 a1/1 p2 p3 p4") && m.structureValid(),
+              "…below that split row (%s)", qPrintable(texts(m)));
+        m.undo();
+        CHECK(texts(m) == before && m.structureValid(), "…one undo step");
+
+        CHECK(ClipboardPaster::pasteBlocks(&m, lanePayload, 4, 2, -1, 0, -1, 0, &cr, &cc, &err) && !m.lastPasteRelocated(),
+              "plain blocks paste into a lane");
+        CHECK(texts(m) == QStringLiteral("p0 # p1/0 q/0 a1p1/1 q/1 p2 p3 p4") && m.structureValid(),
+              "…and stay in it (%s)", qPrintable(texts(m)));
+        m.undo();
+        CHECK(texts(m) == before && m.structureValid(), "…one undo step");
+
+        CHECK(ClipboardPaster::pasteBlocks(&m, lanePayload, 5, 0, -1, 0, -1, 0, &cr, &cc, &err)
+                  && texts(m) == QStringLiteral("p0 # p1/0 q/0 a1/1 p1 qp2 p3 p4") && m.structureValid(),
+              "blocks copied from a lane paste as plain top-level blocks (%s)", qPrintable(texts(m)));
+        m.undo();
+
+        const int t = m.insertTable(7, 2, 2);
+        const QString tablePayload = m.clipboardPayloadForRange(t, 0, t, 0);
+        m.removeBlock(t);
+        CHECK(ClipboardPaster::pasteBlocks(&m, tablePayload, 2, 0, -1, 0, -1, 0, &cr, &cc, &err) && m.lastPasteRelocated()
+                  && m.typeForRow(5) == BlockModel::Table && m.laneForRow(5) == -1 && m.structureValid(),
+              "a table pasted into a lane lands below the split row");
+        m.undo();
+        CHECK(texts(m) == before && m.structureValid(), "…one undo step (%s)", qPrintable(texts(m)));
+
+        BlockClipboard::Payload bad;
+        BlockModel::BlockSpec lone; lone.type = BlockModel::Split;               // a record with one lane
+        BlockModel::BlockSpec child; child.text = QStringLiteral("x"); child.cell = 0;
+        BlockModel::BlockSpec top; top.text = QStringLiteral("z");
+        BlockModel::BlockSpec stray; stray.text = QStringLiteral("y"); stray.cell = 1;   // a lane block with no record
+        bad.specs = { lone, child, top, stray };
+        bad.ink = { QString(), QString(), QString(), QString() };
+        CHECK(ClipboardPaster::pasteBlocks(&m, QString::fromUtf8(BlockClipboard::encode(bad)), 7, 2, -1, 0, -1, 0, &cr, &cc, &err)
+                  && texts(m) == QStringLiteral("p0 # p1/0 q/0 a1/1 p2 p3 p4  x z y") && m.structureValid(),
+              "a malformed payload is sanitized as it lands (%s)", qPrintable(texts(m)));
+        m.undo();
+
+        m.duplicateBlocks(2, 3);
+        CHECK(texts(m) == QStringLiteral("p0 # p1/0 q/0 p1/0 q/0 a1/1 p2 p3 p4") && m.structureValid(),
+              "duplicating blocks in a lane keeps the copies in that lane");
+        m.undo();
+        m.duplicateBlocks(3, 4);
+        CHECK(texts(m) == QStringLiteral("p0 # p1/0 q/0 a1/1 # p1/0 q/0 a1/1 p2 p3 p4") && m.structureValid(),
+              "duplicating across lanes duplicates the whole split row below it");
+        m.undo();
+        CHECK(texts(m) == before && m.structureValid(), "…one undo step");
+    }
+    {   // Save and reopen a pasted split row
+        const QString path = QDir::tempPath() + QStringLiteral("/mn_split_interchange.mnd");
+        QFile::remove(path);
+        BlockModel m;
+        fresh(m);
+        int cr = -1, cc = -1; QString err;
+        ClipboardPaster::pasteBlocks(&m, m.clipboardPayloadForRange(1, 0, 4, 0), 7, 2, -1, 0, -1, 0, &cr, &cc, &err);
+        CHECK(m.saveAs(path), "the document saves");
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && m2.structureValid() && texts(m2) == texts(m) && m2.splitRatios(8).size() == 2
+                  && std::abs(m2.splitRatios(8)[1].toDouble() - 0.75) < 0.001,
+              "a pasted split row round-trips through save (%s)", qPrintable(texts(m2)));
+        QFile::remove(path);
+    }
+    {   // Tab merge
+        BlockModel src, dest;
+        fresh(src);
+        fresh(dest);
+        const QString before = texts(dest);
+        int f = -1, l = -1; QString err;
+        CHECK(dest.mergeGapFor(3) == 5 && dest.mergeGapFor(2) == 5 && dest.mergeGapFor(1) == 1 && dest.mergeGapFor(5) == 5,
+              "merge gaps inside a split row snap below it");
+        CHECK(DocumentMerger::mergeDocuments(&src, &dest, 3, &f, &l, &err) && f == 5 && l == 12,
+              "a merge dropped inside a split row succeeds (%s)", qPrintable(err));
+        CHECK(texts(dest) == QStringLiteral("p0 # p1/0 q/0 a1/1 p0 # p1/0 q/0 a1/1 p2 p3 p4 p2 p3 p4") && dest.structureValid()
+                  && std::abs(dest.splitRatios(6)[1].toDouble() - 0.75) < 0.001,
+              "…below it, the merged split row intact (%s)", qPrintable(texts(dest)));
+        dest.undo();
+        CHECK(texts(dest) == before && dest.structureValid(), "…one undo step");
+
+        dest.splitIntoColumns(5, 0, 0.5);       // 5 B · 6 p2(l0) · 7 (l1): two adjacent split rows
+        CHECK(dest.typeForRow(5) == BlockModel::Split && dest.mergeGapFor(5) == 8 && dest.mergeGapFor(3) == 8,
+              "a merge gap between adjacent split rows snaps below the run");
+        dest.undo();
+
+        BlockModel plain;
+        plain.newDocument();
+        while (plain.rowCountQml() > 0) plain.removeBlock(0);
+        plain.insertBlock(0); plain.setContent(0, QStringLiteral("x"));
+        plain.insertBlock(1); plain.setContent(1, QStringLiteral("y"));
+        dest.setContent(4, QString());          // an empty last lane block must not swallow the merge
+        const QString emptied = texts(dest);
+        CHECK(DocumentMerger::mergeDocuments(&plain, &dest, 5, &f, &l, &err) && f == 5
+                  && texts(dest) == QStringLiteral("p0 # p1/0 q/0 /1 x y p2 p3 p4") && dest.structureValid(),
+              "a merge just below a split row lands at the top level (%s)", qPrintable(texts(dest)));
+        dest.undo();
+        CHECK(texts(dest) == emptied && dest.structureValid(), "…one undo step");
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -6620,6 +6792,7 @@ int main(int argc, char** argv) {
     testSplitRowMoves();
     testLaneGestures();
     testLaneDrops();
+    testSplitRowInterchange();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
