@@ -16,6 +16,7 @@
 #include "PackageFormat.h"
 #include "PackageExporter.h"
 #include "DocumentMerger.h"
+#include <QXmlStreamReader>
 #include "AssetTransfer.h"
 #include "BlockClipboard.h"
 #include "Clipboard.h"
@@ -6599,6 +6600,100 @@ static void testSplitRowInterchange() {
     }
 }
 
+static void testSplitRowExports() {
+    qInfo("[84] split rows export: Markdown stacks lanes, HTML flex lanes, DOCX and PDF one-row tables, packages keep them (SR-3 step 8b)");
+    const QString dir = QDir::tempPath() + QStringLiteral("/mn_split_exports");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 5; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+    m.splitIntoColumns(1, 0, 0.5);
+    m.insertBlock(3);
+    m.setContent(3, QStringLiteral("q"));
+    m.setContent(4, QStringLiteral("a1"));
+    m.setSplitRatios(1, { 0.25, 0.75 });
+    // 0 p0 · 1 A[.25|.75] · 2 p1(l0) · 3 q(l0) · 4 a1(l1) · 5 p2 · 6 p3 · 7 p4
+    CHECK(m.structureValid() && m.laneForRow(4) == 1, "export fixture: a split row with two lanes");
+
+    Exporter ex;
+    ex.setModel(&m);
+    RecordingSink ms;
+    const QString md = ex.toMarkdown(Exporter::Options{}, ms);
+    CHECK(md.contains(QStringLiteral("p0\n\np1\n\nq\n\na1\n\np2\n\n")),
+          "Markdown stacks the lanes in reading order, the record leaving no trace");
+    CHECK(ex.copyMarkdown(1, 4) == QStringLiteral("p1\n\nq\n\na1\n"), "Copy as Markdown of a split row stacks it too");
+
+    RecordingSink hs;
+    const QString html = ex.toHtml(Exporter::Options{}, hs);
+    const int lanesAt = html.indexOf(QStringLiteral("<div class=\"lanes\">"));
+    const int l0 = html.indexOf(QStringLiteral("<div class=\"lane\" style=\"flex:250 1 0\">"));
+    const int l1 = html.indexOf(QStringLiteral("<div class=\"lane\" style=\"flex:750 1 0\">"));
+    const int q = html.indexOf(QStringLiteral("q</p>")), a1 = html.indexOf(QStringLiteral("a1</p>"));
+    const int p2 = html.indexOf(QStringLiteral("p2</p>"));
+    CHECK(lanesAt >= 0 && lanesAt < l0 && l0 < q && q < l1 && l1 < a1 && a1 < p2,
+          "HTML: a lanes row holds a lane per ratio, each with its blocks");
+    const int closeAt = html.indexOf(QStringLiteral("</div>\n</div>\n"), a1);
+    CHECK(closeAt > a1 && closeAt < p2 && html.count(QStringLiteral("<div")) == html.count(QStringLiteral("</div>")),
+          "HTML: the lane and the row close before the next top-level block, divs balanced");
+
+    const QString docxPath = dir + QStringLiteral("/lanes.docx");
+    CHECK(ex.exportDocx(docxPath, false), "DOCX exports");
+    {
+        QZipReader zr(docxPath);
+        const QByteArray doc = zr.fileData(QStringLiteral("word/document.xml"));
+        QXmlStreamReader xr(doc);
+        while (!xr.atEnd()) xr.readNext();
+        CHECK(!xr.hasError(), "DOCX: document.xml is well-formed (%s)", qPrintable(xr.errorString()));
+        CHECK(doc.count("<w:tbl>") == 1 && doc.count("<w:tc>") == 2 && doc.contains("<w:tblLayout w:type=\"fixed\"/>")
+                  && doc.contains("<w:gridCol w:w=\"2610\" w:type=\"dxa\"/>") && doc.contains("<w:gridCol w:w=\"6750\" w:type=\"dxa\"/>"),
+              "DOCX: a borderless fixed one-row table, lane widths from the ratios");
+        const qsizetype dq = doc.indexOf(">q<"), da1 = doc.indexOf(">a1<"), dend = doc.indexOf("</w:tbl>"), dp2 = doc.indexOf(">p2<");
+        CHECK(doc.indexOf(">p1<") < dq && dq < da1 && da1 < dend && dend < dp2 && doc.indexOf("<w:tbl>") < doc.indexOf(">p1<"),
+              "DOCX: the lanes' paragraphs sit inside the table, the next block after it");
+    }
+
+    QBuffer buf;
+    buf.open(QIODevice::ReadWrite);
+    CHECK(ex.toPdf(Exporter::Options{}, buf), "PDF exports");
+    const QString pdfPath = dir + QStringLiteral("/lanes.pdf");
+    { QFile pf(pdfPath); if (pf.open(QIODevice::WriteOnly)) pf.write(buf.data()); }
+    {
+        QPdfDocument pdoc;
+        CHECK(pdoc.load(pdfPath) == QPdfDocument::Error::None && pdoc.pageCount() == 1, "PDF: re-reads as one page");
+        // PDFium may extract a glyph per line here: match across line breaks.
+        const QString all = pdoc.getAllText(0).text();
+        auto find = [&](const char* two) {
+            const auto mt = QRegularExpression(QStringLiteral("%1\\s*%2").arg(QLatin1Char(two[0]), QLatin1Char(two[1]))).match(all);
+            return mt.hasMatch() ? qMakePair(int(mt.capturedStart()), int(mt.capturedLength())) : qMakePair(-1, 0);
+        };
+        const auto ip1 = find("p1"), ia1 = find("a1"), ip2 = find("p2");
+        CHECK(ip1.first >= 0 && ia1.first >= 0 && ip2.first >= 0, "PDF: every lane's text extracts (%s)",
+              qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(200)));
+        if (ip1.first >= 0 && ia1.first >= 0 && ip2.first >= 0) {
+            const QRectF r1 = pdoc.getSelectionAtIndex(0, ip1.first, ip1.second).boundingRectangle();
+            const QRectF ra = pdoc.getSelectionAtIndex(0, ia1.first, ia1.second).boundingRectangle();
+            const QRectF r2 = pdoc.getSelectionAtIndex(0, ip2.first, ip2.second).boundingRectangle();
+            CHECK(ra.left() > r1.right() + 40 && std::abs(ra.top() - r1.top()) < 4 && r2.top() > ra.bottom()
+                      && std::abs(r2.left() - r1.left()) < 4,
+                  "PDF: lane 1 sits beside lane 0 at the row's top; the next block starts below, at the left");
+        }
+    }
+
+    const QString pkg = dir + QStringLiteral("/lanes.mnpkg");
+    QString err;
+    CHECK(PackageExporter::packDocument(&m, pkg, false, &err), "the document packs (%s)", qPrintable(err));
+    {
+        BlockModel p;
+        CHECK(p.openDocument(pkg) && p.structureValid() && p.typeForRow(1) == BlockModel::Split && p.laneForRow(4) == 1
+                  && p.splitRatios(1).size() == 2 && std::abs(p.splitRatios(1)[1].toDouble() - 0.75) < 0.001,
+              "a package keeps split rows");
+        p.closeDocument();
+    }
+    QDir(dir).removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -6793,6 +6888,7 @@ int main(int argc, char** argv) {
     testLaneGestures();
     testLaneDrops();
     testSplitRowInterchange();
+    testSplitRowExports();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

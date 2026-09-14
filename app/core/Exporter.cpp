@@ -866,6 +866,7 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
 
     for (int row = lo; row <= hi; ++row) {
         const int type = m->typeForRow(row);
+        if (type == BlockModel::Split) continue;   // lanes stack in reading order (R-I5 5b)
         const bool isList = BlockModel::isListType(static_cast<uint8_t>(type));
         QString block;
 
@@ -1709,7 +1710,14 @@ color:var(--muted);padding-bottom:10px;margin-bottom:24px;border-bottom:1px soli
    No rule line: the app made its rules focus-reactive, so a static export
    shows numbers only. */
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main blockquote,
-main li,main figure,main .tablewrap,main .blkw{position:relative}
+main li,main figure,main .tablewrap,main .blkw,main .lanes{position:relative}
+/* Split rows (SR-3): lanes side by side at the row's ratios, the app's 24px
+   gap. Blocks in a lane size to it; only the row carries a ledger number. */
+.lanes{display:flex;gap:24px;align-items:flex-start}
+.lane{min-width:0}
+.lane .bnum{display:none}
+.lane pre{width:auto;min-width:0;overflow-x:auto}
+.lane img:not(.ink){max-width:100%!important;height:auto}
 .bnum{position:absolute;left:772px;top:4px;width:calc(100vw - 932px);   /* 932 = the 836
    ledger constant + the 96px the wider left gutter shifted every block */
 min-width:48px;padding-top:3px;
@@ -1882,6 +1890,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
     auto injectInk = [&](QString blk, int row, double indent) -> QString {
         const TextInk ti = renderTextInk(m, row);
         if (ti.img.isNull()) return blk;
+        if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
         const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
         if (src.isEmpty()) return blk;
         ++inkLayers;
@@ -1901,9 +1910,38 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         return blk;
     };
 
+    // Split rows (SR-3 S8, R-I5 5c): a flex row of lanes at the row's ratios,
+    // each lane its real blocks. The record carries the row's number; lane
+    // blocks hide theirs (the app's rail numbers top entries only).
+    int openLane = -1;
+    bool inLanes = false;
+    auto closeLanes = [&](int nextLane) {      // close what the next row doesn't continue
+        if (!inLanes) return;
+        if (openLane >= 0 && nextLane != openLane) {
+            closeListsTo(0);
+            body += QStringLiteral("</div>\n");
+            openLane = -1;
+        }
+        if (nextLane < 0) { body += QStringLiteral("</div>\n"); inLanes = false; }
+    };
+
     const int count = m->rowCountQml();
     for (int row = 0; row < count; ++row) {
         const int type = m->typeForRow(row);
+        const int lane = m->laneForRow(row);
+        closeLanes(lane);
+        if (type == BlockModel::Split) {
+            closeListsTo(0);
+            body += QStringLiteral("<div class=\"lanes\">%1\n").arg(bnum(row));
+            inLanes = true;
+            continue;
+        }
+        if (lane >= 0 && lane != openLane) {
+            const QVariantList ratios = m->splitRatios(m->splitRowOf(row));
+            const double share = lane < ratios.size() ? ratios[lane].toDouble() : 0.5;
+            body += QStringLiteral("<div class=\"lane\" style=\"flex:%1 1 0\">\n").arg(std::lround(share * 1000));
+            openLane = lane;
+        }
         if (!BlockModel::isListType(static_cast<uint8_t>(type)))
             closeListsTo(0);
 
@@ -1978,6 +2016,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink) const {
         }
         }
     }
+    closeLanes(-1);
     closeListsTo(0);
 
     // Comments section (linked from the superscript refs).
@@ -2167,6 +2206,7 @@ struct DocxCtx {
     QStringList commentIds;                     // thread ids, w:id = index
     int picId = 1;
     int inkBaked = 0;
+    double maxImgPx = 0;                        // > 0 inside a lane: images cap to its width
 };
 
 QByteArray docxXml(const std::function<void(QXmlStreamWriter&)>& fn) {
@@ -2265,6 +2305,7 @@ void docxImagePara(DocxCtx& c, QXmlStreamWriter& w, int relIdx,
                    int pxW, int pxH) {
     if (pxW <= 0 || pxH <= 0) return;
     double dispW = std::min(pxW, kDocxImgMaxPx);
+    if (c.maxImgPx > 0 && dispW > c.maxImgPx) dispW = c.maxImgPx;
     const double dispH = dispW * pxH / pxW;
     w.writeStartElement(QStringLiteral("w:p"));
     w.writeStartElement(QStringLiteral("w:r"));
@@ -2853,9 +2894,95 @@ QByteArray docxDocumentXml(DocxCtx& c) {
             docxPlainPara(w, QString(), {});   // breathing room under the rule
         }
 
+        // Split rows (SR-3 S8, R-I5 5d): a borderless one-row table, a cell per
+        // lane at the row's ratios of the text width, the lane's blocks as real
+        // paragraphs, lists and images inside.
+        constexpr double kTextDxa = 9360.0, kGapDxa = 360.0;   // 6.5in text · the app's 24px gap
+        std::vector<double> laneDxa;
+        int openLane = -1;
+        bool inLanes = false;
+        auto closeLanes = [&](int nextLane) {
+            if (!inLanes) return;
+            if (openLane >= 0 && nextLane != openLane) {
+                // A cell must end in a paragraph: a hairline one.
+                docxPlainPara(w, QString(), {}, [](QXmlStreamWriter& pw) {
+                    pw.writeStartElement(QStringLiteral("w:spacing"));
+                    pw.writeAttribute(QStringLiteral("w:before"), QStringLiteral("0"));
+                    pw.writeAttribute(QStringLiteral("w:after"), QStringLiteral("0"));
+                    pw.writeAttribute(QStringLiteral("w:line"), QStringLiteral("20"));
+                    pw.writeAttribute(QStringLiteral("w:lineRule"), QStringLiteral("exact"));
+                    pw.writeEndElement();
+                });
+                w.writeEndElement();   // w:tc
+                openLane = -1;
+                c.maxImgPx = 0;
+            }
+            if (nextLane < 0) {
+                w.writeEndElement();   // w:tr
+                w.writeEndElement();   // w:tbl
+                docxPlainPara(w, QString(), {});   // spacer, as after tables
+                inLanes = false;
+            }
+        };
+        auto dxaAttr = [&](const QString& el, double v) {
+            w.writeStartElement(el);
+            w.writeAttribute(QStringLiteral("w:w"), QString::number(std::lround(v)));
+            w.writeAttribute(QStringLiteral("w:type"), QStringLiteral("dxa"));
+            w.writeEndElement();
+        };
+
         const int count = m->rowCountQml();
         for (int row = 0; row < count; ++row) {
             const int type = m->typeForRow(row);
+            const int lane = m->laneForRow(row);
+            closeLanes(lane);
+            if (type == BlockModel::Split) {
+                const QVariantList ratios = m->splitRatios(row);
+                const int n = std::max(1, int(ratios.size()));
+                const double avail = kTextDxa - kGapDxa * (n - 1);
+                laneDxa.assign(size_t(n), 0.0);
+                for (int k = 0; k < n; ++k)
+                    laneDxa[size_t(k)] = avail * (k < ratios.size() ? ratios[k].toDouble() : 1.0 / n);
+                w.writeStartElement(QStringLiteral("w:tbl"));
+                w.writeStartElement(QStringLiteral("w:tblPr"));
+                dxaAttr(QStringLiteral("w:tblW"), kTextDxa);
+                w.writeStartElement(QStringLiteral("w:tblBorders"));
+                for (const char* side : {"top", "left", "bottom", "right", "insideH", "insideV"}) {
+                    w.writeStartElement(QStringLiteral("w:") + QLatin1String(side));
+                    w.writeAttribute(QStringLiteral("w:val"), QStringLiteral("nil"));
+                    w.writeEndElement();
+                }
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:tblLayout"));
+                w.writeAttribute(QStringLiteral("w:type"), QStringLiteral("fixed"));
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:tblCellMar"));
+                dxaAttr(QStringLiteral("w:left"), 0);
+                dxaAttr(QStringLiteral("w:right"), 0);
+                w.writeEndElement();
+                w.writeEndElement();   // w:tblPr
+                w.writeStartElement(QStringLiteral("w:tblGrid"));
+                for (int k = 0; k < n; ++k)
+                    dxaAttr(QStringLiteral("w:gridCol"), laneDxa[size_t(k)] + (k < n - 1 ? kGapDxa : 0.0));
+                w.writeEndElement();
+                w.writeStartElement(QStringLiteral("w:tr"));
+                inLanes = true;
+                continue;
+            }
+            if (lane >= 0 && lane != openLane && inLanes && lane < int(laneDxa.size())) {
+                const bool last = lane == int(laneDxa.size()) - 1;
+                w.writeStartElement(QStringLiteral("w:tc"));
+                w.writeStartElement(QStringLiteral("w:tcPr"));
+                dxaAttr(QStringLiteral("w:tcW"), laneDxa[size_t(lane)] + (last ? 0.0 : kGapDxa));
+                if (!last) {
+                    w.writeStartElement(QStringLiteral("w:tcMar"));
+                    dxaAttr(QStringLiteral("w:right"), kGapDxa);
+                    w.writeEndElement();
+                }
+                w.writeEndElement();   // w:tcPr
+                c.maxImgPx = laneDxa[size_t(lane)] / 15.0;
+                openLane = lane;
+            }
             switch (type) {
             case BlockModel::Heading:
                 docxHeading(c, w, row, m->levelForRow(row));
@@ -2917,6 +3044,7 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 break;
             }
         }
+        closeLanes(-1);
         w.writeEndElement();   // w:body
         w.writeEndElement();   // w:document
     });
@@ -3141,7 +3269,13 @@ struct PdfCtx {
 
     // Every structure appends; normalizing to the root frame's end keeps the
     // cursor sane after frames/tables (which capture it).
-    void toEnd() { cur = doc->rootFrame()->lastCursorPosition(); }
+    // Inside a split row's lane the "end" is that lane's cell (SR-3 S8).
+    QTextTable* laneTable = nullptr;
+    int laneCol = 0;
+    void toEnd() {
+        cur = laneTable ? laneTable->cellAt(0, laneCol).lastCursorPosition()
+                        : doc->rootFrame()->lastCursorPosition();
+    }
     void newBlock(const QTextBlockFormat& bf, const QTextCharFormat& cf = {}) {
         if (first) { cur.setBlockFormat(bf); cur.setBlockCharFormat(cf); first = false; }
         else cur.insertBlock(bf, cf);
@@ -3669,9 +3803,70 @@ void buildPdfDoc(PdfCtx& c) {
     bool curListOrdered = false;
     auto endList = [&] { curList = nullptr; curListDepth = -1; };
 
+    // Split rows (SR-3 S8, R-I5 5e): a borderless one-row table, a cell per
+    // lane at the row's ratios; blocks land in their lane's cell, sized to it.
+    constexpr qreal kGap = 24;
+    const qreal fullW = c.contentW;
+    std::vector<qreal> laneW;
+    QTextTable* laneRow = nullptr;
+    int openLane = -1;
+    auto closeLanes = [&](int nextLane) {
+        if (!laneRow) return;
+        if (openLane >= 0 && nextLane != openLane) {
+            endList();
+            openLane = -1;
+            c.laneTable = nullptr;
+            c.contentW = fullW;
+        }
+        if (nextLane < 0) {
+            laneRow = nullptr;
+            c.toEnd();
+            c.first = false;
+        }
+    };
+
     const int count = m->rowCountQml();
     for (int row = 0; row < count; ++row) {
         const int type = m->typeForRow(row);
+        const int lane = m->laneForRow(row);
+        closeLanes(lane);
+        if (type == BlockModel::Split) {
+            endList();
+            const QVariantList ratios = m->splitRatios(row);
+            const int n = std::max(1, int(ratios.size()));
+            const qreal avail = fullW - kGap * (n - 1);
+            QTextTableFormat tf;
+            tf.setBorder(0);
+            tf.setBorderStyle(QTextFrameFormat::BorderStyle_None);
+            tf.setCellPadding(0);
+            tf.setCellSpacing(0);
+            tf.setTopMargin(4); tf.setBottomMargin(4);
+            QList<QTextLength> cons;
+            laneW.assign(size_t(n), 0.0);
+            for (int k = 0; k < n; ++k) {
+                laneW[size_t(k)] = avail * (k < ratios.size() ? ratios[k].toDouble() : 1.0 / n);
+                cons.append(QTextLength(QTextLength::FixedLength, laneW[size_t(k)] + (k < n - 1 ? kGap : 0.0)));
+            }
+            tf.setColumnWidthConstraints(cons);
+            c.first = false;
+            laneRow = c.cur.insertTable(1, n, tf);
+            for (int k = 0; k < n - 1; ++k) {
+                QTextTableCell cell = laneRow->cellAt(0, k);
+                QTextTableCellFormat cf = cell.format().toTableCellFormat();
+                cf.setRightPadding(kGap);
+                cell.setFormat(cf);
+            }
+            continue;
+        }
+        if (lane >= 0 && lane != openLane && laneRow && lane < int(laneW.size())) {
+            endList();
+            c.laneTable = laneRow;
+            c.laneCol = lane;
+            c.cur = laneRow->cellAt(0, lane).firstCursorPosition();
+            c.first = true;                    // the cell's own block takes the lane's first block
+            c.contentW = laneW[size_t(lane)];
+            openLane = lane;
+        }
         switch (type) {
         case BlockModel::Heading: {
             endList();
@@ -3762,6 +3957,7 @@ void buildPdfDoc(PdfCtx& c) {
         }
         }
     }
+    closeLanes(-1);
 }
 
 } // namespace
