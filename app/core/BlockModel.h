@@ -169,6 +169,8 @@ public:
     static constexpr double kLaneGap = 24.0;         // px between lanes (the divider band sits in it)
     Q_PROPERTY(qreal laneGap READ laneGapPx CONSTANT)
     qreal laneGapPx() const { return kLaneGap; }
+    Q_PROPERTY(qreal minLaneWidth READ minLaneWidthPx CONSTANT)
+    qreal minLaneWidthPx() const { return kMinLaneWidth; }
     Q_INVOKABLE qreal xForRow(int row) const;
     Q_INVOKABLE qreal widthForRow(int row) const;
     // Caret navigation across lanes (SR-0 §4.4–4.7). Records are never caret targets;

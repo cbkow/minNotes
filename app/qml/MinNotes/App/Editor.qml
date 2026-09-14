@@ -450,6 +450,29 @@ FocusScope {
     property int  resizeW: 0
     property bool tableOverBorder: false   // hover near a column border → resize cursor
 
+    // Lane gestures (SR-3 S7b). ALL state on root (delegates are pooled). Previews never
+    // touch the model: release commits one undo step, Escape cancels.
+    // Divider drag: hover a split row's lane gap, drag the divider (⌥ = this row only).
+    property int  dividerHoverRecord: -1
+    property int  dividerHoverIndex: -1
+    property bool dividerDragging: false
+    property int  dividerDragRecord: -1
+    property int  dividerDragIndex: -1
+    property bool dividerDragAlone: false
+    property real dividerPreviewX: 0          // page-relative
+    property var  dividerDragChain: []        // [record, divider, …] moving together
+    // Pull from the boundary: the hot band just inside a block's column edge drags out a lane.
+    property int  pullHoverRow: -1
+    property int  pullHoverSide: -1           // 0 = the right edge (a new lane on the right), 1 = the left
+    property bool pulling: false
+    property int  pullRow: -1
+    property int  pullSide: 0
+    property int  pullLo: -1                  // the run being wrapped (one block unless a run is selected)
+    property int  pullHi: -1
+    property real pullPressX: 0               // page-relative
+    property real pullPreviewX: 0             // page-relative
+    readonly property real laneHotBand: 8
+
     // Inline table grips (multi-select 2026-08-21): hover bands strictly
     // OUTSIDE the grid rect (top band in the block's 32px top margin, left
     // band in the page margin) — click = select row/column (Shift span /
@@ -1711,6 +1734,99 @@ FocusScope {
         blockModel.deleteRange(row, blockModel.contentForRow(row).length, next, 0)   // pull the next block up
         cursor.setCaret(row, col)
     }
+    // --- Lane gestures (SR-3 S7b) ---
+    // The lane gap under a page-relative x in the split row holding `row`: {record, index}, or null.
+    function dividerAt(row, pageX) {
+        const rec = blockModel.splitRowOf(row)
+        if (rec < 0) return null
+        const n = blockModel.laneCount(rec)
+        for (let k = 0; k + 1 < n; ++k)
+            if (Math.abs(pageX - blockModel.dividerX(rec, k)) <= blockModel.laneGap / 2) return { record: rec, index: k }
+        return null
+    }
+    // 1 = the hot band inside the block's left column edge, 0 = its right edge, -1 = neither.
+    // Hidden while a draw tool is armed or a frame tab is open; tables and records don't pull.
+    function pullSideAt(row, cx) {
+        if (row < 0 || root.inkMode || root.activeFrameId !== "") return -1
+        const t = blockModel.typeForRow(row)
+        if (t === 7 || t === 10) return -1
+        const x0 = columnX(row), w = laneOf(row).w
+        if (cx >= x0 && cx < x0 + laneHotBand) return 1
+        if (cx > x0 + w - laneHotBand && cx <= x0 + w) return 0
+        return -1
+    }
+    // Soft snaps at ¼ ⅓ ½ ⅔ ¾ of [left, left + width].
+    function snapToFractions(x, left, width) {
+        const fr = [0.25, 1 / 3, 0.5, 2 / 3, 0.75]
+        for (let i = 0; i < fr.length; ++i)
+            if (Math.abs(x - (left + width * fr[i])) <= 8) return left + width * fr[i]
+        return x
+    }
+    function beginDividerDrag(rec, idx, pageX, alone) {
+        dividerDragRecord = rec; dividerDragIndex = idx; dividerDragAlone = alone
+        dividerDragChain = alone ? [rec, idx] : blockModel.dividerChain(rec, idx)
+        dividerPreviewX = blockModel.dividerX(rec, idx)
+        dividerDragging = true
+    }
+    function updateDividerDrag(pageX) { dividerPreviewX = snapToFractions(pageX, 0, pageWidth) }
+    function commitDividerDrag() {
+        if (!dividerDragging) return
+        dividerDragging = false
+        blockModel.moveDivider(dividerDragRecord, dividerDragIndex, dividerPreviewX, dividerDragAlone)
+        dividerDragRecord = -1; dividerDragIndex = -1; dividerDragChain = []
+    }
+    function cancelDividerDrag() { dividerDragging = false; dividerDragRecord = -1; dividerDragIndex = -1; dividerDragChain = [] }
+    function beginPull(row, side, pageX) {
+        // With a top-level run selected, pulling from one of its blocks wraps the whole run.
+        const inRun = cursor.hasSel && cursor.loRow !== cursor.hiRow && row >= cursor.loRow && row <= cursor.hiRow
+                      && blockModel.laneForRow(cursor.loRow) < 0 && blockModel.laneForRow(cursor.hiRow) < 0
+        pullRow = row; pullSide = side
+        pullLo = inRun ? cursor.loRow : row; pullHi = inRun ? cursor.hiRow : row
+        pullPressX = pageX; pullPreviewX = pageX
+        pulling = true
+    }
+    function updatePull(pageX) {
+        const g = laneOf(pullRow), min = blockModel.minLaneWidth
+        pullPreviewX = snapToFractions(Math.max(g.x + min, Math.min(g.x + g.w - min, pageX)), g.x, g.w)
+    }
+    function commitPull() {
+        if (!pulling) return
+        pulling = false
+        if (Math.abs(pullPreviewX - pullPressX) < 12) return        // a click on the band, not a pull
+        const g = laneOf(pullRow)
+        const leftShare = (pullPreviewX - g.x) / g.w
+        const hadInk = blockModel.inkForRow(pullRow).length > 0
+        // The pulled block keeps the side away from the edge it was pulled from.
+        const fresh = blockModel.wrapRun(pullLo, pullHi, pullSide, pullSide === 0 ? leftShare : 1 - leftShare)
+        if (fresh < 0) return
+        cursor.setCaret(fresh, 0)
+        root.ensureVisible(fresh)
+        if (hadInk) Toasts.show(qsTr("This row's ink stays where it was drawn"))
+    }
+    function cancelPull() { pulling = false }
+    // Block menu: split the block (or the selected run) into two lanes.
+    function splitMenu(lo, hi) {
+        const fresh = blockModel.wrapRun(lo, hi, 0, 0.5)
+        if (fresh >= 0) { cursor.setCaret(fresh, 0); root.ensureVisible(fresh) }
+    }
+    // The split row right below `record` when it has the same number of lanes, else -1.
+    function mergeTargetBelow(record) {
+        const next = blockModel.splitRowLast(record) + 1
+        return (next < blockModel.count && blockModel.typeForRow(next) === 10
+                && blockModel.laneCount(next) === blockModel.laneCount(record)) ? next : -1
+    }
+    // Delete lane (SR-0 §4.13): remove the lane's blocks — A4 collapses the lane or unwraps the row.
+    function deleteLane(row) {
+        const lane = blockModel.laneForRow(row), rec = blockModel.splitRowOf(row)
+        if (lane < 0 || rec < 0) return
+        let first = -1, last = -1
+        for (let i = rec + 1; i < blockModel.count && blockModel.laneForRow(i) >= 0; ++i)
+            if (blockModel.laneForRow(i) === lane) { if (first < 0) first = i; last = i }
+        if (first < 0) return
+        blockModel.removeBlocks(first, last)
+        const land = Math.min(first, blockModel.count - 1)
+        cursor.setCaret(blockModel.typeForRow(land) === 10 ? blockModel.nextLeaf(land) : land, 0)
+    }
     // Whether the selection is exactly one whole split row (Escape's rung 2 result).
     function selectionIsSplitRow() {
         const rec = blockModel.splitRowOf(cursor.loRow)
@@ -2845,6 +2961,8 @@ FocusScope {
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.hasSelection) { sketchEditCanvas.clearSelection() }
             else if (root.activeVideoRow >= 0 && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
             else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.hasSelection) { root.pdfActiveInk.clearSelection() }
+            else if (root.dividerDragging) { root.cancelDividerDrag() }
+            else if (root.pulling) { root.cancelPull() }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
             else if (root.dragging) { root.dragging = false }
             else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
@@ -3125,7 +3243,7 @@ FocusScope {
         id: poolProbe
         readonly property bool armed: Qt.application.arguments.some(
             function(a) { return a.indexOf("--pool-probe=") === 0 })
-        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits · 8 gestures
         property int step: 0
         property int phaseStep: 0
         property int checks: 0
@@ -3270,6 +3388,35 @@ FocusScope {
                 }
                 if (cursor.focusRow >= 0) root.ensureVisible(cursor.focusRow)
                 next(phaseStep >= 300)
+            } else if (phase === 8) {
+                // Lane gestures (SR-3 S7b), through the same begin/update/commit functions the
+                // mouse uses: pull a lane out of a block in view, drag a divider (with its
+                // chain, or alone). The structure stays valid after every gesture.
+                const row = Math.min(blockModel.count - 1, root.firstVisible + 1 + rand(4))
+                const t = blockModel.typeForRow(row)
+                if (phaseStep % 2 === 0 && t !== 7 && t !== 10) {
+                    const g = root.laneOf(row)
+                    if (g.w >= 2 * blockModel.minLaneWidth + blockModel.laneGap) {
+                        const before = blockModel.count
+                        const side = rand(2)
+                        root.beginPull(row, side, side === 1 ? g.x : g.x + g.w)
+                        root.updatePull(g.x + g.w * (0.3 + 0.1 * rand(5)))
+                        root.commitPull()
+                        ++checks
+                        if (blockModel.count <= before) fail("pulling a lane out of row " + row + " made nothing")
+                    }
+                } else {
+                    const rec = blockModel.splitRowOf(row)
+                    if (rec >= 0 && blockModel.laneCount(rec) >= 2) {
+                        root.beginDividerDrag(rec, 0, blockModel.dividerX(rec, 0), rand(2) === 0)
+                        root.updateDividerDrag(blockModel.dividerX(rec, 0) + (rand(2) ? 60 : -60))
+                        root.commitDividerDrag()
+                    }
+                }
+                ++checks
+                if (!blockModel.structureValid()) fail("the structure broke after a lane gesture near row " + row)
+                if (phaseStep % 6 === 5) flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.7)
+                next(phaseStep >= 120)
             } else {
                 running = false
                 console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,
@@ -3557,6 +3704,8 @@ FocusScope {
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : root.gripDragging ? Qt.ClosedHandCursor
                        : root.gripKind !== "" ? Qt.OpenHandCursor
+                       : (root.dividerDragging || root.pulling
+                          || root.dividerHoverRecord >= 0 || root.pullHoverRow >= 0) ? Qt.SplitHCursor
                        : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
                        : overClickable ? Qt.PointingHandCursor
                        : Qt.IBeamCursor
@@ -3590,6 +3739,13 @@ FocusScope {
                 // (Block drag-reorder starts from the ruler's number handles
                 // now — the left grip gutter is retired.)
                 cursor.resetGoalX(); cursor.clearMarks()
+                // Lane gestures (SR-3 S7b) start before any caret placement.
+                if (root.dividerHoverRecord >= 0) {
+                    root.beginDividerDrag(root.dividerHoverRecord, root.dividerHoverIndex, m.x - root.leftEdge,
+                                          (m.modifiers & Qt.AltModifier) !== 0)
+                    return
+                }
+                if (root.pullHoverRow >= 0) { root.beginPull(root.pullHoverRow, root.pullHoverSide, m.x - root.leftEdge); return }
                 // Click into a table cell → place the table caret; arm drag for
                 // in-cell text selection / cross-cell range.
                 var th = root.tableHitAt(m.x, m.y)
@@ -3672,6 +3828,8 @@ FocusScope {
                 root.dragX = m.x; root.dragViewY = m.y - flick.contentY
             }
             onPositionChanged: (m) => {
+                if (root.dividerDragging) { root.updateDividerDrag(m.x - root.leftEdge); return }
+                if (root.pulling) { root.updatePull(m.x - root.leftEdge); return }
                 if (root.blockDragging) {
                     root.blockDragViewY = m.y - flick.contentY
                     root.dropGap = root.gapForY(m.y)
@@ -3756,6 +3914,14 @@ FocusScope {
                     }
                 }
                 mouse.overClickable = clk
+                // Lane gestures (SR-3 S7b): a lane gap → drag its divider; the hot band just
+                // inside a block's column edge → pull out a lane. Clickables and borders win.
+                const dv = (clk || overBorder) ? null : root.dividerAt(root.hoverRow, m.x - root.leftEdge)
+                root.dividerHoverRecord = dv ? dv.record : -1
+                root.dividerHoverIndex = dv ? dv.index : -1
+                const ps = (clk || overBorder || dv) ? -1 : root.pullSideAt(root.hoverRow, m.x)
+                root.pullHoverRow = ps >= 0 ? root.hoverRow : -1
+                root.pullHoverSide = ps
                 // Hovering an image row → show its resize handles. Don't clear on a
                 // non-image *handle* hover (the central layer onExits then); only a
                 // different block hides them.
@@ -3782,17 +3948,21 @@ FocusScope {
                 }
             }
             onExited: { root.hoverRow = -1; root.tableOverBorder = false
+                        root.dividerHoverRecord = -1; root.dividerHoverIndex = -1; root.pullHoverRow = -1
                         root.gripKind = ""; root.gripIndex = -1
                         root.codeChipHoverRow = -1
                         if (!root.gripDragging) root.gripTableRow = -1
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
-                if (root.blockDragging) root.commitBlockDrag()
+                if (root.dividerDragging) root.commitDividerDrag()
+                else if (root.pulling) root.commitPull()
+                else if (root.blockDragging) root.commitBlockDrag()
                 else if (root.gripDragging) root.commitInlineGripDrag()
                 else if (root.tableResizing || root.tableDragging) root.endTableInteraction()
                 else root.dragging = false
             }
             onCanceled: {
+                root.cancelDividerDrag(); root.cancelPull()
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
                 else {
                     root.dragging = false; root.tableDragging = false; root.tableResizing = false
@@ -5852,6 +6022,31 @@ FocusScope {
     // Drop-indicator line at the insertion gap — FULL WIDTH, page through
     // desk to the rail: the insertion is a document-wide event, and the line
     // meets the drag chip riding the ruler.
+    // Lane gesture previews (SR-3 S7b): the divider being dragged, spanning its aligned
+    // chain, and the divider a pull would make. Previews only — the model commits on release.
+    Rectangle {
+        readonly property int topRec: root.dividerDragChain.length >= 2 ? root.dividerDragChain[0] : -1
+        readonly property int lastRec: root.dividerDragChain.length >= 2
+                                       ? root.dividerDragChain[root.dividerDragChain.length - 2] : -1
+        visible: root.dividerDragging && topRec >= 0
+        x: root.leftEdge + root.dividerPreviewX - 1 - flick.contentX
+        y: (blockModel.layoutRevision, topRec >= 0 ? blockModel.yForRow(topRec) : 0) - flick.contentY
+        width: 2
+        height: (blockModel.layoutRevision, lastRec >= 0
+                 ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.yForRow(topRec) : 0)
+        color: Theme.colors.accent
+        z: 50
+    }
+    Rectangle {
+        visible: root.pulling && Math.abs(root.pullPreviewX - root.pullPressX) >= 12
+        x: root.leftEdge + root.pullPreviewX - 1 - flick.contentX
+        y: (blockModel.layoutRevision, root.pullLo >= 0 ? blockModel.yForRow(root.pullLo) : 0) - flick.contentY
+        width: 2
+        height: (blockModel.layoutRevision, root.pullHi >= 0
+                 ? blockModel.yForRow(root.pullHi) + blockModel.heightForRow(root.pullHi) - blockModel.yForRow(root.pullLo) : 0)
+        color: Theme.colors.accent
+        z: 50
+    }
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0 && !root.dropGapIsNoop(root.dropGap)
         x: root.gutterX - flick.contentX
@@ -6602,6 +6797,16 @@ FocusScope {
                                           && root.menuRow >= cursor.loRow && root.menuRow <= cursor.hiRow
         readonly property int runLo: menuInSel ? cursor.loRow : root.menuRow
         readonly property int runHi: menuInSel ? cursor.hiRow : root.menuRow
+        // Lanes (SR-3 S7b): the split row under the menu, and what it allows.
+        readonly property int laneRecord: menuInSel || root.menuRow < 0 ? -1
+            : (blockModel.contentRevision, blockModel.splitRowOf(root.menuRow))
+        readonly property bool canSplit: root.menuRow >= 0 && (blockModel.contentRevision,
+            blockModel.typeForRow(runLo) !== 7 && blockModel.typeForRow(runLo) !== 10
+            && (!menuInSel || (blockModel.laneForRow(runLo) < 0 && blockModel.laneForRow(runHi) < 0)))
+        readonly property bool canAlign: laneRecord >= 0 && (blockModel.contentRevision,
+            blockModel.splitRowLast(laneRecord) - laneRecord > blockModel.laneCount(laneRecord))
+        readonly property int mergeBelow: laneRecord < 0 ? -1
+            : (blockModel.contentRevision, root.mergeTargetBelow(laneRecord))
         // The right-clicked issue, re-read live: a background-pass issue has no
         // suggestions until the worker's follow-up lands (spell.revision bumps).
         readonly property var liveIssue: {
@@ -6746,6 +6951,14 @@ FocusScope {
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(blockMenu.runLo) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canSplit; text: "Split into columns"
+                          onActivated: root.splitMenu(blockMenu.runLo, blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canAlign; text: "Align lanes"
+                          onActivated: blockModel.alignLanes(blockMenu.laneRecord) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.mergeBelow >= 0; text: "Merge with the row below"
+                          onActivated: blockModel.mergeRowsIntoLanes(blockMenu.laneRecord, blockMenu.mergeBelow) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0; text: "Delete lane"; danger: true
+                          onActivated: root.deleteLane(root.menuRow) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Duplicate blocks" : "Duplicate block"
                           onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
                 MenuRow { visible: !blockMenu.inFrameTab && blockMenu.runLo > 0
