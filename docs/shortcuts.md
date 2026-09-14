@@ -49,14 +49,17 @@ Shift, **⌥** is Alt/Option.
 
 | Action | Shortcut |
 |---|---|
-| Extend the cell selection | ⇧Arrows &nbsp;or&nbsp; ⇧Click |
-| Select all cells | ⌘A |
-| Add / remove a row or column (on a grip) | ⌘Click |
+| Next / previous cell (adds a row past the last cell) | Tab / ⇧Tab |
+| Down the column (the last row adds one; an empty last row leaves the table) | Enter |
+| Insert a row below | ⌘Enter |
+| Cycle a checkmark cell | Space |
+| Select the block → its cell → the table → the document | ⌘A (repeat) |
+| Whole row or column (on a grip) | Click |
 | Span of rows or columns (on a grip) | ⇧Click |
-| Copy selection as a table | ⌘C |
-| Clear selection contents | Backspace / Delete |
-| Fill selection down / right | ⌘D / ⌘R |
-| Step selection out, then leave the table | Esc |
+| Add / remove a row or column (on a grip) | ⌘Click |
+| Copy a grip selection as a table | ⌘C |
+| Clear a grip selection's contents | Backspace / Delete |
+| A selected row → the whole table → the caret below it | Esc |
 
 ## Drawing
 

@@ -32,10 +32,11 @@ LucidLink — and open on either platform and dodge some typical file-locking is
 - Full undo history panel: the note's timeline, click to time-travel
 
 ### Tables
-- Rich cells with text, formatting, and images; choice and checkmark columns
-- Multi-select rows, columns, or cell ranges for bulk operations —
+- Cells hold blocks — text, formatting, images, video; choice, checkmark,
+  and timecode columns
+- Grip-select rows, columns, or cell ranges for bulk operations —
   delete, clear, color, retype, copy-as-table — each a single undo
-- Sort, fill down/right, drag-reorder rows and columns
+- Sort, drag-reorder columns, a tab per table with a row filter
 - One-click kanban board view grouped by any choice or check column
 
 ### Media & Review
