@@ -280,7 +280,10 @@ void Document::appendBlock(const QString& id, const QString& rank, int depth,
 void Document::updateContent(const QString& id, const QString& content) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare("UPDATE blocks SET content = ?, modified = ? WHERE id = ?");
-    q.addBindValue(content);
+    // Same coalesce as appendBlock: an emptied block often holds a NULL QString (clear(),
+    // left(0)…), which binds as SQL NULL — the UPDATE then fails the NOT NULL constraint
+    // and the block's OLD text survives on disk, coming back on reopen.
+    q.addBindValue(content.isNull() ? QString(QLatin1String("")) : content);
     q.addBindValue(QDateTime::currentMSecsSinceEpoch());
     q.addBindValue(id);
     if (!q.exec())

@@ -6190,6 +6190,30 @@ static void testSplitRowNavigation() {
           "…as one undo step");
 }
 
+static void testEmptiedBlockPersists() {
+    qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
+    QFile::remove(path);
+    {
+        BlockModel m;
+        m.newDocument();
+        m.setContent(0, QStringLiteral("abc"));
+        CHECK(m.saveAs(path), "a document with text saves");
+    }
+    {
+        BlockModel m;
+        CHECK(m.openDocument(path) && m.contentForRow(0) == QStringLiteral("abc"), "it reopens with its text");
+        m.setContent(0, QString());          // a NULL QString, as clear() or left(0) produce
+        CHECK(m.contentForRow(0).isEmpty() && m.save(), "the block is emptied and the document saves");
+    }
+    {
+        BlockModel m;
+        CHECK(m.openDocument(path) && m.contentForRow(0).isEmpty(),
+              "reopened, the block is still empty (was: its old text came back)");
+    }
+    QFile::remove(path);
+}
+
 static void testSplitRowEditing() {
     qInfo("[78] editing across lanes: collapsing an empty lane, clearing lanes, deleting row ranges (SR-3 step 6b)");
     auto fresh = [](BlockModel& m, int n) {
@@ -6355,6 +6379,7 @@ int main(int argc, char** argv) {
     testSplitRowGeometry();
     testSplitRowNavigation();
     testSplitRowEditing();
+    testEmptiedBlockPersists();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
