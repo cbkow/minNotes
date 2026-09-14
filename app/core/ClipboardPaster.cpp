@@ -15,8 +15,9 @@ ClipboardPaster::~ClipboardPaster() {
 
 ClipboardPaster::Job ClipboardPaster::planPaste(BlockModel* dest, const QString& json,
                                                 int row, int col,
-                                                int selLo, int selLoCol, int selHi, int selHiCol) {
+                                                int selLo, int selLoCol, int selHi, int selHiCol, bool intoCells) {
     Job job;
+    job.intoCells = intoCells;
     if (!dest) { job.refuse = QStringLiteral("No document"); return job; }
     QString err;
     if (!BlockClipboard::decode(json.toUtf8(), &job.payload, &err)) { job.refuse = err; return job; }
@@ -130,8 +131,28 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
                                                              job.selHi, job.selHiCol);
         if (land.size() == 2) { row = land.at(0).toInt(); col = land.at(1).toInt(); }
     }
-    const auto caret = dest->pasteSpecsAt(row, col, job.payload.specs, job.payload.ink,
-                                          job.payload.pageWidth);
+    // The paste rules (SR-4 S8d, §4.11): a grid — a cell fragment (the payload's `grid`) or copied
+    // table rows — into a table cell fills by position or appends by label; outside a table a
+    // fragment becomes a table of its own.
+    std::pair<int, int> caret{ -1, -1 };
+    bool routed = false;
+    {
+        const QJsonArray cols = job.payload.grid.value(QStringLiteral("cols")).toArray();
+        const int header = job.payload.grid.value(QStringLiteral("header")).toInt(0);
+        const bool fragment = !job.payload.grid.isEmpty();
+        BlockModel::GridPaste grid;
+        const int head = dest->tableHeadOf(row);
+        if (head >= 0 && dest->laneForRow(row) >= 0
+            && BlockModel::parseGridSpecs(job.payload.specs, cols, fragment ? header : 0, &grid)) {
+            if (fragment) grid.header = header;
+            const int land = dest->pasteGrid(head, dest->gridRowOf(row), dest->gridColumnOf(row), grid, job.intoCells);
+            if (land >= 0) { caret = { land, static_cast<int>(dest->contentForRow(land).size()) }; routed = true; }
+        } else if (fragment) {
+            BlockModel::promoteGridSpecs(job.payload.specs, cols, header);
+        }
+    }
+    if (!routed)
+        caret = dest->pasteSpecsAt(row, col, job.payload.specs, job.payload.ink, job.payload.pageWidth);
     dest->endGroup();
     dest->localizeRemoteMedia(row, std::max(caret.first, row + static_cast<int>(job.payload.specs.size())));
 
@@ -142,8 +163,8 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
 
 bool ClipboardPaster::pasteBlocks(BlockModel* dest, const QString& json, int row, int col,
                                   int selLo, int selLoCol, int selHi, int selHiCol,
-                                  int* caretRow, int* caretCol, QString* error) {
-    Job job = planPaste(dest, json, row, col, selLo, selLoCol, selHi, selHiCol);
+                                  int* caretRow, int* caretCol, QString* error, bool intoCells) {
+    Job job = planPaste(dest, json, row, col, selLo, selLoCol, selHi, selHiCol, intoCells);
     if (!job.refuse.isEmpty()) { if (error) *error = job.refuse; return false; }
     if (!job.assets.items.empty()) {
         QString err;
@@ -164,12 +185,12 @@ void ClipboardPaster::setProgress(double p, const QString& item) {
 }
 
 void ClipboardPaster::startPaste(BlockModel* dest, const QString& json, int row, int col,
-                                 int selLo, int selLoCol, int selHi, int selHiCol) {
+                                 int selLo, int selLoCol, int selHi, int selHiCol, bool intoCells) {
     if (running_) return;
     if (worker_.joinable()) worker_.join();   // reap the previous run
     cancel_ = false;
 
-    Job job = planPaste(dest, json, row, col, selLo, selLoCol, selHi, selHiCol);
+    Job job = planPaste(dest, json, row, col, selLo, selLoCol, selHi, selHiCol, intoCells);
     if (!job.refuse.isEmpty()) { emit pasteFinished(false, -1, -1, job.refuse); return; }
 
     if (job.assets.items.empty()) {

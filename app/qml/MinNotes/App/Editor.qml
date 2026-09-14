@@ -3093,6 +3093,13 @@ FocusScope {
             root.copyRange(fr0, 0, fr0, cursor.opaque(fr0) ? 0 : blockModel.contentForRow(fr0).length)
         }
     }
+    // Paste Special ▸ Paste into cells (S8d): the next paste fills a table by position, header rows as content.
+    property bool pasteIntoCells: false
+    function pasteIntoCellsAt(row) {
+        pasteIntoCells = true
+        pasteAtBlock(row)
+        pasteIntoCells = false
+    }
     // Rich copy (0.5.0): the x-mnd-blocks payload PLUS the flavours other
     // apps read — plain text (a table's TSV), a lone table's HTML, a lone image
     // block's raster. Opaque rows never leak descriptor JSON.
@@ -3204,9 +3211,9 @@ FocusScope {
                 if (cursor.hasSel) {
                     var pe = cursor.effectiveRange()
                     paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol,
-                                      pe.lR, pe.lC, pe.hR, pe.hC)
+                                      pe.lR, pe.lC, pe.hR, pe.hC, root.pasteIntoCells)
                 } else {
-                    paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol)
+                    paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol, -1, 0, -1, 0, root.pasteIntoCells)
                 }
                 return
             }
@@ -3267,7 +3274,10 @@ FocusScope {
                           && blockModel.htmlIsBareRemoteImage(html)
             if (html && html.length > 0 && !bareImg) {
                 var hg = root.pasteGroupBegin()
-                var hc = blockModel.pasteHtml(cursor.focusRow, cursor.focusCol, html)
+                // A cell rectangle's anchor is its top-left cell (S8d: a table-only clipboard fills from it).
+                const hrect = root.cellRect
+                const hanchor = hrect ? blockModel.gridCellAt(hrect.head, hrect.r0, hrect.c0) : cursor.focusRow
+                var hc = blockModel.pasteHtml(hanchor >= 0 ? hanchor : cursor.focusRow, hanchor >= 0 && hrect ? 0 : cursor.focusCol, html)
                 root.pasteGroupEnd(hg)
                 if (hc && hc.length === 2) { cursor.setCaret(hc[0], hc[1]); root.ensureVisible(hc[0]); return }
             }
@@ -8244,6 +8254,9 @@ FocusScope {
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) - 1); return null }) }
                 MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaderRow; scope: "table"; text: "Unassign header"
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, 0); return null }) }
+                MenuRow { visible: blockMenu.gridOne && (clipboard.hasBlocks() || clipboard.hasHtml() || clipboard.readText().length > 0)
+                          text: "Paste into cells"
+                          onActivated: root.pasteIntoCellsAt(root.menuRow) }
                 MenuRow { visible: blockMenu.gridOne; scope: "table"; text: "Delete table"; danger: true
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteTable(h); return null }) }
                 Rectangle { visible: blockMenu.gridOne; width: parent.width; height: 1; color: Theme.colors.divider }

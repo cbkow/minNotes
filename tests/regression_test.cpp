@@ -7897,6 +7897,116 @@ static void testCopyByGrain() {
           "the HTML fragment: the table with its thead, no chrome, no block numbers");
 }
 
+static void testPasteRules() {
+    qInfo("[102] paste rules: a grid fills by position or appends by label, Paste into cells, a fragment outside a table (SR-4 S8d)");
+    auto fresh = [](BlockModel& m, const char* prefix) {           // 0 before · a 3×3 table (head 1) · after
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("before"));
+        m.insertBlock(1); m.setContent(1, QStringLiteral("after"));
+        const int head = m.insertTableRows(0, 3, 3) - 1;
+        const char* names[3] = { "Name", "Status", "Done" };
+        for (int c = 0; c < 3; ++c) m.setContent(m.gridCellAt(head, 0, c), QString::fromUtf8(names[c]));
+        for (int r = 1; r < 3; ++r)
+            for (int c = 0; c < 3; ++c)
+                m.setContent(m.gridCellAt(head, r, c), QStringLiteral("%1%2%3").arg(QLatin1String(prefix)).arg(r).arg(c));
+        return head;
+    };
+    BlockModel src;
+    const int sh = fresh(src, "s");
+    {
+        const int b = src.gridCellAt(sh, 1, 1);                     // a two-block cell
+        src.insertBlock(b + 1);
+        src.setContent(b + 1, QStringLiteral("s11b"));
+    }
+    const QString bodyFrag = src.gridCopyPayload(sh, { 1, 2 }, { 1, 2 });      // headerless 2×2
+    const QString headed = src.gridCopyPayload(sh, { 0, 1, 2 }, { 2, 0 });     // header + 2 rows, columns Done, Name
+    int cr = -1, cc = -1;
+    QString err;
+    {   // Fill by position from the caret's cell, the two-block cell landing whole.
+        BlockModel m;
+        const int h = fresh(m, "t");
+        const int anchor = m.gridCellAt(h, 1, 1);
+        const int entries = m.undoHistory().size();
+        CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, anchor, 0, -1, 0, -1, 0, &cr, &cc, &err), "a headerless fragment pastes into a cell (%s)", qPrintable(err));
+        CHECK(m.gridRowCount(h) == 3 && m.tableColumnCount(h) == 3 && m.gridCellText(h, 1, 1) == QStringLiteral("s11\ns11b")
+                  && m.gridCellText(h, 1, 2) == QStringLiteral("s12") && m.gridCellText(h, 2, 2) == QStringLiteral("s22")
+                  && m.gridCellText(h, 1, 0) == QStringLiteral("t10") && m.structureValid(),
+              "…fills the 2×2 from (1,1) by position; the rest of the table untouched");
+        CHECK(m.gridColumnOf(cr) == 2 && m.gridRowOf(cr) == 2, "…the caret lands in the last written cell");
+        CHECK(m.undoHistory().size() == entries + 1, "…one undo entry");
+        m.undo();
+        CHECK(m.gridCellText(h, 1, 1) == QStringLiteral("t11") && m.structureValid(), "…undo restores the cells");
+    }
+    {   // Fill past the edge grows the table; a cell rectangle's top-left is the anchor.
+        BlockModel m;
+        const int h = fresh(m, "t");
+        const int a = m.gridCellAt(h, 2, 2), z = m.gridCellAt(h, 2, 2);
+        Q_UNUSED(z);
+        CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, a, 0, -1, 0, -1, 0, &cr, &cc, &err)
+                  && m.gridRowCount(h) == 4 && m.tableColumnCount(h) == 4 && m.gridCellText(h, 3, 3) == QStringLiteral("s22") && m.structureValid(),
+              "a fill past the last row and column grows the table (%dx%d)", m.gridRowCount(h), m.tableColumnCount(h));
+    }
+    {   // A headered fragment appends by label: columns Done/Name map to the target's, rows land below the caret's row.
+        BlockModel m;
+        const int h = fresh(m, "t");
+        const int anchor = m.gridCellAt(h, 1, 0);
+        CHECK(ClipboardPaster::pasteBlocks(&m, headed, anchor, 0, -1, 0, -1, 0, &cr, &cc, &err), "a headered fragment pastes into a table (%s)", qPrintable(err));
+        CHECK(m.gridRowCount(h) == 5 && m.tableColumnCount(h) == 3
+                  && m.gridCellText(h, 2, 0) == QStringLiteral("s10") && m.gridCellText(h, 2, 2) == QStringLiteral("s12")
+                  && m.gridCellText(h, 2, 1).isEmpty() && m.gridCellText(h, 4, 0) == QStringLiteral("t20") && m.structureValid(),
+              "…two rows inserted below row 1, columns matched by label (Done → col 2, Name → col 0), Status empty");
+        m.undo();
+        CHECK(m.gridRowCount(h) == 3, "…one undo step");
+    }
+    {   // An unmatched source column is appended, with its header text; from a header row the rows go to the end.
+        BlockModel m;
+        const int h = fresh(m, "t");
+        m.setContent(m.gridCellAt(h, 0, 2), QStringLiteral("Other"));
+        CHECK(ClipboardPaster::pasteBlocks(&m, headed, m.gridCellAt(h, 0, 0), 0, -1, 0, -1, 0, &cr, &cc, &err)
+                  && m.tableColumnCount(h) == 4 && m.gridCellText(h, 0, 3) == QStringLiteral("Done")
+                  && m.gridRowCount(h) == 5 && m.gridCellText(h, 3, 3) == QStringLiteral("s12") && m.gridCellText(h, 3, 0) == QStringLiteral("s10")
+                  && m.structureValid(),
+              "…'Done' has no match: a new column with that header; rows appended at the end from the header row");
+    }
+    {   // Paste into cells: the header row pastes as content, by position.
+        BlockModel m;
+        const int h = fresh(m, "t");
+        CHECK(ClipboardPaster::pasteBlocks(&m, headed, m.gridCellAt(h, 1, 1), 0, -1, 0, -1, 0, &cr, &cc, &err, /*intoCells=*/true)
+                  && m.gridRowCount(h) == 4 && m.gridCellText(h, 1, 1) == QStringLiteral("Done") && m.gridCellText(h, 1, 2) == QStringLiteral("Name")
+                  && m.gridCellText(h, 3, 2) == QStringLiteral("s20") && m.structureValid(),
+              "Paste into cells fills by position with the header row as content");
+    }
+    {   // Outside a table a fragment becomes a table: first row the header, the column spec carried.
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("p"));
+        src.setTableColumnWidth(sh, 1, 222);
+        const QString frag = src.gridCopyPayload(sh, { 1, 2 }, { 1, 2 });
+        CHECK(ClipboardPaster::pasteBlocks(&m, frag, 0, 1, -1, 0, -1, 0, &cr, &cc, &err), "a fragment pastes outside a table (%s)", qPrintable(err));
+        const int h = findTableHead(m);
+        CHECK(h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 2 && m.tableColumnCount(h) == 2
+                  && m.gridCellText(h, 0, 0) == QStringLiteral("s11\ns11b") && m.tableColumnWidth(h, 0) == 222 && m.structureValid(),
+              "…a new 2×2 table, its first row the header, the copied column width kept");
+    }
+    {   // A typed target column adopts by label; a foreign table-only HTML paste fills (no thead) or appends (thead).
+        BlockModel m;
+        const int h = fresh(m, "t");
+        m.gridSetColumnKind(h, 2, 1);
+        CHECK(ClipboardPaster::pasteBlocks(&m, bodyFrag, m.gridCellAt(h, 1, 1), 0, -1, 0, -1, 0, &cr, &cc, &err)
+                  && m.gridCellChoiceLabel(h, 1, 2) == QStringLiteral("s12") && m.gridColumnOptions(h, 2).size() == 4,
+              "a choice column adopts pasted values as options by label (2 harvested + 2 pasted = %d)", int(m.gridColumnOptions(h, 2).size()));
+        const QVariantList land = m.pasteHtml(m.gridCellAt(h, 1, 0), 0, QStringLiteral("<table><tr><td>x1</td><td>x2</td></tr></table>"));
+        CHECK(land.size() == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("x1") && m.gridCellText(h, 1, 1) == QStringLiteral("x2")
+                  && m.gridRowCount(h) == 3 && m.structureValid(),
+              "an Excel-style table (no header) into a cell fills by position");
+        CHECK(m.pasteHtml(m.gridCellAt(h, 2, 0), 0, QStringLiteral("<table><thead><tr><th>Status</th></tr></thead><tr><td>st</td></tr></table>")).size() == 2
+                  && m.gridRowCount(h) == 4 && m.gridCellText(h, 3, 1) == QStringLiteral("st") && m.gridCellText(h, 3, 0).isEmpty() && m.structureValid(),
+              "a table with a thead into a cell appends by label");
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8109,6 +8219,7 @@ int main(int argc, char** argv) {
     testGridTableExports();
     testGridTableDocxPdf();
     testCopyByGrain();
+    testPasteRules();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

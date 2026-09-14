@@ -535,6 +535,25 @@ public:
     // original spec, its first spec's index afterwards (-1 for an empty table that vanished) so callers
     // can carry parallel data (ink, comment anchors) across.
     static std::vector<int> expandTableSpecs(std::vector<BlockSpec>& specs);
+    // Paste rules (S8d, §4.11: "position without a header, labels with one"). A GRID is specs of
+    // Split records (any header role) plus their cells' blocks — a cell fragment, a copied table,
+    // a foreign table. parseGridSpecs reads one (false when the specs hold anything else); the
+    // column spec / header count come from the hints (a payload's `grid`) or the first record.
+    // pasteGrid into a table: header rows present and not forced → APPEND BY LABEL (the source
+    // header row matches target columns case-insensitively, duplicates in order, unlabeled by
+    // position; unmatched source columns are appended; rows land below row r, at the end from a
+    // header row); otherwise FILL BY POSITION from (r, c), growing the table, header rows as
+    // content. Typed target columns adopt values by label. One undo; → the last written cell's
+    // block, or -1. promoteGridSpecs makes a grid a table for a paste outside one (first row the
+    // header unless the grid says more).
+    struct GridPaste {
+        std::vector<std::vector<std::vector<BlockSpec>>> rows;   // [row][col] = the cell's blocks
+        QJsonArray cols;
+        int header = 0;
+    };
+    static bool parseGridSpecs(const std::vector<BlockSpec>& specs, const QJsonArray& colsHint, int headerHint, GridPaste* out);
+    int pasteGrid(int head, int r, int c, const GridPaste& grid, bool forceFill);
+    static void promoteGridSpecs(std::vector<BlockSpec>& specs, const QJsonArray& cols, int headerRows);
     // Gap-addressed core (the tab-merge program): gap g = between rows g-1
     // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
     // Lanes (SR-3 S8): specs that carry a Split record keep their own structure
@@ -1387,6 +1406,7 @@ private:
     bool sweepColumnOptions(int head, int c, const QJsonArray& options,
                             const std::function<QString(const QString&)>& remap);
     int ensureGridCell(int head, int r, int c);                  // materialize a ragged cell; → its block
+    void writeCellSpecs(int head, int r, int c, const std::vector<BlockSpec>& blocks);   // S8d: a cell takes these blocks (typed: by label)
     void adaptJoinedChips(int head, int firstJoined);            // A9: joined rows' chips adopt the head's options
     static double tableLaneWidth(const TableGeom& g, int cell) {
         return cell >= 0 && static_cast<std::size_t>(cell) < g.w.size() ? g.w[static_cast<std::size_t>(cell)] : 160.0;

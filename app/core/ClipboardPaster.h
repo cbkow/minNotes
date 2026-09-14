@@ -39,15 +39,18 @@ public:
     // [selLo,selLoCol]..[selHi,selHiCol] when selLo >= 0 (block-grain at
     // opaque ends). pasteFinished(ok, caretRow, caretCol, error) follows —
     // synchronously when nothing needs copying. No-op while running.
+    // intoCells (Paste Special ▸ Paste into cells, S8d): a grid fills the target table by position
+    // even when it carries header rows (they paste as content).
     Q_INVOKABLE void startPaste(BlockModel* dest, const QString& json, int row, int col,
-                                int selLo = -1, int selLoCol = 0, int selHi = -1, int selHiCol = 0);
+                                int selLo = -1, int selLoCol = 0, int selHi = -1, int selHiCol = 0,
+                                bool intoCells = false);
     Q_INVOKABLE void cancel() { cancel_ = true; }
 
     // Synchronous core (headless tests): the same plan → copy → apply.
     static bool pasteBlocks(BlockModel* dest, const QString& json, int row, int col,
                             int selLo, int selLoCol, int selHi, int selHiCol,
                             int* caretRow = nullptr, int* caretCol = nullptr,
-                            QString* error = nullptr);
+                            QString* error = nullptr, bool intoCells = false);
 
 signals:
     void runningChanged();
@@ -63,9 +66,10 @@ private:
         int selLo = -1, selLoCol = 0, selHi = -1, selHiCol = 0;
         QString anchorId;          // dest block id of the target row
         QString refuse;            // non-empty = refused at plan time
+        bool intoCells = false;
     };
     static Job planPaste(BlockModel* dest, const QString& json, int row, int col,
-                         int selLo, int selLoCol, int selHi, int selHiCol);
+                         int selLo, int selLoCol, int selHi, int selHiCol, bool intoCells = false);
     static bool applyPaste(BlockModel* dest, Job& job, int* caretRow, int* caretCol);
     void setProgress(double p, const QString& item);
 

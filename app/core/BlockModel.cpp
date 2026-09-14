@@ -1710,6 +1710,169 @@ int BlockModel::insertGridFromTSV(int afterRow, const QString& tsv) {
     return gridCellAt(head, 0, 0);
 }
 
+bool BlockModel::parseGridSpecs(const std::vector<BlockSpec>& specs, const QJsonArray& colsHint, int headerHint, GridPaste* out) {
+    GridPaste g;
+    g.cols = colsHint;
+    g.header = std::max(0, headerHint);
+    bool first = true;
+    for (const BlockSpec& sp : specs) {
+        if (sp.type == Split && sp.cell < 0) {
+            if (first) {
+                if (g.cols.isEmpty()) g.cols = tableColsOf(sp.table);
+                if (headerHint <= 0) g.header = sp.header;
+                first = false;
+            }
+            g.rows.emplace_back();
+            continue;
+        }
+        if (sp.cell < 0 || g.rows.empty()) return false;          // a top-level block: not a grid
+        auto& row = g.rows.back();
+        if (row.size() <= size_t(sp.cell)) row.resize(size_t(sp.cell) + 1);
+        row[size_t(sp.cell)].push_back(sp);
+    }
+    if (g.rows.empty()) return false;
+    size_t width = 0;
+    for (const auto& row : g.rows) width = std::max(width, row.size());
+    for (auto& row : g.rows) row.resize(width);                   // rectangular: a missing cell is empty
+    if (width == 0) return false;
+    g.header = std::min<int>(g.header, static_cast<int>(g.rows.size()));
+    *out = std::move(g);
+    return true;
+}
+
+void BlockModel::promoteGridSpecs(std::vector<BlockSpec>& specs, const QJsonArray& cols, int headerRows) {
+    for (BlockSpec& sp : specs) {
+        if (sp.type != Split || sp.cell >= 0) continue;
+        QJsonObject t = QJsonDocument::fromJson(sp.table.toUtf8()).object();
+        t.remove(QStringLiteral("cols"));
+        if (!cols.isEmpty()) t.insert(QStringLiteral("cols"), cols);
+        sp.table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+        sp.header = static_cast<uint8_t>(std::clamp(std::max(1, headerRows), 1, 255));
+        return;                                                    // the first record heads the table
+    }
+}
+
+// The pasted value of a cell for a typed column: its first block's text (a chip's text is its label).
+static QString gridValueLabel(const std::vector<BlockModel::BlockSpec>& blocks) {
+    for (const BlockModel::BlockSpec& sp : blocks)
+        if (sp.mediaJson.isEmpty() && sp.type != BlockModel::Split) return sp.text.trimmed();
+    return {};
+}
+
+void BlockModel::writeCellSpecs(int head, int r, int c, const std::vector<BlockSpec>& blocks) {
+    const int hc = headerCount(head);
+    const int kind = r < hc ? 0 : gridColumnKind(head, c);
+    if (kind == 1) {                                               // adopt a matching option, else add one
+        const QString v = gridValueLabel(blocks);
+        QString id = optionIdByLabel(columnOptionsOf(rows_[size_t(head)].table, c), v);
+        if (id.isEmpty() && !v.isEmpty()) id = gridAddOption(head, c, v, QStringLiteral("#8A8A8A"));
+        writeCellValue(ensureGridCell(head, r, c), columnOptionsOf(rows_[size_t(head)].table, c), id);
+        return;
+    }
+    if (kind == 2) {
+        QString v = gridValueLabel(blocks);
+        if (v == QLatin1String("[x]") || v == QLatin1String("[X]")) v = QStringLiteral("Done");
+        else if (v == QLatin1String("[/]")) v = QStringLiteral("Doing");
+        else if (v == QLatin1String("[ ]") || v == QLatin1String("[]")) v = QStringLiteral("To do");
+        const QString id = optionIdByLabel(checkOptions(), v);
+        writeCellValue(ensureGridCell(head, r, c), checkOptions(), id == QStringLiteral("0") ? QString() : id);
+        return;
+    }
+    gridClearCells(head, r, c, r, c);                              // → one empty paragraph
+    const int b = ensureGridCell(head, r, c);
+    if (b < 0) return;
+    std::vector<BlockSpec> in;
+    for (const BlockSpec& sp : blocks) {
+        if (sp.type == Split) continue;
+        BlockSpec x = sp;
+        x.cell = static_cast<int8_t>(c);
+        x.header = 0; x.table.clear(); x.ratios.clear();
+        in.push_back(std::move(x));
+    }
+    if (in.empty()) return;
+    spliceSpecsAt(b + 1, in, /*allowReuseAnchorAbove=*/true, c);   // folds into the empty paragraph
+}
+
+int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool forceFill) {
+    if (headerCount(head) <= 0 || grid.rows.empty() || r < 0 || c < 0) return -1;
+    const int width = static_cast<int>(grid.rows.front().size());
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    int land = -1;
+    if (grid.header > 0 && !forceFill) {
+        // Append by label: the source's first header row names its columns.
+        const int hc = headerCount(head);
+        auto fold = [](const QString& s) { return s.trimmed().toCaseFolded(); };
+        std::vector<QString> target;
+        for (int k = 0; k < tableColumnCount(head); ++k) target.push_back(fold(gridCellText(head, 0, k)));
+        std::vector<char> used(target.size(), 0);
+        std::vector<int> map(size_t(width), -1);
+        std::vector<QString> srcLabel(static_cast<size_t>(width));   // not size_t(width): a vexing parse
+        for (int j = 0; j < width; ++j) {
+            QStringList parts;
+            for (const BlockSpec& sp : grid.rows[0][size_t(j)]) if (sp.mediaJson.isEmpty()) parts << sp.text;
+            srcLabel[size_t(j)] = parts.join(QLatin1Char('\n')).trimmed();
+        }
+        for (int j = 0; j < width; ++j) {                          // labeled: by name, duplicates in order
+            const QString L = fold(srcLabel[size_t(j)]);
+            if (L.isEmpty()) continue;
+            for (size_t k = 0; k < target.size(); ++k)
+                if (!used[k] && target[k] == L) { map[size_t(j)] = static_cast<int>(k); used[k] = 1; break; }
+        }
+        for (int j = 0; j < width; ++j) {                          // unlabeled: by position
+            if (map[size_t(j)] >= 0 || !fold(srcLabel[size_t(j)]).isEmpty()) continue;
+            if (size_t(j) < target.size() && !used[size_t(j)]) { map[size_t(j)] = j; used[size_t(j)] = 1; }
+        }
+        for (int j = 0; j < width; ++j) {                          // unmatched: a new column, its header and kind
+            if (map[size_t(j)] >= 0) continue;
+            const int nc = tableColumnCount(head);
+            if (!gridInsertColumn(head, nc)) continue;
+            map[size_t(j)] = nc;
+            if (const int hb = gridCellAt(head, 0, nc); hb >= 0 && !srcLabel[size_t(j)].isEmpty()) writePlainValue(hb, srcLabel[size_t(j)]);
+            const QJsonObject col = grid.cols.at(j).toObject();
+            const int kind = col.value(QStringLiteral("k")).toInt(0);
+            if (kind == 1) {
+                QVariantList options;
+                for (const QJsonValue& ov : col.value(QStringLiteral("o")).toArray()) {
+                    const QJsonObject o = ov.toObject();
+                    options << QVariantMap{ { QStringLiteral("id"), o.value(QStringLiteral("id")).toString() },
+                                            { QStringLiteral("label"), o.value(QStringLiteral("l")).toString() },
+                                            { QStringLiteral("color"), o.value(QStringLiteral("c")).toString() } };
+                }
+                gridSetColumnKind(head, nc, 1);
+                if (!options.isEmpty()) gridSetColumnOptions(head, nc, options);
+            } else if (kind == 2) {
+                gridSetColumnKind(head, nc, 2);
+            }
+        }
+        const int at = r < hc ? gridRowCount(head) : r + 1;
+        const int n = static_cast<int>(grid.rows.size()) - grid.header;
+        for (int i = 0; i < n; ++i) {
+            if (!gridInsertRow(head, at + i)) break;
+            for (int j = 0; j < width; ++j) {
+                if (map[size_t(j)] < 0) continue;
+                writeCellSpecs(head, at + i, map[size_t(j)], grid.rows[size_t(grid.header + i)][size_t(j)]);
+                land = gridCellAt(head, at + i, map[size_t(j)]);
+            }
+        }
+    } else {
+        // Fill by position from (r, c); header rows paste as content.
+        const int n = static_cast<int>(grid.rows.size());
+        while (gridRowCount(head) < r + n) if (!gridInsertRow(head, gridRowCount(head))) break;
+        while (tableColumnCount(head) < c + width) if (!gridInsertColumn(head, tableColumnCount(head))) break;
+        for (int i = 0; i < n && r + i < gridRowCount(head); ++i)
+            for (int j = 0; j < width && c + j < tableColumnCount(head); ++j) {
+                writeCellSpecs(head, r + i, c + j, grid.rows[size_t(i)][size_t(j)]);
+                land = gridCellAt(head, r + i, c + j);
+            }
+    }
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return land;
+}
+
 int BlockModel::gridInsertMedia(int head, int r, int c, const QVariantList& fileUrls) {
     if (headerCount(head) <= 0 || r < 0 || r >= gridRowCount(head) || c < 0 || c >= 63 || fileUrls.isEmpty()) return -1;
     if (r >= headerCount(head) && gridColumnKind(head, c) != 0) return -1;   // a typed body cell holds one chip
@@ -7125,6 +7288,19 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
     // paste has no source directory, so relative image srcs don't resolve here.
     std::vector<BlockSpec> specs =
         Importer::specsFromTextDocument(doc, mediaStore_.get(), QString());
+    // A table-only clipboard (Excel, a copied web table) into a table cell (S8d, R-I3): no header
+    // (Excel writes none) → fill by position from the caret's cell; a <thead> → append by label.
+    if (specs.size() == 1 && specs[0].type == Table && specs[0].mediaJson.isEmpty() && tableHeadOf(row) >= 0
+        && rows_[size_t(row)].cell >= 0) {
+        const int head = tableHeadOf(row);
+        const int headerRows = TableGrid::fromJson(specs[0].tableJson).headerRows();
+        GridPaste grid;
+        if (parseGridSpecs(gridSpecsFromTable(specs[0].tableJson), QJsonArray(), headerRows, &grid)) {
+            grid.header = headerRows;                                // gridSpecsFromTable forces ≥ 1
+            const int land = pasteGrid(head, gridRowOf(row), gridColumnOf(row), grid, false);
+            if (land >= 0) return QVariantList{ land, static_cast<int>(content_[size_t(land)].size()) };
+        }
+    }
     expandTableSpecs(specs);                 // SR-4: pasted tables land as derived tables
     if (specs.empty()) return {};
 
