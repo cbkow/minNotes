@@ -64,12 +64,31 @@ Item {
         delegate: Rectangle {
             required property int index
             readonly property var span: editor.laneSpan(cell.logicalRow, index)
-            x: editor.leftEdge + span.x + span.w + blockModel.laneGap / 2 - 0.5
+            // Accent on hover only (2026-09-14 walk) — a drag shows its own preview line.
+            readonly property bool hot: !editor.dividerDragging && !editor.pulling
+                && editor.dividerHoverRecord === cell.logicalRow && editor.dividerHoverIndex === index
+            x: editor.leftEdge + span.x + span.w + blockModel.laneGap / 2 - (hot ? 1 : 0.5)
             y: 0
-            width: 1
+            width: hot ? 2 : 1
             height: cell.height
-            color: Theme.colors.border
+            color: hot ? Theme.colors.accent : Theme.colors.border
         }
+    }
+    // Hover cues (2026-09-14 walk): a table column border under the pointer (this table's records),
+    // and the pull band on a block's edge. Hover only — never while a drag is in flight.
+    readonly property int hotColumn: !isTableRecord || editor.dividerDragging || editor.pulling
+        || editor.dividerHoverRecord < 0 || blockModel.tableHeadOf(editor.dividerHoverRecord) !== tableHead
+        ? -1 : editor.dividerHoverIndex
+    Rectangle {
+        visible: cell.active && !cell.isRecord && !editor.pulling && !editor.dividerDragging
+                 && editor.pullHoverRow === cell.logicalRow
+        x: editor.leftEdge + cell.lane.x + (editor.pullHoverSide === 1 ? 0 : cell.lane.w - 3)
+        y: 0
+        width: 3
+        height: cell.height
+        color: Theme.colors.accent
+        opacity: 0.55
+        z: 2
     }
 
     // A table row's record paints the row under its cells (SR-4 S5): each column's cell
@@ -95,7 +114,11 @@ Item {
                 anchors.fill: parent
                 color: Theme.colors.selectionBg
             }
-            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+            Rectangle {   // the column's right border — accent while hovered
+                readonly property bool hot: cell.hotColumn === index
+                anchors.right: parent.right; width: hot ? 2 : 1; height: parent.height
+                color: hot ? Theme.colors.accent : Theme.colors.border
+            }
             Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
         }
     }
