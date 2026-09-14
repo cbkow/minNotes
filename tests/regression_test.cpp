@@ -6190,6 +6190,78 @@ static void testSplitRowNavigation() {
           "…as one undo step");
 }
 
+static void testSplitRowEditing() {
+    qInfo("[78] editing across lanes: collapsing an empty lane, clearing lanes, deleting row ranges (SR-3 step 6b)");
+    auto fresh = [](BlockModel& m, int n) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < n; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+    };
+    {   // p0 · A[p1 | ""] · p2 → collapsing the empty right lane unwraps the row
+        BlockModel m;
+        fresh(m, 3);
+        m.splitIntoColumns(1, 0, 0.5);       // 0 p0 · 1 A · 2 p1(l0) · 3 ""(l1) · 4 p2
+        CHECK(m.collapseEmptyLane(2, false).isEmpty() && m.rowCountQml() == 5,
+              "a non-empty lane block doesn't collapse");
+        const QVariantList land = m.collapseEmptyLane(3, false);
+        CHECK(land.size() == 2 && land[0].toInt() == 1 && land[1].toInt() == 2
+                  && m.typeForRow(1) != BlockModel::Split && m.contentForRow(1) == QStringLiteral("p1")
+                  && m.rowCountQml() == 3 && m.structureValid(),
+              "Backspace in a lane's only, empty block collapses it; the row unwraps; the caret lands at p1's end");
+        m.undo();
+        CHECK(m.rowCountQml() == 5 && m.laneCount(1) == 2 && m.structureValid(), "…one undo step");
+    }
+    {   // A[""(l0) | n1 | n2] → forward from lane 0 lands at the next lane's start
+        BlockModel m;
+        fresh(m, 3);
+        m.splitIntoColumns(1, 0, 0.5);       // 0 p0 · 1 A · 2 p1(l0) · 3 ""(l1) · 4 p2
+        m.splitIntoColumns(3, 0, 0.5);       // lane 1 splits → 2 p1(l0) · 3 ""(l1) · 4 ""(l2)
+        m.setContent(2, QString());
+        m.setContent(3, QStringLiteral("mid"));
+        const QVariantList land = m.collapseEmptyLane(2, true);
+        CHECK(land.size() == 2 && land[0].toInt() == 2 && land[1].toInt() == 0
+                  && m.contentForRow(2) == QStringLiteral("mid") && m.laneCount(1) == 2 && m.structureValid(),
+              "Delete in lane 0's only, empty block collapses it; the caret lands at the next lane's start");
+    }
+    {   // Clearing lanes: a selection across lanes of one split row
+        BlockModel m;
+        fresh(m, 3);
+        m.splitIntoColumns(1, 0, 0.5);
+        m.splitIntoColumns(3, 0, 0.5);       // 0 p0 · 1 A · 2 p1(l0) · 3 ""(l1) · 4 ""(l2) · 5 p2
+        m.setContent(3, QStringLiteral("world"));
+        m.insertBlock(3);                    // lane 0 gets a second block
+        m.setContent(3, QStringLiteral("more"));
+        m.setContent(5, QStringLiteral("keep"));   // 2 p1(l0) · 3 more(l0) · 4 world(l1) · 5 keep(l2) · 6 p2
+        const QVariantList land = m.deleteSelectionRange(2, 1, 4, 2);
+        CHECK(land.size() == 2 && land[0].toInt() == 2 && land[1].toInt() == 0
+                  && m.rowCountQml() == 6 && m.contentForRow(2).isEmpty() && m.laneForRow(2) == 0
+                  && m.contentForRow(3).isEmpty() && m.laneForRow(3) == 1
+                  && m.contentForRow(4) == QStringLiteral("keep") && m.laneCount(1) == 3 && m.structureValid(),
+              "a selection across lanes clears each covered lane to one empty paragraph; structure stays");
+        m.undo();
+        CHECK(m.rowCountQml() == 7 && m.contentForRow(3) == QStringLiteral("more")
+                  && m.contentForRow(4) == QStringLiteral("world") && m.structureValid(), "…one undo step");
+    }
+    {   // Row ranges across containers
+        BlockModel m;
+        fresh(m, 3);
+        m.setContent(0, QStringLiteral("head"));
+        m.setContent(2, QStringLiteral("tail"));
+        m.splitIntoColumns(1, 0, 0.5);       // 0 head · 1 A · 2 p1(l0) · 3 ""(l1) · 4 tail
+        QVariantList land = m.deleteSelectionRange(0, 2, 3, 0);
+        CHECK(land.size() == 2 && land[0].toInt() == 0 && land[1].toInt() == 2 && m.rowCountQml() == 2
+                  && m.contentForRow(0) == QStringLiteral("he") && m.contentForRow(1) == QStringLiteral("tail")
+                  && m.structureValid(),
+              "from a top-level block into a lane: the split row goes whole, the top block keeps its head");
+        m.undo();
+        CHECK(m.rowCountQml() == 5 && m.contentForRow(0) == QStringLiteral("head") && m.structureValid(), "…undone in one step");
+        land = m.deleteSelectionRange(2, 0, 4, 2);
+        CHECK(land.size() == 2 && land[0].toInt() == 1 && land[1].toInt() == 0 && m.rowCountQml() == 2
+                  && m.contentForRow(1) == QStringLiteral("il") && m.structureValid(),
+              "from a lane to a top-level block: the split row goes whole, the top block keeps its tail");
+    }
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -6282,6 +6354,7 @@ int main(int argc, char** argv) {
     testSplitRowMutations();
     testSplitRowGeometry();
     testSplitRowNavigation();
+    testSplitRowEditing();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

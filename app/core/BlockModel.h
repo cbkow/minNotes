@@ -187,7 +187,13 @@ public:
     Q_INVOKABLE int splitRowOf(int row) const;       // the record of the split row containing row, or -1
     Q_INVOKABLE int laneCount(int row) const;        // lanes of a Split record; 0 otherwise
     Q_INVOKABLE QVariantList splitRatios(int row) const;
-    bool structureValid() const;                     // the D1 invariants (PLAN-SR3), for tests
+    Q_INVOKABLE bool structureValid() const;         // the D1 invariants (PLAN-SR3), for tests and the probe
+    // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
+    // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
+    // end of the previous lane's last block (else the next lane's start); forward, the
+    // next lane's start (else the previous lane's end). [] when the block isn't a lane's
+    // only, empty paragraph.
+    Q_INVOKABLE QVariantList collapseEmptyLane(int row, bool forward);
     // Split a block into lanes, one undo step. A top-level block becomes a split row
     // with the block in one lane and a new empty paragraph in the other; a block in a
     // lane gets a new lane beside its own, splitting that lane's width. side 0 = the
@@ -1029,6 +1035,8 @@ private:
     int laneFirst(int record, int lane) const;            // first / last block of a lane, or -1
     int laneLast(int record, int lane) const;
     int entryLeaf(int top, qreal pageX, bool fromAbove) const;   // the block a vertical move enters
+    QVariantList clearLanes(int record, int laneLo, int laneHi);   // §4.10 cell range: each lane → one empty paragraph
+    QVariantList deleteRowRange(int loRow, int loCol, int hiRow, int hiCol);   // §4.10 row range across containers
     QString lastOpenError_;          // why the last open was refused (lastOpenError())
     bool acceptOpenedFormat();       // the 1.0 format gate on a just-opened working copy
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)

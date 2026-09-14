@@ -1096,9 +1096,12 @@ FocusScope {
         // Is the CARET on a media/divider? (Tables route to tcur, never reach these
         // text ops.) These blocks have no text caret, so text ops must not edit them.
         function opaqueHere() { var t = blockModel.typeForRow(focusRow); return t === 3 || t === 6 }
-        function backspace() {
-            if (hasSel) { deleteSelection(); return }
-            if (opaqueHere()) { root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
+        // `repeat` = key auto-repeat: it never makes a structural change (SR-0 P6) — a held
+        // Backspace/Delete won't delete a selected or focused media/divider, remove a block
+        // beside a split row, or collapse a lane. Text merges still repeat.
+        function backspace(repeat) {
+            if (hasSel) { if (!repeat) deleteSelection(); return }
+            if (opaqueHere()) { if (!repeat) root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
             if (focusCol > 0) {
                 // A choice chip is atomic (DT-2): a backspace touching ANY of
                 // its text removes the WHOLE chip, label and all.
@@ -1110,26 +1113,11 @@ FocusScope {
                 }
                 blockModel.deleteRange(focusRow, focusCol - 1, focusRow, focusCol)
                 setCaret(focusRow, focusCol - 1)
-            } else if (focusRow > 0) {
-                var pt = blockModel.typeForRow(focusRow - 1)
-                if (pt === 7) {                           // table before: step into its last cell
-                    if (blockModel.contentForRow(focusRow).length === 0 && blockModel.count > 1)
-                        blockModel.removeBlock(focusRow)  // drop the empty trailing block
-                    root.enterTable(focusRow - 1, false); root.ensureVisible(focusRow - 1); return
-                }
-                if (pt === 3 || pt === 6) {               // media/divider before: backspace deletes it
-                    blockModel.removeBlock(focusRow - 1)
-                    setCaret(focusRow - 1, 0); root.ensureVisible(focusRow - 1); return
-                }
-                var pl = blockModel.contentForRow(focusRow - 1).length
-                blockModel.deleteRange(focusRow - 1, pl, focusRow, 0)
-                setCaret(focusRow - 1, pl)
-                root.ensureVisible(focusRow - 1)
-            }
+            } else root.backspaceAtStart(repeat)
         }
-        function forwardDelete() {
-            if (hasSel) { deleteSelection(); return }
-            if (opaqueHere()) { root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
+        function forwardDelete(repeat) {
+            if (hasSel) { if (!repeat) deleteSelection(); return }
+            if (opaqueHere()) { if (!repeat) root.deleteBlock(focusRow); return }   // caret on media/divider → delete it
             var len = blockModel.contentForRow(focusRow).length
             if (focusCol < len) {
                 // Chip atomicity, forward direction: deleting at its left
@@ -1141,14 +1129,8 @@ FocusScope {
                     return
                 }
                 blockModel.deleteRange(focusRow, focusCol, focusRow, focusCol + 1)
-            } else if (focusRow < blockModel.count - 1) {
-                var nt = blockModel.typeForRow(focusRow + 1)
-                if (nt === 7) { root.enterTable(focusRow + 1, true); return }   // step into the table
-                if (nt === 3 || nt === 6) { blockModel.removeBlock(focusRow + 1); setCaret(focusRow, focusCol); return }
-                // At a block's end: pull the next block up onto this one (caret stays).
-                blockModel.deleteRange(focusRow, len, focusRow + 1, 0)
-            }
-            setCaret(focusRow, focusCol)
+                setCaret(focusRow, focusCol)
+            } else root.deleteAtEnd(repeat)
         }
         function insertChar(ch) {
             if (hasSel) deleteSelection()                 // FIRST — the caret may land on an opaque row
@@ -1659,6 +1641,75 @@ FocusScope {
             if (blockModel.typeForRow(pv) === 7) root.enterTable(pv, false)
             else cursor.move(pv, blockModel.contentForRow(pv).length, shift)
         }
+    }
+    // Backspace at a block's start with no selection (SR-0 §4.2). Blocks merge only within
+    // their container (a lane, or the top level); a media/divider block above is selected
+    // first — the caret moves onto it and the next press deletes it.
+    function backspaceAtStart(repeat) {
+        const row = cursor.focusRow
+        const lane = blockModel.laneForRow(row)
+        const prev = (row > 0 && blockModel.laneForRow(row - 1) === lane
+                      && blockModel.typeForRow(row - 1) !== 10) ? row - 1 : -1
+        if (prev < 0) {
+            if (lane >= 0) {                      // case 4: the first block of a lane
+                if (repeat) return
+                const land = blockModel.collapseEmptyLane(row, false)   // [] unless it's the lane's only, empty block
+                if (land.length === 2) { cursor.setCaret(land[0], land[1]); root.ensureVisible(land[0]) }
+                return
+            }
+            const pv = blockModel.prevLeaf(row)   // case 3: a split row above (case 5: document start)
+            if (pv < 0) return
+            if (!repeat && blockModel.typeForRow(row) === 0 && blockModel.contentForRow(row).length === 0
+                && blockModel.count > 1)
+                blockModel.removeBlock(row)       // the break-removal gesture: nothing merges
+            const pvt = blockModel.typeForRow(pv)
+            cursor.setCaret(pv, (pvt === 3 || pvt === 6) ? 0 : blockModel.contentForRow(pv).length)
+            root.ensureVisible(pv)
+            return
+        }
+        const pt = blockModel.typeForRow(prev)   // case 2: the previous block in this container
+        if (pt === 7) {                           // table before: step into its last cell
+            if (!repeat && blockModel.contentForRow(row).length === 0 && blockModel.count > 1)
+                blockModel.removeBlock(row)       // drop the empty trailing block
+            root.enterTable(prev, false); root.ensureVisible(prev); return
+        }
+        if (pt === 3 || pt === 6) { cursor.setCaret(prev, 0); root.ensureVisible(prev); return }   // select first
+        const pl = blockModel.contentForRow(prev).length
+        blockModel.deleteRange(prev, pl, row, 0)
+        cursor.setCaret(prev, pl)
+        root.ensureVisible(prev)
+    }
+    // Delete at a block's end with no selection (SR-0 §4.3) — the mirror of backspaceAtStart.
+    function deleteAtEnd(repeat) {
+        const row = cursor.focusRow
+        const lane = blockModel.laneForRow(row)
+        const next = (row + 1 < blockModel.count && blockModel.laneForRow(row + 1) === lane
+                      && blockModel.typeForRow(row + 1) !== 10) ? row + 1 : -1
+        if (next < 0) {
+            if (lane >= 0) {                      // the last block of a lane
+                if (repeat) return
+                const land = blockModel.collapseEmptyLane(row, true)
+                if (land.length === 2) { cursor.setCaret(land[0], land[1]); root.ensureVisible(land[0]) }
+                return
+            }
+            const nx = blockModel.nextLeaf(row)   // a split row below (or the document's end)
+            if (nx < 0) return
+            let land = nx
+            if (!repeat && blockModel.typeForRow(row) === 0 && blockModel.contentForRow(row).length === 0
+                && blockModel.count > 1) {
+                blockModel.removeBlock(row)
+                land = nx - 1
+            }
+            cursor.setCaret(land, 0)
+            root.ensureVisible(land)
+            return
+        }
+        const nt = blockModel.typeForRow(next)
+        if (nt === 7) { root.enterTable(next, true); return }                                   // step into the table
+        if (nt === 3 || nt === 6) { cursor.setCaret(next, 0); root.ensureVisible(next); return } // select first
+        const col = cursor.focusCol
+        blockModel.deleteRange(row, blockModel.contentForRow(row).length, next, 0)   // pull the next block up
+        cursor.setCaret(row, col)
     }
     // Whether the selection is exactly one whole split row (Escape's rung 2 result).
     function selectionIsSplitRow() {
@@ -3041,8 +3092,8 @@ FocusScope {
         else if (k === Qt.Key_End) { navEnd(shift); event.accepted = true }
         else if (k === Qt.Key_PageDown) { navPageDown(shift); event.accepted = true }
         else if (k === Qt.Key_PageUp) { navPageUp(shift); event.accepted = true }
-        else if (k === Qt.Key_Backspace) { cursor.backspace(); event.accepted = true }
-        else if (k === Qt.Key_Delete) { cursor.forwardDelete(); event.accepted = true }
+        else if (k === Qt.Key_Backspace) { cursor.backspace(event.isAutoRepeat); event.accepted = true }
+        else if (k === Qt.Key_Delete) { cursor.forwardDelete(event.isAutoRepeat); event.accepted = true }
         else if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
             root.tabKey(k === Qt.Key_Backtab)   // lanes navigate, lists indent; Tab never types
             event.accepted = true
@@ -3063,7 +3114,7 @@ FocusScope {
         id: poolProbe
         readonly property bool armed: Qt.application.arguments.some(
             function(a) { return a.indexOf("--pool-probe=") === 0 })
-        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits
         property int step: 0
         property int phaseStep: 0
         property int checks: 0
@@ -3175,6 +3226,39 @@ FocusScope {
                 }
                 if (cursor.focusRow >= 0) root.ensureVisible(cursor.focusRow)
                 next(phaseStep >= 400)
+            } else if (phase === 7) {
+                // Editing across lanes (SR-3 S6b): a random walk of Backspace, Delete, typing
+                // and Enter at lane edges. The structure stays valid after every edit and
+                // the caret never sits on a record.
+                const ft = blockModel.typeForRow(cursor.focusRow)
+                if (phaseStep === 0 || ft === 7 || blockModel.laneForRow(cursor.focusRow) < 0 && rand(4) === 0) {
+                    for (let i = rand(blockModel.count), k = 0; k < blockModel.count; ++k, i = (i + 1) % blockModel.count)
+                        if (blockModel.typeForRow(i) === 10) { cursor.setCaret(blockModel.nextLeaf(i), 0); break }
+                } else {
+                    const row = cursor.focusRow
+                    const len = blockModel.contentForRow(row).length
+                    switch (rand(7)) {
+                    case 0: cursor.setCaret(row, 0); cursor.backspace(false); break
+                    case 1: cursor.setCaret(row, len); cursor.forwardDelete(false); break
+                    case 2: cursor.backspace(true); break                        // a held key: never structural
+                    case 3: cursor.insertChar("x"); break
+                    case 4: cursor.splitLine(false); break
+                    case 5: {                                                     // empty the block, then Backspace
+                        if (ft !== 3 && ft !== 6 && len > 0) blockModel.setContent(row, "")
+                        cursor.setCaret(row, 0); cursor.backspace(false); break
+                    }
+                    case 6: {                                                     // select across a split row and delete
+                        const last = blockModel.splitRowLast(row)
+                        if (last >= 0) { cursor.anchorRow = row; cursor.anchorCol = 0; cursor.focusRow = last; cursor.focusCol = 0; cursor.deleteSelection() }
+                        break
+                    }
+                    }
+                    checks += 2
+                    if (!blockModel.structureValid()) fail("the split-row structure broke after an edit at " + row)
+                    if (blockModel.typeForRow(cursor.focusRow) === 10) fail("the caret landed on a record at " + cursor.focusRow)
+                }
+                if (cursor.focusRow >= 0) root.ensureVisible(cursor.focusRow)
+                next(phaseStep >= 300)
             } else {
                 running = false
                 console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,

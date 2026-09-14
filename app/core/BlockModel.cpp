@@ -1212,6 +1212,76 @@ int BlockModel::leafAbove(int row, qreal pageX) const {
     return entryLeaf(rows_[size_t(before)].cell >= 0 ? splitRowOf(before) : before, pageX, false);
 }
 
+QVariantList BlockModel::collapseEmptyLane(int row, bool forward) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
+    const Row& r = rows_[size_t(row)];
+    if (r.cell < 0 || r.type != Paragraph || !content_[size_t(row)].isEmpty()) return {};
+    const int rec = splitRowOf(row);
+    const int lane = r.cell;
+    if (rec < 0 || laneFirst(rec, lane) != row || laneLast(rec, lane) != row) return {};
+    const int lanes = static_cast<int>(rows_[size_t(rec)].ratios.size());
+    const int prevEnd = lane > 0 ? laneLast(rec, lane - 1) : -1;
+    const int nextStart = lane + 1 < lanes ? laneFirst(rec, lane + 1) : -1;
+    const int target = forward ? (nextStart >= 0 ? nextStart : prevEnd) : (prevEnd >= 0 ? prevEnd : nextStart);
+    const bool atEnd = target == prevEnd;
+    const QString targetId = target >= 0 ? ids_[size_t(target)] : QString();
+    removeBlock(row);                                    // A4 inside the same undo step
+    for (int i = 0; i < static_cast<int>(ids_.size()); ++i)   // rows shifted; find the target by identity
+        if (ids_[size_t(i)] == targetId)
+            return { i, atEnd ? static_cast<int>(content_[size_t(i)].size()) : 0 };
+    const int land = std::clamp(row - 1, 0, std::max(0, static_cast<int>(rows_.size()) - 1));
+    return { land, 0 };
+}
+
+QVariantList BlockModel::clearLanes(int record, int laneLo, int laneHi) {
+    if (laneLo > laneHi) std::swap(laneLo, laneHi);
+    beginTxn(record, splitRowEnd(record));
+    for (int lane = laneHi; lane >= laneLo; --lane) {
+        const int first = laneFirst(record, lane), last = laneLast(record, lane);
+        if (first < 0) continue;
+        for (int i = last; i > first; --i) removeRowRaw(i);   // the lane keeps one block …
+        Row& r = rows_[size_t(first)];
+        if (r.type == Paragraph && content_[size_t(first)].isEmpty() && r.spans.empty()) continue;
+        Row fresh{};                                          // … an empty paragraph, in its lane
+        fresh.type = Paragraph;
+        fresh.param = 1;
+        fresh.cell = r.cell;
+        r = fresh;
+        content_[size_t(first)].clear();
+        dropBlockInk(ids_[size_t(first)]);
+        persistContent(first);
+        persistMeta(first);
+        setIndexHeight(size_t(first), estimatedHeight(r, laneWidthOfRow(first)));
+    }
+    emit dataChanged(index(record), index(splitRowEnd(record)));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return { laneFirst(record, laneLo), 0 };
+}
+
+QVariantList BlockModel::deleteRowRange(int loRow, int loCol, int hiRow, int hiCol) {
+    const int recLo = splitRowOf(loRow), recHi = splitRowOf(hiRow);
+    const int wlo = recLo >= 0 ? recLo : loRow;
+    const int whi = recHi >= 0 ? splitRowEnd(recHi) : hiRow;
+    const bool loText = recLo < 0 && !isOpaqueRow(loRow);
+    beginTxn(wlo, whi);
+    // The high end first, so the low end's row number holds while we work.
+    int removeHi = whi;
+    if (recHi < 0 && !isOpaqueRow(hiRow)) {       // a top-level text end keeps its tail
+        deleteRange(hiRow, 0, hiRow, hiCol);
+        removeHi = hiRow - 1;
+    }
+    const int removeLo = loText ? loRow + 1 : wlo;   // a top-level text end keeps its head
+    if (removeLo <= removeHi) removeBlocks(removeLo, removeHi);
+    if (loText) deleteRange(loRow, loCol, loRow, static_cast<int>(content_[size_t(loRow)].size()));
+    endTxn();
+    int land = std::min(loText ? loRow : wlo, static_cast<int>(rows_.size()) - 1);
+    if (land >= 0 && rows_[size_t(land)].type == Split) land = nextLeaf(land - 1);
+    return { std::max(0, land), loText ? loCol : 0 };
+}
+
 int BlockModel::insertParagraphBelow(int row) {
     const int n = static_cast<int>(rows_.size());
     if (n == 0) return -1;
@@ -5393,6 +5463,14 @@ QVariantList BlockModel::deleteSelectionRange(int loRow, int loCol, int hiRow, i
     }
     loRow = std::clamp(loRow, 0, n - 1);
     hiRow = std::clamp(hiRow, 0, n - 1);
+    // Across containers (SR-0 §4.10). Inside one split row, every lane from the low end's
+    // to the high end's is cleared — structure stays. Otherwise it's a row range: split
+    // rows it touches go whole and top-level ends keep what lies outside the selection.
+    const int recLo = splitRowOf(loRow), recHi = splitRowOf(hiRow);
+    if (recLo >= 0 && recLo == recHi && rows_[size_t(loRow)].cell != rows_[size_t(hiRow)].cell)
+        return clearLanes(recLo, rows_[size_t(loRow)].cell, rows_[size_t(hiRow)].cell);
+    if (recLo != recHi)
+        return deleteRowRange(loRow, loCol, hiRow, hiCol);
     const bool loOpaque = isOpaqueRow(loRow), hiOpaque = isOpaqueRow(hiRow);
     if (!loOpaque) {
         if (loRow == hiRow && loCol == hiCol) return QVariantList{ loRow, loCol };   // nothing selected
