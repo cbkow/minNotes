@@ -1145,6 +1145,29 @@ bool BlockModel::joinTableByLabel(int target, int source) {
     return true;
 }
 
+// === Table keys (SR-4 S6a) ==================================================
+bool BlockModel::gridRowIsEmpty(int head, int r) const {
+    const int rec = gridRecord(head, r);
+    if (rec < 0) return false;
+    for (int i = rec + 1; i <= splitRowEnd(rec); ++i) {
+        const uint8_t t = rows_[size_t(i)].type;
+        if (!content_[size_t(i)].isEmpty() || (t != Paragraph && t != Heading && t != Quote)) return false;
+    }
+    return true;
+}
+
+int BlockModel::gridExitRow(int head) {
+    const int rows = gridRowCount(head), r = rows - 1;
+    if (rows < 1 || r < headerCount(head) || !gridRowIsEmpty(head, r)) return -1;   // header rows never exit
+    const auto [lo, hi] = tableBand(head);
+    const int rec = gridRecord(head, r);
+    beginTxn(lo, hi);
+    removeBlocks(rec, splitRowEnd(rec));
+    spliceSpecsAt(rec, { BlockSpec{} }, /*allowReuseAnchorAbove=*/false, /*lane=*/-1);   // a paragraph below the table
+    endTxn();
+    return rec;
+}
+
 // === Typed columns (SR-4 S4) ================================================
 static const QJsonArray& checkOptions() {
     static const QJsonArray opts = [] {
@@ -3036,6 +3059,16 @@ int BlockModel::tabTarget(int row, bool back) const {
     const int rec = splitRowOf(row);
     if (rec < 0) return -1;
     const int lane = rows_[size_t(row)].cell;
+    if (const int head = tableHeadOf(rec); head >= 0) {   // SR-4: cells in reading order; past the last, append
+        const int n = static_cast<int>(rows_.size());
+        const int cells = layout().cellCount(size_t(rec));
+        if (back) return lane > 0 ? laneLast(rec, lane - 1) : prevLeaf(laneFirst(rec, 0));
+        if (lane + 1 < cells) return laneLast(rec, lane + 1);
+        const int next = splitRowEnd(rec) + 1;
+        const bool nextRow = next < n && rows_[size_t(next)].type == Split && rows_[size_t(next)].cell < 0
+                             && tableHeadOf(next) == head;
+        return nextRow ? laneLast(next, 0) : kTabAppendsRow;
+    }
     const int lanes = static_cast<int>(rows_[size_t(rec)].ratios.size());
     if (!back)
         return lane + 1 < lanes ? laneLast(rec, lane + 1) : nextLeaf(splitRowEnd(rec));

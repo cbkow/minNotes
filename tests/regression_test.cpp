@@ -7319,6 +7319,40 @@ static void testTablePocketAndSticky() {
     CHECK(m.tablePadTop(1) == 32 && near(m.yForRow(2), m.yForRow(1) + 32), "…and undo brings them back");
 }
 
+static void testTableKeysModel() {
+    qInfo("[91] table keys in the model: Tab walks the cells and asks for a row past the last; an empty last row exits (SR-4 step 6a)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+    m.insertTableRows(0, 3, 2);
+    // 0 above · 1 H · 2 3 · 4 B1 · 5 6 · 7 B2 · 8 9 · 10 below
+    CHECK(m.tabTarget(2, false) == 3 && m.tabTarget(3, false) == 5 && m.tabTarget(6, false) == 8
+              && m.tabTarget(9, false) == BlockModel::kTabAppendsRow,
+          "Tab walks the cells in reading order and asks for a row past the table's last cell");
+    CHECK(m.tabTarget(5, true) == 3 && m.tabTarget(3, true) == 2 && m.tabTarget(2, true) == 0,
+          "Shift+Tab walks back, out above the table from its first cell");
+
+    m.setContent(8, QStringLiteral("x"));
+    CHECK(!m.gridRowIsEmpty(1, 2) && m.gridExitRow(1) == -1 && m.gridRowCount(1) == 3, "a last row with content doesn't exit");
+    m.setContent(8, QString());
+    CHECK(m.gridRowIsEmpty(1, 2) && m.gridRowIsEmpty(1, 0) && m.gridRowIsEmpty(1, 1), "gridRowIsEmpty: rows of empty paragraphs");
+    const int p = m.gridExitRow(1);
+    CHECK(p == 7 && m.gridRowCount(1) == 2 && m.rowCountQml() == 9 && m.laneForRow(7) == -1
+              && m.typeForRow(7) == BlockModel::Paragraph && m.contentForRow(8) == QStringLiteral("below") && m.structureValid(),
+          "an empty last body row exits: the row goes, a paragraph lands below the table (%d)", p);
+    m.undo();
+    CHECK(m.gridRowCount(1) == 3 && m.rowCountQml() == 11 && m.structureValid(), "…one undo step");
+
+    BlockModel h;
+    h.newDocument();
+    while (h.rowCountQml() > 0) h.removeBlock(0);
+    h.insertBlock(0);
+    h.insertTableRows(0, 1, 2);                              // a header-only table
+    CHECK(h.gridRowIsEmpty(1, 0) && h.gridExitRow(1) == -1 && h.gridRowCount(1) == 1, "header rows never exit");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7520,6 +7554,7 @@ int main(int argc, char** argv) {
     testTableAttrsBulkSort();
     testTypedColumns();
     testTablePocketAndSticky();
+    testTableKeysModel();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

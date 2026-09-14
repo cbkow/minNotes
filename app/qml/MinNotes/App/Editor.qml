@@ -1268,7 +1268,7 @@ FocusScope {
                 if (strip > 0) setCaret(focusRow, Math.max(0, focusCol - strip))
             }
         }
-        function splitLine(shift) {
+        function splitLine(shift, repeat) {
             if (hasSel) deleteSelection()
             if (opaqueHere()) {   // Enter on a media/divider → a fresh paragraph below it
                 blockModel.insertBlock(focusRow + 1); setCaret(focusRow + 1, 0); root.ensureVisible(focusRow + 1); return
@@ -1310,6 +1310,13 @@ FocusScope {
                 else
                     blockModel.setBlockType(focusRow, 0)
                 setCaret(focusRow, 0)
+                return
+            }
+            // SR-4 A1: Enter in a table row navigates — the same column in the next row; the last
+            // row appends one (copying its divisions); an empty last body row exits the table as a
+            // paragraph. Shift+Enter splits the block inside its cell.
+            if (!shift && blockModel.tableHeadOf(focusRow) >= 0 && (lt === 0 || lt === 1 || lt === 4)) {
+                root.tableEnter(repeat === true)
                 return
             }
             var leftRow = focusRow
@@ -1922,6 +1929,59 @@ FocusScope {
         const land = Math.min(first, blockModel.count - 1)
         cursor.setCaret(blockModel.typeForRow(land) === 10 ? blockModel.nextLeaf(land) : land, 0)
     }
+    // --- Table keys (SR-4 S6a) ---
+    // The caret at the end of a table cell's last block (a ragged row: its last cell).
+    function landInCell(head, r, c) {
+        const cells = blockModel.gridCellCount(head, r)
+        if (cells <= 0) return
+        const blocks = blockModel.gridCellRows(head, r, Math.max(0, Math.min(c, cells - 1)))
+        if (blocks.length === 0) return
+        const b = blocks[blocks.length - 1]
+        const t = blockModel.typeForRow(b)
+        cursor.resetGoalX(); cursor.clearMarks()
+        cursor.move(b, (t === 3 || t === 6) ? 0 : blockModel.contentForRow(b).length, false)
+        root.ensureVisible(b)
+    }
+    // Enter in a table row (SR-0 A1): down the column; the last row appends a row, or — an empty
+    // last body row — exits the table as a paragraph. Header rows never exit. `repeat` never
+    // appends or exits (P6).
+    function tableEnter(repeat) {
+        const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
+        if (head < 0) return
+        const r = blockModel.gridRowOf(row), c = blockModel.gridColumnOf(row)
+        const rows = blockModel.gridRowCount(head)
+        if (r < rows - 1) { landInCell(head, r + 1, c); return }
+        if (repeat) return
+        if (r >= blockModel.headerCount(head) && blockModel.gridRowIsEmpty(head, r)) {
+            const p = blockModel.gridExitRow(head)
+            if (p >= 0) { cursor.setCaret(p, 0); root.ensureVisible(p) }
+            return
+        }
+        if (blockModel.gridInsertRow(head, rows)) landInCell(head, rows, c)
+    }
+    // ⌘Enter in a table row: a new row below, the caret in the same column.
+    function tableInsertRowBelow() {
+        const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
+        if (head < 0) return
+        const r = blockModel.gridRowOf(row), c = blockModel.gridColumnOf(row)
+        if (blockModel.gridInsertRow(head, r + 1)) landInCell(head, r + 1, c)
+    }
+    // The caret's typed-cell kind: 1 choice, 2 check, 0 otherwise (header rows are text).
+    function typedCellHere() {
+        const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
+        if (head < 0 || blockModel.isHeaderRow(row)) return 0
+        const c = blockModel.gridColumnOf(row)
+        return c < 0 ? 0 : blockModel.gridColumnKind(head, c)
+    }
+    // Whether the selection is exactly one whole table (Escape's rung 3 result).
+    function selectionIsTable() {
+        const head = blockModel.tableHeadOf(cursor.loRow)
+        if (head < 0 || blockModel.tableHeadOf(cursor.hiRow) !== head) return false
+        const recs = blockModel.tableRecords(head)
+        const last = blockModel.splitRowLast(recs[recs.length - 1])
+        return cursor.loRow === blockModel.nextLeaf(head) && cursor.loCol === 0 && cursor.hiRow === last
+            && cursor.hiCol >= blockModel.contentForRow(last).length
+    }
     // Whether the selection is exactly one whole split row (Escape's rung 2 result).
     function selectionIsSplitRow() {
         const rec = blockModel.splitRowOf(cursor.loRow)
@@ -1933,10 +1993,16 @@ FocusScope {
     // Tab / Shift+Tab. In a lane (SR-0 §4.7): the next/previous lane, landing at the end
     // of its last block with no selection, then on in reading order. At top level: list
     // indent/outdent of the focused item, or of every list item in the selection.
-    function tabKey(back) {
+    function tabKey(back, repeat) {
         if (blockModel.laneForRow(cursor.focusRow) >= 0) {
             cursor.resetGoalX(); cursor.clearMarks()
             const t = blockModel.tabTarget(cursor.focusRow, back)
+            if (t === -2) {                          // BlockModel::kTabAppendsRow — SR-4 A3: Tab past a table's last cell appends a row
+                if (repeat === true) return            // P6: never structural on auto-repeat
+                const head = blockModel.tableHeadOf(cursor.focusRow), rows = blockModel.gridRowCount(head)
+                if (blockModel.gridInsertRow(head, rows)) root.landInCell(head, rows, 0)
+                return
+            }
             if (t < 0) return
             const tt = blockModel.typeForRow(t)
             if (tt === 7) { root.enterTable(t, !back); return }
@@ -3069,12 +3135,24 @@ FocusScope {
                 else if (tcur.hasSel) { tcur.clearAll(); cursor.sync() }
                 else root.exitTable(1)
             }
-            else if (cursor.hasSel && root.selectionIsSplitRow()) {
-                // SR-0 §4.8 rung 4: a selected split row → the caret to the block below it
+            else if (cursor.hasSel && root.selectionIsSplitRow()
+                     && blockModel.tableHeadOf(cursor.loRow) >= 0
+                     && blockModel.gridRowCount(blockModel.tableHeadOf(cursor.loRow)) > 1) {
+                // SR-0 A8 rung 3: a selected table row → the whole table.
+                const head = blockModel.tableHeadOf(cursor.loRow), recs = blockModel.tableRecords(head)
+                const first = blockModel.nextLeaf(head), last = blockModel.splitRowLast(recs[recs.length - 1])
+                cursor.anchorRow = first; cursor.anchorCol = 0
+                cursor.focusRow = last; cursor.focusCol = blockModel.contentForRow(last).length
+                cursor.sync()
+            }
+            else if (cursor.hasSel && (root.selectionIsSplitRow() || root.selectionIsTable())) {
+                // SR-0 §4.8 rung 4: a selected split row or table → the caret to the block below it
                 // (a top-level paragraph is made when there is none).
-                const below = blockModel.nextLeaf(blockModel.splitRowLast(cursor.loRow))
+                const head = blockModel.tableHeadOf(cursor.loRow)
+                const lastRec = head >= 0 ? blockModel.tableRecords(head).slice(-1)[0] : blockModel.splitRowOf(cursor.loRow)
+                const below = blockModel.nextLeaf(blockModel.splitRowLast(lastRec))
                 const land = (below >= 0 && blockModel.laneForRow(below) < 0) ? below
-                                                                              : blockModel.insertParagraphBelow(cursor.loRow)
+                                                                              : blockModel.insertParagraphBelow(lastRec)
                 cursor.setCaret(land, 0); root.ensureVisible(land)
             }
             else if (cursor.hasSel) { cursor.setCaret(cursor.focusRow, cursor.focusCol) }
@@ -3300,6 +3378,18 @@ FocusScope {
             event.accepted = true
         }
         else if (cmd && k === Qt.Key_A) { root.selectAllDocument(); event.accepted = true }
+        else if (cmd && (k === Qt.Key_Return || k === Qt.Key_Enter) && blockModel.tableHeadOf(cursor.focusRow) >= 0) {
+            if (!event.isAutoRepeat) root.tableInsertRowBelow()   // ⌘Enter: a row below, caret in the same column
+            event.accepted = true
+        }
+        else if (k === Qt.Key_Space && !cmd && root.typedCellHere() === 2) {   // §4.14: Space cycles a check cell
+            if (!event.isAutoRepeat) {
+                const head = blockModel.tableHeadOf(cursor.focusRow)
+                blockModel.gridCycleCellCheck(head, blockModel.gridRowOf(cursor.focusRow), blockModel.gridColumnOf(cursor.focusRow))
+                cursor.setCaret(cursor.focusRow, 0)
+            }
+            event.accepted = true
+        }
         else if (cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
         else if (cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
         else if (cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
@@ -3319,10 +3409,13 @@ FocusScope {
         else if (k === Qt.Key_Backspace) { cursor.backspace(event.isAutoRepeat); event.accepted = true }
         else if (k === Qt.Key_Delete) { cursor.forwardDelete(event.isAutoRepeat); event.accepted = true }
         else if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
-            root.tabKey(k === Qt.Key_Backtab)   // lanes navigate, lists indent; Tab never types
+            root.tabKey(k === Qt.Key_Backtab, event.isAutoRepeat)   // lanes navigate, lists indent; Tab never types
             event.accepted = true
         }
-        else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(shift); event.accepted = true }
+        else if (k === Qt.Key_Return || k === Qt.Key_Enter) { cursor.splitLine(shift, event.isAutoRepeat); event.accepted = true }
+        else if (event.text.length === 1 && event.text >= " " && !cmd && root.typedCellHere() > 0) {
+            event.accepted = true               // a typed table cell takes values, not text (its picker: S6b)
+        }
         else if (event.text.length === 1 && event.text >= " ") { cursor.insertChar(event.text); event.accepted = true }
     }
 
@@ -3338,7 +3431,7 @@ FocusScope {
         id: poolProbe
         readonly property bool armed: Qt.application.arguments.some(
             function(a) { return a.indexOf("--pool-probe=") === 0 })
-        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits · 8 gestures · 9 tables · 10 sweep with tables
+        property int phase: 0          // 0 sweep down · 1 jumps · 2 edits · 3 sweep up · 4 lanes · 5 sweep with lanes · 6 keys · 7 lane edits · 8 gestures · 9 tables · 10 sweep with tables · 11 table keys
         property int step: 0
         property int phaseStep: 0
         property int checks: 0
@@ -3585,6 +3678,36 @@ FocusScope {
                 if (holdX > 0) { --holdX; next(false); return }
                 flick.contentX = phaseStep % 3 === 2 ? Math.max(0, flick.contentWidth - flick.width) : 0
                 next(phaseStep > 0 && flick.contentY >= maxY)
+            } else if (phase === 11) {
+                // Table keys (SR-4 S6a), through the functions the key handler calls: Enter walks down
+                // a column (appending at the end, exiting on an empty last body row), Tab and
+                // Shift+Tab walk the cells (appending past the last), ⌘Enter inserts a row below.
+                if (phaseStep === 0) flick.contentX = 0
+                if (phaseStep === 0 || blockModel.tableHeadOf(cursor.focusRow) < 0) {
+                    let head = -1
+                    for (let i = rand(blockModel.count), k = 0; k < blockModel.count && head < 0; ++k, i = (i + 1) % blockModel.count)
+                        if (blockModel.headerCount(i) > 0) head = i
+                    if (head >= 0) root.landInCell(head, 0, 0)
+                } else {
+                    const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
+                    const r = blockModel.gridRowOf(row), rows = blockModel.gridRowCount(head)
+                    switch (rand(5)) {
+                    case 0: case 1:
+                        root.tableEnter(false)
+                        ++checks
+                        if (r < rows - 1 && blockModel.gridRowOf(cursor.focusRow) !== r + 1)
+                            fail("Enter in table row " + r + " landed in row " + blockModel.gridRowOf(cursor.focusRow))
+                        break
+                    case 2: root.tabKey(false); break
+                    case 3: root.tabKey(true); break
+                    case 4: root.tableInsertRowBelow(); break
+                    }
+                }
+                checks += 2
+                if (!blockModel.structureValid()) fail("the structure broke after a table key near row " + cursor.focusRow)
+                if (blockModel.typeForRow(cursor.focusRow) === 10) fail("the caret landed on a record at " + cursor.focusRow)
+                if (cursor.focusRow >= 0) root.ensureVisible(cursor.focusRow)
+                next(phaseStep >= 250)
             } else {
                 running = false
                 console.log("POOL-PROBE DONE steps", step, "checks", checks, "fails", fails,

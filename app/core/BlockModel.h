@@ -290,6 +290,12 @@ public:
     Q_INVOKABLE int gridCellCheck(int head, int r, int c) const;             // 0 / 1 / 2
     Q_INVOKABLE bool gridSetCellCheck(int head, int r, int c, int state);
     Q_INVOKABLE bool gridCycleCellCheck(int head, int r, int c);              // To do → Doing → Done → To do
+    // Keys (S6a). tabTarget in a table walks cells in reading order and returns
+    // kTabAppendsRow past the table's last cell (A3). An empty last body row exits the table
+    // as a paragraph below it (A1; one undo; → the paragraph's row, or -1).
+    static constexpr int kTabAppendsRow = -2;
+    Q_INVOKABLE bool gridRowIsEmpty(int head, int r) const;
+    Q_INVOKABLE int gridExitRow(int head);
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
