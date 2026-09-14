@@ -3395,9 +3395,31 @@ FocusScope {
             }
         }
         property bool stickyShot: false
+        property bool frozenShot: false
+        property int holdX: 0
+        // T3: sideways past the left of the page, every table row in view has a frozen first cell.
+        function verifyFrozen() {
+            if (flick.contentX <= root.leftEdge + 1) return
+            const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
+            let tableRows = 0
+            for (let i = 0; i < inView.length; ++i) {
+                const head = blockModel.typeForRow(inView[i]) === 10 ? blockModel.tableHeadOf(inView[i]) : -1
+                if (head >= 0 && root.leftEdge + blockModel.tableWidth(head) > flick.contentX) ++tableRows
+            }
+            ++checks
+            if (frozenColumn.rows.length !== tableRows)
+                fail("frozen column shows " + frozenColumn.rows.length + " rows, " + tableRows + " table rows in view")
+            else if (tableRows > 0 && !frozenShot) {
+                frozenShot = true
+                holdX = 3                                  // the grab lands a frame later: keep the sideways view
+                const arg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
+                flick.grabToImage(function(res) { res.saveToFile(arg.substring("--pool-probe=".length).replace(/[^\/]*$/, "") + "frozen.png") })
+            }
+        }
         function next(phaseDone) { if (phaseDone) { ++phase; phaseStep = 0 } else ++phaseStep }
         onTriggered: {
             verify()
+            verifyFrozen()
             ++step
             var maxY = Math.max(0, flick.contentHeight - flick.height)
             if (phase === 0) {
@@ -3559,6 +3581,9 @@ FocusScope {
             } else if (phase === 10) {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
                 else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
+                // Every third step sideways (the frozen column), then back.
+                if (holdX > 0) { --holdX; next(false); return }
+                flick.contentX = phaseStep % 3 === 2 ? Math.max(0, flick.contentWidth - flick.width) : 0
                 next(phaseStep > 0 && flick.contentY >= maxY)
             } else {
                 running = false
@@ -3828,6 +3853,88 @@ FocusScope {
                 required property int index
                 editor: root
                 logicalRow: (root.slotRev, viewSlots.rowForSlot(index))
+            }
+        }
+
+        // T3 (SR-4 S5c): once the page scrolls sideways past a table's left edge, a mirror of the
+        // table's first column stays pinned at the viewport's left for every table row in view.
+        // Under the sticky header (z 2.5 < 3); the pinned corner cell sits over both.
+        Item {
+            id: frozenColumn
+            readonly property var rows: {
+                const dep = blockModel.layoutRevision + blockModel.contentRevision + flick.contentY + flick.contentX
+                if (flick.contentX <= root.leftEdge + 1) return []
+                const out = []
+                const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
+                for (let i = 0; i < inView.length; ++i) {
+                    const r = inView[i]
+                    if (blockModel.typeForRow(r) !== 10) continue
+                    const head = blockModel.tableHeadOf(r)
+                    if (head < 0) continue
+                    const tw = blockModel.tableWidth(head)
+                    if (root.leftEdge + tw <= flick.contentX) continue    // the whole table is scrolled away
+                    const padTop = blockModel.tablePadTop(r)
+                    out.push({ head: head, gr: blockModel.gridRowOf(r), header: blockModel.isHeaderRow(r),
+                               y: blockModel.yForRow(r) + padTop,
+                               h: blockModel.heightForRow(r) - padTop - blockModel.tablePadBottom(r),
+                               w: blockModel.tableColumnWidth(head, 0), tw: tw })
+                }
+                return out
+            }
+            x: flick.contentX
+            z: 2.5
+            Repeater {
+                model: frozenColumn.rows
+                delegate: Rectangle {
+                    required property var modelData
+                    readonly property string bg: (blockModel.contentRevision, blockModel.gridCellBg(modelData.head, modelData.gr, 0))
+                    readonly property string fg: (blockModel.contentRevision, blockModel.gridCellFg(modelData.head, modelData.gr, 0))
+                    // Pushed off to the left as the table's right edge arrives (never over its last column).
+                    x: Math.min(0, root.leftEdge + modelData.tw - modelData.w - flick.contentX)
+                    y: modelData.y
+                    width: modelData.w
+                    height: modelData.h
+                    clip: true
+                    color: bg !== "" ? bg : modelData.header ? Theme.colors.surfaceHover : Theme.colors.surface
+                    Rectangle { width: parent.width; height: 1; color: Theme.colors.border }
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border }
+                    Rectangle { width: 1; height: parent.height; color: Theme.colors.border }
+                    Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+                    Text {
+                        x: 8; y: 6
+                        width: parent.width - 16
+                        text: (blockModel.contentRevision, blockModel.gridCellText(modelData.head, modelData.gr, 0))
+                        color: fg !== "" ? fg : Theme.colors.text
+                        font.family: Theme.font.body; font.pixelSize: Theme.font.sizeBody; font.bold: modelData.header
+                        wrapMode: Text.Wrap
+                    }
+                }
+            }
+        }
+        Rectangle {   // the corner: the header's first cell, pinned at the top and the left
+            id: frozenCorner
+            readonly property int head: stickyHeader.has ? stickyHeader.st.head : -1
+            visible: stickyHeader.visible && flick.contentX > root.leftEdge + 1 && head >= 0
+                     && root.leftEdge + (blockModel.layoutRevision, blockModel.tableWidth(head)) > flick.contentX
+            x: flick.contentX + (head >= 0 ? Math.min(0, root.leftEdge + (blockModel.layoutRevision, blockModel.tableWidth(head))
+                                                         - width - flick.contentX) : 0)
+            y: stickyHeader.y
+            z: 4
+            width: head >= 0 ? (blockModel.layoutRevision, blockModel.tableColumnWidth(head, 0)) : 0
+            height: stickyHeader.headerH
+            clip: true
+            color: Theme.colors.surfaceHover
+            Rectangle { width: parent.width; height: 1; color: Theme.colors.border }
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border }
+            Rectangle { width: 1; height: parent.height; color: Theme.colors.border }
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+            Text {
+                x: 8; y: 6
+                width: parent.width - 16
+                text: frozenCorner.head >= 0 ? (blockModel.contentRevision, blockModel.gridCellText(frozenCorner.head, 0, 0)) : ""
+                color: Theme.colors.text
+                font.family: Theme.font.body; font.pixelSize: Theme.font.sizeBody; font.bold: true
+                wrapMode: Text.Wrap
             }
         }
 
