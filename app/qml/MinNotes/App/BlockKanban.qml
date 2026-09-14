@@ -12,38 +12,34 @@ import QtQuick
 // MouseAreas directly; nothing here routes through the central handler.
 Item {
     id: kb
-    property int  logicalRow: -1           // a Table block's row (legacy; S10 retires it) …
-    property int  head: -1                 // … or a derived table's head record (SR-4 S9)
+    property int  head: -1                 // the table's head record (SR-4 S9)
     property int  groupCol: -1
     property bool active: false
-    // One accessor set over both table kinds: the board reads through these only.
-    readonly property bool grid: head >= 0
-    function colKind(c) { return grid ? blockModel.gridColumnKind(head, c) : blockModel.tableColumnKind(logicalRow, c) }
-    function hdrRows() { return grid ? blockModel.headerCount(head) : blockModel.tableHeaderRows(logicalRow) }
-    function nRows() { return grid ? blockModel.gridRowCount(head) : blockModel.tableRows(logicalRow) }
-    function nCols() { return grid ? blockModel.tableColumnCount(head) : blockModel.tableColumns(logicalRow) }
-    function options() { return grid ? blockModel.gridColumnOptions(head, groupCol) : blockModel.tableColumnOptions(logicalRow, groupCol) }
-    function cellCheck(r, c) { return grid ? blockModel.gridCellCheck(head, r, c) : blockModel.tableCellCheck(logicalRow, r, c) }
-    function cellChoice(r, c) { return grid ? blockModel.gridCellChoice(head, r, c) : blockModel.tableCellChoice(logicalRow, r, c) }
-    function cellChoiceLabel(r, c) { return grid ? blockModel.gridCellChoiceLabel(head, r, c) : blockModel.tableCellChoiceLabel(logicalRow, r, c) }
-    function cellChoiceColor(r, c) { return grid ? blockModel.gridCellChoiceColor(head, r, c) : blockModel.tableCellChoiceColor(logicalRow, r, c) }
-    function cellText(r, c) { return grid ? blockModel.gridCellText(head, r, c) : blockModel.tableCell(logicalRow, r, c) }
-    function cellImageUrl(r, c) {          // a derived cell's first image block; a legacy cell's media
-        if (!grid) return blockModel.tableCellMedia(logicalRow, r, c) !== "" ? blockModel.tableCellMediaUrl(logicalRow, r, c) : ""
+    // The board reads the table through these only.
+    function colKind(c) { return blockModel.gridColumnKind(head, c) }
+    function hdrRows() { return blockModel.headerCount(head) }
+    function nRows() { return blockModel.gridRowCount(head) }
+    function nCols() { return blockModel.tableColumnCount(head) }
+    function options() { return blockModel.gridColumnOptions(head, groupCol) }
+    function cellCheck(r, c) { return blockModel.gridCellCheck(head, r, c) }
+    function cellChoice(r, c) { return blockModel.gridCellChoice(head, r, c) }
+    function cellChoiceLabel(r, c) { return blockModel.gridCellChoiceLabel(head, r, c) }
+    function cellChoiceColor(r, c) { return blockModel.gridCellChoiceColor(head, r, c) }
+    function cellText(r, c) { return blockModel.gridCellText(head, r, c) }
+    function cellImageUrl(r, c) {          // the cell's first image block
         const blocks = blockModel.gridCellRows(head, r, c)
         for (let i = 0; i < blocks.length; ++i)
             if (blockModel.typeForRow(blocks[i]) === 3 && blockModel.mediaKind(blocks[i]) === "image") return blockModel.mediaUrl(blocks[i])
         return ""
     }
-    function rowBg(r) { return grid ? blockModel.gridRowBg(head, r) : blockModel.tableRowBg(logicalRow, r) }
-    function setCheck(r, state) { if (grid) blockModel.gridSetCellCheck(head, r, groupCol, state); else blockModel.tableSetCellCheck(logicalRow, r, groupCol, state) }
-    function setChoice(r, id) { if (grid) blockModel.gridSetCellChoice(head, r, groupCol, id); else blockModel.tableSetCellChoice(logicalRow, r, groupCol, id) }
-    function moveRow(from, to) { if (grid) blockModel.gridMoveRow(head, from, to); else blockModel.tableMoveRow(logicalRow, from, to) }
-    function insertRow(at) { if (grid) blockModel.gridInsertRow(head, at); else blockModel.tableInsertRow(logicalRow, at) }
-    function setTitle(r, t) { if (grid) blockModel.gridPasteTSV(head, r, titleCol, t); else blockModel.tableSetCell(logicalRow, r, titleCol, t) }
-    // One undo step over the table: its whole band for a derived table.
+    function rowBg(r) { return blockModel.gridRowBg(head, r) }
+    function setCheck(r, state) { blockModel.gridSetCellCheck(head, r, groupCol, state) }
+    function setChoice(r, id) { blockModel.gridSetCellChoice(head, r, groupCol, id) }
+    function moveRow(from, to) { blockModel.gridMoveRow(head, from, to) }
+    function insertRow(at) { blockModel.gridInsertRow(head, at) }
+    function setTitle(r, t) { blockModel.gridPasteTSV(head, r, titleCol, t) }
+    // One undo step over the table: its whole band.
     function groupBegin() {
-        if (!grid) { blockModel.beginGroup(logicalRow, logicalRow); return }
         const recs = blockModel.tableRecords(head)
         blockModel.beginGroup(head, blockModel.splitRowLast(recs[recs.length - 1]))
     }
@@ -69,7 +65,7 @@ Item {
     property var lanes: []
     property int titleCol: -1              // the card-title column (first text col)
     function recompute() {
-        if (!active || groupCol < 0 || (logicalRow < 0 && head < 0)) { lanes = []; return }
+        if (!active || groupCol < 0 || head < 0) { lanes = []; return }
         var kind = colKind(groupCol)
         if (kind === 0) {                  // column reverted to text (undo / edit)
             lanes = []
@@ -146,7 +142,6 @@ Item {
     }
     onActiveChanged: recompute()
     onGroupColChanged: recompute()
-    onLogicalRowChanged: recompute()
     onHeadChanged: recompute()
     Component.onCompleted: recompute()
     Connections {

@@ -609,7 +609,7 @@ Rectangle {
                                 return qsTr("Browse — scroll & pan pages")
                             if (panel.editor.activeVideoRow >= 0)
                                 return qsTr("Browse — playback & note cards")
-                            if (panel.editor.activeTableRow >= 0)
+                            if (panel.editor.activeGridHead >= 0)
                                 return qsTr("Type — edit cells")
                             return modelData.tip
                         }
@@ -622,10 +622,8 @@ Rectangle {
                         // the 2026-08-20 session landed).
                         readonly property string offReason: {
                             if (!panel.editor || modelData.tool === "type") return ""
-                            if (panel.editor.activeTableRow >= 0)
-                                return modelData.tool === "select"
-                                    ? qsTr("tables select with the cell cursor")
-                                    : qsTr("tables have no ink surface")
+                            if (panel.editor.activeGridHead >= 0)
+                                return qsTr("tables have no ink surface")
                             if (modelData.tool !== "text") return ""
                             if (panel.editor.activeVideoRow >= 0)
                                 return qsTr("text boxes aren't part of video notes")
@@ -837,8 +835,7 @@ Rectangle {
             Rectangle {
                 visible: panel.target !== "draw"
                 width: panel.contentW; height: 28
-                readonly property bool canApply: !!panel.editor
-                    && (panel.editor.hasSelection || panel.editor.tableFocused)
+                readonly property bool canApply: !!panel.editor && panel.editor.hasSelection
                 opacity: canApply ? 1.0 : 0.4          // disabled chrome rule
                 color: applyMA.containsMouse && canApply ? Theme.colors.divider
                                                          : Theme.colors.surfaceHover

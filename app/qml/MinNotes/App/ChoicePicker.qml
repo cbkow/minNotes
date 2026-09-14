@@ -1,31 +1,22 @@
 import QtQuick
 import QtQuick.Controls
 
-// Option picker for a choice-column table cell. A root-overlay popup (above the
-// document mouse layer, which is why a table cell can't host it directly): lists
-// the column's shared option set — click one to set the cell, clear the
-// selection, add a new (auto-coloured) option, or delete an existing one. Every
-// edit goes through BlockModel.table* → mutateTable, so undo / persistence /
-// refresh are automatic; this is purely a control surface over that seam.
+// Option picker for a choice cell or an inline choice chip. A root-overlay popup
+// (above the document mouse layer, which is why a cell can't host it directly):
+// lists the option set — click one to set the value, clear the selection, add a
+// new (auto-coloured) option, or delete an existing one. Every edit goes through
+// BlockModel, so undo / persistence / refresh are automatic; this is purely a
+// control surface over that seam.
 Popup {
     id: picker
-    property int row: -1     // table block row
-    property int r: -1       // cell row
-    property int c: -1       // column
-    // SPAN MODE (DT-2, 2026-08-20): the same control surface over an inline
-    // choice chip — the option set lives in the span's payload, writes go
-    // through the choice* invokables. sstart = the chip's range start (its
-    // stable address; label swaps keep it).
+    // SPAN MODE (DT-2, 2026-08-20): the control surface over an inline choice
+    // chip — the option set lives in the span's payload, writes go through the
+    // choice* invokables. sstart = the chip's range start (its stable address;
+    // label swaps keep it).
     property int srow: -1
     property int sstart: -1
     readonly property bool spanMode: sstart >= 0
-    // CELL-SPAN MODE (2026-08-21): the chip lives inside a table text cell —
-    // srow = the table block row, (sr,sc) = the cell, sstart as usual. Reads
-    // and writes route to the tableChoice* invokables.
-    property int sr: -1
-    property int sc: -1
-    readonly property bool cellSpanMode: spanMode && sr >= 0
-    // GRID MODE (SR-4 S6b): a typed cell of a derived table — (gridHead, gridR, gridC). The option set is
+    // GRID MODE (SR-4 S6b): a typed cell of a table — (gridHead, gridR, gridC). The option set is
     // the column's (the header is authoritative), writes go through grid*. The add field doubles
     // as a type-to-filter: Up/Down move the highlight, Enter chooses it or adds the typed text.
     property int gridHead: -1
@@ -55,9 +46,7 @@ Popup {
     onOpened: if (picker.gridMode || picker.options.length === 0) addField.forceActiveFocus()
 
     readonly property var spanPayload: spanMode
-        ? (blockModel.contentRevision,
-           JSON.parse((cellSpanMode ? blockModel.tableChoiceAt(srow, sr, sc, sstart)
-                                    : blockModel.choiceAt(srow, sstart)) || "{}")) : null
+        ? (blockModel.contentRevision, JSON.parse(blockModel.choiceAt(srow, sstart) || "{}")) : null
     readonly property var options: gridMode
         ? (blockModel.contentRevision, blockModel.gridColumnOptions(gridHead, gridC))
         : spanMode
@@ -65,14 +54,12 @@ Popup {
                ? spanPayload.o.map(function(o) {
                      return { id: o.id, label: o.l, color: o.c || "" } })
                : [])
-        : ((row >= 0)
-               ? (blockModel.contentRevision, blockModel.tableColumnOptions(row, c)) : [])
+        : []
     readonly property string selectedId: gridMode
         ? (blockModel.contentRevision, blockModel.gridCellChoice(gridHead, gridR, gridC))
         : spanMode
         ? ((spanPayload && spanPayload.v) ? spanPayload.v : "")
-        : ((row >= 0)
-               ? (blockModel.contentRevision, blockModel.tableCellChoice(row, r, c)) : "")
+        : ""
     // Auto colour for a new option — rotates through a small palette by position.
     readonly property var palette: ["#c0563f", "#c08a3e", "#5a8f4e", "#3f7fa6",
                                     "#7b5ea7", "#a64f7e", "#6a737d"]
@@ -121,13 +108,8 @@ Popup {
                     onClicked: {
                         if (picker.gridMode)
                             blockModel.gridSetCellChoice(picker.gridHead, picker.gridR, picker.gridC, optRow.modelData.id)
-                        else if (picker.cellSpanMode)
-                            blockModel.tableSetChoiceSelected(picker.srow, picker.sr, picker.sc,
-                                                              picker.sstart, optRow.modelData.id)
                         else if (picker.spanMode)
                             blockModel.setChoiceSelected(picker.srow, picker.sstart, optRow.modelData.id)
-                        else
-                            blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, optRow.modelData.id)
                         picker.close()
                     }
                 }
@@ -153,10 +135,7 @@ Popup {
                 onClicked: {
                     if (picker.gridMode)
                         blockModel.gridSetCellChoice(picker.gridHead, picker.gridR, picker.gridC, "")
-                    else if (picker.cellSpanMode)
-                        blockModel.tableRemoveChoiceAt(picker.srow, picker.sr, picker.sc, picker.sstart)
                     else if (picker.spanMode) blockModel.removeChoiceAt(picker.srow, picker.sstart)
-                    else blockModel.tableSetCellChoice(picker.row, picker.r, picker.c, "")
                     picker.close()
                 }
             }
@@ -198,16 +177,9 @@ Popup {
                     if (picker.spanMode) {
                         // Quick-add SELECTS on an inline chip (the label
                         // follows) — the pick is made, close.
-                        if (picker.cellSpanMode)
-                            blockModel.tableChoiceAddOption(picker.srow, picker.sr, picker.sc,
-                                                            picker.sstart, name, col)
-                        else
-                            blockModel.choiceAddOption(picker.srow, picker.sstart, name, col)
+                        blockModel.choiceAddOption(picker.srow, picker.sstart, name, col)
                         text = ""
                         picker.close()
-                    } else {
-                        blockModel.tableAddOption(picker.row, picker.c, name, col)
-                        text = ""
                     }
                 }
                 Text {   // placeholder

@@ -10,7 +10,6 @@ Item {
     // don't cross file boundaries, so the editor hands them over (Editor.qml).
     required property var editor
     readonly property var cursor: editor.cursorObj
-    readonly property var tcur: editor.tcurObj
     readonly property var flick: editor.flickItem
     property int logicalRow: -1   // the row this slot renders — set by the pool (Editor.qml)
     readonly property bool active: logicalRow >= 0 && logicalRow < blockModel.count
@@ -28,7 +27,6 @@ Item {
     readonly property bool isFocus: active && logicalRow === cursor.focusRow
     readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
     readonly property Item teItem: te    // layout oracle, for hit-testing
-    readonly property Item tableItem: tableHost   // BlockTable, for table hit-testing
     readonly property Item langChip: codeLangChip // code language chip, for hit-testing
     // Lane geometry (SR-3): {x, w} page-relative — the page for a top-level block, its
     // lane otherwise. contentRevision covers structure changes, pageWidth the measure.
@@ -202,7 +200,6 @@ Item {
                                            : isPdfMedia ? editor.pdfNavH : 0)
           : te.btype === 10 ? (blockModel.layoutRevision, blockModel.heightForRow(logicalRow))   // record: its tallest lane
           : te.btype === 6 ? 12 + 18                       // divider
-          : te.btype === 7 ? 64 + tableHost.implicitHeight // table: 32 top + 32 bottom (user-tuned; bottom clears the 14px +row button)
           : (te.btype === 2 ? 24 : 12) + te.height   // te.height = lineCount*lineH (even)
 
     // Media is known-geometry: the MODEL derives its height from the
@@ -214,16 +211,6 @@ Item {
     // scroll-in jump. Text/code/table still measure (reflow is unknown).
     function reportHeight() {
         if (!active || isMedia || te.btype === 10) return   // media and records never measure back
-        // Tables: measure ONCE, then reuse the model's cache. A table
-        // can't be estimated from data (cell wrapping), but its height
-        // is stable once known — and on recycle the delegate briefly
-        // reports a near-empty implicitHeight before its rows populate.
-        // Measuring that (or re-measuring a settled table) collapses then
-        // restores the Fenwick height, jumping the view (esp. scrolling
-        // UP into the table). So skip the empty transient, and once the
-        // row is cached don't re-measure it.
-        if (te.btype === 7 && (tableHost.implicitHeight < 40 || blockModel.rowMeasured(logicalRow)))
-            return
         blockModel.setMeasuredHeight(logicalRow, height)
     }
     // Measure-back is DEFERRED (coalesced) via a 0-interval timer: on
@@ -243,7 +230,7 @@ Item {
     // first edit). Debounce tables: restart()-on-each-tick waits for the
     // layout to go quiet, then caches the SETTLED height. Other blocks
     // reflow synchronously, so they keep the instant 0-interval.
-    Timer { id: measureTimer; interval: te.btype === 7 ? 150 : 0; repeat: false; onTriggered: cell.reportHeight() }
+    Timer { id: measureTimer; interval: 0; repeat: false; onTriggered: cell.reportHeight() }
     onHeightChanged: if (active && !isMedia) measureTimer.restart()
     // Re-measure on RECYCLE too, not just on height change: blocks of a
     // type now render at an identical height (the line-height fix), so a
@@ -328,7 +315,7 @@ Item {
     // under a collapsed caret is withheld while the word is typed.
     property var spellRects: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision + spell.revision
-        if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6 || te.btype === 7) return []
+        if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6) return []
         if (!spell.checkSpelling && !spell.checkGrammar) return []
         var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
         var issues = spell.issuesForRow(cell.logicalRow, caret)
@@ -427,7 +414,7 @@ Item {
         var dep = blockModel.contentRevision + blockModel.layoutRevision   // re-eval triggers
         // Opaque rows (media/table/divider) show membership via the
         // wash rectangle below, never via text rects over a hidden te.
-        if (!cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6 || te.btype === 7) return []
+        if (!cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6) return []
         if (cell.inTable && editor.cellRect !== null) return []   // a cell rectangle washes whole cells (the record)
         var sp = (cell.logicalRow === cursor.loRow) ? Math.min(cursor.loCol, te.length) : 0
         var ep = (cell.logicalRow === cursor.hiRow) ? Math.min(cursor.hiCol, te.length) : te.length
@@ -456,7 +443,7 @@ Item {
         // pageWidth directly (NOT cell.measure → te.btype → layoutRevision):
         // the cell height reads mediaHost.implicitHeight, and height bumps
         // layoutRevision, so a te.btype dependency here is a latent loop the
-        // async poster decode wakes up. BlockTable sidesteps it the same way.
+        // async poster decode wakes up.
         maxWidth: cell.lane.w      // the lane's width (the page's at top level) — no te.btype dep
         width: implicitWidth
         // Frame height = the model's authoritative value (same as the
@@ -481,72 +468,6 @@ Item {
     // surfaces whose content must render untinted. Range
     // membership shows through the row fill + dimmed media bars.
 
-    BlockTable {  // table block — passive grid (interaction lands in later phases)
-        id: tableHost
-        visible: cell.active && te.btype === 7
-        logicalRow: cell.logicalRow
-        active: cell.active && te.btype === 7
-        // Left-aligned at the shared left edge, UNCAPPED — the table
-        // takes its natural width and the page scrolls horizontally
-        // (maxWidth is only the capped/full-frame fallback bound).
-        uncapped: true
-        maxWidth: editor.pageWidth
-        width: implicitWidth
-        // 32px top margin (user-tuned live, symmetric with the bottom).
-        x: cell.colLeft; y: 32
-        // Width joins the model's measure-once cache (the height
-        // contract's sibling): the widest reported table drives
-        // flick.contentWidth via blockModel.maxContentWidth.
-        function reportW() {
-            if (active && implicitWidth > 0)
-                blockModel.setMeasuredWidth(logicalRow, implicitWidth)
-        }
-        onImplicitWidthChanged: reportW()
-        onActiveChanged: reportW()
-        onLogicalRowChanged: reportW()
-        height: implicitHeight   // a bare Item won't adopt implicitHeight itself
-        // Focus / in-cell caret + selection (driven by the table sub-cursor).
-        focused: cell.isFocus && te.btype === 7
-        caretOn: editor.caretOn
-        focusR: tcur.cr; focusC: tcur.cc
-        caretPos: tcur.pos
-        selFrom: Math.min(tcur.pos, tcur.anchorPos)
-        selTo: Math.max(tcur.pos, tcur.anchorPos)
-        rangeR0: focused ? tcur.rangeR0 : -1
-        rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
-        selRows: focused ? tcur.selRows : []
-        selCols: focused ? tcur.selCols : []
-        selRev: tcur.selRev
-        // last-sorted column indicator (session state, per table block)
-        sortCol: editor.lastSortRow === cell.logicalRow ? editor.lastSortCol : -1
-        sortAsc: editor.lastSortAsc
-        // live column-resize preview for this table
-        resizeCol: (editor.tableResizing && editor.resizeRow === cell.logicalRow) ? editor.resizeColIdx : -1
-        resizeW: editor.resizeW
-        // Drag-drop target cell (image dragged over this table).
-        dropR: editor.dropTableRow === cell.logicalRow ? editor.dropCellR : -1
-        dropC: editor.dropTableRow === cell.logicalRow ? editor.dropCellC : -1
-        // Context-menu column/row target highlight (this is the
-        // menu's table) — or the grip drag's source highlight
-        // (kind "col" maps to scope "column", the frame pattern).
-        hiScope: (editor.gripDragging && editor.gripTableRow === cell.logicalRow)
-                 ? (editor.gripDragKind === "col" ? "column" : "row")
-                 : (cell.logicalRow === editor.menuRow
-                    && (editor.menuHiScope === "column" || editor.menuHiScope === "row")) ? editor.menuHiScope : ""
-        hiIndex: (editor.gripDragging && editor.gripTableRow === cell.logicalRow)
-                 ? editor.gripFrom
-                 : editor.menuHiScope === "column" ? editor.menuCellC : editor.menuCellR
-        hiDanger: editor.gripDragging && editor.gripTableRow === cell.logicalRow
-                  ? false : editor.menuHiDanger
-        // Inline grip affordances (pills + drop lines in the margins).
-        gripScope: editor.gripTableRow === cell.logicalRow
-                   ? (editor.gripDragging ? editor.gripDragKind : editor.gripKind) : ""
-        gripIdx: editor.gripDragging ? editor.gripFrom : editor.gripIndex
-        gripLive: editor.gripDragging && editor.gripTableRow === cell.logicalRow
-        gripGapScope: (editor.gripDragging && editor.gripTableRow === cell.logicalRow)
-                      ? editor.gripDragKind : ""
-        gripGap: editor.gripDropGap
-    }
 
     Rectangle {  // code background — matches the syntax theme's fill
         visible: cell.active && !cell.isMedia && te.btype === 2
@@ -594,7 +515,7 @@ Item {
 
     TextEdit {
         id: te
-        visible: !cell.isMedia && btype !== 6 && btype !== 7 && btype !== 10   // hidden for divider/table/record
+        visible: !cell.isMedia && btype !== 6 && btype !== 10   // hidden for divider/record
         opacity: cell.colKind === 2 ? 0 : 1   // a check cell: its checkbox stands in for the text (still laid out)
         readOnly: true
         activeFocusOnPress: false
@@ -637,7 +558,7 @@ Item {
         // leaving code releases the width its cached lines held.
         // Tables/media report via their own components.
         function reportW() {
-            if (!cell.active || cell.isMedia || btype === 7) return
+            if (!cell.active || cell.isMedia) return
             blockModel.setMeasuredWidth(cell.logicalRow,
                 btype === 2 ? implicitWidth + 16 : 0)
         }
@@ -718,7 +639,7 @@ Item {
     }
 
     Rectangle {  // caret
-        visible: cursor.active && cell.isFocus && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 7 && te.btype !== 10
+        visible: cursor.active && cell.isFocus && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 10
         color: Theme.colors.accent
         width: 2
         property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))
@@ -832,15 +753,15 @@ Item {
                  // inside a document selection show membership with a
                  // translucent selection wash OVER the block. Never for
                  // a table's own cell selection (that collapses cursor).
-        readonly property bool opaqueRow: te.btype === 3 || te.btype === 6 || te.btype === 7
+        readonly property bool opaqueRow: te.btype === 3 || te.btype === 6
         visible: cell.active && cell.inSel && cursor.hasSel && opaqueRow
         z: 1
         radius: 0
         color: Theme.colors.selectionWash
         x: cell.colLeft
-        y: te.btype === 3 ? 6 : te.btype === 7 ? 32 : cell.height / 2 - 8
-        width: te.btype === 3 ? mediaHost.width : te.btype === 7 ? tableHost.width : cell.measure
-        height: te.btype === 3 ? mediaHost.height : te.btype === 7 ? tableHost.height : 16
+        y: te.btype === 3 ? 6 : cell.height / 2 - 8
+        width: te.btype === 3 ? mediaHost.width : cell.measure
+        height: te.btype === 3 ? mediaHost.height : 16
     }
 
     // (The left-gutter drag grip is GONE — user ruling 2026-07-12,

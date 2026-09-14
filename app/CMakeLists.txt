@@ -170,7 +170,6 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/FlatToolTip.qml
         qml/MinNotes/App/LeftRail.qml
         qml/MinNotes/App/BottomRail.qml
-        qml/MinNotes/App/BlockTable.qml
         qml/MinNotes/App/BlockView.qml
         qml/MinNotes/App/TableTabs.qml
         qml/MinNotes/App/MediaBlock.qml

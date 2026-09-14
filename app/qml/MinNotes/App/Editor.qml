@@ -140,20 +140,6 @@ FocusScope {
         }
     }
 
-    // Active table-tab: "" = the Document view; otherwise a table block's id shown
-    // full-frame (see Tabs B). Reactive row of that table, -1 if it's gone.
-    property string activeTableId: ""
-    readonly property int activeTableRow: (blockModel.layoutRevision, blockModel.contentRevision,
-        activeTableId === "" ? -1 : blockModel.rowForId(activeTableId))
-    // If the active table is deleted, fall back to the Document tab.
-    onActiveTableRowChanged: if (activeTableId !== "" && activeTableRow < 0) activeTableId = ""
-    // Opening a table tab pins the caret into that table so tcur drives editing.
-    onActiveTableIdChanged: {
-        forceActiveFocus()
-        if (activeTableId === "") return
-        var r = blockModel.rowForId(activeTableId)
-        if (r >= 0) { cursor.setCaret(r, 0); tcur.place(0, 0, 0) }
-    }
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
     // tab shows the board; a table with no grouping column stays in the document.
     property string activeGridId: ""
@@ -200,19 +186,15 @@ FocusScope {
         }
         return -1
     }
-    // The board's grouping column kind / option moves / editor, for either table kind.
+    // The board's grouping column kind / option moves / editor.
     function boardKind() {
-        if (boardCol < 0) return 0
-        return activeGridHead >= 0 ? blockModel.gridColumnKind(activeGridHead, boardCol)
-             : activeTableRow >= 0 ? blockModel.tableColumnKind(activeTableRow, boardCol) : 0
+        return boardCol >= 0 && activeGridHead >= 0 ? blockModel.gridColumnKind(activeGridHead, boardCol) : 0
     }
     function moveBoardOption(key, toIndex) {
         if (activeGridHead >= 0) blockModel.gridMoveOption(activeGridHead, boardCol, key, toIndex)
-        else blockModel.tableMoveOption(activeTableRow, boardCol, key, toIndex)
     }
     function openBoardOptions() {
         if (activeGridHead >= 0) choiceEditor.open2Grid(activeGridHead, boardCol)
-        else openChoiceEditor(activeTableRow, boardCol)
     }
     // Active PDF tab (full-page scroll view); "" = not in a PDF tab. Tables and
     // PDFs are mutually exclusive full-frame modes — setActiveTab keeps one set.
@@ -277,8 +259,7 @@ FocusScope {
     onActiveSketchIdChanged: forceActiveFocus()
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
     // active state across table, PDF, video and sketch tabs.
-    readonly property string activeFrameId: activeTableId !== "" ? activeTableId
-                                          : activeGridId !== "" ? activeGridId
+    readonly property string activeFrameId: activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
     function setActiveTab(id) {
@@ -294,31 +275,23 @@ FocusScope {
         var t = inspector ? inspector.drawTool : "type"
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
-            activeTableId = ""; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
         }
         var r = blockModel.rowForId(id)
-        if (blockModel.typeForRow(r) === 7) {
-            // Any non-Type tool drops here (2026-08-20, overturns the
-            // "Select may stay armed" parenthetical): tables select with
-            // the cell cursor, so Select is as dead as the draw tools.
+        if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a table (S9)
+            // Any non-Type tool drops here (2026-08-20): tables have no ink surface.
             if (t !== "type") inspector.drawTool = "type"
-            activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = ""; activeTableId = id
-            var pc = boardPref(id)               // this table's remembered view
-            if (pc >= 0) { boardCol = pc; boardMode = true }
-        }
-        else if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a derived table (S9)
-            if (t !== "type") inspector.drawTool = "type"
-            activeTableId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = id
+            activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = id
             var gc = boardPref(id)               // this table's remembered view: the board, else the grid frame
             if (gc >= 0 && blockModel.gridColumnKind(r, gc) !== 1 && blockModel.gridColumnKind(r, gc) !== 2) gc = -1
             if (gc >= 0) { boardCol = gc; boardMode = true }
         }
         else if (blockModel.mediaKind(r) === "video") {
             if (t === "text") inspector.drawTool = "select"
-            activeTableId = ""; activeGridId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
+            activeGridId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
         }
-        else if (blockModel.mediaKind(r) === "sketch") { activeTableId = ""; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
-        else { activeTableId = ""; activeGridId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
+        else if (blockModel.mediaKind(r) === "sketch") { activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
+        else { activeGridId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
     }
     // Switching documents (new/open/save-as) resets the model; drop all per-doc
     // UI state so nothing points at the old doc's blocks (closes frame tabs /
@@ -443,7 +416,7 @@ FocusScope {
     // reverting) remembers "grid" for this table; plain tab switches don't.
     function showGridView() {
         boardMode = false
-        saveBoardPref(activeTableId !== "" ? activeTableId : activeGridId, -1)
+        saveBoardPref(activeGridId, -1)
     }
     // Leaving the board: the tab shows its grid (a derived table's grid frame, S9b).
     function leaveBoard() { showGridView() }
@@ -462,13 +435,7 @@ FocusScope {
     // grouping for the grid view's "Board view" toggle.
     readonly property int firstGroupCol: {
         var rev = blockModel.contentRevision
-        if (activeGridHead >= 0) return firstGroupColOf(activeGridHead)
-        if (activeTableRow < 0) return -1
-        for (var c = 0; c < blockModel.tableColumns(activeTableRow); ++c) {
-            var k = blockModel.tableColumnKind(activeTableRow, c)
-            if (k === 1 || k === 2) return c
-        }
-        return -1
+        return activeGridHead >= 0 ? firstGroupColOf(activeGridHead) : -1
     }
     readonly property int overscan: 6
     property Item focusBlockItem: null    // the read-only TextEdit of the focus row
@@ -506,13 +473,10 @@ FocusScope {
     property int  menuRow: -1
     property real menuX: 0
     property real menuY: 0
-    property int  menuCellR: 0     // right-clicked table cell (for table menu ops)
-    property int  menuCellC: 0
     property real choiceX: 0       // anchor for the choice-cell option picker
     property real choiceY: 0
     property string menuLinkUrl: ""  // link URL under the right-click (for "Open …")
     property var  menuIssue: null      // spell/grammar issue under the right-click ({s,e,kind,…}) or null
-    property bool menuIssueInCell: false
     // Link-hover tooltip: the URL under the pointer + where to anchor the pill.
     property string hoverLinkUrl: ""
     property real   hoverLinkX: 0
@@ -528,19 +492,6 @@ FocusScope {
         const h = menuRow >= 0 && menuRow < blockModel.count ? blockModel.tableHeadOf(menuRow) : -1
         return h < 0 ? null : { head: h, r: blockModel.gridRowOf(menuRow), c: blockModel.gridColumnOf(menuRow) }
     }
-
-    // Table mouse-drag state: anchor cell/char captured on press, so drag extends
-    // an in-cell text selection (same cell) or a rectangular cell range (across).
-    property bool tableDragging: false
-    property int  tableAnchorR: 0
-    property int  tableAnchorC: 0
-    property int  tableAnchorPos: 0
-    // Column-resize drag state.
-    property bool tableResizing: false
-    property int  resizeRow: -1
-    property int  resizeColIdx: -1
-    property int  resizeW: 0
-    property bool tableOverBorder: false   // hover near a column border → resize cursor
 
     // Lane gestures (SR-3 S7b). ALL state on root (delegates are pooled). Previews never
     // touch the model: release commits one undo step, Escape cancels.
@@ -592,23 +543,6 @@ FocusScope {
     // stays put and the content revision is `rev` (gridSetLive).
     property var    gridSet: null
 
-    // Inline table grips (multi-select 2026-08-21): hover bands strictly
-    // OUTSIDE the grid rect (top band in the block's 32px top margin, left
-    // band in the page margin) — click = select row/column (Shift span /
-    // Cmd toggle), drag = reorder, the full-frame grip strips' semantics.
-    // ALL state on root: delegates are pooled and may recycle mid-drag.
-    property int    gripTableRow: -1     // logical row of the table under the grips
-    property string gripKind: ""         // hover: "" | "col" | "row"
-    property int    gripIndex: -1
-    property bool   gripDragging: false
-    property string gripDragKind: ""
-    property int    gripFrom: -1
-    property int    gripDropGap: -1
-    property bool   gripMoved: false
-    property real   gripPressX: 0        // content coords
-    property real   gripPressY: 0
-    property int    gripPressMods: 0
-
     // Image resize: the hovered image row shows corner affordances; dragging the
     // bottom-right handle previews a target size (a ghost frame — the document does
     // NOT reflow during the drag) and commits the new per-block width on release.
@@ -629,31 +563,6 @@ FocusScope {
         var k = blockModel.mediaKind(r)
         return k === "image" || k === "sketch"
     }
-    // Cell-image resize (the same affordance scoped to a focused table cell that
-    // holds an image; Document view only — the full-frame tab keeps just the tint).
-    property bool cellImgResizing: false
-    property real cellResizeW: 0
-    property real cellResizeAspect: 1
-    property real _cellResizePressX: 0
-    property real _cellResizeStartW: 0
-    readonly property var _cellImgBt: (tcur.active && cellForRow(tcur.row)) ? cellForRow(tcur.row).tableItem : null
-    readonly property bool cellImgActive: tcur.active && activeTableRow < 0 && activePdfRow < 0 && activeVideoRow < 0 && activeSketchRow < 0
-        && _cellImgBt && (blockModel.contentRevision,
-                          blockModel.tableCellMedia(tcur.row, tcur.cr, tcur.cc) !== "")
-    // The focused cell image's rect in viewport coords (re-evaluated on scroll /
-    // table h-scroll / layout / cell change, then mapped from the BlockTable).
-    readonly property rect cellImgRect: {
-        var dep = flick.contentY + flick.contentX
-                + blockModel.layoutRevision + blockModel.contentRevision
-                + (_cellImgBt ? _cellImgBt.scrollX : 0) + tcur.cr + tcur.cc + tcur.pos
-        if (!cellImgActive || !_cellImgBt) return Qt.rect(0, 0, 0, 0)
-        var r = _cellImgBt.cellImageRect(tcur.cr, tcur.cc)
-        var tl = _cellImgBt.mapToItem(root, r.x, r.y)
-        return Qt.rect(tl.x, tl.y, r.width, r.height)
-    }
-    // Column inner width for the focused cell (the resize upper bound).
-    readonly property real cellImgMaxW: (cellImgActive && _cellImgBt) ? _cellImgBt.colW(tcur.cc) - 16 : 800
-
     // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
     function gapForY(cy) {
         var n = blockModel.count
@@ -701,7 +610,7 @@ FocusScope {
         // A typed body cell holds one chip: nothing joins it.
         if (head >= 0 && t !== 10 && !blockModel.isHeaderRow(hit)
             && blockModel.gridColumnKind(head, blockModel.gridColumnOf(hit)) !== 0) return top
-        if (t !== 7 && t !== 10 && head < 0) {                    // table cells take no side drops
+        if (t !== 10 && head < 0) {                               // table cells take no side drops
             const x0 = columnX(hit), w = laneOf(hit).w, band = Math.min(24, w / 6)
             if (cx < x0 + band) return { gap: -1, lane: -1, besideRow: hit, besideSide: 1 }
             if (cx > x0 + w - band) return { gap: -1, lane: -1, besideRow: hit, besideSide: 0 }
@@ -866,7 +775,7 @@ FocusScope {
     readonly property real videoTransportH: 40
     readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
-        && activeTableRow < 0 && activePdfRow < 0   // not in a full-frame tab
+        && activePdfRow < 0   // not in a full-frame tab
         && activeVideoRow < 0 && activeSketchRow < 0   // the studio has its own surface; sketch tab hides the doc
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     // Scrolled away / entered a table or PDF tab → tear the player down. NOT
@@ -1154,17 +1063,13 @@ FocusScope {
         mergeDropGap = mergeGapForY(ey + flick.contentY)
     }
     function endMergeDrop() { mergeDragActive = false; mergeDropGap = -1 }
-    // Drop-onto-a-cell target (an image dragged over a table cell); −1 = none. When
-    // set, the block-insertion gap line is suppressed and the cell is highlighted.
-    property int dropTableRow: -1
-    property int dropCellR: -1
-    property int dropCellC: -1
-    // A derived table's cell under the files (SR-4 S7b); −1 = none.
+    // A table's cell under the files (SR-4 S7b); −1 = none. When set, the
+    // block-insertion gap line is suppressed and the cell is highlighted.
     property int dropGridHead: -1
     property int dropGridR: -1
     property int dropGridC: -1
     function clearDropState() {
-        imageDropGap = -1; dropTableRow = -1; dropCellR = -1; dropCellC = -1
+        imageDropGap = -1
         imageDropLane = -1; imageDropBesideRow = -1; imageDropBesideSide = -1
         dropGridHead = -1; dropGridR = -1; dropGridC = -1
     }
@@ -1183,15 +1088,12 @@ FocusScope {
         const r = blockModel.gridRowOf(rec)
         return { head: head, r: r, c: c, accepts: r < blockModel.headerCount(head) || blockModel.gridColumnKind(head, c) === 0 }
     }
-    // Aim a drag at a content point: a table cell wins (→ image into cell), else a
+    // Aim a drag at a content point: a table cell wins (→ media into the cell), else a
     // block-insertion gap. Mutually exclusive, so the affordances don't both show.
     function aimDrop(cx, cy) {
-        var th = root.tableHitAt(cx, cy)
         imageDropLane = -1; imageDropBesideRow = -1; imageDropBesideSide = -1
         dropGridHead = -1; dropGridR = -1; dropGridC = -1
-        if (th) { dropTableRow = th.row; dropCellR = th.r; dropCellC = th.c; imageDropGap = -1; return }
-        dropTableRow = -1; dropCellR = -1; dropCellC = -1
-        const gc = root.gridCellAtPoint(cx, cy)                 // a derived table's cell (a typed one: no target)
+        const gc = root.gridCellAtPoint(cx, cy)                 // a table's cell (a typed one: no target)
         if (gc) {
             if (gc.accepts) { dropGridHead = gc.head; dropGridR = gc.r; dropGridC = gc.c }
             imageDropGap = -1
@@ -1230,21 +1132,11 @@ FocusScope {
                 return
             }
             if (root.activeFrameId !== "") { root.clearDropState(); return }
-            // A drop lands the caret on the new media (or table cell) → leaving the
-            // edited text block, so consume its inline md first (commit doesn't move
-            // rows, so the drop-target indices below stay valid).
+            // A drop lands the caret on the new media → leaving the edited text block, so
+            // consume its inline md first (commit doesn't move rows, so the drop-target
+            // indices below stay valid).
             blockModel.commitMarkdown(cursor.focusRow)
-            // Over a table cell → drop the (first loadable) image into that cell.
-            if (root.dropTableRow >= 0) {
-                var tr = root.dropTableRow, cr = root.dropCellR, cc = root.dropCellC, ok = false
-                for (var j = 0; j < drop.urls.length && !ok; ++j)
-                    if (blockModel.tableSetCellImageFromUrl(tr, cr, cc, drop.urls[j].toString())) ok = true
-                root.clearDropState()
-                if (ok) { cursor.setCaret(tr, 0); tcur.place(cr, cc, 0); root.ensureVisible(tr) }
-                drop.accept()
-                return
-            }
-            if (root.dropGridHead >= 0) {             // over a derived table's cell → media blocks in it (S7b)
+            if (root.dropGridHead >= 0) {             // over a table's cell → media blocks in it (S7b)
                 const urls = []
                 for (let j = 0; j < drop.urls.length; ++j) urls.push(drop.urls[j].toString())
                 const land = blockModel.gridInsertMedia(root.dropGridHead, root.dropGridR, root.dropGridC, urls)
@@ -1384,11 +1276,11 @@ FocusScope {
             root.ensureVisible(r)
             sync()
         }
-        // Opaque blocks (table/media/divider) hold non-prose content (a table's is
-        // JSON) — a cross-block text merge would spill it. Never merge across one.
-        function opaque(r) { var t = blockModel.typeForRow(r); return t === 7 || t === 3 || t === 6 }
-        // Is the CARET on a media/divider? (Tables route to tcur, never reach these
-        // text ops.) These blocks have no text caret, so text ops must not edit them.
+        // Opaque blocks (media/divider) hold non-prose content — a cross-block text
+        // merge would spill it. Never merge across one.
+        function opaque(r) { var t = blockModel.typeForRow(r); return t === 3 || t === 6 }
+        // Is the CARET on a media/divider? These blocks have no text caret, so text
+        // ops must not edit them.
         function opaqueHere() { var t = blockModel.typeForRow(focusRow); return t === 3 || t === 6 }
         // `repeat` = key auto-repeat: it never makes a structural change (SR-0 P6) — a held
         // Backspace/Delete won't delete a selected or focused media/divider, remove a block
@@ -1515,227 +1407,6 @@ FocusScope {
         }
     }
 
-    // --- Table sub-cursor. Active only while the main caret sits on a table
-    // block (cursor.focusRow). Tracks the active cell (cr,cc) and an in-cell text
-    // caret/selection (pos/anchorPos). Edits go through BlockModel's table seam;
-    // navigation off the grid edge hands back to the main cursor (exitTable).
-    QtObject {
-        id: tcur
-        property int cr: 0
-        property int cc: 0
-        property int pos: 0
-        property int anchorPos: 0
-        // Rectangular cell-range selection (−1 = none); set by cross-cell drag.
-        property int rangeR0: -1
-        property int rangeC0: -1
-        property int rangeR1: -1
-        property int rangeC1: -1
-        function clearRange() { rangeR0 = -1; rangeC0 = -1; rangeR1 = -1; rangeC1 = -1 }
-        function setRange(r0, c0, r1, c1) { rangeR0 = r0; rangeC0 = c0; rangeR1 = r1; rangeC1 = c1 }
-        // Shift+arrow: grow/shrink the range by moving its head; the anchor
-        // stays at the focused cell (rendering normalises the corners).
-        function extendRange(dr, dc) {
-            clearSets()
-            if (rangeR0 < 0) { rangeR0 = cr; rangeC0 = cc; rangeR1 = cr; rangeC1 = cc }
-            rangeR1 = Math.max(0, Math.min(rows() - 1, rangeR1 + dr))
-            rangeC1 = Math.max(0, Math.min(cols() - 1, rangeC1 + dc))
-            cursor.sync()
-        }
-        // --- Selection SETS (multi-select, 2026-08-21): homogeneous — a set
-        // of whole rows OR a set of whole columns OR the cell rect above,
-        // never mixed. JS array contents don't notify, so every writer
-        // reassigns a fresh array AND bumps selRev (the BlockTable bindings
-        // key on it). lastSelR/C = the Shift-span anchors (last plain pick).
-        property var selRows: []
-        property var selCols: []
-        property int selRev: 0
-        property int lastSelR: -1
-        property int lastSelC: -1
-        function clearSets() {
-            if (!selRows.length && !selCols.length && lastSelR < 0 && lastSelC < 0) return
-            selRows = []; selCols = []; lastSelR = -1; lastSelC = -1; selRev++
-        }
-        function clearAll() { clearRange(); clearSets() }
-        readonly property bool hasSel: rangeR0 >= 0 || selRows.length > 0 || selCols.length > 0
-        function setRowSel(a, anchor) {
-            clearRange(); selCols = []; lastSelC = -1
-            selRows = a; lastSelR = anchor; selRev++; cursor.sync()
-        }
-        function setColSel(a, anchor) {
-            clearRange(); selRows = []; lastSelR = -1
-            selCols = a; lastSelC = anchor; selRev++; cursor.sync()
-        }
-        function toggleRow(r) {
-            var a = selRows.slice(); var i = a.indexOf(r)
-            i >= 0 ? a.splice(i, 1) : a.push(r)
-            setRowSel(a, r)
-        }
-        function toggleCol(c) {
-            var a = selCols.slice(); var i = a.indexOf(c)
-            i >= 0 ? a.splice(i, 1) : a.push(c)
-            setColSel(a, c)
-        }
-        function extendRowsTo(r) {
-            var a0 = lastSelR >= 0 ? lastSelR : cr, a = []
-            for (var i = Math.min(a0, r); i <= Math.max(a0, r); ++i)
-                if (i >= blockModel.tableHeaderRows(row)) a.push(i)
-            setRowSel(a, a0)   // the anchor stays put across repeated shift-clicks
-        }
-        function extendColsTo(c) {
-            var a0 = lastSelC >= 0 ? lastSelC : cc, a = []
-            for (var i = Math.min(a0, c); i <= Math.max(a0, c); ++i) a.push(i)
-            setColSel(a, a0)
-        }
-        // Shift+click in a CELL: rect from the anchor (spreadsheet standard).
-        function extendTo(r, c) {
-            clearSets()
-            if (rangeR0 < 0) { rangeR0 = cr; rangeC0 = cc }
-            rangeR1 = r; rangeC1 = c
-            cursor.sync()
-        }
-        // The op-targeting switch for menus/keys.
-        function selKind() {
-            if (selRows.length) return "rows"
-            if (selCols.length) return "cols"
-            if (rangeR0 >= 0) return "rect"
-            return "none"
-        }
-        readonly property int row: cursor.focusRow
-        // Active only when the document selection is COLLAPSED on a table row
-        // (anchor and focus on the same table; cols are always 0 there). A
-        // document range that merely passes through a table stays a document
-        // range — ⌘C/⌘V/arrows keep their document meaning (2026-09-09).
-        readonly property bool active: (blockModel.layoutRevision, blockModel.contentRevision,
-                                        blockModel.typeForRow(cursor.focusRow) === 7
-                                        && cursor.anchorRow === cursor.focusRow)
-
-        function rows() { return Math.max(1, blockModel.tableRows(row)) }
-        function cols() { return Math.max(1, blockModel.tableColumns(row)) }
-        function text() { return blockModel.tableCell(row, cr, cc) }
-        function clampPos() { pos = Math.max(0, Math.min(pos, text().length)) }
-
-        // Place the caret at cell (r,c), char `p` (default end), collapsing selection.
-        function place(r, c, p) {
-            cr = Math.max(0, Math.min(r, rows() - 1))
-            cc = Math.max(0, Math.min(c, cols() - 1))
-            pos = (p === undefined) ? text().length : p
-            clampPos(); anchorPos = pos
-            clearAll()
-            cursor.sync()
-        }
-
-        // Text mutations go through the span-aware model ops so inline formatting
-        // stays glued to its characters (tableCellInsert/Delete shift the spans).
-        function delSel() {
-            var lo = Math.min(pos, anchorPos), hi = Math.max(pos, anchorPos)
-            blockModel.tableCellDelete(row, cr, cc, lo, hi)
-            pos = lo; anchorPos = lo
-        }
-        function type(ch) {
-            if (pos !== anchorPos) delSel()
-            // Never type INSIDE a chip (atomic, DT-2) — snap to its far edge.
-            var tr = blockModel.tableChoiceRangeAt(row, cr, cc, pos)
-            if (tr.length === 2 && pos > tr[0]) { pos = tr[1]; anchorPos = pos }
-            blockModel.tableCellInsert(row, cr, cc, pos, ch)
-            pos += ch.length; anchorPos = pos; cursor.sync()
-        }
-        function backspace() {
-            if (pos !== anchorPos) { delSel(); cursor.sync(); return }
-            if (pos > 0) {
-                // A chip is atomic: a backspace touching ANY of it removes the
-                // whole chip (label + span) — the block-chip rule.
-                var br = blockModel.tableChoiceRangeAt(row, cr, cc, pos - 1)
-                if (br.length === 2) {
-                    blockModel.tableRemoveChoiceAt(row, cr, cc, br[0])
-                    pos = br[0]; anchorPos = pos; cursor.sync(); return
-                }
-                blockModel.tableCellDelete(row, cr, cc, pos - 1, pos); pos--; anchorPos = pos
-            }
-            // At the cell start, Backspace removes the cell's image (it sits above
-            // the text), mirroring backspace-at-block-start.
-            else if (blockModel.tableCellMedia(row, cr, cc) !== "") blockModel.tableClearCellMedia(row, cr, cc)
-            cursor.sync()
-        }
-        function forwardDelete() {
-            if (pos !== anchorPos) { delSel(); cursor.sync(); return }
-            if (pos < text().length) {
-                var fr = blockModel.tableChoiceRangeAt(row, cr, cc, pos)
-                if (fr.length === 2) {
-                    blockModel.tableRemoveChoiceAt(row, cr, cc, fr[0])
-                    pos = fr[0]; anchorPos = pos; cursor.sync(); return
-                }
-                blockModel.tableCellDelete(row, cr, cc, pos, pos + 1)
-            }
-            // Forward-delete in an empty cell also clears its image.
-            else if (text().length === 0 && blockModel.tableCellMedia(row, cr, cc) !== "")
-                blockModel.tableClearCellMedia(row, cr, cc)
-            cursor.sync()
-        }
-        function left(shift) {
-            if (pos > 0) {
-                // Stepping INTO a chip hops to its near edge (atomic).
-                var lr = blockModel.tableChoiceRangeAt(row, cr, cc, pos - 1)
-                pos = (lr.length === 2) ? lr[0] : pos - 1
-            }
-            else if (cc > 0) { cc--; pos = text().length }
-            else if (cr > 0) { cr--; cc = cols() - 1; pos = text().length }
-            if (!shift) anchorPos = pos
-            cursor.sync()
-        }
-        function right(shift) {
-            if (pos < text().length) {
-                var rr = blockModel.tableChoiceRangeAt(row, cr, cc, pos)
-                pos = (rr.length === 2) ? rr[1] : pos + 1
-            }
-            else if (cc < cols() - 1) { cc++; pos = 0 }
-            else if (cr < rows() - 1) { cr++; cc = 0; pos = 0 }
-            if (!shift) anchorPos = pos
-            cursor.sync()
-        }
-        function up() {
-            if (cr > 0) { cr--; clampPos(); anchorPos = pos; cursor.sync() }
-            else root.exitTable(-1)
-        }
-        function down() {
-            if (cr < rows() - 1) { cr++; clampPos(); anchorPos = pos; cursor.sync() }
-            else root.exitTable(1)
-        }
-        function tab(shift) {
-            if (shift) {
-                if (cc > 0) cc--
-                else if (cr > 0) { cr--; cc = cols() - 1 }
-            } else {
-                if (cc < cols() - 1) cc++
-                else {
-                    if (cr >= rows() - 1) blockModel.tableInsertRow(row, rows())   // grow off the end
-                    cr++; cc = 0
-                }
-            }
-            pos = 0; anchorPos = text().length     // select the cell (Excel-style)
-            cursor.sync()
-        }
-        function enter(shift) {
-            if (shift) { type("\n"); return }       // newline within the cell
-            if (cr < rows() - 1) cr++
-            else { blockModel.tableInsertRow(row, rows()); cr++ }
-            pos = 0; anchorPos = 0; cursor.sync()
-        }
-    }
-
-    // Move the main caret out of the focused table (dir<0 up, dir>0 down).
-    function exitTable(dir) {
-        var r = cursor.focusRow, n = blockModel.count
-        if (dir < 0 && r > 0) cursor.setCaret(r - 1, blockModel.contentForRow(r - 1).length)
-        else if (dir > 0 && r < n - 1) cursor.setCaret(r + 1, 0)
-        root.ensureVisible(cursor.focusRow)
-    }
-    // Enter a table at `row` from an adjacent block: top-left from above, bottom-
-    // left from below; `edge` is -1 (came from below) or +1 (came from above).
-    function enterTable(row, fromAbove) {
-        cursor.setCaret(row, 0)
-        tcur.place(fromAbove ? 0 : tcur.rows() - 1, 0, 0)
-    }
-
     // Undo/redo restore the caret (and selection) the model snapshotted.
     Connections {
         target: blockModel
@@ -1842,82 +1513,6 @@ FocusScope {
             && p.y >= -pad && p.y <= cell.langChip.height + pad) return row
         return -1
     }
-    // (cx, cy) in CONTENT coordinates → {row, r, c, pos} if over a table, else
-    // null. Delegates to the table's own BlockTable.cellAtPoint (its delegate
-    // can't own a MouseArea — the document mouse layer sits above it).
-    function tableHitAt(cx, cy) {
-        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
-        if (blockModel.typeForRow(row) !== 7) return null
-        var dcell = cellForRow(row)
-        var bt = dcell ? dcell.tableItem : null
-        if (!bt) return null
-        var p = bt.mapFromItem(mouse, cx, cy)
-        var hit = bt.cellAtPoint(p.x, p.y)
-        return { row: row, r: hit.r, c: hit.c, pos: hit.pos }
-    }
-
-    // Shared table mouse interaction (used by both the document central handler and
-    // the full-frame tab view). `bt` is the BlockTable; (lx,ly) are bt-local coords.
-    function beginTableInteraction(bt, row, lx, ly, mods) {
-        var bc = bt.columnBorderAt(lx)
-        if (bc >= 0) {                                       // near a border → resize
-            root.tableResizing = true; root.resizeRow = row; root.resizeColIdx = bc
-            root.resizeW = bt.widthForDrag(bc, lx)
-            return
-        }
-        // Shift+click: SAME cell with no live rect → extend the in-cell TEXT
-        // selection to the click point (the multi-word gesture); any other
-        // cell (or a live rect) → extend the cell rect from the anchor
-        // (spreadsheet standard). Return WITHOUT arming tableDragging — a
-        // same-cell jitter in updateTableInteraction would collapse the rect.
-        if ((mods & Qt.ShiftModifier) && tcur.active && row === cursor.focusRow) {
-            var sh = bt.cellAtPoint(lx, ly)
-            if (sh.r === tcur.cr && sh.c === tcur.cc && tcur.rangeR0 < 0
-                && !tcur.selRows.length && !tcur.selCols.length) {
-                tcur.pos = sh.pos; tcur.clampPos()   // anchorPos stays — text extend
-                cursor.sync()
-            } else {
-                tcur.extendTo(sh.r, sh.c)
-            }
-            return
-        }
-        var hit = bt.cellAtPoint(lx, ly)
-        // Inline chip in a text cell (2026-08-21) → the picker, not a caret
-        // placement; the press never arms dragging (the block-chip rule).
-        var chipRng = blockModel.tableChoiceRangeAt(row, hit.r, hit.c, hit.pos)
-        if (chipRng.length === 2) {
-            if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
-            cursor.setCaret(row, 0)
-            tcur.place(hit.r, hit.c, chipRng[1])   // park after the chip
-            var cpt = bt.mapToItem(root, lx, ly + 14)
-            root.openCellChoicePicker(row, hit.r, hit.c, chipRng[0], cpt.x, cpt.y)
-            return
-        }
-        if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
-        cursor.setCaret(row, 0)
-        tcur.place(hit.r, hit.c, hit.pos)
-        root.tableDragging = true
-        root.tableAnchorR = hit.r; root.tableAnchorC = hit.c; root.tableAnchorPos = hit.pos
-    }
-    function updateTableInteraction(bt, lx, ly) {
-        if (root.tableResizing) { root.resizeW = bt.widthForDrag(root.resizeColIdx, lx); return }
-        if (root.tableDragging) {
-            var hit = bt.cellAtPoint(lx, ly)
-            if (hit.r === root.tableAnchorR && hit.c === root.tableAnchorC) {
-                tcur.clearAll(); tcur.cr = hit.r; tcur.cc = hit.c
-                tcur.anchorPos = root.tableAnchorPos; tcur.pos = hit.pos
-            } else { tcur.clearSets(); tcur.setRange(root.tableAnchorR, root.tableAnchorC, hit.r, hit.c) }
-            cursor.sync()
-        }
-    }
-    function endTableInteraction() {
-        if (root.tableResizing) {
-            blockModel.tableSetColWidth(root.resizeRow, root.resizeColIdx, root.resizeW)
-            root.tableResizing = false; root.resizeColIdx = -1
-        }
-        root.tableDragging = false
-    }
-
     // --- Central navigation. Uses the focus block's text layout for vertical
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
@@ -1942,8 +1537,7 @@ FocusScope {
         else {                               // the next block in reading order (records skipped)
             const nx = blockModel.nextLeaf(cursor.focusRow)
             if (nx < 0) { root.leaveSplitRowAtEdge(true, shift); return }
-            if (blockModel.typeForRow(nx) === 7) root.enterTable(nx, true)
-            else cursor.move(nx, 0, shift)
+            cursor.move(nx, 0, shift)
         }
     }
     function navLeft(shift) {
@@ -1956,8 +1550,7 @@ FocusScope {
         else {                               // the previous block in reading order (records skipped)
             const pv = blockModel.prevLeaf(cursor.focusRow)
             if (pv < 0) { root.leaveSplitRowAtEdge(false, shift); return }
-            if (blockModel.typeForRow(pv) === 7) root.enterTable(pv, false)
-            else cursor.move(pv, blockModel.contentForRow(pv).length, shift)
+            cursor.move(pv, blockModel.contentForRow(pv).length, shift)
         }
     }
     // Backspace at a block's start with no selection (SR-0 §4.2). Blocks merge only within
@@ -1986,11 +1579,6 @@ FocusScope {
             return
         }
         const pt = blockModel.typeForRow(prev)   // case 2: the previous block in this container
-        if (pt === 7) {                           // table before: step into its last cell
-            if (!repeat && blockModel.contentForRow(row).length === 0 && blockModel.count > 1)
-                blockModel.removeBlock(row)       // drop the empty trailing block
-            root.enterTable(prev, false); root.ensureVisible(prev); return
-        }
         if (pt === 3 || pt === 6) { cursor.setCaret(prev, 0); root.ensureVisible(prev); return }   // select first
         const pl = blockModel.contentForRow(prev).length
         blockModel.deleteRange(prev, pl, row, 0)
@@ -2023,7 +1611,6 @@ FocusScope {
             return
         }
         const nt = blockModel.typeForRow(next)
-        if (nt === 7) { root.enterTable(next, true); return }                                   // step into the table
         if (nt === 3 || nt === 6) { cursor.setCaret(next, 0); root.ensureVisible(next); return } // select first
         const col = cursor.focusCol
         blockModel.deleteRange(row, blockModel.contentForRow(row).length, next, 0)   // pull the next block up
@@ -2081,7 +1668,7 @@ FocusScope {
     function pullSideAt(row, cx) {
         if (row < 0 || root.inkMode || root.activeFrameId !== "") return -1
         const t = blockModel.typeForRow(row)
-        if (t === 7 || t === 10) return -1
+        if (t === 10) return -1
         const x0 = columnX(row), w = laneOf(row).w
         if (cx >= x0 && cx < x0 + laneHotBand) return 1
         if (cx > x0 + w - laneHotBand && cx <= x0 + w) return 0
@@ -2439,7 +2026,6 @@ FocusScope {
             }
             if (t < 0) return
             const tt = blockModel.typeForRow(t)
-            if (tt === 7) { root.enterTable(t, !back); return }
             cursor.move(t, (tt === 3 || tt === 6) ? 0 : blockModel.contentForRow(t).length, false)
             return
         }
@@ -2471,8 +2057,7 @@ FocusScope {
         else {                                                  // the block below: in the lane, else the row below at goal-x
             const below = blockModel.leafBelow(cursor.focusRow, cursor.goalX)
             if (below < 0) { root.leaveSplitRowAtEdge(true, shift); return }
-            if (blockModel.typeForRow(below) === 7) root.enterTable(below, true)
-            else cursor.move(below, colAtGoalX(below, 2), shift)
+            cursor.move(below, colAtGoalX(below, 2), shift)
         }
     }
     function navUp(shift) {
@@ -2488,7 +2073,6 @@ FocusScope {
         else {                                                  // the block above: in the lane, else the row above at goal-x
             const above = blockModel.leafAbove(cursor.focusRow, cursor.goalX)
             if (above < 0) { root.leaveSplitRowAtEdge(false, shift); return }
-            if (blockModel.typeForRow(above) === 7) { root.enterTable(above, false); return }
             var prev = cellForRow(above)
             var yLast = (prev && !prev.isMedia) ? prev.teItem.contentHeight - 2 : 0
             cursor.move(above, colAtGoalX(above, yLast), shift)
@@ -2502,7 +2086,7 @@ FocusScope {
     function caretLandRow(row, dir) {
         var n = blockModel.count
         if (n === 0) return 0
-        function ok(r) { var t = blockModel.typeForRow(r); return t !== 3 && t !== 6 && t !== 7 && t !== 10 }   // never a record
+        function ok(r) { var t = blockModel.typeForRow(r); return t !== 3 && t !== 6 && t !== 10 }   // never a record
         var r = Math.max(0, Math.min(n - 1, row))
         var s = r
         while (s >= 0 && s < n) { if (ok(s)) return s; s += dir }
@@ -2603,7 +2187,6 @@ FocusScope {
                                         && blockModel.linkAt(cursor.focusRow, cursor.focusCol) !== "")
 
     function applyFormat(kind) {
-        if (tcur.active) { applyCellFormat(kind); return }   // table: format the cell selection
         // No selection → Word-style toggle: arm the attribute for the next typing.
         if (!cursor.hasSel) { cursor.toggleMark(kind); return }
         var allCovered = true
@@ -2615,76 +2198,8 @@ FocusScope {
         blockModel.endGroup()
         cursor.sync()
     }
-    // Bold/italic/underline/strike inside a table. A multi-cell range formats every
-    // cell whole (one undo step); otherwise toggle the span over the in-cell text
-    // selection (cells have no armed-toggle path, so a caret-only does nothing).
-    function applyCellFormat(kind) {
-        if (tcur.rangeR0 >= 0) {
-            var r0 = Math.min(tcur.rangeR0, tcur.rangeR1), r1 = Math.max(tcur.rangeR0, tcur.rangeR1)
-            var c0 = Math.min(tcur.rangeC0, tcur.rangeC1), c1 = Math.max(tcur.rangeC0, tcur.rangeC1)
-            var allOn = true, rr, cc, len
-            for (rr = r0; rr <= r1 && allOn; ++rr)
-                for (cc = c0; cc <= c1; ++cc) {
-                    len = blockModel.tableCell(tcur.row, rr, cc).length
-                    if (len > 0 && !blockModel.tableCellHasFormat(tcur.row, rr, cc, 0, len, kind)) { allOn = false; break }
-                }
-            blockModel.beginGroup(tcur.row, tcur.row)
-            for (rr = r0; rr <= r1; ++rr)
-                for (cc = c0; cc <= c1; ++cc) {
-                    len = blockModel.tableCell(tcur.row, rr, cc).length
-                    if (len > 0) blockModel.tableSetCellFormat(tcur.row, rr, cc, 0, len, kind, !allOn)
-                }
-            blockModel.endGroup()
-            cursor.sync()
-            return
-        }
-        var lo = Math.min(tcur.pos, tcur.anchorPos), hi = Math.max(tcur.pos, tcur.anchorPos)
-        if (lo === hi) return
-        var on = !blockModel.tableCellHasFormat(tcur.row, tcur.cr, tcur.cc, lo, hi, kind)
-        blockModel.tableSetCellFormat(tcur.row, tcur.cr, tcur.cc, lo, hi, kind, on)
-        cursor.sync()
-    }
-    function clearCellFormatting() {
-        // A cell range → strip every selected cell's inline formatting (one undo).
-        if (tcur.rangeR0 >= 0) {
-            var r0 = Math.min(tcur.rangeR0, tcur.rangeR1), r1 = Math.max(tcur.rangeR0, tcur.rangeR1)
-            var c0 = Math.min(tcur.rangeC0, tcur.rangeC1), c1 = Math.max(tcur.rangeC0, tcur.rangeC1)
-            blockModel.beginGroup(tcur.row, tcur.row)
-            for (var rr = r0; rr <= r1; ++rr)
-                for (var cc = c0; cc <= c1; ++cc)
-                    blockModel.tableClearCellFormat(tcur.row, rr, cc, 0, blockModel.tableCell(tcur.row, rr, cc).length)
-            blockModel.endGroup()
-            cursor.sync()
-            return
-        }
-        var lo = Math.min(tcur.pos, tcur.anchorPos), hi = Math.max(tcur.pos, tcur.anchorPos)
-        if (lo === hi) { hi = blockModel.tableCell(tcur.row, tcur.cr, tcur.cc).length; lo = 0 }
-        blockModel.tableClearCellFormat(tcur.row, tcur.cr, tcur.cc, lo, hi)
-        cursor.sync()
-    }
-    // Revert-to-default colour: strip fg + bg from the selection — table cell(s)
-    // (cell-level colours) or selected text (colour spans).
+    // Revert-to-default colour: strip fg + bg from the selected text (colour spans).
     function revertColors() {
-        if (tcur.active) {
-            var fr = cursor.focusRow
-            blockModel.beginGroup(fr, fr)   // fg+bg clear = ONE undo entry (was two)
-            if (tcur.selRows.length) {
-                blockModel.tableSetRowsColor(fr, tcur.selRows, true, "")
-                blockModel.tableSetRowsColor(fr, tcur.selRows, false, "")
-            } else if (tcur.selCols.length) {
-                blockModel.tableSetColsColor(fr, tcur.selCols, true, "")
-                blockModel.tableSetColsColor(fr, tcur.selCols, false, "")
-            } else {
-                var r0, c0, r1, c1
-                if (tcur.rangeR0 >= 0) { r0 = tcur.rangeR0; c0 = tcur.rangeC0; r1 = tcur.rangeR1; c1 = tcur.rangeC1 }
-                else { r0 = tcur.cr; c0 = tcur.cc; r1 = tcur.cr; c1 = tcur.cc }
-                blockModel.tableSetCellColor(fr, r0, c0, r1, c1, true, "")    // clear fg
-                blockModel.tableSetCellColor(fr, r0, c0, r1, c1, false, "")   // clear bg
-            }
-            blockModel.endGroup()
-            cursor.sync()
-            return
-        }
         if (!cursor.hasSel) return
         blockModel.beginGroup(cursor.loRow, cursor.hiRow)
         for (var r = cursor.loRow; r <= cursor.hiRow; ++r) {
@@ -2706,10 +2221,7 @@ FocusScope {
     // the document so typing continues immediately without re-clicking.
     function pickTextColor(hex) {
         cursor.armedFg = "" + hex
-        // In a table the DOC cursor is always collapsed (cursor.hasSel is
-        // never true there) — tcur.active is the table's "has a target":
-        // the selection when live, else the focused cell.
-        if (cursor.hasSel || tcur.active) applyColorToSelection(true, "" + hex, true)
+        if (cursor.hasSel) applyColorToSelection(true, "" + hex, true)
         forceActiveFocus()
     }
     // Highlight mirrors the text pen, plus a rail toggle. pickHighlight arms +
@@ -2718,12 +2230,12 @@ FocusScope {
     readonly property bool highlightArmed: cursor.armedBg !== ""
     function pickHighlight(hex) {
         cursor.armedBg = "" + hex
-        if (cursor.hasSel || tcur.active) applyColorToSelection(false, "" + hex, true)
+        if (cursor.hasSel) applyColorToSelection(false, "" + hex, true)
         forceActiveFocus()
     }
     function toggleHighlight(hex) {
         if (cursor.armedBg !== "") {                       // currently on → off
-            if (cursor.hasSel || tcur.active) applyColorToSelection(false, "", false)   // "" removes it
+            if (cursor.hasSel) applyColorToSelection(false, "", false)   // "" removes it
             cursor.armedBg = ""
             forceActiveFocus()
         } else {
@@ -2731,7 +2243,6 @@ FocusScope {
         }
     }
     function applyColorToSelection(isFg, hex, coalesce) {
-        if (tcur.active) { applyTableColor(isFg, hex); return }   // table: colour the cell(s)
         if (!cursor.hasSel) return
         var key = coalesce ? (isFg ? "fgcolor" : "bgcolor") : ""
         if (cursor.loRow === cursor.hiRow) {
@@ -2760,19 +2271,6 @@ FocusScope {
         }
         blockModel.endGroup()
         cursor.sync()
-    }
-    // Right-rail colour applied to a table: fg = text colour, else cell background.
-    // A cell range is coloured if one is selected, otherwise just the focused cell.
-    function applyTableColor(isFg, hex) {
-        var fr = cursor.focusRow
-        if (tcur.selRows.length)
-            blockModel.tableSetRowsColor(fr, tcur.selRows, isFg, hex)
-        else if (tcur.selCols.length)
-            blockModel.tableSetColsColor(fr, tcur.selCols, isFg, hex)
-        else if (tcur.rangeR0 >= 0)
-            blockModel.tableSetCellColor(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1, isFg, hex)
-        else
-            blockModel.tableSetCellColor(fr, tcur.cr, tcur.cc, tcur.cr, tcur.cc, isFg, hex)
     }
 
     // Link button / Cmd+K: open the URL editor over the right target. A single-row
@@ -2878,15 +2376,7 @@ FocusScope {
         // A run menu: the selection is the target — replace it (⌘V's path).
         if (blockMenu.menuInSel) { doPaste(); return }
         var t = blockModel.typeForRow(row)
-        // Table: paste INTO the clicked cell (the same thing ⌘V does there).
-        if (t === 7 && r !== undefined && r >= 0) {
-            if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow)
-            cursor.setCaret(row, 0)
-            tcur.place(r, c, 0)
-            doPaste()
-            return
-        }
-        var textish = !(t === 3 || t === 6 || t === 7)   // Media / Divider / Table
+        var textish = !(t === 3 || t === 6)   // Media / Divider
         if (textish) {
             if (cursor.focusRow !== row)
                 cursor.setCaret(row, blockModel.contentForRow(row).length)
@@ -2920,221 +2410,10 @@ FocusScope {
         if (first >= 0) { cursor.setCaret(first, 0); root.ensureVisible(first) }
     }
     function insertTableAtCaret() { insertTableAt(cursor.focusRow) }
-    // Table context-menu ops — act on the right-clicked block (menuRow) + cell.
-    function tblInsRowAbove() { blockModel.tableInsertRow(menuRow, menuCellR) }
-    function tblInsRowBelow() { blockModel.tableInsertRow(menuRow, menuCellR + 1) }
-    function tblInsColLeft()  { blockModel.tableInsertColumn(menuRow, menuCellC) }
-    function tblInsColRight() { blockModel.tableInsertColumn(menuRow, menuCellC + 1) }
-    // Menu op targeting (multi-select 2026-08-21): the SELECTION when the
-    // right-clicked cell sits inside a multi-member set, else null (single).
-    function menuSelRows() {
-        return (tcur.selRows.length > 1 && tcur.selRows.indexOf(menuCellR) >= 0)
-               ? tcur.selRows : null
-    }
-    function menuSelCols() {
-        return (tcur.selCols.length > 1 && tcur.selCols.indexOf(menuCellC) >= 0)
-               ? tcur.selCols : null
-    }
-    function tblDelRow() {
-        var s = menuSelRows()
-        if (s) { tcur.clearAll(); blockModel.tableDeleteRows(menuRow, s) }
-        else blockModel.tableDeleteRow(menuRow, menuCellR)
-    }
-    function tblDelCol() {
-        var s = menuSelCols()
-        if (s) { tcur.clearAll(); blockModel.tableDeleteColumns(menuRow, s) }
-        else blockModel.tableDeleteColumn(menuRow, menuCellC)
-    }
-    function tblClearRows() { var s = menuSelRows(); if (s) blockModel.tableClearRows(menuRow, s) }
-    function tblClearCols() { var s = menuSelCols(); if (s) blockModel.tableClearColumns(menuRow, s) }
-    function tblCopyRows() {
-        var s = menuSelRows(); if (!s) return
-        clipboard.writeTable(blockModel.tableRowsTSV(menuRow, s),
-                             blockModel.tableRowsHtml(menuRow, s))
-    }
-    function tblCopyCols() {
-        var s = menuSelCols(); if (!s) return
-        clipboard.writeTable(blockModel.tableColsTSV(menuRow, s),
-                             blockModel.tableColsHtml(menuRow, s))
-    }
-    // Cell-rect ops + promotion to whole-row/column sets ("grab a couple of
-    // cells, then Select columns" — the rect's span becomes the set).
-    function tblSelectRectRows() {
-        var lo = Math.min(tcur.rangeR0, tcur.rangeR1), hi = Math.max(tcur.rangeR0, tcur.rangeR1)
-        var hdr = blockModel.tableHeaderRows(menuRow), a = []
-        for (var r = Math.max(lo, hdr); r <= hi; ++r) a.push(r)
-        if (a.length) tcur.setRowSel(a, a[0])
-    }
-    function tblSelectRectCols() {
-        var lo = Math.min(tcur.rangeC0, tcur.rangeC1), hi = Math.max(tcur.rangeC0, tcur.rangeC1)
-        var a = []
-        for (var c = lo; c <= hi; ++c) a.push(c)
-        tcur.setColSel(a, lo)
-    }
-    function tblCopyRect() {
-        clipboard.writeTable(blockModel.tableRangeTSV(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1),
-                             blockModel.tableRangeHtml(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1))
-    }
-    function tblClearRect() {
-        blockModel.tableClearRange(menuRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
-        tcur.clearAll(); cursor.sync()
-    }
-    // Double-click in a table cell: select the word under the pointer (the
-    // document word-select, spoken in cell coordinates).
-    function tableWordSelect(bt, row, lx, ly) {
-        var hit = bt.cellAtPoint(lx, ly)
-        if (row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
-        cursor.setCaret(row, 0)
-        tcur.place(hit.r, hit.c, hit.pos)
-        var t = tcur.text()
-        var s = hit.pos, e = hit.pos
-        while (s > 0 && /\w/.test(t.charAt(s - 1))) s--
-        while (e < t.length && /\w/.test(t.charAt(e))) e++
-        tcur.anchorPos = s; tcur.pos = e
-        cursor.sync()
-    }
-    function tblToggleHeader(){ blockModel.tableSetHeaderRows(menuRow, blockModel.tableHeaderRows(menuRow) > 0 ? 0 : 1) }
-    function tblMoveRow(d)    { blockModel.tableMoveRow(menuRow, menuCellR, menuCellR + d) }
-    function tblMoveCol(d)    { blockModel.tableMoveColumn(menuRow, menuCellC, menuCellC + d) }
-    function tblDupRow()      { blockModel.tableDuplicateRow(menuRow, menuCellR) }
-    function tblDupCol()      { blockModel.tableDuplicateColumn(menuRow, menuCellC) }
-    function tblSort(asc)     { blockModel.tableSortByColumn(menuRow, menuCellC, asc) }
-    // ⌘D/⌘R: fill the selected cell-range from its top row / left column; with no
-    // range, fill the focused cell from the cell above / to its left.
-    function tblFill(right) {
-        if (!tcur.active) return
-        var r0, c0, r1, c1
-        if (tcur.rangeR0 >= 0) {
-            r0 = Math.min(tcur.rangeR0, tcur.rangeR1); r1 = Math.max(tcur.rangeR0, tcur.rangeR1)
-            c0 = Math.min(tcur.rangeC0, tcur.rangeC1); c1 = Math.max(tcur.rangeC0, tcur.rangeC1)
-        } else if (right) {
-            if (tcur.cc === 0) return
-            r0 = tcur.cr; r1 = tcur.cr; c0 = tcur.cc - 1; c1 = tcur.cc
-        } else {
-            if (tcur.cr === 0) return
-            r0 = tcur.cr - 1; r1 = tcur.cr; c0 = tcur.cc; c1 = tcur.cc
-        }
-        if (right) blockModel.tableFillRight(tcur.row, r0, c0, r1, c1)
-        else blockModel.tableFillDown(tcur.row, r0, c0, r1, c1)
-    }
-    // Whole-row / whole-column selection (the tcur rectangular range) — from the
-    // context menu, or a click (not a drag) on a full-frame reorder grip.
-    // Whole-row/column selection is a SET now (multi-select 2026-08-21):
-    // plain = replace, Shift = contiguous span from the last plain pick,
-    // Cmd (Qt.ControlModifier on macOS) = toggle membership. Focus moves to
-    // the picked row/column WITHOUT place() — place() clears the sets.
-    function gripSelectRow(row, r, mods) {
-        if (cursor.focusRow !== row) { blockModel.commitMarkdown(cursor.focusRow); cursor.setCaret(row, 0) }
-        if (mods & Qt.ControlModifier)                            tcur.toggleRow(r)
-        else if ((mods & Qt.ShiftModifier) && tcur.selRows.length) tcur.extendRowsTo(r)
-        else                                                       tcur.setRowSel([r], r)
-        tcur.cr = r; tcur.cc = 0; tcur.pos = 0; tcur.anchorPos = 0
-        cursor.sync()
-    }
-    function gripSelectCol(row, c, mods) {
-        if (cursor.focusRow !== row) { blockModel.commitMarkdown(cursor.focusRow); cursor.setCaret(row, 0) }
-        if (mods & Qt.ControlModifier)                            tcur.toggleCol(c)
-        else if ((mods & Qt.ShiftModifier) && tcur.selCols.length) tcur.extendColsTo(c)
-        else                                                       tcur.setColSel([c], c)
-        tcur.cr = 0; tcur.cc = c; tcur.pos = 0; tcur.anchorPos = 0
-        cursor.sync()
-    }
-    function selectTableRow(row, r)    { gripSelectRow(row, r, 0) }
-    function selectTableColumn(row, c) { gripSelectCol(row, c, 0) }
-    // Header sort: clicking the right edge of a header cell sorts by that column,
-    // toggling direction on repeat. Session-visual state only (the sort itself is
-    // a one-shot undoable mutation; nothing persists).
-    property int  lastSortRow: -1
-    property int  lastSortCol: -1
-    property bool lastSortAsc: true
-    // bt-local point → inline grip zone. Bands sit OUTSIDE the table rect, so
-    // they can never collide with the resize border (±5px), the sort zone
-    // (22px) or widget hits — all of which live INSIDE the grid.
-    function tableGripAt(bt, lx, ly) {
-        if (ly >= -18 && ly < -2 && lx >= 0 && lx < bt.width) {
-            var c = bt.colIndexAt(lx)
-            return c >= 0 ? { kind: "col", index: c } : null
-        }
-        if (lx >= -18 && lx < -2 && ly >= 0 && ly < bt.height) {
-            var r = bt.bodyRowAt(ly)                 // headers: no grip
-            return r >= 0 ? { kind: "row", index: r } : null
-        }
-        return null
-    }
-    function commitInlineGripDrag() {
-        var row = root.gripTableRow
-        if (!root.gripMoved && root.gripFrom >= 0) {
-            if (root.gripDragKind === "col") root.gripSelectCol(row, root.gripFrom, root.gripPressMods)
-            else                             root.gripSelectRow(row, root.gripFrom, root.gripPressMods)
-        } else if (root.gripDropGap >= 0 && root.gripFrom >= 0) {
-            var to = root.gripDropGap > root.gripFrom ? root.gripDropGap - 1 : root.gripDropGap
-            if (to !== root.gripFrom) {
-                if (root.gripDragKind === "col") blockModel.tableMoveColumn(row, root.gripFrom, to)
-                else                             blockModel.tableMoveRow(row, root.gripFrom, to)
-            }
-        }
-        root.gripDragging = false; root.gripDragKind = ""; root.gripFrom = -1
-        root.gripDropGap = -1; root.gripKind = ""; root.gripIndex = -1
-        root.gripTableRow = -1; root.gripPressMods = 0
-    }
-    function headerSortHit(bt, row, r, c, lx) {     // lx = bt-local x
-        if (r !== 0 || blockModel.tableHeaderRows(row) < 1) return false   // glyph lives on the first header row
-        var right = bt.columnLeftX(c) + bt.colW(c) - bt.scrollX
-        return lx > right - 22 && lx <= right
-    }
-    function headerSort(row, c) {
-        var asc = !(lastSortRow === row && lastSortCol === c && lastSortAsc)
-        tcur.clearAll()   // a live selection over re-sorted rows is a lie
-        blockModel.tableSortByColumn(row, c, asc)
-        lastSortRow = row; lastSortCol = c; lastSortAsc = asc
-    }
-    function tblAlign(a) {
-        var s = menuSelCols()
-        if (s) blockModel.tableSetColsAlign(menuRow, s, a)
-        else blockModel.tableSetColAlign(menuRow, menuCellC, a)
-    }
-    function tblColKind()      { return (blockModel.contentRevision, blockModel.tableColumnKind(menuRow, menuCellC)) }
-    function tblMakeChoiceCol(){ var s = menuSelCols()
-                                 if (s) { blockModel.tableSetColumnsKind(menuRow, s, 1); return }   // options edited per column
-                                 blockModel.tableSetColumnKind(menuRow, menuCellC, 1)
-                                 Qt.callLater(root.openChoiceEditor, menuRow, menuCellC) }   // set options right away
-    function tblMakeCheckCol() { var s = menuSelCols()
-                                 if (s) blockModel.tableSetColumnsKind(menuRow, s, 2)
-                                 else blockModel.tableSetColumnKind(menuRow, menuCellC, 2) }
-    function tblMakeTextCol()  { var s = menuSelCols()
-                                 if (s) blockModel.tableSetColumnsKind(menuRow, s, 0)
-                                 else blockModel.tableSetColumnKind(menuRow, menuCellC, 0) }
-    function tblRemoveImage() { blockModel.tableClearCellMedia(menuRow, menuCellR, menuCellC) }
-    readonly property bool menuCellHasImage: blockMenu.isTable
-        && blockModel.tableCellMedia(menuRow, menuCellR, menuCellC) !== ""
 
     // --- Clipboard (copy / cut / paste), table- and text-aware ---
 
     function doCopy() {
-        if (tcur.active) {
-            var fr = cursor.focusRow
-            if (tcur.selRows.length) {
-                clipboard.writeTable(blockModel.tableRowsTSV(fr, tcur.selRows),
-                                     blockModel.tableRowsHtml(fr, tcur.selRows))
-            } else if (tcur.selCols.length) {
-                clipboard.writeTable(blockModel.tableColsTSV(fr, tcur.selCols),
-                                     blockModel.tableColsHtml(fr, tcur.selCols))
-            } else if (tcur.rangeR0 >= 0) {
-                clipboard.writeTable(blockModel.tableRangeTSV(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1),
-                                     blockModel.tableRangeHtml(fr, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1))
-            } else {
-                var t = blockModel.tableCell(fr, tcur.cr, tcur.cc)
-                // No text to copy but the cell holds an image → copy the image.
-                if (tcur.pos === tcur.anchorPos && t.length === 0
-                    && blockModel.tableCellMedia(fr, tcur.cr, tcur.cc) !== "") {
-                    clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(fr, tcur.cr, tcur.cc))
-                    return
-                }
-                clipboard.writeText(tcur.pos !== tcur.anchorPos
-                    ? t.slice(Math.min(tcur.pos, tcur.anchorPos), Math.max(tcur.pos, tcur.anchorPos)) : t)
-            }
-            return
-        }
         // Derived tables (SR-4 S8c, R-I2): a cell rectangle or a grip-picked row / column set copies
         // by the CELL grain — the fragment payload, quoted TSV, and one HTML table (included header
         // rows in <thead>).
@@ -3190,8 +2469,7 @@ FocusScope {
             html = exporter.htmlFragment(lR, hR)
         } else if (lR === hR) {
             var t = blockModel.typeForRow(lR)
-            if (t === 7) html = blockModel.tableRangeHtml(lR, 0, 0, blockModel.tableRows(lR) - 1, blockModel.tableColumns(lR) - 1)
-            else if (t === 3 && blockModel.mediaKind(lR) === "image") img = blockModel.mediaUrl(lR)
+            if (t === 3 && blockModel.mediaKind(lR) === "image") img = blockModel.mediaUrl(lR)
         }
         clipboard.writeBlocks(json, txt, html, img)
     }
@@ -3200,28 +2478,9 @@ FocusScope {
     // (the applyLink insert-mode shape).
     function insertChoiceChip() {
         if (!blockModel.documentOpen || root.inkMode) return
-        // Frame tabs refuse — except the full-frame TABLE studio, whose cells
-        // are text and take chips like the inline view (2026-08-21).
-        if (root.activeFrameId !== "" && root.activeTableRow < 0) return
-        // Table cell (inline or full-frame): the cell-span variant.
-        if (tcur.active) {
-            var trow = tcur.row
-            if (tcur.pos !== tcur.anchorPos) tcur.delSel()
-            tcur.clearAll()
-            var ts = blockModel.tableInsertChoiceAt(trow, tcur.cr, tcur.cc, tcur.pos)
-            if (ts < 0) return
-            var trng = blockModel.tableChoiceRangeAt(trow, tcur.cr, tcur.cc, ts)
-            if (trng.length === 2) { tcur.pos = trng[1]; tcur.anchorPos = tcur.pos; cursor.sync() }
-            var bt = (root.activeTableRow >= 0) ? frameTable
-                   : (root.cellForRow(trow) ? root.cellForRow(trow).tableItem : null)
-            if (bt) {
-                var o = bt.cellOriginInView(tcur.cr, tcur.cc)
-                var bpt = bt.mapToItem(root, o.x + 8, o.y + bt.rowHeightAt(tcur.cr))
-                root.openCellChoicePicker(trow, tcur.cr, tcur.cc, ts, bpt.x, bpt.y)
-            }
-            return
-        }
-        if (root.activeFrameId !== "") return   // table studio but no cell focus
+        // Frame tabs refuse — except a table's grid frame, whose cells are blocks and
+        // take chips like the document view.
+        if (root.activeFrameId !== "" && root.frameLo < 0) return
         if (root.typedCellHere() > 0) return    // a typed table cell holds its column's chip only
         if (cursor.hasSel) cursor.deleteSelection()
         var row = cursor.focusRow
@@ -3267,7 +2526,7 @@ FocusScope {
         const input = { hasBlocks: payload.length > 0, hasHtml: html.length > 0, hasImage: clipboard.hasImage(),
                         bareRemoteImage: html.length > 0 && blockModel.htmlIsBareRemoteImage(html),
                         noTable: false, urls: urls.length, text: txt }
-        const target = { sketchTab: root.activeSketchRow >= 0, legacyCell: tcur.active,
+        const target = { sketchTab: root.activeSketchRow >= 0,
                          codeBlock: blockModel.typeForRow(cursor.focusRow) === 2 && (!cursor.hasSel || cursor.loRow === cursor.hiRow),
                          inTable: blockModel.tableHeadOf(cursor.focusRow) >= 0 }
         for (let guard = 0; guard < 8; ++guard) {
@@ -3293,19 +2552,6 @@ FocusScope {
                 } else {
                     paster.startPaste(blockModel, payload, cursor.focusRow, cursor.focusCol, -1, 0, -1, 0, root.pasteIntoCells)
                 }
-                return
-            case "legacyCellUrl":   // a copied image file into the Table block's focused cell
-                if (blockModel.tableSetCellImageFromUrl(cursor.focusRow, tcur.cr, tcur.cc, urls[0], ephemeralUrls)) { cursor.sync(); return }
-                input.urls = 0
-                continue
-            case "legacyCellTsv":
-                blockModel.tablePasteTSV(cursor.focusRow, tcur.cr, tcur.cc, txt)
-                return
-            case "legacyCellType":
-                tcur.type(txt)
-                return
-            case "legacyCellRaster":
-                if (blockModel.tableSetCellImageFromClipboard(cursor.focusRow, tcur.cr, tcur.cc)) cursor.sync()
                 return
             case "codeVerbatim": {   // user-caught 2026-08-21: no HTML flavouring, no markdown prefixes, no table detection
                 if (cursor.hasSel) cursor.deleteSelection()
@@ -3374,14 +2620,7 @@ FocusScope {
     }
     function doCut() {
         doCopy()
-        if (tcur.active) {
-            if (tcur.selRows.length) { blockModel.tableClearRows(cursor.focusRow, tcur.selRows); tcur.clearAll() }
-            else if (tcur.selCols.length) { blockModel.tableClearColumns(cursor.focusRow, tcur.selCols); tcur.clearAll() }
-            else if (tcur.rangeR0 >= 0) { blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1); tcur.clearRange() }
-            else if (tcur.pos !== tcur.anchorPos) tcur.delSel()
-            else blockModel.tableSetCell(cursor.focusRow, tcur.cr, tcur.cc, "")
-            cursor.sync()
-        } else if (cursor.hasSel) cursor.deleteSelection()
+        if (cursor.hasSel) cursor.deleteSelection()
         else if (cursor.opaqueHere()) root.deleteBlock(cursor.focusRow)   // ⌘X on media/divider cuts it
     }
     function copyBlock(row) {
@@ -3392,17 +2631,14 @@ FocusScope {
     function menuIssueWord() {
         var it = root.menuIssue
         if (!it) return ""
-        var t = root.menuIssueInCell ? blockModel.tableCell(root.menuRow, root.menuCellR, root.menuCellC)
-                                     : blockModel.contentForRow(root.menuRow)
-        return t.substring(it.s, it.e)
+        return blockModel.contentForRow(root.menuRow).substring(it.s, it.e)
     }
-    // Fix all: the top suggestion of every issue in the block (or the clicked
-    // cell), applied right-to-left so earlier offsets stay valid — ONE undo.
+    // Fix all: the top suggestion of every issue in the block, applied right-to-left
+    // so earlier offsets stay valid — ONE undo.
     function applyAllSuggestions() {
         var row = root.menuRow
         if (row < 0) return
-        var inCell = root.menuIssueInCell
-        var list = inCell ? spell.issuesForCell(row, root.menuCellR, root.menuCellC) : spell.issuesForRow(row)
+        var list = spell.issuesForRow(row)
         var fixes = []
         for (var i = 0; i < list.length; ++i) if (list[i].suggestions.length > 0) fixes.push(list[i])
         if (fixes.length === 0) return
@@ -3410,11 +2646,10 @@ FocusScope {
         blockModel.beginGroup(row, row)
         for (var k = 0; k < fixes.length; ++k) {
             var f = fixes[k]
-            if (inCell) blockModel.tableCellReplace(row, root.menuCellR, root.menuCellC, f.s, f.e, f.suggestions[0])
-            else blockModel.replaceText(row, f.s, f.e, f.suggestions[0])
+            blockModel.replaceText(row, f.s, f.e, f.suggestions[0])
         }
         blockModel.endGroup()
-        if (!inCell && cursor.focusRow === row)
+        if (cursor.focusRow === row)
             cursor.setCaret(row, Math.min(cursor.focusCol, blockModel.contentForRow(row).length))
         spell.flushRow(row)
         root.menuIssue = null
@@ -3423,12 +2658,8 @@ FocusScope {
     function applySpellSuggestion(sug) {
         var it = root.menuIssue
         if (!it || sug === undefined || sug === "") return
-        if (root.menuIssueInCell) {
-            blockModel.tableCellReplace(root.menuRow, root.menuCellR, root.menuCellC, it.s, it.e, sug)
-        } else {
-            blockModel.replaceText(root.menuRow, it.s, it.e, sug)
-            cursor.setCaret(root.menuRow, it.s + sug.length)
-        }
+        blockModel.replaceText(root.menuRow, it.s, it.e, sug)
+        cursor.setCaret(root.menuRow, it.s + sug.length)
         spell.flushRow(root.menuRow)
         root.menuIssue = null
     }
@@ -3515,7 +2746,6 @@ FocusScope {
     // needed); with a selection, clears spans over the selected range of each
     // block. Code blocks are left as-is. One grouped undo step.
     function clearFormatting() {
-        if (tcur.active) { clearCellFormatting(); return }   // in a table → clear the cell(s)
         var lo = cursor.loRow, hi = cursor.hiRow
         blockModel.beginGroup(lo, hi)
         for (var r = lo; r <= hi; ++r) {
@@ -3548,7 +2778,6 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        var inTable = tcur.active
         // Sketch text overlay owns the keyboard while editing (belt-and-braces:
         // the TextEdit consumes nearly everything before it can bubble here).
         if (root.activeSketchRow >= 0 && sketchTextSession.active) {
@@ -3589,15 +2818,7 @@ FocusScope {
             else if (root.dragging) { root.dragging = false }
             else if (root.gridColDragging) { root.gridColDragging = false; root.gridColGap = -1 }
             else if (root.gridSetLive()) { root.gridSet = null }
-            else if (root.boardMode && root.activeTableRow >= 0) { root.showGridView() }   // board → grid
-            else if (inTable) {
-                // Escape peels back one layer: in-cell text selection →
-                // cell/row/col selection (pre-existing gap: a live range
-                // used to survive the exit) → leave the table.
-                if (tcur.pos !== tcur.anchorPos) { tcur.anchorPos = tcur.pos; cursor.sync() }
-                else if (tcur.hasSel) { tcur.clearAll(); cursor.sync() }
-                else root.exitTable(1)
-            }
+            else if (root.boardMode) { root.showGridView() }   // board → grid
             else if (cursor.hasSel && root.selectionIsSplitRow()
                      && blockModel.tableHeadOf(cursor.loRow) >= 0
                      && blockModel.gridRowCount(blockModel.tableHeadOf(cursor.loRow)) > 1) {
@@ -3674,9 +2895,9 @@ FocusScope {
         // ("ç") on many layouts — so match both.
         else if (cmd && (event.modifiers & Qt.AltModifier)
                  && (k === Qt.Key_C || k === Qt.Key_Ccedilla)
-                 && (root.activeFrameId === "" || root.activeTableRow >= 0)
+                 && (root.activeFrameId === "" || root.frameLo >= 0)
                  && !root.inkMode) {
-            root.insertChoiceChip()   // doc view OR the full-frame table studio
+            root.insertChoiceChip()   // doc view OR a table's grid frame
             event.accepted = true
         }
         // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
@@ -3763,86 +2984,8 @@ FocusScope {
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
-        // can't invisibly edit the grid underneath (tcur is still pinned to it).
-        else if (root.boardMode && root.activeTableRow >= 0) { event.accepted = true }
-        // Table mode: route editing/navigation to the cell sub-cursor.
-        // Formatting shortcuts come first (else the generic branch swallows them).
-        else if (inTable && cmd && k === Qt.Key_B) { applyFormat("bold"); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_I) { applyFormat("italic"); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_U) { applyFormat("underline"); event.accepted = true }
-        else if (inTable && cmd && shift && k === Qt.Key_X) { applyFormat("strike"); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_Backslash) { clearCellFormatting(); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_D) { tblFill(false); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_R) { tblFill(true); event.accepted = true }
-        else if (inTable && cmd && k === Qt.Key_A) {   // ⌘A ladder: cell text → every cell → document
-            var aLen = tcur.text().length
-            var aLo = Math.min(tcur.pos, tcur.anchorPos), aHi = Math.max(tcur.pos, tcur.anchorPos)
-            var cellAll = aLen > 0 && aLo === 0 && aHi === aLen
-            var gridAll = tcur.rangeR0 === 0 && tcur.rangeC0 === 0
-                          && tcur.rangeR1 === tcur.rows() - 1 && tcur.rangeC1 === tcur.cols() - 1
-            if (gridAll || (aLen === 0 && tcur.hasSel)) root.selectAllDocument()
-            else if (aLen > 0 && !cellAll && !tcur.hasSel) { tcur.anchorPos = 0; tcur.pos = aLen; cursor.sync() }
-            else { tcur.clearSets(); tcur.setRange(0, 0, tcur.rows() - 1, tcur.cols() - 1); cursor.sync() }
-            event.accepted = true
-        }
-        // Page/Home/End leave the table — they move the document caret off it
-        // (tcur deactivates as soon as focusRow is no longer a table row).
-        else if (inTable && k === Qt.Key_PageDown) { navPageDown(false); event.accepted = true }
-        else if (inTable && k === Qt.Key_PageUp)   { navPageUp(false);   event.accepted = true }
-        else if (inTable && k === Qt.Key_Home)     { navHome(false);     event.accepted = true }
-        else if (inTable && k === Qt.Key_End)      { navEnd(false);      event.accepted = true }
-        else if (inTable) {
-            if (cmd) { event.accepted = true; return }   // swallow other Cmd-combos (don't type the letter)
-            // Shift+arrows: spreadsheet-style range extension. Left/Right first
-            // extend the in-cell TEXT selection; crossing the cell edge promotes
-            // to a cell range. Up/Down go straight to cells (there's no vertical
-            // text selection inside a cell). With a range live, arrows move its
-            // head; the anchor stays at the focused cell.
-            if (shift && (k === Qt.Key_Left || k === Qt.Key_Right || k === Qt.Key_Up || k === Qt.Key_Down)) {
-                if (tcur.rangeR0 >= 0)
-                    tcur.extendRange(k === Qt.Key_Down ? 1 : k === Qt.Key_Up ? -1 : 0,
-                                     k === Qt.Key_Right ? 1 : k === Qt.Key_Left ? -1 : 0)
-                else if (k === Qt.Key_Up)    tcur.extendRange(-1, 0)
-                else if (k === Qt.Key_Down)  tcur.extendRange(1, 0)
-                else if (k === Qt.Key_Right) {
-                    if (tcur.pos >= tcur.text().length) tcur.extendRange(0, 1)
-                    else tcur.right(true)
-                } else {                                       // Left
-                    if (tcur.pos <= 0) tcur.extendRange(0, -1)
-                    else tcur.left(true)
-                }
-                event.accepted = true
-                return
-            }
-            if (tcur.hasSel) {
-                // Backspace/Delete over a selection clears its CONTENTS (one
-                // undo step; row/col DELETION stays menu-only — destructive);
-                // any other key just collapses the selection.
-                if (k === Qt.Key_Backspace || k === Qt.Key_Delete) {
-                    if (tcur.selRows.length)
-                        blockModel.tableClearRows(cursor.focusRow, tcur.selRows)
-                    else if (tcur.selCols.length)
-                        blockModel.tableClearColumns(cursor.focusRow, tcur.selCols)
-                    else
-                        blockModel.tableClearRange(cursor.focusRow, tcur.rangeR0, tcur.rangeC0, tcur.rangeR1, tcur.rangeC1)
-                    tcur.clearAll(); cursor.sync()
-                    event.accepted = true
-                    return
-                }
-                tcur.clearAll()                        // any other key collapses it
-            }
-            if (k === Qt.Key_Right) tcur.right(shift)
-            else if (k === Qt.Key_Left) tcur.left(shift)
-            else if (k === Qt.Key_Down) tcur.down()
-            else if (k === Qt.Key_Up) tcur.up()
-            else if (k === Qt.Key_Backspace) tcur.backspace()
-            else if (k === Qt.Key_Delete) tcur.forwardDelete()
-            else if (k === Qt.Key_Tab) tcur.tab(false)
-            else if (k === Qt.Key_Backtab) tcur.tab(true)
-            else if (k === Qt.Key_Return || k === Qt.Key_Enter) tcur.enter(shift)
-            else if (event.text.length === 1 && event.text >= " ") tcur.type(event.text)
-            event.accepted = true
-        }
+        // can't invisibly edit the grid underneath.
+        else if (root.boardMode) { event.accepted = true }
         else if ((k === Qt.Key_Backspace || k === Qt.Key_Delete) && root.gridSetLive()) {
             root.clearGridSet()   // S7b: a grip-picked set clears its cells
             event.accepted = true
@@ -4028,7 +3171,7 @@ FocusScope {
                 // lane, pull a block into one — then keep walking down.
                 const t = Math.min(blockModel.count - 1, root.firstVisible + 1 + phaseStep % 4)
                 const ty = blockModel.typeForRow(t)
-                if (ty !== 10 && ty !== 7) {
+                if (ty !== 10) {
                     if (phaseStep % 3 === 2 && blockModel.laneForRow(t) >= 0) blockModel.insertBlock(t + 1)
                     else blockModel.splitIntoColumns(t, phaseStep % 2, 0.35 + 0.1 * (phaseStep % 4))
                 }
@@ -4047,7 +3190,7 @@ FocusScope {
                         if (blockModel.typeForRow(i) === 10) { cursor.setCaret(blockModel.nextLeaf(i), 0); return }
                 }
                 const ft = blockModel.typeForRow(cursor.focusRow)
-                if (phaseStep === 0 || ft === 7 || ft === 3 || ft === 6) restart()
+                if (phaseStep === 0 || ft === 3 || ft === 6) restart()
                 else {
                     const before = cursor.focusRow
                     switch (rand(6)) {
@@ -4058,7 +3201,7 @@ FocusScope {
                     case 4: {
                         const want = blockModel.tabTarget(before, false)
                         root.tabKey(false)
-                        if (want >= 0 && blockModel.typeForRow(want) !== 7 && cursor.focusRow !== want)
+                        if (want >= 0 && cursor.focusRow !== want)
                             fail("Tab from " + before + " landed on " + cursor.focusRow + ", model says " + want)
                         break
                     }
@@ -4074,7 +3217,7 @@ FocusScope {
                 // and Enter at lane edges. The structure stays valid after every edit and
                 // the caret never sits on a record.
                 const ft = blockModel.typeForRow(cursor.focusRow)
-                if (phaseStep === 0 || ft === 7 || blockModel.laneForRow(cursor.focusRow) < 0 && rand(4) === 0) {
+                if (phaseStep === 0 || blockModel.laneForRow(cursor.focusRow) < 0 && rand(4) === 0) {
                     for (let i = rand(blockModel.count), k = 0; k < blockModel.count; ++k, i = (i + 1) % blockModel.count)
                         if (blockModel.typeForRow(i) === 10) { cursor.setCaret(blockModel.nextLeaf(i), 0); break }
                 } else {
@@ -4108,7 +3251,7 @@ FocusScope {
                 // chain, or alone). The structure stays valid after every gesture.
                 const row = Math.min(blockModel.count - 1, root.firstVisible + 1 + rand(4))
                 const t = blockModel.typeForRow(row)
-                if (phaseStep % 2 === 0 && t !== 7 && t !== 10) {
+                if (phaseStep % 2 === 0 && t !== 10) {
                     const g = root.laneOf(row)
                     if (g.w >= 2 * blockModel.minLaneWidth + blockModel.laneGap) {
                         const before = blockModel.count
@@ -4489,17 +3632,12 @@ FocusScope {
     // BlockView (the extracted block renderer) reads the editor's controllers
     // through these — ids don't cross file boundaries.
     readonly property var cursorObj: cursor
-    readonly property var tcurObj: tcur
     readonly property var flickItem: flick
     readonly property real barFraction: flick.contentHeight > flick.height
         ? flick.contentY / (flick.contentHeight - flick.height) : 0
     readonly property real trueFraction: barFraction
     readonly property int caretRow: cursor.focusRow
     readonly property bool hasSelection: cursor.hasSel
-    // A colour target exists in a table whenever the sub-cursor is live:
-    // the selection when there is one, else the focused cell (the palette's
-    // Apply button reads this).
-    readonly property bool tableFocused: tcur.active
     readonly property string selSummary: cursor.hasSel
         ? ("r" + cursor.loRow + ":" + cursor.loCol + " → r" + cursor.hiRow + ":" + cursor.hiCol
            + "  (" + (cursor.hiRow - cursor.loRow + 1) + " blocks)")
@@ -4512,8 +3650,8 @@ FocusScope {
 
     Flickable {
         id: flick
-        visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
-                 && !(root.activeGridId !== "" && root.boardMode)                 // a derived table's board covers it
+        visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
+                 && !(root.activeGridId !== "" && root.boardMode)                 // a table's board covers it
         anchors.fill: parent
         // The grid frame's clamp (S9b): the table's top sits under the tab toolbar, its bottom at the end.
         topMargin: root.frameLo >= 0 ? -(root.frameTop - Theme.dim.toolStripHeight) : 0
@@ -4817,13 +3955,10 @@ FocusScope {
             property real lastDblClickMs: 0      // triple-click detection (whole-block select)
             property int  lastDblClickRow: -1
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
-                       : root.gripDragging ? Qt.ClosedHandCursor
-                       : root.gripKind !== "" ? Qt.OpenHandCursor
                        : root.gridColDragging ? Qt.ClosedHandCursor
                        : (root.gridGripKind !== "" || root.gridGripPressed) ? Qt.OpenHandCursor
                        : (root.dividerDragging || root.pulling
                           || root.dividerHoverRecord >= 0 || root.pullHoverRow >= 0) ? Qt.SplitHCursor
-                       : (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
                        : overClickable ? Qt.PointingHandCursor
                        : Qt.IBeamCursor
 
@@ -4837,19 +3972,10 @@ FocusScope {
                 if (m.button === Qt.RightButton) {
                     var trow = blockModel.blockAt(m.x - root.leftEdge, m.y)
                     root.menuLinkUrl = ""; root.menuIssue = null
-                    if (blockModel.typeForRow(trow) === 7) {
-                        var th = root.tableHitAt(m.x, m.y)
-                        root.menuCellR = th ? th.r : 0; root.menuCellC = th ? th.c : 0
-                        if (th) {                                   // misspelling under the click?
-                            var ci = spell.cellIssueAt(trow, th.r, th.c, th.pos)
-                            root.menuIssue = ci.ruleId !== undefined ? ci : null; root.menuIssueInCell = true
-                        }
-                    } else {
-                        var rh = root.hitTest(m.x, m.y)              // link / misspelling under the click?
-                        root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
-                        var bi = spell.issueAt(rh.row, rh.col)
-                        root.menuIssue = bi.ruleId !== undefined ? bi : null; root.menuIssueInCell = false
-                    }
+                    var rh = root.hitTest(m.x, m.y)              // link / misspelling under the click?
+                    root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
+                    var bi = spell.issueAt(rh.row, rh.col)
+                    root.menuIssue = bi.ruleId !== undefined ? bi : null
                     root.openBlockMenu(m.x - flick.contentX, m.y - flick.contentY, trow)
                     return
                 }
@@ -4874,40 +4000,6 @@ FocusScope {
                 if (root.pullHoverRow >= 0 && !(m.modifiers & Qt.ShiftModifier)) {
                     root.pullArmed = true; root.pullArmRow = root.pullHoverRow; root.pullArmSide = root.pullHoverSide
                     root.pullArmMods = m.modifiers; root.pullArmX = m.x; root.pullArmY = m.y
-                    return
-                }
-                // Click into a table cell → place the table caret; arm drag for
-                // in-cell text selection / cross-cell range.
-                var th = root.tableHitAt(m.x, m.y)
-                if (th) {
-                    // Typed body cells: choice → option picker; check → cycle state.
-                    // Only fires when the click lands ON the chip/checkbox (not anywhere
-                    // in the cell) — otherwise the click just selects/edits the cell.
-                    var tk = blockModel.tableColumnKind(th.row, th.c)
-                    var tbody = th.r >= blockModel.tableHeaderRows(th.row)
-                    var dcell = root.cellForRow(th.row), bt = dcell ? dcell.tableItem : null
-                    var lp = bt ? bt.mapFromItem(mouse, m.x, m.y) : null
-                    // Grip bands first — they live outside the grid rect, where
-                    // cellAtPoint's clamp used to drop the caret at row 0.
-                    var g = bt ? root.tableGripAt(bt, lp.x, lp.y) : null
-                    if (g) {
-                        root.gripDragging = true; root.gripDragKind = g.kind
-                        root.gripTableRow = th.row; root.gripFrom = g.index
-                        root.gripPressX = m.x; root.gripPressY = m.y
-                        root.gripPressMods = m.modifiers; root.gripMoved = false
-                        root.gripDropGap = g.kind === "col" ? bt.colGapAt(lp.x) : bt.rowGapAt(lp.y)
-                        return
-                    }
-                    if (bt && (tk === 1 || tk === 2) && tbody && bt.widgetHit(lp.x, lp.y)) {
-                        if (tk === 1) root.openChoicePicker(th.row, th.r, th.c, m.x - flick.contentX, m.y - flick.contentY)
-                        else          blockModel.tableCycleCellCheck(th.row, th.r, th.c)
-                        return
-                    }
-                    if (bt) {
-                        // Header sort zone (a header cell's right edge) beats the caret.
-                        if (root.headerSortHit(bt, th.row, th.r, th.c, lp.x)) { root.headerSort(th.row, th.c); return }
-                        root.beginTableInteraction(bt, th.row, lp.x, lp.y, m.modifiers)
-                    }
                     return
                 }
                 // Click a task-item checkbox → cycle its status (todo→doing→done).
@@ -5020,83 +4112,23 @@ FocusScope {
                     return
                 }
                 if (root.gridColDragging) { root.gridColGap = root.gridColGapAt(root.gridGripPressHead, m.x - root.leftEdge); return }
-                if (root.gripDragging) {
-                    if (Math.abs(m.x - root.gripPressX) + Math.abs(m.y - root.gripPressY) > 4)
-                        root.gripMoved = true                    // click ≠ drag (the grip threshold)
-                    var gd = root.cellForRow(root.gripTableRow), gbt = gd ? gd.tableItem : null
-                    if (gbt) {
-                        var glp = gbt.mapFromItem(mouse, m.x, m.y)
-                        root.gripDropGap = root.gripDragKind === "col" ? gbt.colGapAt(glp.x)
-                                                                       : gbt.rowGapAt(glp.y)
-                    }
-                    return
-                }
-                if (root.tableResizing || root.tableDragging) {
-                    var ddcell = root.cellForRow(root.tableResizing ? root.resizeRow : cursor.focusRow)
-                    var dbt = ddcell ? ddcell.tableItem : null
-                    if (dbt) { var dlp = dbt.mapFromItem(mouse, m.x, m.y); root.updateTableInteraction(dbt, dlp.x, dlp.y) }
-                    return
-                }
                 if (root.dragging) {
                     root.dragX = m.x; root.dragViewY = m.y - flick.contentY
                     var h = root.hitTest(m.x, m.y)
                     cursor.move(h.row, h.col, true)
                     return
                 }
-                // hover (not pressed): grip band → grip affordance; else near a
-                // table column border → resize cursor (now y-guarded: the old
-                // check showed a stray SplitHCursor in the margin bands).
+                // hover (not pressed).
                 root.hoverRow = blockModel.blockAt(m.x - root.leftEdge, m.y)
-                var overBorder = false
-                var ghit = null
-                if (blockModel.typeForRow(root.hoverRow) === 7) {
-                    var hd = root.cellForRow(root.hoverRow), hbt = hd ? hd.tableItem : null
-                    if (hbt) {
-                        var hlp = hbt.mapFromItem(mouse, m.x, m.y)
-                        ghit = root.tableGripAt(hbt, hlp.x, hlp.y)
-                        overBorder = !ghit && hlp.y >= 0 && hlp.y <= hbt.height
-                                     && hbt.columnBorderAt(hlp.x) >= 0
-                    }
-                }
-                root.gripKind = ghit ? ghit.kind : ""
-                root.gripIndex = ghit ? ghit.index : -1
-                if (!root.gripDragging) root.gripTableRow = ghit ? root.hoverRow : -1
-                root.tableOverBorder = overBorder
                 // Over an interactive widget (block task checkbox, an inline
                 // choice chip, or a table check/choice body cell) → a
                 // pointing-hand cursor instead of the I-beam.
                 var clk = root.taskCheckboxAt(m.x, m.y) >= 0
                 root.codeChipHoverRow = root.codeLangChipAt(m.x, m.y)
                 clk = clk || root.codeChipHoverRow >= 0
-                if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) !== 7) {
+                if (!clk) {
                     var chh = root.hitTest(m.x, m.y)
                     clk = blockModel.choiceAt(chh.row, chh.col) !== ""
-                }
-                if (!clk && !overBorder && blockModel.typeForRow(root.hoverRow) === 7) {
-                    var ch = root.tableHitAt(m.x, m.y)
-                    if (ch) {
-                        if (ch.r >= blockModel.tableHeaderRows(ch.row)) {
-                            var ck = blockModel.tableColumnKind(ch.row, ch.c)
-                            if (ck === 1 || ck === 2) {   // only over the chip/checkbox
-                                var hd2 = root.cellForRow(ch.row), hbt2 = hd2 ? hd2.tableItem : null
-                                var hlp2 = hbt2 ? hbt2.mapFromItem(mouse, m.x, m.y) : null
-                                clk = hbt2 ? hbt2.widgetHit(hlp2.x, hlp2.y) : false
-                            } else {   // plain text cell: over an inline chip?
-                                var hd3 = root.cellForRow(ch.row), hbt3 = hd3 ? hd3.tableItem : null
-                                if (hbt3) {
-                                    var hlp3 = hbt3.mapFromItem(mouse, m.x, m.y)
-                                    var chit = hbt3.cellAtPoint(hlp3.x, hlp3.y)
-                                    clk = blockModel.tableChoiceAt(ch.row, chit.r, chit.c, chit.pos) !== ""
-                                }
-                            }
-                        } else {   // header: pointer over the sort zone
-                            var chd = root.cellForRow(ch.row), cbt = chd ? chd.tableItem : null
-                            if (cbt) {
-                                var clp = cbt.mapFromItem(mouse, m.x, m.y)
-                                clk = root.headerSortHit(cbt, ch.row, ch.r, ch.c, clp.x)
-                            }
-                        }
-                    }
                 }
                 mouse.overClickable = clk
                 // Lane gestures (SR-3 S7b): a lane gap → drag its divider; the hot band just
@@ -5105,10 +4137,10 @@ FocusScope {
                 root.gridGripHead = gg ? gg.head : -1
                 root.gridGripKind = gg ? gg.kind : ""
                 root.gridGripIndex = gg ? gg.index : -1
-                const dv = (clk || overBorder || gg) ? null : root.dividerAt(root.hoverRow, m.x - root.leftEdge)
+                const dv = (clk || gg) ? null : root.dividerAt(root.hoverRow, m.x - root.leftEdge)
                 root.dividerHoverRecord = dv ? dv.record : -1
                 root.dividerHoverIndex = dv ? dv.index : -1
-                const ps = (clk || overBorder || dv || gg) ? -1 : root.pullSideAt(root.hoverRow, m.x)
+                const ps = (clk || dv || gg) ? -1 : root.pullSideAt(root.hoverRow, m.x)
                 root.pullHoverRow = ps >= 0 ? root.hoverRow : -1
                 root.pullHoverSide = ps
                 // Hovering an image row → show its resize handles. Don't clear on a
@@ -5119,11 +4151,8 @@ FocusScope {
                 // Link under the pointer → anchor the open-link tooltip there. A
                 // grace timer (not an immediate clear) lets the pointer travel up
                 // onto the pill to click it.
-                var lurl = ""
-                if (!overBorder && blockModel.typeForRow(root.hoverRow) !== 7) {
-                    var lh = root.hitTest(m.x, m.y)
-                    lurl = blockModel.linkAt(lh.row, lh.col)
-                }
+                var lh = root.hitTest(m.x, m.y)
+                var lurl = blockModel.linkAt(lh.row, lh.col)
                 if (lurl.length > 0) {
                     // Anchor the pill ONCE on entering a link and freeze it — if it
                     // tracked the mouse, moving up to click it would chase it away.
@@ -5136,12 +4165,10 @@ FocusScope {
                     linkTipHide.restart()
                 }
             }
-            onExited: { root.hoverRow = -1; root.tableOverBorder = false
+            onExited: { root.hoverRow = -1
                         root.dividerHoverRecord = -1; root.dividerHoverIndex = -1; root.pullHoverRow = -1
-                        root.gripKind = ""; root.gripIndex = -1
                         root.gridGripKind = ""; root.gridGripHead = -1; root.gridGripIndex = -1
                         root.codeChipHoverRow = -1
-                        if (!root.gripDragging) root.gripTableRow = -1
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
                 if (root.pullArmed) {   // a click on the pull strip: the caret goes there
@@ -5156,44 +4183,23 @@ FocusScope {
                 else if (root.dividerDragging) root.commitDividerDrag()
                 else if (root.pulling) root.commitPull()
                 else if (root.blockDragging) root.commitBlockDrag()
-                else if (root.gripDragging) root.commitInlineGripDrag()
-                else if (root.tableResizing || root.tableDragging) root.endTableInteraction()
                 else root.dragging = false
             }
             onCanceled: {
                 root.gridGripPressed = false; root.gridColDragging = false; root.gridColGap = -1; root.pullArmed = false
                 root.cancelDividerDrag(); root.cancelPull()
                 if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
-                else {
-                    root.dragging = false; root.tableDragging = false; root.tableResizing = false
-                    root.gripDragging = false; root.gripDragKind = ""; root.gripFrom = -1
-                    root.gripDropGap = -1; root.gripKind = ""; root.gripIndex = -1; root.gripTableRow = -1
-                }
+                else root.dragging = false
             }
             onDoubleClicked: (m) => {
                 // End the press-drag the 2nd press armed, so a tiny mouse jitter
                 // before release can't re-extend the selection back to the click
                 // point (which collapsed the word to word-start→cursor).
-                root.dragging = false; root.tableResizing = false
+                root.dragging = false
                 // Double-click a file-attachment chip → reveal it in Finder/Explorer.
                 var mrow = blockModel.blockAt(m.x - root.leftEdge, m.y)
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
                     blockModel.revealMedia(mrow); return
-                }
-                // Double-click a table column border → reset that column to auto;
-                // otherwise word-select INSIDE the cell (multi-select pass
-                // 2026-08-21 — cells now speak the same double-click language).
-                var drow = blockModel.blockAt(m.x - root.leftEdge, m.y)
-                if (blockModel.typeForRow(drow) === 7) {
-                    var dd = root.cellForRow(drow), dbt = dd ? dd.tableItem : null
-                    if (dbt) {
-                        var dlp = dbt.mapFromItem(mouse, m.x, m.y)
-                        var dbc = dbt.columnBorderAt(dlp.x)
-                        if (dbc >= 0) { blockModel.tableSetColWidth(drow, dbc, 0); return }
-                        if (dlp.x >= 0 && dlp.y >= 0 && dlp.y <= dbt.height)
-                            root.tableWordSelect(dbt, drow, dlp.x, dlp.y)
-                    }
-                    return
                 }
                 // select the word under the cursor
                 var h = root.hitTest(m.x, m.y)
@@ -5233,367 +4239,12 @@ FocusScope {
         ScrollBar.horizontal: MnScrollBar {}
     }
 
-    // --- Full-frame table view (the active table tab). Fills the editor; vertical
-    // scroll for tall tables, the BlockTable handles horizontal internally. Reuses
-    // the same tcur edit model (the cursor is pinned to this table row). ---
-    Flickable {
-        id: tableFrame
-        visible: root.activeTableRow >= 0 && !root.boardMode
-        anchors.fill: parent
-        anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
-        // The PAGE scrolls horizontally for wide tables (the table itself is
-        // uncapped) — same model as the notes view; one scrollbar, no nested one.
-        contentWidth: Math.max(width, 20 + frameTable.width + 4 + 14 + 20)
-        // Room below the table: 4px gap + the +row strip + a 20px bottom margin.
-        contentHeight: frameTable.implicitHeight + 58
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-
-        // Row/column drag-reorder (full-frame only; the doc view reorders via the
-        // context menu). Grip strips sit above (columns) / left of (rows) the
-        // table; dragging a grip shows the existing hiScope highlight on the
-        // source and an accent insertion line at the target gap; release commits
-        // ONE undoable tableMoveRow/Column. Header rows are not draggable and
-        // body rows can't drop above the header boundary.
-        property int  gripC: -1            // hovered column (top strip)
-        property int  gripR: -1            // hovered body row (left strip)
-        property bool colDragging: false
-        property bool rowDragging: false
-        property int  dragFrom: -1
-        property int  dropGap: -1          // target insertion gap (cols: 0..n, rows: header..n)
-        // A grip press that never moves is a CLICK → select the whole row/column.
-        property real gripPressX: 0
-        property real gripPressY: 0
-        property bool gripMoved: false
-        // Modifiers captured at PRESS (users release Shift before the button).
-        property int  gripPressMods: 0
-        readonly property int frameCols: root.activeTableRow >= 0
-            ? (blockModel.contentRevision, blockModel.tableColumns(root.activeTableRow)) : 0
-        readonly property int frameRows: root.activeTableRow >= 0
-            ? (blockModel.contentRevision, blockModel.tableRows(root.activeTableRow)) : 0
-        readonly property int frameHdr: root.activeTableRow >= 0
-            ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.activeTableRow)) : 0
-        function colAt(px) {               // strip x → column index (−1 outside)
-            var cx = px + frameTable.scrollX, acc = 0
-            for (var c = 0; c < frameCols; ++c) { acc += frameTable.colW(c); if (cx < acc) return c }
-            return -1
-        }
-        function colGapAt(px) {            // strip x → insertion gap 0..cols
-            var cx = px + frameTable.scrollX, acc = 0
-            for (var c = 0; c < frameCols; ++c) {
-                var w = frameTable.colW(c)
-                if (cx < acc + w / 2) return c
-                acc += w
-            }
-            return frameCols
-        }
-        function rowAt(py) {               // strip y → BODY row index (−1 header/outside)
-            var acc = 0
-            for (var r = 0; r < frameRows; ++r) {
-                var h = frameTable.rowHeightAt(r)
-                if (py < acc + h) return r >= frameHdr ? r : -1
-                acc += h
-            }
-            return -1
-        }
-        function rowGapAt(py) {            // strip y → insertion gap header..rows
-            var acc = frameTable.rowTopY(frameHdr)
-            if (py < acc) return frameHdr
-            for (var r = frameHdr; r < frameRows; ++r) {
-                var h = frameTable.rowHeightAt(r)
-                if (py < acc + h / 2) return r
-                acc += h
-            }
-            return frameRows
-        }
-        function commitGripDrag() {
-            if (!gripMoved && dragFrom >= 0) {           // click, not drag → select
-                if (colDragging) root.gripSelectCol(root.activeTableRow, dragFrom, gripPressMods)
-                else if (rowDragging) root.gripSelectRow(root.activeTableRow, dragFrom, gripPressMods)
-            } else if (dropGap >= 0 && dragFrom >= 0) {
-                var to = dropGap > dragFrom ? dropGap - 1 : dropGap
-                if (to !== dragFrom) {
-                    if (colDragging) blockModel.tableMoveColumn(root.activeTableRow, dragFrom, to)
-                    else if (rowDragging) blockModel.tableMoveRow(root.activeTableRow, dragFrom, to)
-                }
-            }
-            cancelGripDrag()
-        }
-        function cancelGripDrag() {
-            colDragging = false; rowDragging = false
-            dragFrom = -1; dropGap = -1; gripC = -1; gripR = -1; gripPressMods = 0
-        }
-        ScrollBar.vertical: MnScrollBar {}
-        ScrollBar.horizontal: MnScrollBar {}
-        BlockTable {
-            id: frameTable
-            active: root.activeTableRow >= 0
-            logicalRow: root.activeTableRow
-            x: 20; y: 20
-            uncapped: true                         // natural width; the tab PAGE scrolls
-            maxWidth: tableFrame.width - 58        // (unused while uncapped)
-            width: implicitWidth
-            height: implicitHeight
-            focused: root.activeTableRow >= 0
-            caretOn: root.caretOn
-            focusR: tcur.cr; focusC: tcur.cc
-            caretPos: tcur.pos
-            selFrom: Math.min(tcur.pos, tcur.anchorPos)
-            selTo: Math.max(tcur.pos, tcur.anchorPos)
-            // Gated on the frame actually holding the sub-cursor — the
-            // pre-existing ungated binding showed a STALE selection when the
-            // document caret had moved off this table (the inline instance
-            // gates on `focused`; inRange/inSel short-circuit on rangeR0/-sets).
-            rangeR0: cursor.focusRow === root.activeTableRow ? tcur.rangeR0 : -1
-            rangeC0: tcur.rangeC0; rangeR1: tcur.rangeR1; rangeC1: tcur.rangeC1
-            selRows: cursor.focusRow === root.activeTableRow ? tcur.selRows : []
-            selCols: cursor.focusRow === root.activeTableRow ? tcur.selCols : []
-            selRev: tcur.selRev
-            resizeCol: (root.tableResizing && root.resizeRow === root.activeTableRow) ? root.resizeColIdx : -1
-            resizeW: root.resizeW
-            sortCol: root.lastSortRow === root.activeTableRow ? root.lastSortCol : -1
-            sortAsc: root.lastSortAsc
-            // Context-menu row/column target highlight (same as the doc view);
-            // a grip drag reuses it to mark the dragged column/row.
-            hiScope: tableFrame.colDragging ? "column" : tableFrame.rowDragging ? "row"
-                   : (root.menuRow === root.activeTableRow
-                      && (root.menuHiScope === "column" || root.menuHiScope === "row")) ? root.menuHiScope : ""
-            hiIndex: (tableFrame.colDragging || tableFrame.rowDragging) ? tableFrame.dragFrom
-                   : root.menuHiScope === "column" ? root.menuCellC : root.menuCellR
-            hiDanger: (tableFrame.colDragging || tableFrame.rowDragging) ? false : root.menuHiDanger
-        }
-
-        // Full-frame mouse handling — this view is a dedicated mode (no document
-        // mouse layer above it), so a direct MouseArea works. Coords are already
-        // frameTable-local. Reuses the same begin/update/end helpers.
-        MouseArea {
-            id: frameMA
-            anchors.fill: frameTable
-            hoverEnabled: true; preventStealing: true
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            property bool overClickable: false   // over a check / choice body cell
-            cursorShape: (root.tableResizing || root.tableOverBorder) ? Qt.SplitHCursor
-                       : overClickable ? Qt.PointingHandCursor : Qt.IBeamCursor
-            onPressed: (m) => {
-                root.forceActiveFocus()
-                // Right-click → the same table context menu as the document view
-                // (capture the cell for the row/column ops; coords mapped to root).
-                if (m.button === Qt.RightButton) {
-                    var hit = frameTable.cellAtPoint(m.x, m.y)
-                    root.menuCellR = hit.r; root.menuCellC = hit.c
-                    root.menuLinkUrl = ""
-                    var fci = spell.cellIssueAt(root.activeTableRow, hit.r, hit.c, hit.pos)
-                    root.menuIssue = fci.ruleId !== undefined ? fci : null; root.menuIssueInCell = true
-                    var p = frameMA.mapToItem(root, m.x, m.y)
-                    root.openBlockMenu(p.x, p.y, root.activeTableRow)
-                    return
-                }
-                // Typed body cells behave the same as the inline view: choice → the
-                // option picker; check → cycle the tri-state. Both go through the same
-                // mutateTable-backed invokables, so undo is identical here.
-                var fhit = frameTable.cellAtPoint(m.x, m.y)
-                // Header sort zone beats the caret (m is already frameTable-local).
-                if (root.headerSortHit(frameTable, root.activeTableRow, fhit.r, fhit.c, m.x)) {
-                    root.headerSort(root.activeTableRow, fhit.c); return
-                }
-                var ftk = blockModel.tableColumnKind(root.activeTableRow, fhit.c)
-                var fbody = fhit.r >= blockModel.tableHeaderRows(root.activeTableRow)
-                // Trigger only when the click lands ON the chip/checkbox.
-                if ((ftk === 1 || ftk === 2) && fbody && frameTable.widgetHit(m.x, m.y)) {
-                    if (ftk === 1) {
-                        var fp = frameMA.mapToItem(root, m.x, m.y)
-                        root.openChoicePicker(root.activeTableRow, fhit.r, fhit.c, fp.x, fp.y)
-                    } else {
-                        blockModel.tableCycleCellCheck(root.activeTableRow, fhit.r, fhit.c)
-                    }
-                    return
-                }
-                root.beginTableInteraction(frameTable, root.activeTableRow, m.x, m.y, m.modifiers)
-            }
-            onPositionChanged: (m) => {
-                if (root.tableResizing || root.tableDragging) { root.updateTableInteraction(frameTable, m.x, m.y); return }
-                var overBorder = frameTable.columnBorderAt(m.x) >= 0
-                root.tableOverBorder = overBorder
-                // Pointer cursor over a check / choice body cell or a header's
-                // sort slot.
-                var clk = false
-                if (!overBorder) {
-                    var fh = frameTable.cellAtPoint(m.x, m.y)
-                    if (fh && fh.r >= blockModel.tableHeaderRows(root.activeTableRow)) {
-                        var fk = blockModel.tableColumnKind(root.activeTableRow, fh.c)
-                        clk = (fk === 1 || fk === 2) && frameTable.widgetHit(m.x, m.y)
-                        if (!clk && fk === 0)   // inline chip in a plain text cell
-                            clk = blockModel.tableChoiceAt(root.activeTableRow, fh.r, fh.c, fh.pos) !== ""
-                    } else if (fh) {
-                        clk = root.headerSortHit(frameTable, root.activeTableRow, fh.r, fh.c, m.x)
-                    }
-                }
-                frameMA.overClickable = clk
-            }
-            onExited: { root.tableOverBorder = false; frameMA.overClickable = false }
-            onReleased: root.endTableInteraction()
-            onCanceled: { root.tableResizing = false; root.tableDragging = false }
-            onDoubleClicked: (m) => {
-                var bc = frameTable.columnBorderAt(m.x)
-                if (bc >= 0) blockModel.tableSetColWidth(root.activeTableRow, bc, 0)
-            }
-        }
-
-        DropArea {   // image file → the cell under the pointer. The document
-                     // view's DropArea doesn't cover this dedicated mode.
-            anchors.fill: parent
-            onPositionChanged: (drag) => {
-                var lp = frameTable.mapFromItem(tableFrame, drag.x, drag.y)
-                if (drag.hasUrls && lp.x >= 0 && lp.x <= frameTable.width
-                                 && lp.y >= 0 && lp.y <= frameTable.height) {
-                    var h = frameTable.cellAtPoint(lp.x, lp.y)
-                    frameTable.dropR = h.r; frameTable.dropC = h.c
-                } else { frameTable.dropR = -1; frameTable.dropC = -1 }
-            }
-            onExited: { frameTable.dropR = -1; frameTable.dropC = -1 }
-            onDropped: (drop) => {
-                var r = frameTable.dropR, c = frameTable.dropC
-                frameTable.dropR = -1; frameTable.dropC = -1
-                if (r < 0 || !drop.hasUrls) return
-                for (var i = 0; i < drop.urls.length; ++i)
-                    if (blockModel.tableSetCellImageFromUrl(root.activeTableRow, r, c, drop.urls[i].toString())) {
-                        tcur.place(r, c, 0)
-                        drop.accept()
-                        return
-                    }
-            }
-        }
-
-        // Full-frame affordances: +column (right), horizontal scrollbar + +row
-        // (bottom). Direct children — no mouse-layer conflict in this view.
-        Rectangle {   // + column
-            x: 20 + frameTable.width + 4; y: 20
-            width: 14; height: frameTable.height; radius: 0
-            color: fAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-            border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
-            MouseArea { id: fAddColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                        onClicked: blockModel.tableInsertColumn(root.activeTableRow, blockModel.tableColumns(root.activeTableRow)) }
-        }
-        Rectangle {   // + row
-            x: 20; y: 20 + frameTable.height + 4
-            width: frameTable.width; height: 14; radius: 0
-            color: fAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-            border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
-            MouseArea { id: fAddRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                        onClicked: blockModel.tableInsertRow(root.activeTableRow, blockModel.tableRows(root.activeTableRow)) }
-        }
-
-        // --- Row/column reorder grips (see the property block above) ---
-        Item {   // column grips: a thin strip across the table's top edge
-            x: 20; y: 4; width: frameTable.width; height: 14
-            Rectangle {   // grip pill over the hovered / dragged column
-                visible: colGripMA.gcol >= 0
-                x: Math.max(0, frameTable.columnLeftX(colGripMA.gcol) - frameTable.scrollX)
-                width: Math.max(0, Math.min(frameTable.colW(colGripMA.gcol),
-                                            parent.width - x))
-                height: 8; y: 3; radius: 0
-                color: tableFrame.colDragging ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-                border.width: 1; border.color: tableFrame.colDragging ? Theme.colors.accent : Theme.colors.border
-            }
-            MouseArea {
-                id: colGripMA
-                anchors.fill: parent
-                hoverEnabled: true; preventStealing: true
-                readonly property int gcol: tableFrame.colDragging ? tableFrame.dragFrom : tableFrame.gripC
-                cursorShape: tableFrame.colDragging ? Qt.ClosedHandCursor
-                           : tableFrame.gripC >= 0 ? Qt.OpenHandCursor : Qt.ArrowCursor
-                onPositionChanged: (m) => {
-                    if (tableFrame.colDragging) {
-                        if (Math.abs(m.x - tableFrame.gripPressX) + Math.abs(m.y - tableFrame.gripPressY) > 4)
-                            tableFrame.gripMoved = true
-                        tableFrame.dropGap = tableFrame.colGapAt(m.x); return
-                    }
-                    tableFrame.gripC = tableFrame.colAt(m.x)
-                }
-                onPressed: (m) => {
-                    var c = tableFrame.colAt(m.x)
-                    if (c >= 0) { tableFrame.colDragging = true; tableFrame.dragFrom = c
-                                  tableFrame.gripPressX = m.x; tableFrame.gripPressY = m.y
-                                  tableFrame.gripMoved = false
-                                  tableFrame.gripPressMods = m.modifiers
-                                  tableFrame.dropGap = tableFrame.colGapAt(m.x) }
-                }
-                onReleased: tableFrame.commitGripDrag()
-                onCanceled: tableFrame.cancelGripDrag()
-                onExited: if (!tableFrame.colDragging) tableFrame.gripC = -1
-            }
-        }
-        Item {   // row grips: a thin strip down the table's left edge (body rows)
-            x: 4; y: 20; width: 14; height: frameTable.height
-            Rectangle {   // grip pill beside the hovered / dragged row
-                visible: rowGripMA.gr >= 0
-                y: frameTable.rowTopY(rowGripMA.gr)
-                height: Math.max(0, Math.min(frameTable.rowHeightAt(rowGripMA.gr),
-                                             parent.height - y))
-                width: 8; x: 3; radius: 0
-                color: tableFrame.rowDragging ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-                border.width: 1; border.color: tableFrame.rowDragging ? Theme.colors.accent : Theme.colors.border
-            }
-            MouseArea {
-                id: rowGripMA
-                anchors.fill: parent
-                hoverEnabled: true; preventStealing: true
-                readonly property int gr: tableFrame.rowDragging ? tableFrame.dragFrom : tableFrame.gripR
-                cursorShape: tableFrame.rowDragging ? Qt.ClosedHandCursor
-                           : tableFrame.gripR >= 0 ? Qt.OpenHandCursor : Qt.ArrowCursor
-                onPositionChanged: (m) => {
-                    if (tableFrame.rowDragging) {
-                        if (Math.abs(m.x - tableFrame.gripPressX) + Math.abs(m.y - tableFrame.gripPressY) > 4)
-                            tableFrame.gripMoved = true
-                        tableFrame.dropGap = tableFrame.rowGapAt(m.y); return
-                    }
-                    tableFrame.gripR = tableFrame.rowAt(m.y)
-                }
-                onPressed: (m) => {
-                    var r = tableFrame.rowAt(m.y)
-                    if (r >= 0) { tableFrame.rowDragging = true; tableFrame.dragFrom = r
-                                  tableFrame.gripPressX = m.x; tableFrame.gripPressY = m.y
-                                  tableFrame.gripMoved = false
-                                  tableFrame.gripPressMods = m.modifiers
-                                  tableFrame.dropGap = tableFrame.rowGapAt(m.y) }
-                }
-                onReleased: tableFrame.commitGripDrag()
-                onCanceled: tableFrame.cancelGripDrag()
-                onExited: if (!tableFrame.rowDragging) tableFrame.gripR = -1
-            }
-        }
-        Rectangle {   // column drop line (insertion gap during a grip drag)
-            visible: tableFrame.colDragging && tableFrame.dropGap >= 0
-            x: 20 + Math.max(0, Math.min(frameTable.width,
-                   frameTable.columnLeftX(tableFrame.dropGap) - frameTable.scrollX)) - 1
-            y: 20; width: 3; height: frameTable.height
-            radius: 0; color: Theme.colors.accent; z: 10
-        }
-        Rectangle {   // row drop line
-            visible: tableFrame.rowDragging && tableFrame.dropGap >= 0
-            x: 20; y: 20 + frameTable.rowTopY(tableFrame.dropGap) - 1
-            width: frameTable.width; height: 3
-            radius: 0; color: Theme.colors.accent; z: 10
-        }
-    }
-    Rectangle {   // bottom clip cue: more table below the viewport — mirrors the
-                  // table's right-edge cue; hidden once scrolled to the end.
-        visible: tableFrame.visible && tableFrame.contentHeight > tableFrame.height
-                 && tableFrame.contentY < tableFrame.contentHeight - tableFrame.height - 0.5
-        x: 20; width: frameTable.width; height: 2
-        anchors.bottom: tableFrame.bottom
-        color: Theme.colors.border
-        z: 15
-    }
-
     // --- Full-frame kanban board (the active table tab in board mode). Scrolls
     // both ways; the board view owns all card interaction directly (a dedicated
     // mode like the table frame — no document mouse layer above it). ---
     Flickable {
         id: boardFrame
-        visible: (root.activeTableRow >= 0 || root.activeGridHead >= 0) && root.boardMode
+        visible: root.activeGridHead >= 0 && root.boardMode
         anchors.fill: parent
         anchors.topMargin: Theme.dim.toolStripHeight   // room for the tab toolbar
         contentWidth: Math.max(width, boardView.implicitWidth + 40)
@@ -5607,20 +4258,14 @@ FocusScope {
             x: 20; y: 20
             width: implicitWidth; height: implicitHeight
             active: boardFrame.visible
-            logicalRow: root.activeTableRow
             head: root.activeGridHead
             groupCol: root.boardCol
             onShowGrid: root.leaveBoard()        // grouping column vanished → grid (or the document, S9a)
             onEditClosed: root.forceActiveFocus()
-            onOpenCard: (r, c) => {              // double-click → grid, cell focused
-                if (root.activeGridHead >= 0) {
-                    const gh = root.activeGridHead
-                    root.showGridView()          // the grid frame (S9b)
-                    root.landInCell(gh, r, c); root.forceActiveFocus()
-                    return
-                }
+            onOpenCard: (r, c) => {              // double-click → the grid frame (S9b), cell focused
+                const gh = root.activeGridHead
                 root.showGridView()
-                tcur.place(r, c, 0)
+                if (gh >= 0) root.landInCell(gh, r, c)
                 root.forceActiveFocus()
             }
             onLaneMenuRequested: (li, bx, by) => {
@@ -5706,7 +4351,7 @@ FocusScope {
     }
     Rectangle {   // table-tab toolbar: the family flat-button strip above the frame
         id: tableTabBar
-        visible: root.activeTableRow >= 0 || root.activeGridHead >= 0
+        visible: root.activeGridHead >= 0
         anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
         height: Theme.dim.toolStripHeight
         color: Theme.colors.surface
@@ -5744,8 +4389,7 @@ FocusScope {
                 tooltipSide: "right"
                 onClicked: {
                     if (!root.boardMode)
-                        root.openBoard(root.activeGridHead >= 0 ? root.activeGridHead : root.activeTableRow,
-                                       root.boardCol >= 0 ? root.boardCol : root.firstGroupCol)
+                        root.openBoard(root.activeGridHead, root.boardCol >= 0 ? root.boardCol : root.firstGroupCol)
                     root.forceActiveFocus()
                 }
             }
@@ -7505,7 +6149,7 @@ FocusScope {
             opacity: root.inkMode ? 0.5 : ((blockSelected && !live) ? 0.35 : 1.0)
             enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+            visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
                      && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
@@ -7552,7 +6196,7 @@ FocusScope {
             opacity: root.inkMode ? 0.5 : (blockSelected ? 0.35 : 1.0)
             enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+            visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
@@ -7603,7 +6247,7 @@ FocusScope {
         // Also hidden in ink mode: a still-selected image's handles would sit
         // above the canvas and let the pen RESIZE the layout under the ink.
         visible: row >= 0 && !root.inkMode
-                 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+                 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         readonly property real imgX: (row >= 0 ? root.columnX(row) : root.leftEdge) - flick.contentX
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
@@ -7696,97 +6340,13 @@ FocusScope {
         }
     }
 
-    // Cell-image resize handles — root overlays over the focused table cell's image
-    // (fit-to-column top-right, proportional drag bottom-right), the same model as
-    // the document image but bounded by the column width.
-    Item {
-        id: cellImgResize
-        visible: root.cellImgActive && root.cellImgRect.width > 0
-        readonly property real rx: root.cellImgRect.x
-        readonly property real ry: root.cellImgRect.y
-        readonly property real rw: root.cellImgRect.width
-        readonly property real rh: root.cellImgRect.height
-        z: 57
-
-        Rectangle {   // fit-to-column (top-right)
-            visible: !root.cellImgResizing
-            width: 20; height: 20; radius: 0
-            x: cellImgResize.rx + cellImgResize.rw - width - 4
-            y: cellImgResize.ry + 4
-            color: cFitMA.containsMouse ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
-            border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 12; color: Theme.colors.textBright }
-            MouseArea {
-                id: cFitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, Math.round(root.cellImgMaxW))
-            }
-        }
-
-        Rectangle {   // proportional drag (bottom-right)
-            width: 18; height: 18; radius: 0
-            x: cellImgResize.rx + cellImgResize.rw - width - 4
-            y: cellImgResize.ry + cellImgResize.rh - height - 4
-            color: (cDragMA.containsMouse || root.cellImgResizing) ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
-            border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "resize"; size: 12; color: Theme.colors.textBright }
-            MouseArea {
-                id: cDragMA
-                anchors.fill: parent; hoverEnabled: true; preventStealing: true
-                cursorShape: Qt.SizeFDiagCursor
-                onPressed: (m) => {
-                    root._cellResizePressX = m.x
-                    root._cellResizeStartW = cellImgResize.rw
-                    root.cellResizeW = cellImgResize.rw
-                    root.cellResizeAspect = cellImgResize.rw > 0 ? cellImgResize.rh / cellImgResize.rw : 1
-                    root.cellImgResizing = true
-                }
-                onPositionChanged: (m) => {
-                    if (!root.cellImgResizing) return
-                    root.cellResizeW = Math.max(40, Math.min(root.cellImgMaxW,
-                        root._cellResizeStartW + (m.x - root._cellResizePressX)))
-                }
-                onReleased: {
-                    if (root.cellImgResizing) {
-                        blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, Math.round(root.cellResizeW))
-                        root.cellImgResizing = false
-                    }
-                }
-                onCanceled: root.cellImgResizing = false
-                onDoubleClicked: blockModel.tableSetCellImageWidth(tcur.row, tcur.cr, tcur.cc, 0)   // reset
-            }
-        }
-    }
-
-    // Cell-image resize ghost — target-size outline during the drag (no reflow until
-    // release), anchored at the cell image's top-left.
-    Rectangle {
-        visible: root.cellImgResizing
-        z: 58
-        x: root.cellImgRect.x
-        y: root.cellImgRect.y
-        width: root.cellResizeW
-        height: root.cellResizeW * root.cellResizeAspect
-        color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.08)
-        border.width: 2; border.color: Theme.colors.accent
-        Rectangle {
-            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4
-            width: cDimLabel.width + 10; height: cDimLabel.height + 6; radius: 0
-            color: Qt.rgba(0, 0, 0, 0.7)
-            Text {
-                id: cDimLabel; anchors.centerIn: parent
-                text: Math.round(root.cellResizeW) + " × " + Math.round(root.cellResizeW * root.cellResizeAspect)
-                color: Theme.colors.textBright; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-            }
-        }
-    }
-
     // Context-menu target highlight (whole block) — tints the block the hovered
     // menu item will act on (red for destructive). Column/row scopes are drawn
     // inside the table itself. Document view only (the menu opens there).
     // Full FIELD like the focus fill and the multi-block selection band (one
     // row treatment); covers the whole selected run when the menu row is in it.
     Rectangle {
-        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         x: -flick.contentX
         y: (blockModel.layoutRevision, blockModel.yForRow(blockMenu.runLo)) - flick.contentY
         width: Math.max(flick.width, root.contentSpan)
@@ -7797,77 +6357,6 @@ FocusScope {
         color: Qt.rgba(_c.r, _c.g, _c.b, 0.10)
         border.width: 1; border.color: Qt.rgba(_c.r, _c.g, _c.b, 0.55)
         radius: Theme.dim.radius
-    }
-
-    // +row / +column affordances for the focused table. Root overlays (above the
-    // document mouse layer) — a clickable strip inside the table couldn't receive
-    // events, since that mouse layer stacks over every delegate.
-    Item {
-        id: tableAdd
-        readonly property Item dlg: (blockModel.layoutRevision, blockModel.contentRevision, flick.contentY,
-            tcur.active ? root.cellForRow(cursor.focusRow) : null)
-        readonly property Item tItem: dlg ? dlg.tableItem : null
-        visible: tItem !== null && root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // Document view only
-        readonly property real topV: dlg ? dlg.y - flick.contentY + 32 : 0   // table content top (tableHost y:32)
-        readonly property real cw: tItem ? tItem.width : 0
-        readonly property real ch: tItem ? tItem.height : 0
-        readonly property real tableX: root.leftEdge - flick.contentX   // shared edge, in VIEWPORT coords (page can h-scroll)
-        readonly property bool overflow: tItem ? tItem.overflowing : false
-        readonly property real sbH: Theme.dim.scrollBarWidth
-
-        Rectangle {   // horizontal scrollbar — a root overlay (an inner ScrollBar
-                      // would sit under the document mouse layer) that drives the
-                      // table's scrollX; sits between the table and the +row button.
-            visible: tableAdd.overflow
-            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + 4
-            width: tableAdd.cw; height: tableAdd.sbH; z: 41; color: "transparent"
-            readonly property real contentTW: tableAdd.tItem ? tableAdd.tItem.contentW : 0
-            readonly property real maxScroll: Math.max(0, contentTW - tableAdd.cw)
-            readonly property real thumbW: Math.max(24, width * tableAdd.cw / Math.max(1, contentTW))
-            readonly property real maxThumbX: width - thumbW
-            Rectangle {
-                id: hthumb
-                height: parent.height; radius: 0; width: parent.thumbW
-                x: parent.maxScroll > 0 && tableAdd.tItem ? (tableAdd.tItem.scrollX / parent.maxScroll) * parent.maxThumbX : 0
-                color: Theme.colors.textSubtle
-                opacity: hbarMA.pressed ? 0.85 : (hbarMA.containsMouse ? 0.65 : 0.45)
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
-            MouseArea {
-                id: hbarMA
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                function setScroll(mx) {
-                    var tx = Math.max(0, Math.min(parent.maxThumbX, mx - parent.thumbW / 2))
-                    if (parent.maxThumbX > 0 && tableAdd.tItem)
-                        tableAdd.tItem.scrollX = (tx / parent.maxThumbX) * parent.maxScroll
-                }
-                onPressed: (m) => setScroll(m.x)
-                onPositionChanged: (m) => { if (pressed) setScroll(m.x) }
-            }
-        }
-
-        Rectangle {   // + row, bottom edge (below the scrollbar when present)
-            x: tableAdd.tableX; y: tableAdd.topV + tableAdd.ch + (tableAdd.overflow ? tableAdd.sbH + 8 : 4)
-            width: tableAdd.cw; height: 14; radius: 0; z: 40
-            color: addRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-            border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
-            MouseArea {
-                id: addRowMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: blockModel.tableInsertRow(cursor.focusRow, blockModel.tableRows(cursor.focusRow))
-            }
-        }
-        Rectangle {   // + column, right edge
-            x: tableAdd.tableX + tableAdd.cw + 4; y: tableAdd.topV
-            width: 14; height: tableAdd.ch; radius: 0; z: 40
-            color: addColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
-            border.width: 1; border.color: Theme.colors.border
-            Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
-            MouseArea {
-                id: addColMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: blockModel.tableInsertColumn(cursor.focusRow, blockModel.tableColumns(cursor.focusRow))
-            }
-        }
     }
 
     // A column grip drag's drop line (SR-4 S7b): the gap it would land at, down the whole table.
@@ -8063,31 +6552,18 @@ FocusScope {
         }
     }
 
-    // --- Choice-cell option picker (root overlay above the mouse layer) ---
-    function openChoicePicker(trow, r, c, vx, vy) {
-        choicePicker.gridHead = -1
-        choicePicker.srow = -1; choicePicker.sstart = -1
-        choicePicker.sr = -1; choicePicker.sc = -1
-        choicePicker.row = trow; choicePicker.r = r; choicePicker.c = c
-        root.choiceX = vx; root.choiceY = vy
-        choicePicker.open()
-    }
-    // Inline chip variant (DT-2): span address instead of the cell triple.
+    // --- Choice option picker (root overlay above the mouse layer) ---
+    // Inline chip variant (DT-2): a span address.
     function openInlineChoicePicker(brow, s, vx, vy) {
         choicePicker.gridHead = -1
-        choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
-        choicePicker.sr = -1; choicePicker.sc = -1
         choicePicker.srow = brow; choicePicker.sstart = s
         root.choiceX = vx; root.choiceY = vy
         choicePicker.open()
     }
-    // Cell-chip variant (2026-08-21): a chip span INSIDE a table text cell —
-    // span address plus the cell coords.
-    // A derived table's choice cell (SR-4 S6b): the picker under the cell, the add field
+    // A table's choice cell (SR-4 S6b): the picker under the cell, the add field
     // prefilled with `text` (the typed character that opened it, or "").
     function openGridChoicePicker(head, r, c, text) {
-        choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
-        choicePicker.srow = -1; choicePicker.sstart = -1; choicePicker.sr = -1; choicePicker.sc = -1
+        choicePicker.srow = -1; choicePicker.sstart = -1
         choicePicker.gridHead = head; choicePicker.gridR = r; choicePicker.gridC = c
         const b = blockModel.gridCellAt(head, r, c)
         const cell = b >= 0 ? root.cellForRow(b) : null
@@ -8098,32 +6574,19 @@ FocusScope {
         choicePicker.prefill(text)
         choicePicker.open()
     }
-    function openCellChoicePicker(trow, r, c, s, vx, vy) {
-        choicePicker.gridHead = -1
-        choicePicker.row = -1; choicePicker.r = -1; choicePicker.c = -1
-        choicePicker.srow = trow; choicePicker.sstart = s
-        choicePicker.sr = r; choicePicker.sc = c
-        root.choiceX = vx; root.choiceY = vy
-        choicePicker.open()
-    }
     ChoicePicker {
         id: choicePicker
         z: 60
         x: Math.max(8, Math.min(root.choiceX, root.width - width - 8))
         y: Math.max(8, Math.min(root.choiceY, root.height - height - 8))
         onClosed: root.forceActiveFocus()
-        onEditOptions: choicePicker.gridMode
-                           ? choiceEditor.open2Grid(choicePicker.gridHead, choicePicker.gridC)
-                       : choicePicker.cellSpanMode
-                           ? choiceEditor.open2CellSpan(choicePicker.srow, choicePicker.sr,
-                                                        choicePicker.sc, choicePicker.sstart)
-                       : choicePicker.spanMode
-                           ? choiceEditor.open2Span(choicePicker.srow, choicePicker.sstart)
-                           : root.openChoiceEditor(choicePicker.row, choicePicker.c)
+        onEditOptions: {
+            if (choicePicker.gridMode) choiceEditor.open2Grid(choicePicker.gridHead, choicePicker.gridC)
+            else if (choicePicker.spanMode) choiceEditor.open2Span(choicePicker.srow, choicePicker.sstart)
+        }
     }
     // Modal editor for a choice column's option set (opened from the column menu or
     // the picker's "Edit options…"). Centres itself in the editor.
-    function openChoiceEditor(trow, col) { choiceEditor.open2(trow, col) }
     ChoiceColumnEditor {
         id: choiceEditor
         z: 70
@@ -8137,8 +6600,6 @@ FocusScope {
         id: blockMenu
         readonly property bool isCode: !menuInSel && root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 2)
-        readonly property bool isTable: !menuInSel && root.menuRow >= 0
-            && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 7)
         readonly property bool isMedia: !menuInSel && root.menuRow >= 0
             && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
         readonly property bool isPdf: isMedia
@@ -8147,15 +6608,15 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "video"
         readonly property bool isSketch: isMedia
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "sketch"
-        // In a full-frame tab (table/PDF/video) the menu is a view INTO one block, so
+        // In a full-frame tab (PDF/video/sketch) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
-        readonly property bool inFrameTab: root.activeTableRow >= 0 || root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
+        readonly property bool inFrameTab: root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
         // The menu row lies inside a multi-block selection → the menu is a RUN
         // menu: block ops (add above/below, duplicate, copy, paste, move,
         // insert below, delete) act on the whole run and the target highlight
         // covers it; single-block rows (open, media, code, chip, link, table
         // columns) are withheld — the clicked row isn't apparent under a run
-        // highlight (isTable/isMedia/isCode read false here).
+        // highlight (isMedia/isCode read false here).
         readonly property bool menuInSel: cursor.hasSel && cursor.loRow !== cursor.hiRow
                                           && root.menuRow >= cursor.loRow && root.menuRow <= cursor.hiRow
         readonly property int runLo: menuInSel ? cursor.loRow : root.menuRow
@@ -8164,7 +6625,7 @@ FocusScope {
         readonly property int laneRecord: menuInSel || root.menuRow < 0 ? -1
             : (blockModel.contentRevision, blockModel.splitRowOf(root.menuRow))
         readonly property bool canSplit: root.menuRow >= 0 && (blockModel.contentRevision,
-            blockModel.typeForRow(runLo) !== 7 && blockModel.typeForRow(runLo) !== 10
+            blockModel.typeForRow(runLo) !== 10
             && (!menuInSel || (blockModel.laneForRow(runLo) < 0 && blockModel.laneForRow(runHi) < 0)))
         readonly property bool canAlign: laneRecord >= 0 && (blockModel.contentRevision,
             blockModel.splitRowLast(laneRecord) - laneRecord > blockModel.laneCount(laneRecord))
@@ -8201,47 +6662,16 @@ FocusScope {
         readonly property var liveIssue: {
             var dep = spell.revision
             if (!root.menuIssue) return null
-            var it = root.menuIssueInCell ? spell.cellIssueAt(root.menuRow, root.menuCellR, root.menuCellC, root.menuIssue.s)
-                                          : spell.issueAt(root.menuRow, root.menuIssue.s)
+            var it = spell.issueAt(root.menuRow, root.menuIssue.s)
             return it.ruleId !== undefined ? it : root.menuIssue
         }
-        // Table facts the row visibilities share (revision-dep'd once here).
-        readonly property int tHdr: isTable ? (blockModel.contentRevision, blockModel.tableHeaderRows(root.menuRow)) : 0
-        readonly property int tRows: isTable ? (blockModel.contentRevision, blockModel.tableRows(root.menuRow)) : 0
-        readonly property int tCols: isTable ? (blockModel.contentRevision, blockModel.tableColumns(root.menuRow)) : 0
-        readonly property bool bodyRow: isTable && root.menuCellR >= tHdr
-        readonly property bool sortable: isTable && tRows - tHdr > 1
-        // Multi-select targeting (2026-08-21): the menu operates on the
-        // SELECTION when the right-clicked cell sits inside it (right-click
-        // preserves the selection by construction), else single-target.
-        readonly property bool selRowsHit: isTable && (tcur.selRev, tcur.selRows.length > 1
-            && tcur.selRows.indexOf(root.menuCellR) >= 0)
-        readonly property bool selColsHit: isTable && (tcur.selRev, tcur.selCols.length > 1
-            && tcur.selCols.indexOf(root.menuCellC) >= 0)
-        readonly property int selRowCount: (tcur.selRev, tcur.selRows.length)
-        readonly property int selColCount: (tcur.selRev, tcur.selCols.length)
-        // A live multi-cell rect containing the clicked cell (rect corners are
-        // plain int props — they notify on their own, no selRev needed).
-        readonly property bool selRectHit: isTable && tcur.rangeR0 >= 0
-            && !(tcur.rangeR0 === tcur.rangeR1 && tcur.rangeC0 === tcur.rangeC1)
-            && root.menuCellR >= Math.min(tcur.rangeR0, tcur.rangeR1)
-            && root.menuCellR <= Math.max(tcur.rangeR0, tcur.rangeR1)
-            && root.menuCellC >= Math.min(tcur.rangeC0, tcur.rangeC1)
-            && root.menuCellC <= Math.max(tcur.rangeC0, tcur.rangeC1)
-        // Multi-selection → ONE compact menu column (user ruling 2026-08-21:
-        // the full three-column menu is noise when the target is the
-        // selection); the three regular columns hide entirely.
-        readonly property bool bulkMode: selRowsHit || selColsHit || selRectHit || gridSetHit !== null
-        readonly property int rectRows: selRectHit
-            ? Math.abs(tcur.rangeR1 - tcur.rangeR0) + 1 : 0
-        readonly property int rectCols: selRectHit
-            ? Math.abs(tcur.rangeC1 - tcur.rangeC0) + 1 : 0
+        // A grip-picked set → ONE compact menu column (user ruling 2026-08-21: the full
+        // three-column menu is noise when the target is the selection).
+        readonly property bool bulkMode: gridSetHit !== null
         // Tallest of the visible columns — the inter-column dividers stretch to it.
         readonly property real bodyH: bulkMode ? bulkColMenu.implicitHeight
             : gridOne
             ? Math.max(blockColMenu.implicitHeight, gridColMenu.implicitHeight, gridRowMenu.implicitHeight)
-            : isTable
-            ? Math.max(blockColMenu.implicitHeight, colColMenu.implicitHeight, rowColMenu.implicitHeight)
             : blockColMenu.implicitHeight
         padding: 4; z: 60
         // Reactive on-screen clamp: re-evaluates as the menu's height settles after
@@ -8263,7 +6693,6 @@ FocusScope {
                 visible: !blockMenu.bulkMode
                 spacing: 1
                 MenuHeader { visible: blockMenu.menuInSel; text: (blockMenu.runHi - blockMenu.runLo + 1) + " blocks" }
-                MenuHeader { visible: blockMenu.isTable; text: "Block" }
                 // Spell / grammar (0.5.0): the issue under the click as a
                 // tinted WELL in the underline's colour (red = spelling, the
                 // quote-bar blue = grammar) with a 2 px bar on the left — the
@@ -8278,8 +6707,7 @@ FocusScope {
                     readonly property int fixable: {
                         var dep = spell.revision
                         if (blockMenu.menuInSel || root.menuRow < 0) return 0
-                        var list = root.menuIssueInCell ? spell.issuesForCell(root.menuRow, root.menuCellR, root.menuCellC)
-                                                        : spell.issuesForRow(root.menuRow)
+                        var list = spell.issuesForRow(root.menuRow)
                         var n = 0
                         for (var i = 0; i < list.length; ++i) if (list[i].suggestions.length > 0) ++n
                         return n
@@ -8321,7 +6749,7 @@ FocusScope {
                                     color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.45) }
                         MenuRow { visible: spellWell.showFixAll
                                   hoverColor: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.55)
-                                  text: (root.menuIssueInCell ? "Fix all in cell (" : "Fix all in block (") + spellWell.fixable + ")"
+                                  text: "Fix all in block (" + spellWell.fixable + ")"
                                   onActivated: root.applyAllSuggestions()
                                   Rectangle { anchors.fill: parent; z: -1; radius: 0
                                               color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.28) }
@@ -8333,11 +6761,10 @@ FocusScope {
                           text: "Open " + root.truncUrl(root.menuLinkUrl)
                           onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
                 Rectangle { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.isTable && root.activeTableRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.isTable && !blockMenu.menuInSel
+                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.menuInSel
                           text: "Insert choice chip"
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(blockMenu.runLo) }
@@ -8380,11 +6807,11 @@ FocusScope {
                 MenuRow { visible: !blockMenu.inFrameTab && (blockModel.contentRevision, blockMenu.runHi < blockModel.count - 1)
                           text: blockMenu.menuInSel ? "Move blocks down" : "Move down"; onActivated: root.moveMenuRow(1) }
                 MenuRow { visible: !blockMenu.inFrameTab
-                          text: blockMenu.menuInSel ? "Copy blocks" : blockMenu.isTable ? "Copy table" : "Copy"
+                          text: blockMenu.menuInSel ? "Copy blocks" : "Copy"
                           onActivated: { if (blockMenu.menuInSel) { var ce = cursor.effectiveRange(); root.copyRange(ce.lR, ce.lC, ce.hR, ce.hC) }
                                          else root.copyBlock(root.menuRow) } }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Paste"
-                          onActivated: root.pasteAtBlock(root.menuRow, blockMenu.isTable ? root.menuCellR : -1, root.menuCellC) }
+                          onActivated: root.pasteAtBlock(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia
                                    && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
                           text: "Copy image"
@@ -8395,9 +6822,8 @@ FocusScope {
                           onActivated: blockModel.revealMedia(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch; text: "Open in ufb"
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
-                MenuRow { visible: !blockMenu.isTable; text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
+                MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(blockMenu.runHi) }
-                MenuRow { visible: blockMenu.isTable; text: blockMenu.tHdr > 0 ? "Remove header row" : "Add header row"; onActivated: root.tblToggleHeader() }
                 // comment on the current (single-row) text selection
                 MenuRow {
                     visible: !blockMenu.inFrameTab && cursor.hasSel && cursor.loRow === cursor.hiRow
@@ -8405,85 +6831,19 @@ FocusScope {
                     onActivated: root.addCommentOnSelection()
                 }
                 // text-only transform (withheld for a run — the clicked row isn't apparent)
-                Rectangle { visible: !blockMenu.isTable && !blockMenu.isMedia && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
+                Rectangle { visible: !blockMenu.isMedia && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow {
-                    visible: !blockMenu.isTable && !blockMenu.isMedia && !blockMenu.menuInSel
+                    visible: !blockMenu.isMedia && !blockMenu.menuInSel
                     text: blockMenu.isCode ? "Change language…" : "Make code block"
                     onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
                                                   : root.makeCodeAt(root.menuRow)
                 }
-                // cell image (right-clicked table cell)
-                Rectangle { visible: root.menuCellHasImage; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: root.menuCellHasImage; text: "Copy image"
-                          onActivated: { clipboard.writeImageFromFile(blockModel.tableCellMediaUrl(root.menuRow, root.menuCellR, root.menuCellC))
-                                         Toasts.show(qsTr("Image copied")) } }
-                MenuRow { visible: root.menuCellHasImage; text: "Remove image"; danger: true; onActivated: root.tblRemoveImage() }
                 Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Delete blocks" : "Delete block"; danger: true
                           onActivated: root.deleteRun(blockMenu.runLo, blockMenu.runHi) }
             }
 
-            Rectangle { visible: blockMenu.isTable && !blockMenu.bulkMode; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
-
-            // --- Column column (the right-clicked table column) ---
-            Column {
-                id: colColMenu
-                visible: blockMenu.isTable && !blockMenu.bulkMode
-                spacing: 1
-                MenuHeader { text: "Column" }
-                MenuRow { scope: "column"; text: "Select column"; onActivated: root.selectTableColumn(root.menuRow, root.menuCellC) }
-                MenuRow { scope: "column"; text: "Insert column left"; onActivated: root.tblInsColLeft() }
-                MenuRow { scope: "column"; text: "Insert column right"; onActivated: root.tblInsColRight() }
-                MenuRow { visible: root.menuCellC > 0; scope: "column"; text: "Move column left"; onActivated: root.tblMoveCol(-1) }
-                MenuRow { visible: root.menuCellC < blockMenu.tCols - 1; scope: "column"; text: "Move column right"; onActivated: root.tblMoveCol(1) }
-                MenuRow { scope: "column"; text: "Duplicate column"; onActivated: root.tblDupCol() }
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuSegRow {
-                    label: "Align"
-                    readonly property int _a: blockMenu.isTable ? (blockModel.contentRevision, blockModel.tableColAlign(root.menuRow, root.menuCellC)) : 0
-                    MenuIconBtn { icon: "text-align-left";   on: parent._a === 0; onActivated: root.tblAlign(0) }
-                    MenuIconBtn { icon: "text-align-center"; on: parent._a === 1; onActivated: root.tblAlign(1) }
-                    MenuIconBtn { icon: "text-align-right";  on: parent._a === 2; onActivated: root.tblAlign(2) }
-                }
-                // One-shot sort of the body rows by this column (header stays pinned).
-                Rectangle { visible: blockMenu.sortable; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuSegRow {
-                    visible: blockMenu.sortable
-                    label: "Sort"
-                    MenuIconBtn { icon: "sort-ascending";  onActivated: root.tblSort(true) }
-                    MenuIconBtn { icon: "sort-descending"; onActivated: root.tblSort(false) }
-                }
-                // Column type
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: root.tblColKind() !== 1; scope: "column"; text: "Make choice column"; onActivated: root.tblMakeChoiceCol() }
-                MenuRow { visible: root.tblColKind() !== 2; scope: "column"; text: "Make checkmark column"; onActivated: root.tblMakeCheckCol() }
-                MenuRow { visible: root.tblColKind() === 1; scope: "column"; text: "Edit options…"; onActivated: root.openChoiceEditor(root.menuRow, root.menuCellC) }
-                MenuRow { visible: root.tblColKind() !== 0 && !root.boardMode; scope: "column"; text: "View as board"; onActivated: root.openBoard(root.menuRow, root.menuCellC) }
-                MenuRow { visible: root.tblColKind() !== 0; scope: "column"; text: "Make text column"; danger: true; onActivated: root.tblMakeTextCol() }
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { scope: "column"; text: "Delete column"; danger: true; onActivated: root.tblDelCol() }
-            }
-
-            Rectangle { visible: blockMenu.isTable && !blockMenu.bulkMode; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
-
-            // --- Row column (the right-clicked table row) ---
-            Column {
-                id: rowColMenu
-                visible: blockMenu.isTable && !blockMenu.bulkMode
-                spacing: 1
-                MenuHeader { text: "Row" }
-                MenuRow { scope: "row"; text: "Select row"; onActivated: root.selectTableRow(root.menuRow, root.menuCellR) }
-                MenuRow { scope: "row"; text: "Insert row above"; onActivated: root.tblInsRowAbove() }
-                MenuRow { scope: "row"; text: "Insert row below"; onActivated: root.tblInsRowBelow() }
-                // Reorder/duplicate: body rows only (a header row's place is structural).
-                MenuRow { visible: root.menuCellR > blockMenu.tHdr; scope: "row"; text: "Move row up"; onActivated: root.tblMoveRow(-1) }
-                MenuRow { visible: blockMenu.bodyRow && root.menuCellR < blockMenu.tRows - 1; scope: "row"; text: "Move row down"; onActivated: root.tblMoveRow(1) }
-                MenuRow { visible: blockMenu.bodyRow; scope: "row"; text: "Duplicate row"; onActivated: root.tblDupRow() }
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
-            }
-
-            // --- Derived tables (SR-4): the right-clicked cell's column and row ---
+            // --- Tables (SR-4): the right-clicked cell's column and row ---
             Rectangle { visible: blockMenu.gridOne; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
             Column {
                 id: gridColMenu
@@ -8576,12 +6936,7 @@ FocusScope {
                 id: bulkColMenu
                 visible: blockMenu.bulkMode
                 spacing: 1
-                MenuHeader {
-                    text: blockMenu.gridSetHit !== null ? blockMenu.gridSetNoun
-                        : blockMenu.selRowsHit ? blockMenu.selRowCount + " rows"
-                        : blockMenu.selColsHit ? blockMenu.selColCount + " columns"
-                        : blockMenu.rectRows + "×" + blockMenu.rectCols + " cells"
-                }
+                MenuHeader { text: blockMenu.gridSetNoun }
                 // A derived table's grip-picked set (SR-4 S7b)
                 MenuRow { visible: blockMenu.gridSetHit !== null; scope: "set"; text: "Clear contents"
                           onActivated: root.clearGridSet() }
@@ -8601,39 +6956,8 @@ FocusScope {
                           onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 2) }) }
                 MenuRow { visible: blockMenu.gridSetCols; scope: "set"; text: "Make text columns"; danger: true
                           onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 0) }) }
-                // Rows set
-                MenuRow { visible: blockMenu.selRowsHit; scope: "row"; text: "Copy as table"; onActivated: root.tblCopyRows() }
-                MenuRow { visible: blockMenu.selRowsHit; scope: "row"; text: "Clear contents"; onActivated: root.tblClearRows() }
-                // Columns set
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Copy as table"; onActivated: root.tblCopyCols() }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Clear contents"; onActivated: root.tblClearCols() }
-                MenuSegRow {
-                    visible: blockMenu.selColsHit
-                    label: "Align"
-                    MenuIconBtn { icon: "text-align-left";   onActivated: root.tblAlign(0) }
-                    MenuIconBtn { icon: "text-align-center"; onActivated: root.tblAlign(1) }
-                    MenuIconBtn { icon: "text-align-right";  onActivated: root.tblAlign(2) }
-                }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Make choice columns"; onActivated: root.tblMakeChoiceCol() }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Make checkmark columns"; onActivated: root.tblMakeCheckCol() }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"; text: "Make text columns"; onActivated: root.tblMakeTextCol() }
-                // Cell rect: promote to whole rows/columns, or act on the cells.
-                MenuRow { visible: blockMenu.selRectHit
-                          text: "Select " + blockMenu.rectRows + (blockMenu.rectRows === 1 ? " row" : " rows")
-                          onActivated: root.tblSelectRectRows() }
-                MenuRow { visible: blockMenu.selRectHit
-                          text: "Select " + blockMenu.rectCols + (blockMenu.rectCols === 1 ? " column" : " columns")
-                          onActivated: root.tblSelectRectCols() }
-                MenuRow { visible: blockMenu.selRectHit; text: "Copy cells"; onActivated: root.tblCopyRect() }
-                MenuRow { visible: blockMenu.selRectHit; text: "Clear cells"; onActivated: root.tblClearRect() }
-                // Destructive tail (sets only — the rect clears, never deletes)
-                Rectangle { visible: !blockMenu.selRectHit; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.selRowsHit; scope: "row"
-                          text: "Delete " + blockMenu.selRowCount + " rows"
-                          danger: true; onActivated: root.tblDelRow() }
-                MenuRow { visible: blockMenu.selColsHit; scope: "column"
-                          text: "Delete " + blockMenu.selColCount + " columns"
-                          danger: true; onActivated: root.tblDelCol() }
+                // Destructive tail
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: blockMenu.gridSetHit !== null; scope: "set"; danger: true
                           text: blockMenu.gridSetHit !== null && blockMenu.gridSetHit.kind === "row"
                                 && blockMenu.gridSetHit.items[0] < blockMenu.gridHeaders ? "Delete table" : "Delete " + blockMenu.gridSetNoun

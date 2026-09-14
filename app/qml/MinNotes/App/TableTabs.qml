@@ -15,9 +15,8 @@ Rectangle {
     id: tabs
     property var editor: null
 
-    // Table tabs: the Table blocks, then derived tables by their head record's id (SR-4 S9).
-    readonly property var ids: (blockModel.layoutRevision, blockModel.contentRevision,
-                                blockModel.tableBlockIds().concat(blockModel.gridBlockIds()))
+    // Table tabs: the tables by their head record's id (SR-4 S9).
+    readonly property var ids: (blockModel.layoutRevision, blockModel.contentRevision, blockModel.gridBlockIds())
     readonly property var pdfIds: (blockModel.layoutRevision, blockModel.contentRevision,
                                    blockModel.pdfBlockIds())
     readonly property var videoIds: (blockModel.layoutRevision, blockModel.contentRevision,
