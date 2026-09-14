@@ -540,12 +540,12 @@ FocusScope {
     // undo step (the focused row's inline markdown commits inside it), then
     // the caret and selection follow their blocks (the old code left the caret
     // on whatever slid into the vacated index).
-    function moveRun(from, count, to) {
+    function moveRun(from, count, to, asTopLevel) {
         if (count < 1 || to < 0 || to > blockModel.count - count || to === from) return
         var lo = Math.min(from, to, cursor.focusRow), hi = Math.max(from, to, cursor.focusRow) + count - 1
         blockModel.beginGroup(lo, hi)
         blockModel.commitMarkdown(cursor.focusRow)
-        blockModel.moveBlocks(from, count, to)
+        blockModel.moveBlocks(from, count, to, asTopLevel === true)
         blockModel.endGroup()                          // BEFORE the caret write
         cursor.anchorRow = blockModel.rowAfterMove(cursor.anchorRow, from, count, to)
         cursor.focusRow  = blockModel.rowAfterMove(cursor.focusRow,  from, count, to)
@@ -2937,6 +2937,14 @@ FocusScope {
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
+        // ⌘] / ⌘[ (SR-0 §4.7): list indent / outdent everywhere — inside a lane Tab moves
+        // between lanes, so indent needs its own keys.
+        else if (cmd && (k === Qt.Key_BracketRight || k === Qt.Key_BracketLeft)) {
+            blockModel.indentBlocks(cursor.hasSel ? cursor.loRow : cursor.focusRow,
+                                    cursor.hasSel ? cursor.hiRow : cursor.focusRow,
+                                    k === Qt.Key_BracketRight ? 1 : -1)
+            event.accepted = true
+        }
         else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
         else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
@@ -2948,7 +2956,10 @@ FocusScope {
                  && root.activeFrameId === "" && !root.inkMode && !root.boardMode) {
             var mlo = cursor.hasSel ? cursor.loRow : cursor.focusRow
             var mhi = cursor.hasSel ? cursor.hiRow : cursor.focusRow
-            root.moveRun(mlo, mhi - mlo + 1, k === Qt.Key_Up ? mlo - 1 : mlo + 1)
+            // Within its container (SR-0 §4.12): a lane block stays in its lane; a top-level
+            // block or a selected split row steps over whole split rows. [] = at the edge.
+            const mt = blockModel.moveTarget(mlo, mhi, k === Qt.Key_Up ? -1 : 1)
+            if (mt.length === 4) root.moveRun(mt[0], mt[1], mt[2], mt[3])
             event.accepted = true
         }
         // Video studio: transport keys, then swallow everything else so typing

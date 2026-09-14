@@ -1301,6 +1301,39 @@ int BlockModel::insertParagraphBelow(int row) {
     return at;
 }
 
+QVariantList BlockModel::moveTarget(int lo, int hi, int dir) const {
+    const int n = static_cast<int>(rows_.size());
+    if (n == 0 || dir == 0) return {};
+    lo = std::clamp(lo, 0, n - 1);
+    hi = std::clamp(hi, 0, n - 1);
+    if (lo > hi) std::swap(lo, hi);
+    const int recLo = splitRowOf(lo), recHi = splitRowOf(hi);
+    const int8_t lane = rows_[size_t(lo)].cell;
+    if (recLo >= 0 && recLo == recHi && lane >= 0 && rows_[size_t(hi)].cell == lane) {   // within one lane
+        const int count = hi - lo + 1;
+        if (dir < 0)
+            return (lo > 0 && rows_[size_t(lo - 1)].cell == lane) ? QVariantList{ lo, count, lo - 1, false }
+                                                                  : QVariantList{};
+        return (hi + 1 < n && rows_[size_t(hi + 1)].cell == lane) ? QVariantList{ lo, count, lo + 1, false }
+                                                                 : QVariantList{};
+    }
+    // Among top-level rows. A split-row end must be the whole row (Escape's row selection).
+    if (recLo >= 0 && lo != nextLeaf(recLo)) return {};
+    if (recHi >= 0 && hi != splitRowEnd(recHi)) return {};
+    const int from = recLo >= 0 ? recLo : lo;
+    const int last = recHi >= 0 ? splitRowEnd(recHi) : hi;
+    const int count = last - from + 1;
+    if (dir < 0) {
+        if (from == 0) return {};
+        const int above = from - 1;                                  // step over a whole split row above
+        return { from, count, rows_[size_t(above)].cell >= 0 ? splitRowOf(above) : above, true };
+    }
+    const int next = last + 1;
+    if (next >= n) return {};
+    const int nextEnd = rows_[size_t(next)].type == Split ? splitRowEnd(next) : next;   // … or below
+    return { from, count, nextEnd - count + 1, true };
+}
+
 int BlockModel::tabTarget(int row, bool back) const {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return -1;
     const int rec = splitRowOf(row);
@@ -5515,7 +5548,7 @@ int BlockModel::rowAfterMove(int r, int from, int count, int to) {
     return r;
 }
 
-void BlockModel::moveBlocks(int from, int count, int to) {
+void BlockModel::moveBlocks(int from, int count, int to, bool asTopLevel) {
     const int n = static_cast<int>(rows_.size());
     if (count < 1 || from < 0 || from + count > n || to < 0 || to > n - count || from == to) return;
     // Split rows move whole, and only between top-level rows; any other run joins
@@ -5523,13 +5556,16 @@ void BlockModel::moveBlocks(int from, int count, int to) {
     bool carriesSplit = false;
     for (int k = from; k < from + count; ++k)
         if (rows_[size_t(k)].type == Split) carriesSplit = true;
-    if (carriesSplit) {
+    // asTopLevel: the run stays at the top level wherever it lands (⌥⌘↑↓ stepping over a
+    // split row) instead of joining the lane above the gap.
+    if (carriesSplit || asTopLevel) {
         if (rows_[size_t(from)].cell >= 0) return;                             // starts inside a split row
         if (from + count < n && rows_[size_t(from + count)].cell >= 0) return; // ends inside one
-        const int above = to - 1;          // the row above the destination, in the reduced list
-        if (above >= 0) {
-            const int orig = above < from ? above : above + count;
-            if (rows_[size_t(orig)].cell >= 0 || rows_[size_t(orig)].type == Split) return;
+        // The destination must be a top-level gap: the row that will sit right BELOW the
+        // run can't be a lane block. (A gap just after a split row is top level.)
+        if (to < n - count) {
+            const int orig = to < from ? to : to + count;
+            if (rows_[size_t(orig)].cell >= 0) return;
         }
     }
     // The touched band: every row between the two positions, inclusive of the run
@@ -5560,7 +5596,7 @@ void BlockModel::moveBlocks(int from, int count, int to) {
         prev = rk;
         const int at = to + k;
         Row moved = rs[static_cast<size_t>(k)];
-        if (!carriesSplit) moved.cell = laneAt(at);   // join the destination's lane (or top level)
+        if (!carriesSplit && !asTopLevel) moved.cell = laneAt(at);   // join the destination's lane (or top level)
         rows_.insert(rows_.begin() + at, moved);
         content_.insert(content_.begin() + at, cs[static_cast<size_t>(k)]);
         ids_.insert(ids_.begin() + at, ids[static_cast<size_t>(k)]);

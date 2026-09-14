@@ -178,6 +178,11 @@ public:
     Q_INVOKABLE int leafBelow(int row, qreal pageX) const;    // Down past a block's bottom edge
     Q_INVOKABLE int leafAbove(int row, qreal pageX) const;    // Up past its top edge
     Q_INVOKABLE int tabTarget(int row, bool back) const;      // Tab from a lane block (-1 at top level)
+    // ⌥⌘↑/↓ within the container (SR-0 §4.12): [from, count, to, asTopLevel] for moveBlocks,
+    // or [] at the container's edge. A run inside one lane moves within that lane; a
+    // top-level run — or a selection of exactly one whole split row — steps over whole
+    // split rows. A partial selection across lanes doesn't move.
+    Q_INVOKABLE QVariantList moveTarget(int lo, int hi, int dir) const;
     Q_INVOKABLE int splitRowLast(int row) const;              // last block of the split row holding row, or -1
     // A top-level empty paragraph under the whole split row holding `row` (under `row`
     // itself at top level), one undo step. Returns its row.
@@ -285,7 +290,9 @@ public:
     // final index `to` (0..count-`count`, an index in the REDUCED list). ONE
     // undo step; ranks chain between the destination neighbours; measured
     // heights travel with their rows. moveBlock is the count-1 case.
-    Q_INVOKABLE void moveBlocks(int from, int count, int to);
+    // asTopLevel: the run stays top-level wherever it lands (else a non-split run joins the
+    // lane above the gap). Split rows always move whole, between top-level rows only.
+    Q_INVOKABLE void moveBlocks(int from, int count, int to, bool asTopLevel = false);
     // Where row `r` ends up after moveBlocks(from, count, to) — shared by the
     // QML caret/selection remap and the tests (one formula, no drift).
     Q_INVOKABLE static int rowAfterMove(int r, int from, int count, int to);

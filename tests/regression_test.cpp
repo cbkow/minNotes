@@ -6190,6 +6190,71 @@ static void testSplitRowNavigation() {
           "…as one undo step");
 }
 
+static void testSplitRowMoves() {
+    qInfo("[80] moving blocks within their container: lanes, over split rows, whole split rows (SR-3 step 6c)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 8; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+    m.splitIntoColumns(1, 0, 0.5);
+    m.insertBlock(3);
+    m.setContent(3, QStringLiteral("xA"));
+    m.splitIntoColumns(7, 0, 0.3);
+    m.insertBlock(10);
+    // 0 p0 · 1 A · 2 p1(l0) · 3 xA(l0) · 4 ""(l1) · 5 p2 · 6 p3 · 7 B · 8 p4(l0) · 9 ""(l1) · 10 ""(l1) · 11 p5 · 12 p6 · 13 p7
+    auto move = [&](const QVariantList& t) {
+        if (t.size() == 4) m.moveBlocks(t[0].toInt(), t[1].toInt(), t[2].toInt(), t[3].toBool());
+    };
+    auto triple = [](const QVariantList& t, int from, int count, int to, bool top) {
+        return t.size() == 4 && t[0].toInt() == from && t[1].toInt() == count && t[2].toInt() == to && t[3].toBool() == top;
+    };
+
+    QVariantList t = m.moveTarget(3, 3, -1);
+    CHECK(triple(t, 3, 1, 2, false), "a lane block moves up within its lane");
+    move(t);
+    CHECK(m.contentForRow(2) == QStringLiteral("xA") && m.laneForRow(2) == 0 && m.laneForRow(3) == 0 && m.structureValid(),
+          "…and stays in the lane");
+    m.undo();
+    CHECK(m.contentForRow(3) == QStringLiteral("xA"), "…one undo step");
+    CHECK(m.moveTarget(2, 2, -1).isEmpty() && m.moveTarget(4, 4, 1).isEmpty() && m.moveTarget(3, 3, 1).isEmpty(),
+          "at a lane's top or bottom a lane block doesn't move");
+
+    t = m.moveTarget(6, 6, 1);
+    CHECK(triple(t, 6, 1, 10, true), "a top-level block moving down steps over a whole split row");
+    move(t);
+    CHECK(m.contentForRow(10) == QStringLiteral("p3") && m.laneForRow(10) == -1 && m.typeForRow(6) == BlockModel::Split
+              && m.structureValid(), "…and lands at the top level below it");
+    t = m.moveTarget(10, 10, -1);
+    CHECK(triple(t, 10, 1, 6, true), "…moving up steps back over it");
+    move(t);
+    CHECK(m.contentForRow(6) == QStringLiteral("p3") && m.laneForRow(6) == -1 && m.typeForRow(7) == BlockModel::Split
+              && m.structureValid(), "…to where it started");
+
+    t = m.moveTarget(8, 10, -1);
+    CHECK(triple(t, 7, 4, 6, true), "a selection of one whole split row moves the row");
+    move(t);
+    CHECK(m.typeForRow(6) == BlockModel::Split && m.contentForRow(10) == QStringLiteral("p3") && m.laneForRow(7) == 0
+              && m.structureValid(), "…and the row moves whole");
+    m.undo();
+    CHECK(m.typeForRow(7) == BlockModel::Split && m.contentForRow(6) == QStringLiteral("p3") && m.structureValid(),
+          "…undone in one step");
+    CHECK(m.moveTarget(3, 9, 1).isEmpty() && m.moveTarget(3, 4, -1).isEmpty(),
+          "a selection that cuts across lanes or split rows doesn't move");
+    CHECK(triple(m.moveTarget(2, 4, -1), 1, 4, 0, true), "…but one covering a whole split row does");
+
+    // A gap just after a split row is a top-level gap (the old check refused it).
+    m.moveBlocks(7, 4, 5);              // B → between A and p2
+    CHECK(m.typeForRow(5) == BlockModel::Split && m.laneForRow(4) == 1 && m.contentForRow(9) == QStringLiteral("p2")
+              && m.structureValid(), "a split row moves into the gap right after another split row");
+    m.undo();
+    CHECK(m.typeForRow(7) == BlockModel::Split && m.contentForRow(5) == QStringLiteral("p2") && m.structureValid(),
+          "…undone");
+    const int before = m.rowCountQml();
+    m.moveBlocks(7, 4, 3);              // into the middle of A's lanes: refused
+    CHECK(m.rowCountQml() == before && m.typeForRow(7) == BlockModel::Split && m.structureValid(),
+          "a split row can't move into another split row's lanes");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -6380,6 +6445,7 @@ int main(int argc, char** argv) {
     testSplitRowNavigation();
     testSplitRowEditing();
     testEmptiedBlockPersists();
+    testSplitRowMoves();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
