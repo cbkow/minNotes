@@ -210,6 +210,7 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         DocxReader::Result res = DocxReader::read(path, store);
         if (!res.ok) return out;
         out.specs = std::move(res.specs);
+        BlockModel::promoteGridRuns(out.specs);   // no w:tblHeader → the first row heads the table (R-I4 4b)
         out.comments = std::move(res.comments);
         out.ok = true;
     } else if (fmt == QLatin1String("rtf")) {

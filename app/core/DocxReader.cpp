@@ -64,6 +64,7 @@ struct Ctx {
     QHash<QString, QStringList> comments;// comment id → bodies
     std::vector<BlockModel::BlockSpec>* specs = nullptr;
     std::vector<DocxReader::CommentOut>* commentsOut = nullptr;
+    int lastJc = 0;                      // the last paragraph's w:jc: 0 left, 1 center, 2 right (table cells read it)
     struct OpenRange { int specIndex; int start; };
     QHash<QString, OpenRange> openRanges;   // comment id → started at
 };
@@ -250,6 +251,10 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
             if (pp.headingLevel == 0)
                 pp.headingLevel = std::clamp(
                     xml.attributes().value(QLatin1String("w:val")).toInt() + 1, 1, 6);
+        } else if (n == QLatin1String("jc")) {
+            const auto v = xml.attributes().value(QLatin1String("w:val"));
+            c.lastJc = v == QLatin1String("center") ? 1
+                     : (v == QLatin1String("right") || v == QLatin1String("end")) ? 2 : 0;
         } else if (n == QLatin1String("numId")) {
             pp.numId = xml.attributes().value(QLatin1String("w:val")).toInt();
         } else if (n == QLatin1String("ilvl")) {
@@ -411,45 +416,161 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
     return {};
 }
 
-void parseTable(QXmlStreamReader& xml, Ctx& c) {
-    std::vector<QStringList> rows;
+// A w:tbl → a derived table (SR-4 S8e2, R-I4 4b/4c): each cell's paragraphs through
+// parseParagraph in full mode (spans, lists, images, comments) into the cell's own block list;
+// w:tblHeader rows → the header count (0 when none: the importer promotes the first row);
+// gridSpan → the origin holds the content, covered cells stay empty; a vMerge continuation is an
+// empty cell (3b); a nested w:tbl flattens into one paragraph per inner row, cells joined by " · "
+// (3c, the E5 corruption); w:gridCol widths (dxa → px), w:shd fills and w:jc alignment carry.
+struct DocxCell {
+    std::vector<BlockModel::BlockSpec> blocks;
+    QString bg;
+    int span = 1;
+    bool covered = false;       // a vMerge continuation
+    int jc = 0;
+    size_t coBegin = 0, coEnd = 0;   // comment anchors made while parsing this cell (local spec indices)
+};
+struct DocxTable {
+    std::vector<std::vector<DocxCell>> rows;
+    std::vector<bool> headerRow;
+    std::vector<int> widths;    // px per grid column
+};
+
+DocxTable readDocxTable(QXmlStreamReader& xml, Ctx& c, int depth);
+
+DocxCell readDocxCell(QXmlStreamReader& xml, Ctx& c, int depth) {
+    DocxCell cell;
+    std::vector<BlockModel::BlockSpec>* saved = c.specs;
+    std::vector<BlockModel::BlockSpec> local;
+    c.specs = &local;
+    cell.coBegin = c.commentsOut ? c.commentsOut->size() : 0;
     while (!xml.atEnd()) {
         const auto t = xml.readNext();
-        if (t == QXmlStreamReader::EndElement && xml.name() == QLatin1String("tbl"))
-            break;
+        if (t == QXmlStreamReader::EndElement && xml.name() == QLatin1String("tc")) break;
         if (t != QXmlStreamReader::StartElement) continue;
-        if (xml.name() == QLatin1String("tr")) {
-            rows.emplace_back();
-        } else if (xml.name() == QLatin1String("tc") && !rows.empty()) {
-            QString cell;
-            while (!xml.atEnd()) {
-                const auto ct = xml.readNext();
-                if (ct == QXmlStreamReader::EndElement
-                    && xml.name() == QLatin1String("tc")) break;
-                if (ct == QXmlStreamReader::StartElement
-                    && xml.name() == QLatin1String("p")) {
-                    const QString ptxt = parseParagraph(xml, c, /*cellTextMode*/true);
-                    if (!ptxt.isEmpty()) {
-                        if (!cell.isEmpty()) cell += QLatin1Char('\n');
-                        cell += ptxt;
-                    }
+        const auto n = xml.name();
+        if (n == QLatin1String("gridSpan")) {
+            cell.span = std::max(1, xml.attributes().value(QLatin1String("w:val")).toInt());
+        } else if (n == QLatin1String("vMerge")) {
+            const auto v = xml.attributes().value(QLatin1String("w:val"));
+            if (v.isEmpty() || v == QLatin1String("continue")) cell.covered = true;
+        } else if (n == QLatin1String("shd")) {
+            const QString fill = xml.attributes().value(QLatin1String("w:fill")).toString();
+            if (!fill.isEmpty() && fill.toLower() != QLatin1String("auto") && fill.size() == 6)
+                cell.bg = QLatin1Char('#') + fill.toLower();
+        } else if (n == QLatin1String("p")) {
+            c.lastJc = 0;
+            parseParagraph(xml, c, /*cellTextMode*/false);
+            if (cell.jc == 0) cell.jc = c.lastJc;
+        } else if (n == QLatin1String("tbl") && depth < 2) {       // nested: flatten
+            const DocxTable inner = readDocxTable(xml, c, depth + 1);
+            for (const std::vector<DocxCell>& row : inner.rows) {
+                QStringList parts;
+                for (const DocxCell& ic : row) {
+                    QStringList lines;
+                    for (const BlockModel::BlockSpec& b : ic.blocks) if (b.mediaJson.isEmpty()) lines << b.text;
+                    parts << lines.join(QLatin1Char(' '));
                 }
+                BlockModel::BlockSpec p;
+                p.type = BlockModel::Paragraph;
+                p.text = parts.join(QStringLiteral(" · "));
+                local.push_back(std::move(p));
             }
-            rows.back() << cell;
         }
     }
-    if (rows.empty()) return;
-    int cols = 0;
-    for (const QStringList& r : rows) cols = std::max<int>(cols, r.size());
-    if (cols == 0) return;
-    TableGrid g = TableGrid::makeEmpty(static_cast<int>(rows.size()), cols);
-    for (int r = 0; r < static_cast<int>(rows.size()); ++r)
-        for (int cix = 0; cix < rows[r].size(); ++cix)
-            g.setCellText(r, cix, rows[r][cix]);
-    BlockModel::BlockSpec sp;
-    sp.type = BlockModel::Table;
-    sp.tableJson = g.toJson();
-    c.specs->push_back(std::move(sp));
+    c.specs = saved;
+    cell.coEnd = c.commentsOut ? c.commentsOut->size() : 0;
+    cell.blocks = std::move(local);
+    return cell;
+}
+
+DocxTable readDocxTable(QXmlStreamReader& xml, Ctx& c, int depth) {
+    DocxTable t;
+    while (!xml.atEnd()) {
+        const auto tk = xml.readNext();
+        if (tk == QXmlStreamReader::EndElement && xml.name() == QLatin1String("tbl")) break;
+        if (tk != QXmlStreamReader::StartElement) continue;
+        const auto n = xml.name();
+        if (n == QLatin1String("gridCol")) {
+            t.widths.push_back(int(std::lround(xml.attributes().value(QLatin1String("w:w")).toDouble() / 15.0)));
+        } else if (n == QLatin1String("tr")) {
+            t.rows.emplace_back();
+            t.headerRow.push_back(false);
+        } else if (n == QLatin1String("tblHeader") && !t.rows.empty()) {
+            t.headerRow.back() = true;
+        } else if (n == QLatin1String("tc") && !t.rows.empty()) {
+            t.rows.back().push_back(readDocxCell(xml, c, depth));
+        }
+    }
+    return t;
+}
+
+void parseTable(QXmlStreamReader& xml, Ctx& c) {
+    const DocxTable t = readDocxTable(xml, c, 0);
+    if (t.rows.empty()) return;
+    int ncols = 0;
+    for (const std::vector<DocxCell>& row : t.rows) {
+        int w = 0;
+        for (const DocxCell& cell : row) w += cell.span;
+        ncols = std::max(ncols, w);
+    }
+    ncols = std::min(ncols, 63);
+    if (ncols <= 0) return;
+    int header = 0;
+    for (bool h : t.headerRow) { if (!h) break; ++header; }
+    std::vector<int> align(static_cast<size_t>(ncols), 0);
+    for (const std::vector<DocxCell>& row : t.rows) {           // a column's alignment: its first aligned cell
+        int pos = 0;
+        for (const DocxCell& cell : row) {
+            if (pos < ncols && align[static_cast<size_t>(pos)] == 0 && !cell.covered) align[static_cast<size_t>(pos)] = cell.jc;
+            pos += cell.span;
+        }
+    }
+    QJsonArray cols;
+    for (int k = 0; k < ncols; ++k) {
+        QJsonObject col;
+        if (k < static_cast<int>(t.widths.size()) && t.widths[static_cast<size_t>(k)] > 0)
+            col.insert(QStringLiteral("w"), std::clamp(t.widths[static_cast<size_t>(k)], 48, 4000));
+        if (align[static_cast<size_t>(k)] != 0) col.insert(QStringLiteral("a"), align[static_cast<size_t>(k)]);
+        cols.append(col);
+    }
+    const std::vector<float> equal(static_cast<size_t>(ncols), 1.0f / static_cast<float>(ncols));
+    for (size_t r = 0; r < t.rows.size(); ++r) {
+        std::vector<const DocxCell*> at(static_cast<size_t>(ncols), nullptr);   // the cell placed at each column
+        int pos = 0;
+        for (const DocxCell& cell : t.rows[r]) {
+            if (pos < ncols && !cell.covered) at[static_cast<size_t>(pos)] = &cell;
+            pos += cell.span;
+        }
+        BlockModel::BlockSpec rec;
+        rec.type = BlockModel::Split;
+        rec.ratios = equal;
+        rec.header = r == 0 ? static_cast<uint8_t>(std::min(header, 255)) : uint8_t(0);
+        QJsonObject tj;
+        if (r == 0) tj.insert(QStringLiteral("cols"), cols);
+        QJsonArray cbg;
+        for (int k = 0; k < ncols; ++k) cbg.append(at[static_cast<size_t>(k)] ? at[static_cast<size_t>(k)]->bg : QString());
+        while (!cbg.isEmpty() && cbg.last().toString().isEmpty()) cbg.removeLast();
+        if (!cbg.isEmpty()) tj.insert(QStringLiteral("cbg"), cbg);
+        rec.table = tj.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(tj).toJson(QJsonDocument::Compact));
+        c.specs->push_back(std::move(rec));
+        for (int k = 0; k < ncols; ++k) {
+            const DocxCell* cell = at[static_cast<size_t>(k)];
+            std::vector<BlockModel::BlockSpec> blocks = cell ? cell->blocks : std::vector<BlockModel::BlockSpec>{};
+            while (blocks.size() > 1 && blocks.back().type == BlockModel::Paragraph && blocks.back().text.isEmpty()
+                   && blocks.back().mediaJson.isEmpty())
+                blocks.pop_back();                                  // a cell's trailing empty paragraphs
+            if (blocks.empty()) { BlockModel::BlockSpec e; e.type = BlockModel::Paragraph; blocks.push_back(std::move(e)); }
+            const int base = static_cast<int>(c.specs->size());
+            if (cell && c.commentsOut)                              // the cell's comment anchors: local → final indices
+                for (size_t k2 = cell->coBegin; k2 < cell->coEnd && k2 < c.commentsOut->size(); ++k2)
+                    (*c.commentsOut)[k2].specIndex += base;
+            for (BlockModel::BlockSpec& b : blocks) {
+                b.cell = static_cast<int8_t>(k);
+                c.specs->push_back(std::move(b));
+            }
+        }
+    }
 }
 
 } // namespace

@@ -8148,6 +8148,104 @@ static void testForeignTables() {
     }
 }
 
+static void testOfficeTables() {
+    qInfo("[105] office tables: DOCX rich cells, tblHeader, gridSpan/vMerge, widths, jc, nested; XLSX widths + alignment (SR-4 S8e2)");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_office_tables"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    const QString docx = dir.filePath(QStringLiteral("t.docx"));
+    {
+        mnpkg::PackageWriter w(docx);
+        w.addCompressed(QStringLiteral("[Content_Types].xml"), QByteArray(
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+            "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+            "</Types>"));
+        w.addCompressed(QStringLiteral("word/document.xml"), QByteArray(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+            "<w:p><w:r><w:t>before</w:t></w:r></w:p>"
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"1500\"/><w:gridCol w:w=\"1500\"/></w:tblGrid>"
+            "<w:tr><w:trPr><w:tblHeader/></w:trPr>"
+            "<w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Qty</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:r><w:t>Notes</w:t></w:r></w:p></w:tc></w:tr>"
+            "<w:tr><w:tc><w:tcPr><w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r><w:r><w:t> text</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>second</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>wide</w:t></w:r></w:p></w:tc></w:tr>"
+            "<w:tr><w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>tall</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:r><w:t>7</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:tbl><w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>y</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr>"
+            "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>8</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>n</w:t></w:r></w:p></w:tc></w:tr>"
+            "</w:tbl>"
+            "<w:p><w:r><w:t>after</w:t></w:r></w:p>"
+            "</w:body></w:document>"));
+        CHECK(w.finish(), "docx fixture wrote");
+    }
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importDocxFile(docx, &m), "docx imported");
+        const int h = findTableHead(m);
+        CHECK(h >= 0 && m.headerCount(h) == 1 && m.gridRowCount(h) == 4 && m.tableColumnCount(h) == 3 && m.structureValid(),
+              "a 4×3 derived table with 1 header row (tblHeader) (%d rows, %d cols)", h >= 0 ? m.gridRowCount(h) : -1, h >= 0 ? m.tableColumnCount(h) : -1);
+        if (h >= 0) {
+            CHECK(m.tableColumnWidth(h, 0) == 200 && m.tableColumnWidth(h, 1) == 100 && m.gridColAlign(h, 1) == 1,
+                  "gridCol widths (3000 dxa → 200 px) and w:jc center carry (w0=%g w1=%g a1=%d)",
+                  m.tableColumnWidth(h, 0), m.tableColumnWidth(h, 1), m.gridColAlign(h, 1));
+            CHECK(m.gridCellRows(h, 1, 0).size() == 2 && m.gridCellText(h, 1, 0) == QStringLiteral("bold text\nsecond")
+                      && m.hasFormat(m.gridCellAt(h, 1, 0), 0, 4, QStringLiteral("bold")) && m.gridCellBg(h, 1, 0) == QStringLiteral("#ff0000"),
+                  "a rich cell: two paragraphs, a bold span, its shading");
+            CHECK(m.gridCellText(h, 1, 1) == QStringLiteral("wide") && m.gridCellText(h, 1, 2).isEmpty(),
+                  "gridSpan: the origin holds the content, the covered cell is empty");
+            CHECK(m.gridCellText(h, 2, 0) == QStringLiteral("tall") && m.gridCellText(h, 3, 0).isEmpty() && m.gridCellText(h, 3, 1) == QStringLiteral("8"),
+                  "vMerge: the continuation cell is empty, its neighbours intact");
+            CHECK(m.gridCellText(h, 2, 2) == QStringLiteral("x · y"), "a nested table flattens to 'x · y' (E5)");
+            CHECK(m.contentForRow(0) == QStringLiteral("before") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("after"),
+                  "the prose lands around the table");
+        }
+        m.closeDocument();
+    }
+    const QString xlsx = dir.filePath(QStringLiteral("w.xlsx"));
+    {
+        mnpkg::PackageWriter w(xlsx);
+        w.addCompressed(QStringLiteral("xl/workbook.xml"), QByteArray(
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+            "<sheets><sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"));
+        w.addCompressed(QStringLiteral("xl/_rels/workbook.xml.rels"), QByteArray(
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
+            "</Relationships>"));
+        w.addCompressed(QStringLiteral("xl/styles.xml"), QByteArray(
+            "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+            "<cellXfs count=\"3\"><xf numFmtId=\"0\"/><xf numFmtId=\"0\" applyAlignment=\"1\"><alignment horizontal=\"center\"/></xf>"
+            "<xf numFmtId=\"0\" applyAlignment=\"1\"><alignment horizontal=\"right\"/></xf></cellXfs></styleSheet>"));
+        w.addCompressed(QStringLiteral("xl/worksheets/sheet1.xml"), QByteArray(
+            "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+            "<cols><col min=\"1\" max=\"1\" width=\"20\" customWidth=\"1\"/><col min=\"2\" max=\"2\" width=\"12\"/></cols>"
+            "<sheetData>"
+            "<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Name</t></is></c><c r=\"B1\" t=\"inlineStr\"><is><t>Qty</t></is></c><c r=\"C1\" t=\"inlineStr\"><is><t>Sum</t></is></c></row>"
+            "<row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>a</t></is></c><c r=\"B2\" s=\"1\"><v>1</v></c><c r=\"C2\" s=\"2\"><v>3</v></c></row>"
+            "</sheetData></worksheet>"));
+        CHECK(w.finish(), "xlsx fixture wrote");
+    }
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importXlsxFile(xlsx, &m), "xlsx imported");
+        const int h = findTableHead(m);
+        CHECK(h >= 0 && m.tableColumnCount(h) == 3 && m.tableColumnWidth(h, 0) == 145 && m.tableColumnWidth(h, 1) != 89
+                  && m.gridColAlign(h, 1) == 1 && m.gridColAlign(h, 2) == 2 && m.gridColAlign(h, 0) == 0,
+              "xlsx: a custom width carries (20 chars → 145 px), a default-width column stays auto, body-cell alignment sets the column (w0=%g a1=%d a2=%d)",
+              h >= 0 ? m.tableColumnWidth(h, 0) : -1.0, h >= 0 ? m.gridColAlign(h, 1) : -1, h >= 0 ? m.gridColAlign(h, 2) : -1);
+        m.closeDocument();
+    }
+    dir.removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8363,6 +8461,7 @@ int main(int argc, char** argv) {
     testPasteRules();
     testPasteRouter();
     testForeignTables();
+    testOfficeTables();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

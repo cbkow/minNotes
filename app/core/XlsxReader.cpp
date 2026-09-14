@@ -243,7 +243,38 @@ struct SheetData {
     QString drawingRelId;
     struct VmCell { int row; int col; int vm; };
     std::vector<VmCell> vmCells;
+    // SR-4 S8e2 (R-I4 4c): authored column widths (<cols>, customWidth) in px, and each cell's
+    // style index (the workbook's cellXfs) for its alignment.
+    std::vector<int> colWidthPx;
+    std::vector<std::vector<int>> styles;   // parallel to rows; -1 = none
 };
+
+// xl/styles.xml → per cellXfs index, its horizontal alignment: 0 left/none, 1 center, 2 right.
+std::vector<int> parseStyleAlignments(const QString& zipPath) {
+    std::vector<int> out;
+    const QByteArray data = mnpkg::readEntry(zipPath, QStringLiteral("xl/styles.xml"));
+    if (data.isEmpty()) return out;
+    QXmlStreamReader xml(data);
+    bool inXfs = false;
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (xml.isStartElement() && xml.name() == QLatin1String("cellXfs")) { inXfs = true; continue; }
+        if (xml.isEndElement() && xml.name() == QLatin1String("cellXfs")) break;
+        if (!inXfs || !xml.isStartElement() || xml.name() != QLatin1String("xf")) continue;
+        int a = 0;
+        while (!xml.atEnd()) {                       // the xf's children until </xf> (or a self-closing xf)
+            xml.readNext();
+            if (xml.isEndElement() && xml.name() == QLatin1String("xf")) break;
+            if (xml.isStartElement() && xml.name() == QLatin1String("alignment")) {
+                const auto h = xml.attributes().value(QLatin1String("horizontal"));
+                if (h == QLatin1String("center") || h == QLatin1String("centerContinuous")) a = 1;
+                else if (h == QLatin1String("right")) a = 2;
+            }
+        }
+        out.push_back(a);
+    }
+    return out;
+}
 
 bool parseSheet(const QString& zipPath, const QString& part, SheetData& sd) {
     const QByteArray data = mnpkg::readEntry(zipPath, part);
@@ -258,13 +289,30 @@ bool parseSheet(const QString& zipPath, const QString& part, SheetData& sd) {
                 xml.attributes().value(QLatin1String("r:id")).toString();
             continue;
         }
+        if (xml.isStartElement() && xml.name() == QLatin1String("col")) {   // <cols><col min max width customWidth>
+            const auto at = xml.attributes();
+            if (at.value(QLatin1String("customWidth")) == QLatin1String("1") || at.value(QLatin1String("customWidth")) == QLatin1String("true")) {
+                const int lo = at.value(QLatin1String("min")).toInt() - 1, hi = at.value(QLatin1String("max")).toInt() - 1;
+                const double w = at.value(QLatin1String("width")).toDouble();
+                if (lo >= 0 && hi >= lo && w > 0) {
+                    const int px = int(std::lround(w * 7.0 + 5.0));   // character units → px (Calibri 11's 7 px digit)
+                    for (int k = lo; k <= hi && k < kMaxCols; ++k) {
+                        if (int(sd.colWidthPx.size()) <= k) sd.colWidthPx.resize(size_t(k) + 1, 0);
+                        sd.colWidthPx[size_t(k)] = px;
+                    }
+                }
+            }
+            continue;
+        }
         if (!xml.isStartElement() || xml.name() != QLatin1String("row")) continue;
         // Sparse rows: honour r="N" so skipped rows stay blank.
         const int rowRef = xml.attributes().value(QLatin1String("r")).toInt() - 1;
         const int rowIdx = rowRef >= 0 ? rowRef : int(rows.size());
         if (rowIdx >= kMaxRows) break;
         while (int(rows.size()) <= rowIdx) rows.emplace_back();
+        while (int(sd.styles.size()) <= rowIdx) sd.styles.emplace_back();
         std::vector<QString>& cells = rows[size_t(rowIdx)];
+        std::vector<int>& cellStyles = sd.styles[size_t(rowIdx)];
         // Cell loop until </row>.
         while (!xml.atEnd()) {
             xml.readNext();
@@ -273,6 +321,7 @@ bool parseSheet(const QString& zipPath, const QString& part, SheetData& sd) {
             const QString ref = xml.attributes().value(QLatin1String("r")).toString();
             const QString type = xml.attributes().value(QLatin1String("t")).toString();
             const int vm = xml.attributes().value(QLatin1String("vm")).toInt();
+            const int styleIx = xml.attributes().hasAttribute(QLatin1String("s")) ? xml.attributes().value(QLatin1String("s")).toInt() : -1;
             int col = colFromRef(ref);
             if (col < 0) col = int(cells.size());       // no ref → append
             if (col >= kMaxCols) continue;
@@ -298,7 +347,9 @@ bool parseSheet(const QString& zipPath, const QString& part, SheetData& sd) {
             // with 4 real columns was importing 26 wide (user file 2026-08-20).
             if (value.isEmpty() && vm <= 0) continue;
             while (int(cells.size()) <= col) cells.emplace_back();
+            while (int(cellStyles.size()) <= col) cellStyles.push_back(-1);
             cells[size_t(col)] = value;
+            cellStyles[size_t(col)] = styleIx;
             maxCols = std::max(maxCols, col + 1);
         }
     }
@@ -326,6 +377,7 @@ std::vector<BlockModel::BlockSpec> XlsxReader::read(const QString& xlsxPath,
     if (sheets.empty()) return specs;
     const QHash<QString, QString> rels = parseWorkbookRels(xlsxPath);
     const std::vector<QString> shared = parseSharedStrings(xlsxPath);
+    const std::vector<int> xfAlign = parseStyleAlignments(xlsxPath);
     // The rich-value chain is workbook-global; parsed lazily on the first
     // vm cell. Imported descriptors cache per media part (a repeated image
     // decodes once; the sidecar dedups by content anyway).
@@ -406,6 +458,19 @@ std::vector<BlockModel::BlockSpec> XlsxReader::read(const QString& xlsxPath,
         // empty shared strings (or a cleared #VALUE! with no image) is
         // padding, not data. Image cells survive (cellMedia counts).
         grid.trimTrailingEmpty();
+        // Authored widths and alignment (R-I4 4c): a column's alignment is its first body cell's
+        // explicit one (the header row is text, like the app's).
+        for (int c = 0; c < grid.cols(); ++c) {
+            if (c < int(sd.colWidthPx.size()) && sd.colWidthPx[size_t(c)] > 0)
+                grid.setColWidth(c, std::clamp(sd.colWidthPx[size_t(c)], 48, 4000));
+            for (int r = 1; r < int(sd.styles.size()) && r < grid.rows(); ++r) {
+                if (c >= int(sd.styles[size_t(r)].size())) continue;
+                const int ix = sd.styles[size_t(r)][size_t(c)];
+                if (ix < 0 || ix >= int(xfAlign.size()) || xfAlign[size_t(ix)] == 0) continue;
+                grid.setColAlign(c, xfAlign[size_t(ix)]);
+                break;
+            }
+        }
 
         if (sheets.size() > 1) {   // name each sheet only when there are several
             BlockModel::BlockSpec h;
