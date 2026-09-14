@@ -3380,7 +3380,21 @@ FocusScope {
                 if (h.row !== r) fail("hitTest at the top of row " + r + " resolved row " + h.row)
             }
             maxRows = Math.max(maxRows, inView.length)
+            // T3: while a table's body is under the viewport top with its header scrolled away,
+            // the sticky header shows.
+            const st = blockModel.tableStickyAt(flick.contentY)
+            if (st.head !== undefined && flick.contentY > st.headerTop
+                    && flick.contentY < st.tableBottom - (st.headerBottom - st.headerTop)) {
+                ++checks
+                if (!stickyHeader.visible) fail("sticky header hidden over table " + st.head + " at contentY " + flick.contentY)
+                else if (!stickyShot) {                    // one inspection artifact next to the fixture
+                    stickyShot = true
+                    const arg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
+                    flick.grabToImage(function(res) { res.saveToFile(arg.substring("--pool-probe=".length).replace(/[^\/]*$/, "") + "sticky.png") })
+                }
+            }
         }
+        property bool stickyShot: false
         function next(phaseDone) { if (phaseDone) { ++phase; phaseStep = 0 } else ++phaseStep }
         onTriggered: {
             verify()
@@ -3814,6 +3828,64 @@ FocusScope {
                 required property int index
                 editor: root
                 logicalRow: (root.slotRev, viewSlots.rowForSlot(index))
+            }
+        }
+
+        // T3 (SR-4 S5b): once a table's header rows scroll above the viewport while its body is
+        // still on screen, a mirror of them stays pinned at the top — pushed up as the table ends.
+        // Plain text in the header's styling; interaction still goes to the rows beneath.
+        Item {
+            id: stickyHeader
+            readonly property var st: (blockModel.layoutRevision, blockModel.contentRevision,
+                                       blockModel.tableStickyAt(flick.contentY))
+            readonly property bool has: st.head !== undefined
+            readonly property real headerH: has ? st.headerBottom - st.headerTop : 0
+            visible: has && flick.contentY > st.headerTop && flick.contentY < st.tableBottom - headerH
+            x: 0
+            y: flick.contentY + (has ? Math.min(0, st.tableBottom - headerH - flick.contentY) : 0)
+            z: 3
+            width: flick.contentWidth
+            height: headerH
+            Repeater {
+                model: stickyHeader.visible ? stickyHeader.st.headerRows : []
+                delegate: Item {
+                    id: stickyRow
+                    required property var modelData
+                    required property int index
+                    readonly property int rec: modelData
+                    readonly property real pad: index === 0 ? blockModel.tablePadTop(rec) : 0
+                    y: (blockModel.layoutRevision, blockModel.yForRow(rec)) + pad - stickyHeader.st.headerTop
+                    width: stickyHeader.width
+                    height: (blockModel.layoutRevision, blockModel.heightForRow(rec)) - pad
+                    Repeater {
+                        model: (blockModel.contentRevision, blockModel.tableColumnCount(stickyHeader.st.head))
+                        delegate: Rectangle {
+                            required property int index
+                            readonly property int head: stickyHeader.st.head
+                            readonly property string bg: (blockModel.contentRevision, blockModel.gridCellBg(head, stickyRow.index, index))
+                            readonly property string fg: (blockModel.contentRevision, blockModel.gridCellFg(head, stickyRow.index, index))
+                            x: root.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(head, index))
+                            width: (blockModel.layoutRevision, blockModel.tableColumnWidth(head, index))
+                            height: stickyRow.height
+                            color: bg !== "" ? bg : Theme.colors.surfaceHover
+                            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+                            Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
+                            Rectangle { visible: index === 0; width: 1; height: parent.height; color: Theme.colors.border }
+                            Text {
+                                x: 8; y: 6
+                                width: parent.width - 16
+                                text: (blockModel.contentRevision, blockModel.gridCellText(head, stickyRow.index, index))
+                                color: fg !== "" ? fg : Theme.colors.text
+                                font.family: Theme.font.body; font.pixelSize: Theme.font.sizeBody; font.bold: true
+                                wrapMode: Text.Wrap
+                                horizontalAlignment: {
+                                    const a = (blockModel.contentRevision, blockModel.gridColAlign(head, index))
+                                    return a === 1 ? Text.AlignHCenter : a === 2 ? Text.AlignRight : Text.AlignLeft
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

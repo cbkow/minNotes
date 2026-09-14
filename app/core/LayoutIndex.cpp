@@ -32,6 +32,8 @@ bool LayoutIndex::reset(const std::vector<Entry>& entries, std::vector<double> h
             if (e.split) {
                 splitOfSlot.push_back(int(splits.size()));
                 splits.push_back(Split{f, 0, {}, {}});
+                splits.back().padTop = std::max(0.0, e.padTop);
+                splits.back().padBottom = std::max(0.0, e.padBottom);
                 laneHeights.emplace_back();
                 open = int(splits.size()) - 1;
                 outerH.push_back(0.0);   // derived once the lanes are known
@@ -60,11 +62,9 @@ bool LayoutIndex::reset(const std::vector<Entry>& entries, std::vector<double> h
     for (std::size_t k = 0; k < splits.size(); ++k) {
         Split& s = splits[k];
         s.cells.resize(laneHeights[k].size());
-        double extent = 0.0;
-        for (std::size_t c = 0; c < s.cells.size(); ++c) {
+        for (std::size_t c = 0; c < s.cells.size(); ++c)
             s.cells[c].reset(std::move(laneHeights[k][c]));
-            extent = std::max(extent, s.cells[c].total());
-        }
+        const double extent = s.extent();
         outerH[slotOf[s.flat]] = extent;
         heights[s.flat] = extent;
     }
@@ -92,7 +92,7 @@ double LayoutIndex::y(std::size_t flat) const {
     const int c = entries_[flat].cell;
     if (c == kTop) return top;
     const Split& s = splits_[std::size_t(splitOfSlot_[slot])];
-    return top + s.cells[std::size_t(c)].prefix(indexInCell_[flat]);
+    return top + s.padTop + s.cells[std::size_t(c)].prefix(indexInCell_[flat]);
 }
 
 double LayoutIndex::setHeight(std::size_t flat, double h) {
@@ -103,8 +103,7 @@ double LayoutIndex::setHeight(std::size_t flat, double h) {
     if (c == kTop) return outer_.setHeight(slot, h);
     Split& s = splits_[std::size_t(splitOfSlot_[slot])];
     s.cells[std::size_t(c)].setHeight(indexInCell_[flat], h);
-    double extent = 0.0;
-    for (const FenwickTree& lane : s.cells) extent = std::max(extent, lane.total());
+    const double extent = s.extent();
     heights_[s.flat] = extent;
     return outer_.setHeight(slot, extent);
 }
@@ -143,6 +142,7 @@ std::size_t LayoutIndex::blockInCellAt(std::size_t split, int c, double ly, bool
     if (!s || s->cells.empty()) return split;
     const std::size_t lane = std::size_t(std::clamp(c, 0, int(s->cells.size()) - 1));
     const FenwickTree& t = s->cells[lane];
+    ly -= s->padTop;                                  // local offsets are from the record's top
     if (ly >= t.total()) {
         if (pastEnd) *pastEnd = true;
         return s->cellStart[lane] + t.size() - 1;
@@ -163,12 +163,12 @@ std::vector<std::size_t> LayoutIndex::visible(double y0, double y1) const {
         out.push_back(f);
         if (splitOfSlot_[slot] < 0) continue;
         const Split& s = splits_[std::size_t(splitOfSlot_[slot])];
-        const double ly0 = std::max(0.0, y0 - top);
+        const double ly0 = std::max(0.0, y0 - top - s.padTop);
         for (std::size_t c = 0; c < s.cells.size(); ++c) {
             const FenwickTree& lane = s.cells[c];
             if (lane.size() == 0 || (ly0 > 0.0 && ly0 >= lane.total())) continue;   // below a short lane
             for (std::size_t i = lane.rowAtOffset(ly0); i < lane.size(); ++i) {
-                const double by = top + lane.prefix(i);
+                const double by = top + s.padTop + lane.prefix(i);
                 if (by >= y1) break;
                 if (hits(by, lane.height(i))) out.push_back(s.cellStart[c] + i);
             }

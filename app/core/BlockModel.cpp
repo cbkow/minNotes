@@ -321,8 +321,17 @@ bool BlockModel::loadDocument(const QString& path, bool untitled) {
 
 std::vector<mn::LayoutIndex::Entry> BlockModel::layoutEntries() const {
     std::vector<mn::LayoutIndex::Entry> e(rows_.size());
-    for (size_t i = 0; i < rows_.size(); ++i)
+    const std::vector<int>& heads = tableHeads();
+    const int n = static_cast<int>(rows_.size());
+    for (size_t i = 0; i < rows_.size(); ++i) {
         e[i] = { rows_[i].type == Split && rows_[i].cell < 0, rows_[i].cell };
+        if (!e[i].split || heads[i] < 0) continue;
+        // SR-4 S5b: a table's pocket — the old Table block's 32 px above and below.
+        if (heads[i] == static_cast<int>(i)) e[i].padTop = kTablePocket;
+        const int next = splitRowEnd(static_cast<int>(i)) + 1;
+        if (next >= n || rows_[size_t(next)].type != Split || rows_[size_t(next)].cell >= 0 || rows_[size_t(next)].header > 0)
+            e[i].padBottom = kTablePocket;
+    }
     return e;
 }
 
@@ -487,6 +496,43 @@ const BlockModel::TableGeom* BlockModel::tableGeom(int head) const {
     }
     const auto it = geoms_.constFind(head);
     return it == geoms_.constEnd() ? nullptr : &it.value();
+}
+
+qreal BlockModel::tablePadTop(int row) const {
+    const mn::LayoutIndex& li = layout();
+    return row >= 0 && size_t(row) < li.size() ? li.entry(size_t(row)).padTop : 0.0;
+}
+
+qreal BlockModel::tablePadBottom(int row) const {
+    const mn::LayoutIndex& li = layout();
+    return row >= 0 && size_t(row) < li.size() ? li.entry(size_t(row)).padBottom : 0.0;
+}
+
+QString BlockModel::gridCellText(int head, int r, int c) const {
+    QStringList parts;
+    for (const QVariant& v : gridCellRows(head, r, c)) parts << content_[size_t(v.toInt())];
+    return parts.join(QLatin1Char('\n'));
+}
+
+QVariantMap BlockModel::tableStickyAt(qreal y) const {
+    const int top = rowForY(y);
+    if (top < 0 || top >= static_cast<int>(rows_.size()) || rows_[size_t(top)].type != Split) return {};
+    const int head = tableHeadOf(top);
+    if (head < 0) return {};
+    const QVariantList recs = tableRecords(head);
+    const int hc = std::min(static_cast<int>(rows_[size_t(head)].header), static_cast<int>(recs.size()));
+    if (hc <= 0 || recs.size() <= hc) return {};                // no body rows to scroll under it
+    const mn::LayoutIndex& li = layout();
+    const size_t lastHeader = size_t(recs[hc - 1].toInt()), last = size_t(recs.back().toInt());
+    QVariantList headerRows;
+    for (int k = 0; k < hc; ++k) headerRows << recs[k];
+    return {
+        { QStringLiteral("head"), head },
+        { QStringLiteral("headerTop"), li.y(size_t(head)) + li.entry(size_t(head)).padTop },
+        { QStringLiteral("headerBottom"), li.y(lastHeader) + li.height(lastHeader) },
+        { QStringLiteral("tableBottom"), li.y(last) + li.height(last) - li.entry(last).padBottom },
+        { QStringLiteral("headerRows"), headerRows },
+    };
 }
 
 qreal BlockModel::tableColumnWidth(int head, int column) const {
@@ -1598,6 +1644,7 @@ bool BlockModel::setHeaderRole(int record, int count) {
     persistMeta(record);
     normalizeStructure(lo, hi);                       // rows leaving a table follow layout rules
     tablesDirty_ = true;
+    reindex(std::vector<double>(layout().heights())); // the table pockets move with the role
     bumpLayout();
     ++contentRevision_;
     const int last = std::min(hi, static_cast<int>(rows_.size()) - 1);
@@ -3366,7 +3413,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         if (p.row < 0 || p.row >= static_cast<int>(rows_.size())
             || ids_[p.row] != s.id) continue;   // safety net — never expected
         Row& r = rows_[p.row];
-        if (r.type != s.type || r.cell != s.cell) restructured = true;
+        if (r.type != s.type || r.cell != s.cell || r.header != s.header) restructured = true;   // header: the pocket moves
         r.cell = s.cell; r.ratios = s.ratios;
         r.header = s.header; r.table = s.table;
         tablesDirty_ = true;

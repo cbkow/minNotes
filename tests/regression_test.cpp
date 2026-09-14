@@ -5621,7 +5621,10 @@ static LayoutFixture makeLayoutFixture(std::size_t tops, std::mt19937& rng) {
     LayoutFixture f;
     for (std::size_t t = 0; t < tops; ++t) {
         if (coin(rng) == 0) {
-            f.entries.push_back({true, mn::LayoutIndex::kTop});
+            mn::LayoutIndex::Entry rec{true, mn::LayoutIndex::kTop};
+            if (coin(rng) == 0) rec.padTop = 8.0 * coin(rng);          // pockets (SR-4 S5b) on some records
+            if (coin(rng) == 0) rec.padBottom = 8.0 * coin(rng);
+            f.entries.push_back(rec);
             f.heights.push_back(0.0);
             const int C = lanes(rng);
             for (int c = 0; c < C; ++c)
@@ -5649,10 +5652,11 @@ static void bruteLayout(const LayoutFixture& f, std::vector<double>& ys, std::ve
         std::size_t j = i + 1;
         for (; j < n && f.entries[j].cell >= 0; ++j) {
             const auto c = std::size_t(f.entries[j].cell);
-            ys[j] = top + laneY[c];
+            ys[j] = top + f.entries[i].padTop + laneY[c];
             laneY[c] += f.heights[j];
             extent = std::max(extent, laneY[c]);
         }
+        extent += f.entries[i].padTop + f.entries[i].padBottom;
         hs[i] = extent;
         top += extent;
         i = j;
@@ -5749,9 +5753,10 @@ static void testLayoutIndex() {
             double sum = 0.0;
             for (std::size_t i = a; i < b; ++i) { if (f.entries[i].cell != c) laneOk = false; sum += f.heights[i]; }
             if (sum != li.cellHeight(rec, c)) laneOk = false;
-            if (sum < hs[rec]) {   // a short lane: the space below it is that lane's end
+            const double padTop = f.entries[rec].padTop, pads = padTop + f.entries[rec].padBottom;
+            if (sum < hs[rec] - pads) {   // a short lane: the space below it is that lane's end
                 bool past = false;
-                if (li.blockInCellAt(rec, c, sum + 2.0, &past) != b - 1 || !past) laneOk = false;
+                if (li.blockInCellAt(rec, c, padTop + sum + 2.0, &past) != b - 1 || !past) laneOk = false;
             }
         }
     }
@@ -7272,6 +7277,48 @@ static void testTypedColumns() {
     QDir(dir).removeRecursively();
 }
 
+static void testTablePocketAndSticky() {
+    qInfo("[90] tables in the layout: the vertical pocket, and the sticky-header query (SR-4 step 5b)");
+    auto near = [](double a, double b) { return std::abs(a - b) < 0.01; };
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+    m.insertTableRows(0, 4, 2);
+    m.setContent(2, QStringLiteral("Name"));
+    // 0 above · 1 H · 2 3 · 4 B1 · 5 6 · 7 B2 · 8 9 · 10 B3 · 11 12 · 13 below
+    CHECK(m.tablePadTop(1) == 32 && m.tablePadBottom(1) == 0 && m.tablePadTop(4) == 0 && m.tablePadBottom(4) == 0
+              && m.tablePadBottom(10) == 32 && m.tablePadTop(0) == 0 && m.tablePadTop(2) == 0,
+          "the table's first row carries the top pocket, its last row the bottom one");
+    CHECK(near(m.yForRow(2), m.yForRow(1) + 32) && near(m.heightForRow(1), 32 + m.heightForRow(2))
+              && near(m.yForRow(4), m.yForRow(1) + m.heightForRow(1)) && near(m.heightForRow(10), m.heightForRow(11) + 32)
+              && near(m.yForRow(13), m.yForRow(10) + m.heightForRow(10)),
+          "cells start below the top pocket; the next row starts below the bottom one");
+    CHECK(m.blockAt(5, m.yForRow(1) + 4) == 2 && m.rowForY(m.yForRow(1) + 4) == 1, "a point in the pocket resolves to the row's first block");
+    CHECK(m.gridCellText(1, 0, 0) == QStringLiteral("Name"), "gridCellText");
+
+    const QVariantMap st = m.tableStickyAt(m.yForRow(7) + 1);
+    CHECK(st.value(QStringLiteral("head")).toInt() == 1
+              && near(st.value(QStringLiteral("headerTop")).toDouble(), m.yForRow(1) + 32)
+              && near(st.value(QStringLiteral("headerBottom")).toDouble(), m.yForRow(1) + m.heightForRow(1))
+              && near(st.value(QStringLiteral("tableBottom")).toDouble(), m.yForRow(10) + m.heightForRow(10) - 32)
+              && st.value(QStringLiteral("headerRows")).toList() == (QVariantList{ 1 }),
+          "tableStickyAt reports the table's header band and its end");
+    CHECK(m.tableStickyAt(m.yForRow(0) + 1).isEmpty() && m.tableStickyAt(m.yForRow(13) + 1).isEmpty(), "…and nothing outside tables");
+
+    BlockModel::BlockSpec brk;
+    m.spliceSpecsAt(7, { brk }, false, -1);
+    // 7 break · 8 B2 (layout) · 11 B3 (layout)
+    CHECK(m.tablePadBottom(4) == 32 && m.tablePadTop(8) == 0 && m.tablePadBottom(11) == 0 && m.structureValid(),
+          "a break ends the table: its new last row takes the bottom pocket; the layout rows below have none");
+    m.removeBlock(7);
+    CHECK(m.tablePadBottom(4) == 0 && m.tablePadBottom(10) == 32, "removing the break moves the pocket back");
+    CHECK(m.setHeaderRole(1, 0) && m.tablePadTop(1) == 0 && near(m.yForRow(2), m.yForRow(1)), "unassigning the header removes the pockets");
+    m.undo();
+    CHECK(m.tablePadTop(1) == 32 && near(m.yForRow(2), m.yForRow(1) + 32), "…and undo brings them back");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7472,6 +7519,7 @@ int main(int argc, char** argv) {
     testTableStructureOps();
     testTableAttrsBulkSort();
     testTypedColumns();
+    testTablePocketAndSticky();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

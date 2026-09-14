@@ -210,6 +210,15 @@ public:
     Q_INVOKABLE qreal tableColumnWidth(int head, int column) const;
     Q_INVOKABLE qreal tableColumnLeft(int head, int column) const;
     Q_INVOKABLE qreal tableWidth(int head) const;
+    // The pocket (S5b): a table's first row carries kTablePocket above its cells, its last row
+    // the same below; a record's extent includes it, its blocks start below it.
+    static constexpr double kTablePocket = 32.0;
+    Q_INVOKABLE qreal tablePadTop(int row) const;
+    Q_INVOKABLE qreal tablePadBottom(int row) const;
+    Q_INVOKABLE QString gridCellText(int head, int r, int c) const;   // the cell's blocks' text, joined
+    // T3 sticky header: for the table whose row covers content y (and has body rows),
+    // {head, headerTop, headerBottom, tableBottom, headerRows: [records]}; {} otherwise.
+    Q_INVOKABLE QVariantMap tableStickyAt(qreal y) const;
     Q_INVOKABLE bool setTableColumnWidth(int head, int column, qreal width);   // ≤ 0 = auto; one undo
     // Grid addressing and structure (SR-4 S3a). A table is rows r (its records, top to
     // bottom) × cells c (lanes); a cell holds ≥ 1 blocks. Named grid* until S10 retires

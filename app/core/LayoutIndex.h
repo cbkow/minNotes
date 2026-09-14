@@ -1,5 +1,6 @@
 #pragma once
 #include "FenwickTree.h"
+#include <algorithm>
 #include <cstddef>
 #include <vector>
 
@@ -27,6 +28,9 @@ public:
     struct Entry {
         bool split = false;   // a split row's record (top level only)
         int cell = kTop;      // >= 0: a block in that lane of the preceding record
+        // A record's pocket (SR-4 tables): space above its lanes and below the tallest.
+        // The record's extent is padTop + tallest lane + padBottom; its blocks start at padTop.
+        double padTop = 0.0, padBottom = 0.0;
     };
 
     // entries and heights are parallel; a record's height is ignored. A malformed
@@ -65,6 +69,12 @@ private:
         std::size_t flat = 0, end = 0;          // the record, and one past its last child
         std::vector<std::size_t> cellStart;
         std::vector<FenwickTree> cells;
+        double padTop = 0.0, padBottom = 0.0;
+        double extent() const {
+            double tallest = 0.0;
+            for (const FenwickTree& lane : cells) tallest = std::max(tallest, lane.total());
+            return padTop + tallest + padBottom;
+        }
     };
     const Split* splitAt(std::size_t flat) const;
 

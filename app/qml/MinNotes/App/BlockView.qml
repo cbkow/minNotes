@@ -75,15 +75,18 @@ Item {
     // A table row's record paints the row under its cells (SR-4 S5): each column's cell
     // background (cell > row > column colour; header rows tinted) and the grid lines. It
     // stacks below the cell blocks' delegates.
+    // The row's cells sit between its pockets (S5b: the first row's top, the last row's bottom).
+    readonly property real padTop: isTableRecord ? (blockModel.layoutRevision, blockModel.tablePadTop(logicalRow)) : 0
+    readonly property real padBottom: isTableRecord ? (blockModel.layoutRevision, blockModel.tablePadBottom(logicalRow)) : 0
     Repeater {
         model: cell.isTableRecord ? (blockModel.contentRevision, blockModel.tableColumnCount(cell.tableHead)) : 0
         delegate: Rectangle {
             required property int index
             readonly property string bg: (blockModel.contentRevision, blockModel.gridCellBg(cell.tableHead, cell.gridRow, index))
             x: editor.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(cell.tableHead, index))
-            y: 0
+            y: cell.padTop
             width: (blockModel.layoutRevision, blockModel.tableColumnWidth(cell.tableHead, index))
-            height: cell.height
+            height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
             color: bg !== "" ? bg : cell.headerCell ? Theme.colors.surfaceHover : "transparent"
             Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
             Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
@@ -91,12 +94,12 @@ Item {
     }
     Rectangle {   // the table's left edge
         visible: cell.isTableRecord
-        x: editor.leftEdge; y: 0; width: 1; height: cell.height
+        x: editor.leftEdge; y: cell.padTop; width: 1; height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
         color: Theme.colors.border
     }
     Rectangle {   // the top edge, on the table's first row
         visible: cell.isTableRecord && cell.gridRow === 0
-        x: editor.leftEdge; y: 0; height: 1
+        x: editor.leftEdge; y: cell.padTop; height: 1
         width: (blockModel.layoutRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
     }
