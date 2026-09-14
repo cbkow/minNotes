@@ -424,15 +424,37 @@ bool BlockModel::structureValid() const {
 const std::vector<int>& BlockModel::tableHeads() const {
     if (!tablesDirty_ && tableHeads_.size() == rows_.size()) return tableHeads_;
     tableHeads_.assign(rows_.size(), -1);
+    tableRowIndex_.assign(rows_.size(), -1);
+    tables_.clear();
     int cur = -1;
+    TableInfo* info = nullptr;
     for (size_t i = 0; i < rows_.size(); ++i) {
         const Row& r = rows_[i];
-        if (r.cell < 0) cur = r.type != Split ? -1 : r.header > 0 ? static_cast<int>(i) : cur;
+        if (r.cell < 0) {
+            cur = r.type != Split ? -1 : r.header > 0 ? static_cast<int>(i) : cur;
+            if (cur == static_cast<int>(i)) {
+                info = &tables_[cur];
+                info->cols = static_cast<int>(QJsonDocument::fromJson(r.table.toUtf8()).object()
+                                                  .value(QStringLiteral("cols")).toArray().size());
+            } else if (cur < 0) {
+                info = nullptr;
+            }
+            if (info) { tableRowIndex_[i] = static_cast<int>(info->records.size()); info->records.push_back(static_cast<int>(i)); }
+        } else if (info) {
+            tableRowIndex_[i] = static_cast<int>(info->records.size()) - 1;
+            info->cols = std::max(info->cols, r.cell + 1);
+        }
         tableHeads_[i] = cur;
     }
     tablesDirty_ = false;
     tableGeomDirty_ = true;                           // heads may have moved: geometry follows
     return tableHeads_;
+}
+
+const BlockModel::TableInfo* BlockModel::tableInfo(int head) const {
+    tableHeads();
+    const auto it = tables_.constFind(head);
+    return it == tables_.constEnd() ? nullptr : &it.value();
 }
 
 // The app's auto column-width rule (mirrors exportColWidth): the widest text line in the
@@ -451,8 +473,9 @@ static double tableTextWidth(const QString& text) {
 BlockModel::TableGeom BlockModel::buildTableGeom(int head) const {
     TableGeom g;
     const int n = static_cast<int>(rows_.size());
-    const QJsonArray spec = QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8())
-                                .object().value(QStringLiteral("cols")).toArray();
+    g.spec = QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8())
+                 .object().value(QStringLiteral("cols")).toArray();
+    const QJsonArray& spec = g.spec;
     int cols = static_cast<int>(spec.size());
     std::vector<double> widest;
     std::vector<char> measurable;
@@ -518,12 +541,13 @@ QVariantMap BlockModel::tableStickyAt(qreal y) const {
     const int top = rowForY(y);
     if (top < 0 || top >= static_cast<int>(rows_.size()) || rows_[size_t(top)].type != Split) return {};
     const int head = tableHeadOf(top);
-    if (head < 0) return {};
-    const QVariantList recs = tableRecords(head);
+    const TableInfo* info = head >= 0 ? tableInfo(head) : nullptr;
+    if (!info) return {};
+    const std::vector<int>& recs = info->records;
     const int hc = std::min(static_cast<int>(rows_[size_t(head)].header), static_cast<int>(recs.size()));
-    if (hc <= 0 || recs.size() <= hc) return {};                // no body rows to scroll under it
+    if (hc <= 0 || static_cast<int>(recs.size()) <= hc) return {};   // no body rows to scroll under it
     const mn::LayoutIndex& li = layout();
-    const size_t lastHeader = size_t(recs[hc - 1].toInt()), last = size_t(recs.back().toInt());
+    const size_t lastHeader = size_t(recs[size_t(hc - 1)]), last = size_t(recs.back());
     QVariantList headerRows;
     for (int k = 0; k < hc; ++k) headerRows << recs[k];
     return {
@@ -553,8 +577,8 @@ qreal BlockModel::tableWidth(int head) const {
 
 // === Grid addressing and structure (SR-4 S3a) ==============================
 int BlockModel::gridRecord(int head, int r) const {
-    const QVariantList recs = tableRecords(head);
-    return r >= 0 && r < recs.size() ? recs[r].toInt() : -1;
+    const TableInfo* info = tableInfo(head);
+    return info && r >= 0 && r < static_cast<int>(info->records.size()) ? info->records[size_t(r)] : -1;
 }
 
 std::pair<int,int> BlockModel::tableBand(int head) const {
@@ -585,7 +609,10 @@ std::vector<BlockModel::GridRow> BlockModel::gridOf(int head) const {
     return grid;
 }
 
-int BlockModel::gridRowCount(int head) const { return static_cast<int>(tableRecords(head).size()); }
+int BlockModel::gridRowCount(int head) const {
+    const TableInfo* info = tableInfo(head);
+    return info ? static_cast<int>(info->records.size()) : 0;
+}
 
 int BlockModel::gridCellCount(int head, int r) const {
     const int rec = gridRecord(head, r);
@@ -610,11 +637,8 @@ int BlockModel::gridCellAt(int head, int r, int c) const {
 }
 
 int BlockModel::gridRowOf(int row) const {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return -1;
-    const int rec = rows_[size_t(row)].cell >= 0 ? splitRowOf(row) : row;
-    const int head = tableHeadOf(rec);
-    if (rec < 0 || head < 0) return -1;
-    return static_cast<int>(tableRecords(head).indexOf(QVariant(rec)));
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || tableHeadOf(row) < 0) return -1;
+    return tableRowIndex_[size_t(row)];
 }
 
 int BlockModel::gridColumnOf(int row) const {
@@ -939,8 +963,8 @@ QString BlockModel::gridRowBg(int head, int r) const {
 }
 
 int BlockModel::gridColAlign(int head, int c) const {
-    if (headerCount(head) == 0 || c < 0) return 0;
-    return tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(QStringLiteral("a")).toInt(0);
+    const TableGeom* tg = c >= 0 ? tableGeom(head) : nullptr;   // the parsed spec, cached with the geometry
+    return tg ? tg->spec.at(c).toObject().value(QStringLiteral("a")).toInt(0) : 0;
 }
 
 bool BlockModel::gridSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
@@ -1265,8 +1289,8 @@ void BlockModel::writePlainValue(int block, const QString& text) {
 }
 
 int BlockModel::gridColumnKind(int head, int c) const {
-    if (headerCount(head) == 0 || c < 0) return 0;
-    return tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(QStringLiteral("k")).toInt(0);
+    const TableGeom* tg = c >= 0 ? tableGeom(head) : nullptr;   // the parsed spec, cached with the geometry
+    return tg ? tg->spec.at(c).toObject().value(QStringLiteral("k")).toInt(0) : 0;
 }
 
 QVariantList BlockModel::gridColumnOptions(int head, int c) const {
@@ -1833,34 +1857,20 @@ int BlockModel::headerCount(int row) const {
 }
 
 bool BlockModel::isHeaderRow(int row) const {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
-    const int rec = rows_[size_t(row)].cell >= 0 ? splitRowOf(row) : row;
-    const int head = tableHeadOf(rec);
-    if (rec < 0 || head < 0) return false;
-    int k = 0;
-    for (int r = head; r < rec; r = splitRowEnd(r) + 1) ++k;
-    return k < rows_[size_t(head)].header;
+    const int head = tableHeadOf(row);
+    return head >= 0 && tableRowIndex_[size_t(row)] < rows_[size_t(head)].header;
 }
 
 QVariantList BlockModel::tableRecords(int head) const {
-    if (headerCount(head) == 0) return {};
-    const int n = static_cast<int>(rows_.size());
     QVariantList out;
-    for (int r = head; r < n && rows_[size_t(r)].type == Split && rows_[size_t(r)].cell < 0
-                       && (r == head || rows_[size_t(r)].header == 0); r = splitRowEnd(r) + 1)
-        out << r;
+    if (const TableInfo* info = tableInfo(head))
+        for (int r : info->records) out << r;
     return out;
 }
 
 int BlockModel::tableColumnCount(int head) const {
-    if (headerCount(head) == 0) return 0;
-    int cols = static_cast<int>(QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8())
-                                    .object().value(QStringLiteral("cols")).toArray().size());
-    for (const QVariant& v : tableRecords(head)) {
-        const int rec = v.toInt();
-        for (int i = rec + 1; i <= splitRowEnd(rec); ++i) cols = std::max(cols, rows_[size_t(i)].cell + 1);
-    }
-    return cols;
+    const TableInfo* info = tableInfo(head);
+    return info ? info->cols : 0;
 }
 
 bool BlockModel::setHeaderRole(int record, int count) {

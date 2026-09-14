@@ -7663,6 +7663,19 @@ static void testLegacyTableSinks() {
                   && m.structureValid(),
               "…as one derived table, the last row in place");
         CHECK(ms < 8000, "…in near-linear time (%lld ms; a regrouping per inserted row was O(n^2))", ms);
+        // The renderer's per-cell lookups must not walk the table (scrolling a big import crawled):
+        // a screenful of delegates' worth of lookups, many times over.
+        timer.restart();
+        int sink = 0;
+        for (int k = 0; k < 4000; ++k) {
+            const int r = (k * 7919) % 3001;
+            const int b = m.gridCellAt(head, r, k % 4);
+            sink += m.gridRowOf(b) + m.tableColumnCount(head) + m.gridColumnKind(head, k % 4)
+                  + m.gridCellBg(head, r, k % 4).size() + (m.isHeaderRow(b) ? 1 : 0) + m.gridCellCheck(head, r, k % 4);
+        }
+        const qint64 lookupMs = timer.elapsed();
+        qInfo("  4000 x 6 cell lookups in %lld ms (sink %d)", lookupMs, sink);
+        CHECK(lookupMs < 400, "per-cell lookups are O(1) in the table's size (%lld ms for 24000)", lookupMs);
         QFile::remove(path);
     }
 }

@@ -1332,11 +1332,17 @@ private:
     mutable std::vector<int> tableHeads_;
     mutable bool tablesDirty_ = true;
     const std::vector<int>& tableHeads() const;
+    // Built in the same pass (a big table made every per-cell lookup walk the table): per head its
+    // records and column count; per row, its record's row index in its table (-1 outside tables).
+    struct TableInfo { std::vector<int> records; int cols = 0; };
+    mutable QHash<int, TableInfo> tables_;
+    mutable std::vector<int> tableRowIndex_;
+    const TableInfo* tableInfo(int head) const;         // nullptr unless head is a table head
     std::pair<int,int> splitRunBand(int record) const;   // adjacent top-level split rows around record
     // Per-table column geometry, rebuilt lazily for every table at once. Stale when the
     // grouping rebuilds, a table cell's text changes (persistContent), or a record's
     // table attrs change (persistMeta).
-    struct TableGeom { std::vector<double> x, w; double width = 0.0; };
+    struct TableGeom { std::vector<double> x, w; double width = 0.0; QJsonArray spec; };   // spec: the head's parsed `cols`
     mutable QHash<int, TableGeom> geoms_;               // keyed by head record
     mutable bool tableGeomDirty_ = true;
     mutable std::size_t geomRows_ = 0;
