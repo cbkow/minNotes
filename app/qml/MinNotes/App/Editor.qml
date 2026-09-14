@@ -4656,8 +4656,8 @@ FocusScope {
             property int stHead: -1
             property var headerRows: []
             onStChanged: {
-                const h = has ? st.head : -1
-                const rows = h >= 0 ? st.headerRows : []
+                const h = st.head !== undefined ? st.head : -1   // not `has`: it may lag st in this handler
+                const rows = h >= 0 && st.headerRows !== undefined ? st.headerRows : []
                 let same = h === stHead && rows.length === headerRows.length
                 for (let i = 0; same && i < rows.length; ++i) same = rows[i] === headerRows[i]
                 if (same) return
