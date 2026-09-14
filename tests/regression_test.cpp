@@ -7468,6 +7468,31 @@ static void testSplitRowExits() {
           "insertParagraphAbove puts a paragraph above the split row");
 }
 
+static void testLeftPullRanks() {
+    qInfo("[95] a new lane on a block's left keeps rank order: the last block, and after reopening (crash fix)");
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_left_pull.mnd");
+    QFile::remove(path);
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("a"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("b"));
+    const int freshLast = m.splitIntoColumns(1, 1, 0.5);        // the document's last block: used to read past the end
+    CHECK(freshLast == 2 && m.typeForRow(1) == BlockModel::Split && m.laneForRow(2) == 0 && m.contentForRow(2).isEmpty()
+              && m.laneForRow(3) == 1 && m.contentForRow(3) == QStringLiteral("b") && m.structureValid(),
+          "pulling a lane out of the last block's left edge: [new | b]");
+    const int freshFirst = m.splitIntoColumns(0, 1, 0.5);       // a block with a row after it
+    CHECK(freshFirst == 1 && m.laneForRow(1) == 0 && m.contentForRow(2) == QStringLiteral("a") && m.laneForRow(2) == 1
+              && m.structureValid(), "…and out of a block with rows after it: [new | a]");
+    CHECK(m.saveAs(path), "the document saves");
+    BlockModel m2;
+    CHECK(m2.openDocument(path) && m2.structureValid() && m2.rowCountQml() == m.rowCountQml()
+              && m2.laneForRow(1) == 0 && m2.contentForRow(1).isEmpty() && m2.contentForRow(2) == QStringLiteral("a")
+              && m2.laneForRow(2) == 1 && m2.laneForRow(4) == 0 && m2.contentForRow(5) == QStringLiteral("b"),
+          "the lanes come back in order after reopening");
+    QFile::remove(path);
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7673,6 +7698,7 @@ int main(int argc, char** argv) {
     testTableSelectionOps();
     testInsertGridFromTSV();
     testSplitRowExits();
+    testLeftPullRanks();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

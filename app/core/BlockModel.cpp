@@ -2010,7 +2010,9 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
             insertRowRaw(freshRow, fresh, rankBetween(ranks_[size_t(row + 1)], below));
         } else {
             freshRow = row + 1;
-            insertRowRaw(freshRow, fresh, rankBetween(recRank, ranks_[size_t(row + 2)]));
+            // Between the record and the block (now at row + 1) — never the row after the block:
+            // that read past the end on the document's last block and misordered lanes on reload.
+            insertRowRaw(freshRow, fresh, rankBetween(recRank, ranks_[size_t(row + 1)]));
         }
         rederiveMedia(row, row + 2);                  // the block now lays out at a lane's width
         emit dataChanged(index(row), index(row + 2));
