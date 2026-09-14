@@ -1589,17 +1589,28 @@ std::vector<BlockModel::BlockSpec> BlockModel::gridSpecsFromTable(const QString&
     return out;
 }
 
-void BlockModel::expandTableSpecs(std::vector<BlockSpec>& specs) {
+std::vector<int> BlockModel::expandTableSpecs(std::vector<BlockSpec>& specs) {
+    std::vector<int> at(specs.size());
     bool any = false;
     for (const BlockSpec& sp : specs) any = any || (sp.type == Table && sp.mediaJson.isEmpty());
-    if (!any) return;
+    if (!any) {
+        for (size_t k = 0; k < at.size(); ++k) at[k] = static_cast<int>(k);
+        return at;
+    }
     std::vector<BlockSpec> out;
-    for (BlockSpec& sp : specs) {
-        if (sp.type != Table || !sp.mediaJson.isEmpty()) { out.push_back(std::move(sp)); continue; }
+    for (size_t k = 0; k < specs.size(); ++k) {
+        BlockSpec& sp = specs[k];
+        if (sp.type != Table || !sp.mediaJson.isEmpty()) {
+            at[k] = static_cast<int>(out.size());
+            out.push_back(std::move(sp));
+            continue;
+        }
         std::vector<BlockSpec> grid = gridSpecsFromTable(sp.tableJson);
+        at[k] = grid.empty() ? -1 : static_cast<int>(out.size());
         std::move(grid.begin(), grid.end(), std::back_inserter(out));
     }
     specs.swap(out);
+    return at;
 }
 
 int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
@@ -7240,9 +7251,16 @@ BlockModel::CopyBand BlockModel::copyBand(int loRow, int loCol, int hiRow, int h
     return b;
 }
 
-std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpec>& specsIn,
+std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpec>& specsArg,
                                              bool allowReuseAnchorAbove, int lane) {
     const int n = static_cast<int>(rows_.size());
+    // SR-4 S8a: a Table spec (an importer's IR, an old payload, a merge snapshot) lands as a derived table.
+    // Callers with parallel data (ink, comment anchors) expand first and remap; this is the safety net.
+    bool legacyTable = false;
+    for (const BlockSpec& sp : specsArg) legacyTable = legacyTable || (sp.type == Table && sp.mediaJson.isEmpty());
+    std::vector<BlockSpec> expanded;
+    if (legacyTable) { expanded = specsArg; expandTableSpecs(expanded); }
+    const std::vector<BlockSpec>& specsIn = legacyTable ? expanded : specsArg;
     if (specsIn.empty()) return { std::clamp(gap - 1, 0, std::max(0, n - 1)), 0 };
     const bool topLevel = lane == -1 || specsNeedTopLevel(specsIn);
     gap = spliceGapFor(gap, specsIn, lane);
@@ -7315,6 +7333,10 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
         struct NewBlk { QString id, rank, content; Row r; };
         std::vector<NewBlk> made;
         beginInsertRows({}, first, last);
+        // Split-row specs carry their own structure: estimate a lane's width from the incoming record's
+        // ratios rather than asking the model, whose table grouping each insert dirties (a rebuild per row
+        // was O(n²) for a big import). Media heights re-derive once the splice is in.
+        const std::vector<float>* incomingRatios = nullptr;
         for (int k = 0; k < cnt; ++k) {
             const int at = first + k;
             const BlockSpec& sp = specs[startSpec + k];
@@ -7326,7 +7348,11 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
             content_.insert(content_.begin() + at, content);
             ids_.insert(ids_.begin() + at, id);
             ranks_.insert(ranks_.begin() + at, rk);
-            indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneWidthForInsert(at, r.cell)));
+            if (carriesSplit && r.cell < 0) incomingRatios = r.type == Split ? &sp.ratios : nullptr;
+            const double laneW = !carriesSplit ? laneWidthForInsert(at, r.cell)
+                               : r.cell < 0 || !incomingRatios ? contentWidth_
+                               : laneWidthFrom(*incomingRatios, r.cell);
+            indexInsert(static_cast<size_t>(at), estimatedHeight(r, laneW));
             made.push_back({id, rk, content, r});
             caretRow = at; caretCol = (sp.type == Table) ? 0 : content.size();
         }
@@ -7335,6 +7361,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
             for (const NewBlk& b : made)
                 doc_.appendBlock(b.id, b.rank, b.r.depth, QString::fromLatin1(typeToString(b.r.type)),
                                  attrsJson(b.r.type, b.r.level, b.r.lang, b.r.spans, b.r.taskState, b.r.cell, b.r.ratios, b.r.header, b.r.table), b.content);
+        if (carriesSplit) rederiveMedia(first, last);   // their lanes' real widths (the loop estimated)
     }
 
     bumpLayout();
@@ -7859,8 +7886,20 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
 }
 
 std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
-                                            const std::vector<QString>& ink, qreal srcPageWidth) {
+                                            const std::vector<QString>& inkIn, qreal srcPageWidth) {
     lastPasteRelocated_ = false;
+    // SR-4 S8a: a pasted Table spec (an old payload) lands as a derived table; ink stays with its spec's first row.
+    std::vector<QString> ink = inkIn;
+    {
+        const size_t before = specs.size();
+        const std::vector<int> at = expandTableSpecs(specs);
+        if (specs.size() != before) {
+            std::vector<QString> moved(specs.size());
+            for (size_t k = 0; k < at.size() && k < inkIn.size(); ++k)
+                if (at[k] >= 0) moved[size_t(at[k])] = inkIn[k];
+            ink.swap(moved);
+        }
+    }
     const int n = static_cast<int>(rows_.size());
     if (n == 0) return { 0, 0 };
     row = std::clamp(row, 0, n - 1);

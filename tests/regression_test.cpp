@@ -70,6 +70,13 @@ static int g_fail = 0;
     else { qCritical("  FAIL: " __VA_ARGS__); ++g_fail; } \
 } while (0)
 
+// The first derived table's head record (SR-4), or -1.
+static int findTableHead(const BlockModel& m) {
+    for (int r = 0; r < m.rowCountQml(); ++r)
+        if (m.headerCount(r) > 0) return r;
+    return -1;
+}
+
 static int findRowOfType(const BlockModel& m, int type) {
     for (int i = 0; i < m.rowCountQml(); ++i)
         if (m.typeForRow(i) == type) return i;
@@ -1684,11 +1691,12 @@ static void testImportFileCores() {
         BlockModel m; freshModel(m);
         imp.setModel(&m);
         CHECK(imp.importFile(p), "csv import succeeded");
-        CHECK(m.rowCountQml() == 1 && m.typeForRow(0) == BlockModel::Table,
-              "csv: one Table block, blank row consumed");
-        CHECK(m.tableCell(0, 1, 0) == QStringLiteral("Doe, Jane")
-                  && m.tableCell(0, 1, 1) == QStringLiteral("line1\nline2")
-                  && m.tableCell(0, 2, 1) == QStringLiteral("cell"),
+        CHECK(m.headerCount(0) == 1 && m.gridRowCount(0) == 3 && findRowOfType(m, BlockModel::Table) < 0
+                  && m.structureValid(),
+              "csv: a derived table from row 0, blank row consumed (SR-4 S8a)");
+        CHECK(m.gridCellText(0, 1, 0) == QStringLiteral("Doe, Jane")
+                  && m.gridCellText(0, 1, 1) == QStringLiteral("line1\nline2")
+                  && m.gridCellText(0, 2, 1) == QStringLiteral("cell"),
               "csv: RFC-4180 quoting held (comma + newline in cells)");
         m.closeDocument();
     }
@@ -2394,9 +2402,8 @@ static void testNotionImport() {
 
     BlockModel m2;
     CHECK(m2.openDocument(dest + QStringLiteral("/Tasks.mnd")), "database opens");
-    CHECK(m2.typeForRow(0) == BlockModel::Table
-              && m2.tableCell(0, 1, 0) == QStringLiteral("Ship it"),
-          "csv database → Table doc");
+    CHECK(m2.headerCount(0) > 0 && m2.gridCellText(0, 1, 0) == QStringLiteral("Ship it"),
+          "csv database → a derived table doc");
     m2.closeDocument();
     dir.removeRecursively();
 }
@@ -2430,12 +2437,11 @@ static void testDocxRoundTrip() {
             tk.text = QStringLiteral("doing task"); specs.push_back(tk);
             BlockModel::BlockSpec cd; cd.type = BlockModel::Code;
             cd.text = QStringLiteral("int x;\nint y;"); specs.push_back(cd);
-            TableGrid g = TableGrid::makeEmpty(2, 2);
-            g.setCellText(1, 0, QStringLiteral("cell A"));
-            BlockModel::BlockSpec tb; tb.type = BlockModel::Table;
-            tb.tableJson = g.toJson(); specs.push_back(tb);
         }
         m.insertSpecs(0, specs, true);
+        // The source table stays a Table block until S8b moves the DOCX exporter to derived tables.
+        const int legacyTable = m.insertTable(m.rowCountQml() - 1, 2, 2);
+        m.tableSetCell(legacyTable, 1, 0, QStringLiteral("cell A"));
         const QString threadId = m.addComment(1, 0, 5);
         m.addCommentMessage(threadId, QStringLiteral("check this wording"));
         m.insertImageFromUrl(m.rowCountQml() - 1,
@@ -2475,13 +2481,13 @@ static void testDocxRoundTrip() {
     int codeRow = -1, tableRow = -1, mediaRow = -1;
     for (int r2 = 0; r2 < m2.rowCountQml(); ++r2) {
         if (m2.typeForRow(r2) == BlockModel::Code) codeRow = r2;
-        if (m2.typeForRow(r2) == BlockModel::Table && tableRow < 0) tableRow = r2;
+        if (m2.headerCount(r2) > 0 && tableRow < 0) tableRow = r2;
         if (m2.typeForRow(r2) == BlockModel::Media) mediaRow = r2;
     }
     CHECK(codeRow >= 0 && m2.contentForRow(codeRow) == QStringLiteral("int x;\nint y;"),
           "code block (Courier+EFEFEF) coalesced back to one block");
-    CHECK(tableRow >= 0 && m2.tableCell(tableRow, 1, 0) == QStringLiteral("cell A"),
-          "table cell text");
+    CHECK(tableRow >= 0 && m2.gridCellText(tableRow, 1, 0) == QStringLiteral("cell A"),
+          "table cell text (a DOCX table imports as a derived table)");
     CHECK(mediaRow >= 0 && QFileInfo::exists(m2.mediaLocalPath(mediaRow)),
           "image re-imported into the sidecar");
     // Comment thread → native thread with the body preserved.
@@ -3445,24 +3451,27 @@ static void testNewImportFormats() {
         CHECK(Importer::importXlsxFile(xlsx, &m), "xlsx imported");
         int tables = 0, headings = 0, tRow = -1;
         for (int r = 0; r < m.rowCountQml(); ++r) {
-            if (m.typeForRow(r) == BlockModel::Table) { ++tables; if (tRow < 0) tRow = r; }
+            if (m.headerCount(r) > 0) { ++tables; if (tRow < 0) tRow = r; }
             if (m.typeForRow(r) == BlockModel::Heading) ++headings;
         }
-        CHECK(tables == 2 && headings == 2, "two sheets → two headed tables");
-        CHECK(m.tableCell(tRow, 0, 0) == QStringLiteral("Name")
-                  && m.tableCell(tRow, 0, 1) == QStringLiteral("Qty"),
+        CHECK(tables == 2 && headings == 2 && m.structureValid(), "two sheets → two headed (derived) tables");
+        CHECK(m.gridCellText(tRow, 0, 0) == QStringLiteral("Name")
+                  && m.gridCellText(tRow, 0, 1) == QStringLiteral("Qty"),
               "shared strings resolved");
-        CHECK(m.tableCell(tRow, 2, 0) == QStringLiteral("rich run")
-                  && m.tableCell(tRow, 2, 2) == QStringLiteral("42")
-                  && m.tableCell(tRow, 1, 0).isEmpty(),
+        CHECK(m.gridCellText(tRow, 2, 0) == QStringLiteral("rich run")
+                  && m.gridCellText(tRow, 2, 2) == QStringLiteral("42")
+                  && m.gridCellText(tRow, 1, 0).isEmpty(),
               "rich-run si, numeric cell, sparse row gap");
-        CHECK(m.tableColumns(tRow) == 3,
+        CHECK(m.tableColumnCount(tRow) == 3,
               "style-only cell (Z1, formatting to the sheet edge) adds no column");
-        CHECK(m.tableCellMedia(tRow, 1, 1).contains(QStringLiteral(".minnotes/")),
-              "drawing-anchored image landed at its from-cell (B2)");
-        CHECK(m.tableCellMedia(tRow, 0, 2).contains(QStringLiteral(".minnotes/"))
-                  && m.tableCell(tRow, 0, 2).isEmpty(),
-              "rich-value in-cell image resolved; #VALUE! placeholder cleared");
+        // A cell image is a Media block in the cell (its text = the descriptor).
+        auto onlyMedia = [&](int r, int c) {
+            const QVariantList blocks = m.gridCellRows(tRow, r, c);
+            return blocks.size() == 1 && m.typeForRow(blocks.front().toInt()) == BlockModel::Media
+                && m.contentForRow(blocks.front().toInt()).contains(QStringLiteral(".minnotes/"));
+        };
+        CHECK(onlyMedia(1, 1), "drawing-anchored image landed at its from-cell (B2)");
+        CHECK(onlyMedia(0, 2), "rich-value in-cell image resolved; #VALUE! placeholder cleared");
         m.closeDocument();
     }
 
@@ -3489,18 +3498,17 @@ static void testNewImportFormats() {
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0);
         CHECK(Importer::importOdsFile(ods, &m), "ods imported");
-        int tRow = -1, headings = 0;
-        for (int r = 0; r < m.rowCountQml(); ++r) {
-            if (m.typeForRow(r) == BlockModel::Table && tRow < 0) tRow = r;
+        int headings = 0;
+        const int tRow = findTableHead(m);
+        for (int r = 0; r < m.rowCountQml(); ++r)
             if (m.typeForRow(r) == BlockModel::Heading) ++headings;
-        }
         CHECK(tRow >= 0 && headings == 0, "single sheet → table, NO heading");
-        CHECK(m.tableColumns(tRow) == 3 && m.tableRows(tRow) == 1,
+        CHECK(m.tableColumnCount(tRow) == 3 && m.gridRowCount(tRow) == 1,
               "repeats expanded, sheet-edge padding trimmed (%dx%d)",
-              m.tableRows(tRow), m.tableColumns(tRow));
-        CHECK(m.tableCell(tRow, 0, 0) == QStringLiteral("dup")
-                  && m.tableCell(tRow, 0, 1) == QStringLiteral("dup")
-                  && m.tableCell(tRow, 0, 2) == QStringLiteral("end"),
+              m.gridRowCount(tRow), m.tableColumnCount(tRow));
+        CHECK(m.gridCellText(tRow, 0, 0) == QStringLiteral("dup")
+                  && m.gridCellText(tRow, 0, 1) == QStringLiteral("dup")
+                  && m.gridCellText(tRow, 0, 2) == QStringLiteral("end"),
               "column repeat duplicated the value");
         m.closeDocument();
     }
@@ -3575,10 +3583,10 @@ static void testNewImportFormats() {
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0);
         CHECK(Importer::importCsvFile(csv, &m), "padded csv imported");
-        const int tRow = findRowOfType(m, BlockModel::Table);
-        CHECK(tRow >= 0 && m.tableColumns(tRow) == 2 && m.tableRows(tRow) == 2,
+        const int tRow = findTableHead(m);
+        CHECK(tRow >= 0 && m.tableColumnCount(tRow) == 2 && m.gridRowCount(tRow) == 2,
               "trailing empty cols+rows trimmed (%dx%d)",
-              m.tableRows(tRow), m.tableColumns(tRow));
+              m.gridRowCount(tRow), m.tableColumnCount(tRow));
         m.closeDocument();
     }
     dir.removeRecursively();
@@ -3638,7 +3646,9 @@ static void testMergeEngine() {
     int first = -1, last = -1; QString err;
     CHECK(DocumentMerger::mergeDocuments(&src, &dest, 1, &first, &last, &err),
           "merge succeeded (%s)", qPrintable(err));
-    CHECK(first == 1 && last == 7 && dest.rowCountQml() == 2 + srcN,
+    // The source's 2×2 Table block lands as a derived table: 2 records + 4 cells = 5 more rows (SR-4 S8a).
+    const int grow = 5;
+    CHECK(first == 1 && last == 7 + grow && dest.rowCountQml() == 2 + srcN + grow,
           "gap-1 merge landed between top and bottom (%d..%d)", first, last);
 
     // Fidelity, row by row.
@@ -3652,22 +3662,21 @@ static void testMergeEngine() {
               && dest.languageForRow(3) == QStringLiteral("py")
               && dest.contentForRow(3) == QStringLiteral("x = 1\ny = 2"),
           "code block + language rode along");
-    CHECK(dest.typeForRow(4) == BlockModel::Table
-              && TableGrid::fromJson(dest.contentForRow(4)).cellText(0, 0)
-                     == QStringLiteral("c00"),
-          "table content rode along");
+    CHECK(dest.headerCount(4) > 0 && dest.gridRowCount(4) == 2 && dest.gridCellText(4, 0, 0) == QStringLiteral("c00")
+              && dest.structureValid(),
+          "table content rode along (as a derived table)");
     {
         bool choiceOk = false;
-        for (const QVariant& v : dest.spansForRow(5)) {
+        for (const QVariant& v : dest.spansForRow(5 + grow)) {
             const QVariantMap m = v.toMap();
             if (m.value(QStringLiteral("k")).toInt() == int(BlockModel::SpanChoice)
                 && m.value(QStringLiteral("u")).toString() == kChoice)
                 choiceOk = true;
         }
-        CHECK(choiceOk && dest.contentForRow(5) == QStringLiteral("Doing"),
+        CHECK(choiceOk && dest.contentForRow(5 + grow) == QStringLiteral("Doing"),
               "choice chip payload rode along");
     }
-    const QString newTid = dest.commentAt(6, 1);
+    const QString newTid = dest.commentAt(6 + grow, 1);
     CHECK(!newTid.isEmpty() && newTid != tid,
           "comment anchor arrived under a NEW thread id");
     {
@@ -3679,7 +3688,7 @@ static void testMergeEngine() {
                   && dm[0].toMap().value("created") == sm[0].toMap().value("created"),
               "thread history preserved (bodies + timestamps)");
     }
-    CHECK(dest.inkForRow(7) == kInk && dest.contentForRow(7) == QStringLiteral("inked"),
+    CHECK(dest.inkForRow(7 + grow) == kInk && dest.contentForRow(7 + grow) == QStringLiteral("inked"),
           "margin ink rode along (same width: byte-equal)");
 
     // Exactly ONE undo entry; undo restores the destination wholesale.
@@ -3689,8 +3698,8 @@ static void testMergeEngine() {
               && dest.contentForRow(1) == QStringLiteral("bottom"),
           "one undo removes the whole merge");
     dest.redo();
-    CHECK(dest.rowCountQml() == 2 + srcN && dest.inkForRow(7) == kInk
-              && dest.commentAt(6, 1) == newTid,
+    CHECK(dest.rowCountQml() == 2 + srcN + grow && dest.inkForRow(7 + grow) == kInk
+              && dest.commentAt(6 + grow, 1) == newTid,
           "redo brings it back with ink + comment anchor");
 
     // The source was never touched; refusals + the pristine no-op.
@@ -3781,7 +3790,8 @@ static void testMergeAssetsAndEdges() {
     int f = -1, l = -1; QString err;
     CHECK(DocumentMerger::mergeDocuments(&src, &dest, dest.rowCountQml(), &f, &l, &err),
           "asset merge succeeded (%s)", qPrintable(err));
-    CHECK(f == 1 && l == srcN && dest.rowCountQml() == 1 + srcN,
+    // The 2×2 Table block lands derived: 2 records, a Media block for the image cell, 3 paragraphs → 5 more rows.
+    CHECK(f == 1 && l == srcN + 5 && dest.rowCountQml() == 1 + srcN + 5,
           "merged at the end (%d..%d)", f, l);
     CHECK(dest.contentForRow(2).contains(QStringLiteral(".minnotes/") + pic2),
           "collided image renamed -2 in the descriptor");
@@ -3798,8 +3808,8 @@ static void testMergeAssetsAndEdges() {
           "video copied with its .qcview sidecar tree");
     CHECK(dest.contentForRow(4).contains(extPic),
           "absolute (linked) ref passed through untouched");
-    CHECK(dest.tableCellMedia(5, 0, 0).contains(QStringLiteral(".minnotes/") + pic2),
-          "table cell descriptor followed the copy");
+    CHECK(dest.headerCount(5) > 0 && dest.gridCellText(5, 0, 0).contains(QStringLiteral(".minnotes/") + pic2),
+          "table cell image followed the copy (a Media block in the derived cell)");
 
     // Package-view source: entries splice straight out of the archive; the
     // byte-identical same-name video is REUSED without a second copy.
@@ -4764,8 +4774,8 @@ static void testPasteGroupUndo() {
     p3.insertBlock(0); p3.setContent(0, QStringLiteral("a"));
     const int t = p3.insertTable(0, 2, 2);
     CHECK(ClipboardPaster::pasteBlocks(&m, p3.clipboardPayloadForRange(t, 0, t, 0), 0, 2, -1, 0, -1, 0, &cr, &cc, &err), "paste a table mid-row");
-    CHECK(m.typeForRow(1) == BlockModel::Table && m.contentForRow(0) == QStringLiteral("helXb"),
-          "table inserted after the row, row untouched");
+    CHECK(m.headerCount(1) > 0 && m.contentForRow(0) == QStringLiteral("helXb") && m.structureValid(),
+          "table inserted after the row (as a derived table), row untouched");
 }
 
 // --- Test 55: deleteSelectionRange shapes ------------------------------------
@@ -6528,8 +6538,8 @@ static void testSplitRowInterchange() {
         const QString tablePayload = m.clipboardPayloadForRange(t, 0, t, 0);
         m.removeBlock(t);
         CHECK(ClipboardPaster::pasteBlocks(&m, tablePayload, 2, 0, -1, 0, -1, 0, &cr, &cc, &err) && m.lastPasteRelocated()
-                  && m.typeForRow(5) == BlockModel::Table && m.laneForRow(5) == -1 && m.structureValid(),
-              "a table pasted into a lane lands below the split row");
+                  && m.headerCount(5) > 0 && m.laneForRow(5) == -1 && m.structureValid(),
+              "a table pasted into a lane lands below the split row (as a derived table)");
         m.undo();
         CHECK(texts(m) == before && m.structureValid(), "…one undo step (%s)", qPrintable(texts(m)));
 
@@ -7605,6 +7615,58 @@ static void testTableGripsAndDrops() {
     dir.removeRecursively();
 }
 
+static void testLegacyTableSinks() {
+    qInfo("[98] every sink lands derived tables; a big CSV import stays near-linear (SR-4 S8a)");
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        TableGrid g = TableGrid::makeEmpty(3, 2);
+        g.setCellText(0, 0, QStringLiteral("H"));
+        g.setCellText(2, 1, QStringLiteral("z"));
+        BlockModel::BlockSpec a; a.type = BlockModel::Paragraph; a.text = QStringLiteral("before");
+        BlockModel::BlockSpec t; t.type = BlockModel::Table; t.tableJson = g.toJson();
+        BlockModel::BlockSpec b; b.type = BlockModel::Paragraph; b.text = QStringLiteral("after");
+        m.insertSpecs(0, { a, t, b }, true);
+        const int head = findTableHead(m), lastRow = m.rowCountQml() - 1;
+        CHECK(m.contentForRow(0) == QStringLiteral("before") && head == 1 && m.gridRowCount(head) == 3
+                  && m.gridCellText(head, 0, 0) == QStringLiteral("H") && m.gridCellText(head, 2, 1) == QStringLiteral("z")
+                  && m.contentForRow(lastRow) == QStringLiteral("after") && m.laneForRow(lastRow) < 0
+                  && findRowOfType(m, BlockModel::Table) < 0 && m.structureValid(),
+              "a Table spec between paragraphs lands as a derived table, the paragraph after it at top level");
+        std::vector<BlockModel::BlockSpec> specs{ a, t, b };
+        const std::vector<int> at = BlockModel::expandTableSpecs(specs);
+        CHECK(at.size() == 3 && at[0] == 0 && at[1] == 1 && at[2] == 10 && specs.size() == 11,
+              "expandTableSpecs maps each spec to its first row (3 records × (1 + 2 cells) = 9)");
+    }
+    {
+        const QString path = QDir::tempPath() + QStringLiteral("/mn_big_import.csv");
+        {
+            QFile f(path);
+            f.open(QIODevice::WriteOnly);
+            QByteArray data = "a,b,c,d\n";
+            for (int r = 0; r < 3000; ++r) data += QByteArray::number(r) + ",x,y,z\n";
+            f.write(data);
+        }
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        QElapsedTimer timer;
+        timer.start();
+        CHECK(Importer::importCsvFile(path, &m), "a 3001-row csv imports");
+        const qint64 ms = timer.elapsed();
+        qInfo("  3001 x 4 csv -> %d blocks in %lld ms", m.rowCountQml(), ms);
+        const int head = findTableHead(m);
+        CHECK(head == 0 && m.gridRowCount(head) == 3001 && m.gridCellText(head, 3000, 0) == QStringLiteral("2999")
+                  && m.structureValid(),
+              "…as one derived table, the last row in place");
+        CHECK(ms < 8000, "…in near-linear time (%lld ms; a regrouping per inserted row was O(n^2))", ms);
+        QFile::remove(path);
+    }
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7813,6 +7875,7 @@ int main(int argc, char** argv) {
     testLeftPullRanks();
     testPastedHtmlTables();
     testTableGripsAndDrops();
+    testLegacyTableSinks();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

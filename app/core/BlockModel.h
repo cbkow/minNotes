@@ -521,7 +521,10 @@ public:
     // column spec: widths, alignment, colours, kinds + options), a record per row (row/cell
     // colours) and each cell's blocks (media, then text with spans; choice/check values as chips).
     static std::vector<BlockSpec> gridSpecsFromTable(const QString& tableJson);
-    static void expandTableSpecs(std::vector<BlockSpec>& specs);   // every Table spec → gridSpecsFromTable
+    // Every Table spec → gridSpecsFromTable (SR-4 S8a: every sink lands derived tables). Returns, per
+    // original spec, its first spec's index afterwards (-1 for an empty table that vanished) so callers
+    // can carry parallel data (ink, comment anchors) across.
+    static std::vector<int> expandTableSpecs(std::vector<BlockSpec>& specs);
     // Gap-addressed core (the tab-merge program): gap g = between rows g-1
     // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
     // Lanes (SR-3 S8): specs that carry a Split record keep their own structure
