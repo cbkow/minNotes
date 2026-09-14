@@ -1199,6 +1199,7 @@ FocusScope {
         }
         function deleteSelection() {
             if (!hasSel) return
+            if (root.selObjectValid()) { root.deleteSelectedObject(); return }   // a table row / table picked by Escape
             var e = effectiveRange()
             var land = blockModel.deleteSelectionRange(e.lR, e.lC, e.hR, e.hC)
             var r = (land && land.length === 2) ? land[0] : e.lR
@@ -1958,6 +1959,41 @@ FocusScope {
             return
         }
         if (blockModel.gridInsertRow(head, rows)) landInCell(head, rows, c)
+    }
+    // A7 (SR-4 S6c): a selection whose ends sit in different cells of one table is a cell
+    // rectangle {head, r0, c0, r1, c1}; null otherwise (inside one cell it's blocks/characters).
+    readonly property var cellRect: {
+        const dep = blockModel.contentRevision
+        if (!cursor.hasSel) return null
+        const ha = blockModel.tableHeadOf(cursor.anchorRow), hf = blockModel.tableHeadOf(cursor.focusRow)
+        if (ha < 0 || ha !== hf) return null
+        const ca = blockModel.gridColumnOf(cursor.anchorRow), cf = blockModel.gridColumnOf(cursor.focusRow)
+        if (ca < 0 || cf < 0) return null
+        const ra = blockModel.gridRowOf(cursor.anchorRow), rf = blockModel.gridRowOf(cursor.focusRow)
+        if (ra === rf && ca === cf) return null
+        return { head: ha, r0: Math.min(ra, rf), c0: Math.min(ca, cf), r1: Math.max(ra, rf), c1: Math.max(ca, cf) }
+    }
+    // What an Escape rung selected as an OBJECT (SR-0 §4.8/§4.10): a table row or a whole table —
+    // {kind, head, r, lo, hi}. Deleting (or typing over) it removes it; the same range reached by
+    // ⌘A or dragging is cells, and clears. Valid only while the selection is still that range.
+    property var selObject: null
+    function selObjectValid() {
+        return selObject !== null && cursor.hasSel && cursor.loRow === selObject.lo && cursor.loCol === 0
+            && cursor.hiRow === selObject.hi
+    }
+    function deleteSelectedObject() {
+        const o = selObject
+        selObject = null
+        if (o.kind === "table") blockModel.gridDeleteTable(o.head)
+        else blockModel.gridDeleteRow(o.head, o.r)
+        let land = Math.min(o.head, blockModel.count - 1)
+        if (blockModel.tableHeadOf(land) >= 0 && blockModel.headerCount(land) > 0 && o.kind === "row") {
+            const b = blockModel.gridCellAt(land, Math.min(o.r, blockModel.gridRowCount(land) - 1), 0)
+            if (b >= 0) land = b
+        }
+        if (land >= 0 && blockModel.typeForRow(land) === 10) land = blockModel.nextLeaf(land - 1)
+        cursor.setCaret(Math.max(0, land), 0)
+        root.ensureVisible(Math.max(0, land))
     }
     // ⌘Enter in a table row: a new row below, the caret in the same column.
     function tableInsertRowBelow() {
@@ -2911,6 +2947,15 @@ FocusScope {
         // --- Plain text. ---
         var txt = clipboard.readText()
         if (txt.length === 0) return
+        // SR-4 A5: text with tabs or newlines pasted in a table cell fills cells from the anchor (a
+        // rectangle's top-left), growing the table as needed — one undo step.
+        if (blockModel.tableHeadOf(cursor.focusRow) >= 0 && (txt.indexOf("\t") >= 0 || txt.indexOf("\n") >= 0)) {
+            const gh = blockModel.tableHeadOf(cursor.focusRow), rect = root.cellRect
+            const gland = blockModel.gridPasteTSV(gh, rect ? rect.r0 : blockModel.gridRowOf(cursor.focusRow),
+                                                  rect ? rect.c0 : blockModel.gridColumnOf(cursor.focusRow), txt)
+            if (gland >= 0) { cursor.setCaret(gland, blockModel.contentForRow(gland).length); root.ensureVisible(gland) }
+            return
+        }
         var tg = root.pasteGroupBegin()
         if (root.looksTabular(txt)) {                       // rectangular TSV → table block
             blockModel.commitMarkdown(cursor.focusRow)      // caret moves to the new table → consume inline md
@@ -3179,6 +3224,7 @@ FocusScope {
                 cursor.anchorRow = first; cursor.anchorCol = 0
                 cursor.focusRow = last; cursor.focusCol = blockModel.contentForRow(last).length
                 cursor.sync()
+                root.selObject = { kind: "table", head: head, r: 0, lo: first, hi: last }
             }
             else if (cursor.hasSel && (root.selectionIsSplitRow() || root.selectionIsTable())) {
                 // SR-0 §4.8 rung 4: a selected split row or table → the caret to the block below it
@@ -3199,6 +3245,8 @@ FocusScope {
                 cursor.anchorRow = first; cursor.anchorCol = 0
                 cursor.focusRow = last; cursor.focusCol = blockModel.contentForRow(last).length
                 cursor.sync()
+                const th = blockModel.tableHeadOf(rec)   // a table row picked this way is an object (Delete removes it)
+                root.selObject = th >= 0 ? { kind: "row", head: th, r: blockModel.gridRowOf(rec), lo: first, hi: last } : null
             }
             event.accepted = true
         }
@@ -3733,7 +3781,22 @@ FocusScope {
                 } else {
                     const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
                     const r = blockModel.gridRowOf(row), rows = blockModel.gridRowCount(head)
-                    switch (rand(6)) {
+                    switch (rand(7)) {
+                    case 6: {   // A7: select a cell rectangle and delete it — the cells clear, the rows stay
+                        const rowsBefore = blockModel.gridRowCount(head)
+                        const a = blockModel.gridCellAt(head, 0, 0)
+                        const z = blockModel.gridCellAt(head, rowsBefore - 1, Math.max(0, blockModel.gridCellCount(head, rowsBefore - 1) - 1))
+                        if (a >= 0 && z >= 0 && a !== z) {
+                            cursor.setCaret(a, 0)
+                            cursor.move(z, blockModel.contentForRow(z).length, true)
+                            root.selObject = null
+                            cursor.deleteSelection()
+                            ++checks
+                            if (blockModel.tableHeadOf(cursor.focusRow) !== head || blockModel.gridRowCount(head) !== rowsBefore)
+                                fail("deleting a cell rectangle in table " + head + " changed its rows")
+                        }
+                        break
+                    }
                     case 5: {   // ⌘A climbs to the whole table (block → cell → table), then collapse
                         cursor.setCaret(row, 0)
                         for (let k = 0; k < 3 && !root.selectionIsTable(); ++k) root.selectAllLadder()

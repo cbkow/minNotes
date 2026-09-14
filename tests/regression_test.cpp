@@ -7353,6 +7353,66 @@ static void testTableKeysModel() {
     CHECK(h.gridRowIsEmpty(1, 0) && h.gridExitRow(1) == -1 && h.gridRowCount(1) == 1, "header rows never exit");
 }
 
+static void testTableSelectionOps() {
+    qInfo("[92] table selection edits: cell rectangles clear, row ranges take a table whole, TSV fills cells (SR-4 step 6c)");
+    auto gridText = [](const BlockModel& m, int head) {
+        QStringList rows;
+        for (int r = 0; r < m.gridRowCount(head); ++r) {
+            QStringList cells;
+            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+                QStringList parts;
+                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                    const QString t = m.contentForRow(v.toInt());
+                    parts << (t.isEmpty() ? QStringLiteral("·") : t);
+                }
+                cells << parts.join(QLatin1Char('+'));
+            }
+            rows << cells.join(QLatin1Char(' '));
+        }
+        return rows.join(QStringLiteral(" | "));
+    };
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+    m.insertTableRows(0, 3, 3);
+    const char* text[3][3] = { { "A", "B", "C" }, { "a1", "b1", "c1" }, { "a2", "b2", "c2" } };
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) m.setContent(m.gridCellAt(1, r, c), QString::fromLatin1(text[r][c]));
+    const QString start = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2");
+
+    const QVariantList land = m.deleteSelectionRange(m.gridCellAt(1, 1, 0), 0, m.gridCellAt(1, 2, 1), 2);
+    CHECK(gridText(m, 1) == QStringLiteral("A B C | · · c1 | · · c2") && m.gridRowCount(1) == 3 && land.size() == 2
+              && land[0].toInt() == m.gridCellAt(1, 1, 0) && m.structureValid(),
+          "deleting a selection across cells clears the cell rectangle; rows and columns stay (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(gridText(m, 1) == start, "…one undo step");
+    m.deleteSelectionRange(m.gridCellAt(1, 2, 2), 1, m.gridCellAt(1, 0, 1), 0);
+    CHECK(gridText(m, 1) == QStringLiteral("A · · | a1 · · | a2 · ·") && m.structureValid(),
+          "…whichever way round the ends are (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+
+    m.deleteSelectionRange(0, 2, m.gridCellAt(1, 1, 1), 1);
+    CHECK(m.rowCountQml() == 2 && m.contentForRow(0) == QStringLiteral("ab") && m.contentForRow(1) == QStringLiteral("below")
+              && m.structureValid(),
+          "a row range reaching into a table takes the whole table (%d rows)", m.rowCountQml());
+    m.undo();
+    CHECK(gridText(m, 1) == start && m.contentForRow(0) == QStringLiteral("above"), "…one undo step");
+
+    CHECK(m.gridPasteTSV(1, 2, 2, QStringLiteral("p\tq\nr\ts\n")) >= 0
+              && gridText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a2 b2 p q | · · r s") && m.tableColumnCount(1) == 4
+              && m.structureValid(),
+          "a TSV paste fills cells from the anchor and grows the table (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(gridText(m, 1) == start && m.tableColumnCount(1) == 3, "…one undo step (%s)", qPrintable(gridText(m, 1)));
+
+    m.gridSetColumnKind(1, 0, 1);                              // options a1, a2
+    CHECK(m.gridPasteTSV(1, 1, 0, QStringLiteral("a2\nnew")) >= 0 && m.gridCellChoiceLabel(1, 1, 0) == QStringLiteral("a2")
+              && m.gridCellChoiceLabel(1, 2, 0) == QStringLiteral("new") && m.gridColumnOptions(1, 0).size() == 3 && m.structureValid(),
+          "pasted values in a choice column adopt matching options and add the rest");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7555,6 +7615,7 @@ int main(int argc, char** argv) {
     testTypedColumns();
     testTablePocketAndSticky();
     testTableKeysModel();
+    testTableSelectionOps();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

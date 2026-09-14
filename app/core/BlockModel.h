@@ -296,6 +296,10 @@ public:
     static constexpr int kTabAppendsRow = -2;
     Q_INVOKABLE bool gridRowIsEmpty(int head, int r) const;
     Q_INVOKABLE int gridExitRow(int head);
+    // A5 (S6c): tab/newline text pasted into a table fills cells by position from (r0, c0),
+    // replacing each target cell's blocks with its value (typed columns adopt options by label,
+    // adding unknown ones) and growing rows/columns as needed. One undo; → the last cell's block.
+    Q_INVOKABLE int gridPasteTSV(int head, int r0, int c0, const QString& text);
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the

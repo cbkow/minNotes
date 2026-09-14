@@ -1478,6 +1478,60 @@ bool BlockModel::gridCycleCellCheck(int head, int r, int c) {
     return gridSetCellCheck(head, r, c, (gridCellCheck(head, r, c) + 1) % 3);
 }
 
+int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
+    if (headerCount(head) == 0 || r0 < 0 || c0 < 0 || c0 >= 63) return -1;
+    QString t = text;
+    t.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    t.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    while (t.endsWith(QLatin1Char('\n'))) t.chop(1);
+    const TableGrid src = TableGrid::fromTSV(t);
+    const int rows = src.rows(), cols = std::min(src.cols(), 63 - c0);
+    std::vector<GridRow> grid = gridOf(head);
+    if (rows <= 0 || cols <= 0 || grid.empty() || r0 >= static_cast<int>(grid.size())) return -1;
+    const size_t widest = size_t(c0 + cols);
+    while (grid.size() < size_t(r0 + rows)) {                  // grow rows, copying the last row's divisions
+        GridRow fresh;
+        fresh.cells.resize(grid.back().cells.size());
+        grid.push_back(std::move(fresh));
+    }
+    for (int i = 0; i < rows; ++i) {                            // grow columns; one value block per target
+        auto& cells = grid[size_t(r0 + i)].cells;
+        if (cells.size() < widest) cells.resize(widest);
+        for (int j = 0; j < cols; ++j)
+            if (cells[size_t(c0 + j)].blocks.size() > 1) cells[size_t(c0 + j)].blocks.resize(1);
+    }
+    QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    while (spec.size() < qsizetype(widest)) spec.append(QJsonObject());
+    const auto [lo, hi] = tableBand(head);
+    const int hc = headerCount(head);
+    beginTxn(lo, hi);
+    rebuildTable(lo, hi, grid, spec, hc);
+    int land = -1;
+    for (int i = 0; i < rows; ++i)
+        for (int j = 0; j < cols; ++j) {
+            const int r = r0 + i, c = c0 + j;
+            if (gridCellAt(head, r, c) < 0) continue;
+            const QString v = src.cellText(i, j);
+            const int kind = r < hc ? 0 : gridColumnKind(head, c);
+            if (kind == 1) {                                    // adopt a matching option, else add one
+                QString id = optionIdByLabel(columnOptionsOf(rows_[size_t(head)].table, c), v);
+                if (id.isEmpty() && !v.trimmed().isEmpty()) id = gridAddOption(head, c, v, QStringLiteral("#8A8A8A"));
+                writeCellValue(gridCellAt(head, r, c), columnOptionsOf(rows_[size_t(head)].table, c), id);
+            } else if (kind == 2) {
+                const QString id = optionIdByLabel(checkOptions(), v);
+                writeCellValue(gridCellAt(head, r, c), checkOptions(), id == QStringLiteral("0") ? QString() : id);
+            } else {
+                writePlainValue(gridCellAt(head, r, c), v);
+            }
+            land = gridCellAt(head, r, c);
+        }
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return land;
+}
+
 void BlockModel::adaptJoinedChips(int head, int firstJoined) {
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     const int rows = gridRowCount(head), hc = headerCount(head);
@@ -7348,10 +7402,27 @@ QVariantList BlockModel::deleteSelectionRange(int loRow, int loCol, int hiRow, i
     // to the high end's is cleared — structure stays. Otherwise it's a row range: split
     // rows it touches go whole and top-level ends keep what lies outside the selection.
     const int recLo = splitRowOf(loRow), recHi = splitRowOf(hiRow);
+    // SR-4 A7 / §4.10: ends in different cells of one table → clear the cell rectangle; the
+    // table's rows, columns and colours stay.
+    const int headLo = tableHeadOf(loRow), headHi = tableHeadOf(hiRow);
+    const int cellLo = rows_[size_t(loRow)].cell, cellHi = rows_[size_t(hiRow)].cell;
+    if (headLo >= 0 && headLo == headHi && cellLo >= 0 && cellHi >= 0 && (recLo != recHi || cellLo != cellHi)) {
+        const int ra = gridRowOf(loRow), rb = gridRowOf(hiRow);
+        const int r0 = std::min(ra, rb), c0 = std::min(cellLo, cellHi);
+        gridClearCells(headLo, r0, c0, std::max(ra, rb), std::max(cellLo, cellHi));
+        return QVariantList{ std::max(0, gridCellAt(headLo, r0, c0)), 0 };
+    }
     if (recLo >= 0 && recLo == recHi && rows_[size_t(loRow)].cell != rows_[size_t(hiRow)].cell)
         return clearLanes(recLo, rows_[size_t(loRow)].cell, rows_[size_t(hiRow)].cell);
-    if (recLo != recHi)
+    if (recLo != recHi) {
+        // A row range reaching into a table takes the whole table — no orphaned table rows.
+        if (headLo >= 0) { loRow = headLo; loCol = 0; }
+        if (headHi >= 0) {
+            hiRow = tableBand(headHi).second;
+            hiCol = static_cast<int>(content_[size_t(hiRow)].size());
+        }
         return deleteRowRange(loRow, loCol, hiRow, hiCol);
+    }
     const bool loOpaque = isOpaqueRow(loRow), hiOpaque = isOpaqueRow(hiRow);
     if (!loOpaque) {
         if (loRow == hiRow && loCol == hiCol) return QVariantList{ loRow, loCol };   // nothing selected

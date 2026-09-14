@@ -88,6 +88,13 @@ Item {
             width: (blockModel.layoutRevision, blockModel.tableColumnWidth(cell.tableHead, index))
             height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
             color: bg !== "" ? bg : cell.headerCell ? Theme.colors.surfaceHover : "transparent"
+            Rectangle {   // A7 (S6c): this cell sits in the editor's cell rectangle
+                readonly property var rect: editor.cellRect
+                visible: rect !== null && rect.head === cell.tableHead && cell.gridRow >= rect.r0 && cell.gridRow <= rect.r1
+                         && index >= rect.c0 && index <= rect.c1
+                anchors.fill: parent
+                color: Theme.colors.selectionBg
+            }
             Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
             Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: Theme.colors.border }
         }
@@ -346,6 +353,7 @@ Item {
         // Opaque rows (media/table/divider) show membership via the
         // wash rectangle below, never via text rects over a hidden te.
         if (!cell.inSel || cell.isMedia || te.btype === 6 || te.btype === 7) return []
+        if (cell.inTable && editor.cellRect !== null) return []   // a cell rectangle washes whole cells (the record)
         var sp = (cell.logicalRow === cursor.loRow) ? Math.min(cursor.loCol, te.length) : 0
         var ep = (cell.logicalRow === cursor.hiRow) ? Math.min(cursor.hiCol, te.length) : te.length
         return editor.selectionRects(te, sp, ep)
@@ -733,6 +741,7 @@ Item {
         // Runs the FULL FIELD like the focused block's fill (page
         // and margins alike) — one row treatment, not two widths.
         visible: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
+                 && !(cell.inTable && editor.cellRect !== null)
         z: -0.5                                  // above the block rules + focus fill, below text + rects
         radius: 0
         color: Theme.colors.selectionBand
