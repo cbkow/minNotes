@@ -450,6 +450,13 @@ FocusScope {
     // "block" whole block, "column"/"row" within a table) + danger (red) tint.
     property string menuHiScope: ""
     property bool   menuHiDanger: false
+    // The derived-table cell under the block menu {head, r, c} (null elsewhere): what the table,
+    // column, row and set scopes wash (SR-4 S7b).
+    readonly property var menuGrid: {
+        const dep = blockModel.contentRevision
+        const h = menuRow >= 0 && menuRow < blockModel.count ? blockModel.tableHeadOf(menuRow) : -1
+        return h < 0 ? null : { head: h, r: blockModel.gridRowOf(menuRow), c: blockModel.gridColumnOf(menuRow) }
+    }
 
     // Table mouse-drag state: anchor cell/char captured on press, so drag extends
     // an in-cell text selection (same cell) or a rectangular cell range (across).
@@ -4072,6 +4079,19 @@ FocusScope {
                         root.clearGridSet()
                         if (blockModel.headerCount(head) <= 0 || blockModel.gridRowCount(head) !== rowsBefore)
                             fail("clearing a row set in table " + head + " changed its rows")
+                        {   // the grip bands: beside a row in the left margin, above a column in the first row's pocket
+                            const recs = blockModel.tableRecords(head), rr = rand(recs.length), rec = recs[rr]
+                            const rowY = blockModel.yForRow(rec) + blockModel.tablePadTop(rec) + 4
+                            const gRow = root.gridGripAt(root.leftEdge - 10, rowY)
+                            const colY = blockModel.yForRow(head) + blockModel.tablePadTop(head) - 10
+                            const gCol = root.gridGripAt(root.leftEdge + blockModel.tableColumnLeft(head, 0) + 4, colY)
+                            checks += 2
+                            if (!gRow || gRow.kind !== "row" || gRow.head !== head || gRow.index !== rr)
+                                fail("the row grip beside row " + rr + " of table " + head + " at y " + rowY + " answered " + JSON.stringify(gRow))
+                            if (!gCol || gCol.kind !== "col" || gCol.head !== head || gCol.index !== 0)
+                                fail("the column grip above column 0 of table " + head + " at y " + colY + " answered " + JSON.stringify(gCol)
+                                     + " (padTop " + blockModel.tablePadTop(head) + ", rowForY " + blockModel.rowForY(colY) + ")")
+                        }
                         const b = blockModel.gridCellAt(head, 0, 0)   // a drop over cell (0,0) targets it
                         if (b >= 0) {
                             const pt = root.gridCellAtPoint(root.leftEdge + blockModel.tableColumnLeft(head, 0) + 4, blockModel.yForRow(b) + 2)
@@ -4609,8 +4629,7 @@ FocusScope {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             preventStealing: true
             hoverEnabled: true
-            property bool overClickable: false   // over a task checkbox / table check or choice cell
-            property real lastDblClickMs: 0      // triple-click detection (whole-block select)
+            property bool overClickable: false   // over a task checkbox / table check or choice cell            property real lastDblClickMs: 0      // triple-click detection (whole-block select)
             property int  lastDblClickRow: -1
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : root.gripDragging ? Qt.ClosedHandCursor
@@ -7891,6 +7910,11 @@ FocusScope {
             return s.items.indexOf(s.kind === "row" ? blockModel.gridRowOf(root.menuRow) : gridC) >= 0 ? s : null
         }
         readonly property bool gridOne: gridOn && gridSetHit === null
+        readonly property int gridR: gridHead >= 0 ? (blockModel.contentRevision, blockModel.gridRowOf(root.menuRow)) : -1
+        readonly property int gridRows: gridHead >= 0 ? (blockModel.contentRevision, blockModel.gridRowCount(gridHead)) : 0
+        readonly property bool gridSortable: gridRows - gridHeaders > 1
+        readonly property bool gridBodyDeletable: !gridHeaderRow && gridRows - gridHeaders > 1
+        readonly property int gridColKind: gridC >= 0 ? (blockModel.contentRevision, blockModel.gridColumnKind(gridHead, gridC)) : 0   // header rows too
         readonly property bool gridSetCols: gridSetHit !== null && gridSetHit.kind === "col"
         readonly property string gridSetNoun: gridSetHit === null ? ""
             : gridSetHit.items.length + (gridSetHit.kind === "row" ? " rows" : " columns")
@@ -7929,13 +7953,15 @@ FocusScope {
         // Multi-selection → ONE compact menu column (user ruling 2026-08-21:
         // the full three-column menu is noise when the target is the
         // selection); the three regular columns hide entirely.
-        readonly property bool bulkMode: selRowsHit || selColsHit || selRectHit
+        readonly property bool bulkMode: selRowsHit || selColsHit || selRectHit || gridSetHit !== null
         readonly property int rectRows: selRectHit
             ? Math.abs(tcur.rangeR1 - tcur.rangeR0) + 1 : 0
         readonly property int rectCols: selRectHit
             ? Math.abs(tcur.rangeC1 - tcur.rangeC0) + 1 : 0
         // Tallest of the visible columns — the inter-column dividers stretch to it.
         readonly property real bodyH: bulkMode ? bulkColMenu.implicitHeight
+            : gridOne
+            ? Math.max(blockColMenu.implicitHeight, gridColMenu.implicitHeight, gridRowMenu.implicitHeight)
             : isTable
             ? Math.max(blockColMenu.implicitHeight, colColMenu.implicitHeight, rowColMenu.implicitHeight)
             : blockColMenu.implicitHeight
@@ -8050,71 +8076,18 @@ FocusScope {
                 MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0 && (blockMenu.gridHead < 0 || !blockMenu.gridHeaderRow)
                           text: "Assign as header"
                           onActivated: blockModel.setHeaderRole(blockMenu.laneRecord, 1) }
-                MenuHeader { visible: blockMenu.gridOn; text: "Table" }
-                MenuRow { visible: blockMenu.gridSetHit !== null; text: "Clear " + blockMenu.gridSetNoun
-                          onActivated: root.clearGridSet() }
-                MenuRow { visible: blockMenu.gridSetCols; text: "Make choice columns"
-                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 1) }) }
-                MenuRow { visible: blockMenu.gridSetCols; text: "Make checkmark columns"
-                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 2) }) }
-                MenuRow { visible: blockMenu.gridSetCols; text: "Make text columns"; danger: true
-                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 0) }) }
-                MenuRow { visible: blockMenu.gridSetCols; text: "Align columns left"
-                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColsAlign(h, items, 0) }) }
-                MenuRow { visible: blockMenu.gridSetCols; text: "Align columns center"
-                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColsAlign(h, items, 1) }) }
-                MenuRow { visible: blockMenu.gridSetCols; text: "Align columns right"
-                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColsAlign(h, items, 2) }) }
-                MenuRow { visible: blockMenu.gridSetHit !== null; danger: true
-                          text: blockMenu.gridSetHit !== null && blockMenu.gridSetHit.kind === "row"
-                                && blockMenu.gridSetHit.items[0] < blockMenu.gridHeaders ? "Delete table" : "Delete " + blockMenu.gridSetNoun
-                          onActivated: root.gridSetMenuOp(function(h, items, kind) {
-                              if (kind === "row") blockModel.gridDeleteRows(h, items)
-                              else blockModel.gridDeleteColumns(h, items)
-                          }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Insert row above"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertRow(h, r); return [r, c] }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Insert row below"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertRow(h, r + 1); return [r + 1, c] }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Insert column left"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertColumn(h, c); return [r, c] }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Insert column right"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertColumn(h, c + 1); return [r, c + 1] }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Duplicate row"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDuplicateRow(h, r); return [r + 1, c] }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Duplicate column"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDuplicateColumn(h, c); return [r, c + 1] }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridC > 0; text: "Move column left"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveColumn(h, c, c - 1); return [r, c - 1] }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridC < blockMenu.gridCols - 1; text: "Move column right"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveColumn(h, c, c + 1); return [r, c + 1] }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Sort ascending"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSortByColumn(h, c, true); return null }) }
-                MenuRow { visible: blockMenu.gridOne; text: "Sort descending"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSortByColumn(h, c, false); return null }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridKind !== 1; text: "Make choice column"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 1); return [r, c] }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridKind !== 2; text: "Make checkmark column"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 2); return [r, c] }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridKind !== 0; text: "Make text column"; danger: true
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 0); return [r, c] }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridAlign !== 0; text: "Align column left"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 0); return null }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridAlign !== 1; text: "Align column center"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 1); return null }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridAlign !== 2; text: "Align column right"
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 2); return null }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaders < (blockModel.contentRevision, blockModel.gridRowCount(blockMenu.gridHead)) - 1
+                // The table as a whole; its column and row get their own menu columns (gridColMenu / gridRowMenu).
+                MenuHeader { visible: blockMenu.gridOne; text: "Table" }
+                MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaders < blockMenu.gridRows - 1; scope: "table"
                           text: "Add a header row"
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) + 1); return null }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaders > 1; text: "Remove a header row"
+                MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaders > 1; scope: "table"; text: "Remove a header row"
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) - 1); return null }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaderRow; text: "Unassign header"
+                MenuRow { visible: blockMenu.gridOne && blockMenu.gridHeaderRow; scope: "table"; text: "Unassign header"
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, 0); return null }) }
-                MenuRow { visible: blockMenu.gridOne; text: blockMenu.gridHeaderRow ? "Delete table" : "Delete row"; danger: true
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteRow(h, r); return [r, c] }) }
-                MenuRow { visible: blockMenu.gridOne && blockMenu.gridCols > 1; text: "Delete column"; danger: true
-                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteColumn(h, c); return [r, Math.max(0, c - 1)] }) }
+                MenuRow { visible: blockMenu.gridOne; scope: "table"; text: "Delete table"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteTable(h); return null }) }
+                Rectangle { visible: blockMenu.gridOne; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Duplicate blocks" : "Duplicate block"
                           onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
                 MenuRow { visible: !blockMenu.inFrameTab && blockMenu.runLo > 0
@@ -8225,6 +8198,79 @@ FocusScope {
                 MenuRow { scope: "row"; text: "Delete row"; danger: true; onActivated: root.tblDelRow() }
             }
 
+            // --- Derived tables (SR-4): the right-clicked cell's column and row ---
+            Rectangle { visible: blockMenu.gridOne; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
+            Column {
+                id: gridColMenu
+                visible: blockMenu.gridOne
+                spacing: 1
+                MenuHeader { text: "Column" }
+                MenuRow { scope: "column"; text: "Select column"
+                          onActivated: root.gridGripClick(blockMenu.gridHead, "col", blockMenu.gridC, 0) }
+                MenuRow { scope: "column"; text: "Insert column left"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertColumn(h, c); return [r, c] }) }
+                MenuRow { scope: "column"; text: "Insert column right"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertColumn(h, c + 1); return [r, c + 1] }) }
+                MenuRow { visible: blockMenu.gridC > 0; scope: "column"; text: "Move column left"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveColumn(h, c, c - 1); return [r, c - 1] }) }
+                MenuRow { visible: blockMenu.gridC < blockMenu.gridCols - 1; scope: "column"; text: "Move column right"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveColumn(h, c, c + 1); return [r, c + 1] }) }
+                MenuRow { scope: "column"; text: "Duplicate column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDuplicateColumn(h, c); return [r, c + 1] }) }
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSegRow {
+                    label: "Align"
+                    MenuIconBtn { icon: "text-align-left";   on: blockMenu.gridAlign === 0
+                                  onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 0); return null }) }
+                    MenuIconBtn { icon: "text-align-center"; on: blockMenu.gridAlign === 1
+                                  onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 1); return null }) }
+                    MenuIconBtn { icon: "text-align-right";  on: blockMenu.gridAlign === 2
+                                  onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 2); return null }) }
+                }
+                Rectangle { visible: blockMenu.gridSortable; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSegRow {
+                    visible: blockMenu.gridSortable
+                    label: "Sort"
+                    MenuIconBtn { icon: "sort-ascending"
+                                  onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSortByColumn(h, c, true); return null }) }
+                    MenuIconBtn { icon: "sort-descending"
+                                  onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSortByColumn(h, c, false); return null }) }
+                }
+                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: blockMenu.gridColKind !== 1; scope: "column"; text: "Make choice column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 1); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridColKind !== 2; scope: "column"; text: "Make checkmark column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 2); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridColKind !== 0; scope: "column"; text: "Make text column"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 0); return [r, c] }) }
+                Rectangle { visible: blockMenu.gridCols > 1; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: blockMenu.gridCols > 1; scope: "column"; text: "Delete column"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteColumn(h, c); return [r, Math.max(0, c - 1)] }) }
+            }
+            Rectangle { visible: blockMenu.gridOne; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
+            Column {
+                id: gridRowMenu
+                visible: blockMenu.gridOne
+                spacing: 1
+                MenuHeader { text: "Row" }
+                MenuRow { scope: "row"; text: "Select row"
+                          onActivated: root.gridGripClick(blockMenu.gridHead, "row", blockMenu.gridR, 0) }
+                MenuRow { scope: "row"; text: "Insert row above"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertRow(h, r); return [r, c] }) }
+                MenuRow { scope: "row"; text: "Insert row below"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertRow(h, r + 1); return [r + 1, c] }) }
+                // Reorder / duplicate / delete: body rows only (a header row's place is the table's; Delete table is under Table).
+                MenuRow { visible: blockMenu.gridR > blockMenu.gridHeaders; scope: "row"; text: "Move row up"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveRow(h, r, r - 1); return [r - 1, c] }) }
+                MenuRow { visible: !blockMenu.gridHeaderRow && blockMenu.gridR < blockMenu.gridRows - 1; scope: "row"; text: "Move row down"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveRow(h, r, r + 1); return [r + 1, c] }) }
+                MenuRow { visible: !blockMenu.gridHeaderRow; scope: "row"; text: "Duplicate row"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDuplicateRow(h, r); return [r + 1, c] }) }
+                Rectangle { visible: blockMenu.gridBodyDeletable; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuRow { visible: blockMenu.gridBodyDeletable; scope: "row"; text: "Delete row"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteRow(h, r); return [r, c] }) }
+            }
+
             // --- Bulk column: the ONE compact menu when the right-click
             // targets a multi-selection (rows set / columns set / cell rect).
             Column {
@@ -8232,10 +8278,30 @@ FocusScope {
                 visible: blockMenu.bulkMode
                 spacing: 1
                 MenuHeader {
-                    text: blockMenu.selRowsHit ? blockMenu.selRowCount + " rows"
+                    text: blockMenu.gridSetHit !== null ? blockMenu.gridSetNoun
+                        : blockMenu.selRowsHit ? blockMenu.selRowCount + " rows"
                         : blockMenu.selColsHit ? blockMenu.selColCount + " columns"
                         : blockMenu.rectRows + "×" + blockMenu.rectCols + " cells"
                 }
+                // A derived table's grip-picked set (SR-4 S7b)
+                MenuRow { visible: blockMenu.gridSetHit !== null; scope: "set"; text: "Clear contents"
+                          onActivated: root.clearGridSet() }
+                MenuSegRow {
+                    visible: blockMenu.gridSetCols
+                    label: "Align"
+                    MenuIconBtn { icon: "text-align-left"
+                                  onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColsAlign(h, items, 0) }) }
+                    MenuIconBtn { icon: "text-align-center"
+                                  onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColsAlign(h, items, 1) }) }
+                    MenuIconBtn { icon: "text-align-right"
+                                  onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColsAlign(h, items, 2) }) }
+                }
+                MenuRow { visible: blockMenu.gridSetCols; scope: "set"; text: "Make choice columns"
+                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 1) }) }
+                MenuRow { visible: blockMenu.gridSetCols; scope: "set"; text: "Make checkmark columns"
+                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 2) }) }
+                MenuRow { visible: blockMenu.gridSetCols; scope: "set"; text: "Make text columns"; danger: true
+                          onActivated: root.gridSetMenuOp(function(h, items) { blockModel.gridSetColumnsKind(h, items, 0) }) }
                 // Rows set
                 MenuRow { visible: blockMenu.selRowsHit; scope: "row"; text: "Copy as table"; onActivated: root.tblCopyRows() }
                 MenuRow { visible: blockMenu.selRowsHit; scope: "row"; text: "Clear contents"; onActivated: root.tblClearRows() }
@@ -8269,6 +8335,13 @@ FocusScope {
                 MenuRow { visible: blockMenu.selColsHit; scope: "column"
                           text: "Delete " + blockMenu.selColCount + " columns"
                           danger: true; onActivated: root.tblDelCol() }
+                MenuRow { visible: blockMenu.gridSetHit !== null; scope: "set"; danger: true
+                          text: blockMenu.gridSetHit !== null && blockMenu.gridSetHit.kind === "row"
+                                && blockMenu.gridSetHit.items[0] < blockMenu.gridHeaders ? "Delete table" : "Delete " + blockMenu.gridSetNoun
+                          onActivated: root.gridSetMenuOp(function(h, items, kind) {
+                              if (kind === "row") blockModel.gridDeleteRows(h, items)
+                              else blockModel.gridDeleteColumns(h, items)
+                          }) }
             }
         }
     }

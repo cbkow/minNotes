@@ -132,6 +132,18 @@ Item {
                 border.width: dropping ? 2 : 0
                 border.color: Theme.colors.accent
             }
+            Rectangle {   // S7b: the hovered block-menu item's target — the table, the column, the row, or the set
+                readonly property string sc: editor.menuHiScope
+                readonly property var t: editor.menuGrid
+                readonly property var s: editor.gridSet
+                visible: t !== null && t.head === cell.tableHead
+                         && (sc === "table" || (sc === "row" && cell.gridRow === t.r) || (sc === "column" && index === t.c)
+                             || (sc === "set" && s !== null && s.head === cell.tableHead
+                                 && (s.kind === "row" ? s.items.indexOf(cell.gridRow) >= 0 : s.items.indexOf(index) >= 0)))
+                readonly property color tone: editor.menuHiDanger ? Theme.colors.error : Theme.colors.accent
+                anchors.fill: parent
+                color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
+            }
             Rectangle {   // the column's right border — accent while hovered
                 readonly property bool hot: cell.hotColumn === index
                 anchors.right: parent.right; width: hot ? 2 : 1; height: parent.height
