@@ -1017,15 +1017,30 @@ bool BlockModel::gridSortByColumn(int head, int c, bool asc) {
         if (okx != oky) return okx;                              // numbers before text
         return QString::compare(x, y, Qt::CaseInsensitive) < 0;
     };
-    std::vector<std::pair<QString, GridRow>> body;
-    for (size_t i = size_t(hc); i < grid.size(); ++i) body.push_back({ text(grid[i]), grid[i] });
-    std::stable_sort(body.begin(), body.end(), [&](const auto& a, const auto& b) {
-        return asc ? less(a.first, b.first) : less(b.first, a.first);
+    // Typed columns sort by option order (unset after every option) or by check state.
+    const QJsonObject col = tableColsOf(rows_[size_t(head)].table).at(c).toObject();
+    const int kind = col.value(QStringLiteral("k")).toInt(0);
+    const QJsonArray opts = col.value(QStringLiteral("o")).toArray();
+    auto typedKey = [&](const GridRow& gr) {
+        const int b = c < static_cast<int>(gr.cells.size()) && !gr.cells[size_t(c)].blocks.empty()
+                    ? gr.cells[size_t(c)].blocks.front() : -1;
+        const QString v = chipPayloadOf(b).value(QStringLiteral("v")).toString();
+        if (kind == 2) return v.toInt();
+        for (int i = 0; i < opts.size(); ++i)
+            if (opts[i].toObject().value(QStringLiteral("id")).toString() == v) return i;
+        return static_cast<int>(opts.size());
+    };
+    struct Item { QString text; int key; GridRow row; };
+    std::vector<Item> body;
+    for (size_t i = size_t(hc); i < grid.size(); ++i) body.push_back({ text(grid[i]), kind ? typedKey(grid[i]) : 0, grid[i] });
+    std::stable_sort(body.begin(), body.end(), [&](const Item& a, const Item& b) {
+        if (kind) return asc ? a.key < b.key : b.key < a.key;
+        return asc ? less(a.text, b.text) : less(b.text, a.text);
     });
     bool changed = false;
-    for (size_t k = 0; k < body.size(); ++k) changed = changed || body[k].second.rec != grid[size_t(hc) + k].rec;
+    for (size_t k = 0; k < body.size(); ++k) changed = changed || body[k].row.rec != grid[size_t(hc) + k].rec;
     if (!changed) return true;
-    for (size_t k = 0; k < body.size(); ++k) grid[size_t(hc) + k] = std::move(body[k].second);
+    for (size_t k = 0; k < body.size(); ++k) grid[size_t(hc) + k] = std::move(body[k].row);
     return commitGrid(head, grid, tableColsOf(rows_[size_t(head)].table), rows_[size_t(head)].header);
 }
 
@@ -1076,11 +1091,366 @@ bool BlockModel::joinTableByLabel(int target, int source) {
     const int lo = target, hi = tableBand(source).second;
     beginTxn(lo, hi);
     rebuildTable(lo, hi, grid, cols, rows_[size_t(target)].header);
+    adaptJoinedChips(target, static_cast<int>(tg.size()));     // chips adapt by label (A9)
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
     endTxn();
     return true;
+}
+
+// === Typed columns (SR-4 S4) ================================================
+static const QJsonArray& checkOptions() {
+    static const QJsonArray opts = [] {
+        QJsonArray a;
+        const char* defs[3][2] = { { "To do", "#8A8A8A" }, { "Doing", "#0189F1" }, { "Done", "#58A65C" } };
+        for (int i = 0; i < 3; ++i)
+            a.append(QJsonObject{ { QStringLiteral("id"), QString::number(i) },
+                                  { QStringLiteral("l"), QLatin1String(defs[i][0]) },
+                                  { QStringLiteral("c"), QLatin1String(defs[i][1]) } });
+        return a;
+    }();
+    return opts;
+}
+
+static QString optionIdByLabel(const QJsonArray& opts, const QString& label) {
+    const QString want = label.trimmed().toCaseFolded();
+    if (want.isEmpty()) return {};
+    for (const QJsonValue& v : opts)
+        if (v.toObject().value(QStringLiteral("l")).toString().trimmed().toCaseFolded() == want)
+            return v.toObject().value(QStringLiteral("id")).toString();
+    return {};
+}
+
+static bool optionsHave(const QJsonArray& opts, const QString& id) {
+    for (const QJsonValue& v : opts)
+        if (v.toObject().value(QStringLiteral("id")).toString() == id) return true;
+    return false;
+}
+
+QJsonObject BlockModel::chipPayloadOf(int block) const {
+    if (block < 0 || block >= static_cast<int>(rows_.size())) return {};
+    for (const Span& s : rows_[size_t(block)].spans)
+        if (s.kind == SpanChoice) return QJsonDocument::fromJson(s.href.toUtf8()).object();
+    return {};
+}
+
+void BlockModel::writeCellValue(int block, const QJsonArray& options, const QString& id) {
+    Row& r = rows_[size_t(block)];
+    r.type = Paragraph; r.level = 0; r.taskState = 0; r.depth = 0; r.lang.clear(); r.param = 1;
+    QString label;
+    std::vector<Span> spans;
+    if (!id.isEmpty() && optionsHave(options, id)) {
+        const QJsonObject payload{ { QStringLiteral("o"), options }, { QStringLiteral("v"), id } };
+        label = mn::inl::sanitizeChoiceLabel(mn::inl::choiceLabelFor(payload, id));
+        if (!label.isEmpty()) spans.push_back({ 0, static_cast<int>(label.size()), SpanChoice, mn::inl::encodeChoicePayload(payload) });
+    }
+    if (content_[size_t(block)] == label && r.spans.size() == spans.size()
+        && (spans.empty() || r.spans.front().href == spans.front().href)) return;   // unchanged
+    content_[size_t(block)] = label;
+    r.spans = std::move(spans);
+    persistContent(block);
+    persistMeta(block);
+    emit dataChanged(index(block), index(block), { ContentRole });
+}
+
+void BlockModel::writePlainValue(int block, const QString& text) {
+    Row& r = rows_[size_t(block)];
+    r.type = Paragraph; r.level = 0; r.taskState = 0; r.depth = 0; r.lang.clear(); r.param = 1;
+    r.spans.clear();
+    content_[size_t(block)] = text;
+    persistContent(block);
+    persistMeta(block);
+    emit dataChanged(index(block), index(block), { ContentRole });
+}
+
+int BlockModel::gridColumnKind(int head, int c) const {
+    if (headerCount(head) == 0 || c < 0) return 0;
+    return tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(QStringLiteral("k")).toInt(0);
+}
+
+QVariantList BlockModel::gridColumnOptions(int head, int c) const {
+    const int kind = gridColumnKind(head, c);
+    const QJsonArray opts = kind == 2 ? checkOptions()
+                          : tableColsOf(rows_[size_t(head)].table).at(c).toObject().value(QStringLiteral("o")).toArray();
+    QVariantList out;
+    if (kind == 0) return out;
+    for (const QJsonValue& v : opts) {
+        const QJsonObject o = v.toObject();
+        out << QVariantMap{ { QStringLiteral("id"), o.value(QStringLiteral("id")).toString() },
+                            { QStringLiteral("label"), o.value(QStringLiteral("l")).toString() },
+                            { QStringLiteral("color"), o.value(QStringLiteral("c")).toString() } };
+    }
+    return out;
+}
+
+bool BlockModel::gridSetColumnKind(int head, int c, int kind) {
+    if (headerCount(head) == 0 || c < 0 || c >= tableColumnCount(head)) return false;
+    kind = std::clamp(kind, 0, 2);
+    QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    while (spec.size() <= c) spec.append(QJsonObject());
+    QJsonObject col = spec[c].toObject();
+    if (col.value(QStringLiteral("k")).toInt(0) == kind) return true;
+    std::vector<GridRow> grid = gridOf(head);
+    const int hc = std::min(headerCount(head), static_cast<int>(grid.size()));
+    auto valueOf = [&](const GridCell& cell) {
+        if (cell.blocks.empty()) return QString();
+        QStringList parts;
+        for (int b : cell.blocks) parts << content_[size_t(b)];
+        return parts.join(QLatin1Char(' ')).simplified();
+    };
+    QJsonArray options;
+    if (kind == 1) {                                        // T1: harvest the distinct values
+        static const char* palette[] = { "#8A8A8A", "#0189F1", "#58A65C", "#E5A33B",
+                                         "#D9534F", "#9B6BD6", "#2BB3A6", "#C6689D" };
+        for (size_t r = size_t(hc); r < grid.size(); ++r) {
+            if (c >= static_cast<int>(grid[r].cells.size())) continue;
+            const QString raw = valueOf(grid[r].cells[size_t(c)]);
+            if (raw.isEmpty()) continue;                     // an empty cell is no value (sanitize would name it "Option")
+            const QString v = mn::inl::sanitizeChoiceLabel(raw);
+            if (v.isEmpty() || !optionIdByLabel(options, v).isEmpty()) continue;
+            options.append(QJsonObject{ { QStringLiteral("id"), makeUlid() }, { QStringLiteral("l"), v },
+                                        { QStringLiteral("c"), QLatin1String(palette[options.size() % 8]) } });
+        }
+    }
+    const QJsonArray& valueOptions = kind == 2 ? checkOptions() : options;
+    if (kind == 0) { col.remove(QStringLiteral("k")); col.remove(QStringLiteral("o")); }
+    else { col.insert(QStringLiteral("k"), kind); if (kind == 1) col.insert(QStringLiteral("o"), options); else col.remove(QStringLiteral("o")); }
+    spec[c] = col;
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    for (size_t r = size_t(hc); r < grid.size(); ++r) {
+        if (c >= static_cast<int>(grid[r].cells.size()) || grid[r].cells[size_t(c)].blocks.empty()) continue;
+        GridCell& cell = grid[r].cells[size_t(c)];
+        const QString v = valueOf(cell);
+        const int keep = cell.blocks.front();               // the value block; the rest go (one value per cell)
+        if (kind == 0) writePlainValue(keep, v);
+        else writeCellValue(keep, valueOptions, optionIdByLabel(valueOptions, v));
+        if (kind == 2 && optionIdByLabel(valueOptions, v) == QStringLiteral("0")) writeCellValue(keep, valueOptions, QString());
+        cell.blocks = { keep };
+    }
+    rebuildTable(lo, hi, grid, spec, headerCount(head));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+bool BlockModel::gridSetColumnsKind(int head, const QVariantList& cols, int kind) {
+    const std::vector<int> set = gridIndexSet(cols, tableColumnCount(head));
+    if (set.empty()) return false;
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);                                        // one undo step for the set
+    bool ok = true;
+    for (int c : set) ok = gridSetColumnKind(head, c, kind) && ok;
+    endTxn();
+    return ok;
+}
+
+bool BlockModel::sweepColumnOptions(int head, int c, const QJsonArray& options,
+                                    const std::function<QString(const QString&)>& remap) {
+    if (gridColumnKind(head, c) != 1) return false;
+    QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    QJsonObject col = spec[c].toObject();
+    col.insert(QStringLiteral("o"), options);
+    spec[c] = col;
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    QJsonObject t = QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8()).object();
+    t.insert(QStringLiteral("cols"), spec);
+    rows_[size_t(head)].table = QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+    persistMeta(head);
+    const int hc = headerCount(head), rows = gridRowCount(head);
+    for (int r = hc; r < rows; ++r) {
+        const int b = gridCellAt(head, r, c);
+        const QJsonObject p = chipPayloadOf(b);
+        if (b < 0 || p.isEmpty()) continue;
+        writeCellValue(b, options, remap(p.value(QStringLiteral("v")).toString()));
+    }
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
+static QJsonArray columnOptionsOf(const QString& table, int c) {
+    return tableColsOf(table).at(c).toObject().value(QStringLiteral("o")).toArray();
+}
+
+QString BlockModel::gridAddOption(int head, int c, const QString& label, const QString& color) {
+    if (gridColumnKind(head, c) != 1) return {};
+    const QString clean = mn::inl::sanitizeChoiceLabel(label);
+    if (clean.isEmpty()) return {};
+    QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
+    const QString id = makeUlid();
+    opts.append(QJsonObject{ { QStringLiteral("id"), id }, { QStringLiteral("l"), clean }, { QStringLiteral("c"), color } });
+    return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; }) ? id : QString();
+}
+
+bool BlockModel::gridRenameOption(int head, int c, const QString& id, const QString& label) {
+    const QString clean = mn::inl::sanitizeChoiceLabel(label);
+    QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
+    if (clean.isEmpty() || !optionsHave(opts, id)) return false;
+    for (qsizetype i = 0; i < opts.size(); ++i) {
+        QJsonObject o = opts[i].toObject();
+        if (o.value(QStringLiteral("id")).toString() == id) { o.insert(QStringLiteral("l"), clean); opts[i] = o; }
+    }
+    return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; });
+}
+
+bool BlockModel::gridRecolorOption(int head, int c, const QString& id, const QString& color) {
+    QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
+    if (!optionsHave(opts, id)) return false;
+    for (qsizetype i = 0; i < opts.size(); ++i) {
+        QJsonObject o = opts[i].toObject();
+        if (o.value(QStringLiteral("id")).toString() == id) { o.insert(QStringLiteral("c"), color); opts[i] = o; }
+    }
+    return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; });
+}
+
+bool BlockModel::gridMoveOption(int head, int c, const QString& id, int toIndex) {
+    QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
+    qsizetype from = -1;
+    for (qsizetype i = 0; i < opts.size(); ++i)
+        if (opts[i].toObject().value(QStringLiteral("id")).toString() == id) from = i;
+    if (from < 0) return false;
+    const qsizetype to = std::clamp<qsizetype>(toIndex, 0, opts.size() - 1);
+    if (to == from) return true;
+    const QJsonValue moved = opts.at(from);
+    opts.removeAt(from);
+    opts.insert(to, moved);
+    return sweepColumnOptions(head, c, opts, [](const QString& v) { return v; });
+}
+
+bool BlockModel::gridRemoveOption(int head, int c, const QString& id) {
+    QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
+    if (!optionsHave(opts, id)) return false;
+    for (qsizetype i = opts.size() - 1; i >= 0; --i)
+        if (opts[i].toObject().value(QStringLiteral("id")).toString() == id) opts.removeAt(i);
+    return sweepColumnOptions(head, c, opts, [&](const QString& v) { return v == id ? QString() : v; });
+}
+
+bool BlockModel::gridSetColumnOptions(int head, int c, const QVariantList& options) {
+    if (gridColumnKind(head, c) != 1) return false;
+    QJsonArray opts;
+    for (const QVariant& v : options) {
+        const QVariantMap m = v.toMap();
+        const QString label = mn::inl::sanitizeChoiceLabel(m.value(QStringLiteral("label")).toString());
+        if (label.isEmpty()) continue;
+        QString id = m.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) id = makeUlid();
+        opts.append(QJsonObject{ { QStringLiteral("id"), id }, { QStringLiteral("l"), label },
+                                 { QStringLiteral("c"), m.value(QStringLiteral("color")).toString() } });
+    }
+    return sweepColumnOptions(head, c, opts, [&](const QString& v) { return optionsHave(opts, v) ? v : QString(); });
+}
+
+QString BlockModel::gridCellChoice(int head, int r, int c) const {
+    return chipPayloadOf(gridCellAt(head, r, c)).value(QStringLiteral("v")).toString();
+}
+
+QString BlockModel::gridCellChoiceLabel(int head, int r, int c) const {
+    const QJsonObject p = chipPayloadOf(gridCellAt(head, r, c));
+    return p.isEmpty() ? QString() : mn::inl::choiceLabelFor(p, p.value(QStringLiteral("v")).toString());
+}
+
+QString BlockModel::gridCellChoiceColor(int head, int r, int c) const {
+    const QJsonObject p = chipPayloadOf(gridCellAt(head, r, c));
+    return p.isEmpty() ? QString() : mn::inl::choiceColorFor(p, p.value(QStringLiteral("v")).toString());
+}
+
+int BlockModel::ensureGridCell(int head, int r, int c) {
+    int b = gridCellAt(head, r, c);
+    if (b >= 0) return b;
+    std::vector<GridRow> grid = gridOf(head);
+    if (r < 0 || r >= static_cast<int>(grid.size()) || c < 0 || c >= 63) return -1;
+    if (static_cast<int>(grid[size_t(r)].cells.size()) <= c) grid[size_t(r)].cells.resize(size_t(c) + 1);
+    const auto [lo, hi] = tableBand(head);
+    rebuildTable(lo, hi, grid, tableColsOf(rows_[size_t(head)].table), headerCount(head));
+    return gridCellAt(head, r, c);
+}
+
+bool BlockModel::gridSetCellChoice(int head, int r, int c, const QString& id) {
+    if (gridColumnKind(head, c) != 1 || r < headerCount(head)) return false;
+    const QJsonArray opts = columnOptionsOf(rows_[size_t(head)].table, c);
+    if (!id.isEmpty() && !optionsHave(opts, id)) return false;
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    const int b = ensureGridCell(head, r, c);
+    if (b >= 0) writeCellValue(b, opts, id);
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return b >= 0;
+}
+
+int BlockModel::gridCellCheck(int head, int r, int c) const {
+    return std::clamp(chipPayloadOf(gridCellAt(head, r, c)).value(QStringLiteral("v")).toString().toInt(), 0, 2);
+}
+
+bool BlockModel::gridSetCellCheck(int head, int r, int c, int state) {
+    if (gridColumnKind(head, c) != 2 || r < headerCount(head)) return false;
+    state = std::clamp(state, 0, 2);
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    const int b = ensureGridCell(head, r, c);
+    if (b >= 0) writeCellValue(b, checkOptions(), state == 0 ? QString() : QString::number(state));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return b >= 0;
+}
+
+bool BlockModel::gridCycleCellCheck(int head, int r, int c) {
+    return gridSetCellCheck(head, r, c, (gridCellCheck(head, r, c) + 1) % 3);
+}
+
+void BlockModel::adaptJoinedChips(int head, int firstJoined) {
+    QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    const int rows = gridRowCount(head), hc = headerCount(head);
+    bool specChanged = false;
+    for (int c = 0; c < spec.size(); ++c) {
+        QJsonObject col = spec[c].toObject();
+        const int kind = col.value(QStringLiteral("k")).toInt(0);
+        if (kind == 0) continue;
+        QJsonArray opts = kind == 2 ? checkOptions() : col.value(QStringLiteral("o")).toArray();
+        const int optionsBefore = static_cast<int>(opts.size());
+        std::vector<std::pair<int, QString>> writes;
+        for (int r = std::max(firstJoined, hc); r < rows; ++r) {
+            const int b = gridCellAt(head, r, c);
+            const QJsonObject p = chipPayloadOf(b);
+            if (b < 0 || p.isEmpty()) continue;
+            const QString v = p.value(QStringLiteral("v")).toString();
+            const QString label = mn::inl::choiceLabelFor(p, v);
+            QString id = optionIdByLabel(opts, label);
+            if (id.isEmpty() && kind == 1 && !label.isEmpty()) {
+                id = makeUlid();
+                opts.append(QJsonObject{ { QStringLiteral("id"), id }, { QStringLiteral("l"), label },
+                                         { QStringLiteral("c"), mn::inl::choiceColorFor(p, v) } });
+            }
+            writes.push_back({ b, id == QStringLiteral("0") && kind == 2 ? QString() : id });
+        }
+        for (const auto& [b, id] : writes) writeCellValue(b, opts, id);
+        if (kind == 1 && opts.size() != optionsBefore) {
+            col.insert(QStringLiteral("o"), opts);
+            spec[c] = col;
+            specChanged = true;
+            for (int r = hc; r < std::max(firstJoined, hc); ++r) {    // the table's own chips: the grown set
+                const int b = gridCellAt(head, r, c);
+                const QJsonObject p = chipPayloadOf(b);
+                if (b >= 0 && !p.isEmpty()) writeCellValue(b, opts, p.value(QStringLiteral("v")).toString());
+            }
+        }
+    }
+    if (!specChanged) return;
+    QJsonObject t = QJsonDocument::fromJson(rows_[size_t(head)].table.toUtf8()).object();
+    t.insert(QStringLiteral("cols"), spec);
+    rows_[size_t(head)].table = QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
+    persistMeta(head);
 }
 
 void BlockModel::applyPermutation(int lo, const std::vector<std::pair<QString, QString>>& order) {

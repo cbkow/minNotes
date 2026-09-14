@@ -258,6 +258,29 @@ public:
     // Stable sort of the body rows by a column's text: numeric when both parse, numbers
     // before text, text case-insensitive. The undo entry records the two row orders (T2).
     Q_INVOKABLE bool gridSortByColumn(int head, int c, bool asc);
+    // Typed columns (S4): one chip primitive. A column's kind (0 text, 1 choice, 2 check)
+    // and choice options live in the head's spec; a typed body cell is one paragraph whose
+    // text is a single chip carrying the column's options (an empty paragraph = no value;
+    // check state 0 "To do" is the empty cell). Header rows stay text. Converting text →
+    // choice harvests the distinct values as options (T1); option edits sweep the column's
+    // chips in one undo step.
+    Q_INVOKABLE int gridColumnKind(int head, int c) const;
+    Q_INVOKABLE bool gridSetColumnKind(int head, int c, int kind);
+    Q_INVOKABLE bool gridSetColumnsKind(int head, const QVariantList& cols, int kind);
+    Q_INVOKABLE QVariantList gridColumnOptions(int head, int c) const;   // [{id, label, color}]
+    Q_INVOKABLE QString gridAddOption(int head, int c, const QString& label, const QString& color);   // → id
+    Q_INVOKABLE bool gridRenameOption(int head, int c, const QString& id, const QString& label);
+    Q_INVOKABLE bool gridRecolorOption(int head, int c, const QString& id, const QString& color);
+    Q_INVOKABLE bool gridMoveOption(int head, int c, const QString& id, int toIndex);
+    Q_INVOKABLE bool gridRemoveOption(int head, int c, const QString& id);
+    Q_INVOKABLE bool gridSetColumnOptions(int head, int c, const QVariantList& options);
+    Q_INVOKABLE QString gridCellChoice(int head, int r, int c) const;        // selected id, "" = none
+    Q_INVOKABLE QString gridCellChoiceLabel(int head, int r, int c) const;
+    Q_INVOKABLE QString gridCellChoiceColor(int head, int r, int c) const;
+    Q_INVOKABLE bool gridSetCellChoice(int head, int r, int c, const QString& id);   // "" clears
+    Q_INVOKABLE int gridCellCheck(int head, int r, int c) const;             // 0 / 1 / 2
+    Q_INVOKABLE bool gridSetCellCheck(int head, int r, int c, int state);
+    Q_INVOKABLE bool gridCycleCellCheck(int head, int r, int c);              // To do → Doing → Done → To do
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -1299,6 +1322,14 @@ private:
     QString gridColour(int head, int r, int c, bool fg) const;
     bool joinTableByLabel(int target, int source);
     void applyPermutation(int lo, const std::vector<std::pair<QString, QString>>& order);
+    // S4 typed cells (inside the caller's txn).
+    QJsonObject chipPayloadOf(int block) const;                  // the block's chip payload, {} = none
+    void writeCellValue(int block, const QJsonArray& options, const QString& id);   // one chip, or empty
+    void writePlainValue(int block, const QString& text);
+    bool sweepColumnOptions(int head, int c, const QJsonArray& options,
+                            const std::function<QString(const QString&)>& remap);
+    int ensureGridCell(int head, int r, int c);                  // materialize a ragged cell; → its block
+    void adaptJoinedChips(int head, int firstJoined);            // A9: joined rows' chips adopt the head's options
     static double tableLaneWidth(const TableGeom& g, int cell) {
         return cell >= 0 && static_cast<std::size_t>(cell) < g.w.size() ? g.w[static_cast<std::size_t>(cell)] : 160.0;
     }

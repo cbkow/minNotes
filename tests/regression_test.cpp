@@ -7146,6 +7146,132 @@ static void testTableAttrsBulkSort() {
     }
 }
 
+static void testTypedColumns() {
+    qInfo("[89] typed table columns: choice and check cells as chips, T1 harvest, header-authoritative option sweeps (SR-4 step 4)");
+    auto gridText = [](const BlockModel& m, int head) {
+        QStringList rows;
+        for (int r = 0; r < m.gridRowCount(head); ++r) {
+            QStringList cells;
+            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+                QStringList parts;
+                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                    const QString t = m.contentForRow(v.toInt());
+                    parts << (t.isEmpty() ? QStringLiteral("·") : t);
+                }
+                cells << parts.join(QLatin1Char('+'));
+            }
+            rows << cells.join(QLatin1Char(' '));
+        }
+        return rows.join(QStringLiteral(" | "));
+    };
+    auto fill = [](BlockModel& m, int head, const QList<QStringList>& rows) {
+        for (int r = 0; r < rows.size(); ++r)
+            for (int c = 0; c < rows[r].size(); ++c) m.setContent(m.gridCellAt(head, r, c), rows[r][c]);
+    };
+    auto optionId = [](const BlockModel& m, int head, int c, const QString& label) {
+        for (const QVariant& v : m.gridColumnOptions(head, c))
+            if (v.toMap().value(QStringLiteral("label")).toString() == label) return v.toMap().value(QStringLiteral("id")).toString();
+        return QString();
+    };
+    const QString dir = QDir::tempPath() + QStringLiteral("/mn_typed_columns");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertTableRows(0, 5, 2);
+    fill(m, 1, { { "Name", "Status" }, { "a", "Doing" }, { "b", "Done" }, { "c", "doing" }, { "d", "" } });
+    const QString texts = QStringLiteral("Name Status | a Doing | b Done | c doing | d ·");
+    CHECK(gridText(m, 1) == texts && m.gridColumnKind(1, 1) == 0, "fixture: a text column");
+
+    CHECK(m.gridSetColumnKind(1, 1, 1) && m.gridColumnKind(1, 1) == 1 && m.gridColumnOptions(1, 1).size() == 2
+              && optionId(m, 1, 1, QStringLiteral("Doing")).size() > 0 && optionId(m, 1, 1, QStringLiteral("Done")).size() > 0,
+          "text → choice harvests the distinct values as options, first appearance first, case-insensitively (T1) [%s]",
+          qPrintable([&] { QStringList l; for (const QVariant& v : m.gridColumnOptions(1, 1)) l << v.toMap().value(QStringLiteral("label")).toString(); return l.join(QLatin1Char(',')); }()));
+    const QString doing = optionId(m, 1, 1, QStringLiteral("Doing")), done = optionId(m, 1, 1, QStringLiteral("Done"));
+    CHECK(m.gridCellChoice(1, 1, 1) == doing && m.gridCellChoice(1, 3, 1) == doing && m.gridCellChoiceLabel(1, 3, 1) == QStringLiteral("Doing")
+              && m.gridCellChoice(1, 2, 1) == done && m.gridCellChoice(1, 4, 1).isEmpty()
+              && m.contentForRow(m.gridCellAt(1, 0, 1)) == QStringLiteral("Status") && m.gridCellChoice(1, 0, 1).isEmpty()
+              && !m.choiceAt(m.gridCellAt(1, 2, 1), 0).isEmpty() && m.structureValid(),
+          "every body cell keeps its value as a chip; the header stays text (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(gridText(m, 1) == texts && m.gridColumnKind(1, 1) == 0 && m.choiceAt(m.gridCellAt(1, 2, 1), 0).isEmpty(),
+          "…one undo step (%s)", qPrintable(gridText(m, 1)));
+    m.redo();
+
+    CHECK(m.gridRenameOption(1, 1, done, QStringLiteral("Shipped")) && m.contentForRow(m.gridCellAt(1, 2, 1)) == QStringLiteral("Shipped")
+              && m.gridCellChoiceLabel(1, 2, 1) == QStringLiteral("Shipped") && m.gridCellChoice(1, 2, 1) == done,
+          "renaming an option rewrites every chip that selects it");
+    m.undo();
+    CHECK(m.contentForRow(m.gridCellAt(1, 2, 1)) == QStringLiteral("Done"), "…one undo step");
+    CHECK(m.gridRecolorOption(1, 1, doing, QStringLiteral("#123456")) && m.gridCellChoiceColor(1, 1, 1) == QStringLiteral("#123456")
+              && m.gridCellChoiceColor(1, 3, 1) == QStringLiteral("#123456"), "recolouring an option sweeps its chips");
+    const QString blocked = m.gridAddOption(1, 1, QStringLiteral("Blocked"), QStringLiteral("#D9534F"));
+    const QJsonObject payload = QJsonDocument::fromJson(m.choiceAt(m.gridCellAt(1, 2, 1), 0).toUtf8()).object();
+    CHECK(!blocked.isEmpty() && m.gridColumnOptions(1, 1).size() == 3 && payload.value(QStringLiteral("o")).toArray().size() == 3,
+          "adding an option reaches every chip's option set (the header is authoritative)");
+    CHECK(m.gridSetCellChoice(1, 4, 1, blocked) && m.gridCellChoiceLabel(1, 4, 1) == QStringLiteral("Blocked"), "set a cell's value");
+    CHECK(m.gridMoveOption(1, 1, blocked, 0) && m.gridSortByColumn(1, 1, true)
+              && gridText(m, 1) == QStringLiteral("Name Status | d Blocked | a Doing | c Doing | b Done"),
+          "a choice column sorts by option order (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    m.undo();
+    CHECK(m.gridRemoveOption(1, 1, doing) && m.gridCellChoice(1, 1, 1).isEmpty() && m.gridCellChoice(1, 3, 1).isEmpty()
+              && m.contentForRow(m.gridCellAt(1, 1, 1)).isEmpty() && m.gridCellChoice(1, 2, 1) == done
+              && m.gridColumnOptions(1, 1).size() == 2,
+          "removing an option clears the cells that selected it");
+    m.undo();
+    CHECK(m.gridCellChoice(1, 1, 1) == doing, "…one undo step");
+
+    CHECK(m.gridSetColumnKind(1, 0, 2) && m.gridColumnKind(1, 0) == 2 && m.gridCellCheck(1, 1, 0) == 0
+              && m.contentForRow(m.gridCellAt(1, 1, 0)).isEmpty() && m.contentForRow(m.gridCellAt(1, 0, 0)) == QStringLiteral("Name"),
+          "text → check: cells start To do; the header stays text");
+    CHECK(m.gridCycleCellCheck(1, 1, 0) && m.gridCellCheck(1, 1, 0) == 1 && m.gridCycleCellCheck(1, 1, 0)
+              && m.gridCellCheck(1, 1, 0) == 2 && m.contentForRow(m.gridCellAt(1, 1, 0)) == QStringLiteral("Done")
+              && m.gridCycleCellCheck(1, 1, 0) && m.gridCellCheck(1, 1, 0) == 0,
+          "a check cell cycles To do → Doing → Done → To do");
+    CHECK(m.gridSetCellCheck(1, 3, 0, 2) && m.gridCellCheck(1, 3, 0) == 2, "set a check state");
+
+    CHECK(m.gridSetColumnKind(1, 1, 0) && m.gridColumnKind(1, 1) == 0 && m.contentForRow(m.gridCellAt(1, 2, 1)) == QStringLiteral("Done")
+              && m.choiceAt(m.gridCellAt(1, 2, 1), 0).isEmpty(),
+          "choice → text keeps each label as plain text");
+    m.undo();
+
+    const QString path = dir + QStringLiteral("/typed.mnd");
+    CHECK(m.saveAs(path), "the document saves");
+    {
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && m2.gridColumnKind(1, 1) == 1 && m2.gridColumnKind(1, 0) == 2
+                  && m2.gridCellChoice(1, 1, 1) == doing && m2.gridCellCheck(1, 3, 0) == 2 && m2.gridColumnOptions(1, 1).size() == 3
+                  && m2.structureValid(),
+              "kinds, options, and values come back after reopening");
+    }
+
+    {   // A9: rows joining by label adopt the table's option ids
+        BlockModel j;
+        j.newDocument();
+        while (j.rowCountQml() > 0) j.removeBlock(0);
+        j.insertBlock(0); j.setContent(0, QStringLiteral("above"));
+        j.insertTableRows(0, 2, 1);                          // X: Status / Done
+        fill(j, 1, { { "Status" }, { "Done" } });
+        j.gridSetColumnKind(1, 0, 1);
+        const int y = j.splitRowLast(j.tableRecords(1).back().toInt()) + 1;
+        j.insertTableRows(y - 1, 3, 1);                      // Y: Status / Done / Review
+        fill(j, y, { { "Status" }, { "Done" }, { "Review" } });
+        j.gridSetColumnKind(y, 0, 1);
+        const QString xDone = j.gridCellChoice(1, 1, 0), yDone = j.gridCellChoice(y, 1, 0);
+        CHECK(!xDone.isEmpty() && !yDone.isEmpty() && xDone != yDone, "fixture: two tables with their own option ids");
+        CHECK(j.setHeaderRole(y, 0) && j.gridRowCount(1) == 5 && j.gridCellChoice(1, 3, 0) == xDone
+                  && j.gridCellChoiceLabel(1, 4, 0) == QStringLiteral("Review") && j.gridColumnOptions(1, 0).size() == 2
+                  && QJsonDocument::fromJson(j.choiceAt(j.gridCellAt(1, 1, 0), 0).toUtf8()).object().value(QStringLiteral("o")).toArray().size() == 2
+                  && j.structureValid(),
+              "joined chips adopt the table's id for a matching label and add the unknown one (%s)", qPrintable(gridText(j, 1)));
+    }
+    QDir(dir).removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7345,6 +7471,7 @@ int main(int argc, char** argv) {
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
+    testTypedColumns();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
