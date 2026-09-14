@@ -300,6 +300,9 @@ public:
     // replacing each target cell's blocks with its value (typed columns adopt options by label,
     // adding unknown ones) and growing rows/columns as needed. One undo; → the last cell's block.
     Q_INVOKABLE int gridPasteTSV(int head, int r0, int c0, const QString& text);
+    // A tabular plain-text paste outside a table (S7a): a new table below afterRow holding the
+    // grid, its first row the header. One undo; → the first cell's block, or -1.
+    Q_INVOKABLE int insertGridFromTSV(int afterRow, const QString& tsv);
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the

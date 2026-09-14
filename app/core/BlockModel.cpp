@@ -1532,6 +1532,25 @@ int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
     return land;
 }
 
+int BlockModel::insertGridFromTSV(int afterRow, const QString& tsv) {
+    QString t = tsv;
+    t.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    t.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    while (t.endsWith(QLatin1Char('\n'))) t.chop(1);
+    if (t.trimmed().isEmpty()) return -1;                     // fromTSV("") is a 1×1 grid, not nothing
+    const TableGrid g = TableGrid::fromTSV(t);
+    if (g.rows() < 1 || g.cols() < 1) return -1;
+    const int n = static_cast<int>(rows_.size());
+    int gap = n == 0 ? 0 : std::clamp(afterRow, -1, n - 1) + 1;   // insertTableRows' own gap
+    while (gap < n && rows_[size_t(gap)].cell >= 0) ++gap;
+    beginTxn(gap, gap - 1);
+    const int first = insertTableRows(afterRow, g.rows(), std::min(g.cols(), 63));
+    const int head = first - 1;
+    gridPasteTSV(head, 0, 0, t);
+    endTxn();
+    return gridCellAt(head, 0, 0);
+}
+
 void BlockModel::adaptJoinedChips(int head, int firstJoined) {
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     const int rows = gridRowCount(head), hc = headerCount(head);

@@ -1842,6 +1842,14 @@ FocusScope {
     function dividerAt(row, pageX) {
         const rec = blockModel.splitRowOf(row)
         if (rec < 0) return null
+        const head = blockModel.tableHeadOf(rec)
+        if (head >= 0) {   // SR-4 A6: a table column's right border (the last column's too) → its px width
+            const cols = blockModel.tableColumnCount(head)
+            for (let k = 0; k < cols; ++k)
+                if (Math.abs(pageX - blockModel.tableColumnLeft(head, k) - blockModel.tableColumnWidth(head, k)) <= 4)
+                    return { record: rec, index: k }
+            return null
+        }
         const n = blockModel.laneCount(rec)
         for (let k = 0; k + 1 < n; ++k)
             if (Math.abs(pageX - blockModel.dividerX(rec, k)) <= blockModel.laneGap / 2) return { record: rec, index: k }
@@ -1867,15 +1875,34 @@ FocusScope {
     }
     function beginDividerDrag(rec, idx, pageX, alone) {
         dividerDragRecord = rec; dividerDragIndex = idx; dividerDragAlone = alone
-        dividerDragChain = alone ? [rec, idx] : blockModel.dividerChain(rec, idx)
-        dividerPreviewX = blockModel.dividerX(rec, idx)
+        const head = blockModel.tableHeadOf(rec)
+        if (head >= 0) {   // a table column border: the preview spans the table
+            const recs = blockModel.tableRecords(head)
+            dividerDragChain = [recs[0], idx, recs[recs.length - 1], idx]
+            dividerPreviewX = blockModel.tableColumnLeft(head, idx) + blockModel.tableColumnWidth(head, idx)
+        } else {
+            dividerDragChain = alone ? [rec, idx] : blockModel.dividerChain(rec, idx)
+            dividerPreviewX = blockModel.dividerX(rec, idx)
+        }
         dividerDragging = true
     }
-    function updateDividerDrag(pageX) { dividerPreviewX = snapToFractions(pageX, 0, pageWidth) }
+    function updateDividerDrag(pageX) {
+        const head = blockModel.tableHeadOf(dividerDragRecord)
+        if (head >= 0) {   // px, no fraction snaps; a column never goes under 48
+            dividerPreviewX = Math.max(blockModel.tableColumnLeft(head, dividerDragIndex) + 48, pageX)
+            return
+        }
+        dividerPreviewX = snapToFractions(pageX, 0, pageWidth)
+    }
     function commitDividerDrag() {
         if (!dividerDragging) return
         dividerDragging = false
-        blockModel.moveDivider(dividerDragRecord, dividerDragIndex, dividerPreviewX, dividerDragAlone)
+        const head = blockModel.tableHeadOf(dividerDragRecord)
+        if (head >= 0)
+            blockModel.setTableColumnWidth(head, dividerDragIndex,
+                                           dividerPreviewX - blockModel.tableColumnLeft(head, dividerDragIndex))
+        else
+            blockModel.moveDivider(dividerDragRecord, dividerDragIndex, dividerPreviewX, dividerDragAlone)
         dividerDragRecord = -1; dividerDragIndex = -1; dividerDragChain = []
     }
     function cancelDividerDrag() { dividerDragging = false; dividerDragRecord = -1; dividerDragIndex = -1; dividerDragChain = [] }
@@ -1890,12 +1917,20 @@ FocusScope {
     }
     function updatePull(pageX) {
         const g = laneOf(pullRow), min = blockModel.minLaneWidth
+        if (blockModel.tableHeadOf(pullRow) >= 0) { pullPreviewX = Math.max(g.x, Math.min(g.x + g.w, pageX)); return }
         pullPreviewX = snapToFractions(Math.max(g.x + min, Math.min(g.x + g.w - min, pageX)), g.x, g.w)
     }
     function commitPull() {
         if (!pulling) return
         pulling = false
         if (Math.abs(pullPreviewX - pullPressX) < 12) return        // a click on the band, not a pull
+        const head = blockModel.tableHeadOf(pullRow)
+        if (head >= 0) {   // SR-4 A6: in a table, a pull adds a column table-wide beside this cell
+            const r = blockModel.gridRowOf(pullRow), c = blockModel.gridColumnOf(pullRow)
+            const at = pullSide === 0 ? c + 1 : c
+            if (blockModel.gridInsertColumn(head, at)) root.landInCell(head, r, at)
+            return
+        }
         const g = laneOf(pullRow)
         const leftShare = (pullPreviewX - g.x) / g.w
         const hadInk = blockModel.inkForRow(pullRow).length > 0
@@ -1994,6 +2029,21 @@ FocusScope {
         if (land >= 0 && blockModel.typeForRow(land) === 10) land = blockModel.nextLeaf(land - 1)
         cursor.setCaret(Math.max(0, land), 0)
         root.ensureVisible(Math.max(0, land))
+    }
+    // Block menu → a derived-table op on the right-clicked cell (SR-4 S7a). `op(head, r, c)` returns
+    // the [r, c] to land the caret in, or null; when the table is gone the caret takes the nearest block.
+    function gridMenuOp(op) {
+        const h = blockModel.tableHeadOf(root.menuRow)
+        if (h < 0) return
+        const land = op(h, blockModel.gridRowOf(root.menuRow), blockModel.gridColumnOf(root.menuRow))
+        if (blockModel.headerCount(h) > 0 && blockModel.tableHeadOf(h) === h) {
+            if (land) root.landInCell(h, Math.min(land[0], blockModel.gridRowCount(h) - 1), Math.max(0, land[1]))
+            return
+        }
+        let l = Math.min(h, blockModel.count - 1)
+        if (l >= 0 && blockModel.typeForRow(l) === 10) l = blockModel.nextLeaf(l - 1)
+        cursor.setCaret(Math.max(0, l), 0)
+        root.ensureVisible(Math.max(0, l))
     }
     // ⌘Enter in a table row: a new row below, the caret in the same column.
     function tableInsertRowBelow() {
@@ -2517,8 +2567,9 @@ FocusScope {
     function makeCodeAt(row)    { if (cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow); blockModel.makeCodeBlock(row, ""); cursor.setCaret(row, 0); cursor.sync() }
     function insertTableAt(row) {
         blockModel.commitMarkdown(cursor.focusRow)
-        var tr = blockModel.insertTable(row, 3, 3)   // actual row (anchor may be consumed)
-        if (tr >= 0) { cursor.setCaret(tr, 0); tcur.place(0, 0, 0); root.ensureVisible(tr) }
+        // SR-4 S7a: a derived table — a header row and two body rows of three cells.
+        const first = blockModel.insertTableRows(row, 3, 3)
+        if (first >= 0) { cursor.setCaret(first, 0); root.ensureVisible(first) }
     }
     function insertTableAtCaret() { insertTableAt(cursor.focusRow) }
     // Table context-menu ops — act on the right-clicked block (menuRow) + cell.
@@ -2959,9 +3010,9 @@ FocusScope {
         var tg = root.pasteGroupBegin()
         if (root.looksTabular(txt)) {                       // rectangular TSV → table block
             blockModel.commitMarkdown(cursor.focusRow)      // caret moves to the new table → consume inline md
-            var tr = blockModel.insertTableFromTSV(cursor.focusRow, txt)
+            var tr = blockModel.insertGridFromTSV(cursor.focusRow, txt)   // SR-4 S7a: a derived table
             root.pasteGroupEnd(tg)
-            if (tr >= 0) { cursor.setCaret(tr, 0); root.ensureVisible(tr); return }
+            if (tr >= 0) { cursor.setCaret(tr, blockModel.contentForRow(tr).length); root.ensureVisible(tr); return }
             tg = false
         }
         // Smart paste: blocks (blank lines separate) + per-line markdown prefixes +
@@ -3781,7 +3832,29 @@ FocusScope {
                 } else {
                     const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
                     const r = blockModel.gridRowOf(row), rows = blockModel.gridRowCount(head)
-                    switch (rand(7)) {
+                    switch (rand(9)) {
+                    case 7: {   // A6: drag a column's right border — its px width, never under 48
+                        const c = blockModel.gridColumnOf(row)
+                        const edge = blockModel.tableColumnLeft(head, c) + blockModel.tableColumnWidth(head, c)
+                        root.beginDividerDrag(blockModel.splitRowOf(row), c, edge, false)
+                        root.updateDividerDrag(edge + (rand(2) ? 60 : -500))
+                        root.commitDividerDrag()
+                        ++checks
+                        if (blockModel.tableColumnWidth(head, c) < 48) fail("column " + c + " of table " + head + " went under 48 px")
+                        break
+                    }
+                    case 8: {   // A6: a pull from a cell's right edge adds a column table-wide
+                        const colsBefore = blockModel.tableColumnCount(head)
+                        if (colsBefore >= 8) break                       // keep the walk's tables representative
+                        const g = root.laneOf(row)
+                        root.beginPull(row, 0, g.x + g.w)
+                        root.updatePull(g.x + g.w * 0.3)
+                        root.commitPull()
+                        ++checks
+                        if (colsBefore < 63 && blockModel.tableColumnCount(head) !== colsBefore + 1)
+                            fail("a pull in table " + head + " made " + blockModel.tableColumnCount(head) + " columns from " + colsBefore)
+                        break
+                    }
                     case 6: {   // A7: select a cell rectangle and delete it — the cells clear, the rows stay
                         const rowsBefore = blockModel.gridRowCount(head)
                         const a = blockModel.gridCellAt(head, 0, 0)
@@ -7410,6 +7483,16 @@ FocusScope {
             blockModel.splitRowLast(laneRecord) - laneRecord > blockModel.laneCount(laneRecord))
         readonly property int mergeBelow: laneRecord < 0 ? -1
             : (blockModel.contentRevision, root.mergeTargetBelow(laneRecord))
+        // Derived tables (SR-4 S7a): the table cell under the menu.
+        readonly property int gridHead: menuInSel || root.menuRow < 0 ? -1
+            : (blockModel.contentRevision, blockModel.tableHeadOf(root.menuRow))
+        readonly property int gridC: gridHead >= 0 ? (blockModel.contentRevision, blockModel.gridColumnOf(root.menuRow)) : -1
+        readonly property bool gridHeaderRow: gridHead >= 0 && (blockModel.contentRevision, blockModel.isHeaderRow(root.menuRow))
+        readonly property int gridKind: gridC >= 0 && !gridHeaderRow ? (blockModel.contentRevision, blockModel.gridColumnKind(gridHead, gridC)) : 0
+        readonly property int gridAlign: gridC >= 0 ? (blockModel.contentRevision, blockModel.gridColAlign(gridHead, gridC)) : 0
+        readonly property int gridCols: gridHead >= 0 ? (blockModel.contentRevision, blockModel.tableColumnCount(gridHead)) : 0
+        readonly property int gridHeaders: gridHead >= 0 ? (blockModel.contentRevision, blockModel.headerCount(gridHead)) : 0
+        readonly property bool gridOn: !inFrameTab && gridHead >= 0
         // The right-clicked issue, re-read live: a background-pass issue has no
         // suggestions until the worker's follow-up lands (spell.revision bumps).
         readonly property var liveIssue: {
@@ -7554,14 +7637,62 @@ FocusScope {
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(blockMenu.runLo) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(blockMenu.runHi) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canSplit; text: "Split into columns"
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canSplit && blockMenu.gridHead < 0; text: "Split into columns"
                           onActivated: root.splitMenu(blockMenu.runLo, blockMenu.runHi) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canAlign; text: "Align lanes"
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canAlign && blockMenu.gridHead < 0; text: "Align lanes"
                           onActivated: blockModel.alignLanes(blockMenu.laneRecord) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.mergeBelow >= 0; text: "Merge with the row below"
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.mergeBelow >= 0 && blockMenu.gridHead < 0; text: "Merge with the row below"
                           onActivated: blockModel.mergeRowsIntoLanes(blockMenu.laneRecord, blockMenu.mergeBelow) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0; text: "Delete lane"; danger: true
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0 && blockMenu.gridHead < 0; text: "Delete lane"; danger: true
                           onActivated: root.deleteLane(root.menuRow) }
+                // Derived tables (SR-4 S7a). A split row takes the header role; a table cell gets the table's ops.
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0 && (blockMenu.gridHead < 0 || !blockMenu.gridHeaderRow)
+                          text: "Assign as header"
+                          onActivated: blockModel.setHeaderRole(blockMenu.laneRecord, 1) }
+                MenuHeader { visible: blockMenu.gridOn; text: "Table" }
+                MenuRow { visible: blockMenu.gridOn; text: "Insert row above"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertRow(h, r); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Insert row below"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertRow(h, r + 1); return [r + 1, c] }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Insert column left"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertColumn(h, c); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Insert column right"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridInsertColumn(h, c + 1); return [r, c + 1] }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Duplicate row"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDuplicateRow(h, r); return [r + 1, c] }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Duplicate column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDuplicateColumn(h, c); return [r, c + 1] }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridC > 0; text: "Move column left"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveColumn(h, c, c - 1); return [r, c - 1] }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridC < blockMenu.gridCols - 1; text: "Move column right"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridMoveColumn(h, c, c + 1); return [r, c + 1] }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Sort ascending"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSortByColumn(h, c, true); return null }) }
+                MenuRow { visible: blockMenu.gridOn; text: "Sort descending"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSortByColumn(h, c, false); return null }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridKind !== 1; text: "Make choice column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 1); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridKind !== 2; text: "Make checkmark column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 2); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridKind !== 0; text: "Make text column"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 0); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridAlign !== 0; text: "Align column left"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 0); return null }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridAlign !== 1; text: "Align column center"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 1); return null }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridAlign !== 2; text: "Align column right"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColAlign(h, c, 2); return null }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridHeaders < (blockModel.contentRevision, blockModel.gridRowCount(blockMenu.gridHead)) - 1
+                          text: "Add a header row"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) + 1); return null }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridHeaders > 1; text: "Remove a header row"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) - 1); return null }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridHeaderRow; text: "Unassign header"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, 0); return null }) }
+                MenuRow { visible: blockMenu.gridOn; text: blockMenu.gridHeaderRow ? "Delete table" : "Delete row"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteRow(h, r); return [r, c] }) }
+                MenuRow { visible: blockMenu.gridOn && blockMenu.gridCols > 1; text: "Delete column"; danger: true
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridDeleteColumn(h, c); return [r, Math.max(0, c - 1)] }) }
                 MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Duplicate blocks" : "Duplicate block"
                           onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
                 MenuRow { visible: !blockMenu.inFrameTab && blockMenu.runLo > 0

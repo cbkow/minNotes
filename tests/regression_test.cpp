@@ -7413,6 +7413,24 @@ static void testTableSelectionOps() {
           "pasted values in a choice column adopt matching options and add the rest");
 }
 
+static void testInsertGridFromTSV() {
+    qInfo("[93] a tabular plain-text paste makes a derived table (SR-4 step 7a)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+    m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+    const int first = m.insertGridFromTSV(0, QStringLiteral("Name\tStatus\r\na\tb\nc\td\n"));
+    const int head = first - 1;
+    CHECK(first == 2 && m.headerCount(head) == 1 && m.gridRowCount(head) == 3 && m.tableColumnCount(head) == 2
+              && m.gridCellText(head, 0, 1) == QStringLiteral("Status") && m.gridCellText(head, 2, 0) == QStringLiteral("c")
+              && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("below") && m.structureValid(),
+          "the grid lands below the row as a table with a header row");
+    m.undo();
+    CHECK(m.rowCountQml() == 2 && m.contentForRow(1) == QStringLiteral("below") && m.structureValid(), "…one undo step");
+    CHECK(m.insertGridFromTSV(0, QString()) == -1 && m.rowCountQml() == 2, "an empty grid makes nothing");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7616,6 +7634,7 @@ int main(int argc, char** argv) {
     testTablePocketAndSticky();
     testTableKeysModel();
     testTableSelectionOps();
+    testInsertGridFromTSV();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
