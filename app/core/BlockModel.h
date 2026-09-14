@@ -211,6 +211,30 @@ public:
     Q_INVOKABLE qreal tableColumnLeft(int head, int column) const;
     Q_INVOKABLE qreal tableWidth(int head) const;
     Q_INVOKABLE bool setTableColumnWidth(int head, int column, qreal width);   // ≤ 0 = auto; one undo
+    // Grid addressing and structure (SR-4 S3a). A table is rows r (its records, top to
+    // bottom) × cells c (lanes); a cell holds ≥ 1 blocks. Named grid* until S10 retires
+    // the Table block's table* twins. Every mutation is one undo step; the table's first
+    // row always carries the header count and column spec; an emptied cell refills with
+    // one empty paragraph. Row/column deletes refuse the last body row / last column; a
+    // header row's delete removes the table.
+    Q_INVOKABLE int gridRowCount(int head) const;
+    Q_INVOKABLE int gridCellCount(int head, int r) const;       // this row's own cells (rows may be ragged)
+    Q_INVOKABLE QVariantList gridCellRows(int head, int r, int c) const;   // the cell's blocks, flat rows
+    Q_INVOKABLE int gridCellAt(int head, int r, int c) const;   // the cell's first block, or -1
+    Q_INVOKABLE int gridRowOf(int row) const;                   // a record's or cell block's row in its table, or -1
+    Q_INVOKABLE int gridColumnOf(int row) const;                // a cell block's column, or -1
+    Q_INVOKABLE bool gridInsertRow(int head, int at);           // copies the divisions of the row above (or below at 0)
+    Q_INVOKABLE bool gridDeleteRow(int head, int r);
+    Q_INVOKABLE bool gridMoveRow(int head, int from, int to);
+    Q_INVOKABLE bool gridDuplicateRow(int head, int r);         // the copy lands below
+    Q_INVOKABLE bool gridInsertColumn(int head, int at);
+    Q_INVOKABLE bool gridDeleteColumn(int head, int c);
+    Q_INVOKABLE bool gridMoveColumn(int head, int from, int to);
+    Q_INVOKABLE bool gridDuplicateColumn(int head, int c);      // the copy lands to the right
+    Q_INVOKABLE bool gridDeleteTable(int head);
+    Q_INVOKABLE bool gridClearCells(int head, int r0, int c0, int r1, int c1);
+    Q_INVOKABLE bool gridFillDown(int head, int r0, int c0, int r1, int c1);
+    Q_INVOKABLE bool gridFillRight(int head, int r0, int c0, int r1, int c1);
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the
@@ -1229,6 +1253,18 @@ private:
     mutable std::size_t geomRows_ = 0;
     const TableGeom* tableGeom(int head) const;         // nullptr unless head is a table head
     TableGeom buildTableGeom(int head) const;
+    // S3a: a table as a grid of existing rows. Cell entries: v ≥ 0 keeps flat row v (its id);
+    // v ≤ -2 is a copy of flat row -v-2 (a new id). rec ≥ 0 keeps (or, with copy, copies) that
+    // record; rec = -1 is a new record. An empty cell refills with an empty paragraph.
+    struct GridRow { int rec = -1; bool copy = false; std::vector<std::vector<int>> cells; };
+    std::vector<GridRow> gridOf(int head) const;
+    int gridRecord(int head, int r) const;                       // the record of row r, or -1
+    std::pair<int,int> tableBand(int head) const;                // head … the last record's last block
+    // Replace the table's band with `grid` (inside the caller's txn). The first row takes
+    // `headerCount` and the column spec `cols`.
+    void rebuildTable(int head, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount);
+    bool commitGrid(int head, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount);
+    int refillTableCells(int lo, int hi);                        // A4 for tables; → rows inserted
     static double tableLaneWidth(const TableGeom& g, int cell) {
         return cell >= 0 && static_cast<std::size_t>(cell) < g.w.size() ? g.w[static_cast<std::size_t>(cell)] : 160.0;
     }

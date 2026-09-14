@@ -6857,6 +6857,133 @@ static void testTableGeometry() {
     QFile::remove(path);
 }
 
+static void testTableStructureOps() {
+    qInfo("[87] table structure: rows and columns inserted, deleted, moved, duplicated; clear, fill, refill (SR-4 step 3a)");
+    auto gridText = [](const BlockModel& m, int head) {
+        QStringList rows;
+        for (int r = 0; r < m.gridRowCount(head); ++r) {
+            QStringList cells;
+            for (int c = 0; c < m.gridCellCount(head, r); ++c) {
+                QStringList parts;
+                for (const QVariant& v : m.gridCellRows(head, r, c)) {
+                    const QString t = m.contentForRow(v.toInt());
+                    parts << (t.isEmpty() ? QStringLiteral("·") : t);
+                }
+                cells << parts.join(QLatin1Char('+'));
+            }
+            rows << cells.join(QLatin1Char(' '));
+        }
+        return rows.join(QStringLiteral(" | "));
+    };
+    auto fresh = [](BlockModel& m) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
+        m.insertBlock(1); m.setContent(1, QStringLiteral("below"));
+        m.insertTableRows(0, 3, 3);
+        const char* text[3][3] = { { "A", "B", "C" }, { "a1", "b1", "c1" }, { "a2", "b2", "c2" } };
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) m.setContent(m.gridCellAt(1, r, c), QString::fromLatin1(text[r][c]));
+    };
+    const QString start = QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2");
+    BlockModel m;
+    fresh(m);
+    CHECK(gridText(m, 1) == start && m.gridRowOf(m.gridCellAt(1, 2, 1)) == 2 && m.gridColumnOf(m.gridCellAt(1, 2, 1)) == 1
+              && m.gridRowOf(0) == -1 && m.gridColumnOf(0) == -1,
+          "grid addressing: rows × cells (%s)", qPrintable(gridText(m, 1)));
+    const QString idB1 = m.idForRow(m.gridCellAt(1, 1, 1));
+
+    CHECK(m.gridInsertColumn(1, 1) && gridText(m, 1) == QStringLiteral("A · B C | a1 · b1 c1 | a2 · b2 c2")
+              && m.tableColumnCount(1) == 4 && m.structureValid() && m.gridRowOf(m.rowForId(idB1)) == 1
+              && m.gridColumnOf(m.rowForId(idB1)) == 2,
+          "insert a column: every row gains an empty cell; blocks keep their ids (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(gridText(m, 1) == start && m.tableColumnCount(1) == 3 && m.structureValid(), "…one undo step");
+
+    CHECK(m.gridDeleteColumn(1, 0) && gridText(m, 1) == QStringLiteral("B C | b1 c1 | b2 c2") && m.structureValid(),
+          "delete a column (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+
+    m.setTableColumnWidth(1, 2, 300);
+    CHECK(m.gridMoveColumn(1, 2, 0) && gridText(m, 1) == QStringLiteral("C A B | c1 a1 b1 | c2 a2 b2")
+              && m.tableColumnWidth(1, 0) == 300 && m.structureValid(),
+          "move a column: its cells and its manual width travel (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    m.undo();
+
+    const int before = m.rowCountQml();
+    CHECK(m.gridDuplicateColumn(1, 1) && gridText(m, 1) == QStringLiteral("A B B C | a1 b1 b1 c1 | a2 b2 b2 c2")
+              && m.rowCountQml() == before + 3 && m.rowForId(idB1) == m.gridCellAt(1, 1, 1) && m.structureValid(),
+          "duplicate a column: copies land to the right with new ids (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+
+    CHECK(m.gridInsertRow(1, 1) && gridText(m, 1) == QStringLiteral("A B C | · · · | a1 b1 c1 | a2 b2 c2")
+              && m.headerCount(1) == 1 && m.structureValid(),
+          "insert a row: it copies the row above's divisions (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(m.gridDuplicateRow(1, 2) && gridText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a2 b2 c2 | a2 b2 c2") && m.structureValid(),
+          "duplicate a row below itself (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(m.gridMoveRow(1, 2, 1) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2 | a1 b1 c1") && m.structureValid(),
+          "move a body row (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    const qreal autoW0 = m.tableColumnWidth(1, 0);          // column 0 has text: its auto width
+    m.setTableColumnWidth(1, 0, 250);
+    CHECK(m.gridMoveRow(1, 0, 2) && gridText(m, 1) == QStringLiteral("a1 b1 c1 | a2 b2 c2 | A B C") && m.headerCount(1) == 1
+              && m.tableColumnWidth(1, 0) == 250 && m.tableRecords(1).size() == 3 && m.structureValid(),
+          "move the header row down: the header role and column spec stay with the first row (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    m.undo();
+    CHECK(gridText(m, 1) == start && m.tableColumnWidth(1, 0) == autoW0, "…the header move and the width undone (%s, %.0f)",
+          qPrintable(gridText(m, 1)), m.tableColumnWidth(1, 0));
+
+    CHECK(m.gridDeleteRow(1, 1) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2") && m.structureValid(), "delete a body row");
+    CHECK(!m.gridDeleteRow(1, 1) && gridText(m, 1) == QStringLiteral("A B C | a2 b2 c2"), "the last body row can't be deleted");
+    m.undo();
+    CHECK(m.gridDeleteRow(1, 0) && m.rowCountQml() == 2 && m.contentForRow(1) == QStringLiteral("below") && m.structureValid(),
+          "\"delete row\" on the header row deletes the table");
+    m.undo();
+    CHECK(gridText(m, 1) == start && m.structureValid(), "…the table delete undone (%s)", qPrintable(gridText(m, 1)));
+
+    CHECK(m.gridClearCells(1, 1, 0, 2, 1) && gridText(m, 1) == QStringLiteral("A B C | · · c1 | · · c2") && m.structureValid(),
+          "clear a cell rectangle: each cell keeps one empty paragraph (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(m.gridFillDown(1, 1, 0, 2, 1) && gridText(m, 1) == QStringLiteral("A B C | a1 b1 c1 | a1 b1 c2") && m.structureValid(),
+          "fill down (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(m.gridFillRight(1, 1, 0, 1, 2) && gridText(m, 1) == QStringLiteral("A B C | a1 a1 a1 | a2 b2 c2") && m.structureValid(),
+          "fill right (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(gridText(m, 1) == start, "…the fill undone (%s)", qPrintable(gridText(m, 1)));
+
+    const int b1 = m.gridCellAt(1, 1, 1);
+    m.insertBlock(b1 + 1);                                  // a second block in cell (1, 1)
+    m.setContent(b1 + 1, QStringLiteral("x"));
+    CHECK(gridText(m, 1) == QStringLiteral("A B C | a1 b1+x c1 | a2 b2 c2") && m.structureValid(), "a cell can hold two blocks");
+    CHECK(m.gridMoveColumn(1, 1, 2) && gridText(m, 1) == QStringLiteral("A C B | a1 c1 b1+x | a2 c2 b2") && m.structureValid(),
+          "…and they move together, in order (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    m.undo();
+    m.undo();
+
+    m.removeBlock(m.gridCellAt(1, 1, 1));
+    CHECK(gridText(m, 1) == QStringLiteral("A B C | a1 · c1 | a2 b2 c2") && m.gridColumnOf(m.gridCellAt(1, 1, 2)) == 2
+              && m.structureValid(),
+          "removing a cell's only block refills the cell instead of shifting the columns (%s)", qPrintable(gridText(m, 1)));
+    m.undo();
+    CHECK(gridText(m, 1) == start && m.structureValid(), "…one undo step (%s)", qPrintable(gridText(m, 1)));
+
+    const QString path = QDir::tempPath() + QStringLiteral("/mn_table_ops.mnd");
+    QFile::remove(path);
+    m.gridInsertColumn(1, 3);
+    m.gridDuplicateRow(1, 1);
+    CHECK(m.saveAs(path), "the document saves");
+    BlockModel m2;
+    CHECK(m2.openDocument(path) && m2.structureValid() && !m2.dirty() && gridText(m2, 1) == gridText(m, 1),
+          "the rebuilt table round-trips through save (%s)", qPrintable(gridText(m2, 1)));
+    QFile::remove(path);
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7054,6 +7181,7 @@ int main(int argc, char** argv) {
     testSplitRowExports();
     testTableModel();
     testTableGeometry();
+    testTableStructureOps();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
