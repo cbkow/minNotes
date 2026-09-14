@@ -106,7 +106,8 @@ public:
     };
     enum BlockType : uint8_t {
         Paragraph = 0, Heading = 1, Code = 2, Media = 3,
-        Quote = 4, ListItem = 5, Divider = 6, Table = 7,
+        Quote = 4, ListItem = 5, Divider = 6,
+        Table = 7,          // RESERVED: the retired Table block (SR-4 S10) — never instantiated, "table" is unknown on load
         TaskListItem = 8,   // a list item carrying a tri-state status (todo/doing/done)
         OrderedListItem = 9, // numbered item; the number is COMPUTED at render time
         Split = 10          // a split row's record (SR-3): its lanes' blocks follow it, DFS-flat
@@ -527,7 +528,6 @@ public:
         QString lang;               // code-block language
         QString text;
         std::vector<Span> spans;
-        QString tableJson;          // Table blocks
         QString mediaJson;          // Media blocks (descriptor)
         int8_t cell = -1;           // split rows (SR-3): the lane, when the list carries its record
         std::vector<float> ratios;  // a Split record's lane fractions
@@ -540,14 +540,10 @@ public:
     // C++ importer seam (QML goes through paste/import invokables).
     std::pair<int,int> insertSpecs(int row, const std::vector<BlockSpec>& specs,
                                    bool allowReuseBlankRow = true);
-    // SR-4: a Table-block grid as a derived table's specs — a head record (header count ≥ 1,
-    // column spec: widths, alignment, colours, kinds + options), a record per row (row/cell
-    // colours) and each cell's blocks (media, then text with spans; choice/check values as chips).
+    // SR-4: the import IR (a TableGrid, as JSON) as a table's specs — a head record (header count ≥ 1,
+    // column spec: widths, alignment, colours, kinds + options), a record per row (row/cell colours)
+    // and each cell's blocks (media, then text with spans; choice/check values as chips).
     static std::vector<BlockSpec> gridSpecsFromTable(const QString& tableJson);
-    // Every Table spec → gridSpecsFromTable (SR-4 S8a: every sink lands derived tables). Returns, per
-    // original spec, its first spec's index afterwards (-1 for an empty table that vanished) so callers
-    // can carry parallel data (ink, comment anchors) across.
-    static std::vector<int> expandTableSpecs(std::vector<BlockSpec>& specs);
     // Paste rules (S8d, §4.11: "position without a header, labels with one"). A GRID is specs of
     // Split records (any header role) plus their cells' blocks — a cell fragment, a copied table,
     // a foreign table. parseGridSpecs reads one (false when the specs hold anything else); the

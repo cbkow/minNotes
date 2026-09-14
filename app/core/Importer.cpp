@@ -282,17 +282,14 @@ bool Importer::importOdtFile(const QString& path, BlockModel* m) {
 bool Importer::applySpecs(BlockModel* m, const FileSpecs& fs) {
     if (!fs.ok || !m) return false;
     if (fs.specs.empty()) return true;   // empty file → empty doc, not a failure
-    // SR-4 S8a: tables land as derived tables — a table spec becomes its rows and cells, so a comment
-    // anchored by spec index follows the map (one on a table lands on its first row).
-    std::vector<BlockModel::BlockSpec> specs = fs.specs;
-    const std::vector<int> rowOfSpec = BlockModel::expandTableSpecs(specs);
-    if (specs.empty()) return true;
+    const std::vector<BlockModel::BlockSpec>& specs = fs.specs;
     const auto [caretRow, caretCol] = m->insertSpecs(0, specs, true);
     Q_UNUSED(caretCol);
-    // Reuse folds spec 0 into row 0, the rest follow — spec i is row i.
+    // Reuse folds spec 0 into row 0, the rest follow — spec i is row i (a table's records and cells
+    // are specs of their own, so a comment anchored by spec index lands on its block).
     for (const DocxReader::CommentOut& co : fs.comments) {
-        if (co.specIndex < 0 || co.specIndex >= static_cast<int>(rowOfSpec.size()) || rowOfSpec[size_t(co.specIndex)] < 0) continue;
-        const QString threadId = m->addComment(rowOfSpec[size_t(co.specIndex)], co.start, co.end);
+        if (co.specIndex < 0 || co.specIndex >= static_cast<int>(specs.size())) continue;
+        const QString threadId = m->addComment(co.specIndex, co.start, co.end);
         if (threadId.isEmpty()) continue;
         for (const QString& body : co.messages)
             m->addCommentMessage(threadId, body);

@@ -1738,30 +1738,6 @@ std::vector<BlockModel::BlockSpec> BlockModel::gridSpecsFromTable(const QString&
     return out;
 }
 
-std::vector<int> BlockModel::expandTableSpecs(std::vector<BlockSpec>& specs) {
-    std::vector<int> at(specs.size());
-    bool any = false;
-    for (const BlockSpec& sp : specs) any = any || (sp.type == Table && sp.mediaJson.isEmpty());
-    if (!any) {
-        for (size_t k = 0; k < at.size(); ++k) at[k] = static_cast<int>(k);
-        return at;
-    }
-    std::vector<BlockSpec> out;
-    for (size_t k = 0; k < specs.size(); ++k) {
-        BlockSpec& sp = specs[k];
-        if (sp.type != Table || !sp.mediaJson.isEmpty()) {
-            at[k] = static_cast<int>(out.size());
-            out.push_back(std::move(sp));
-            continue;
-        }
-        std::vector<BlockSpec> grid = gridSpecsFromTable(sp.tableJson);
-        at[k] = grid.empty() ? -1 : static_cast<int>(out.size());
-        std::move(grid.begin(), grid.end(), std::back_inserter(out));
-    }
-    specs.swap(out);
-    return at;
-}
-
 int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
     if (headerCount(head) == 0 || r0 < 0 || c0 < 0 || c0 >= 63) return -1;
     QString t = text;
@@ -6814,7 +6790,6 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
         }
     }
     promoteGridRuns(specs);                  // a pasted table always has a head
-    expandTableSpecs(specs);                 // an old Table spec (none from the walker now) lands derived
     if (specs.empty()) return {};
 
     const bool opaque = (rows_[row].type == Media || rows_[row].type == Divider);
@@ -6964,13 +6939,7 @@ BlockModel::CopyBand BlockModel::copyBand(int loRow, int loCol, int hiRow, int h
 std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpec>& specsArg,
                                              bool allowReuseAnchorAbove, int lane) {
     const int n = static_cast<int>(rows_.size());
-    // SR-4 S8a: a Table spec (an importer's IR, an old payload, a merge snapshot) lands as a derived table.
-    // Callers with parallel data (ink, comment anchors) expand first and remap; this is the safety net.
-    bool legacyTable = false;
-    for (const BlockSpec& sp : specsArg) legacyTable = legacyTable || (sp.type == Table && sp.mediaJson.isEmpty());
-    std::vector<BlockSpec> expanded;
-    if (legacyTable) { expanded = specsArg; expandTableSpecs(expanded); }
-    const std::vector<BlockSpec>& specsIn = legacyTable ? expanded : specsArg;
+    const std::vector<BlockSpec>& specsIn = specsArg;
     if (specsIn.empty()) return { std::clamp(gap - 1, 0, std::max(0, n - 1)), 0 };
     const bool topLevel = lane == -1 || specsNeedTopLevel(specsIn);
     gap = spliceGapFor(gap, specsIn, lane);
@@ -6989,10 +6958,6 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
             r.type = Media;
             content = sp.mediaJson;
             fillMediaMeta(r, content);              // dims/aspect-param from the descriptor
-        } else if (sp.type == Table) {
-            r.type = Table;
-            r.param = static_cast<uint16_t>(std::max(1, TableGrid::fromJson(sp.tableJson).rows()));
-            content = sp.tableJson;
         } else {
             r.type = sp.type; r.level = sp.level; r.taskState = sp.taskState;
             r.depth = sp.depth; r.lang = sp.lang;
@@ -7700,18 +7665,7 @@ QString BlockModel::gridCopyPayload(int head, const QVariantList& rowsIn, const 
 std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
                                             const std::vector<QString>& inkIn, qreal srcPageWidth) {
     lastPasteRelocated_ = false;
-    // SR-4 S8a: a pasted Table spec (an old payload) lands as a derived table; ink stays with its spec's first row.
-    std::vector<QString> ink = inkIn;
-    {
-        const size_t before = specs.size();
-        const std::vector<int> at = expandTableSpecs(specs);
-        if (specs.size() != before) {
-            std::vector<QString> moved(specs.size());
-            for (size_t k = 0; k < at.size() && k < inkIn.size(); ++k)
-                if (at[k] >= 0) moved[size_t(at[k])] = inkIn[k];
-            ink.swap(moved);
-        }
-    }
+    const std::vector<QString>& ink = inkIn;
     const int n = static_cast<int>(rows_.size());
     if (n == 0) return { 0, 0 };
     row = std::clamp(row, 0, n - 1);

@@ -1693,9 +1693,8 @@ static void testImportFileCores() {
         BlockModel m; freshModel(m);
         imp.setModel(&m);
         CHECK(imp.importFile(p), "csv import succeeded");
-        CHECK(m.headerCount(0) == 1 && m.gridRowCount(0) == 3 && findRowOfType(m, BlockModel::Table) < 0
-                  && m.structureValid(),
-              "csv: a derived table from row 0, blank row consumed (SR-4 S8a)");
+        CHECK(m.headerCount(0) == 1 && m.gridRowCount(0) == 3 && m.structureValid(),
+              "csv: a table from row 0, blank row consumed (SR-4 S8a)");
         CHECK(m.gridCellText(0, 1, 0) == QStringLiteral("Doe, Jane")
                   && m.gridCellText(0, 1, 1) == QStringLiteral("line1\nline2")
                   && m.gridCellText(0, 2, 1) == QStringLiteral("cell"),
@@ -6922,15 +6921,10 @@ static void testPastedHtmlTables() {
         while (m.rowCountQml() > 0) m.removeBlock(0);
         m.insertBlock(0); m.setContent(0, QStringLiteral("above"));
         m.pasteHtml(0, 5, QStringLiteral("<table><tr><th>Name</th><th>Status</th></tr><tr><td>a</td><td><b>b</b></td></tr></table>"));
-        int head = -1;
-        bool legacy = false;
-        for (int r = 0; r < m.rowCountQml(); ++r) {
-            if (m.typeForRow(r) == BlockModel::Table) legacy = true;
-            if (head < 0 && m.headerCount(r) > 0) head = r;
-        }
-        CHECK(!legacy && head >= 0 && m.gridRowCount(head) == 2 && m.gridCellText(head, 0, 0) == QStringLiteral("Name")
+        const int head = findTableHead(m);
+        CHECK(head >= 0 && m.gridRowCount(head) == 2 && m.gridCellText(head, 0, 0) == QStringLiteral("Name")
                   && m.gridCellText(head, 1, 1) == QStringLiteral("b") && m.structureValid(),
-              "an HTML table pastes as a derived table, not a Table block");
+              "an HTML table pastes as a table");
         m.undo();
         bool gone = true;
         for (int r = 0; r < m.rowCountQml(); ++r) gone = gone && m.typeForRow(r) != BlockModel::Split;
@@ -7027,7 +7021,7 @@ static void testTableGripsAndDrops() {
 }
 
 static void testLegacyTableSinks() {
-    qInfo("[98] every sink lands derived tables; a big CSV import stays near-linear (SR-4 S8a)");
+    qInfo("[98] the import IR lands as a table between blocks; a big CSV import stays near-linear (SR-4 S8a)");
     {
         BlockModel m;
         m.newDocument();
@@ -7037,19 +7031,17 @@ static void testLegacyTableSinks() {
         g.setCellText(0, 0, QStringLiteral("H"));
         g.setCellText(2, 1, QStringLiteral("z"));
         BlockModel::BlockSpec a; a.type = BlockModel::Paragraph; a.text = QStringLiteral("before");
-        BlockModel::BlockSpec t; t.type = BlockModel::Table; t.tableJson = g.toJson();
         BlockModel::BlockSpec b; b.type = BlockModel::Paragraph; b.text = QStringLiteral("after");
-        m.insertSpecs(0, { a, t, b }, true);
+        std::vector<BlockModel::BlockSpec> specs{ a };
+        for (BlockModel::BlockSpec& sp : BlockModel::gridSpecsFromTable(g.toJson())) specs.push_back(std::move(sp));
+        specs.push_back(b);
+        CHECK(specs.size() == 11, "the grid IR becomes 3 records × (1 + 2 cells) = 9 specs");
+        m.insertSpecs(0, specs, true);
         const int head = findTableHead(m), lastRow = m.rowCountQml() - 1;
         CHECK(m.contentForRow(0) == QStringLiteral("before") && head == 1 && m.gridRowCount(head) == 3
                   && m.gridCellText(head, 0, 0) == QStringLiteral("H") && m.gridCellText(head, 2, 1) == QStringLiteral("z")
-                  && m.contentForRow(lastRow) == QStringLiteral("after") && m.laneForRow(lastRow) < 0
-                  && findRowOfType(m, BlockModel::Table) < 0 && m.structureValid(),
-              "a Table spec between paragraphs lands as a derived table, the paragraph after it at top level");
-        std::vector<BlockModel::BlockSpec> specs{ a, t, b };
-        const std::vector<int> at = BlockModel::expandTableSpecs(specs);
-        CHECK(at.size() == 3 && at[0] == 0 && at[1] == 1 && at[2] == 10 && specs.size() == 11,
-              "expandTableSpecs maps each spec to its first row (3 records × (1 + 2 cells) = 9)");
+                  && m.contentForRow(lastRow) == QStringLiteral("after") && m.laneForRow(lastRow) < 0 && m.structureValid(),
+              "a table between paragraphs: the paragraph after it at top level");
     }
     {
         const QString path = QDir::tempPath() + QStringLiteral("/mn_big_import.csv");

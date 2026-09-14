@@ -123,19 +123,6 @@ bool DocumentMerger::applyMerge(BlockModel* dest, MergeJob& job,
     // the only undo-visible pass and undo/redo never see interim srcs.
     AssetTransfer::rewriteSpecs(job.specs, job.assets.srcRewrite);
 
-    // SR-4 S8a: an old Table block lands as a derived table (after the rewrite: its cell media srcs are
-    // final). Its ink stays with the table's first row.
-    {
-        const size_t before = job.specs.size();
-        const std::vector<int> at = BlockModel::expandTableSpecs(job.specs);
-        if (job.specs.size() != before) {
-            std::vector<QString> moved(job.specs.size());
-            for (size_t k = 0; k < at.size() && k < job.ink.size(); ++k)
-                if (at[k] >= 0) moved[size_t(at[k])] = job.ink[k];
-            job.ink.swap(moved);
-        }
-    }
-
     // Mint the migrated threads FIRST so no anchor ever points at a missing
     // thread, even transiently. Thread rows are outside undo by design.
     for (const BlockModel::ThreadImport& ti : job.threads)

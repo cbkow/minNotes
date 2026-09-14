@@ -29,33 +29,19 @@ void TableGrid::setCellText(int r, int c, const QString& t) {
     cells_[r][c].text = t;
 }
 
-void TableGrid::clearCellContents(int r, int c) {
-    if (r < 0 || r >= rows() || c < 0 || c >= cols_) return;
-    Cell& cell = cells_[r][c];
-    cell.text.clear();
-    cell.spans = QJsonArray();
-    cell.media.clear();
-    cell.choice.clear();
-}
 
 static bool inCell(int r, int c, int rows, int cols) { return r >= 0 && r < rows && c >= 0 && c < cols; }
 QString TableGrid::cellBg(int r, int c) const { return inCell(r,c,rows(),cols_) ? cells_[r][c].bg : QString(); }
 void TableGrid::setCellBg(int r, int c, const QString& h) { if (inCell(r,c,rows(),cols_)) cells_[r][c].bg = h; }
 QString TableGrid::cellFg(int r, int c) const { return inCell(r,c,rows(),cols_) ? cells_[r][c].fg : QString(); }
-void TableGrid::setCellFg(int r, int c, const QString& h) { if (inCell(r,c,rows(),cols_)) cells_[r][c].fg = h; }
 QJsonArray TableGrid::cellSpans(int r, int c) const { return inCell(r,c,rows(),cols_) ? cells_[r][c].spans : QJsonArray(); }
-void TableGrid::setCellSpans(int r, int c, const QJsonArray& s) { if (inCell(r,c,rows(),cols_)) cells_[r][c].spans = s; }
 QString TableGrid::cellMedia(int r, int c) const { return inCell(r,c,rows(),cols_) ? cells_[r][c].media : QString(); }
 void TableGrid::setCellMedia(int r, int c, const QString& m) { if (inCell(r,c,rows(),cols_)) cells_[r][c].media = m; }
 
 QString TableGrid::rowBg(int r) const { return (r >= 0 && r < (int)rowBg_.size()) ? rowBg_[r] : QString(); }
-void TableGrid::setRowBg(int r, const QString& h) { if (r >= 0 && r < (int)rowBg_.size()) rowBg_[r] = h; }
 QString TableGrid::rowFg(int r) const { return (r >= 0 && r < (int)rowFg_.size()) ? rowFg_[r] : QString(); }
-void TableGrid::setRowFg(int r, const QString& h) { if (r >= 0 && r < (int)rowFg_.size()) rowFg_[r] = h; }
 QString TableGrid::colBg(int c) const { return (c >= 0 && c < (int)colBg_.size()) ? colBg_[c] : QString(); }
-void TableGrid::setColBg(int c, const QString& h) { if (c >= 0 && c < (int)colBg_.size()) colBg_[c] = h; }
 QString TableGrid::colFg(int c) const { return (c >= 0 && c < (int)colFg_.size()) ? colFg_[c] : QString(); }
-void TableGrid::setColFg(int c, const QString& h) { if (c >= 0 && c < (int)colFg_.size()) colFg_[c] = h; }
 
 int TableGrid::colWidth(int c) const {
     return (c >= 0 && c < static_cast<int>(colWidths_.size())) ? colWidths_[c] : 0;
@@ -100,18 +86,6 @@ std::vector<TableGrid::Option> TableGrid::colOptions(int c) const {
     return (c >= 0 && c < static_cast<int>(colTypes_.size())) ? colTypes_[c].options : std::vector<Option>{};
 }
 
-void TableGrid::setColumnOptions(int c, const std::vector<Option>& opts) {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
-    colTypes_[c].kind = ColChoice;
-    colTypes_[c].options = opts;
-    // Sweep any cell whose selection is no longer a valid option (deleted in the edit).
-    for (auto& row : cells_) {
-        if (c >= static_cast<int>(row.size()) || row[c].choice.isEmpty()) continue;
-        bool found = false;
-        for (const Option& o : opts) if (o.id == row[c].choice) { found = true; break; }
-        if (!found) row[c].choice.clear();
-    }
-}
 
 void TableGrid::addOption(int c, const QString& id, const QString& label, const QString& color) {
     if (c < 0 || c >= static_cast<int>(colTypes_.size()) || id.isEmpty()) return;
@@ -119,37 +93,9 @@ void TableGrid::addOption(int c, const QString& id, const QString& label, const 
     colTypes_[c].options.push_back({id, label, color});
 }
 
-void TableGrid::renameOption(int c, const QString& id, const QString& label) {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
-    for (auto& o : colTypes_[c].options) if (o.id == id) { o.label = label; return; }
-}
 
-void TableGrid::recolorOption(int c, const QString& id, const QString& color) {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
-    for (auto& o : colTypes_[c].options) if (o.id == id) { o.color = color; return; }
-}
 
-void TableGrid::removeOption(int c, const QString& id) {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
-    auto& opts = colTypes_[c].options;
-    opts.erase(std::remove_if(opts.begin(), opts.end(),
-               [&](const Option& o){ return o.id == id; }), opts.end());
-    // sweep cells so none reference a now-deleted option.
-    for (auto& row : cells_) if (c < static_cast<int>(row.size()) && row[c].choice == id) row[c].choice.clear();
-}
 
-void TableGrid::moveOption(int c, const QString& id, int toIndex) {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return;
-    auto& opts = colTypes_[c].options;
-    int from = -1;
-    for (int i = 0; i < static_cast<int>(opts.size()); ++i) if (opts[i].id == id) { from = i; break; }
-    if (from < 0) return;
-    toIndex = std::clamp(toIndex, 0, static_cast<int>(opts.size()) - 1);
-    if (toIndex == from) return;
-    Option moved = opts[from];
-    opts.erase(opts.begin() + from);
-    opts.insert(opts.begin() + toIndex, moved);
-}
 
 QString TableGrid::cellChoice(int r, int c) const {
     return inCell(r,c,rows(),cols_) ? cells_[r][c].choice : QString();
@@ -162,49 +108,16 @@ int TableGrid::cellCheck(int r, int c) const {
     if (!inCell(r,c,rows(),cols_)) return 0;
     return std::clamp(cells_[r][c].choice.toInt(), 0, 2);
 }
-void TableGrid::cycleCellCheck(int r, int c) {
-    if (!inCell(r,c,rows(),cols_)) return;
-    const int n = (std::clamp(cells_[r][c].choice.toInt(), 0, 2) + 1) % 3;
-    cells_[r][c].choice = (n == 0) ? QString() : QString::number(n);   // 0 stays "" (plain cell)
-}
-void TableGrid::setCellCheck(int r, int c, int n) {
-    if (!inCell(r,c,rows(),cols_)) return;
-    n = std::clamp(n, 0, 2);
-    cells_[r][c].choice = (n == 0) ? QString() : QString::number(n);
-}
 
 QString TableGrid::optionLabel(int c, const QString& id) const {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return QString();
-    for (const auto& o : colTypes_[c].options) if (o.id == id) return o.label;
-    return QString();
+    for (const Option& o : colOptions(c)) if (o.id == id) return o.label;
+    return {};
 }
-QString TableGrid::optionColor(int c, const QString& id) const {
-    if (c < 0 || c >= static_cast<int>(colTypes_.size())) return QString();
-    for (const auto& o : colTypes_[c].options) if (o.id == id) return o.color;
-    return QString();
-}
+
 
 // ---- structure ops ---------------------------------------------------------
 
-void TableGrid::insertRow(int at) {
-    normalize();
-    at = std::clamp(at, 0, rows());
-    cells_.insert(cells_.begin() + at, std::vector<Cell>(cols_));
-    rowBg_.insert(rowBg_.begin() + at, QString());
-    rowFg_.insert(rowFg_.begin() + at, QString());
-}
 
-void TableGrid::insertCol(int at) {
-    normalize();
-    at = std::clamp(at, 0, cols_);
-    for (auto& row : cells_) row.insert(row.begin() + at, Cell{});
-    colWidths_.insert(colWidths_.begin() + at, 0);
-    colAligns_.insert(colAligns_.begin() + at, 0);
-    colTypes_.insert(colTypes_.begin() + at, ColType{});
-    colBg_.insert(colBg_.begin() + at, QString());
-    colFg_.insert(colFg_.begin() + at, QString());
-    ++cols_;
-}
 
 void TableGrid::deleteRow(int at) {
     if (at < 0 || at >= rows() || rows() <= 1) return;   // keep at least one row
@@ -228,131 +141,17 @@ void TableGrid::deleteCol(int at) {
 }
 
 namespace {
-template <typename Vec>
-void spliceMove(Vec& v, int from, int to) {
-    auto moved = std::move(v[from]);
-    v.erase(v.begin() + from);
-    v.insert(v.begin() + to, std::move(moved));
-}
 }
 
-void TableGrid::moveRow(int from, int to) {
-    normalize();
-    if (from < 0 || from >= rows()) return;
-    to = std::clamp(to, 0, rows() - 1);
-    if (to == from) return;
-    spliceMove(cells_, from, to);
-    spliceMove(rowBg_, from, to);
-    spliceMove(rowFg_, from, to);
-}
 
-void TableGrid::moveCol(int from, int to) {
-    normalize();
-    if (from < 0 || from >= cols_) return;
-    to = std::clamp(to, 0, cols_ - 1);
-    if (to == from) return;
-    for (auto& row : cells_) spliceMove(row, from, to);
-    spliceMove(colWidths_, from, to);
-    spliceMove(colAligns_, from, to);
-    spliceMove(colTypes_, from, to);
-    spliceMove(colBg_, from, to);
-    spliceMove(colFg_, from, to);
-}
 
 namespace {
-// Insert a copy of v[at] right after it. The copy is taken FIRST — inserting a
-// reference into the same vector it reallocates is the classic self-insert trap.
-template <typename Vec>
-void spliceDup(Vec& v, int at) {
-    auto copy = v[at];
-    v.insert(v.begin() + at + 1, std::move(copy));
-}
 }
 
-void TableGrid::duplicateRow(int at) {
-    normalize();
-    if (at < 0 || at >= rows()) return;
-    spliceDup(cells_, at);
-    spliceDup(rowBg_, at);
-    spliceDup(rowFg_, at);
-}
 
-void TableGrid::duplicateCol(int at) {
-    normalize();
-    if (at < 0 || at >= cols_) return;
-    for (auto& row : cells_) spliceDup(row, at);
-    spliceDup(colWidths_, at);
-    spliceDup(colAligns_, at);
-    spliceDup(colTypes_, at);
-    spliceDup(colBg_, at);
-    spliceDup(colFg_, at);
-    ++cols_;
-}
 
-void TableGrid::sortByColumn(int c, bool asc) {
-    normalize();
-    if (c < 0 || c >= cols_) return;
-    const int lo = std::clamp(headerRows_, 0, rows());
-    if (rows() - lo < 2) return;
-    const int kind = colKind(c);
-    auto optIndex = [&](const QString& id) {
-        const auto& opts = colTypes_[c].options;
-        for (int i = 0; i < static_cast<int>(opts.size()); ++i) if (opts[i].id == id) return i;
-        return static_cast<int>(opts.size());          // unset / unknown sorts after every option
-    };
-    auto less = [&](int a, int b) {
-        const Cell& x = cells_[a][c];
-        const Cell& y = cells_[b][c];
-        if (kind == ColChoice) return optIndex(x.choice) < optIndex(y.choice);
-        if (kind == ColCheck)  return cellCheck(a, c) < cellCheck(b, c);
-        bool okx = false, oky = false;
-        const double nx = x.text.toDouble(&okx);
-        const double ny = y.text.toDouble(&oky);
-        if (okx && oky) return nx < ny;                // numeric when both sides parse
-        if (okx != oky) return okx;                    // numbers before text
-        return QString::compare(x.text, y.text, Qt::CaseInsensitive) < 0;
-    };
-    std::vector<int> idx;
-    idx.reserve(rows() - lo);
-    for (int r = lo; r < rows(); ++r) idx.push_back(r);
-    std::stable_sort(idx.begin(), idx.end(),
-                     [&](int a, int b) { return asc ? less(a, b) : less(b, a); });
-    std::vector<std::vector<Cell>> nc(cells_.begin(), cells_.begin() + lo);
-    std::vector<QString> nbg(rowBg_.begin(), rowBg_.begin() + lo);
-    std::vector<QString> nfg(rowFg_.begin(), rowFg_.begin() + lo);
-    for (int r : idx) {
-        nc.push_back(std::move(cells_[r]));
-        nbg.push_back(std::move(rowBg_[r]));
-        nfg.push_back(std::move(rowFg_[r]));
-    }
-    cells_ = std::move(nc); rowBg_ = std::move(nbg); rowFg_ = std::move(nfg);
-}
 
-void TableGrid::fillDown(int r0, int c0, int r1, int c1) {
-    normalize();
-    if (!isValid()) return;
-    r0 = std::clamp(r0, 0, rows() - 1); r1 = std::clamp(r1, 0, rows() - 1);
-    c0 = std::clamp(c0, 0, cols_ - 1);  c1 = std::clamp(c1, 0, cols_ - 1);
-    if (r0 > r1) std::swap(r0, r1);
-    if (c0 > c1) std::swap(c0, c1);
-    for (int c = c0; c <= c1; ++c) {
-        const Cell src = cells_[r0][c];
-        for (int r = r0 + 1; r <= r1; ++r) cells_[r][c] = src;
-    }
-}
 
-void TableGrid::fillRight(int r0, int c0, int r1, int c1) {
-    normalize();
-    if (!isValid()) return;
-    r0 = std::clamp(r0, 0, rows() - 1); r1 = std::clamp(r1, 0, rows() - 1);
-    c0 = std::clamp(c0, 0, cols_ - 1);  c1 = std::clamp(c1, 0, cols_ - 1);
-    if (r0 > r1) std::swap(r0, r1);
-    if (c0 > c1) std::swap(c0, c1);
-    for (int r = r0; r <= r1; ++r) {
-        const Cell src = cells_[r][c0];
-        for (int c = c0 + 1; c <= c1; ++c) cells_[r][c] = src;
-    }
-}
 
 // Import janitor (2026-08-20): sheet/CSV exports pad rows and columns to
 // the sheet edge — trailing fully-empty rows/columns never reach the doc.
@@ -378,18 +177,6 @@ void TableGrid::trimTrailingEmpty() {
     }
 }
 
-// Flattened export text for a cell: header rows + text columns are literal text;
-// a choice body cell resolves to its selected option's label; a check body cell
-// to a glyph (done ✓ / in-progress ~ / todo blank).
-QString TableGrid::cellDisplay(int r, int c) const {
-    if (!inCell(r,c,rows(),cols_)) return QString();
-    const Cell& cell = cells_[r][c];
-    const int kind = (r < headerRows_ || c >= static_cast<int>(colTypes_.size())) ? ColText : colTypes_[c].kind;
-    if (kind == ColChoice) return optionLabel(c, cell.choice);
-    if (kind == ColCheck) { const int s = std::clamp(cell.choice.toInt(), 0, 2);
-                            return s == 2 ? QStringLiteral("✓") : s == 1 ? QStringLiteral("~") : QString(); }
-    return cell.text;
-}
 
 // ---- JSON ------------------------------------------------------------------
 
@@ -611,38 +398,7 @@ TableGrid TableGrid::fromCSV(const QString& csv) {
     return g;
 }
 
-QString TableGrid::toTSV() const {
-    QString out;
-    for (int r = 0; r < rows(); ++r) {
-        for (int c = 0; c < cols_; ++c) {
-            if (c) out += QLatin1Char('\t');
-            // strip tabs/newlines so the TSV stays rectangular; typed cells flatten
-            // to their display text (the "own variant" export trade).
-            QString t = cellDisplay(r, c);
-            t.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            out += t;
-        }
-        if (r != rows() - 1) out += QLatin1Char('\n');
-    }
-    return out;
-}
 
-QString TableGrid::toHtml() const {
-    QString out = QStringLiteral("<table>");
-    for (int r = 0; r < rows(); ++r) {
-        out += QStringLiteral("<tr>");
-        const bool header = r < headerRows_;
-        for (int c = 0; c < cols_; ++c) {
-            QString t = cellDisplay(r, c).toHtmlEscaped();
-            out += header ? QStringLiteral("<th>") : QStringLiteral("<td>");
-            out += t;
-            out += header ? QStringLiteral("</th>") : QStringLiteral("</td>");
-        }
-        out += QStringLiteral("</tr>");
-    }
-    out += QStringLiteral("</table>");
-    return out;
-}
 
 TableGrid TableGrid::makeEmpty(int rows, int cols) {
     TableGrid g;
