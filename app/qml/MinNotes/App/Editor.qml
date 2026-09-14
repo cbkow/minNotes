@@ -4629,7 +4629,8 @@ FocusScope {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             preventStealing: true
             hoverEnabled: true
-            property bool overClickable: false   // over a task checkbox / table check or choice cell            property real lastDblClickMs: 0      // triple-click detection (whole-block select)
+            property bool overClickable: false   // over a task checkbox / table check or choice cell
+            property real lastDblClickMs: 0      // triple-click detection (whole-block select)
             property int  lastDblClickRow: -1
             cursorShape: root.blockDragging ? Qt.ClosedHandCursor
                        : root.gripDragging ? Qt.ClosedHandCursor
