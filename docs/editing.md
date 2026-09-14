@@ -49,6 +49,29 @@ shared address you can reference anywhere ("see block 14" — the numbers
 also appear in exports). **Drag a number to reorder its block**; an accent
 line shows where it will land.
 
+## Side by Side
+
+A **split row** sets blocks side by side in **lanes**. Each lane is a short
+stack of ordinary blocks — paragraphs, lists, images, sketches — and the
+row is as tall as its tallest lane.
+
+- **Make one:** right-click a block and choose **Split into columns**, or
+  pull from the left or right edge of a block. Dropping a dragged block or
+  a file on a block's side edge puts it in a new lane beside that block.
+- **Resize:** drag the gap between two lanes. It snaps at ¼, ⅓, ½, ⅔ and
+  ¾; dividers that line up with the rows above and below move together —
+  hold `⌥` to move just this row's.
+- **Move around:** `←` / `→` walk the lanes in reading order, `↑` / `↓`
+  stay in a lane until its top or bottom; `Tab` / `⇧Tab` jump to the next
+  or previous lane.
+- **Tidy up:** the block menu offers **Align lanes**, **Merge with the row
+  below**, and **Delete lane**. Empty a lane and its space goes back to
+  its neighbour; a row left with one lane becomes plain blocks again.
+
+Tables always span the page, so a table never lands inside a lane — paste
+one (or a whole split row) with the caret in a lane and it goes in just
+below the row.
+
 ## Inline Formatting
 
 Select text and use a shortcut or the Inspector — **bold**, *italic*,

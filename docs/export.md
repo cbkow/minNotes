@@ -28,6 +28,10 @@ allows.
 - **PDF** — print-ready pages with images fitted, tables normalized to
   the page, and annotated PDF pages exported as baked images.
 
+[Split rows](editing.md#side-by-side) stay side by side in HTML, Word,
+and PDF, at the widths you set; Markdown has no columns, so it stacks the
+lanes in reading order.
+
 **Copy as Markdown** (`⇧⌘C`) puts the selection — or the whole note —
 on the clipboard in the same Markdown dialect, no files written.
 

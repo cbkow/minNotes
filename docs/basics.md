@@ -44,7 +44,9 @@ tells you before overwriting.
 
 
 One `⌘Z` undoes the entire merge. Dropping directly on a tab (without
-entering the document) appends at the end. Media that lives with the
+entering the document) appends at the end. A merge never lands inside a
+[split row](editing.md#side-by-side) or between two of them — the line
+moves below the run. Media that lives with the
 source note is copied into the destination's media folder; files
 referenced from shares stay referenced.
 
