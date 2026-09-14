@@ -311,9 +311,22 @@ public:
     // final index `to` (0..count-`count`, an index in the REDUCED list). ONE
     // undo step; ranks chain between the destination neighbours; measured
     // heights travel with their rows. moveBlock is the count-1 case.
-    // asTopLevel: the run stays top-level wherever it lands (else a non-split run joins the
-    // lane above the gap). Split rows always move whole, between top-level rows only.
-    Q_INVOKABLE void moveBlocks(int from, int count, int to, bool asTopLevel = false);
+    // targetLane: kInheritLane = join the lane above the gap (or the top level); -1 = land at
+    // the top level; k = land in lane k (the gap must touch a block of that lane). Split rows
+    // always move whole, between top-level rows only.
+    static constexpr int kInheritLane = -2;
+    Q_INVOKABLE void moveBlocks(int from, int count, int to, int targetLane = kInheritLane);
+    // Side-edge drop (PLAN-split-rows): the run lands in a new lane beside `target` — a
+    // top-level target becomes a split row, a lane target gains a lane. One undo step.
+    // Returns the run's first row, or -1 (runs carrying split rows, tables and records refuse).
+    Q_INVOKABLE int moveBeside(int from, int count, int target, int side);
+    // A file dropped at `gap`, landing in `lane` (-1 = the top level) where that is a valid
+    // place, else where the insert put it. One undo step. Returns the new row, or -1.
+    Q_INVOKABLE int insertMediaAt(int gap, int lane, const QString& fileUrl);
+    // A file dropped on a block's edge: a new lane beside it holds the file. One undo step.
+    Q_INVOKABLE int insertMediaBeside(int target, int side, const QString& fileUrl);
+    // [lo, hi] widened to whole split rows — the band a grouped edit must cover.
+    Q_INVOKABLE QVariantList splitRowsBand(int lo, int hi) const { const auto b = wholeSplitRows(lo, hi); return { b.first, b.second }; }
     // Where row `r` ends up after moveBlocks(from, count, to) — shared by the
     // QML caret/selection remap and the tests (one formula, no drift).
     Q_INVOKABLE static int rowAfterMove(int r, int from, int count, int to);

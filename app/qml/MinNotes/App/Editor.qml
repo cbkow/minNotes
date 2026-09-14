@@ -413,6 +413,15 @@ FocusScope {
     property real blockDragViewY: 0       // viewport y of the cursor
     property int  dropGap: -1            // insertion gap 0..count (line at its top)
     property int  blockDragCount: 1      // run length: the selected range when its number was grabbed
+    // Drops into lanes (SR-3 S7c): the lane a gap sits in (-1 = the top level), or a
+    // side-edge target — the block the drop lands beside and on which side (0 right, 1 left).
+    property int  dropLane: -1
+    property int  dropBesideRow: -1
+    property int  dropBesideSide: -1
+    property real blockDragX: 0          // content x of the pointer (the auto-scroll ticker re-aims with it)
+    property int  imageDropLane: -1
+    property int  imageDropBesideRow: -1
+    property int  imageDropBesideSide: -1
     property int  hoverRow: -1           // row whose grip is lit
     readonly property real gutterX: leftEdge   // drag-feedback overlays (drop line / ghost) align here
 
@@ -539,9 +548,57 @@ FocusScope {
     function gapForY(cy) {
         var n = blockModel.count
         if (cy <= 0) return 0
-        var row = blockModel.rowForY(cy)
+        var row = blockModel.rowForY(cy)          // a top entry — a split row answers with its record
         var mid = blockModel.yForRow(row) + blockModel.heightForRow(row) / 2
-        return (cy < mid) ? row : row + 1
+        if (cy < mid) return row
+        const last = blockModel.splitRowLast(row) // below a split row means after its last block, never inside it
+        return (last >= 0 ? last : row) + 1
+    }
+    // Tab merge snaps below a run of adjacent split rows (R-I6 6c): a merge never lands
+    // between two split rows or inside one.
+    function mergeGapForY(cy) {
+        let g = gapForY(cy)
+        while (g > 0 && g < blockModel.count && blockModel.typeForRow(g) === 10 && blockModel.laneForRow(g - 1) >= 0)
+            g = blockModel.splitRowLast(g) + 1
+        return g
+    }
+    // Where a drag (of blocks or files) would land at content point (cx, cy), SR-3 S7c:
+    // the side edge of a block (→ a new lane beside it), a gap inside the lane under the
+    // pointer, or a top-level gap — always top-level when the pointer is off the page.
+    // excludeLo/excludeCount = the dragged run, which can't be its own target.
+    function laneDropAim(cx, cy, excludeLo, excludeCount) {
+        const top = { gap: gapForY(cy), lane: -1, besideRow: -1, besideSide: -1 }
+        const pageX = cx - leftEdge
+        if (pageX < 0 || pageX > pageWidth) return top
+        const hit = blockModel.blockAt(pageX, Math.max(0, cy))
+        if (hit < 0 || (hit >= excludeLo && hit < excludeLo + excludeCount)) return top
+        const t = blockModel.typeForRow(hit)
+        if (t !== 7 && t !== 10) {
+            const x0 = columnX(hit), w = laneOf(hit).w, band = Math.min(24, w / 6)
+            if (cx < x0 + band) return { gap: -1, lane: -1, besideRow: hit, besideSide: 1 }
+            if (cx > x0 + w - band) return { gap: -1, lane: -1, besideRow: hit, besideSide: 0 }
+        }
+        const lane = blockModel.laneForRow(hit)
+        if (lane < 0) return top
+        const mid = blockModel.yForRow(hit) + blockModel.heightForRow(hit) / 2
+        return { gap: cy < mid ? hit : hit + 1, lane: lane, besideRow: -1, besideSide: -1 }
+    }
+    function aimBlockDrag(cx, cy) {
+        let carries = false                        // split rows move whole, between top-level rows only
+        for (let k = blockDragRow; k < blockDragRow + blockDragCount; ++k)
+            if (blockModel.typeForRow(k) === 10) carries = true
+        const aim = carries ? { gap: gapForY(cy), lane: -1, besideRow: -1, besideSide: -1 }
+                            : laneDropAim(cx, cy, blockDragRow, blockDragCount)
+        dropGap = aim.gap; dropLane = aim.lane; dropBesideRow = aim.besideRow; dropBesideSide = aim.besideSide
+    }
+    // A drop line for gap `gap` in `lane` (content coords): {x, w, y}; w = -1 for a top-level line.
+    function dropLineGeom(gap, lane) {
+        if (gap < 0 || lane < 0) return { x: gutterX, w: -1, y: gap >= 0 ? gapY(gap) : 0 }
+        const below = gap < blockModel.count && blockModel.laneForRow(gap) === lane
+        const ref = below ? gap : gap - 1
+        const g = laneOf(ref)
+        return { x: leftEdge + g.x, w: g.w,
+                 y: below ? blockModel.yForRow(gap) : blockModel.yForRow(ref) + blockModel.heightForRow(ref) }
     }
     // Content-y of a gap's drop line (top of that block, or doc end).
     function gapY(gap) {
@@ -551,24 +608,44 @@ FocusScope {
     }
     // Gaps inside the dragged run (from..from+count) are no-ops; past it the
     // destination index shifts by the run's length.
-    function dropGapIsNoop(gap) { return gap >= blockDragRow && gap <= blockDragRow + blockDragCount }
+    // In place is a no-op only when the run keeps its lane.
+    function dropGapIsNoop(gap) {
+        return gap >= blockDragRow && gap <= blockDragRow + blockDragCount
+            && dropLane === blockModel.laneForRow(blockDragRow)
+    }
     function commitBlockDrag() {
-        if (blockDragRow >= 0 && dropGap >= 0 && !dropGapIsNoop(dropGap)) {
+        if (blockDragRow >= 0 && dropBesideRow >= 0) {
+            // Beside a block's edge: a new lane for the run (SR-3 S7c), grouped with the
+            // markdown commit so the gesture is one undo step.
+            const b = blockModel.splitRowsBand(Math.min(blockDragRow, dropBesideRow, cursor.focusRow),
+                                               Math.max(blockDragRow + blockDragCount - 1, dropBesideRow, cursor.focusRow))
+            blockModel.beginGroup(b[0], b[1])
+            blockModel.commitMarkdown(cursor.focusRow)
+            const land = blockModel.moveBeside(blockDragRow, blockDragCount, dropBesideRow, dropBesideSide)
+            blockModel.endGroup()
+            if (land >= 0) { cursor.setCaret(land, 0); root.ensureVisible(land) }
+        } else if (blockDragRow >= 0 && dropGap >= 0 && !dropGapIsNoop(dropGap)) {
             var to = (dropGap > blockDragRow) ? dropGap - blockDragCount : dropGap
-            root.moveRun(blockDragRow, blockDragCount, to)
+            root.moveRun(blockDragRow, blockDragCount, to, dropLane)
         }
         blockDragging = false; blockDragRow = -1; dropGap = -1; blockDragCount = 1
+        dropLane = -1; dropBesideRow = -1; dropBesideSide = -1
     }
     // Move the run [from, from+count) so it starts at final index `to` — ONE
     // undo step (the focused row's inline markdown commits inside it), then
     // the caret and selection follow their blocks (the old code left the caret
     // on whatever slid into the vacated index).
-    function moveRun(from, count, to, asTopLevel) {
-        if (count < 1 || to < 0 || to > blockModel.count - count || to === from) return
-        var lo = Math.min(from, to, cursor.focusRow), hi = Math.max(from, to, cursor.focusRow) + count - 1
-        blockModel.beginGroup(lo, hi)
+    // lane: omitted = join the lane above the gap; -1 = the top level; k = lane k.
+    function moveRun(from, count, to, lane) {
+        const targetLane = lane === undefined ? -2 : lane
+        if (count < 1 || to < 0 || to > blockModel.count - count) return
+        if (to === from && (targetLane === -2 || targetLane === blockModel.laneForRow(from))) return
+        // The group covers whole split rows: a lane the run leaves may collapse.
+        const band = blockModel.splitRowsBand(Math.min(from, to, cursor.focusRow),
+                                              Math.max(from, to, cursor.focusRow) + count - 1)
+        blockModel.beginGroup(band[0], band[1])
         blockModel.commitMarkdown(cursor.focusRow)
-        blockModel.moveBlocks(from, count, to, asTopLevel === true)
+        blockModel.moveBlocks(from, count, to, targetLane)
         blockModel.endGroup()                          // BEFORE the caret write
         cursor.anchorRow = blockModel.rowAfterMove(cursor.anchorRow, from, count, to)
         cursor.focusRow  = blockModel.rowAfterMove(cursor.focusRow,  from, count, to)
@@ -941,7 +1018,7 @@ FocusScope {
         }
         mergeDragActive = true
         mergeDragViewY = ey
-        mergeDropGap = gapForY(ey + flick.contentY)
+        mergeDropGap = mergeGapForY(ey + flick.contentY)
     }
     function endMergeDrop() { mergeDragActive = false; mergeDropGap = -1 }
     // Drop-onto-a-cell target (an image dragged over a table cell); −1 = none. When
@@ -949,13 +1026,20 @@ FocusScope {
     property int dropTableRow: -1
     property int dropCellR: -1
     property int dropCellC: -1
-    function clearDropState() { imageDropGap = -1; dropTableRow = -1; dropCellR = -1; dropCellC = -1 }
+    function clearDropState() {
+        imageDropGap = -1; dropTableRow = -1; dropCellR = -1; dropCellC = -1
+        imageDropLane = -1; imageDropBesideRow = -1; imageDropBesideSide = -1
+    }
     // Aim a drag at a content point: a table cell wins (→ image into cell), else a
     // block-insertion gap. Mutually exclusive, so the affordances don't both show.
     function aimDrop(cx, cy) {
         var th = root.tableHitAt(cx, cy)
-        if (th) { dropTableRow = th.row; dropCellR = th.r; dropCellC = th.c; imageDropGap = -1 }
-        else    { dropTableRow = -1; dropCellR = -1; dropCellC = -1; imageDropGap = root.gapForY(cy) }
+        imageDropLane = -1; imageDropBesideRow = -1; imageDropBesideSide = -1
+        if (th) { dropTableRow = th.row; dropCellR = th.r; dropCellC = th.c; imageDropGap = -1; return }
+        dropTableRow = -1; dropCellR = -1; dropCellC = -1
+        const aim = root.laneDropAim(cx, cy, -1, 0)   // a lane gap, a side edge, or a top-level gap
+        imageDropGap = aim.gap; imageDropLane = aim.lane
+        imageDropBesideRow = aim.besideRow; imageDropBesideSide = aim.besideSide
     }
     DropArea {
         anchors.fill: parent
@@ -1001,12 +1085,19 @@ FocusScope {
                 return
             }
             var afterRow = root.imageDropGap - 1      // insert AT the gap (= after gap-1)
+            var lane = root.imageDropLane             // the lane the gap sits in (-1 = top level)
             var any = false
             for (var i = 0; i < drop.urls.length; ++i) {
                 // Inserts return the ACTUAL new row (an empty-paragraph anchor
                 // is consumed, shifting placement) — chain from it, never +1.
-                var nr = blockModel.insertMediaFromUrl(afterRow, drop.urls[i].toString())
-                if (nr >= 0) { afterRow = nr; any = true }
+                // On a block's edge the first file makes a lane beside it; the rest
+                // follow it down that lane.
+                var u = drop.urls[i].toString(), nr = -1
+                if (!any && root.imageDropBesideRow >= 0)
+                    nr = blockModel.insertMediaBeside(root.imageDropBesideRow, root.imageDropBesideSide, u)
+                else if (afterRow >= -1)
+                    nr = blockModel.insertMediaAt(afterRow + 1, lane, u)
+                if (nr >= 0) { afterRow = nr; lane = blockModel.laneForRow(nr); any = true }
             }
             root.clearDropState()
             if (any) { cursor.setCaret(Math.max(0, afterRow), 0); root.ensureVisible(afterRow) }
@@ -3832,7 +3923,8 @@ FocusScope {
                 if (root.pulling) { root.updatePull(m.x - root.leftEdge); return }
                 if (root.blockDragging) {
                     root.blockDragViewY = m.y - flick.contentY
-                    root.dropGap = root.gapForY(m.y)
+                    root.blockDragX = m.x
+                    root.aimBlockDrag(m.x, m.y)
                     return
                 }
                 if (root.gripDragging) {
@@ -4020,8 +4112,8 @@ FocusScope {
                 if (sp === 0) return
                 flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, flick.contentY + sp))
                 var cy = viewY + flick.contentY               // content point under the held cursor
-                if (root.mergeDragActive) { root.mergeDropGap = root.gapForY(cy); return }
-                if (root.blockDragging) { root.dropGap = root.gapForY(cy); return }
+                if (root.mergeDragActive) { root.mergeDropGap = root.mergeGapForY(cy); return }
+                if (root.blockDragging) { root.aimBlockDrag(root.blockDragX, cy); return }
                 var h = root.hitTest(root.dragX, cy)
                 cursor.move(h.row, h.col, true)
             }
@@ -5989,12 +6081,15 @@ FocusScope {
                                 root.blockDragCount = cursor.hiRow - cursor.loRow + 1
                             } else {
                                 root.blockDragRow = rnum.prow
-                                root.blockDragCount = 1
+                                // A split row's number carries the whole split row.
+                                root.blockDragCount = blockModel.typeForRow(rnum.prow) === 10
+                                    ? blockModel.splitRowLast(rnum.prow) - rnum.prow + 1 : 1
                             }
                             root.blockDragging = true
                         }
                         root.blockDragViewY = vy
-                        root.dropGap = root.gapForY(vy + flick.contentY)
+                        root.blockDragX = mapToItem(root, m.x, m.y).x + flick.contentX
+                        root.aimBlockDrag(root.blockDragX, vy + flick.contentY)
                     }
                     onReleased: if (root.blockDragging) root.commitBlockDrag()
                 }
@@ -6049,10 +6144,25 @@ FocusScope {
     }
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0 && !root.dropGapIsNoop(root.dropGap)
-        x: root.gutterX - flick.contentX
-        width: root.width - x
+        // A top-level gap spans the field; a lane gap only its lane (SR-3 S7c).
+        readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
+                                     root.dropLineGeom(root.dropGap, root.dropLane))
+        x: geom.x - flick.contentX
+        width: geom.w >= 0 ? geom.w : root.width - x
         height: 2; radius: 0
-        y: (blockModel.layoutRevision, root.gapY(root.dropGap)) - flick.contentY - 1
+        y: geom.y - flick.contentY - 1
+        color: Theme.colors.accent
+        z: 50
+    }
+    Rectangle {   // side-edge drop (SR-3 S7c): a bar on the edge the dropped block or file will sit beside
+        readonly property int row: root.blockDragging ? root.dropBesideRow
+                                 : root.imageDropActive ? root.imageDropBesideRow : -1
+        readonly property int side: root.blockDragging ? root.dropBesideSide : root.imageDropBesideSide
+        visible: row >= 0
+        x: (row >= 0 ? root.columnX(row) + (side === 0 ? root.laneOf(row).w - 3 : 0) : 0) - flick.contentX
+        y: (blockModel.layoutRevision, row >= 0 ? blockModel.yForRow(row) : 0) - flick.contentY
+        width: 3
+        height: (blockModel.layoutRevision, row >= 0 ? blockModel.heightForRow(row) : 0)
         color: Theme.colors.accent
         z: 50
     }
@@ -6066,12 +6176,17 @@ FocusScope {
     Item {
         visible: root.dropIndicatorActive && root.dropIndicatorGap >= 0
         z: 55
-        readonly property real lineY: (blockModel.layoutRevision, root.gapY(root.dropIndicatorGap)) - flick.contentY
+        // A lane gap draws at its lane (SR-3 S7c); a top-level gap across the page.
+        readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
+            root.dropLineGeom(root.dropIndicatorGap, root.imageDropActive ? root.imageDropLane : -1))
+        readonly property real lineY: geom.y - flick.contentY
+        readonly property real lineX: (geom.w >= 0 ? geom.x : root.leftEdge) - flick.contentX
+        readonly property real lineW: geom.w >= 0 ? geom.w : root.pageWidth
 
         Rectangle {   // insertion line
             // (was `root.textWidth` — an undefined property; the line had no
             // width since forever. Surfaced by the left-anchor survey.)
-            x: root.leftEdge - flick.contentX; width: root.pageWidth; height: 3; radius: 0
+            x: parent.lineX; width: parent.lineW; height: 3; radius: 0
             y: parent.lineY - 1.5
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: Theme.colors.accent
@@ -6082,13 +6197,13 @@ FocusScope {
             }
         }
         Rectangle {   // solid dot at the left end
-            x: root.leftEdge - flick.contentX - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
+            x: parent.lineX - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
             color: Theme.colors.accent
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
         }
         Rectangle {   // expanding ring emanating from the dot
             id: dropRing
-            x: root.leftEdge - flick.contentX - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
+            x: parent.lineX - 4; y: parent.lineY - 4; width: 8; height: 8; radius: 4
             Behavior on y { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
             color: "transparent"; border.width: 2; border.color: Theme.colors.accent
             transformOrigin: Item.Center

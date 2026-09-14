@@ -6203,14 +6203,14 @@ static void testSplitRowMoves() {
     m.insertBlock(10);
     // 0 p0 · 1 A · 2 p1(l0) · 3 xA(l0) · 4 ""(l1) · 5 p2 · 6 p3 · 7 B · 8 p4(l0) · 9 ""(l1) · 10 ""(l1) · 11 p5 · 12 p6 · 13 p7
     auto move = [&](const QVariantList& t) {
-        if (t.size() == 4) m.moveBlocks(t[0].toInt(), t[1].toInt(), t[2].toInt(), t[3].toBool());
+        if (t.size() == 4) m.moveBlocks(t[0].toInt(), t[1].toInt(), t[2].toInt(), t[3].toInt());
     };
-    auto triple = [](const QVariantList& t, int from, int count, int to, bool top) {
-        return t.size() == 4 && t[0].toInt() == from && t[1].toInt() == count && t[2].toInt() == to && t[3].toBool() == top;
+    auto triple = [](const QVariantList& t, int from, int count, int to, int lane) {
+        return t.size() == 4 && t[0].toInt() == from && t[1].toInt() == count && t[2].toInt() == to && t[3].toInt() == lane;
     };
 
     QVariantList t = m.moveTarget(3, 3, -1);
-    CHECK(triple(t, 3, 1, 2, false), "a lane block moves up within its lane");
+    CHECK(triple(t, 3, 1, 2, 0), "a lane block moves up within its lane");
     move(t);
     CHECK(m.contentForRow(2) == QStringLiteral("xA") && m.laneForRow(2) == 0 && m.laneForRow(3) == 0 && m.structureValid(),
           "…and stays in the lane");
@@ -6220,18 +6220,18 @@ static void testSplitRowMoves() {
           "at a lane's top or bottom a lane block doesn't move");
 
     t = m.moveTarget(6, 6, 1);
-    CHECK(triple(t, 6, 1, 10, true), "a top-level block moving down steps over a whole split row");
+    CHECK(triple(t, 6, 1, 10, -1), "a top-level block moving down steps over a whole split row");
     move(t);
     CHECK(m.contentForRow(10) == QStringLiteral("p3") && m.laneForRow(10) == -1 && m.typeForRow(6) == BlockModel::Split
               && m.structureValid(), "…and lands at the top level below it");
     t = m.moveTarget(10, 10, -1);
-    CHECK(triple(t, 10, 1, 6, true), "…moving up steps back over it");
+    CHECK(triple(t, 10, 1, 6, -1), "…moving up steps back over it");
     move(t);
     CHECK(m.contentForRow(6) == QStringLiteral("p3") && m.laneForRow(6) == -1 && m.typeForRow(7) == BlockModel::Split
               && m.structureValid(), "…to where it started");
 
     t = m.moveTarget(8, 10, -1);
-    CHECK(triple(t, 7, 4, 6, true), "a selection of one whole split row moves the row");
+    CHECK(triple(t, 7, 4, 6, -1), "a selection of one whole split row moves the row");
     move(t);
     CHECK(m.typeForRow(6) == BlockModel::Split && m.contentForRow(10) == QStringLiteral("p3") && m.laneForRow(7) == 0
               && m.structureValid(), "…and the row moves whole");
@@ -6240,7 +6240,7 @@ static void testSplitRowMoves() {
           "…undone in one step");
     CHECK(m.moveTarget(3, 9, 1).isEmpty() && m.moveTarget(3, 4, -1).isEmpty(),
           "a selection that cuts across lanes or split rows doesn't move");
-    CHECK(triple(m.moveTarget(2, 4, -1), 1, 4, 0, true), "…but one covering a whole split row does");
+    CHECK(triple(m.moveTarget(2, 4, -1), 1, 4, 0, -1), "…but one covering a whole split row does");
 
     // A gap just after a split row is a top-level gap (the old check refused it).
     m.moveBlocks(7, 4, 5);              // B → between A and p2
@@ -6348,6 +6348,82 @@ static void testLaneGestures() {
         CHECK(m.rowCountQml() == 9 && m.typeForRow(4) == BlockModel::Split && m.structureValid(), "…undone in one step");
         m.insertParagraphBelow(2);                        // a top-level row between A and B
         CHECK(m.mergeRowsIntoLanes(2, 6) == -1, "rows with a top-level row between them don't merge");
+    }
+}
+
+static void testLaneDrops() {
+    qInfo("[82] drops into lanes: explicit lane gaps, top-level gaps after a split row, side-edge drops (SR-3 step 7c)");
+    auto fresh = [](BlockModel& m) {
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < 5; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("p%1").arg(i)); }
+        m.splitIntoColumns(1, 0, 0.5);
+        m.insertBlock(3);
+        m.setContent(3, QStringLiteral("q"));
+        m.setContent(4, QStringLiteral("a1"));
+        // 0 p0 · 1 A · 2 p1(l0) · 3 q(l0) · 4 a1(l1) · 5 p2 · 6 p3 · 7 p4
+    };
+    {
+        BlockModel m;
+        fresh(m);
+        m.moveBlocks(6, 1, 4, 1);
+        CHECK(m.contentForRow(4) == QStringLiteral("p3") && m.laneForRow(4) == 1 && m.contentForRow(5) == QStringLiteral("a1")
+                  && m.structureValid(), "a block dropped at the top of lane 1 lands in lane 1");
+        m.undo();
+        m.moveBlocks(6, 1, 4);
+        CHECK(m.laneForRow(4) == 0, "…where inheriting the lane above would have put it in lane 0");
+        m.undo();
+        m.moveBlocks(7, 1, 6, 1);
+        CHECK(m.contentForRow(7) == QStringLiteral("p4") && m.structureValid(), "a lane gap that touches no block of that lane is refused");
+        m.moveBlocks(3, 1, 4, -1);
+        CHECK(m.contentForRow(4) == QStringLiteral("q") && m.laneForRow(4) == -1 && m.laneForRow(3) == 1 && m.structureValid(),
+              "a lane block dropped just below its split row lands at the top level");
+        m.undo();
+
+        int land = m.moveBeside(7, 1, 5, 0);
+        CHECK(land == 7 && m.typeForRow(5) == BlockModel::Split && m.contentForRow(6) == QStringLiteral("p2")
+                  && m.laneForRow(7) == 1 && m.contentForRow(7) == QStringLiteral("p4")
+                  && m.contentForRow(8) == QStringLiteral("p3") && m.structureValid(),
+              "dropping a block on a top-level block's right edge makes a split row [target | dropped]");
+        m.undo();
+        CHECK(m.rowCountQml() == 8 && m.contentForRow(7) == QStringLiteral("p4") && m.laneForRow(7) == -1 && m.structureValid(),
+              "…one undo step");
+        land = m.moveBeside(0, 1, 2, 1);
+        CHECK(land == 1 && m.laneCount(0) == 3 && m.laneForRow(1) == 0 && m.contentForRow(1) == QStringLiteral("p0")
+                  && m.laneForRow(2) == 1 && m.structureValid(),
+              "dropping on a lane block's left edge adds a lane beside it for the dropped block");
+        m.undo();
+        CHECK(m.moveBeside(1, 4, 6, 0) == -1 && m.structureValid(), "a run carrying a split row can't drop beside a block");
+    }
+    {   // Files
+        const QString dir = QDir::tempPath() + QStringLiteral("/mn_lane_drops");
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString png = dir + QStringLiteral("/dot.png");
+        QImage img(40, 20, QImage::Format_RGB32);
+        img.fill(Qt::red);
+        CHECK(img.save(png), "a test image is written");
+        BlockModel m;
+        fresh(m);
+        CHECK(m.saveAs(dir + QStringLiteral("/drops.mnd")), "the document is anchored for media");
+        const QString url = QUrl::fromLocalFile(png).toString();
+        const int below = m.insertMediaAt(5, -1, url);
+        CHECK(below == 5 && m.typeForRow(5) == BlockModel::Media && m.laneForRow(5) == -1 && m.structureValid(),
+              "a file dropped just below a split row lands at the top level");
+        m.undo();
+        const int top = m.insertMediaAt(4, 1, url);
+        CHECK(top == 4 && m.typeForRow(4) == BlockModel::Media && m.laneForRow(4) == 1 && m.laneForRow(3) == 0 && m.structureValid(),
+              "a file dropped at the top of lane 1 lands in lane 1");
+        m.undo();
+        const int beside = m.insertMediaBeside(6, 0, url);
+        // 6 B · 7 p3(l0) · 8 the file (l1) — it took the new lane's empty paragraph's place
+        CHECK(beside == 8 && m.typeForRow(6) == BlockModel::Split && m.contentForRow(7) == QStringLiteral("p3")
+                  && m.typeForRow(8) == BlockModel::Media && m.laneForRow(8) == 1 && m.structureValid(),
+              "a file dropped on a block's right edge lands in a new lane beside it");
+        m.undo();
+        CHECK(m.typeForRow(6) != BlockModel::Split && m.contentForRow(6) == QStringLiteral("p3") && m.structureValid(),
+              "…one undo step");
+        QDir(dir).removeRecursively();
     }
 }
 
@@ -6543,6 +6619,7 @@ int main(int argc, char** argv) {
     testEmptiedBlockPersists();
     testSplitRowMoves();
     testLaneGestures();
+    testLaneDrops();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

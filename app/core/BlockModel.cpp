@@ -1601,9 +1601,9 @@ QVariantList BlockModel::moveTarget(int lo, int hi, int dir) const {
     if (recLo >= 0 && recLo == recHi && lane >= 0 && rows_[size_t(hi)].cell == lane) {   // within one lane
         const int count = hi - lo + 1;
         if (dir < 0)
-            return (lo > 0 && rows_[size_t(lo - 1)].cell == lane) ? QVariantList{ lo, count, lo - 1, false }
+            return (lo > 0 && rows_[size_t(lo - 1)].cell == lane) ? QVariantList{ lo, count, lo - 1, int(lane) }
                                                                   : QVariantList{};
-        return (hi + 1 < n && rows_[size_t(hi + 1)].cell == lane) ? QVariantList{ lo, count, lo + 1, false }
+        return (hi + 1 < n && rows_[size_t(hi + 1)].cell == lane) ? QVariantList{ lo, count, lo + 1, int(lane) }
                                                                  : QVariantList{};
     }
     // Among top-level rows. A split-row end must be the whole row (Escape's row selection).
@@ -1615,12 +1615,74 @@ QVariantList BlockModel::moveTarget(int lo, int hi, int dir) const {
     if (dir < 0) {
         if (from == 0) return {};
         const int above = from - 1;                                  // step over a whole split row above
-        return { from, count, rows_[size_t(above)].cell >= 0 ? splitRowOf(above) : above, true };
+        return { from, count, rows_[size_t(above)].cell >= 0 ? splitRowOf(above) : above, -1 };
     }
     const int next = last + 1;
     if (next >= n) return {};
     const int nextEnd = rows_[size_t(next)].type == Split ? splitRowEnd(next) : next;   // … or below
-    return { from, count, nextEnd - count + 1, true };
+    return { from, count, nextEnd - count + 1, -1 };
+}
+
+int BlockModel::moveBeside(int from, int count, int target, int side) {
+    const int n = static_cast<int>(rows_.size());
+    if (count < 1 || from < 0 || from + count > n || target < 0 || target >= n) return -1;
+    if (target >= from && target < from + count) return -1;
+    for (int k = from; k < from + count; ++k)
+        if (rows_[size_t(k)].type == Split) return -1;
+    const uint8_t tt = rows_[size_t(target)].type;
+    if (tt == Split || tt == Table) return -1;
+    const QString firstId = ids_[size_t(from)];
+    const auto band = wholeSplitRows(std::min(from, target), std::max(from + count - 1, target));
+    beginTxn(band.first, band.second);
+    int land = -1;
+    const int fresh = splitIntoColumns(target, side, 0.5);   // [target | new lane] — the lane the run will fill
+    if (fresh >= 0) {
+        const QString freshId = ids_[size_t(fresh)];
+        const int lane = rows_[size_t(fresh)].cell;
+        const int f = rowForId(firstId);
+        moveBlocks(f, count, fresh > f ? fresh - count : fresh, lane);   // just above the placeholder …
+        removeBlock(rowForId(freshId));                                   // … which then goes
+        land = rowForId(firstId);
+    }
+    endTxn();
+    return land;
+}
+
+int BlockModel::insertMediaAt(int gap, int lane, const QString& fileUrl) {
+    const int n = static_cast<int>(rows_.size());
+    gap = std::clamp(gap, 0, n);
+    const auto band = n > 0 ? wholeSplitRows(std::max(0, gap - 1), std::max(0, gap - 1)) : std::pair<int, int>{0, -1};
+    beginTxn(band.first, band.second);
+    const int r = insertMediaFromUrl(gap - 1, fileUrl);          // lands in the lane above the gap …
+    if (r >= 0 && rows_[size_t(r)].cell != lane) {
+        const int8_t was = rows_[size_t(r)].cell;
+        rows_[size_t(r)].cell = static_cast<int8_t>(lane);      // … so move it to the lane it was dropped in
+        if (structureValid()) {
+            persistMeta(r);
+            if (!indexDirty_) reindex(std::vector<double>(layout_.heights()));
+            rederiveMedia(r, r);
+            emit dataChanged(index(r), index(r));
+            bumpLayout();
+        } else {
+            rows_[size_t(r)].cell = was;                        // not a place that lane can be
+        }
+    }
+    endTxn();
+    return r;
+}
+
+int BlockModel::insertMediaBeside(int target, int side, const QString& fileUrl) {
+    if (target < 0 || target >= static_cast<int>(rows_.size())) return -1;
+    const auto band = wholeSplitRows(target, target);
+    beginTxn(band.first, band.second);
+    int r = -1;
+    const int fresh = splitIntoColumns(target, side, 0.5);
+    if (fresh >= 0) {
+        r = insertMediaFromUrl(fresh, fileUrl);                  // consumes the new lane's empty paragraph
+        if (r < 0) removeBlock(fresh);                           // nothing landed (e.g. an import): no lane
+    }
+    endTxn();
+    return r;
 }
 
 int BlockModel::tabTarget(int row, bool back) const {
@@ -5837,25 +5899,32 @@ int BlockModel::rowAfterMove(int r, int from, int count, int to) {
     return r;
 }
 
-void BlockModel::moveBlocks(int from, int count, int to, bool asTopLevel) {
+void BlockModel::moveBlocks(int from, int count, int to, int targetLane) {
     const int n = static_cast<int>(rows_.size());
-    if (count < 1 || from < 0 || from + count > n || to < 0 || to > n - count || from == to) return;
+    // In place is a no-op — unless the run changes lane where it stands.
+    if (count < 1 || from < 0 || from + count > n || to < 0 || to > n - count
+        || (from == to && targetLane == kInheritLane)) return;
     // Split rows move whole, and only between top-level rows; any other run joins
     // the lane (or the top level) it lands in (PLAN-SR3 S3b).
     bool carriesSplit = false;
     for (int k = from; k < from + count; ++k)
         if (rows_[size_t(k)].type == Split) carriesSplit = true;
-    // asTopLevel: the run stays at the top level wherever it lands (⌥⌘↑↓ stepping over a
-    // split row) instead of joining the lane above the gap.
-    if (carriesSplit || asTopLevel) {
+    const bool asTopLevel = targetLane == -1;
+    if (carriesSplit) {
+        if (targetLane >= 0) return;                                           // split rows never go in a lane
         if (rows_[size_t(from)].cell >= 0) return;                             // starts inside a split row
         if (from + count < n && rows_[size_t(from + count)].cell >= 0) return; // ends inside one
+    }
+    auto origOf = [&](int reduced) { return reduced < from ? reduced : reduced + count; };
+    if (carriesSplit || asTopLevel) {
         // The destination must be a top-level gap: the row that will sit right BELOW the
         // run can't be a lane block. (A gap just after a split row is top level.)
-        if (to < n - count) {
-            const int orig = to < from ? to : to + count;
-            if (rows_[size_t(orig)].cell >= 0) return;
-        }
+        if (to < n - count && rows_[size_t(origOf(to))].cell >= 0) return;
+    } else if (targetLane >= 0) {
+        // A lane gap: the row right above or below the run must be a block of that lane.
+        const bool below = to < n - count && rows_[size_t(origOf(to))].cell == targetLane;
+        const bool above = to > 0 && rows_[size_t(origOf(to - 1))].cell == targetLane;
+        if (!below && !above) return;
     }
     // The touched band: every row between the two positions, inclusive of the run
     // at either end, widened to whole split rows (a lane the run leaves may
@@ -5885,7 +5954,8 @@ void BlockModel::moveBlocks(int from, int count, int to, bool asTopLevel) {
         prev = rk;
         const int at = to + k;
         Row moved = rs[static_cast<size_t>(k)];
-        if (!carriesSplit && !asTopLevel) moved.cell = laneAt(at);   // join the destination's lane (or top level)
+        if (!carriesSplit)                                           // the destination's lane
+            moved.cell = targetLane >= 0 ? static_cast<int8_t>(targetLane) : asTopLevel ? int8_t(-1) : laneAt(at);
         rows_.insert(rows_.begin() + at, moved);
         content_.insert(content_.begin() + at, cs[static_cast<size_t>(k)]);
         ids_.insert(ids_.begin() + at, ids[static_cast<size_t>(k)]);
