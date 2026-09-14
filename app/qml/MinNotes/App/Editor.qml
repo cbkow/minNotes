@@ -1320,6 +1320,14 @@ FocusScope {
                 root.tableEnter(repeat === true)
                 return
             }
+            // A lane's double Enter (2026-09-14 walk): Enter on an empty last block of a layout lane
+            // leaves the split row — the block goes (unless it's the lane's only one) and the caret
+            // lands in a paragraph below. Shift+Enter still adds a block; a held key never exits.
+            if (!shift && repeat !== true && lt === 0 && blockModel.laneForRow(focusRow) >= 0
+                && blockModel.tableHeadOf(focusRow) < 0 && blockModel.contentForRow(focusRow).length === 0) {
+                const out = blockModel.exitLane(focusRow)
+                if (out >= 0) { setCaret(out, 0); root.ensureVisible(out); return }
+            }
             var leftRow = focusRow
             blockModel.splitBlock(focusRow, focusCol)
             setCaret(focusRow + 1, 0)
@@ -1738,6 +1746,15 @@ FocusScope {
     // --- Central navigation. Uses the focus block's text layout for vertical
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
+    // An arrow run off the document's end (or start) inside a split row or table would trap the
+    // caret (2026-09-14 walk): a paragraph appears below (or above) the row and the caret moves in.
+    function leaveSplitRowAtEdge(down, shift) {
+        if (shift || blockModel.splitRowOf(cursor.focusRow) < 0) return
+        const p = down ? blockModel.insertParagraphBelow(cursor.focusRow) : blockModel.insertParagraphAbove(cursor.focusRow)
+        if (p < 0) return
+        cursor.setCaret(p, 0)
+        root.ensureVisible(p)
+    }
     function navRight(shift) {
         cursor.resetGoalX(); cursor.clearMarks()
         var fb = root.focusBlockItem, n = blockModel.count
@@ -1749,7 +1766,7 @@ FocusScope {
         }
         else {                               // the next block in reading order (records skipped)
             const nx = blockModel.nextLeaf(cursor.focusRow)
-            if (nx < 0) return
+            if (nx < 0) { root.leaveSplitRowAtEdge(true, shift); return }
             if (blockModel.typeForRow(nx) === 7) root.enterTable(nx, true)
             else cursor.move(nx, 0, shift)
         }
@@ -1763,7 +1780,7 @@ FocusScope {
         }
         else {                               // the previous block in reading order (records skipped)
             const pv = blockModel.prevLeaf(cursor.focusRow)
-            if (pv < 0) return
+            if (pv < 0) { root.leaveSplitRowAtEdge(false, shift); return }
             if (blockModel.typeForRow(pv) === 7) root.enterTable(pv, false)
             else cursor.move(pv, blockModel.contentForRow(pv).length, shift)
         }
@@ -2008,6 +2025,13 @@ FocusScope {
         if (ra === rf && ca === cf) return null
         return { head: ha, r0: Math.min(ra, rf), c0: Math.min(ca, cf), r1: Math.max(ra, rf), c1: Math.max(ca, cf) }
     }
+    // A split row or table selected as a whole — an Escape-picked row/table, or a layout row's
+    // lanes — shows as a bracket in the left margin instead of washing its text (2026-09-14 walk).
+    readonly property bool objectSelected: {
+        const dep = cursor.loRow + cursor.hiRow + cursor.loCol + cursor.hiCol + blockModel.contentRevision
+        if (!cursor.hasSel) return false
+        return selObjectValid() || (selectionIsSplitRow() && blockModel.tableHeadOf(cursor.loRow) < 0)
+    }
     // What an Escape rung selected as an OBJECT (SR-0 §4.8/§4.10): a table row or a whole table —
     // {kind, head, r, lo, hi}. Deleting (or typing over) it removes it; the same range reached by
     // ⌘A or dragging is cells, and clears. Valid only while the selection is still that range.
@@ -2122,7 +2146,7 @@ FocusScope {
             cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX - textLeft, r.y + lh * 1.5), shift)
         else {                                                  // the block below: in the lane, else the row below at goal-x
             const below = blockModel.leafBelow(cursor.focusRow, cursor.goalX)
-            if (below < 0) return
+            if (below < 0) { root.leaveSplitRowAtEdge(true, shift); return }
             if (blockModel.typeForRow(below) === 7) root.enterTable(below, true)
             else cursor.move(below, colAtGoalX(below, 2), shift)
         }
@@ -2139,7 +2163,7 @@ FocusScope {
             cursor.move(cursor.focusRow, fb.positionAt(cursor.goalX - textLeft, r.y - lh * 0.5), shift)
         else {                                                  // the block above: in the lane, else the row above at goal-x
             const above = blockModel.leafAbove(cursor.focusRow, cursor.goalX)
-            if (above < 0) return
+            if (above < 0) { root.leaveSplitRowAtEdge(false, shift); return }
             if (blockModel.typeForRow(above) === 7) { root.enterTable(above, false); return }
             var prev = cellForRow(above)
             var yLast = (prev && !prev.isMedia) ? prev.teItem.contentHeight - 2 : 0
@@ -4163,6 +4187,35 @@ FocusScope {
                 editor: root
                 logicalRow: (root.slotRev, viewSlots.rowForSlot(index))
             }
+        }
+
+        // The object-selection bracket (2026-09-14 walk): a selected split row or table is marked in
+        // the left margin — an accent bar with caps — so it never competes with text highlight.
+        Item {
+            id: selBracket
+            readonly property var span: {
+                const dep = blockModel.layoutRevision + blockModel.contentRevision
+                if (!root.objectSelected) return null
+                const head = blockModel.tableHeadOf(cursor.loRow)
+                let first = blockModel.splitRowOf(cursor.loRow), last = first
+                if (head >= 0 && root.selectionIsTable()) {
+                    const recs = blockModel.tableRecords(head)
+                    first = head
+                    last = recs[recs.length - 1]
+                }
+                if (first < 0) return null
+                return { top: blockModel.yForRow(first) + blockModel.tablePadTop(first),
+                         bottom: blockModel.yForRow(last) + blockModel.heightForRow(last) - blockModel.tablePadBottom(last) }
+            }
+            visible: span !== null
+            x: root.leftEdge - 20
+            y: span ? span.top : 0
+            width: 8
+            height: span ? span.bottom - span.top : 0
+            z: 3
+            Rectangle { width: 2; height: parent.height; color: Theme.colors.accent }
+            Rectangle { width: parent.width; height: 2; color: Theme.colors.accent }
+            Rectangle { y: parent.height - 2; width: parent.width; height: 2; color: Theme.colors.accent }
         }
 
         // T3 (SR-4 S5c): once the page scrolls sideways past a table's left edge, a mirror of the

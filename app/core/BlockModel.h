@@ -189,6 +189,12 @@ public:
     // A top-level empty paragraph under the whole split row holding `row` (under `row`
     // itself at top level), one undo step. Returns its row.
     Q_INVOKABLE int insertParagraphBelow(int row);
+    // Ways out of split rows (the 2026-09-14 walk): a paragraph above the split row holding row
+    // (or above row at top level); and exitLane — Enter on an empty last block of a layout lane
+    // removes it (unless it's the lane's only block) and lands in a paragraph below the split row
+    // (an empty one already there is reused). One undo each; → the paragraph's row, or -1.
+    Q_INVOKABLE int insertParagraphAbove(int row);
+    Q_INVOKABLE int exitLane(int row);
     // --- Split rows (SR-3). A Split record is followed by its lanes' blocks.
     Q_INVOKABLE int laneForRow(int row) const;       // the lane a block sits in; -1 = top level
     Q_INVOKABLE int splitRowOf(int row) const;       // the record of the split row containing row, or -1
@@ -507,6 +513,11 @@ public:
     // C++ importer seam (QML goes through paste/import invokables).
     std::pair<int,int> insertSpecs(int row, const std::vector<BlockSpec>& specs,
                                    bool allowReuseBlankRow = true);
+    // SR-4: a Table-block grid as a derived table's specs — a head record (header count ≥ 1,
+    // column spec: widths, alignment, colours, kinds + options), a record per row (row/cell
+    // colours) and each cell's blocks (media, then text with spans; choice/check values as chips).
+    static std::vector<BlockSpec> gridSpecsFromTable(const QString& tableJson);
+    static void expandTableSpecs(std::vector<BlockSpec>& specs);   // every Table spec → gridSpecsFromTable
     // Gap-addressed core (the tab-merge program): gap g = between rows g-1
     // and g (0 = top, count = end). insertSpecs is a thin wrapper over this.
     // Lanes (SR-3 S8): specs that carry a Split record keep their own structure
