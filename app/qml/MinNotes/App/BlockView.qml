@@ -187,6 +187,7 @@ Item {
     x: 0
     width: flick.contentWidth   // == flick.width outside ink mode
     visible: active && (editor.frameLo < 0 || (logicalRow >= editor.frameLo && logicalRow <= editor.frameHi))   // the grid frame shows one table
+             && !(blockModel.layoutRevision, blockModel.rowHidden(logicalRow))                                  // T4: a filtered-out row
     y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
     // Code blocks get double vertical padding (24 vs 12) so the
     // syntax-themed background has breathing room above/below.

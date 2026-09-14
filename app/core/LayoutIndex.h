@@ -31,6 +31,9 @@ public:
         // A record's pocket (SR-4 tables): space above its lanes and below the tallest.
         // The record's extent is padTop + tallest lane + padBottom; its blocks start at padTop.
         double padTop = 0.0, padBottom = 0.0;
+        // SR-4 T4: a filtered-out record. It keeps its heights but contributes 0 to the
+        // outer tree, and visible() skips it and its lanes — a view-only fold.
+        bool hidden = false;
     };
 
     // entries and heights are parallel; a record's height is ignored. A malformed
@@ -40,9 +43,11 @@ public:
     std::size_t size() const { return entries_.size(); }
     double total() const { return outer_.total(); }
     double y(std::size_t flat) const;
-    double height(std::size_t flat) const { return flat < heights_.size() ? heights_[flat] : 0.0; }
-    const std::vector<double>& heights() const { return heights_; }   // per flat entry
+    double height(std::size_t flat) const { return flat < heights_.size() && !hidden(flat) ? heights_[flat] : 0.0; }
+    const std::vector<double>& heights() const { return heights_; }   // per flat entry (real heights, hidden or not)
     double setHeight(std::size_t flat, double h);   // no-op (0) on a record
+    bool hidden(std::size_t flat) const { return flat < slotOf_.size() && hidden_[slotOf_[flat]]; }   // the entry or its record
+    double setHidden(std::size_t flat, bool hidden);   // a record (or one of its blocks) → the change in total()
 
     const Entry& entry(std::size_t flat) const { return entries_[flat]; }
     std::size_t topOf(std::size_t flat) const { return flat < slotOf_.size() ? flatOfSlot_[slotOf_[flat]] : flat; }
@@ -84,6 +89,7 @@ private:
     std::vector<std::size_t> indexInCell_;    // flat → position within its lane (children)
     std::vector<std::size_t> flatOfSlot_;     // top slot → flat
     std::vector<int> splitOfSlot_;            // top slot → splits_ index, or -1
+    std::vector<bool> hidden_;                // top slot → folded (T4)
     std::vector<Split> splits_;
     FenwickTree outer_;                       // one entry per top slot
 };

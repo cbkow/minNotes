@@ -8396,6 +8396,46 @@ static void testTimecodeColumns() {
           "back to text keeps the timecode strings");
 }
 
+static void testRowFilter() {
+    qInfo("[109] row filter: folded records read as hidden, fold to zero height, survive rebuilds; the document is untouched (SR-4 T4)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    const int h = m.insertTableRows(0, 4, 2) - 1;
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(h, r, c), QString::fromUtf8(t)); };
+    set(0, 0, "Shot"); set(0, 1, "Note");
+    set(1, 0, "apple"); set(1, 1, "red");
+    set(2, 0, "pear");  set(2, 1, "green");
+    set(3, 0, "plum");  set(3, 1, "RED wine");
+    for (int r = 0; r < m.rowCountQml(); ++r) m.setMeasuredHeight(r, 20);   // every block 20 px
+    const double before = m.totalHeight();
+    const QVariantList recs = m.tableRecords(h);
+    const QVariantList hide = m.gridFilterRecords(h, QStringLiteral("red"));
+    CHECK(hide.size() == 1 && hide[0].toInt() == recs[2].toInt(), "'red' keeps apple and plum (case-insensitive), folds pear");
+    CHECK(m.gridFilterRecords(h, QStringLiteral("")).isEmpty() && m.gridFilterRecords(h, QStringLiteral("shot")).size() == 3,
+          "an empty filter folds nothing; the header never counts as a match");
+    m.setHiddenRecords(hide);
+    const int pear = recs[2].toInt();
+    CHECK(m.rowHidden(pear) && m.rowHidden(m.gridCellAt(h, 2, 0)) && !m.rowHidden(recs[1].toInt()) && m.hiddenRecordCount(h) == 1,
+          "the record and its cells read as hidden; neighbours don't");
+    CHECK(m.totalHeight() == before - 20 && m.heightForRow(pear) == 0 && m.yForRow(recs[3].toInt()) == m.yForRow(pear),
+          "a folded record has no extent: the next record sits where it was (%g → %g)", before, m.totalHeight());
+    CHECK(m.gridCellText(h, 2, 0) == QStringLiteral("pear") && m.rowCountQml() == recs.size() * 3 + 1,
+          "the document is untouched: the row is still there for copy / export (%d rows)", m.rowCountQml());
+    set(1, 1, "crimson");                                            // an edit rebuilds nothing structural…
+    m.insertParagraphBelow(m.rowCountQml() - 1);                     // …but this does (index reset)
+    CHECK(m.rowHidden(pear) && m.heightForRow(pear) == 0 && m.hiddenRecordCount(h) == 1,
+          "the fold survives a structural rebuild (keyed by block id)");
+    const double afterInsert = m.totalHeight();                      // the new paragraph at its estimate
+    m.setMeasuredHeight(m.gridCellAt(h, 2, 0), 60);                  // a delegate reports while folded
+    CHECK(m.heightForRow(pear) == 0 && m.totalHeight() == afterInsert,
+          "heights reported into a folded row don't move the layout (%g)", m.totalHeight());
+    m.clearHiddenRecords();
+    CHECK(!m.rowHidden(pear) && m.heightForRow(pear) == 60 && m.hiddenRecordCount(h) == 0,
+          "unfolding restores the row at its latest reported height (%g)", m.heightForRow(pear));
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8615,6 +8655,7 @@ int main(int argc, char** argv) {
     testImportCapAndPackages();
     testGridTabsAndBoard();
     testTimecodeColumns();
+    testRowFilter();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

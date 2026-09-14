@@ -301,6 +301,13 @@ public:
     // column's frame rate (`fps` in the spec, 24 by default): a frame count becomes "hh:mm:ss:ff", a
     // timecode its canonical form (drop-frame for 29.97 / 59.94), anything else stays. Normalized when
     // a cell is left (commitMarkdown), filled, pasted, or the kind is set; sorts by frames.
+    // T4 (S9c): the view-only row filter — folded records read as hidden; nothing in the
+    // document changes (copy / export / undo see every row).
+    Q_INVOKABLE bool rowHidden(int row) const;                       // a record, or any block of one
+    Q_INVOKABLE void setHiddenRecords(const QVariantList& records);  // replaces the fold set (records by row)
+    Q_INVOKABLE void clearHiddenRecords();
+    Q_INVOKABLE int hiddenRecordCount(int head) const;
+    Q_INVOKABLE QVariantList gridFilterRecords(int head, const QString& text) const;   // body records with NO cell containing text
     Q_INVOKABLE double gridColumnFps(int head, int c) const;
     Q_INVOKABLE bool gridSetColumnFps(int head, int c, double fps);         // re-normalizes the column
     Q_INVOKABLE QString timecodeForFrames(int frames, double fps) const;
@@ -1387,6 +1394,7 @@ private:
     struct TableGeom { std::vector<double> x, w; double width = 0.0; QJsonArray spec; };   // spec: the head's parsed `cols`
     mutable QHash<int, TableGeom> geoms_;               // keyed by head record
     mutable bool tableGeomDirty_ = true;
+    QSet<QString> hiddenIds_;                 // T4: folded records, by block id (view-only; not in the document)
     mutable std::size_t geomRows_ = 0;
     bool layoutSpikePending_ = false;                   // a coalesced layoutChangedSpike is queued (measure-backs)
     const TableGeom* tableGeom(int head) const;         // nullptr unless head is a table head

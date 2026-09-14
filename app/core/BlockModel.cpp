@@ -327,6 +327,7 @@ std::vector<mn::LayoutIndex::Entry> BlockModel::layoutEntries() const {
     for (size_t i = 0; i < rows_.size(); ++i) {
         e[i] = { rows_[i].type == Split && rows_[i].cell < 0, rows_[i].cell };
         if (!e[i].split || heads[i] < 0) continue;
+        e[i].hidden = !hiddenIds_.isEmpty() && hiddenIds_.contains(ids_[i]);   // T4: the filter survives rebuilds
         // SR-4 S5b: a table's pocket — the old Table block's 32 px above and below.
         if (heads[i] == static_cast<int>(i)) e[i].padTop = kTablePocket;
         const int next = splitRowEnd(static_cast<int>(i)) + 1;
@@ -1359,6 +1360,53 @@ bool BlockModel::normalizeTimecodeCell(int block) {
     if (canon.isEmpty() || canon == content_[size_t(block)]) return false;
     writePlainValue(block, canon);
     return true;
+}
+
+// ---- T4 (S9c): the view-only row filter. Hidden records fold to zero height in the layout
+// index and the views skip them; the document, copy and export are untouched. Keyed by
+// block id so structural rebuilds (layoutEntries) keep the fold.
+bool BlockModel::rowHidden(int row) const {
+    if (hiddenIds_.isEmpty() || row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    const int rec = rows_[size_t(row)].cell >= 0 ? splitRowOf(row) : row;
+    return rec >= 0 && hiddenIds_.contains(ids_[size_t(rec)]);
+}
+
+void BlockModel::setHiddenRecords(const QVariantList& records) {
+    QSet<QString> next;
+    for (const QVariant& v : records) {
+        const int r = v.toInt();
+        if (r >= 0 && r < static_cast<int>(rows_.size()) && rows_[size_t(r)].type == Split && rows_[size_t(r)].cell < 0)
+            next.insert(ids_[size_t(r)]);
+    }
+    if (next == hiddenIds_) return;
+    hiddenIds_ = std::move(next);
+    if (!indexDirty_)
+        for (size_t i = 0; i < rows_.size(); ++i)
+            if (rows_[i].type == Split && rows_[i].cell < 0) layout_.setHidden(i, hiddenIds_.contains(ids_[i]));
+    bumpLayout();
+}
+
+void BlockModel::clearHiddenRecords() { setHiddenRecords({}); }
+
+int BlockModel::hiddenRecordCount(int head) const {
+    if (hiddenIds_.isEmpty()) return 0;
+    int n = 0;
+    for (const QVariant& v : tableRecords(head)) n += rowHidden(v.toInt()) ? 1 : 0;
+    return n;
+}
+
+QVariantList BlockModel::gridFilterRecords(int head, const QString& text) const {
+    QVariantList out;
+    const QString needle = text.trimmed();
+    if (needle.isEmpty() || headerCount(head) == 0) return out;
+    const int hc = headerCount(head), nc = tableColumnCount(head);
+    const QVariantList recs = tableRecords(head);                    // grid row r ↔ recs[r]
+    for (int r = hc; r < recs.size(); ++r) {
+        bool hit = false;
+        for (int c = 0; c < nc && !hit; ++c) hit = gridCellText(head, r, c).contains(needle, Qt::CaseInsensitive);
+        if (!hit) out.append(recs[r]);
+    }
+    return out;
 }
 
 bool BlockModel::gridSetColumnFps(int head, int c, double fps) {

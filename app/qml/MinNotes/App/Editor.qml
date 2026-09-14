@@ -175,6 +175,24 @@ FocusScope {
     readonly property real frameBottom: frameLo >= 0
         ? (blockModel.layoutRevision, blockModel.yForRow(frameHiRec) + blockModel.heightForRow(frameHiRec)) : 0
     onFrameLoChanged: if (frameLo >= 0) { flick.contentX = 0; flick.contentY = frameTop - Theme.dim.toolStripHeight }
+    // T4 (S9c): the grid frame's view-only row filter. Lives with the frame: a tab switch clears it,
+    // and it never touches the document (copy / export / undo see every row). Re-applied on edits
+    // only through the fold set — a row you're typing in stays put even when it stops matching.
+    property string gridFilter: ""
+    readonly property int gridHiddenCount: activeGridHead >= 0 ? (blockModel.layoutRevision, blockModel.hiddenRecordCount(activeGridHead)) : 0
+    function applyGridFilter(text) {
+        gridFilter = text
+        if (activeGridHead < 0) { blockModel.clearHiddenRecords(); return }
+        blockModel.setHiddenRecords(blockModel.gridFilterRecords(activeGridHead, text))
+        // The caret can't sit in a folded row: park it in the first row still showing.
+        if (cursor.row >= 0 && blockModel.rowHidden(cursor.row)) {
+            const recs = blockModel.tableRecords(activeGridHead)
+            for (let i = blockModel.headerCount(activeGridHead); i < recs.length; ++i)
+                if (!blockModel.rowHidden(recs[i])) { landInCell(activeGridHead, i, 0); return }
+            landInCell(activeGridHead, 0, 0)
+        }
+    }
+    onActiveGridIdChanged: if (gridFilter !== "") applyGridFilter("")   // by id: the head ROW shifts on edits above the table
     function firstGroupColOf(head) {
         for (var c = 0; c < blockModel.tableColumnCount(head); ++c) {
             var k = blockModel.gridColumnKind(head, c)
@@ -4585,6 +4603,7 @@ FocusScope {
                 visible: prow >= 0 && prow < blockModel.count
                          && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0
                          && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))   // the grid frame
+                         && !(blockModel.layoutRevision, blockModel.rowHidden(prow))                // T4 filter
                 z: -1
                 x: 0
                 width: Math.max(flick.width, root.contentSpan)
@@ -5728,6 +5747,46 @@ FocusScope {
                         root.openBoard(root.activeGridHead >= 0 ? root.activeGridHead : root.activeTableRow,
                                        root.boardCol >= 0 ? root.boardCol : root.firstGroupCol)
                     root.forceActiveFocus()
+                }
+            }
+        }
+        Row {   // T4: the row filter (derived tables' grid only) — a plain TextInput in a themed
+                // frame (a Controls TextField won't theme under the native macOS style) + the count.
+            visible: root.activeGridHead >= 0 && !root.boardMode
+            anchors.right: parent.right; anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 8
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.gridFilter !== ""
+                readonly property int total: root.activeGridHead >= 0
+                    ? (blockModel.contentRevision, blockModel.tableRecords(root.activeGridHead).length - blockModel.headerCount(root.activeGridHead)) : 0
+                text: "Showing " + (total - root.gridHiddenCount) + " of " + total + " rows"
+                color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+            }
+            Rectangle {
+                width: 180; height: 22; radius: 0
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.colors.codeBg; border.width: 1
+                border.color: gridFilterField.activeFocus ? Theme.colors.textMuted : Theme.colors.border
+                TextInput {
+                    id: gridFilterField
+                    anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true; selectByMouse: true
+                    color: Theme.colors.text; selectionColor: Theme.colors.selectionBg
+                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+                    text: root.gridFilter
+                    onTextEdited: root.applyGridFilter(text)
+                    Keys.onEscapePressed: { if (text !== "") { text = ""; root.applyGridFilter("") } else root.forceActiveFocus() }
+                    onAccepted: root.forceActiveFocus()
+                    Text {
+                        anchors.fill: parent; verticalAlignment: Text.AlignVCenter
+                        visible: gridFilterField.text.length === 0
+                        text: "Filter rows…"
+                        color: Theme.colors.textSubtle; font: gridFilterField.font
+                        elide: Text.ElideRight
+                    }
                 }
             }
         }
@@ -7142,6 +7201,7 @@ FocusScope {
                 visible: prow >= 0 && prow < blockModel.count
                          && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0   // top entries only
                          && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))
+                         && !(blockModel.layoutRevision, blockModel.rowHidden(prow))                // T4 filter
                 width: blockRuler.width
                 height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
                 y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY

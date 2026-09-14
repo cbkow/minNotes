@@ -10,6 +10,7 @@ bool LayoutIndex::reset(const std::vector<Entry>& entries, std::vector<double> h
 
     std::vector<std::size_t> slotOf(n, 0), indexInCell(n, 0), flatOfSlot;
     std::vector<int> splitOfSlot;
+    std::vector<bool> hidden;
     std::vector<Split> splits;
     std::vector<std::vector<std::vector<double>>> laneHeights;   // per split, per lane
     std::vector<double> outerH;
@@ -29,6 +30,7 @@ bool LayoutIndex::reset(const std::vector<Entry>& entries, std::vector<double> h
             if (!closeOpen(f)) return false;
             slotOf[f] = flatOfSlot.size();
             flatOfSlot.push_back(f);
+            hidden.push_back(e.split && e.hidden);   // only a record folds
             if (e.split) {
                 splitOfSlot.push_back(int(splits.size()));
                 splits.push_back(Split{f, 0, {}, {}});
@@ -65,7 +67,7 @@ bool LayoutIndex::reset(const std::vector<Entry>& entries, std::vector<double> h
         for (std::size_t c = 0; c < s.cells.size(); ++c)
             s.cells[c].reset(std::move(laneHeights[k][c]));
         const double extent = s.extent();
-        outerH[slotOf[s.flat]] = extent;
+        outerH[slotOf[s.flat]] = hidden[slotOf[s.flat]] ? 0.0 : extent;
         heights[s.flat] = extent;
     }
 
@@ -75,6 +77,7 @@ bool LayoutIndex::reset(const std::vector<Entry>& entries, std::vector<double> h
     indexInCell_ = std::move(indexInCell);
     flatOfSlot_ = std::move(flatOfSlot);
     splitOfSlot_ = std::move(splitOfSlot);
+    hidden_ = std::move(hidden);
     splits_ = std::move(splits);
     outer_.reset(std::move(outerH));
     return true;
@@ -105,7 +108,15 @@ double LayoutIndex::setHeight(std::size_t flat, double h) {
     s.cells[std::size_t(c)].setHeight(indexInCell_[flat], h);
     const double extent = s.extent();
     heights_[s.flat] = extent;
-    return outer_.setHeight(slot, extent);
+    return hidden_[slot] ? 0.0 : outer_.setHeight(slot, extent);
+}
+
+double LayoutIndex::setHidden(std::size_t flat, bool hidden) {
+    if (flat >= entries_.size()) return 0.0;
+    const std::size_t slot = slotOf_[flat];
+    if (splitOfSlot_[slot] < 0 || hidden_[slot] == hidden) return 0.0;
+    hidden_[slot] = hidden;
+    return outer_.setHeight(slot, hidden ? 0.0 : heights_[flatOfSlot_[slot]]);
 }
 
 std::size_t LayoutIndex::topAt(double y) const {
@@ -159,7 +170,7 @@ std::vector<std::size_t> LayoutIndex::visible(double y0, double y1) const {
         const double top = outer_.prefix(slot);
         if (top >= y1) break;
         const std::size_t f = flatOfSlot_[slot];
-        if (!hits(top, outer_.height(slot))) continue;
+        if (hidden_[slot] || !hits(top, outer_.height(slot))) continue;   // a folded record and its lanes
         out.push_back(f);
         if (splitOfSlot_[slot] < 0) continue;
         const Split& s = splits_[std::size_t(splitOfSlot_[slot])];
