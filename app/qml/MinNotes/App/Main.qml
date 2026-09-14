@@ -152,7 +152,8 @@ ApplicationWindow {
         target: importer
         function onImportFinished(ok, count, firstPath, error) {
             if (!ok) {
-                Toasts.show(qsTr("Import failed") + (error !== "" ? " — " + error : ""), 2)
+                if (error !== "cancelled")
+                    Toasts.show(qsTr("Import failed") + (error !== "" ? " — " + error : ""), 2)
                 return
             }
             if (firstPath !== "") {   // multi-doc: open the first, say how many
@@ -161,6 +162,52 @@ ApplicationWindow {
                 win.openDoc(firstPath)
             } else {
                 Toasts.show(qsTr("Imported ") + win._pendingImportName)
+            }
+        }
+    }
+    // The cell cap (SR-4 S8f, R-I4 4a): a file whose tables hold over 100,000 cells asks — the
+    // first rows that fit, the file attached as a chip, or nothing.
+    Connections {
+        target: importer
+        function onImportNeedsDecision(cells, rows, keptRows, fileName) {
+            importCapDialog.cells = cells; importCapDialog.rows = rows
+            importCapDialog.keptRows = keptRows; importCapDialog.fileName = fileName
+            importCapDialog.open()
+        }
+    }
+    Popup {
+        id: importCapDialog
+        property int cells: 0
+        property int rows: 0
+        property int keptRows: 0
+        property string fileName: ""
+        modal: true
+        closePolicy: Popup.NoAutoClose
+        anchors.centerIn: Overlay.overlay
+        width: 460; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: 0
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text {
+                text: qsTr("This table is very large")
+                color: Theme.colors.textBright; font.family: Theme.font.family
+                font.pixelSize: Theme.font.sizeBody; font.bold: true
+            }
+            Text {
+                width: 420; wrapMode: Text.Wrap
+                text: qsTr("%1 has %2 rows and %3 cells. Documents are for tables you read and edit; big data stays in spreadsheets. Import the first %4 rows, or attach the file to open it in its own app.")
+                          .arg(importCapDialog.fileName).arg(importCapDialog.rows.toLocaleString(Qt.locale(), 'f', 0))
+                          .arg(importCapDialog.cells.toLocaleString(Qt.locale(), 'f', 0)).arg(importCapDialog.keptRows.toLocaleString(Qt.locale(), 'f', 0))
+                color: Theme.colors.textMuted
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: qsTr("Cancel"); padding: 12; onClicked: { importCapDialog.close(); importer.resolvePendingImport("cancel") } }
+                FlatButton { text: qsTr("Attach file"); padding: 12; onClicked: { importCapDialog.close(); importer.resolvePendingImport("attach") } }
+                FlatButton { text: qsTr("Import first %1 rows").arg(importCapDialog.keptRows.toLocaleString(Qt.locale(), 'f', 0)); padding: 12
+                             onClicked: { importCapDialog.close(); importer.resolvePendingImport("rows") } }
             }
         }
     }

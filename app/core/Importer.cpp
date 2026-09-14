@@ -345,13 +345,65 @@ void Importer::startImportFile(const QString& fileUrlOrPath) {
     MediaStore* store = model_->mediaStore();   // modal popup pins the tab open
     worker_ = std::thread([this, path, fmt, store, target] {
         const FileSpecs fs = buildFileSpecs(path, fmt, store);
-        QMetaObject::invokeMethod(this, [this, fs, target] {
+        QMetaObject::invokeMethod(this, [this, fs, target, path] {
+            const int cells = fs.ok ? tableCellCount(fs.specs) : 0;
+            if (fs.ok && target && cells > kCellCap) {          // over the cap: ask before applying
+                pending_ = fs;
+                pendingPath_ = path;
+                std::vector<BlockModel::BlockSpec> cut = fs.specs;
+                truncateToCellCap(cut, kCellCap);
+                int rows = 0, kept = 0;
+                for (const BlockModel::BlockSpec& sp : fs.specs) if (sp.type == BlockModel::Split && sp.cell < 0) ++rows;
+                for (const BlockModel::BlockSpec& sp : cut) if (sp.type == BlockModel::Split && sp.cell < 0) ++kept;
+                setBusy(false, QString());
+                emit importNeedsDecision(cells, rows, kept, QFileInfo(path).fileName());
+                return;
+            }
             const bool ok = target ? applySpecs(target, fs) : false;
             setBusy(false, QString());
             emit importFinished(ok, 1, {},
                                 ok ? QString() : QStringLiteral("Import failed"));
         }, Qt::QueuedConnection);
     });
+}
+
+int Importer::tableCellCount(const std::vector<BlockModel::BlockSpec>& specs) {
+    int n = 0;
+    for (const BlockModel::BlockSpec& sp : specs) if (sp.cell >= 0) ++n;
+    return n;
+}
+
+void Importer::truncateToCellCap(std::vector<BlockModel::BlockSpec>& specs, int cap) {
+    // Keep specs while the cell count fits; a cut lands at the start of the row that overflowed,
+    // so every kept table row is whole. Nothing after the cut survives.
+    int cells = 0;
+    size_t lastRecord = specs.size();
+    for (size_t k = 0; k < specs.size(); ++k) {
+        const BlockModel::BlockSpec& sp = specs[k];
+        if (sp.type == BlockModel::Split && sp.cell < 0) lastRecord = k;
+        if (sp.cell >= 0 && ++cells > cap) {
+            specs.resize(lastRecord < specs.size() ? lastRecord : k);
+            return;
+        }
+    }
+}
+
+void Importer::resolvePendingImport(const QString& choice) {
+    FileSpecs fs = std::move(pending_);
+    const QString path = pendingPath_;
+    pending_ = FileSpecs();
+    pendingPath_.clear();
+    if (!model_ || !fs.ok) { emit importFinished(false, 0, {}, QStringLiteral("Import failed")); return; }
+    if (choice == QLatin1String("rows")) {
+        truncateToCellCap(fs.specs, kCellCap);
+        const bool ok = applySpecs(model_, fs);
+        emit importFinished(ok, 1, {}, ok ? QString() : QStringLiteral("Import failed"));
+    } else if (choice == QLatin1String("attach")) {
+        const int row = model_->insertFileFromUrl(std::max(0, model_->rowCountQml() - 1), QUrl::fromLocalFile(path).toString());
+        emit importFinished(row >= 0, 1, {}, row >= 0 ? QString() : QStringLiteral("Import failed"));
+    } else {
+        emit importFinished(false, 0, {}, QStringLiteral("cancelled"));
+    }
 }
 
 void Importer::startImportToFolder(const QString& fileUrlOrPath,

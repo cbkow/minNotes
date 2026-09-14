@@ -51,12 +51,22 @@ public:
                                          const QString& destDirUrlOrPath);
     // Folder imports stop between notes/pages; single-file parses finish.
     Q_INVOKABLE void cancel() { cancel_ = true; }
+    // The cell cap (SR-4 S8f, R-I4 4a): under derived tables every cell is a block, so a file
+    // whose tables hold more than kCellCap cells isn't applied — importNeedsDecision asks, and
+    // resolvePendingImport("rows" | "attach" | "cancel") imports the first rows that fit (cut at
+    // a row boundary), attaches the file as a file chip, or drops it (importFinished with
+    // error "cancelled").
+    static constexpr int kCellCap = 100000;
+    static int tableCellCount(const std::vector<BlockModel::BlockSpec>& specs);
+    static void truncateToCellCap(std::vector<BlockModel::BlockSpec>& specs, int cap);
+    Q_INVOKABLE void resolvePendingImport(const QString& choice);
 
 signals:
     void runningChanged();
     void progressChanged();
     void importFinished(bool ok, int count, const QString& firstPath,
                         const QString& error);
+    void importNeedsDecision(int cells, int rows, int keptRows, const QString& fileName);
 
 public:
 
@@ -157,6 +167,8 @@ private:
                      const QString& error);
 
     BlockModel* model_ = nullptr;
+    FileSpecs pending_;                 // a parse over the cell cap, awaiting resolvePendingImport
+    QString pendingPath_;
     bool running_ = false;
     QString currentItem_;
     std::atomic<bool> cancel_{false};

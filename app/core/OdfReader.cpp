@@ -160,13 +160,35 @@ void readParagraphText(QXmlStreamReader& xml, const Styles& st,
 
 // --- Spreadsheet table (shared by ods sheets and odt inline tables) ----
 // Returns false when the table holds nothing.
-bool readOdfTable(QXmlStreamReader& xml, TableGrid& grid) {
+// An ODF length ("2.267cm", "0.9in", "72pt", "24mm", "96px") in px at 96 dpi; 0 when unreadable.
+int odfLengthPx(const QString& s) {
+    static const QRegularExpression re(QStringLiteral("^\\s*([0-9.]+)\\s*(cm|mm|in|pt|px)?\\s*$"));
+    const auto m = re.match(s);
+    if (!m.hasMatch()) return 0;
+    const double v = m.captured(1).toDouble();
+    const QString u = m.captured(2);
+    const double px = u == QLatin1String("cm") ? v * 96.0 / 2.54 : u == QLatin1String("mm") ? v * 96.0 / 25.4
+                    : u == QLatin1String("in") ? v * 96.0 : u == QLatin1String("pt") ? v * 96.0 / 72.0 : v;
+    return int(std::lround(px));
+}
+
+// `colPx` (SR-4 S8f, R-I4 4c): table-column style name → authored width in px; the table's
+// table:table-column elements (before its rows) map columns to styles.
+bool readOdfTable(QXmlStreamReader& xml, TableGrid& grid, const QHash<QString, int>& colPx = QHash<QString, int>()) {
     const QString endName = xml.qualifiedName().toString();   // table:table
     std::vector<std::vector<QString>> rows;
+    std::vector<int> widths;
     int maxCols = 0;
     while (!xml.atEnd()) {
         xml.readNext();
         if (xml.isEndElement() && xml.qualifiedName() == endName) break;
+        if (xml.isStartElement() && xml.qualifiedName() == QLatin1String("table:table-column")) {
+            const int rep = std::min(kMaxRepeat, std::max(1,
+                xml.attributes().value(QLatin1String("table:number-columns-repeated")).toInt()));
+            const int px = colPx.value(xml.attributes().value(QLatin1String("table:style-name")).toString(), 0);
+            for (int i = 0; i < rep && int(widths.size()) < kMaxCols; ++i) widths.push_back(px);
+            continue;
+        }
         if (!xml.isStartElement()
             || xml.qualifiedName() != QLatin1String("table:table-row")) continue;
         const int rowRepeat = std::min(kMaxRepeat, std::max(1,
@@ -222,8 +244,31 @@ bool readOdfTable(QXmlStreamReader& xml, TableGrid& grid) {
             g.setCellText(r, c, rows[size_t(r)][size_t(c)]);
     g.setHeaderRows(1);
     g.trimTrailingEmpty();   // shared import janitor, on top of the repeat trims
+    for (int c = 0; c < g.cols() && c < int(widths.size()); ++c)
+        if (widths[size_t(c)] > 0) g.setColWidth(c, std::clamp(widths[size_t(c)], 48, 4000));
     grid = g;
     return true;
+}
+
+// content.xml's automatic styles: table-column style name → authored width in px.
+QHash<QString, int> odfColumnWidths(const QByteArray& content) {
+    QHash<QString, int> out;
+    QXmlStreamReader xml(content);
+    QString cur;
+    bool column = false;
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (!xml.isStartElement()) continue;
+        const auto q = xml.qualifiedName();
+        if (q == QLatin1String("style:style")) {
+            cur = xml.attributes().value(QLatin1String("style:name")).toString();
+            column = xml.attributes().value(QLatin1String("style:family")) == QLatin1String("table-column");
+        } else if (column && q == QLatin1String("style:table-column-properties")) {
+            const int px = odfLengthPx(xml.attributes().value(QLatin1String("style:column-width")).toString());
+            if (px > 0) out.insert(cur, px);
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -243,6 +288,7 @@ std::vector<BlockModel::BlockSpec> OdfReader::readOds(const QString& path) {
                 ++sheetCount;
         }
     }
+    const QHash<QString, int> colPx = odfColumnWidths(data);
     QXmlStreamReader xml(data);
     while (!xml.atEnd()) {
         xml.readNext();
@@ -251,7 +297,7 @@ std::vector<BlockModel::BlockSpec> OdfReader::readOds(const QString& path) {
         const QString name =
             xml.attributes().value(QLatin1String("table:name")).toString();
         TableGrid grid;
-        if (!readOdfTable(xml, grid)) continue;
+        if (!readOdfTable(xml, grid, colPx)) continue;
         if (sheetCount > 1) {
             BlockModel::BlockSpec h;
             h.type = BlockModel::Heading;

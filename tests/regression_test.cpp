@@ -8246,6 +8246,80 @@ static void testOfficeTables() {
     dir.removeRecursively();
 }
 
+static void testImportCapAndPackages() {
+    qInfo("[106] the cell cap cuts at a row boundary; ODS column widths; a packaged table keeps its cell image (SR-4 S8f)");
+    {
+        std::vector<BlockModel::BlockSpec> specs;
+        BlockModel::BlockSpec p; p.type = BlockModel::Paragraph; p.text = QStringLiteral("intro");
+        specs.push_back(p);
+        for (int r = 0; r < 3; ++r) {                    // a 3-row × 2-cell table, then a paragraph
+            BlockModel::BlockSpec rec; rec.type = BlockModel::Split; rec.header = r == 0 ? 1 : 0; rec.ratios = { 0.5f, 0.5f };
+            specs.push_back(rec);
+            for (int c = 0; c < 2; ++c) { BlockModel::BlockSpec cell; cell.type = BlockModel::Paragraph; cell.cell = int8_t(c); specs.push_back(cell); }
+        }
+        specs.push_back(p);
+        CHECK(Importer::tableCellCount(specs) == 6, "6 cells counted");
+        std::vector<BlockModel::BlockSpec> cut = specs;
+        Importer::truncateToCellCap(cut, 4);
+        int recs = 0;
+        for (const auto& sp : cut) if (sp.type == BlockModel::Split) ++recs;
+        CHECK(cut.size() == 7 && recs == 2 && Importer::tableCellCount(cut) == 4,
+              "a cap of 4 keeps the intro and two whole rows, nothing after (%d specs)", int(cut.size()));
+        std::vector<BlockModel::BlockSpec> fits = specs;
+        Importer::truncateToCellCap(fits, 6);
+        CHECK(fits.size() == specs.size(), "a file under the cap is untouched");
+    }
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_cap_pkg"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    {   // ODS: a column style's width carries.
+        const QString ods = dir.filePath(QStringLiteral("w.ods"));
+        mnpkg::PackageWriter w(ods);
+        w.addCompressed(QStringLiteral("content.xml"), QByteArray(
+            "<office:document-content xmlns:office=\"o\" xmlns:table=\"t\" xmlns:text=\"x\" xmlns:style=\"s\">"
+            "<office:automatic-styles><style:style style:name=\"co1\" style:family=\"table-column\">"
+            "<style:table-column-properties style:column-width=\"2.54cm\"/></style:style></office:automatic-styles>"
+            "<office:body><office:spreadsheet><table:table table:name=\"S\">"
+            "<table:table-column table:style-name=\"co1\"/><table:table-column/>"
+            "<table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>"
+            "<table:table-row><table:table-cell><text:p>1</text:p></table:table-cell><table:table-cell><text:p>2</text:p></table:table-cell></table:table-row>"
+            "</table:table></office:spreadsheet></office:body></office:document-content>"));
+        CHECK(w.finish(), "ods fixture wrote");
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(Importer::importOdsFile(ods, &m), "ods imported");
+        const int h = findTableHead(m);
+        CHECK(h >= 0 && m.tableColumnWidth(h, 0) == 96 && m.tableColumnWidth(h, 1) != 96,
+              "ods: a 2.54 cm column style → 96 px, the other column auto (w0=%g)", h >= 0 ? m.tableColumnWidth(h, 0) : -1.0);
+        m.closeDocument();
+    }
+    {   // A packaged document keeps a table cell's image (an ordinary media block).
+        { QImage img(8, 8, QImage::Format_RGB32); img.fill(Qt::cyan); img.save(dir.filePath(QStringLiteral("pic.png")), "PNG"); }
+        const QString pkg = dir.filePath(QStringLiteral("t.mnpkg"));
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("doc"));
+        const int head = m.insertTableRows(0, 2, 2) - 1;
+        const int land = m.gridInsertMedia(head, 1, 0, QVariantList{ QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString() });
+        CHECK(land >= 0 && m.typeForRow(land) == BlockModel::Media, "a cell image in the table");
+        QString err;
+        CHECK(PackageExporter::packDocument(&m, pkg, true, &err), "the document packs (%s)", qPrintable(err));
+        m.closeDocument();
+        BlockModel v;
+        CHECK(v.openDocument(pkg), "the package opens");
+        const int vh = findTableHead(v);
+        const QVariantList cell = vh >= 0 ? v.gridCellRows(vh, 1, 0) : QVariantList();
+        CHECK(vh >= 0 && cell.size() == 1 && v.typeForRow(cell.front().toInt()) == BlockModel::Media
+                  && !v.mediaLocalPath(cell.front().toInt()).isEmpty() && QFileInfo::exists(v.mediaLocalPath(cell.front().toInt())),
+              "…and the cell's image resolves from the package");
+        v.closeDocument();
+    }
+    dir.removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8462,6 +8536,7 @@ int main(int argc, char** argv) {
     testPasteRouter();
     testForeignTables();
     testOfficeTables();
+    testImportCapAndPackages();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);
