@@ -7535,6 +7535,76 @@ static void testPastedHtmlTables() {
     }
 }
 
+static void testTableGripsAndDrops() {
+    qInfo("[97] a header row carries its table; a body row moves out; files dropped on a cell join it (SR-4 S7b)");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_griddrop"));
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    { QImage img(8, 8, QImage::Format_RGB32); img.fill(Qt::blue);
+      img.save(dir.filePath(QStringLiteral("pic.png")), "PNG"); }
+    const QString url = QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString();
+    auto fresh = [](BlockModel& m) {                 // 0 p0 · 1 table (3 rows × 2 cells, rows 1–9) · 10 p1
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0); m.setContent(0, QStringLiteral("p0"));
+        m.insertBlock(1); m.setContent(1, QStringLiteral("p1"));
+        const int head = m.insertTableRows(0, 3, 2) - 1;
+        m.setContent(m.gridCellAt(head, 0, 0), QStringLiteral("H"));
+        m.setContent(m.gridCellAt(head, 2, 1), QStringLiteral("z"));
+        return head;
+    };
+    {
+        BlockModel m;
+        const int head = fresh(m);
+        const QVariantList recs = m.tableRecords(head);
+        const int count = m.splitRowLast(recs.back().toInt()) - head + 1;
+        CHECK(head == 1 && count == 9 && m.rowCountQml() == 11, "fixture: p0 · a 3-row table · p1");
+        m.moveBlocks(head, count, m.rowCountQml() - count, -1);        // the table's run, below p1
+        CHECK(m.contentForRow(0) == QStringLiteral("p0") && m.contentForRow(1) == QStringLiteral("p1")
+                  && m.headerCount(2) == 1 && m.gridRowCount(2) == 3 && m.gridCellText(2, 0, 0) == QStringLiteral("H")
+                  && m.gridCellText(2, 2, 1) == QStringLiteral("z") && m.structureValid(),
+              "the header row's run carries the whole table, header and cells intact");
+        m.undo();
+        CHECK(m.headerCount(1) == 1 && m.gridRowCount(1) == 3 && m.contentForRow(10) == QStringLiteral("p1") && m.structureValid(),
+              "…one undo step puts it back");
+    }
+    {
+        BlockModel m;
+        const int head = fresh(m);
+        const int rec = m.tableRecords(head).back().toInt();
+        m.moveBlocks(rec, m.splitRowLast(rec) - rec + 1, 0, -1);      // the last body row, above p0
+        CHECK(m.typeForRow(0) == BlockModel::Split && m.tableHeadOf(0) < 0 && m.headerCount(4) == 1
+                  && m.gridRowCount(4) == 2 && m.structureValid(),
+              "a body row dropped outside its table leaves it and becomes a layout row");
+    }
+    {
+        BlockModel m;
+        const int head = fresh(m);
+        const int land = m.gridInsertMedia(head, 1, 0, QVariantList{ url });
+        const QVariantList cell = m.gridCellRows(head, 1, 0);
+        CHECK(land >= 0 && cell.size() == 1 && cell.front().toInt() == land && m.typeForRow(land) == BlockModel::Media
+                  && m.gridColumnOf(land) == 0 && m.structureValid(),
+              "a file dropped on an empty cell replaces its empty paragraph");
+        m.undo();
+        const QVariantList back = m.gridCellRows(head, 1, 0);
+        CHECK(back.size() == 1 && m.typeForRow(back.front().toInt()) == BlockModel::Paragraph && m.structureValid(),
+              "…one undo step");
+        const int x = m.gridCellAt(head, 1, 1);
+        m.setContent(x, QStringLiteral("x"));
+        CHECK(m.gridInsertMedia(head, 1, 1, QVariantList{ url, url }) >= 0 && m.gridCellRows(head, 1, 1).size() == 3
+                  && m.contentForRow(m.gridCellAt(head, 1, 1)) == QStringLiteral("x") && m.structureValid(),
+              "two files dropped on a cell with text append after it, in order");
+        m.undo();
+        CHECK(m.gridCellRows(head, 1, 1).size() == 1, "…both in one undo step");
+        CHECK(m.gridSetColumnKind(head, 0, 1) && m.gridInsertMedia(head, 2, 0, QVariantList{ url }) < 0,
+              "a typed body cell refuses a drop");
+        CHECK(m.gridInsertMedia(head, 0, 0, QVariantList{ url }) >= 0 && m.gridCellText(head, 0, 0).contains(QStringLiteral("H"))
+                  && m.structureValid(),
+              "a header cell over a typed column takes it (header rows are text)");
+    }
+    dir.removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -7742,6 +7812,7 @@ int main(int argc, char** argv) {
     testSplitRowExits();
     testLeftPullRanks();
     testPastedHtmlTables();
+    testTableGripsAndDrops();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

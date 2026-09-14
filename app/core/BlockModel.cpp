@@ -1675,6 +1675,26 @@ int BlockModel::insertGridFromTSV(int afterRow, const QString& tsv) {
     return gridCellAt(head, 0, 0);
 }
 
+int BlockModel::gridInsertMedia(int head, int r, int c, const QVariantList& fileUrls) {
+    if (headerCount(head) <= 0 || r < 0 || r >= gridRowCount(head) || c < 0 || c >= 63 || fileUrls.isEmpty()) return -1;
+    if (r >= headerCount(head) && gridColumnKind(head, c) != 0) return -1;   // a typed body cell holds one chip
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    const bool ragged = gridCellAt(head, r, c) < 0;
+    int last = -1;
+    if (ensureGridCell(head, r, c) >= 0) {
+        for (const QVariant& u : fileUrls) {
+            const QVariantList blocks = gridCellRows(head, r, c);
+            if (blocks.isEmpty()) break;
+            const int nr = insertMediaFromUrl(blocks.back().toInt(), u.toString());   // joins the cell's lane
+            if (nr >= 0) last = nr;
+        }
+    }
+    if (ragged && last < 0) { bumpLayout(); ++contentRevision_; emit contentChangedSpike(); }
+    endTxn();
+    return last;
+}
+
 void BlockModel::adaptJoinedChips(int head, int firstJoined) {
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     const int rows = gridRowCount(head), hc = headerCount(head);

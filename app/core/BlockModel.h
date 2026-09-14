@@ -309,6 +309,10 @@ public:
     // A tabular plain-text paste outside a table (S7a): a new table below afterRow holding the
     // grid, its first row the header. One undo; → the first cell's block, or -1.
     Q_INVOKABLE int insertGridFromTSV(int afterRow, const QString& tsv);
+    // Files dropped on a table cell (S7b): media blocks appended to the cell in order (an empty
+    // last paragraph is replaced; a ragged cell is materialized). Typed body cells refuse — they
+    // hold one chip. One undo; → the last media block's row, or -1 when nothing landed.
+    Q_INVOKABLE int gridInsertMedia(int head, int r, int c, const QVariantList& fileUrls);
     // SR-0 §4.2/§4.3 case 4: remove a lane's sole empty paragraph — A4 collapses the lane
     // or unwraps the row — as one undo step. Returns [caretRow, caretCol]: backward, the
     // end of the previous lane's last block (else the next lane's start); forward, the

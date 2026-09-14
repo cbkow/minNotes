@@ -114,6 +114,24 @@ Item {
                 anchors.fill: parent
                 color: Theme.colors.selectionBg
             }
+            Rectangle {   // S7b: a grip-picked row or column set
+                readonly property var s: editor.gridSet
+                visible: s !== null && s.head === cell.tableHead && s.rev === blockModel.contentRevision
+                         && (s.kind === "row" ? s.items.indexOf(cell.gridRow) >= 0 : s.items.indexOf(index) >= 0)
+                anchors.fill: parent
+                color: Theme.colors.selectionBg
+            }
+            Rectangle {   // S7b: the column a grip drag moves; the cell files are dragged over
+                readonly property bool moving: editor.gridColDragging && editor.gridGripPressHead === cell.tableHead
+                                               && editor.gridGripPressIndex === index
+                readonly property bool dropping: editor.dropGridHead === cell.tableHead && editor.dropGridR === cell.gridRow
+                                                 && editor.dropGridC === index
+                visible: moving || dropping
+                anchors.fill: parent
+                color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, dropping ? 0.16 : 0.14)
+                border.width: dropping ? 2 : 0
+                border.color: Theme.colors.accent
+            }
             Rectangle {   // the column's right border — accent while hovered
                 readonly property bool hot: cell.hotColumn === index
                 anchors.right: parent.right; width: hot ? 2 : 1; height: parent.height
@@ -132,6 +150,31 @@ Item {
         x: editor.leftEdge; y: cell.padTop; height: 1
         width: (blockModel.layoutRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
+    }
+    // Grips (SR-4 S7b): the hovered row's pill in the left margin, the hovered column's in the pocket
+    // above the first row; accent while pressed or dragged.
+    Rectangle {
+        readonly property bool live: editor.gridGripPressed && editor.gridGripPressKind === "row"
+            && editor.gridGripPressHead === cell.tableHead && editor.gridGripPressIndex === cell.gridRow
+        visible: cell.isTableRecord && (live || (editor.gridGripKind === "row" && editor.gridGripHead === cell.tableHead
+                                                 && editor.gridGripIndex === cell.gridRow))
+        x: editor.leftEdge - 13; y: cell.padTop; width: 8
+        height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
+        color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+        border.width: 1; border.color: live ? Theme.colors.accent : Theme.colors.border
+    }
+    Rectangle {
+        readonly property bool live: (editor.gridColDragging || (editor.gridGripPressed && editor.gridGripPressKind === "col"))
+            && editor.gridGripPressHead === cell.tableHead
+        readonly property int col: !cell.isTableRecord || cell.gridRow !== 0 ? -1
+            : live ? editor.gridGripPressIndex
+            : editor.gridGripKind === "col" && editor.gridGripHead === cell.tableHead ? editor.gridGripIndex : -1
+        visible: col >= 0
+        x: editor.leftEdge + (blockModel.layoutRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
+        width: (blockModel.layoutRevision, col >= 0 ? blockModel.tableColumnWidth(cell.tableHead, col) : 0)
+        y: cell.padTop - 13; height: 8
+        color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover
+        border.width: 1; border.color: live ? Theme.colors.accent : Theme.colors.border
     }
 
     // The delegate spans the whole field (row fill, washes); content sits at colLeft.
