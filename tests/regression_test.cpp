@@ -8356,6 +8356,46 @@ static void testGridTabsAndBoard() {
           "…and the choice (r2='%s' r1='%s')", qPrintable(m.gridCellChoice(h1, 2, 1)), qPrintable(m.gridCellChoice(h1, 1, 1)));
 }
 
+static void testTimecodeColumns() {
+    qInfo("[108] timecode columns: frames and timecodes normalize at the column's rate, sort by frames (SR-4 T6)");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    const int h = m.insertTableRows(0, 4, 2) - 1;
+    auto set = [&](int r, int c, const char* t) { m.setContent(m.gridCellAt(h, r, c), QString::fromUtf8(t)); };
+    set(0, 0, "Shot"); set(0, 1, "In");
+    set(1, 0, "a"); set(1, 1, "86400");
+    set(2, 0, "b"); set(2, 1, "00:00:10:00");
+    set(3, 0, "c"); set(3, 1, "tbd");
+    CHECK(m.timecodeForFrames(86400, 24) == QStringLiteral("01:00:00:00") && m.framesForTimecode(QStringLiteral("00:00:10:00"), 24) == 240
+              && m.framesForTimecode(QStringLiteral("tbd"), 24) < 0,
+          "the formatter at 24: frames ⇄ SMPTE, junk unreadable (%s, %d)", qPrintable(m.timecodeForFrames(86400, 24)), m.framesForTimecode(QStringLiteral("00:00:10:00"), 24));
+    // 29.97 drop-frame: 30 minutes = 54000 nominal frames minus 2 per minute except every tenth (27 × 2).
+    CHECK(m.timecodeForFrames(53946, 29.97) == QStringLiteral("00:30:00;00") && m.framesForTimecode(QStringLiteral("00:30:00;00"), 29.97) == 53946,
+          "…and at 29.97 drop-frame (%s, %d)", qPrintable(m.timecodeForFrames(53946, 29.97)), m.framesForTimecode(QStringLiteral("00:30:00;00"), 29.97));
+    CHECK(m.gridSetColumnKind(h, 1, 3) && m.gridColumnKind(h, 1) == 3 && m.gridColumnFps(h, 1) == 24.0
+              && m.gridCellText(h, 1, 1) == QStringLiteral("01:00:00:00") && m.gridCellText(h, 2, 1) == QStringLiteral("00:00:10:00")
+              && m.gridCellText(h, 3, 1) == QStringLiteral("tbd") && m.gridCellText(h, 0, 1) == QStringLiteral("In"),
+          "making the column timecode normalizes frame counts, keeps timecodes and junk, header untouched (%s / %s)",
+          qPrintable(m.gridCellText(h, 1, 1)), qPrintable(m.gridCellText(h, 3, 1)));
+    m.setContent(m.gridCellAt(h, 3, 1), QStringLiteral("48"));
+    m.commitMarkdown(m.gridCellAt(h, 3, 1));
+    CHECK(m.gridCellText(h, 3, 1) == QStringLiteral("00:00:02:00"), "leaving a cell normalizes what was typed (%s)", qPrintable(m.gridCellText(h, 3, 1)));
+    m.undo();
+    CHECK(m.gridCellText(h, 3, 1) == QStringLiteral("48"), "…as its own undo step");
+    m.redo();
+    CHECK(m.gridSortByColumn(h, 1, true) && m.gridCellText(h, 1, 0) == QStringLiteral("c") && m.gridCellText(h, 2, 0) == QStringLiteral("b")
+              && m.gridCellText(h, 3, 0) == QStringLiteral("a"),
+          "sorting a timecode column orders by frames (c 48 < b 240 < a 86400)");
+    CHECK(m.gridSetColumnFps(h, 1, 25) && m.gridColumnFps(h, 1) == 25.0 && m.gridCellText(h, 3, 1) == QStringLiteral("01:00:00:00"),
+          "a frame-rate change re-normalizes: the timecode text stays (frames are what's read back)");
+    CHECK(m.gridPasteTSV(h, 1, 1, QStringLiteral("100")) >= 0 && m.gridCellText(h, 1, 1) == QStringLiteral("00:00:04:00"),
+          "a pasted frame count normalizes at 25 fps (%s)", qPrintable(m.gridCellText(h, 1, 1)));
+    CHECK(m.gridSetColumnKind(h, 1, 0) && m.gridColumnKind(h, 1) == 0 && m.gridCellText(h, 1, 1) == QStringLiteral("00:00:04:00"),
+          "back to text keeps the timecode strings");
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8574,6 +8614,7 @@ int main(int argc, char** argv) {
     testOfficeTables();
     testImportCapAndPackages();
     testGridTabsAndBoard();
+    testTimecodeColumns();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

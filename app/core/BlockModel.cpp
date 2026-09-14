@@ -6,6 +6,7 @@
 #include "TableGrid.h"
 #include "PathMap.h"
 #include "CodeSyntax.h"                     // the language chip's picker feed
+#include "../player/timecode_formatter.h"   // timecode columns (SR-4 T6)
 #include "../notes/sketch_text.h"
 #include "../notes/doc_ink.h"               // page-width ink migration (setPageWidth)
 #include "../notes/annotation_thumbnail.h"  // qcv::strokeBoundsNorm (oval-aware bbox)
@@ -1091,9 +1092,14 @@ bool BlockModel::gridSortByColumn(int head, int c, bool asc) {
     const QJsonObject col = tableColsOf(rows_[size_t(head)].table).at(c).toObject();
     const int kind = col.value(QStringLiteral("k")).toInt(0);
     const QJsonArray opts = col.value(QStringLiteral("o")).toArray();
+    const double fps = col.value(QStringLiteral("fps")).toDouble(24.0);
     auto typedKey = [&](const GridRow& gr) {
         const int b = c < static_cast<int>(gr.cells.size()) && !gr.cells[size_t(c)].blocks.empty()
                     ? gr.cells[size_t(c)].blocks.front() : -1;
+        if (kind == 3) {                                          // timecode: by frames, unreadable last
+            const int f = b >= 0 ? framesForTimecode(content_[size_t(b)], fps) : -1;
+            return f < 0 ? std::numeric_limits<int>::max() : f;
+        }
         const QString v = chipPayloadOf(b).value(QStringLiteral("v")).toString();
         if (kind == 2) return v.toInt();
         for (int i = 0; i < opts.size(); ++i)
@@ -1308,9 +1314,77 @@ QVariantList BlockModel::gridColumnOptions(int head, int c) const {
     return out;
 }
 
+// The formatter for a column's frame rate: the broadcast rates as their exact fractions (drop-frame
+// for the 1001 rates), anything else as an integer rate.
+static ufbplayer::TimecodeFormatter tcFormatterFor(double fps) {
+    if (fps <= 0) fps = 24;
+    if (std::abs(fps - 23.976) < 0.01) return ufbplayer::TimecodeFormatter(24000, 1001, false);
+    if (std::abs(fps - 29.97) < 0.01)  return ufbplayer::TimecodeFormatter(30000, 1001, true);
+    if (std::abs(fps - 59.94) < 0.01)  return ufbplayer::TimecodeFormatter(60000, 1001, true);
+    return ufbplayer::TimecodeFormatter(static_cast<int>(std::lround(fps)), 1, false);
+}
+
+QString BlockModel::timecodeForFrames(int frames, double fps) const {
+    const ufbplayer::TimecodeFormatter f = tcFormatterFor(fps);
+    return f.isValid() ? f.format(std::max(0, frames)) : QString();
+}
+
+int BlockModel::framesForTimecode(const QString& text, double fps) const {
+    const QString t = text.trimmed();
+    if (t.isEmpty()) return -1;
+    bool isInt = false;
+    const int n = t.toInt(&isInt);
+    if (isInt) return std::max(0, n);
+    const ufbplayer::TimecodeFormatter f = tcFormatterFor(fps);
+    return f.isValid() ? f.parse(t) : -1;
+}
+
+double BlockModel::gridColumnFps(int head, int c) const {
+    const TableGeom* tg = c >= 0 ? tableGeom(head) : nullptr;
+    const double fps = tg ? tg->spec.at(c).toObject().value(QStringLiteral("fps")).toDouble(0) : 0;
+    return fps > 0 ? fps : 24.0;
+}
+
+bool BlockModel::normalizeTimecodeCell(int block) {
+    if (block < 0 || block >= static_cast<int>(rows_.size())) return false;
+    const Row& r = rows_[size_t(block)];
+    if (r.cell < 0 || r.type != Paragraph) return false;
+    const int head = tableHeadOf(block);
+    if (head < 0 || isHeaderRow(block) || gridColumnKind(head, r.cell) != 3) return false;
+    const QString text = content_[size_t(block)].trimmed();
+    if (text.isEmpty()) return false;
+    const int frames = framesForTimecode(text, gridColumnFps(head, r.cell));
+    if (frames < 0) return false;
+    const QString canon = timecodeForFrames(frames, gridColumnFps(head, r.cell));
+    if (canon.isEmpty() || canon == content_[size_t(block)]) return false;
+    writePlainValue(block, canon);
+    return true;
+}
+
+bool BlockModel::gridSetColumnFps(int head, int c, double fps) {
+    if (headerCount(head) == 0 || c < 0 || c >= tableColumnCount(head) || fps <= 0) return false;
+    QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
+    while (spec.size() <= c) spec.append(QJsonObject());
+    QJsonObject col = spec[c].toObject();
+    col.insert(QStringLiteral("fps"), fps);
+    spec[c] = col;
+    std::vector<GridRow> grid = gridOf(head);
+    const auto [lo, hi] = tableBand(head);
+    beginTxn(lo, hi);
+    rebuildTable(lo, hi, grid, spec, headerCount(head));
+    tableGeomDirty_ = true;
+    if (gridColumnKind(head, c) == 3)
+        for (int r = headerCount(head); r < gridRowCount(head); ++r) normalizeTimecodeCell(gridCellAt(head, r, c));
+    bumpLayout();
+    ++contentRevision_;
+    emit contentChangedSpike();
+    endTxn();
+    return true;
+}
+
 bool BlockModel::gridSetColumnKind(int head, int c, int kind) {
     if (headerCount(head) == 0 || c < 0 || c >= tableColumnCount(head)) return false;
-    kind = std::clamp(kind, 0, 2);
+    kind = std::clamp(kind, 0, 3);
     QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     while (spec.size() <= c) spec.append(QJsonObject());
     QJsonObject col = spec[c].toObject();
@@ -1348,12 +1422,15 @@ bool BlockModel::gridSetColumnKind(int head, int c, int kind) {
         GridCell& cell = grid[r].cells[size_t(c)];
         const QString v = valueOf(cell);
         const int keep = cell.blocks.front();               // the value block; the rest go (one value per cell)
-        if (kind == 0) writePlainValue(keep, v);
+        if (kind == 0 || kind == 3) writePlainValue(keep, v);
         else writeCellValue(keep, valueOptions, optionIdByLabel(valueOptions, v));
         if (kind == 2 && optionIdByLabel(valueOptions, v) == QStringLiteral("0")) writeCellValue(keep, valueOptions, QString());
         cell.blocks = { keep };
     }
     rebuildTable(lo, hi, grid, spec, headerCount(head));
+    tableGeomDirty_ = true;                                  // the spec (and its cached parse) changed
+    if (kind == 3)                                           // T6: frame counts / timecodes → canonical
+        for (int r = headerCount(head); r < gridRowCount(head); ++r) normalizeTimecodeCell(gridCellAt(head, r, c));
     bumpLayout();
     ++contentRevision_;
     emit contentChangedSpike();
@@ -1681,6 +1758,7 @@ int BlockModel::gridPasteTSV(int head, int r0, int c0, const QString& text) {
                 writeCellValue(gridCellAt(head, r, c), checkOptions(), id == QStringLiteral("0") ? QString() : id);
             } else {
                 writePlainValue(gridCellAt(head, r, c), v);
+                if (kind == 3) normalizeTimecodeCell(gridCellAt(head, r, c));
             }
             land = gridCellAt(head, r, c);
         }
@@ -1803,6 +1881,7 @@ void BlockModel::writeCellSpecs(int head, int r, int c, const std::vector<BlockS
     }
     if (in.empty()) return;
     spliceSpecsAt(b + 1, in, /*allowReuseAnchorAbove=*/true, c);   // folds into the empty paragraph
+    if (kind == 3) normalizeTimecodeCell(gridCellAt(head, r, c));
 }
 
 int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool forceFill) {
@@ -6851,6 +6930,15 @@ void BlockModel::commitMarkdown(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     const uint8_t t = rows_[row].type;
     if (t != Paragraph && t != Quote && t != ListItem && t != TaskListItem) return;   // where inline md renders
+    // T6: leaving a timecode cell normalizes it (its own undo step, like the markdown commit).
+    if (rows_[row].cell >= 0 && tableHeadOf(row) >= 0 && gridColumnKind(tableHeadOf(row), rows_[row].cell) == 3) {
+        const auto [lo, hi] = tableBand(tableHeadOf(row));
+        beginTxn(lo, hi);
+        const bool changed = normalizeTimecodeCell(row);
+        if (changed) { bumpLayout(); ++contentRevision_; emit contentChangedSpike(); }
+        endTxn();
+        return;
+    }
     // A "```"/"```lang" fence is a code-block trigger (consumed on Enter); never
     // run inline conversion on it, which would eat the backticks into a stray span.
     if (content_[row].startsWith(QLatin1String("```"))) return;

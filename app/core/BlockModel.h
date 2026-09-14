@@ -297,6 +297,14 @@ public:
     Q_INVOKABLE int gridCellCheck(int head, int r, int c) const;             // 0 / 1 / 2
     Q_INVOKABLE bool gridSetCellCheck(int head, int r, int c, int state);
     Q_INVOKABLE bool gridCycleCellCheck(int head, int r, int c);              // To do → Doing → Done → To do
+    // T6 (S9c): a TIMECODE column (kind 3) — plain text cells that normalize to SMPTE timecode at the
+    // column's frame rate (`fps` in the spec, 24 by default): a frame count becomes "hh:mm:ss:ff", a
+    // timecode its canonical form (drop-frame for 29.97 / 59.94), anything else stays. Normalized when
+    // a cell is left (commitMarkdown), filled, pasted, or the kind is set; sorts by frames.
+    Q_INVOKABLE double gridColumnFps(int head, int c) const;
+    Q_INVOKABLE bool gridSetColumnFps(int head, int c, double fps);         // re-normalizes the column
+    Q_INVOKABLE QString timecodeForFrames(int frames, double fps) const;
+    Q_INVOKABLE int framesForTimecode(const QString& text, double fps) const;   // -1 when unreadable
     // Keys (S6a). tabTarget in a table walks cells in reading order and returns
     // kTabAppendsRow past the table's last cell (A3). An empty last body row exits the table
     // as a paragraph below it (A1; one undo; → the paragraph's row, or -1).
@@ -1411,6 +1419,7 @@ private:
                             const std::function<QString(const QString&)>& remap);
     int ensureGridCell(int head, int r, int c);                  // materialize a ragged cell; → its block
     void writeCellSpecs(int head, int r, int c, const std::vector<BlockSpec>& blocks);   // S8d: a cell takes these blocks (typed: by label)
+    bool normalizeTimecodeCell(int block);                        // T6: the block's text → canonical timecode; true when it changed
     void adaptJoinedChips(int head, int firstJoined);            // A9: joined rows' chips adopt the head's options
     static double tableLaneWidth(const TableGeom& g, int cell) {
         return cell >= 0 && static_cast<std::size_t>(cell) < g.w.size() ? g.w[static_cast<std::size_t>(cell)] : 160.0;

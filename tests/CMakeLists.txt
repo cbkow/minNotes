@@ -21,6 +21,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/BlockClipboard.cpp
     ${CMAKE_SOURCE_DIR}/app/core/ClipboardPaster.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Clipboard.cpp
+    ${CMAKE_SOURCE_DIR}/app/player/timecode_formatter.cpp   # timecode columns (SR-4 T6)
     # Spell + grammar checker (Quick-free by design; the corpus test [62] runs
     # the real rule file through the real interpreter).
     ${CMAKE_SOURCE_DIR}/app/spell/SpellTokenizer.cpp

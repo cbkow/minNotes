@@ -802,6 +802,9 @@ FocusScope {
     // time" for free; scrolling the playing block out of view tears it down.
     // Transport logic is ported from ufb's VideoPreview. ---
     property int  videoPlayingRow: -1
+    // T5 (S9c): a video whose column is narrower than this can't host the transport; its bar hides and
+    // a click on the frame opens the review view instead.
+    readonly property real transportMinW: 300
     // The active video's file path, captured at activation. Playhead banking keys
     // off THIS, not blockModel.mediaLocalPath(videoPlayingRow), so teardown stays
     // correct even when blockModel has already re-pointed to another note (a note
@@ -4912,6 +4915,12 @@ FocusScope {
                     return
                 }
                 mouse.lastDblClickMs = 0
+                // T5 (S9c): a video in a cell too narrow for its transport opens the review view on click.
+                if (blockModel.typeForRow(h.row) === 3 && blockModel.mediaKind(h.row) === "video"
+                    && blockModel.laneForRow(h.row) >= 0 && root.measureForRow(h.row) < root.transportMinW) {
+                    root.setActiveTab(blockModel.idForRow(h.row))
+                    return
+                }
                 {   // SR-4 §4.14: a typed table cell — a click opens a choice cell's picker; a click on a
                     // check cell's box cycles it. The caret parks at the cell's start.
                     const gh = blockModel.tableHeadOf(h.row)
@@ -7437,6 +7446,7 @@ FocusScope {
             enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: root.activeTableRow < 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+                     && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
                      && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
@@ -7960,6 +7970,21 @@ FocusScope {
             onClicked: { parent.activated(); blockMenu.close() }
         }
     }
+    component MenuTextBtn: Rectangle {   // a small text segment (the timecode column's frame rates)
+        property string text: ""
+        property bool on: false
+        signal activated()
+        width: Math.max(26, mtbLabel.implicitWidth + 8); height: 22
+        color: on ? Theme.colors.divider : (mtbMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+        Text { id: mtbLabel; anchors.centerIn: parent; text: parent.text; font.family: Theme.font.family; font.pixelSize: 11
+               color: parent.on ? Theme.colors.textBright : Theme.colors.textMuted }
+        MouseArea {
+            id: mtbMA
+            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) { root.menuHiScope = "column"; root.menuHiDanger = false }
+            onClicked: { parent.activated(); blockMenu.close() }
+        }
+    }
     component MenuSegRow: Item {
         property string label: ""
         default property alias content: segRow.data
@@ -8443,6 +8468,18 @@ FocusScope {
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 2); return [r, c] }) }
                 MenuRow { visible: blockMenu.gridColKind === 1; scope: "column"; text: "Edit options…"
                           onActivated: choiceEditor.open2Grid(blockMenu.gridHead, blockMenu.gridC) }
+                MenuRow { visible: blockMenu.gridColKind !== 3; scope: "column"; text: "Make timecode column"
+                          onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 3); return [r, c] }) }
+                MenuSegRow {   // T6: the timecode column's frame rate
+                    visible: blockMenu.gridColKind === 3
+                    label: "Frame rate"
+                    readonly property real fps: blockMenu.gridColKind === 3 ? (blockModel.contentRevision, blockModel.gridColumnFps(blockMenu.gridHead, blockMenu.gridC)) : 0
+                    Repeater {
+                        model: [23.976, 24, 25, 29.97, 30, 60]
+                        MenuTextBtn { required property var modelData; text: "" + modelData; on: Math.abs(parent.parent.fps - modelData) < 0.01
+                                      onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnFps(h, c, modelData); return null }) }
+                    }
+                }
                 MenuRow { visible: blockMenu.gridColKind !== 0; scope: "column"; text: "Make text column"; danger: true
                           onActivated: root.gridMenuOp(function(h, r, c) { blockModel.gridSetColumnKind(h, c, 0); return [r, c] }) }
                 Rectangle { visible: blockMenu.gridCols > 1; width: parent.width; height: 1; color: Theme.colors.divider }
