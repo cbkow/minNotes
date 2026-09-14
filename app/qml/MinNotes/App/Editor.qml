@@ -4552,7 +4552,18 @@ FocusScope {
         // Under the sticky header (z 2.5 < 3); the pinned corner cell sits over both.
         Item {
             id: frozenColumn
-            readonly property var rows: {
+            // `computed` is a fresh array per scroll frame; `rows` (the Repeater's model) only changes when
+            // the visible set does — a model reset per frame rebuilt every mirror cell (the big-table crawl).
+            property var rows: []
+            onComputedChanged: {
+                const a = computed, b = rows
+                let same = a.length === b.length
+                for (let i = 0; same && i < a.length; ++i)
+                    same = a[i].head === b[i].head && a[i].gr === b[i].gr && a[i].y === b[i].y && a[i].h === b[i].h
+                        && a[i].w === b[i].w && a[i].tw === b[i].tw && a[i].header === b[i].header
+                if (!same) rows = a
+            }
+            readonly property var computed: {
                 const dep = blockModel.layoutRevision + blockModel.contentRevision + flick.contentY + flick.contentX
                 if (flick.contentX <= root.leftEdge + 1) return []
                 const out = []
@@ -4604,7 +4615,7 @@ FocusScope {
         }
         Rectangle {   // the corner: the header's first cell, pinned at the top and the left
             id: frozenCorner
-            readonly property int head: stickyHeader.has ? stickyHeader.st.head : -1
+            readonly property int head: stickyHeader.stHead
             visible: stickyHeader.visible && flick.contentX > root.leftEdge + 1 && head >= 0
                      && root.leftEdge + (blockModel.layoutRevision, blockModel.tableWidth(head)) > flick.contentX
             x: flick.contentX + (head >= 0 ? Math.min(0, root.leftEdge + (blockModel.layoutRevision, blockModel.tableWidth(head))
@@ -4638,6 +4649,21 @@ FocusScope {
                                        blockModel.tableStickyAt(flick.contentY))
             readonly property bool has: st.head !== undefined
             readonly property real headerH: has ? st.headerBottom - st.headerTop : 0
+            readonly property real headerTop: has ? st.headerTop : 0
+            // `st` is a fresh map per scroll frame. The Repeater's model and the cells' head are STABLE
+            // properties reassigned only when the sticky table or its header rows change — a model reset
+            // per frame rebuilt every header cell (the big-table crawl).
+            property int stHead: -1
+            property var headerRows: []
+            onStChanged: {
+                const h = has ? st.head : -1
+                const rows = h >= 0 ? st.headerRows : []
+                let same = h === stHead && rows.length === headerRows.length
+                for (let i = 0; same && i < rows.length; ++i) same = rows[i] === headerRows[i]
+                if (same) return
+                stHead = h
+                headerRows = rows
+            }
             visible: has && flick.contentY > st.headerTop && flick.contentY < st.tableBottom - headerH
             x: 0
             y: flick.contentY + (has ? Math.min(0, st.tableBottom - headerH - flick.contentY) : 0)
@@ -4645,21 +4671,21 @@ FocusScope {
             width: flick.contentWidth
             height: headerH
             Repeater {
-                model: stickyHeader.visible ? stickyHeader.st.headerRows : []
+                model: stickyHeader.headerRows
                 delegate: Item {
                     id: stickyRow
                     required property var modelData
                     required property int index
                     readonly property int rec: modelData
                     readonly property real pad: index === 0 ? blockModel.tablePadTop(rec) : 0
-                    y: (blockModel.layoutRevision, blockModel.yForRow(rec)) + pad - stickyHeader.st.headerTop
+                    y: (blockModel.layoutRevision, blockModel.yForRow(rec)) + pad - stickyHeader.headerTop
                     width: stickyHeader.width
                     height: (blockModel.layoutRevision, blockModel.heightForRow(rec)) - pad
                     Repeater {
-                        model: (blockModel.contentRevision, blockModel.tableColumnCount(stickyHeader.st.head))
+                        model: (blockModel.contentRevision, blockModel.tableColumnCount(stickyHeader.stHead))
                         delegate: Rectangle {
                             required property int index
-                            readonly property int head: stickyHeader.st.head
+                            readonly property int head: stickyHeader.stHead
                             readonly property string bg: (blockModel.contentRevision, blockModel.gridCellBg(head, stickyRow.index, index))
                             readonly property string fg: (blockModel.contentRevision, blockModel.gridCellFg(head, stickyRow.index, index))
                             x: root.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(head, index))
