@@ -16,6 +16,7 @@ public:
 
     bool enabled = true;
     bool hlOverlay = false;   // highlight spans drawn by the view, not as char bg
+    QColor baseColor;         // a table cell's text colour (invalid = none)
     QColor markerColor         = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
     QColor selectedMarkerColor = QColor(0xff, 0xff, 0xff);   // Theme.colors.textBright
     QColor codeColor           = QColor(0x4a, 0xa8, 0xff);   // Theme.colors.inlineCodeText (blue)
@@ -40,8 +41,10 @@ protected:
 
         // No background here — the code "chip" is a QML overlay rect layered
         // BELOW the selection (so selecting code highlights it). Glyphs only.
+        const QColor codeFg = baseColor.isValid() ? baseColor : codeColor;   // a coloured cell colours its code too
+        const QColor linkFg = baseColor.isValid() ? baseColor : linkColor;
         QTextCharFormat code;
-        code.setForeground(codeColor);
+        code.setForeground(codeFg);
         code.setFontFamilies(codeFamilies());
 
         // A marker token at local [start,start+len): accent, or white if it sits
@@ -106,20 +109,21 @@ protected:
             if (fl[x] & 8)  f.setFontStrikeOut(true);
             if (fl[x] & 16) f.setFontUnderline(true);
             if (fl[x] & 4) {   // code: glyphs only; chip drawn as a QML overlay
-                f.setForeground(codeColor);
+                f.setForeground(codeFg);
                 f.setFontFamilies(codeFamilies());
             }
             if (fl[x] & 32) {  // link: underline + accent (code colour wins if both)
                 f.setFontUnderline(true);
-                if (!(fl[x] & 4)) f.setForeground(linkColor);
+                if (!(fl[x] & 4)) f.setForeground(linkFg);
             }
             if (bg[x].isValid()) {
                 if (!hlOverlay) f.setBackground(bg[x]);               // highlight (else the view overlays it)
                 // Auto-contrast: highlighted glyphs flip dark/light from the
                 // highlight's luma so a bright highlighter stays readable.
                 // Overrides code/link colours (readability wins; the underline
-                // keeps a link recognisable); an explicit fg span still wins below.
-                if (!fg[x].isValid()) {
+                // keeps a link recognisable); an explicit fg span still wins below,
+                // and a coloured cell keeps its colour (the user chose both).
+                if (!fg[x].isValid() && !baseColor.isValid()) {
                     const int luma = (299 * bg[x].red() + 587 * bg[x].green() + 114 * bg[x].blue()) / 1000;
                     f.setForeground(luma > 150 ? QColor(QStringLiteral("#1c1c1c"))
                                                : QColor(QStringLiteral("#f0f0f0")));
@@ -167,6 +171,12 @@ QColor InlineMarkdownHighlighter::linkColor() const { return hl_->linkColor; }
 void InlineMarkdownHighlighter::setLinkColor(const QColor& c) {
     if (hl_->linkColor == c) return;
     hl_->linkColor = c; emit linkColorChanged(); hl_->rehighlight();
+}
+QString InlineMarkdownHighlighter::baseColor() const { return hl_->baseColor.isValid() ? hl_->baseColor.name() : QString(); }
+void InlineMarkdownHighlighter::setBaseColor(const QString& hex) {
+    const QColor c = hex.isEmpty() ? QColor() : QColor(hex);
+    if (hl_->baseColor == c) return;
+    hl_->baseColor = c; emit baseColorChanged(); hl_->rehighlight();
 }
 bool InlineMarkdownHighlighter::highlightAsOverlay() const { return hl_->hlOverlay; }
 void InlineMarkdownHighlighter::setHighlightAsOverlay(bool on) {

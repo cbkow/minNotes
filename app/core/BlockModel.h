@@ -1277,7 +1277,9 @@ private:
     int refillTableCells(int lo, int hi);                        // A4 for tables; → rows inserted
     // S3b: record-attr edits over a table (one txn; sparse undo), colour resolution,
     // the explicit label join (A9), and T2 permutation undo.
-    bool editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn);
+    void stripFgSpans(int block);      // drop the text-colour spans of one cell block (inside a txn)
+    bool editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn,
+                        const std::function<void(int r, int c, int block)>& cellFn = {});   // cellFn: every cell block, same txn
     QString tableColour(int head, int r, int c, bool fg) const;
     bool joinTableByLabel(int target, int source);
     void applyPermutation(int lo, const std::vector<std::pair<QString, QString>>& order);

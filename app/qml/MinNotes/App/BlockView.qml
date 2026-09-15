@@ -631,6 +631,7 @@ Item {
         document: (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8 || te.btype === 9) ? te.textDocument : null
         enabled: cell.active && (te.btype === 0 || te.btype === 1 || te.btype === 4 || te.btype === 5 || te.btype === 8 || te.btype === 9)
         highlightAsOverlay: true   // hlRects draws them below the selection
+        baseColor: cell.cellFg     // a coloured cell colours its code / links / highlighted runs too
         markerColor: Theme.colors.accent
         selectedMarkerColor: Theme.colors.textBright
         codeColor: Theme.colors.inlineCodeText

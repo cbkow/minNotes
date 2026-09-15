@@ -46,6 +46,10 @@ class InlineMarkdownHighlighter : public QObject {
     // (a char background paints inside the TextEdit, above the selection, so
     // selecting highlighted text showed no selection). Same trick as code chips.
     Q_PROPERTY(bool highlightAsOverlay READ highlightAsOverlay WRITE setHighlightAsOverlay NOTIFY highlightAsOverlayChanged)
+    // A table cell's text colour (hex; "" = none). When set it also colours inline code, links and
+    // highlighted runs — the colours those would pick for themselves defer to the cell's (walk 2:
+    // "some text doesn't change colour" in a coloured row). Explicit text-colour spans still win.
+    Q_PROPERTY(QString baseColor READ baseColor WRITE setBaseColor NOTIFY baseColorChanged)
 public:
     explicit InlineMarkdownHighlighter(QObject* parent = nullptr);
 
@@ -77,7 +81,11 @@ public:
     bool highlightAsOverlay() const;
     void setHighlightAsOverlay(bool on);
 
+    QString baseColor() const;
+    void setBaseColor(const QString& hex);
+
 signals:
+    void baseColorChanged();
     void documentChanged();
     void enabledChanged();
     void markerColorChanged();

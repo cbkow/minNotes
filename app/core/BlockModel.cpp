@@ -923,7 +923,8 @@ static void setLaneString(QJsonObject& t, const QString& key, int c, const QStri
     else t.insert(key, a);
 }
 
-bool BlockModel::editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn) {
+bool BlockModel::editTableAttrs(int head, const std::function<void(int r, int rec, QJsonObject& t)>& fn,
+                                const std::function<void(int r, int c, int block)>& cellFn) {
     const QVariantList recs = tableRecords(head);
     if (recs.isEmpty()) return false;
     const auto [lo, hi] = tableBand(head);
@@ -933,6 +934,9 @@ bool BlockModel::editTableAttrs(int head, const std::function<void(int r, int re
         QJsonObject t = QJsonDocument::fromJson(rows_[size_t(rec)].table.toUtf8()).object();
         const QJsonObject was = t;
         fn(r, rec, t);
+        if (cellFn)
+            for (int i = rec + 1; i <= splitRowEnd(rec); ++i)
+                if (rows_[size_t(i)].cell >= 0) cellFn(r, rows_[size_t(i)].cell, i);
         if (t == was) continue;
         rows_[size_t(rec)].table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
         persistMeta(rec);
@@ -969,6 +973,17 @@ int BlockModel::tableColAlign(int head, int c) const {
     return tg ? tg->spec.at(c).toObject().value(QStringLiteral("a")).toInt(0) : 0;
 }
 
+// A cell TEXT colour is the whole cell's colour (walk 2, 2026-09-15): runs that were coloured
+// earlier with the palette (text-colour spans, which win over the cell colour in the view) lose
+// that span inside the coloured cells, so "make this row red" makes the row red — Excel's rule.
+// Setting a cell colour to "" (revert) strips them too: the cells come back to plain text.
+void BlockModel::stripFgSpans(int block) {
+    std::vector<Span>& v = rows_[size_t(block)].spans;
+    const size_t before = v.size();
+    v.erase(std::remove_if(v.begin(), v.end(), [](const Span& sp) { return sp.kind == SpanFgColor; }), v.end());
+    if (v.size() != before) persistMeta(block);
+}
+
 bool BlockModel::tableSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
     if (r0 > r1) std::swap(r0, r1);
     if (c0 > c1) std::swap(c0, c1);
@@ -977,6 +992,8 @@ bool BlockModel::tableSetCellColor(int head, int r0, int c0, int r1, int c1, boo
         if (r < r0 || r > r1) return;
         for (int c = std::max(0, c0); c <= std::min(c1, 62); ++c)
             setLaneString(t, fg ? QStringLiteral("cfg") : QStringLiteral("cbg"), c, color);
+    }, !fg ? std::function<void(int, int, int)>{} : [&](int r, int c, int block) {
+        if (r >= r0 && r <= r1 && c >= c0 && c <= c1) stripFgSpans(block);
     });
 }
 
@@ -985,6 +1002,8 @@ bool BlockModel::tableSetRowsColor(int head, const QVariantList& rows, bool fg, 
     if (set.empty()) return false;
     return editTableAttrs(head, [&](int r, int, QJsonObject& t) {
         if (std::binary_search(set.begin(), set.end(), r)) setAttrString(t, fg ? QStringLiteral("fg") : QStringLiteral("bg"), color);
+    }, !fg ? std::function<void(int, int, int)>{} : [&](int r, int, int block) {
+        if (std::binary_search(set.begin(), set.end(), r)) stripFgSpans(block);
     });
 }
 
@@ -1001,6 +1020,8 @@ bool BlockModel::tableSetColsColor(int head, const QVariantList& cols, bool fg, 
             spec[c] = col;
         }
         t.insert(QStringLiteral("cols"), spec);
+    }, !fg ? std::function<void(int, int, int)>{} : [&](int, int c, int block) {
+        if (std::binary_search(set.begin(), set.end(), c)) stripFgSpans(block);
     });
 }
 
