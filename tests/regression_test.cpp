@@ -7282,6 +7282,7 @@ static void testGridTableDocxPdf() {
         CHECK(wex.toPdf(Exporter::Options{}, wbuf), "wide PDF exports");
         const QString wpath = dir + QStringLiteral("/wide.pdf");
         { QFile pf(wpath); if (pf.open(QIODevice::WriteOnly)) pf.write(wbuf.data()); }
+        { QFile::remove(QDir::tempPath() + QStringLiteral("/mn_wide_probe.pdf")); QFile::copy(wpath, QDir::tempPath() + QStringLiteral("/mn_wide_probe.pdf")); }   // inspection artifact
         QPdfDocument pdoc;
         CHECK(pdoc.load(wpath) == QPdfDocument::Error::None, "wide PDF re-reads");
         QString all;
@@ -7294,12 +7295,16 @@ static void testGridTableDocxPdf() {
             }
             return QRegularExpression(pat).match(all).hasMatch();
         };
-        // Six 300-wide columns: two fit, the band shrinks to take a third and a fourth (four at ~165,
-        // half is the limit), a fifth can't → bands of four and two.
-        CHECK(has(QStringLiteral("columns 5-6 of 6")) && !has(QStringLiteral("columns 3-4")) && !has(QStringLiteral("columns 1-")),
-              "wide PDF: band 2 announces columns 5–6 (%s)", qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(240)));
+        // Six columns of long sentences (each asks for the cap): the band shrinks to take as many as
+        // fit at ≥ half their width, the rest start a second band — so at least one caption, never
+        // one for the first band, and the first band holds at least three columns.
+        const int firstBandCols = [&] { int n = 0; for (int k = 1; k <= 6; ++k) if (has(QStringLiteral("H%1").arg(k))) ++n; return n; }();
+        CHECK(has(QStringLiteral("of 6")) && !has(QStringLiteral("columns 1-")) && firstBandCols >= 3,
+              "wide PDF: a later band announces its columns, the first band packs ≥ 3 (%d) (%s)", firstBandCols,
+              qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(240)));
         bool allWords = true;
-        for (const char* w : words) if (!has(QLatin1String(w))) allWords = false;
+        QString missing;
+        for (const char* w : words) if (!has(QLatin1String(w))) { allWords = false; missing += QLatin1String(w) + QLatin1Char(' '); }
         const QRectF fig = [&] {   // the last column's word sits on ONE line: no letter-by-letter wrapping
             QString pat;
             for (QChar ch : QStringLiteral("figleaf")) pat += QRegularExpression::escape(QString(ch)) + QStringLiteral("\\s*");
@@ -7311,7 +7316,8 @@ static void testGridTableDocxPdf() {
             return QRectF();
         }();
         CHECK(allWords && !fig.isNull() && fig.height() < 20 && fig.width() > fig.height(),
-              "wide PDF: every cell's text extracts; the last column's word is one line (%gx%g)", fig.width(), fig.height());
+              "wide PDF: every cell's text extracts (missing: %s); the last column's word is one line (%gx%g) [%s]", qPrintable(missing), fig.width(), fig.height(),
+              qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).mid(240, 900)));
     }
     QDir(dir).removeRecursively();
 }

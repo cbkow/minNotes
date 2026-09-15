@@ -3739,7 +3739,9 @@ void buildPdfDoc(PdfCtx& c) {
             laneW.assign(size_t(n), 0.0);
             for (int k = 0; k < n; ++k) {
                 laneW[size_t(k)] = avail * (k < ratios.size() ? ratios[k].toDouble() : 1.0 / n);
-                cons.append(QTextLength(QTextLength::FixedLength, laneW[size_t(k)] + (k < n - 1 ? kGap : 0.0)));
+                // FixedLength column widths are scaled by deviceDpi / platform-default dpi like inline
+                // images (the imgFmt trap): pre-multiply so the LAID-OUT width equals the intended units.
+                cons.append(QTextLength(QTextLength::FixedLength, (laneW[size_t(k)] + (k < n - 1 ? kGap : 0.0)) * c.imgFmt));
             }
             tf.setColumnWidthConstraints(cons);
             c.first = false;
@@ -3886,16 +3888,17 @@ void buildPdfDoc(PdfCtx& c) {
         // the columns that still wrap, proportional to what they lack.
         // kPdfWordCapW: a token longer than this (a URL, a file name) wraps mid-word rather than
         // widening its column.
-        constexpr qreal kPdfMaxColW = 300, kPdfImgColW = 140, kPdfImgMinW = 72, kPdfWordCapW = 150;
+        constexpr qreal kPdfMaxColW = 260, kPdfImgColW = 140, kPdfImgMinW = 72, kPdfWordCapW = 120;
         const QFontMetricsF fm([] { QFont f(QStringLiteral("Aspekta")); f.setPixelSize(qRound(kPdfCellPt * 96.0 / 72.0)); return f; }());
         const qreal inner = 2 * kPad + 2;                // padding + a hair, both sides
         std::vector<qreal> w(static_cast<size_t>(cols), 0.0), ideal(static_cast<size_t>(cols), 0.0), lo(static_cast<size_t>(cols), 0.0);
         std::vector<char> mediaCol(static_cast<size_t>(cols), 0);
         std::vector<double> filled(static_cast<size_t>(cols), 0.0);   // share of body cells with text
         for (int k = 0; k < cols; ++k) {
-            // Per cell: its widest line (an empty cell counts as 0). The column's ideal is the 90th
-            // percentile of its cells (not the maximum: one long note in a column of five-character
-            // ids must wrap, not widen every row); the longest word over all cells is the floor.
+            // Per body cell: its widest line (an empty cell counts as 0). The column's ideal is the
+            // 80th percentile of its cells (not the maximum: one long note in a column of five-
+            // character ids must wrap, not widen every row); the longest word over all cells,
+            // header included, is the floor. Headers wrap to whatever the body needs.
             std::vector<qreal> cellW;
             qreal word = 0;
             int textCells = 0;
@@ -3912,16 +3915,17 @@ void buildPdfDoc(PdfCtx& c) {
                 }
                 qreal widest = 0;
                 for (const QString& line : text.split(QLatin1Char('\n'))) {
-                    widest = std::max(widest, fm.horizontalAdvance(line) + (r < hdr ? 6.0 : 0.0));
+                    widest = std::max(widest, fm.horizontalAdvance(line));
                     for (const QString& wd : line.split(QLatin1Char(' '), Qt::SkipEmptyParts))
                         word = std::max(word, fm.horizontalAdvance(wd));
                 }
-                if (!text.isEmpty() && r >= hdr) ++textCells;
+                if (r < hdr) continue;   // a header wraps to its column; it never sets the width
+                if (!text.isEmpty()) ++textCells;
                 cellW.push_back(widest);
             }
             filled[size_t(k)] = rows > hdr ? double(textCells) / double(rows - hdr) : 0.0;
             std::sort(cellW.begin(), cellW.end());
-            qreal widest = cellW.empty() ? 0.0 : cellW[std::min(cellW.size() - 1, size_t(std::lround(0.9 * double(cellW.size() - 1))))];
+            qreal widest = cellW.empty() ? 0.0 : cellW[std::min(cellW.size() - 1, size_t(std::lround(0.8 * double(cellW.size() - 1))))];
             if (mediaCol[size_t(k)]) { widest = std::max(widest, kPdfImgColW); word = std::max(word, kPdfImgMinW); }
             ideal[size_t(k)] = std::min(widest + inner, kPdfMaxColW);
             lo[size_t(k)] = std::clamp(word + inner, 24.0, kPdfWordCapW);   // not below the longest (sane) word
@@ -4009,9 +4013,17 @@ void buildPdfDoc(PdfCtx& c) {
             tf.setTopMargin(6); tf.setBottomMargin(6);
             tf.setHeaderRowCount(hdr);
             QList<QTextLength> cons;
-            for (int k : bc) cons.append(QTextLength(QTextLength::FixedLength, bw[size_t(k)]));
+            // Column widths carry the same dpi pre-multiply as inline images (imgFmt): on a 72-dpi
+            // Mac screen the layout scaled every fixed width by 96/72 — columns a third too wide and
+            // the last one pushed off the page (2026-09-15, "still too wide on all the columns").
+            for (int k : bc) cons.append(QTextLength(QTextLength::FixedLength, bw[size_t(k)] * c.imgFmt));
             tf.setColumnWidthConstraints(cons);
             QTextTable* t = c.cur.insertTable(rows, int(bc.size()), tf);
+            if (qEnvironmentVariableIsSet("MN_PDF_DEBUG")) {
+                QString line = QStringLiteral("[pdf]   band %1 table: %2 cols, cons").arg(b).arg(t->columns());
+                for (const QTextLength& L : t->format().columnWidthConstraints()) line += QStringLiteral(" %1").arg(L.rawValue(), 0, 'f', 1);
+                qInfo("%s", qPrintable(line));
+            }
             for (int r = 0; r < rows; ++r)
                 for (size_t j = 0; j < bc.size(); ++j) {
                     const int k = bc[j];
