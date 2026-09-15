@@ -835,7 +835,7 @@ Rectangle {
             Rectangle {
                 visible: panel.target !== "draw"
                 width: panel.contentW; height: 28
-                readonly property bool canApply: !!panel.editor && panel.editor.hasSelection
+                readonly property bool canApply: !!panel.editor && (panel.editor.hasSelection || panel.editor.caretInCell)
                 opacity: canApply ? 1.0 : 0.4          // disabled chrome rule
                 color: applyMA.containsMouse && canApply ? Theme.colors.divider
                                                          : Theme.colors.surfaceHover

@@ -2198,8 +2198,18 @@ FocusScope {
         blockModel.endGroup()
         cursor.sync()
     }
-    // Revert-to-default colour: strip fg + bg from the selected text (colour spans).
+    // Revert-to-default colour: strip fg + bg from the table target (cells / rows / columns) or
+    // from the selected text (colour spans).
     function revertColors() {
+        if (root.tableSetLive() || root.cellRect || (!cursor.hasSel && root.caretInCell)) {
+            const head = root.cellRect ? root.cellRect.head : root.tableSetLive() ? root.tableSet.head : blockModel.tableHeadOf(cursor.focusRow)
+            const recs = blockModel.tableRecords(head)
+            blockModel.beginGroup(head, blockModel.splitRowLast(recs[recs.length - 1]))   // fg + bg = ONE undo entry
+            applyTableColor(true, ""); applyTableColor(false, "")
+            blockModel.endGroup()
+            cursor.sync()
+            return
+        }
         if (!cursor.hasSel) return
         blockModel.beginGroup(cursor.loRow, cursor.hiRow)
         for (var r = cursor.loRow; r <= cursor.hiRow; ++r) {
@@ -2221,7 +2231,7 @@ FocusScope {
     // the document so typing continues immediately without re-clicking.
     function pickTextColor(hex) {
         cursor.armedFg = "" + hex
-        if (cursor.hasSel) applyColorToSelection(true, "" + hex, true)
+        if (cursor.hasSel || root.caretInCell) applyColorToSelection(true, "" + hex, true)
         forceActiveFocus()
     }
     // Highlight mirrors the text pen, plus a rail toggle. pickHighlight arms +
@@ -2230,19 +2240,44 @@ FocusScope {
     readonly property bool highlightArmed: cursor.armedBg !== ""
     function pickHighlight(hex) {
         cursor.armedBg = "" + hex
-        if (cursor.hasSel) applyColorToSelection(false, "" + hex, true)
+        if (cursor.hasSel || root.caretInCell) applyColorToSelection(false, "" + hex, true)
         forceActiveFocus()
     }
     function toggleHighlight(hex) {
         if (cursor.armedBg !== "") {                       // currently on → off
-            if (cursor.hasSel) applyColorToSelection(false, "", false)   // "" removes it
+            if (cursor.hasSel || root.caretInCell) applyColorToSelection(false, "", false)   // "" removes it
             cursor.armedBg = ""
             forceActiveFocus()
         } else {
             pickHighlight("" + hex)
         }
     }
+    // The caret sits in a table cell (a cell block, not a record): the palette's target when
+    // nothing is selected — the cell itself, not a span (the 2026-09-15 walk).
+    readonly property bool caretInCell: (blockModel.contentRevision, cursor.focusRow >= 0
+        && blockModel.tableHeadOf(cursor.focusRow) >= 0 && blockModel.tableColumnOf(cursor.focusRow) >= 0)
+    // Table targets (2026-09-15 walk: the Back tab was painting spans inside cells): a grip-picked
+    // set colours its rows / columns as a unit, a cell rectangle its cells, a lone caret its cell;
+    // text selected INSIDE one cell is still a span. Returns true when a table took the colour.
+    function applyTableColor(isFg, hex) {
+        const set = root.tableSetLive() ? root.tableSet : null
+        if (set && set.head >= 0 && set.items.length) {
+            if (set.kind === "row") blockModel.tableSetRowsColor(set.head, set.items, isFg, hex)
+            else                    blockModel.tableSetColsColor(set.head, set.items, isFg, hex)
+            return true
+        }
+        const rect = root.cellRect
+        if (rect) { blockModel.tableSetCellColor(rect.head, rect.r0, rect.c0, rect.r1, rect.c1, isFg, hex); return true }
+        if (!cursor.hasSel && root.caretInCell) {
+            const row = cursor.focusRow, head = blockModel.tableHeadOf(row)
+            const r = blockModel.tableRowOf(row), c = blockModel.tableColumnOf(row)
+            blockModel.tableSetCellColor(head, r, c, r, c, isFg, hex)
+            return true
+        }
+        return false
+    }
     function applyColorToSelection(isFg, hex, coalesce) {
+        if (applyTableColor(isFg, hex)) return
         if (!cursor.hasSel) return
         var key = coalesce ? (isFg ? "fgcolor" : "bgcolor") : ""
         if (cursor.loRow === cursor.hiRow) {
@@ -4028,7 +4063,7 @@ FocusScope {
                     }
                 }
                 // Lane gestures (SR-3 S7b) start before any caret placement.
-                if (root.dividerHoverRecord >= 0) {
+                if (root.dividerHoverRecord >= 0 && !(m.modifiers & Qt.ControlModifier)) {   // ⌘ = pull, never resize
                     root.beginDividerDrag(root.dividerHoverRecord, root.dividerHoverIndex, m.x - root.leftEdge,
                                           (m.modifiers & Qt.AltModifier) !== 0)
                     return
@@ -4177,7 +4212,8 @@ FocusScope {
                 root.tableGripHead = gg ? gg.head : -1
                 root.tableGripKind = gg ? gg.kind : ""
                 root.tableGripIndex = gg ? gg.index : -1
-                const dv = (clk || gg) ? null : root.dividerAt(root.hoverRow, m.x - root.leftEdge)
+                // ⌘ held = the pull band's drag, so the border resize steps aside (either/or, 2026-09-15).
+                const dv = (clk || gg || (m.modifiers & Qt.ControlModifier)) ? null : root.dividerAt(root.hoverRow, m.x - root.leftEdge)
                 root.dividerHoverRecord = dv ? dv.record : -1
                 root.dividerHoverIndex = dv ? dv.index : -1
                 // The pull band needs ⌘ held (user walk 2026-09-15: a plain drag at a cell's edge is the
