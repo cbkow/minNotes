@@ -6787,9 +6787,10 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     return QVariantList{ caretRow, caretCol };
 }
 
-QVariantList BlockModel::pasteHtml(int row, int col, const QString& html) {
+QVariantList BlockModel::pasteHtml(int row, int col, const QString& htmlIn) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return {};
 
+    const QString html = Importer::inlineExcelPictures(htmlIn);   // Excel's floating pictures → their cells
     QTextDocument doc;
     doc.setHtml(html);
 

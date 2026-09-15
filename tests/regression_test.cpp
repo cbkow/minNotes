@@ -7831,6 +7831,58 @@ static void testRowFilter() {
           "unfolding restores the row at its latest reported height (%g)", m.heightForRow(pear));
 }
 
+static void testExcelPicturePaste() {
+    qInfo("[110] Excel paste: floating pictures (VML in comments + one composite <img>) land in their own cells (SR-4 walk 2)");
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/mn_excel_pics"));
+    dir.removeRecursively();
+    dir.mkpath(QStringLiteral("."));
+    QStringList src;
+    for (int k = 0; k < 3; ++k) {
+        const QString p = dir.filePath(QStringLiteral("clip_image00%1.png").arg(k + 1));
+        QImage pr(16 + 4 * k, 12, QImage::Format_RGB32); pr.fill(Qt::darkCyan); pr.save(p, "PNG");
+        src << QUrl::fromLocalFile(p).toString();
+    }
+    // The shape Excel puts on the clipboard: rows 66pt tall, a 65pt picture column; three pictures
+    // stacked in rows 1..3 (offsets from row 1's cell), a composite <img> without src where the
+    // group starts, all shapes inside the `[if gte vml 1]` comment.
+    auto shape = [&](int k, double top) {
+        return QStringLiteral("<v:shape id=\"Picture_x0020_%1\" style='position:absolute;margin-left:2.25pt;margin-top:%2pt;width:45pt;height:60pt;z-index:%1'>"
+                              "<v:imagedata src=\"%3\" o:title=\"\"/></v:shape>").arg(k + 1).arg(top).arg(src.at(k));
+    };
+    const QString html = QStringLiteral(
+        "<html><body><table border=0 cellpadding=0 cellspacing=0 width=152 style='border-collapse:collapse;width:114pt'>"
+        "<col width=87 style='width:65pt'><col width=65 style='width:49pt'>"
+        "<tr height=20 style='height:15.0pt'><td width=87 style='width:65pt'>Name</td><td width=65 style='width:49pt'>Pic</td></tr>"
+        "<tr height=88 style='height:66.0pt'><td>alpha</td><td><!--[if gte vml 1]>%1%2%3<![endif]--><![if !vml]><img width=45 height=200 src=\"\" v:shapes=\"Picture_x0020_1 Picture_x0020_2 Picture_x0020_3\"><![endif]></td></tr>"
+        "<tr height=88 style='height:66.0pt'><td>beta</td><td></td></tr>"
+        "<tr height=88 style='height:66.0pt'><td>gamma</td><td></td></tr>"
+        "</table></body></html>").arg(shape(0, 1.5), shape(1, 67.5), shape(2, 133.5));
+    const QString fixed = Importer::inlineExcelPictures(html);
+    CHECK(!fixed.contains(QStringLiteral("v:shapes=")) && fixed.count(QStringLiteral("<img src=")) == 3,
+          "the composite <img> goes; three real <img src> tags land (%d)", int(fixed.count(QStringLiteral("<img src="))));
+    CHECK(Importer::inlineExcelPictures(QStringLiteral("<table><tr><td><img src=\"x.png\"></td></tr></table>")) == QStringLiteral("<table><tr><td><img src=\"x.png\"></td></tr></table>"),
+          "HTML without VML passes through untouched");
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        m.insertBlock(0);
+        CHECK(m.pasteHtml(0, 0, html).size() == 2, "the Excel HTML pastes");
+        const int h = findTableHead(m);
+        int pics[3] = {0, 0, 0};
+        if (h >= 0 && m.tableRowCount(h) == 4)
+            for (int r = 1; r <= 3; ++r) {
+                const QVariantList rows = m.tableCellRows(h, r, 1);
+                for (const QVariant& v : rows) if (m.typeForRow(v.toInt()) == BlockModel::Media) ++pics[r - 1];
+            }
+        CHECK(h >= 0 && m.tableRowCount(h) == 4 && pics[0] == 1 && pics[1] == 1 && pics[2] == 1 && m.structureValid(),
+              "…a 4-row table with ONE picture in each of rows 1..3's picture cell (%d/%d/%d)", pics[0], pics[1], pics[2]);
+        CHECK(h >= 0 && m.tableCellText(h, 2, 0) == QStringLiteral("beta") && m.tableCellText(h, 3, 0) == QStringLiteral("gamma"),
+              "…the text cells are untouched");
+    }
+    dir.removeRecursively();
+}
+
 static void testEmptiedBlockPersists() {
     qInfo("[79] a block emptied to a null string saves as empty, not as its old text");
     const QString path = QDir::tempPath() + QStringLiteral("/mn_emptied_block.mnd");
@@ -8046,6 +8098,7 @@ int main(int argc, char** argv) {
     testGridTabsAndBoard();
     testTimecodeColumns();
     testRowFilter();
+    testExcelPicturePaste();
 
     if (g_fail == 0) qInfo("=== ALL CHECKS PASSED ===");
     else             qCritical("=== %d CHECK(S) FAILED ===", g_fail);

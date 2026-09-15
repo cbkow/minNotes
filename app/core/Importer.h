@@ -151,6 +151,14 @@ public:
         QTextDocument& doc, MediaStore* store, const QString& baseDir = QString(),
         const QList<int>& thHeaders = QList<int>());
     static QList<int> htmlHeaderRowsPerTable(const QString& html);
+    // Excel's HTML (2026-09-15 walk): pictures floating over cells are NOT in the table — the
+    // visible markup holds ONE src-less composite <img> in the cell where the group starts, and
+    // the real pictures live as VML <v:shape>s inside a conditional comment, each with a
+    // <v:imagedata src="file://…/msohtmlclip/clip_imageNNN.png"> and pt offsets from that cell.
+    // This maps every picture to its own row / column (offsets against the <tr> heights and <td>
+    // widths), injects a real <img src> into that cell and drops the composite. Other HTML
+    // passes through untouched.
+    static QString inlineExcelPictures(const QString& html);
 
 private:
     // One file's parsed output — built on the worker, applied on the GUI.

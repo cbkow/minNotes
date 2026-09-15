@@ -28,6 +28,8 @@
 #include <QXmlStreamReader>
 #include "PackageFormat.h"
 #include <functional>
+#include <algorithm>
+#include <map>
 
 // file:// URL or plain path → plain path (FileDialog and drops hand us URLs).
 static QString localPath(const QString& fileUrlOrPath) {
@@ -279,6 +281,78 @@ bool Importer::importOdtFile(const QString& path, BlockModel* m) {
 }
 
 // GUI-thread half: land the specs + comments + async remote localize.
+QString Importer::inlineExcelPictures(const QString& html) {
+    if (!html.contains(QLatin1String("v:imagedata"))) return html;
+    static const QRegularExpression trRe(QStringLiteral("<tr\\b[^>]*>"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression tdRe(QStringLiteral("<t[dh]\\b[^>]*>"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression ptRe(QStringLiteral("(height|width):\\s*([0-9.]+)pt"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression shapeRe(QStringLiteral("<v:shape\\b.*?</v:shape>"),
+                                            QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression srcRe(QStringLiteral("v:imagedata[^>]*\\bsrc=\"([^\"]+)\""), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression topRe(QStringLiteral("margin-top:\\s*([0-9.]+)pt"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression leftRe(QStringLiteral("margin-left:\\s*([0-9.]+)pt"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression compositeRe(QStringLiteral("<img\\b[^>]*v:shapes=[^>]*>"), QRegularExpression::CaseInsensitiveOption);
+    auto pt = [](const QString& tag, const char* which, double fallback) {
+        auto it = ptRe.globalMatch(tag);
+        while (it.hasNext()) { const auto m = it.next(); if (m.captured(1).compare(QLatin1String(which), Qt::CaseInsensitive) == 0) return m.captured(2).toDouble(); }
+        return fallback;
+    };
+    // Rows: start offset + height; per row its cells' start offsets + widths.
+    struct Row { qsizetype start = 0; double h = 15.0; std::vector<qsizetype> tdStart; std::vector<double> tdW; };
+    std::vector<Row> rows;
+    for (auto it = trRe.globalMatch(html); it.hasNext();) {
+        const auto m = it.next();
+        Row r; r.start = m.capturedStart(); r.h = pt(m.captured(0), "height", 15.0);
+        rows.push_back(r);
+    }
+    if (rows.empty()) return html;
+    for (auto it = tdRe.globalMatch(html); it.hasNext();) {
+        const auto m = it.next();
+        size_t ri = 0;
+        while (ri + 1 < rows.size() && rows[ri + 1].start < m.capturedStart()) ++ri;
+        if (rows[ri].start > m.capturedStart()) continue;   // a cell before the first row
+        rows[ri].tdStart.push_back(m.capturedStart());
+        rows[ri].tdW.push_back(pt(m.captured(0), "width", 64.0));
+    }
+    // Pictures → (row, col) → the <img> to inject.
+    std::map<std::pair<size_t, size_t>, QString> inject;
+    for (auto it = shapeRe.globalMatch(html); it.hasNext();) {
+        const auto m = it.next();
+        const QString body = m.captured(0);
+        const auto src = srcRe.match(body);
+        if (!src.hasMatch()) continue;
+        size_t ri = 0;
+        while (ri + 1 < rows.size() && rows[ri + 1].start < m.capturedStart()) ++ri;
+        if (rows[ri].start > m.capturedStart() || rows[ri].tdStart.empty()) continue;
+        size_t ci = 0;
+        while (ci + 1 < rows[ri].tdStart.size() && rows[ri].tdStart[ci + 1] < m.capturedStart()) ++ci;
+        const auto top = topRe.match(body), left = leftRe.match(body);
+        double t = top.hasMatch() ? top.captured(1).toDouble() : 0.0;
+        double l = left.hasMatch() ? left.captured(1).toDouble() : 0.0;
+        while (ri + 1 < rows.size() && t >= rows[ri].h - 0.5) { t -= rows[ri].h; ++ri; }   // down the rows
+        const Row& row = rows[ri];
+        if (row.tdStart.empty()) continue;
+        ci = std::min(ci, row.tdStart.size() - 1);
+        while (ci + 1 < row.tdW.size() && l >= row.tdW[ci] - 0.5) { l -= row.tdW[ci]; ++ci; }   // across the columns
+        inject[{ri, ci}] += QStringLiteral("<img src=\"%1\">").arg(src.captured(1).toHtmlEscaped());
+    }
+    if (inject.empty()) return html;
+    // Rewrite back to front so offsets stay valid: the composite <img>s go, the real ones land
+    // right after their cell's opening tag.
+    QString out = html;
+    std::vector<std::pair<qsizetype, QString>> edits;
+    for (const auto& [rc, img] : inject) {
+        const Row& row = rows[rc.first];
+        const qsizetype tdStart = row.tdStart[rc.second];
+        const qsizetype close = out.indexOf(QLatin1Char('>'), tdStart);
+        if (close >= 0) edits.push_back({ close + 1, img });
+    }
+    std::sort(edits.begin(), edits.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [at, img] : edits) out.insert(at, img);
+    out.remove(compositeRe);
+    return out;
+}
+
 bool Importer::applySpecs(BlockModel* m, const FileSpecs& fs) {
     if (!fs.ok || !m) return false;
     if (fs.specs.empty()) return true;   // empty file → empty doc, not a failure
