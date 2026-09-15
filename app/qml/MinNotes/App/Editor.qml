@@ -70,6 +70,8 @@ FocusScope {
         leftEdge * 2 + Math.max(pageWidth, blockModel.maxContentWidth)
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return laneOf(row).w }   // a lane block measures its lane
+    // An image's "fit" width: its lane, minus a table cell's two 8 px insets (BlockView's colLeft).
+    function fitWidthForRow(row) { return Math.round(measureForRow(row) - (blockModel.tableColumnOf(row) >= 0 ? 16 : 0)) }
     // Lane `lane` of the split row whose record is `record`, page-relative (SR-3 D3):
     // its share of the page less the gaps between lanes. Computed from pageWidth and
     // the row's ratios (not read from the model) so a page-width change can't race
@@ -6402,7 +6404,7 @@ FocusScope {
                     }
                     onCanceled: { root.imageResizing = false; root.imageResizeRow = -1 }
                     onDoubleClicked: {   // fit the lane (the page at top level); at the fit already → intrinsic
-                        const fit = Math.round(root.measureForRow(imgResize.row) - 2 * imgResize.inset)
+                        const fit = root.fitWidthForRow(imgResize.row)
                         blockModel.setMediaWidth(imgResize.row, Math.abs(imgResize.imgW - fit) < 1 ? 0 : fit)
                     }
                 }
@@ -6714,6 +6716,8 @@ FocusScope {
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "video"
         readonly property bool isSketch: isMedia
             && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "sketch"
+        readonly property bool isImage: isMedia
+            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
         // In a full-frame tab (PDF/video/sketch) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
         readonly property bool inFrameTab: root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
@@ -6918,11 +6922,15 @@ FocusScope {
                                          else root.copyBlock(root.menuRow) } }
                 MenuRow { visible: !blockMenu.inFrameTab; text: "Paste"
                           onActivated: root.pasteAtBlock(root.menuRow) }
-                MenuRow { visible: blockMenu.isMedia
-                                   && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
+                MenuRow { visible: blockMenu.isImage
                           text: "Copy image"
                           onActivated: { clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow))
                                          Toasts.show(qsTr("Image copied")) } }
+                // Image size (the corner double-click's discoverable twin): fit the lane / the original.
+                MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: "Fit width"
+                          onActivated: blockModel.setMediaWidth(root.menuRow, root.fitWidthForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: "Original size"
+                          onActivated: blockModel.setMediaWidth(root.menuRow, 0) }
                 MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch   // sketch has no backing file
                           text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                           onActivated: blockModel.revealMedia(root.menuRow) }
