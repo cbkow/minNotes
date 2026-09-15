@@ -3619,25 +3619,40 @@ FocusScope {
     readonly property int poolSize: poolModel.count
     readonly property int delegateCount: poolSize
     ListModel { id: poolModel }
+    // The rows actually on screen: they always get a slot at once; the overscan rows around them
+    // are assigned a few per frame (2026-09-15 walk: a table entering the overscan band rebound
+    // ~100 delegates in one frame — the "hitch as a table comes into view").
+    readonly property var viewRows: (blockModel.contentRevision, blockModel.layoutRevision,
+        blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height))
     function sizePool() {
-        const want = Math.min(blockModel.count, Math.ceil(poolNeed / 8) * 8)
+        // Enough for the screen right now; the rest of the need in chunks of 8 per call (the pending
+        // timer keeps calling while rows wait), so a flick never creates a screenful at once.
+        const need = Math.min(blockModel.count, Math.ceil(poolNeed / 8) * 8)
+        const now = Math.min(blockModel.count, viewRows.length + 4)
+        const want = Math.max(now, Math.min(need, poolModel.count + 8))
         while (poolModel.count < want) poolModel.append({ slot: poolModel.count })
-        while (poolModel.count > want && poolModel.count > blockModel.count) poolModel.remove(poolModel.count - 1)
+        while (poolModel.count > need && poolModel.count > blockModel.count) poolModel.remove(poolModel.count - 1)
     }
     onPoolNeedChanged: sizePool()
-    // Pre-warm (2026-09-15 walk: the first scroll into a dense table hitched while slots were
-    // created mid-flick): while the view rests, grow the pool a couple of slots per tick up to a
-    // few screens of small cells, so a table is met with delegates already built.
-    readonly property int poolPrewarm: Math.min(blockModel.count, 4 * (Math.ceil(root.height / 38) + 2 * overscan + 4))
+    // Pre-warm: while the view rests, grow the pool a few slots per tick up to several screens of
+    // small cells, so a table is met with delegates already built.
+    readonly property int poolPrewarm: Math.min(blockModel.count, Math.max(320, 6 * (Math.ceil(root.height / 38) + 2 * overscan + 4)))
     Timer {
-        interval: 40; repeat: true
+        interval: 20; repeat: true
         running: blockModel.documentOpen && !flick.moving && !flick.dragging && poolModel.count < root.poolPrewarm
-        onTriggered: { for (let k = 0; k < 2 && poolModel.count < root.poolPrewarm; ++k) poolModel.append({ slot: poolModel.count }) }
+        onTriggered: { for (let k = 0; k < 4 && poolModel.count < root.poolPrewarm; ++k) poolModel.append({ slot: poolModel.count }) }
     }
     // Which block each pool slot renders. Blocks that stay in view keep their
     // delegate. sync RETURNS the revision and runs inside this binding, so everything
-    // reading slotRev before rowForSlot() sees the updated table.
-    readonly property int slotRev: viewSlots.sync(poolRows, poolSize)
+    // reading slotRev before rowForSlot() sees the updated table. slotTick re-runs it
+    // while overscan rows are still waiting for a slot.
+    property int slotTick: 0
+    readonly property int slotRev: (root.slotTick, viewSlots.sync(poolRows, viewRows, poolSize, 12))
+    Timer {
+        interval: 16; repeat: true
+        running: viewSlots.pending > 0
+        onTriggered: { root.sizePool(); root.slotTick++ }
+    }
     // BlockView (the extracted block renderer) reads the editor's controllers
     // through these — ids don't cross file boundaries.
     readonly property var cursorObj: cursor

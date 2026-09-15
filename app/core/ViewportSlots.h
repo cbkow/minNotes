@@ -24,16 +24,30 @@ bool assignSlots(std::vector<int>& slotRows, const std::vector<int>& visible);
 // NOTIFY and no binding loop. Idempotent: an unchanged set keeps the revision.
 class ViewportSlots : public QObject {
     Q_OBJECT
+    // Rows that still want a slot after the last sync (overscan rows past the budget, or rows
+    // with no free slot yet). The editor re-syncs on a timer while this is > 0.
+    Q_PROPERTY(int pending READ pending NOTIFY pendingChanged)
 public:
     explicit ViewportSlots(QObject* parent = nullptr) : QObject(parent) {}
 
     Q_INVOKABLE int sync(const QList<int>& visibleRows, int slotCount);
+    // Budgeted sync (2026-09-15 walk: a table entering the overscan band rebound ~100 delegates in
+    // one frame): `all` = the rows to show (viewport + overscan, in order), `inView` = the ones
+    // actually on screen. Rows leaving free their slot; in-view rows entering take a slot at once;
+    // overscan rows entering take at most `budget` slots per call — the rest are `pending`.
+    Q_INVOKABLE int sync(const QList<int>& all, const QList<int>& inView, int slotCount, int budget);
     Q_INVOKABLE int rowForSlot(int slot) const;
     Q_INVOKABLE int slotForRow(int row) const;
     int revision() const { return revision_; }
+    int pending() const { return pending_; }
+
+signals:
+    void pendingChanged();
 
 private:
+    void setPending(int n);
     std::vector<int> slotRows_;
     QHash<int, int> slotByRow_;
     int revision_ = 0;
+    int pending_ = 0;
 };
