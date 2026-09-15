@@ -7193,6 +7193,9 @@ static void testGridTableDocxPdf() {
         CHECK(doc.count("<w:tbl>") == 1 && doc.count("<w:tr>") == 3 && doc.count("<w:tblHeader/>") == 1
                   && doc.count("<w:tc>") == 9,
               "DOCX: one table, three rows, the header row marked to repeat, nine cells");
+        CHECK(doc.count("<w:sz w:val=\"18\"/>") >= 6 && doc.count("<w:spacing w:before=\"0\" w:after=\"40\"") >= 6,
+              "DOCX: cell runs at 9pt with tight paragraph spacing (%d runs, %d paragraphs)",
+              int(doc.count("<w:sz w:val=\"18\"/>")), int(doc.count("<w:spacing w:before=\"0\" w:after=\"40\"")));
         CHECK(doc.contains("<w:tableCol w:w=\"3000\" w:type=\"dxa\"/>") && doc.contains("w:fill=\"FF0000\"")
                   && doc.contains("<w:jc w:val=\"center\"/>") && doc.contains("mnTask"),
               "DOCX: the 200 px column as 3000 dxa, the cell shading, the column alignment, the check glyph");

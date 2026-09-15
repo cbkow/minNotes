@@ -2180,7 +2180,19 @@ struct DocxCtx {
     int picId = 1;
     int inkBaked = 0;
     double maxImgPx = 0;                        // > 0 inside a lane: images cap to its width
+    // Inside a derived-table cell (user ruling 2026-09-15, "shrink them down so more copy fits"):
+    // runs at 9pt (kCellHalfPt) unless a run sets its own size, paragraphs with no space after.
+    int cellHalfPt = 0;
 };
+constexpr int kDocxCellHalfPt = 18;   // 9pt
+void docxCellSpacing(QXmlStreamWriter& pw) {   // a cell paragraph: single-spaced, no space after
+    pw.writeStartElement(QStringLiteral("w:spacing"));
+    pw.writeAttribute(QStringLiteral("w:before"), QStringLiteral("0"));
+    pw.writeAttribute(QStringLiteral("w:after"), QStringLiteral("40"));
+    pw.writeAttribute(QStringLiteral("w:line"), QStringLiteral("240"));
+    pw.writeAttribute(QStringLiteral("w:lineRule"), QStringLiteral("auto"));
+    pw.writeEndElement();
+}
 
 QByteArray docxXml(const std::function<void(QXmlStreamWriter&)>& fn) {
     QByteArray ba;
@@ -2531,7 +2543,9 @@ void docxSpanRuns(DocxCtx& c, QXmlStreamWriter& w, const QString& text,
 }
 
 void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
-              const DocxRunProps& base) {
+              const DocxRunProps& baseIn) {
+    DocxRunProps base = baseIn;
+    if (c.cellHalfPt > 0 && base.halfPtSize == 0) base.halfPtSize = c.cellHalfPt;   // a table cell's size
     docxSpanRuns(c, w, c.m->contentForRow(row), c.m->spansForRow(row), base);
 }
 
@@ -2795,6 +2809,7 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 w.writeEndElement();   // w:tc
                 openLane = -1;
                 c.maxImgPx = 0;
+                c.cellHalfPt = 0;
                 cellAlign = 0;
                 cellFg.clear();
             }
@@ -2882,6 +2897,7 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 }
                 w.writeEndElement();   // w:tcPr
                 c.maxImgPx = std::max(8.0, laneDxa[size_t(lane)] / 15.0 - 10.0);
+                c.cellHalfPt = kDocxCellHalfPt;
                 cellAlign = m->tableColAlign(tableHead, lane);
                 cellFg = m->tableCellFg(tableHead, r, lane);
                 ++cellsInRow;
@@ -2957,6 +2973,7 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 const int numId = (type == BlockModel::OrderedListItem) ? 2 : 1;
                 w.writeStartElement(QStringLiteral("w:p"));
                 w.writeStartElement(QStringLiteral("w:pPr"));
+                if (c.cellHalfPt > 0) docxCellSpacing(w);
                 w.writeStartElement(QStringLiteral("w:numPr"));
                 w.writeStartElement(QStringLiteral("w:ilvl"));
                 w.writeAttribute(QStringLiteral("w:val"), QString::number(depth));
@@ -2997,15 +3014,17 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 }
                 DocxRunProps rp;
                 std::function<void(QXmlStreamWriter&)> jc;
-                if (tableHead >= 0 && lane >= 0) {                  // a table cell: its colour, its column's alignment
+                if (tableHead >= 0 && lane >= 0) {                  // a table cell: its colour, its column's alignment, tight spacing
                     rp.color = cellFg;
                     const int al = cellAlign;
-                    if (al != 0)
-                        jc = [al](QXmlStreamWriter& pw) {
+                    jc = [al](QXmlStreamWriter& pw) {
+                        if (al != 0) {
                             pw.writeStartElement(QStringLiteral("w:jc"));
                             pw.writeAttribute(QStringLiteral("w:val"), al == 1 ? QStringLiteral("center") : QStringLiteral("right"));
                             pw.writeEndElement();
-                        };
+                        }
+                        docxCellSpacing(pw);
+                    };
                 }
                 docxPara(c, w, row, rp, jc);
                 break;
@@ -3212,6 +3231,8 @@ const QColor kPdfText(0x20, 0x20, 0x20);
 const QColor kPdfMuted(0x77, 0x77, 0x77);
 const QColor kPdfAccent(0x01, 0x66, 0xc0);   // print-legible accent
 const QColor kPdfBorder(0xC8, 0xC8, 0xC8);
+constexpr qreal kPdfBodyPt = 10.5;     // the app's 14px body at 96 dpi (doc default font)
+constexpr qreal kPdfCellPt = 8.5;      // table cells: smaller, so more copy fits (2026-09-15)
 
 QStringList pdfMonoFamilies() {
     return {QStringLiteral("JetBrains Mono"), QStringLiteral("Menlo"),
@@ -3243,6 +3264,9 @@ struct PdfCtx {
     int laneCellRow = 0;
     int laneCol = 0;
     Qt::Alignment cellAlign = {};       // a table cell's column alignment, applied to its blocks
+    // Inside a derived-table cell (user ruling 2026-09-15, "shrink them down so more copy fits"):
+    // text at kPdfCellPt instead of the 10.5pt body, block margins 1, headings scaled the same.
+    qreal cellPt = 0;                   // 0 = not in a cell
     void toEnd() {
         cur = laneTable ? laneTable->cellAt(laneCellRow, laneCol).lastCursorPosition()
                         : doc->rootFrame()->lastCursorPosition();
@@ -3733,12 +3757,13 @@ void buildPdfDoc(PdfCtx& c) {
             endList();
             const int lvl = std::clamp(m->levelForRow(row), 1, 6);
             static const qreal pts[6] = {20, 16, 13.5, 12, 11, 10.5};
+            const bool inCell = c.cellPt > 0;
             QTextBlockFormat bf;
-            bf.setTopMargin(lvl <= 2 ? 16 : 12);
-            bf.setBottomMargin(4);
+            bf.setTopMargin(inCell ? 4 : (lvl <= 2 ? 16 : 12));
+            bf.setBottomMargin(inCell ? 1 : 4);
             QTextCharFormat f;
             f.setFontWeight(QFont::Bold);
-            f.setFontPointSize(pts[lvl - 1]);
+            f.setFontPointSize(inCell ? pts[lvl - 1] * c.cellPt / kPdfBodyPt : pts[lvl - 1]);
             f.setForeground(QColor(0x10, 0x10, 0x10));
             c.newBlock(bf, f);
             pdfInline(c, row, f);
@@ -3747,11 +3772,12 @@ void buildPdfDoc(PdfCtx& c) {
         case BlockModel::Quote: {
             endList();
             QTextBlockFormat bf;
-            bf.setLeftMargin(24);
-            bf.setTopMargin(4); bf.setBottomMargin(4);
+            bf.setLeftMargin(c.cellPt > 0 ? 12 : 24);
+            bf.setTopMargin(c.cellPt > 0 ? 1 : 4); bf.setBottomMargin(c.cellPt > 0 ? 1 : 4);
             QTextCharFormat f;
             f.setFontItalic(true);
             f.setForeground(QColor(0x55, 0x55, 0x55));
+            if (c.cellPt > 0) f.setFontPointSize(c.cellPt);
             c.newBlock(bf, f);
             pdfInline(c, row, f);
             break;
@@ -3768,6 +3794,7 @@ void buildPdfDoc(PdfCtx& c) {
             QTextBlockFormat bf;
             bf.setTopMargin(1); bf.setBottomMargin(1);
             QTextCharFormat f; f.setForeground(kPdfText);
+            if (c.cellPt > 0) f.setFontPointSize(c.cellPt);
             c.newBlock(bf, f);
             if (curList && curListDepth == depth && curListOrdered == ordered) {
                 curList->add(c.cur.block());
@@ -3806,9 +3833,10 @@ void buildPdfDoc(PdfCtx& c) {
         default: {
             endList();
             QTextBlockFormat bf;
-            bf.setTopMargin(2); bf.setBottomMargin(2);
+            bf.setTopMargin(c.cellPt > 0 ? 1 : 2); bf.setBottomMargin(c.cellPt > 0 ? 1 : 2);
             QTextCharFormat f; f.setForeground(kPdfText);
             if (cellFg.isValid()) f.setForeground(cellFg);
+            if (c.cellPt > 0) f.setFontPointSize(c.cellPt);
             c.newBlock(bf, f);
             if (tableHead >= 0 && lane >= 0 && tableR >= m->headerCount(tableHead)
                 && m->tableColumnKind(tableHead, lane) == 2) {       // a check cell: its painted box
@@ -3836,12 +3864,15 @@ void buildPdfDoc(PdfCtx& c) {
         const int cols = std::max(1, tableExportCols(m, th));
         const int rows = std::max(1, m->tableRowCount(th));
         const int hdr = std::min(m->headerCount(th), rows);
-        constexpr qreal kPad = 4, kLine = 0.5;
+        constexpr qreal kPad = 3, kLine = 0.5;
         // Fixed column widths are the cells' outer widths (padding inside); the table frame adds
         // its own border + padding on both sides and the collapsed lines between columns.
         const qreal usable = fullW - 2 * (kLine + kPad) - (cols + 1) * kLine;
+        // Cells print at kPdfCellPt, so the app's px widths scale by the same ratio: a line holds
+        // the same words as on screen, rows are shorter and more columns fit a band.
+        const qreal scale = kPdfCellPt / kPdfBodyPt;
         std::vector<qreal> w(static_cast<size_t>(cols), 0.0);
-        for (int k = 0; k < cols; ++k) w[size_t(k)] = std::clamp<qreal>(m->tableColumnWidth(th, k), 24.0, usable);
+        for (int k = 0; k < cols; ++k) w[size_t(k)] = std::clamp<qreal>(m->tableColumnWidth(th, k) * scale, 24.0, usable);
         const bool keyCol = cols > 1 && w[0] <= usable / 3;
         std::vector<std::pair<int, int>> bands;   // [first, last] columns
         for (int k = 0; k < cols;) {
@@ -3854,6 +3885,7 @@ void buildPdfDoc(PdfCtx& c) {
         }
         c.first = false;
         tableHead = th;
+        c.cellPt = kPdfCellPt;
         for (size_t b = 0; b < bands.size(); ++b) {
             std::vector<int> bc;                          // the band's columns, key column first
             if (b > 0 && keyCol && bands[b].first != 0) bc.push_back(0);
@@ -3920,6 +3952,7 @@ void buildPdfDoc(PdfCtx& c) {
             c.toEnd();
             c.first = false;
         }
+        c.cellPt = 0;
         tableHead = -1;
     };
 
