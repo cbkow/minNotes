@@ -3607,9 +3607,21 @@ FocusScope {
     // is stable, so a height settle only hands ENTERING blocks to free slots (no
     // re-render, no re-measure), and measure-back is asynchronous anyway.
     readonly property real overscanPx: Math.max(200, flick.height * 0.5)
-    readonly property var poolRows: (blockModel.contentRevision, blockModel.layoutRevision,
-        blockModel.visibleBlocks(Math.max(0, flick.contentY - overscanPx),
-                                 flick.contentY + flick.height + overscanPx))
+    // The overscan is half a screen of PIXELS each side — ~15 paragraphs, but hundreds of cells
+    // where a table is dense (2026-09-15 walk: a table entering the band rebound ~700 delegates
+    // in one frame at 0.3 ms each). Cap it by ROWS beyond the viewport: still screens of prose,
+    // half a screen of table.
+    readonly property int overscanRows: Qt.application.arguments.indexOf("--no-overscan-cap") >= 0 ? 1000000 : 60   // the switch: an A/B on the same build
+    readonly property var poolRows: {
+        const dep = blockModel.contentRevision + blockModel.layoutRevision
+        const y0 = flick.contentY, y1 = flick.contentY + flick.height
+        const all = blockModel.visibleBlocks(Math.max(0, y0 - overscanPx), y1 + overscanPx)
+        const view = blockModel.visibleBlocks(y0, y1)
+        if (view.length === 0 || all.length <= view.length + 2 * overscanRows) return all
+        const first = all.indexOf(view[0]), last = all.indexOf(view[view.length - 1])
+        if (first < 0 || last < 0) return all
+        return all.slice(Math.max(0, first - overscanRows), Math.min(all.length, last + 1 + overscanRows))
+    }
     // The pool's SIZE is a ListModel that only grows, in chunks of 16 (and shrinks only when the
     // document has fewer blocks than slots). An int model on the pool Repeater regenerated EVERY
     // delegate whenever the count changed, and with a table in view (records + cells) the visible
@@ -3618,6 +3630,27 @@ FocusScope {
         Math.max(poolRows.length, Math.ceil(root.height / 38) + 2 * overscan + 4))
     readonly property int poolSize: poolModel.count
     readonly property int delegateCount: poolSize
+    // Instrument (2026-09-15 walk): `--perf-log` counts delegate rebinds per burst and the
+    // synchronous milliseconds from the first rebind to the end of the event-loop turn — the
+    // number a table entering the view should shrink.
+    readonly property bool perfLog: Qt.application.arguments.indexOf("--perf-log") >= 0
+    property int rebindBurst: 0
+    property real rebindBurstStart: 0
+    property real rebindBurstLast: 0
+    function noteRebind() {
+        if (rebindBurst === 0) rebindBurstStart = Date.now()
+        rebindBurst++
+        rebindBurstLast = Date.now()
+        rebindTimer.restart()
+    }
+    Timer {
+        id: rebindTimer; interval: 0
+        onTriggered: {   // cascade = first → last rebind (the delegates' own work); turn = to the end of the event-loop turn
+            console.log("[perf] rebind burst:", root.rebindBurst, "delegates, cascade", root.rebindBurstLast - root.rebindBurstStart,
+                        "ms, turn", Date.now() - root.rebindBurstStart, "ms, pool", poolModel.count, "at y", Math.round(flick.contentY))
+            root.rebindBurst = 0
+        }
+    }
     ListModel { id: poolModel }
     function sizePool() {
         const want = Math.min(blockModel.count, Math.ceil(poolNeed / 8) * 8)
@@ -3628,11 +3661,15 @@ FocusScope {
     // Pre-warm (2026-09-15 walk: the first scroll into a dense table hitched while slots were
     // created mid-flick): while the view rests, grow the pool a couple of slots per tick up to a
     // few screens of small cells, so a table is met with delegates already built.
-    readonly property int poolPrewarm: Math.min(blockModel.count, 4 * (Math.ceil(root.height / 38) + 2 * overscan + 4))
+    // Deeper and faster (2026-09-15 A/B on the user's document): the worst frames were the ones
+    // where the pool GREW mid-flick — ~0.8 ms per delegate created on top of ~0.13 ms per rebind —
+    // and the old 2-per-40 ms warm-up never got ahead of the scroll. Target: eight screens of small
+    // cells (never fewer than 480), four slots per tick while the view rests.
+    readonly property int poolPrewarm: Math.min(blockModel.count, Math.max(480, 8 * (Math.ceil(root.height / 38) + 2 * overscan + 4)))
     Timer {
-        interval: 40; repeat: true
+        interval: 20; repeat: true
         running: blockModel.documentOpen && !flick.moving && !flick.dragging && poolModel.count < root.poolPrewarm
-        onTriggered: { for (let k = 0; k < 2 && poolModel.count < root.poolPrewarm; ++k) poolModel.append({ slot: poolModel.count }) }
+        onTriggered: { for (let k = 0; k < 4 && poolModel.count < root.poolPrewarm; ++k) poolModel.append({ slot: poolModel.count }) }
     }
     // Which block each pool slot renders. Blocks that stay in view keep their
     // delegate. sync RETURNS the revision and runs inside this binding, so everything

@@ -238,7 +238,10 @@ Item {
     // onHeightChanged — the new row would never get measured and would
     // keep its (taller) estimate in the Fenwick → a gap below it. Keying
     // off logicalRow ensures every block the delegate shows is measured.
-    onLogicalRowChanged: if (active && !isMedia) measureTimer.restart()
+    onLogicalRowChanged: {
+        if (editor.perfLog) editor.noteRebind()   // the rebind instrument (2026-09-15)
+        if (active && !isMedia) measureTimer.restart()
+    }
     onIsFocusChanged: if (isFocus) editor.focusBlockItem = te
     Component.onCompleted: {
         if (active && !isMedia) measureTimer.restart()
