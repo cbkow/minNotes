@@ -3661,17 +3661,14 @@ void buildPdfDoc(PdfCtx& c) {
 
     // Split rows (SR-3 S8, R-I5 5e): a borderless one-row table, a cell per
     // lane at the row's ratios; blocks land in their lane's cell, sized to it.
-    // Derived tables (SR-4 S8b, R-I5 5e): one bordered table for the whole table — the app's px columns
-    // scaled into the content width, header rows repeated per page (setHeaderRowCount, R-I5 5a), cell
-    // colours, column alignment; the cells' blocks land in their cells.
     constexpr qreal kGap = 24;
     const qreal fullW = c.contentW;
     std::vector<qreal> laneW;
     QTextTable* laneRow = nullptr;
     int openLane = -1;
-    int tableHead = -1, tableCols = 0, tableR = 0;
+    int tableHead = -1, tableR = 0;     // the derived table being emitted (emitTable), for the check-cell glyph
     QColor cellFg;
-    auto closeLanes = [&](int nextLane, int nextRow) {
+    auto closeLanes = [&](int nextLane) {
         if (!laneRow) return;
         if (openLane >= 0 && nextLane != openLane) {
             endList();
@@ -3682,75 +3679,17 @@ void buildPdfDoc(PdfCtx& c) {
             cellFg = QColor();
         }
         if (nextLane < 0) {
-            if (tableHead >= 0 && nextRow < m->rowCountQml() && m->tableHeadOf(nextRow) == tableHead)
-                return;                                   // the table's next row: same table
             laneRow = nullptr;
-            tableHead = -1;
             c.toEnd();
             c.first = false;
         }
     };
 
-    const int count = m->rowCountQml();
-    for (int row = 0; row < count; ++row) {
+    // One block (a derived table's cell blocks come through here too, from emitTable).
+    auto emitRow = [&](int row) {
         const int type = m->typeForRow(row);
         const int lane = m->laneForRow(row);
-        closeLanes(lane, row);
-        if (type == BlockModel::Split && m->tableHeadOf(row) >= 0) {
-            endList();
-            const int th = m->tableHeadOf(row);
-            if (!laneRow || tableHead != th) {
-                tableHead = th;
-                tableCols = tableExportCols(m, th);
-                const int rows = std::max(1, m->tableRowCount(th));
-                QTextTableFormat tf;
-                tf.setBorder(0.5);
-                tf.setBorderBrush(kPdfBorder);
-                tf.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-                tf.setBorderCollapse(true);
-                tf.setCellPadding(4);
-                tf.setCellSpacing(0);
-                tf.setTopMargin(6); tf.setBottomMargin(6);
-                tf.setHeaderRowCount(std::min(m->headerCount(th), rows));
-                laneW.assign(size_t(tableCols), 0.0);
-                qreal total = 0;
-                for (int k = 0; k < tableCols; ++k) { laneW[size_t(k)] = m->tableColumnWidth(th, k); total += laneW[size_t(k)]; }
-                const qreal scale = total > fullW ? fullW / total : 1.0;
-                QList<QTextLength> cons;
-                for (int k = 0; k < tableCols; ++k) {
-                    laneW[size_t(k)] *= scale;
-                    cons.append(QTextLength(QTextLength::FixedLength, laneW[size_t(k)]));
-                }
-                tf.setColumnWidthConstraints(cons);
-                c.first = false;
-                laneRow = c.cur.insertTable(rows, std::max(1, tableCols), tf);
-            }
-            tableR = m->tableRowOf(row);
-            for (int k = 0; k < tableCols && tableR < laneRow->rows(); ++k) {   // cell colours, ragged cells too
-                const QString bg = m->tableCellBg(th, tableR, k);
-                if (bg.isEmpty()) continue;
-                QTextTableCell cell = laneRow->cellAt(tableR, k);
-                QTextCharFormat cf = cell.format();
-                cf.setBackground(QColor(bg));
-                cell.setFormat(cf);
-            }
-            continue;
-        }
-        if (lane >= 0 && lane != openLane && laneRow && tableHead >= 0) {
-            if (lane >= tableCols || tableR >= laneRow->rows()) continue;   // a trimmed trailing column
-            endList();
-            c.laneTable = laneRow;
-            c.laneCellRow = tableR;
-            c.laneCol = lane;
-            c.cur = laneRow->cellAt(tableR, lane).firstCursorPosition();
-            c.first = true;
-            c.contentW = std::max<qreal>(8.0, laneW[size_t(lane)] - 10.0);
-            const int al = m->tableColAlign(tableHead, lane);
-            c.cellAlign = al == 1 ? Qt::AlignHCenter : al == 2 ? Qt::AlignRight : Qt::Alignment{};
-            const QString fg = m->tableCellFg(tableHead, tableR, lane);
-            cellFg = fg.isEmpty() ? QColor() : QColor(fg);
-            openLane = lane;
-        }
+        closeLanes(lane);
         if (type == BlockModel::Split) {
             endList();
             const QVariantList ratios = m->splitRatios(row);
@@ -3777,9 +3716,9 @@ void buildPdfDoc(PdfCtx& c) {
                 cf.setRightPadding(kGap);
                 cell.setFormat(cf);
             }
-            continue;
+            return;
         }
-        if (lane >= 0 && lane != openLane && laneRow && tableHead < 0 && lane < int(laneW.size())) {
+        if (lane >= 0 && lane != openLane && laneRow && lane < int(laneW.size())) {
             endList();
             c.laneTable = laneRow;
             c.laneCellRow = 0;
@@ -3883,8 +3822,119 @@ void buildPdfDoc(PdfCtx& c) {
             break;
         }
         }
+    };
+
+    // Derived tables (SR-4 S8b + walk 2, R-I5 5a/5e): the app's px columns UNSCALED, in column BANDS
+    // that fit the content width — a spreadsheet's print-across-pages — so cells keep their measure
+    // and text wraps as it does on screen instead of letter-by-letter (the 2026-09-15 report: a
+    // 17-column grid squeezed into the page ran to 321 pages). Header rows repeat per page
+    // (setHeaderRowCount); the first column repeats per band as the row key when it's narrow; a
+    // muted "columns a–b of n" line introduces every band after the first. Hairline grid: in Qt's
+    // collapsed-border mode the CELL formats carry the borders (the table border alone draws
+    // nothing). Cell colours and column alignment as before.
+    auto emitTable = [&](int th) {
+        const int cols = std::max(1, tableExportCols(m, th));
+        const int rows = std::max(1, m->tableRowCount(th));
+        const int hdr = std::min(m->headerCount(th), rows);
+        constexpr qreal kPad = 4, kLine = 0.5;
+        // Fixed column widths are the cells' outer widths (padding inside); the table frame adds
+        // its own border + padding on both sides and the collapsed lines between columns.
+        const qreal usable = fullW - 2 * (kLine + kPad) - (cols + 1) * kLine;
+        std::vector<qreal> w(static_cast<size_t>(cols), 0.0);
+        for (int k = 0; k < cols; ++k) w[size_t(k)] = std::clamp<qreal>(m->tableColumnWidth(th, k), 24.0, usable);
+        const bool keyCol = cols > 1 && w[0] <= usable / 3;
+        std::vector<std::pair<int, int>> bands;   // [first, last] columns
+        for (int k = 0; k < cols;) {
+            int e = k;
+            qreal sum = (bands.empty() || !keyCol) ? 0.0 : w[0];
+            while (e < cols && sum + w[size_t(e)] <= usable + 0.01) { sum += w[size_t(e)]; ++e; }
+            if (e == k) e = k + 1;                        // a lone over-wide column (already clamped)
+            bands.push_back({k, e - 1});
+            k = e;
+        }
+        c.first = false;
+        tableHead = th;
+        for (size_t b = 0; b < bands.size(); ++b) {
+            std::vector<int> bc;                          // the band's columns, key column first
+            if (b > 0 && keyCol && bands[b].first != 0) bc.push_back(0);
+            for (int k = bands[b].first; k <= bands[b].second; ++k) bc.push_back(k);
+            if (b > 0) {
+                QTextBlockFormat bf; bf.setTopMargin(10); bf.setBottomMargin(0);
+                QTextCharFormat st; st.setForeground(kPdfMuted); st.setFontPointSize(8.0);
+                c.newBlock(bf, st);
+                c.cur.insertText(QStringLiteral("columns %1–%2 of %3").arg(bands[b].first + 1).arg(bands[b].second + 1).arg(cols), st);
+            }
+            QTextTableFormat tf;
+            tf.setBorder(kLine);
+            tf.setBorderBrush(kPdfBorder);
+            tf.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+            tf.setBorderCollapse(true);
+            tf.setCellPadding(kPad);
+            tf.setCellSpacing(0);
+            tf.setTopMargin(6); tf.setBottomMargin(6);
+            tf.setHeaderRowCount(hdr);
+            QList<QTextLength> cons;
+            for (int k : bc) cons.append(QTextLength(QTextLength::FixedLength, w[size_t(k)]));
+            tf.setColumnWidthConstraints(cons);
+            QTextTable* t = c.cur.insertTable(rows, int(bc.size()), tf);
+            for (int r = 0; r < rows; ++r)
+                for (size_t j = 0; j < bc.size(); ++j) {
+                    const int k = bc[j];
+                    const QVariantList blocks = m->tableCellRows(th, r, k);
+                    if (blocks.isEmpty()) continue;
+                    endList();
+                    c.laneTable = t;
+                    c.laneCellRow = r;
+                    c.laneCol = int(j);
+                    c.cur = t->cellAt(r, int(j)).firstCursorPosition();
+                    c.first = true;
+                    c.contentW = std::max<qreal>(8.0, w[size_t(k)] - 2 * kPad - 2);
+                    const int al = m->tableColAlign(th, k);
+                    c.cellAlign = al == 1 ? Qt::AlignHCenter : al == 2 ? Qt::AlignRight : Qt::Alignment{};
+                    const QString fg = m->tableCellFg(th, r, k);
+                    cellFg = fg.isEmpty() ? QColor() : QColor(fg);
+                    tableR = r;
+                    for (const QVariant& v : blocks) emitRow(v.toInt());
+                }
+            // Cell formats AFTER the content: a cell's format lives on its marker fragment, which is
+            // also where Qt keeps the "block char format" of the cell's first block — so newBlock's
+            // setBlockCharFormat on that block REPLACES the cell format (the 2026-09-15 finding: the
+            // grid lines and cell colours set before the content never reached the page).
+            for (int r = 0; r < rows; ++r)
+                for (size_t j = 0; j < bc.size(); ++j) {
+                    QTextTableCell cell = t->cellAt(r, int(j));
+                    QTextTableCellFormat cf = cell.format().toTableCellFormat();
+                    cf.setTopBorder(kLine); cf.setBottomBorder(kLine); cf.setLeftBorder(kLine); cf.setRightBorder(kLine);
+                    cf.setTopBorderStyle(QTextFrameFormat::BorderStyle_Solid); cf.setBottomBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+                    cf.setLeftBorderStyle(QTextFrameFormat::BorderStyle_Solid); cf.setRightBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+                    cf.setTopBorderBrush(kPdfBorder); cf.setBottomBorderBrush(kPdfBorder); cf.setLeftBorderBrush(kPdfBorder); cf.setRightBorderBrush(kPdfBorder);
+                    const QString bg = m->tableCellBg(th, r, bc[j]);
+                    if (!bg.isEmpty()) cf.setBackground(QColor(bg));
+                    cell.setFormat(cf);
+                }
+            endList();
+            c.laneTable = nullptr;
+            c.contentW = fullW;
+            c.cellAlign = {};
+            cellFg = QColor();
+            c.toEnd();
+            c.first = false;
+        }
+        tableHead = -1;
+    };
+
+    const int count = m->rowCountQml();
+    for (int row = 0; row < count; ++row) {
+        if (m->typeForRow(row) == BlockModel::Split && m->tableHeadOf(row) == row) {   // a table's head record
+            closeLanes(-1);
+            endList();
+            emitTable(row);
+            row = std::max(row, tableTableLast(m, row));   // the loop's ++ steps past the table
+            continue;
+        }
+        emitRow(row);
     }
-    closeLanes(-1, count);
+    closeLanes(-1);
 }
 
 } // namespace

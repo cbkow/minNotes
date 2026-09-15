@@ -7221,6 +7221,75 @@ static void testGridTableDocxPdf() {
             CHECK(bravo.left() > alpha.right() && std::abs(bravo.top() - alpha.top()) < 4 && echo.top() > bravo.bottom() - 1
                       && charlie.top() > echo.top() && std::abs(charlie.left() - alpha.left()) < 4 && after.top() > charlie.bottom(),
                   "PDF: cells side by side in a row, a cell's second block below its first, rows stacked, the next block below");
+        // The hairline grid (walk 2, 2026-09-15): a rule between the header row and the first body
+        // row — a run of light-grey pixels on the scanline between "Name" and "alpha". (Cell formats
+        // must be applied AFTER the cell content; set before it, the first block's char format
+        // replaced them and nothing drew.)
+        if (!name.isNull() && !alpha.isNull()) {
+            const QSizeF pts = pdoc.pagePointSize(0);
+            const int scale = 4;
+            const QImage pg = pdoc.render(0, QSize(int(pts.width() * scale), int(pts.height() * scale)));
+            int best = 0;
+            for (int y = int(name.bottom() * scale); y <= int(alpha.top() * scale) && y < pg.height(); ++y) {
+                int grey = 0;
+                for (int x = int(name.left() * scale); x < int(bravo.right() * scale) && x < pg.width(); ++x) {
+                    const QRgb px = pg.pixel(x, y);
+                    if (qAlpha(px) > 8 && qRed(px) < 240 && qRed(px) > 120 && std::abs(qRed(px) - qBlue(px)) < 8) ++grey;
+                }
+                best = std::max(best, grey);
+            }
+            CHECK(best > int((bravo.right() - name.left()) * scale * 0.8), "PDF: a grid rule runs between the header row and the first body row (%d px)", best);
+        }
+    }
+    {   // A table wider than the page prints in column BANDS at its column widths (walk 2): six
+        // 300-wide columns → three bands of two, a "columns a–b of 6" line before the 2nd and 3rd,
+        // every cell's text present, nothing squeezed (the last column's word extracts whole).
+        BlockModel wide;
+        wide.newDocument();
+        while (wide.rowCountQml() > 0) wide.removeBlock(0);
+        wide.insertBlock(0);
+        const int wh = wide.insertTableRows(0, 2, 6) - 1;
+        static const char* words[6] = { "apple", "banana", "cherry", "damson", "elder", "figleaf" };
+        for (int k = 0; k < 6; ++k) {
+            wide.setContent(wide.tableCellAt(wh, 0, k), QStringLiteral("H%1").arg(k + 1));
+            wide.setContent(wide.tableCellAt(wh, 1, k), QLatin1String(words[k]));
+            wide.setTableColumnWidth(wh, k, 300);
+        }
+        Exporter wex;
+        wex.setModel(&wide);
+        QBuffer wbuf;
+        wbuf.open(QIODevice::ReadWrite);
+        CHECK(wex.toPdf(Exporter::Options{}, wbuf), "wide PDF exports");
+        const QString wpath = dir + QStringLiteral("/wide.pdf");
+        { QFile pf(wpath); if (pf.open(QIODevice::WriteOnly)) pf.write(wbuf.data()); }
+        QPdfDocument pdoc;
+        CHECK(pdoc.load(wpath) == QPdfDocument::Error::None, "wide PDF re-reads");
+        QString all;
+        for (int p = 0; p < pdoc.pageCount(); ++p) all += pdoc.getAllText(p).text() + QLatin1Char('\n');
+        auto has = [&](const QString& phrase) {   // the extractor breaks glyph runs with whitespace; match loosely
+            QString pat;
+            for (QChar ch : phrase) {
+                if (ch == QLatin1Char(' ')) continue;   // the trailing \s* already allows it
+                pat += (ch == QLatin1Char('-') ? QStringLiteral("[-–]") : QRegularExpression::escape(QString(ch))) + QStringLiteral("\\s*");
+            }
+            return QRegularExpression(pat).match(all).hasMatch();
+        };
+        CHECK(has(QStringLiteral("columns 3-4 of 6")) && has(QStringLiteral("columns 5-6 of 6")) && !has(QStringLiteral("columns 1-2")),
+              "wide PDF: bands 2 and 3 announce their columns (%s)", qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(240)));
+        bool allWords = true;
+        for (const char* w : words) if (!has(QLatin1String(w))) allWords = false;
+        const QRectF fig = [&] {   // the last column's word sits on ONE line: no letter-by-letter wrapping
+            QString pat;
+            for (QChar ch : QStringLiteral("figleaf")) pat += QRegularExpression::escape(QString(ch)) + QStringLiteral("\\s*");
+            for (int p = 0; p < pdoc.pageCount(); ++p) {
+                const QString t = pdoc.getAllText(p).text();
+                const auto mt = QRegularExpression(pat).match(t);
+                if (mt.hasMatch()) return pdoc.getSelectionAtIndex(p, int(mt.capturedStart()), int(mt.capturedLength())).boundingRectangle();
+            }
+            return QRectF();
+        }();
+        CHECK(allWords && !fig.isNull() && fig.height() < 20 && fig.width() > fig.height(),
+              "wide PDF: every cell's text extracts; the last column's word is one line (%gx%g)", fig.width(), fig.height());
     }
     QDir(dir).removeRecursively();
 }

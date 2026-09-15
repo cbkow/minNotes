@@ -24,8 +24,11 @@ small mono label.
 - **Word (`.docx`)** — comments arrive as **native Word review
   comments**; code blocks keep their syntax colors; media ink is baked
   into the images.
-- **PDF** — print-ready pages with images fitted, tables normalized to
-  the page, and annotated PDF pages exported as baked images.
+- **PDF** — print-ready pages with images fitted, tables printed at
+  their column widths on a hairline grid (a table wider than the page
+  continues in column bands, the way a spreadsheet prints across pages,
+  with header rows repeated), and annotated PDF pages exported as baked
+  images.
 
 [Split rows](editing.md#side-by-side) stay side by side in HTML, Word,
 and PDF, at the widths you set; Markdown has no columns, so it stacks the
