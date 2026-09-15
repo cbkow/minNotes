@@ -10,12 +10,12 @@ Quick surface that owns the document model directly.
 |---|---|
 | App shell, editor, dialogs, menus | Qt 6.11 / QML / Qt Quick Controls 2 |
 | Document store (`.mnd`), blocks, undo | SQLite (C++ `app/core/`) |
-| Block types | paragraphs, headings, code (syntax-highlighted), quotes, bullet/numbered/task/choice lists, tables + kanban, dividers |
+| Block types | paragraphs, headings, code (syntax-highlighted), quotes, bullet/numbered/task/choice lists, dividers; blocks sit side by side in lanes, and a run of lanes with a header row is a table (typed columns, grips, row filter, kanban board) whose cells hold any blocks |
 | Media | inline images, video (decode + scrub/skim audio + annotate), inline PDF, file attachments |
 | Ink & comments | tool-driven drawing (the armed tool is the mode), page margin ink, per-page PDF annotation, sketch blocks, on-video annotations (QCView-interop), multi-select ink editing, text-anchored comment threads with in-margin cards |
 | Page | per-document page width (760–1600 detents, top ruler) with edge-anchored margin-ink migration |
 | Import | Markdown, txt, CSV/TSV, HTML, DOCX, Excel `.xlsx`, OpenDocument `.odt`/`.ods`, source-code files, RTF (macOS), Evernote `.enex`, Notion exports |
-| Export | Markdown (+`.assets/`), self-contained HTML (annotation layers + toggle, hover comment threads, lightbox, block ruler), DOCX with native Word review comments, `.mnpkg` sealed packages (media inside, video streams from the archive) |
+| Export | Markdown (+`.assets/`), self-contained HTML (annotation layers + toggle, hover comment threads, lightbox), DOCX with native Word review comments, PDF (tables print in column bands like a spreadsheet, header rows repeated), `.mnpkg` sealed packages (media inside, video streams from the archive) |
 | Cross-OS | OS-neutral path mappings for referenced media, multi-document tabs, `.mnd`/`.mnpkg` file associations |
 | Tab merge | drag a tab onto another tab, drop between blocks — the whole document copies in as one undo entry (assets follow, comments keep their history) |
 | Updates | Sparkle (macOS) / WinSparkle (Windows), EdDSA-signed appcasts |

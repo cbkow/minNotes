@@ -27,8 +27,9 @@ LucidLink — and open on either platform and dodge some typical file-locking is
 - Spelling and grammar checking as you type — on-device, US and UK English
   both accepted
 - Per-note page width, from a prose measure to a wide board
-- A block-number ruler down the right side — drag a number to reorder,
-  reference "block 14" in a review
+- Blocks side by side: drag any block next to another to make lanes,
+  resize them by dragging the gap
+- A block rail down the right side — drag a block's dot to reorder
 - Full undo history panel: the note's timeline, click to time-travel
 
 ### Tables
