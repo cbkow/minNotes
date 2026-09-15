@@ -8,8 +8,7 @@ nav_order: 11
 
 The **Export** menu writes your note in four formats, plus
 [packages](packages.md). Every export leads with the note's name as a
-small mono label, and the block-ruler numbers come along where the format
-allows.
+small mono label.
 
 ## Formats
 

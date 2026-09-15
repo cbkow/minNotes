@@ -44,10 +44,10 @@ widens. Pick a wide page for image boards, the classic measure for prose.
 
 ![The page-width ruler](images/mn008.png)
 
-Down the right side runs the **block ruler**: every block's number, a
-shared address you can reference anywhere ("see block 14" — the numbers
-also appear in exports). **Drag a number to reorder its block**; an accent
-line shows where it will land.
+Down the right side runs the **block rail**: a dot for every block, the
+focused block's a little brighter. **Drag a dot to reorder its block**
+(a table row's dot carries the row; the header row's carries the table);
+an accent line shows where it will land.
 
 ## Side by Side
 
