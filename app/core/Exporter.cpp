@@ -3304,7 +3304,9 @@ void pdfInsertImage(PdfCtx& c, const QImage& img, qreal displayW) {
     // never tip its block past the page and clip.
     const qreal maxH = c.contentH - 48;
     if (maxH > 0 && h > maxH) { w *= maxH / h; h = maxH; }
-    QTextBlockFormat bf; bf.setTopMargin(6); bf.setBottomMargin(6);
+    QTextBlockFormat bf;
+    const qreal m = c.cellPt > 0 ? 1 : 6;   // inside a table cell the picture sits tight
+    bf.setTopMargin(m); bf.setBottomMargin(m);
     c.newBlock(bf);
     QTextImageFormat f;
     f.setName(pdfAddImage(c, img));
@@ -3898,9 +3900,16 @@ void buildPdfDoc(PdfCtx& c) {
             qreal word = 0;
             int textCells = 0;
             for (int r = 0; r < rows; ++r) {
-                for (const QVariant& v : m->tableCellRows(th, r, k))
-                    if (m->typeForRow(v.toInt()) == BlockModel::Media) mediaCol[size_t(k)] = 1;
-                const QString text = m->tableCellText(th, r, k);
+                // The cell's TEXT blocks only: a media block's content is its descriptor JSON — one
+                // 80-character "word" that measured every picture column as a 300-wide text column.
+                QString text;
+                for (const QVariant& v : m->tableCellRows(th, r, k)) {
+                    const int br = v.toInt();
+                    if (m->typeForRow(br) == BlockModel::Media) { mediaCol[size_t(k)] = 1; continue; }
+                    if (m->typeForRow(br) == BlockModel::Divider) continue;
+                    if (!text.isEmpty()) text += QLatin1Char('\n');
+                    text += m->contentForRow(br);
+                }
                 qreal widest = 0;
                 for (const QString& line : text.split(QLatin1Char('\n'))) {
                     widest = std::max(widest, fm.horizontalAdvance(line) + (r < hdr ? 6.0 : 0.0));
@@ -3966,6 +3975,16 @@ void buildPdfDoc(PdfCtx& c) {
                     }
             }
             bands.push_back(std::move(band));
+        }
+        if (qEnvironmentVariableIsSet("MN_PDF_DEBUG")) {   // dev: the packer's numbers for this table
+            QString line = QStringLiteral("[pdf] table at %1: usable %2 |").arg(th).arg(usable);
+            for (int k = 0; k < cols; ++k)
+                line += QStringLiteral(" c%1 w%2 ideal%3 lo%4%5").arg(k).arg(w[size_t(k)], 0, 'f', 0).arg(ideal[size_t(k)], 0, 'f', 0).arg(lo[size_t(k)], 0, 'f', 0).arg(mediaCol[size_t(k)] ? QStringLiteral(" img") : QString());
+            for (size_t b = 0; b < bands.size(); ++b) {
+                line += QStringLiteral(" | band %1:").arg(b);
+                for (const auto& [col, bwid] : bands[b].cols) line += QStringLiteral(" c%1=%2").arg(col).arg(bwid, 0, 'f', 0);
+            }
+            qInfo("%s", qPrintable(line));
         }
         c.first = false;
         tableHead = th;
