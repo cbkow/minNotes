@@ -607,6 +607,11 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
     // URIs decode there); local file srcs are referenced in place, relative
     // ones resolved against baseDir. Remote http(s) images are left for the
     // caller's async localize pass.
+    // The enclosing table cell's background while its blocks walk (invalid outside a cell): Qt's HTML
+    // reader stamps a <td>'s background-color onto every fragment's char format inside it, so a
+    // coloured cell also read as a text HIGHLIGHT on all its text (walk 2, Google Docs). A fragment
+    // background equal to the cell's is the cell's, not a highlight.
+    QColor cellBgNow;
     auto buildText = [&](const QTextBlock& b) {
         const QTextBlockFormat bf = b.blockFormat();
 
@@ -735,7 +740,7 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
                 }
                 if (cf.hasProperty(QTextFormat::BackgroundBrush)) {
                     const QColor c = cf.background().color();
-                    if (c.alpha() > 0 && c != QColor(Qt::white))
+                    if (c.alpha() > 0 && c != QColor(Qt::white) && !(cellBgNow.isValid() && c.rgb() == cellBgNow.rgb()))
                         spans.push_back({s, e, BlockModel::SpanHighlight, c.name()});
                 }
             }
@@ -785,9 +790,10 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
                 const QTextTableCell cell = t->cellAt(r, c);
                 if (!cell.isValid() || cell.row() != r || cell.column() != c) continue;   // covered by a span: empty
                 const QTextCharFormat cf = cell.format();
+                cellBgNow = QColor();
                 if (cf.hasProperty(QTextFormat::BackgroundBrush)) {
                     const QColor bc = cf.background().color();
-                    if (bc.alpha() > 0 && bc != QColor(Qt::white)) bg[size_t(r)][size_t(c)] = bc.name();
+                    if (bc.alpha() > 0 && bc != QColor(Qt::white)) { bg[size_t(r)][size_t(c)] = bc.name(); cellBgNow = bc; }
                 }
                 if (align[size_t(c)] == 0) {
                     const Qt::Alignment a = cell.firstCursorPosition().block().blockFormat().alignment();
@@ -824,6 +830,7 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
                 }
                 out = &specs;
                 prevCode = false;
+                cellBgNow = QColor();
                 cells[size_t(r)][size_t(c)] = std::move(blocks);
             }
         QJsonArray cols;

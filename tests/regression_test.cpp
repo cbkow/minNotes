@@ -7538,7 +7538,7 @@ static void testForeignTables() {
         "<p>intro</p>"
         "<table><colgroup><col width=\"120\"><col><col></colgroup>"
         "<tr><th width=\"120\">Name</th><th style=\"text-align:center\">Qty</th><th>Notes</th></tr>"
-        "<tr><td>a1</td><td colspan=\"2\">wide</td></tr>"
+        "<tr><td>a<span style=\"background-color:#ffff00\">1</span></td><td colspan=\"2\">wide</td></tr>"
         "<tr><td style=\"background:#ff0000\"><b>bold</b> text<ul><li>one</li><li>two</li></ul></td><td>7</td>"
         "<td><table><tr><td>x</td><td>y</td></tr></table></td></tr></table>"
         "<p>outro</p>");
@@ -7592,6 +7592,11 @@ static void testForeignTables() {
               "…a 3×3 derived table with its width, alignment, cell colour and a three-block cell");
         CHECK(m.contentForRow(0) == QStringLiteral("intro") && m.contentForRow(m.rowCountQml() - 1) == QStringLiteral("outro"),
               "…the prose lands around it");
+        // A cell's background is the CELL's colour, not a highlight on its text (walk 2, Google Docs:
+        // Qt stamps a <td> background onto every fragment inside); a real highlight span still carries.
+        CHECK(h >= 0 && !m.hasFormat(m.tableCellAt(h, 2, 0), 0, 9, QStringLiteral("highlight"))
+                  && m.hasFormat(m.tableCellAt(h, 1, 0), 1, 2, QStringLiteral("highlight")) && !m.hasFormat(m.tableCellAt(h, 1, 0), 0, 1, QStringLiteral("highlight")),
+              "…a coloured cell's text carries no highlight; a highlighted run inside a plain cell does");
     }
     {   // A headerless web table into a cell fills; a th-headed one appends by label.
         BlockModel m;
