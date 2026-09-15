@@ -8,8 +8,9 @@ nav_order: 7
 
 Drag a file onto the note, or paste from the clipboard:
 
-- **Images** — inline; drag the corner handle to resize (double-click it
-  to reset). Images also live inside table cells.
+- **Images** — inline; hover or select one for its outline and drag any
+  corner to resize (double-click a corner to fit the width, again to
+  return to the original size). Images also live inside table cells.
 - **Video** — an inline player with a transport bar, skim audio, and
   press-and-hold fast forward / rewind. Open full-frame to scrub and
   annotate — notes are interchangeable with [QCView](https://qcview.com).

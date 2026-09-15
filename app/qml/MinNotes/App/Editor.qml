@@ -553,6 +553,7 @@ FocusScope {
     property real imageResizeAspect: 1     // h/w, captured on press (for the ghost height)
     property real _imgResizePressX: 0
     property real _imgResizeStartW: 0
+    property int  _imgResizeSign: 1        // +1 right-corner drag, -1 left-corner drag (outward = bigger)
     function _isImageRow(r) {
         return r >= 0 && blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "image"
     }
@@ -6318,14 +6319,16 @@ FocusScope {
         }
     }
 
-    // Image resize affordances — root overlays (above the central mouse layer) at
-    // the hovered/resizing image's corners: top-right fit-to-width, bottom-right
-    // proportional drag. Images only (kind "image"); Document view only.
+    // Image resize affordances (redesigned 2026-09-15, user ruling: "a traditional outline with 4
+    // corners"): a 1px outline around the hovered / selected image with a square handle at each
+    // corner. Drag ANY corner to resize proportionally — the image stays anchored at its lane's
+    // left edge, so a left-corner drag grows the image the same way a right one does (outward =
+    // bigger). Double-click a corner: fit the lane width; again: back to the intrinsic size.
+    // Root overlays (above the central mouse layer); images only (kind "image"); Document view only.
     Item {
         id: imgResize
-        // Show handles while resizing, while hovering the image, OR while the image
-        // is the selected block — so a click (which selects it) can't make them
-        // vanish, and missing the small handle just selects + keeps them up.
+        // Show while resizing, while hovering the image, OR while the image is the selected block
+        // — so a click (which selects it) can't make the handles vanish.
         readonly property int row: root.imageResizing ? root.imageResizeRow
             : (root.imgHandleRow >= 0 ? root.imgHandleRow
                : (root._isResizableMediaRow(cursor.focusRow) ? cursor.focusRow : -1))
@@ -6342,60 +6345,64 @@ FocusScope {
             ? (blockModel.layoutRevision, blockModel.mediaDisplayHeight(row)) : 0
         z: 57
 
-        Rectangle {   // fit-to-width (top-right)
-            id: fitBtn
+        Rectangle {   // the outline (the ghost below takes over during a drag)
             visible: !root.imageResizing
-            width: 24; height: 24; radius: 0
-            x: imgResize.imgX + imgResize.imgW - width - 6
-            y: imgResize.imgTopV + 6
-            color: fitMA.containsMouse ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
-            border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "frame-corners"; size: 14; color: Theme.colors.textBright }
-            MouseArea {
-                id: fitMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: blockModel.setMediaWidth(imgResize.row, Math.round(root.measureForRow(imgResize.row)))   // fit the lane (the page at top level)
-            }
+            x: imgResize.imgX; y: imgResize.imgTopV; width: imgResize.imgW; height: imgResize.imgH
+            color: "transparent"
+            border.width: 1; border.color: Theme.colors.accent
         }
-
-        Rectangle {   // proportional drag handle (bottom-right)
-            id: dragHandle
-            width: 22; height: 22; radius: 0
-            x: imgResize.imgX + imgResize.imgW - width - 6
-            y: imgResize.imgTopV + imgResize.imgH - height - 6
-            color: (dragMA.containsMouse || root.imageResizing) ? Theme.colors.accent : Qt.rgba(0, 0, 0, 0.55)
-            border.width: 1; border.color: Theme.colors.border
-            Icon { anchors.centerIn: parent; name: "resize"; size: 14; color: Theme.colors.textBright }
-            MouseArea {
-                id: dragMA
-                anchors.fill: parent; hoverEnabled: true; preventStealing: true
-                cursorShape: Qt.SizeFDiagCursor
-                onPressed: (m) => {
-                    // Capture the target row + start geometry BEFORE flipping
-                    // imageResizing — imgResize.row depends on it, so setting it
-                    // first would re-evaluate row to the default (-1).
-                    root.imageResizeRow = imgResize.row
-                    root._imgResizePressX = m.x
-                    root._imgResizeStartW = imgResize.imgW
-                    root.imageResizeW = imgResize.imgW
-                    root.imageResizeAspect = imgResize.imgW > 0 ? imgResize.imgH / imgResize.imgW : 1
-                    root.imageResizing = true
+        Repeater {   // four corner handles: 0 TL, 1 TR, 2 BR, 3 BL
+            model: 4
+            Item {
+                id: corner
+                required property int index
+                readonly property bool onLeft: index === 0 || index === 3
+                readonly property bool onTop: index < 2
+                width: 18; height: 18   // hit area; the visible square is 9 px
+                x: imgResize.imgX + (onLeft ? 0 : imgResize.imgW) - width / 2
+                y: imgResize.imgTopV + (onTop ? 0 : imgResize.imgH) - height / 2
+                Rectangle {
+                    visible: !root.imageResizing
+                    anchors.centerIn: parent
+                    width: 9; height: 9; radius: 0
+                    color: cornerMA.containsMouse ? Theme.colors.accent : Theme.colors.textBright
+                    border.width: 1; border.color: Theme.colors.accent
                 }
-                onPositionChanged: (m) => {
-                    if (!root.imageResizing) return
-                    // No page cap (user ruling): the drag can take an image
-                    // past the 760 measure — the reachable screen is the
-                    // practical limit, and the page h-scroll holds the rest.
-                    root.imageResizeW = Math.max(80,
-                        root._imgResizeStartW + (m.x - root._imgResizePressX))
-                }
-                onReleased: {
-                    if (root.imageResizing) {
-                        blockModel.setMediaWidth(root.imageResizeRow, Math.round(root.imageResizeW))
-                        root.imageResizing = false; root.imageResizeRow = -1
+                MouseArea {
+                    id: cornerMA
+                    anchors.fill: parent; hoverEnabled: true; preventStealing: true
+                    cursorShape: (corner.onLeft === corner.onTop) ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor
+                    onPressed: (m) => {
+                        // Capture the target row + start geometry BEFORE flipping imageResizing —
+                        // imgResize.row depends on it, so setting it first would re-evaluate row to -1.
+                        root.imageResizeRow = imgResize.row
+                        root._imgResizePressX = m.x
+                        root._imgResizeStartW = imgResize.imgW
+                        root._imgResizeSign = corner.onLeft ? -1 : 1   // a left corner grows leftward
+                        root.imageResizeW = imgResize.imgW
+                        root.imageResizeAspect = imgResize.imgW > 0 ? imgResize.imgH / imgResize.imgW : 1
+                        root.imageResizing = true
+                    }
+                    onPositionChanged: (m) => {
+                        if (!root.imageResizing) return
+                        // No page cap (user ruling): the drag can take an image past the 760
+                        // measure — the reachable screen is the practical limit, and the page
+                        // h-scroll holds the rest.
+                        root.imageResizeW = Math.max(80,
+                            root._imgResizeStartW + root._imgResizeSign * (m.x - root._imgResizePressX))
+                    }
+                    onReleased: {
+                        if (root.imageResizing) {
+                            blockModel.setMediaWidth(root.imageResizeRow, Math.round(root.imageResizeW))
+                            root.imageResizing = false; root.imageResizeRow = -1
+                        }
+                    }
+                    onCanceled: { root.imageResizing = false; root.imageResizeRow = -1 }
+                    onDoubleClicked: {   // fit the lane (the page at top level); at the fit already → intrinsic
+                        const fit = Math.round(root.measureForRow(imgResize.row))
+                        blockModel.setMediaWidth(imgResize.row, Math.abs(imgResize.imgW - fit) < 1 ? 0 : fit)
                     }
                 }
-                onCanceled: { root.imageResizing = false; root.imageResizeRow = -1 }
-                onDoubleClicked: blockModel.setMediaWidth(imgResize.row, 0)   // reset to intrinsic
             }
         }
     }
@@ -6410,11 +6417,22 @@ FocusScope {
             ? blockModel.yForRow(root.imageResizeRow) : 0) + 6 - flick.contentY
         width: root.imageResizeW
         height: root.imageResizeW * root.imageResizeAspect
-        color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.08)
-        border.width: 2; border.color: Theme.colors.accent
-        radius: Theme.dim.radius
+        color: "transparent"
+        border.width: 1; border.color: Theme.colors.accent
+        radius: 0
+        Repeater {   // the four corners travel with the ghost
+            model: 4
+            Rectangle {
+                required property int index
+                x: (index === 0 || index === 3 ? 0 : parent.width) - 4.5
+                y: (index < 2 ? 0 : parent.height) - 4.5
+                width: 9; height: 9; radius: 0
+                color: Theme.colors.accent
+                border.width: 1; border.color: Theme.colors.accent
+            }
+        }
         Rectangle {
-            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
+            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 10
             width: dimLabel.width + 10; height: dimLabel.height + 6; radius: 0
             color: Qt.rgba(0, 0, 0, 0.7)
             Text {
