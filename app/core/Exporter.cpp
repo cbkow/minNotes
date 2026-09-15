@@ -2187,11 +2187,11 @@ struct DocxCtx {
     // runs at 9pt (kCellHalfPt) unless a run sets its own size, paragraphs with no space after.
     int cellHalfPt = 0;
 };
-constexpr int kDocxCellHalfPt = 18;   // 9pt
+constexpr int kDocxCellHalfPt = 16;   // 8pt
 void docxCellSpacing(QXmlStreamWriter& pw) {   // a cell paragraph: single-spaced, no space after
     pw.writeStartElement(QStringLiteral("w:spacing"));
     pw.writeAttribute(QStringLiteral("w:before"), QStringLiteral("0"));
-    pw.writeAttribute(QStringLiteral("w:after"), QStringLiteral("40"));
+    pw.writeAttribute(QStringLiteral("w:after"), QStringLiteral("20"));
     pw.writeAttribute(QStringLiteral("w:line"), QStringLiteral("240"));
     pw.writeAttribute(QStringLiteral("w:lineRule"), QStringLiteral("auto"));
     pw.writeEndElement();
@@ -2869,6 +2869,10 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                     w.writeStartElement(QStringLiteral("w:tblLayout"));
                     w.writeAttribute(QStringLiteral("w:type"), QStringLiteral("fixed"));
                     w.writeEndElement();
+                    w.writeStartElement(QStringLiteral("w:tblCellMar"));   // tight cells (Word's default is 108 dxa each side)
+                    for (const char* side : {"top", "left", "bottom", "right"})
+                        dxaAttr(QStringLiteral("w:") + QLatin1String(side), (side[0] == 't' || side[0] == 'b') ? 15.0 : 50.0);
+                    w.writeEndElement();
                     w.writeEndElement();   // w:tblPr
                     w.writeStartElement(QStringLiteral("w:tblGrid"));
                     for (int k = 0; k < tableCols; ++k) dxaAttr(QStringLiteral("w:tableCol"), laneDxa[size_t(k)]);
@@ -3236,7 +3240,7 @@ const QColor kPdfMuted(0x77, 0x77, 0x77);
 const QColor kPdfAccent(0x01, 0x66, 0xc0);   // print-legible accent
 const QColor kPdfBorder(0xC8, 0xC8, 0xC8);
 constexpr qreal kPdfBodyPt = 10.5;     // the app's 14px body at 96 dpi (doc default font)
-constexpr qreal kPdfCellPt = 7.5;      // table cells: smaller, so more copy fits (2026-09-15, "much further")
+constexpr qreal kPdfCellPt = 7.0;      // table cells: smaller, so more copy fits (2026-09-15, "a bit smaller all around")
 
 QStringList pdfMonoFamilies() {
     return {QStringLiteral("JetBrains Mono"), QStringLiteral("Menlo"),
@@ -3868,7 +3872,7 @@ void buildPdfDoc(PdfCtx& c) {
         const int cols = std::max(1, tableExportCols(m, th));
         const int rows = std::max(1, m->tableRowCount(th));
         const int hdr = std::min(m->headerCount(th), rows);
-        constexpr qreal kPad = 2, kLine = 0.5;
+        constexpr qreal kPad = 1.5, kLine = 0.5;
         // Fixed column widths are the cells' outer widths (padding inside); the table frame adds
         // its own border + padding on both sides and the collapsed lines between columns.
         const qreal usable = fullW - 2 * (kLine + kPad) - (cols + 1) * kLine;
@@ -3880,7 +3884,7 @@ void buildPdfDoc(PdfCtx& c) {
         // the columns that still wrap, proportional to what they lack.
         // kPdfWordCapW: a token longer than this (a URL, a file name) wraps mid-word rather than
         // widening its column.
-        constexpr qreal kPdfMaxColW = 300, kPdfImgColW = 180, kPdfImgMinW = 96, kPdfWordCapW = 150;
+        constexpr qreal kPdfMaxColW = 300, kPdfImgColW = 160, kPdfImgMinW = 80, kPdfWordCapW = 150;
         const QFontMetricsF fm([] { QFont f(QStringLiteral("Aspekta")); f.setPixelSize(qRound(kPdfCellPt * 96.0 / 72.0)); return f; }());
         const qreal inner = 2 * kPad + 2;                // padding + a hair, both sides
         std::vector<qreal> w(static_cast<size_t>(cols), 0.0), ideal(static_cast<size_t>(cols), 0.0), lo(static_cast<size_t>(cols), 0.0);
@@ -3972,7 +3976,7 @@ void buildPdfDoc(PdfCtx& c) {
             for (const auto& [col, bwid] : bands[b].cols) { bc.push_back(col); bw[size_t(col)] = bwid; }
             if (b > 0) {
                 QTextBlockFormat bf; bf.setTopMargin(10); bf.setBottomMargin(0);
-                QTextCharFormat st; st.setForeground(kPdfMuted); st.setFontPointSize(8.0);
+                QTextCharFormat st; st.setForeground(kPdfMuted); st.setFontPointSize(7.0);
                 c.newBlock(bf, st);
                 c.cur.insertText(QStringLiteral("columns %1–%2 of %3").arg(bands[b].first + 1).arg(bands[b].last + 1).arg(cols), st);
             }
