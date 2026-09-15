@@ -7193,9 +7193,9 @@ static void testGridTableDocxPdf() {
         CHECK(doc.count("<w:tbl>") == 1 && doc.count("<w:tr>") == 3 && doc.count("<w:tblHeader/>") == 1
                   && doc.count("<w:tc>") == 9,
               "DOCX: one table, three rows, the header row marked to repeat, nine cells");
-        CHECK(doc.count("<w:sz w:val=\"16\"/>") >= 6 && doc.count("<w:spacing w:before=\"0\" w:after=\"20\"") >= 6 && doc.count("<w:tblCellMar>") == 1,
-              "DOCX: cell runs at 8pt with tight paragraph spacing and cell margins (%d runs, %d paragraphs)",
-              int(doc.count("<w:sz w:val=\"16\"/>")), int(doc.count("<w:spacing w:before=\"0\" w:after=\"20\"")));
+        CHECK(doc.count("<w:sz w:val=\"14\"/>") >= 6 && doc.count("<w:spacing w:before=\"0\" w:after=\"20\"") >= 6 && doc.count("<w:tblCellMar>") == 1,
+              "DOCX: cell runs at 7pt with tight paragraph spacing and cell margins (%d runs, %d paragraphs)",
+              int(doc.count("<w:sz w:val=\"14\"/>")), int(doc.count("<w:spacing w:before=\"0\" w:after=\"20\"")));
         CHECK(doc.contains("<w:tableCol w:w=\"3000\" w:type=\"dxa\"/>") && doc.contains("w:fill=\"FF0000\"")
                   && doc.contains("<w:jc w:val=\"center\"/>") && doc.contains("mnTask"),
               "DOCX: the 200 px column as 3000 dxa, the cell shading, the column alignment, the check glyph");
