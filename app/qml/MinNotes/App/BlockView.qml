@@ -444,7 +444,7 @@ Item {
         // the cell height reads mediaHost.implicitHeight, and height bumps
         // layoutRevision, so a te.btype dependency here is a latent loop the
         // async poster decode wakes up.
-        maxWidth: cell.lane.w      // the lane's width (the page's at top level) — no te.btype dep
+        maxWidth: cell.lane.w - 2 * cell.cellInset   // the lane's width (the page's at top level), inside a cell's inset — no te.btype dep
         width: implicitWidth
         // Frame height = the model's authoritative value (same as the
         // cell reservation), so the rendered media never disagrees with

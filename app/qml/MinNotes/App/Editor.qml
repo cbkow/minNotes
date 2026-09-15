@@ -3997,10 +3997,14 @@ FocusScope {
                                           (m.modifiers & Qt.AltModifier) !== 0)
                     return
                 }
-                if (root.pullHoverRow >= 0 && !(m.modifiers & Qt.ShiftModifier)) {
-                    root.pullArmed = true; root.pullArmRow = root.pullHoverRow; root.pullArmSide = root.pullHoverSide
-                    root.pullArmMods = m.modifiers; root.pullArmX = m.x; root.pullArmY = m.y
-                    return
+                if ((m.modifiers & Qt.ControlModifier) && !(m.modifiers & Qt.ShiftModifier)) {   // ⌘-press on the pull band
+                    // Re-test at the press: the hover cue only tracks ⌘ while the pointer moves.
+                    const prow = blockModel.blockAt(m.x - root.leftEdge, m.y), ps = root.pullSideAt(prow, m.x)
+                    if (ps >= 0 && root.taskCheckboxAt(m.x, m.y) < 0) {
+                        root.pullArmed = true; root.pullArmRow = prow; root.pullArmSide = ps
+                        root.pullArmMods = m.modifiers; root.pullArmX = m.x; root.pullArmY = m.y
+                        return
+                    }
                 }
                 // Click a task-item checkbox → cycle its status (todo→doing→done).
                 var tcb = root.taskCheckboxAt(m.x, m.y)
@@ -4140,7 +4144,9 @@ FocusScope {
                 const dv = (clk || gg) ? null : root.dividerAt(root.hoverRow, m.x - root.leftEdge)
                 root.dividerHoverRecord = dv ? dv.record : -1
                 root.dividerHoverIndex = dv ? dv.index : -1
-                const ps = (clk || dv || gg) ? -1 : root.pullSideAt(root.hoverRow, m.x)
+                // The pull band needs ⌘ held (user walk 2026-09-15: a plain drag at a cell's edge is the
+                // column-border resize; pulling out a lane is the special drag).
+                const ps = (clk || dv || gg || !(m.modifiers & Qt.ControlModifier)) ? -1 : root.pullSideAt(root.hoverRow, m.x)
                 root.pullHoverRow = ps >= 0 ? root.hoverRow : -1
                 root.pullHoverSide = ps
                 // Hovering an image row → show its resize handles. Don't clear on a

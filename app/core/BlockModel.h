@@ -1121,6 +1121,7 @@ private:
     double laneWidthFrom(const std::vector<float>& ratios, int lane) const;
     double laneLeftFrom(const std::vector<float>& ratios, int lane) const;
     double laneWidthOfRow(int row) const;                 // scans rows_, never the (maybe stale) index
+    double contentWidthOfRow(int row) const;              // the lane less a table cell's inset (media sizes to this)
     double laneWidthForInsert(int at, int8_t cell) const; // for a row about to be inserted at `at`
     std::vector<double> laneWidths() const;               // every row's width, one O(n) pass
     void rederiveMedia(int lo, int hi);                   // media heights after lane widths changed

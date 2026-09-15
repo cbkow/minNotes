@@ -2945,6 +2945,14 @@ double BlockModel::laneWidthOfRow(int row) const {
                                           : contentWidth_;
 }
 
+// The width a block's CONTENT gets: its lane, less a table cell's 8 px inset each side (the
+// renderer's cellInset) — what media sizes to and what text wraps in.
+double BlockModel::contentWidthOfRow(int row) const {
+    const double w = laneWidthOfRow(row);
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return w;
+    return tableHeadOf(row) >= 0 ? std::max(1.0, w - 16.0) : w;
+}
+
 double BlockModel::laneWidthForInsert(int at, int8_t cell) const {
     if (cell < 0) return contentWidth_;
     int i = std::min(at, static_cast<int>(rows_.size())) - 1;
@@ -2976,7 +2984,7 @@ void BlockModel::rederiveMedia(int lo, int hi) {
     hi = std::min(hi, static_cast<int>(rows_.size()) - 1);
     for (int i = std::max(0, lo); i <= hi; ++i)
         if (rows_[size_t(i)].type == Media)
-            setIndexHeight(size_t(i), estimatedHeight(rows_[size_t(i)], laneWidthOfRow(i)));
+            setIndexHeight(size_t(i), estimatedHeight(rows_[size_t(i)], contentWidthOfRow(i)));
 }
 
 qreal BlockModel::xForRow(int row) const {
@@ -3423,7 +3431,7 @@ QVariantList BlockModel::clearLanes(int record, int laneLo, int laneHi) {
         dropBlockInk(ids_[size_t(first)]);
         persistContent(first);
         persistMeta(first);
-        setIndexHeight(size_t(first), estimatedHeight(r, laneWidthOfRow(first)));
+        setIndexHeight(size_t(first), estimatedHeight(r, contentWidthOfRow(first)));
     }
     emit dataChanged(index(record), index(splitRowEnd(record)));
     bumpLayout();
@@ -3977,7 +3985,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         // rows (2026-08-21): they never measure back — the estimate is
         // authoritative and must re-derive from the restored descriptor.
         if (r.type == Media)
-            setIndexHeight(static_cast<size_t>(p.row), estimatedHeight(r, laneWidthOfRow(p.row)));
+            setIndexHeight(static_cast<size_t>(p.row), estimatedHeight(r, contentWidthOfRow(p.row)));
         if (doc_.isOpen()) {
             doc_.updateContent(s.id, s.content);
             doc_.updateMeta(s.id, QString::fromLatin1(typeToString(s.type)),
@@ -4953,7 +4961,7 @@ void BlockModel::sketchResizeCanvas(int row, int dl, int dt, int dr, int db) {
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], laneWidthOfRow(row)));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], contentWidthOfRow(row)));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -6342,11 +6350,11 @@ void BlockModel::flushLayoutSpike() {
 
 qreal BlockModel::mediaDisplayHeight(int row) const {
     const Row& r = rowAt(row);
-    return (r.type == Media) ? mediaFrameHeight(r, laneWidthOfRow(row)) : 0.0;
+    return (r.type == Media) ? mediaFrameHeight(r, contentWidthOfRow(row)) : 0.0;
 }
 int BlockModel::mediaDispWidth(int row) const {
     const Row& r = rowAt(row);
-    return (r.type == Media) ? int(mediaDisplayWidth(r, laneWidthOfRow(row)) + 0.5) : 0;
+    return (r.type == Media) ? int(mediaDisplayWidth(r, contentWidthOfRow(row)) + 0.5) : 0;
 }
 void BlockModel::setMediaWidth(int row, int w) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
@@ -6360,7 +6368,7 @@ void BlockModel::setMediaWidth(int row, int w) {
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], laneWidthOfRow(row)));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], contentWidthOfRow(row)));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
@@ -7088,7 +7096,7 @@ void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& js
     content_[row] = json;
     fillMediaMeta(rows_[row], json);
     rows_[row].measured = false;
-    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], laneWidthOfRow(row)));
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], contentWidthOfRow(row)));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();

@@ -56,8 +56,9 @@ stack of ordinary blocks — paragraphs, lists, images, sketches — and the
 row is as tall as its tallest lane.
 
 - **Make one:** right-click a block and choose **Split into columns**, or
-  pull from the left or right edge of a block. Dropping a dragged block or
-  a file on a block's side edge puts it in a new lane beside that block.
+  `⌘`-drag from the left or right edge of a block (a plain drag at a
+  table cell's edge resizes the column). Dropping a dragged block or a
+  file on a block's side edge puts it in a new lane beside that block.
 - **Resize:** drag the gap between two lanes. It snaps at ¼, ⅓, ½, ⅔ and
   ¾; dividers that line up with the rows above and below move together —
   hold `⌥` to move just this row's.

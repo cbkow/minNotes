@@ -1797,24 +1797,18 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             inLanes = false;
         }
     };
-    // A table's wrapper, <table> and colgroup: the app's px columns; wider than the page, percentage shares
-    // under the viewport cap (the emitTableHtml rules).
+    // A table's wrapper, <table> and colgroup: the app's px columns, always — a wide table runs past
+    // the page and the page scrolls, exactly like the app (user walk 2026-09-15: the old viewport cap
+    // squished wide tables into their columns).
     auto openGridTable = [&](int head) {
         const int cols = tableExportCols(m, head);
         double total = 0;
-        for (int c = 0; c < cols; ++c) total += m->tableColumnWidth(head, c);
-        const double pageW = std::max<double>(400.0, m->pageWidth());
-        QString colTags, open;
-        if (total > pageW) {
-            for (int c = 0; c < cols; ++c)
-                colTags += QStringLiteral("<col style=\"width:%1%\">").arg(m->tableColumnWidth(head, c) / total * 100.0, 0, 'f', 2);
-            open = QStringLiteral("<table style=\"table-layout:fixed;width:min(%1px,max(%2px,calc(100vw - 152px)))\">")
-                       .arg(int(total)).arg(int(pageW));
-        } else {
-            for (int c = 0; c < cols; ++c)
-                colTags += QStringLiteral("<col style=\"width:%1px\">").arg(qRound(m->tableColumnWidth(head, c)));
-            open = QStringLiteral("<table style=\"table-layout:fixed;width:%1px;min-width:0\">").arg(qRound(total));
+        QString colTags;
+        for (int c = 0; c < cols; ++c) {
+            total += m->tableColumnWidth(head, c);
+            colTags += QStringLiteral("<col style=\"width:%1px\">").arg(qRound(m->tableColumnWidth(head, c)));
         }
+        const QString open = QStringLiteral("<table style=\"table-layout:fixed;width:%1px;min-width:0\">").arg(qRound(total));
         return QStringLiteral("<div class=\"tablewrap\">%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags);
     };
 
@@ -2022,10 +2016,9 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             for (int c = 0; c < gc; ++c) t += m->tableColumnWidth(r, c);
             widest = std::max(widest, t);
         }
-        if (widest > pw)
+        if (widest > pw)   // the band runs as wide as the widest table (no viewport cap: the page scrolls)
             css.replace(QLatin1String("--sheetw:1000px"),
-                QStringLiteral("--sheetw:calc(min(%1px,max(%2px,100vw - 152px)) + 240px)")
-                    .arg(int(widest)).arg(pw));
+                        QStringLiteral("--sheetw:%1px").arg(int(widest) + 240));
         else if (pw != 760)
             css.replace(QLatin1String("--sheetw:1000px"),
                         QStringLiteral("--sheetw:%1px").arg(pw + 240));
