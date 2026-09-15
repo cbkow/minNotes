@@ -32,10 +32,16 @@ class QIODevice;
 
 class Exporter : public QObject {
     Q_OBJECT
+    // Why the last export failed (the file couldn't be opened / written) — the toast shows it.
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 public:
     explicit Exporter(QObject* parent = nullptr);
 
     void setModel(BlockModel* m) { model_ = m; }
+    QString lastError() const { return lastError_; }
+signals:
+    void lastErrorChanged();
+public:
 
     struct Options {
         bool includeVideoNotes = true;
@@ -117,5 +123,7 @@ public:
 private:
     QString markdownRange(int lo, int hi, const Options& opt, AssetSink& sink,
                           bool withHeader) const;
+    bool fail(const QString& why);   // records lastError, returns false
     BlockModel* model_ = nullptr;
+    QString lastError_;
 };

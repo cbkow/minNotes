@@ -1012,9 +1012,10 @@ bool Exporter::exportMarkdown(const QString& fileUrlOrPath, bool includeVideoNot
     const QString md = toMarkdown(opt, sink);
 
     QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly)) return false;
+    if (!f.open(QIODevice::WriteOnly)) return fail(QStringLiteral("%1 — %2").arg(QDir::toNativeSeparators(path), f.errorString()));
     f.write(md.toUtf8());
-    return f.commit();
+    if (!f.commit()) return fail(QStringLiteral("%1 — %2").arg(QDir::toNativeSeparators(path), f.errorString()));
+    return true;
 }
 
 // ============================ HTML emitter =============================
@@ -2152,9 +2153,10 @@ bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes, 
     const QString html = toHtml(opt, sink);
 
     QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly)) return false;
+    if (!f.open(QIODevice::WriteOnly)) return fail(QStringLiteral("%1 — %2").arg(QDir::toNativeSeparators(path), f.errorString()));
     f.write(html.toUtf8());
-    return f.commit();
+    if (!f.commit()) return fail(QStringLiteral("%1 — %2").arg(QDir::toNativeSeparators(path), f.errorString()));
+    return true;
 }
 
 // ============================ DOCX emitter =============================
@@ -3202,7 +3204,7 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes, 
 
     QZipWriter zip(outPath);
     zip.setCompressionPolicy(QZipWriter::AlwaysCompress);
-    if (zip.status() != QZipWriter::NoError) return false;
+    if (zip.status() != QZipWriter::NoError) return fail(QStringLiteral("%1 — the file could not be opened for writing").arg(QDir::toNativeSeparators(outPath)));
     zip.addFile(QStringLiteral("[Content_Types].xml"), contentTypes);
     zip.addFile(QStringLiteral("_rels/.rels"), pkgRels);
     zip.addFile(QStringLiteral("word/document.xml"), documentXml);
@@ -3215,7 +3217,8 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes, 
                         .arg(i + 1).arg(c.images.at(i).second),
                     c.images.at(i).first);
     zip.close();
-    return zip.status() == QZipWriter::NoError;
+    if (zip.status() != QZipWriter::NoError) return fail(QStringLiteral("%1 — the file could not be written").arg(QDir::toNativeSeparators(outPath)));
+    return true;
 }
 
 // ============================ PDF export ============================
@@ -4134,17 +4137,28 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
     return out.pos() > before;
 }
 
+bool Exporter::fail(const QString& why) {
+    qWarning("minNotes export: %s", qPrintable(why));
+    if (lastError_ != why) { lastError_ = why; emit lastErrorChanged(); }
+    return false;
+}
+
 bool Exporter::exportPdf(const QString& fileUrlOrPath, bool includeVideoNotes, bool ufbLinks) {
     QString outPath = localPathOf(fileUrlOrPath);
-    if (outPath.isEmpty() || !model_) return false;
+    if (outPath.isEmpty() || !model_) return fail(QStringLiteral("no file chosen"));
     if (!outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive))
         outPath += QStringLiteral(".pdf");
-    QFile f(outPath);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    // QSaveFile: the PDF is written beside the target and swapped in on commit, so an existing
+    // file is replaced whole or left untouched (2026-09-15, "exporters can't overwrite").
+    QSaveFile f(outPath);
+    if (!f.open(QIODevice::WriteOnly))
+        return fail(QStringLiteral("%1 — %2").arg(QDir::toNativeSeparators(outPath), f.errorString()));
     Options opt;
     opt.includeVideoNotes = includeVideoNotes;
     opt.ufbLinks = ufbLinks;
     const bool ok = toPdf(opt, f);
-    f.close();
-    return ok && f.error() == QFile::NoError && f.size() > 0;
+    if (!ok) { f.cancelWriting(); return fail(QStringLiteral("the PDF could not be rendered")); }
+    if (!f.commit())
+        return fail(QStringLiteral("%1 — %2").arg(QDir::toNativeSeparators(outPath), f.errorString()));
+    return true;
 }

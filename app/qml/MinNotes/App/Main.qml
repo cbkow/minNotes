@@ -344,7 +344,7 @@ ApplicationWindow {
                 ? exporter.exportPdf(f, win._exportNotes, exportPrefs.ufbLinks)
                 : exporter.exportMarkdown(f, win._exportNotes, exportPrefs.ufbLinks)
             if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f))
-            else    Toasts.show(qsTr("Export failed"), 2)
+            else    Toasts.show(qsTr("Export failed — ") + exporter.lastError, 2)
         }
     }
     // --- Package export progress (async worker; family dialog chrome). ---
