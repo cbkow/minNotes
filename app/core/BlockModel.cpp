@@ -122,7 +122,7 @@ void BlockModel::closeDocument() {
     endResetModel();
     clearUndo();
     if (!inkByBlock_.isEmpty()) { inkByBlock_.clear(); ++inkRevision_; emit inkChanged(); }
-    if (!qFuzzyCompare(pageWidth_, 760.0)) { pageWidth_ = 760; emit pageWidthChanged(); }
+    if (!qFuzzyCompare(pageWidth_, 760.0)) { pageWidth_ = 760; emit pageWidthChanged(); markTableGeomDirty(); }
     emit documentChanged();
     emit dirtyChanged();
 }
@@ -449,7 +449,7 @@ const std::vector<int>& BlockModel::tableHeads() const {
         tableHeads_[i] = cur;
     }
     tablesDirty_ = false;
-    tableGeomDirty_ = true;                           // heads may have moved: geometry follows
+    markTableGeomDirty();                           // heads may have moved: geometry follows
     return tableHeads_;
 }
 
@@ -717,7 +717,7 @@ void BlockModel::rebuildTable(int lo, int hi, const std::vector<GridRow>& grid, 
     }
     replaceBand(lo, hi, nr, ni, nc);
     tablesDirty_ = true;
-    tableGeomDirty_ = true;
+    markTableGeomDirty();
 }
 
 bool BlockModel::commitGrid(int head, const std::vector<GridRow>& grid, const QJsonArray& cols, int headerCount) {
@@ -1420,7 +1420,7 @@ bool BlockModel::tableSetColumnFps(int head, int c, double fps) {
     const auto [lo, hi] = tableBand(head);
     beginTxn(lo, hi);
     rebuildTable(lo, hi, grid, spec, headerCount(head));
-    tableGeomDirty_ = true;
+    markTableGeomDirty();
     if (tableColumnKind(head, c) == 3)
         for (int r = headerCount(head); r < tableRowCount(head); ++r) normalizeTimecodeCell(tableCellAt(head, r, c));
     bumpLayout();
@@ -1476,7 +1476,7 @@ bool BlockModel::tableSetColumnKind(int head, int c, int kind) {
         cell.blocks = { keep };
     }
     rebuildTable(lo, hi, grid, spec, headerCount(head));
-    tableGeomDirty_ = true;                                  // the spec (and its cached parse) changed
+    markTableGeomDirty();                                  // the spec (and its cached parse) changed
     if (kind == 3)                                           // T6: frame counts / timecodes → canonical
         for (int r = headerCount(head); r < tableRowCount(head); ++r) normalizeTimecodeCell(tableCellAt(head, r, c));
     bumpLayout();
@@ -2682,7 +2682,7 @@ void BlockModel::persistContent(int row) {
     const int column = rows_[size_t(row)].cell;
     const qreal before = tableColumnWidth(head, column);
     rows_[size_t(row)].natW = -1;
-    tableGeomDirty_ = true;
+    markTableGeomDirty();
     if (tableColumnWidth(head, column) == before) return;
     const QVariantList recs = tableRecords(head);
     const int end = splitRowEnd(recs.back().toInt());
@@ -2831,7 +2831,7 @@ void BlockModel::loadFromStore() {
     clearUndo();
     // The document's page measure (v3; 760 for pre-v3 docs).
     const qreal docW = doc_.pageWidth();
-    if (!qFuzzyCompare(pageWidth_, docW)) { pageWidth_ = docW; emit pageWidthChanged(); }
+    if (!qFuzzyCompare(pageWidth_, docW)) { pageWidth_ = docW; emit pageWidthChanged(); markTableGeomDirty(); }
     emit modelReset();
     emit layoutChangedSpike();
 }
@@ -3824,7 +3824,7 @@ QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
 
 void BlockModel::persistMeta(int row) {
     if (row >= 0 && row < static_cast<int>(rows_.size()) && rows_[size_t(row)].type == Split)
-        tableGeomDirty_ = true;                        // a head's column spec may have changed
+        markTableGeomDirty();                        // a head's column spec may have changed
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
@@ -4220,7 +4220,7 @@ void BlockModel::applyUndoWidth(qreal w) {
     if (w <= 0 || qFuzzyCompare(w, pageWidth_)) return;
     pageWidth_ = w;
     doc_.setPageWidth(int(std::lround(w)));
-    emit pageWidthChanged();
+    emit pageWidthChanged(); markTableGeomDirty();
 }
 
 // Edge-affinity migration (PLAN-page-width, affinity DERIVED not stored):
@@ -4302,7 +4302,7 @@ void BlockModel::setPageWidth(qreal w) {
         undoCur_ = static_cast<int>(undo_.size()) - 1;
         ++undoRev_; emit undoStackChanged();
     }
-    emit pageWidthChanged();
+    emit pageWidthChanged(); markTableGeomDirty();
 }
 
 // History-panel label: a read-time heuristic over the entry's snapshots —
@@ -6339,6 +6339,16 @@ void BlockModel::setMeasuredHeight(int row, qreal h) {
             layoutSpikePending_ = true;
             QMetaObject::invokeMethod(this, [this] { flushLayoutSpike(); }, Qt::QueuedConnection);
         }
+    }
+}
+
+void BlockModel::markTableGeomDirty() const {
+    tableGeomDirty_ = true;
+    ++geomRevision_;
+    if (!geomSpikePending_) {
+        geomSpikePending_ = true;
+        BlockModel* self = const_cast<BlockModel*>(this);   // the emit is the only non-const act, and it is queued
+        QMetaObject::invokeMethod(self, [self] { self->geomSpikePending_ = false; emit self->geomChangedSpike(); }, Qt::QueuedConnection);
     }
 }
 

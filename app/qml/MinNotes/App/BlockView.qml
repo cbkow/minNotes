@@ -93,16 +93,16 @@ Item {
     // background (cell > row > column colour; header rows tinted) and the grid lines. It
     // stacks below the cell blocks' delegates.
     // The row's cells sit between its pockets (S5b: the first row's top, the last row's bottom).
-    readonly property real padTop: isTableRecord ? (blockModel.layoutRevision, blockModel.tablePadTop(logicalRow)) : 0
-    readonly property real padBottom: isTableRecord ? (blockModel.layoutRevision, blockModel.tablePadBottom(logicalRow)) : 0
+    readonly property real padTop: isTableRecord ? (blockModel.contentRevision, blockModel.tablePadTop(logicalRow)) : 0
+    readonly property real padBottom: isTableRecord ? (blockModel.contentRevision, blockModel.tablePadBottom(logicalRow)) : 0
     Repeater {
         model: cell.isTableRecord ? (blockModel.contentRevision, blockModel.tableColumnCount(cell.tableHead)) : 0
         delegate: Rectangle {
             required property int index
             readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(cell.tableHead, cell.tableRow, index))
-            x: editor.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(cell.tableHead, index))
+            x: editor.leftEdge + (blockModel.geomRevision, blockModel.tableColumnLeft(cell.tableHead, index))
             y: cell.padTop
-            width: (blockModel.layoutRevision, blockModel.tableColumnWidth(cell.tableHead, index))
+            width: (blockModel.geomRevision, blockModel.tableColumnWidth(cell.tableHead, index))
             height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
             color: bg !== "" ? bg : cell.headerCell ? Theme.colors.surfaceHover : "transparent"
             // ONE wash per cell (2026-09-14: four stacked rectangles cost a big table's scroll), by
@@ -151,7 +151,7 @@ Item {
     Rectangle {   // the top edge, on the table's first row
         visible: cell.isTableRecord && cell.tableRow === 0
         x: editor.leftEdge; y: cell.padTop; height: 1
-        width: (blockModel.layoutRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
+        width: (blockModel.geomRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
     }
     // Grips (SR-4 S7b): the hovered row's pill in the left margin, the hovered column's in the pocket
@@ -173,8 +173,8 @@ Item {
             : live ? editor.tableGripPressIndex
             : editor.tableGripKind === "col" && editor.tableGripHead === cell.tableHead ? editor.tableGripIndex : -1
         visible: col >= 0
-        x: editor.leftEdge + (blockModel.layoutRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
-        width: (blockModel.layoutRevision, col >= 0 ? blockModel.tableColumnWidth(cell.tableHead, col) : 0)
+        x: editor.leftEdge + (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
+        width: (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnWidth(cell.tableHead, col) : 0)
         y: cell.padTop - 13; height: 8
         color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover
         border.width: 1; border.color: live ? Theme.colors.accent : Theme.colors.border
@@ -255,7 +255,7 @@ Item {
     // regenerates on any new model object — so each Repeater takes the constant 0 while its array
     // is empty (the common case: only a real array resets it), and records compute nothing.
     property var hlRects: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision
+        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount   // the text's OWN geometry (a height settling elsewhere can't move these)
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.highlightRangesForRow(cell.logicalRow)
         var out = []
@@ -283,7 +283,7 @@ Item {
     // ranges (the margin pin is the interactive affordance; plain
     // clicks here keep editing text). One rect per visual line.
     property var commentRects: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision
+        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount
                 + blockModel.commentsRevision
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.commentRangesForRow(cell.logicalRow)
@@ -321,7 +321,7 @@ Item {
     // would regenerate its tiles on every result (the 2026-09-15 first-scroll hitch).
     property var spellRects: []
     readonly property string spellKey: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision + spell.revision
+        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount + spell.revision
         if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6) return ""
         if (!spell.checkSpelling && !spell.checkGrammar) return ""
         var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
@@ -360,7 +360,7 @@ Item {
     // the highlight, and below the glyphs. NOT a char-format
     // background (that paints inside the TextEdit, above selection).
     property var codeRects: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision
+        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.codeRangesForRow(cell.logicalRow)
         var out = []
@@ -391,7 +391,7 @@ Item {
     // The label is the block's own text; this is only the pill
     // behind it.
     property var choiceRects: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision
+        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         if (cell.colKind === 2) return []   // a check cell shows its checkbox, not the chip
         var ranges = blockModel.choiceRangesForRow(cell.logicalRow)
@@ -427,7 +427,7 @@ Item {
 
     // selection highlight (behind text), one rect per visual line.
     property var selRects: {
-        var dep = blockModel.contentRevision + blockModel.layoutRevision   // re-eval triggers
+        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount   // re-eval triggers: the text's own geometry
         // Opaque rows (media/table/divider) show membership via the
         // wash rectangle below, never via text rects over a hidden te.
         if (!cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6) return []
@@ -461,6 +461,7 @@ Item {
         // layoutRevision, so a te.btype dependency here is a latent loop the
         // async poster decode wakes up.
         maxWidth: cell.lane.w - 2 * cell.cellInset   // the lane's width (the page's at top level), inside a cell's inset — no te.btype dep
+        onImageReady: if (editor.perfLog) editor.imagesReady++
         width: implicitWidth
         // Frame height = the model's authoritative value (same as the
         // cell reservation), so the rendered media never disagrees with
@@ -601,7 +602,7 @@ Item {
                    : btype === 4 ? Theme.font.serif   // quote → Merriweather
                    : Theme.font.body                  // document body → Aspekta
         font.pixelSize: {
-            var _ = blockModel.layoutRevision + blockModel.contentRevision   // deps
+            var _ = blockModel.contentRevision   // dep (NOT layoutRevision: the size feeds the height)
             if (btype === 2) return Theme.font.sizeMono
             if (btype !== 1 || !cell.active) return Theme.font.sizeBody
             return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]

@@ -35,6 +35,11 @@ class BlockModel : public QAbstractListModel {
     // Bump on any height change; QML bindings include it to force re-eval of
     // yForRow()/rowForY() (which are Q_INVOKABLE, not properties).
     Q_PROPERTY(int layoutRevision READ layoutRevision NOTIFY layoutChangedSpike)
+    // Table GEOMETRY (column widths / lefts / table width): bumped when a column spec, a lane ratio,
+    // a measured natural width or the page width changes — NOT on every height settle. Delegates
+    // key their column bindings on this (2026-09-15: keyed on layoutRevision, ~20 bindings per
+    // pooled delegate re-ran per frame while a table scrolled).
+    Q_PROPERTY(int geomRevision READ geomRevision NOTIFY geomChangedSpike)
     // Bump on any CONTENT change (edit/delete). The Flickable arm's text
     // binding includes it to re-read contentForRow() without repositioning.
     Q_PROPERTY(int contentRevision READ contentRevision NOTIFY contentChangedSpike)
@@ -132,6 +137,7 @@ public:
     int rowCountQml() const { return static_cast<int>(rows_.size()); }
     qreal totalHeight() const { return layout().total(); }
     int layoutRevision() const { return layoutRevision_; }
+    int geomRevision() const { return geomRevision_; }
     int contentRevision() const { return contentRevision_; }
 
     // --- Build / reconfigure (driven by Main.qml controls) ---
@@ -910,6 +916,7 @@ public:
 
 signals:
     void layoutChangedSpike();
+    void geomChangedSpike();      // table geometry changed (coalesced; see geomRevision)
     void contentChangedSpike();
     void maxContentWidthChanged();
     void modelReset();
@@ -1249,6 +1256,9 @@ private:
     QSet<QString> hiddenIds_;                 // T4: folded records, by block id (view-only; not in the document)
     mutable std::size_t geomRows_ = 0;
     bool layoutSpikePending_ = false;                   // a coalesced layoutChangedSpike is queued (measure-backs)
+    mutable int geomRevision_ = 0;                      // table geometry (see the property)
+    mutable bool geomSpikePending_ = false;
+    void markTableGeomDirty() const;                    // tableGeomDirty_ + one geomChangedSpike per turn (const: the cache is)
     const TableGeom* tableGeom(int head) const;         // nullptr unless head is a table head
     TableGeom buildTableGeom(int head) const;
     // S3a: a table as a grid of existing rows. Cell entries: v ≥ 0 keeps flat row v (its id);

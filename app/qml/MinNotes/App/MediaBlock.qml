@@ -12,6 +12,7 @@ import QtQuick
 // pointless decode.
 Item {
     id: mb
+    signal imageReady()
     property int  logicalRow: -1
     property bool active: false
     property real maxWidth: 760
@@ -200,6 +201,7 @@ Item {
         // cache:true (2026-09-14): media sources are content-addressed, so a URL never changes
         // its bytes; without it every delegate recycle re-decoded the image on the reader thread.
         asynchronous: true; cache: true
+        onStatusChanged: if (status === Image.Ready) mb.imageReady()   // the frame monitor counts decodes (perfLog)
         fillMode: Image.PreserveAspectFit
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
         smooth: true

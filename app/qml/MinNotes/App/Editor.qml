@@ -3634,12 +3634,35 @@ FocusScope {
     // synchronous milliseconds from the first rebind to the end of the event-loop turn — the
     // number a table entering the view should shrink.
     readonly property bool perfLog: Qt.application.arguments.indexOf("--perf-log") >= 0
+    readonly property bool noSticky: Qt.application.arguments.indexOf("--no-sticky") >= 0   // A/B: no sticky header / frozen column
     property int rebindBurst: 0
+    property int rebindTotal: 0
+    property int imagesReady: 0        // MediaBlock counts decoded images here (perfLog only)
+    // The frame monitor: every frame over 25 ms, with what changed in it — so a hitch names its
+    // cause instead of being sampled for.
+    FrameAnimation {
+        running: root.perfLog
+        property real lastY: 0
+        property int lastPool: 0
+        property int lastRebinds: 0
+        property int lastImages: 0
+        property int lastSticky: -1
+        onTriggered: {
+            const ms = frameTime * 1000
+            const sticky = stickyHeader.stHead
+            if (ms > 25)
+                console.log("[frame]", Math.round(ms), "ms  dy", Math.round(flick.contentY - lastY), " pool +" + (poolModel.count - lastPool),
+                            " rebinds", root.rebindTotal - lastRebinds, " images", root.imagesReady - lastImages,
+                            " sticky", lastSticky, "→", sticky, " y", Math.round(flick.contentY))
+            lastY = flick.contentY; lastPool = poolModel.count; lastRebinds = root.rebindTotal
+            lastImages = root.imagesReady; lastSticky = sticky
+        }
+    }
     property real rebindBurstStart: 0
     property real rebindBurstLast: 0
     function noteRebind() {
         if (rebindBurst === 0) rebindBurstStart = Date.now()
-        rebindBurst++
+        rebindBurst++; rebindTotal++
         rebindBurstLast = Date.now()
         rebindTimer.restart()
     }
@@ -3839,7 +3862,7 @@ FocusScope {
             }
             readonly property var computed: {
                 const dep = blockModel.layoutRevision + blockModel.contentRevision + flick.contentY + flick.contentX
-                if (flick.contentX <= root.leftEdge + 1) return []
+                if (root.noSticky || flick.contentX <= root.leftEdge + 1) return []
                 const out = []
                 const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
                 for (let i = 0; i < inView.length; ++i) {
@@ -3920,7 +3943,7 @@ FocusScope {
         Item {
             id: stickyHeader
             readonly property var st: (blockModel.layoutRevision, blockModel.contentRevision,
-                                       blockModel.tableStickyAt(flick.contentY))
+                                       root.noSticky ? ({}) : blockModel.tableStickyAt(flick.contentY))
             readonly property bool has: st.head !== undefined
             readonly property real headerH: has ? st.headerBottom - st.headerTop : 0
             readonly property real headerTop: has ? st.headerTop : 0
