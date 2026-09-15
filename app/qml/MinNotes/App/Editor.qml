@@ -3799,41 +3799,7 @@ FocusScope {
                 color: Theme.colors.bgAlt
             }
         }
-        Repeater {   // RULES: a faint hairline at each block's top across the
-                     // whole field, text column included — a line that INFORMS
-                     // ("a block starts here") and stays put under editing,
-                     // unlike zebra parity.
-            model: root.noRail ? 0 : poolModel   // grows by insertion: never a full regenerate
-            delegate: Rectangle {
-                required property int index
-                readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
-                // Top entries only: a rule marks where a ROW starts, not a lane block.
-                visible: prow >= 0 && prow < blockModel.count
-                         && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0
-                         && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))   // the grid frame
-                         && !(blockModel.layoutRevision, blockModel.rowHidden(prow))                // T4 filter
-                z: -1
-                x: 0
-                width: Math.max(flick.width, root.contentSpan)
-                y: (blockModel.layoutRevision, blockModel.yForRow(prow))
-                height: 1
-                color: Theme.colors.border
-                // ROLLING VISIBILITY (user ruling): rules earn their ink when
-                // they're load-bearing — full strength bounding the focused
-                // block ±2 (local orientation), ALL of them during a block
-                // drag (the insertion grid), otherwise INVISIBLE (user: "more
-                // obvious — completely invisible except for the neighbors").
-                // Distance 0 = the two rules bounding the focus block
-                // (a rule at prow is the boundary ABOVE block prow).
-                readonly property real dist: cursor.focusRow < 0 ? 99
-                    : prow <= cursor.focusRow ? cursor.focusRow - prow
-                                              : prow - cursor.focusRow - 1
-                opacity: root.blockDragging ? 0.55
-                       : dist <= 2 ? 0.55
-                       : Math.max(0, 0.55 - (dist - 2) * 0.2)
-                Behavior on opacity { NumberAnimation { duration: 150 } }
-            }
-        }
+        // (The block rules are gone — 2026-09-15 walk: the user dropped them for scroll smoothness.)
 
         Repeater {
             id: pool
@@ -5933,14 +5899,13 @@ FocusScope {
                 // Being dragged → the rail chip is the block's body; its slot dims.
                 opacity: root.blockDragging && rnum.prow >= root.blockDragRow
                          && rnum.prow < root.blockDragRow + root.blockDragCount ? 0.3 : 1
-                Text {
-                    y: 2
-                    width: parent.width - 8
-                    horizontalAlignment: Text.AlignRight
-                    text: rnum.prow + 1
-                    color: rnum.prow === cursor.focusRow ? Theme.colors.textMuted
-                                                         : Theme.colors.textSubtle
-                    font.family: Theme.font.mono; font.pixelSize: 11
+                // A DOT, not a number (2026-09-15 walk): with cells as blocks the numbering counted
+                // every cell, and a Text per rail slot laid out and built glyph nodes on every rebind.
+                Rectangle {
+                    x: parent.width - 8 - width; y: 6
+                    width: 6; height: 6; radius: 3
+                    color: rnum.prow === cursor.focusRow ? Theme.colors.textMuted : Theme.colors.textSubtle
+                    opacity: rnum.prow === cursor.focusRow ? 1.0 : 0.55
                 }
                 MouseArea {   // the number is the block's HANDLE — drag to
                               // reorder (the left gutter's twin; reuses the
@@ -5990,7 +5955,7 @@ FocusScope {
             border.width: 1; border.color: Theme.colors.accent
             Text {
                 anchors.centerIn: parent
-                text: root.blockDragCount > 1 ? root.blockDragCount + " blocks" : root.blockDragRow + 1
+                text: root.blockDragCount > 1 ? root.blockDragCount + " blocks" : "block"
                 color: Theme.colors.textBright
                 font.family: Theme.font.mono; font.pixelSize: 11
             }
