@@ -4,6 +4,7 @@
 #include "BlockModel.h"
 #include "CodeSyntax.h"
 #include "MediaStore.h"
+#include <QFontMetricsF>
 
 #include <KSyntaxHighlighting/AbstractHighlighter>
 #include <KSyntaxHighlighting/Definition>
@@ -3232,7 +3233,7 @@ const QColor kPdfMuted(0x77, 0x77, 0x77);
 const QColor kPdfAccent(0x01, 0x66, 0xc0);   // print-legible accent
 const QColor kPdfBorder(0xC8, 0xC8, 0xC8);
 constexpr qreal kPdfBodyPt = 10.5;     // the app's 14px body at 96 dpi (doc default font)
-constexpr qreal kPdfCellPt = 8.5;      // table cells: smaller, so more copy fits (2026-09-15)
+constexpr qreal kPdfCellPt = 7.5;      // table cells: smaller, so more copy fits (2026-09-15, "much further")
 
 QStringList pdfMonoFamilies() {
     return {QStringLiteral("JetBrains Mono"), QStringLiteral("Menlo"),
@@ -3864,37 +3865,98 @@ void buildPdfDoc(PdfCtx& c) {
         const int cols = std::max(1, tableExportCols(m, th));
         const int rows = std::max(1, m->tableRowCount(th));
         const int hdr = std::min(m->headerCount(th), rows);
-        constexpr qreal kPad = 3, kLine = 0.5;
+        constexpr qreal kPad = 2, kLine = 0.5;
         // Fixed column widths are the cells' outer widths (padding inside); the table frame adds
         // its own border + padding on both sides and the collapsed lines between columns.
         const qreal usable = fullW - 2 * (kLine + kPad) - (cols + 1) * kLine;
-        // Cells print at kPdfCellPt, so the app's px widths scale by the same ratio: a line holds
-        // the same words as on screen, rows are shorter and more columns fit a band.
-        const qreal scale = kPdfCellPt / kPdfBodyPt;
-        std::vector<qreal> w(static_cast<size_t>(cols), 0.0);
-        for (int k = 0; k < cols; ++k) w[size_t(k)] = std::clamp<qreal>(m->tableColumnWidth(th, k) * scale, 24.0, usable);
+        // Print widths come from the CONTENT, not the screen (user ruling 2026-09-15, "we can go
+        // much further with PDFs … column/cell width adjustments"): a column's ideal width is its
+        // widest line at the cell size (capped at kPdfMaxColW so a paragraph column wraps at ~65
+        // characters), its floor is its longest word (nothing breaks mid-word), an image column
+        // asks for kPdfImgColW. Bands pack by those widths; a band's leftover width then goes to
+        // the columns that still wrap, proportional to what they lack.
+        // kPdfWordCapW: a token longer than this (a URL, a file name) wraps mid-word rather than
+        // widening its column.
+        constexpr qreal kPdfMaxColW = 300, kPdfImgColW = 180, kPdfImgMinW = 96, kPdfWordCapW = 150;
+        const QFontMetricsF fm([] { QFont f(QStringLiteral("Aspekta")); f.setPixelSize(qRound(kPdfCellPt * 96.0 / 72.0)); return f; }());
+        const qreal inner = 2 * kPad + 2;                // padding + a hair, both sides
+        std::vector<qreal> w(static_cast<size_t>(cols), 0.0), ideal(static_cast<size_t>(cols), 0.0), lo(static_cast<size_t>(cols), 0.0);
+        for (int k = 0; k < cols; ++k) {
+            // Per cell: its widest line. The column's ideal is the 90th percentile of its cells
+            // (not the maximum: one long note in a column of five-character ids must wrap, not
+            // widen every row); the longest word over all cells is the floor.
+            std::vector<qreal> cellW;
+            qreal word = 0;
+            bool media = false;
+            for (int r = 0; r < rows; ++r) {
+                for (const QVariant& v : m->tableCellRows(th, r, k))
+                    if (m->typeForRow(v.toInt()) == BlockModel::Media) media = true;
+                const QString text = m->tableCellText(th, r, k);
+                if (text.isEmpty()) continue;
+                qreal widest = 0;
+                for (const QString& line : text.split(QLatin1Char('\n'))) {
+                    widest = std::max(widest, fm.horizontalAdvance(line) + (r < hdr ? 6.0 : 0.0));
+                    for (const QString& wd : line.split(QLatin1Char(' '), Qt::SkipEmptyParts))
+                        word = std::max(word, fm.horizontalAdvance(wd));
+                }
+                cellW.push_back(widest);
+            }
+            qreal widest = 0;
+            if (!cellW.empty()) {
+                std::sort(cellW.begin(), cellW.end());
+                widest = cellW[std::min(cellW.size() - 1, size_t(std::lround(0.9 * double(cellW.size() - 1))))];
+            }
+            if (media) { widest = std::max(widest, kPdfImgColW); word = std::max(word, kPdfImgMinW); }
+            ideal[size_t(k)] = std::min(widest + inner, kPdfMaxColW);
+            lo[size_t(k)] = std::clamp(word + inner, 24.0, kPdfWordCapW);   // not below the longest (sane) word
+            w[size_t(k)] = std::min(usable, std::max(lo[size_t(k)], ideal[size_t(k)]));
+        }
         const bool keyCol = cols > 1 && w[0] <= usable / 3;
-        std::vector<std::pair<int, int>> bands;   // [first, last] columns
+        // Bands: columns at their widths while they fit; the last column of a band may take what's
+        // left when that is at least half its width (never below its floor) — so a band fills the
+        // page instead of stopping 150 units short. What a band still has spare goes to the
+        // columns that wrap, by their deficit.
+        struct Band { std::vector<std::pair<int, qreal>> cols; int first = 0, last = 0; };
+        std::vector<Band> bands;
         for (int k = 0; k < cols;) {
-            int e = k;
-            qreal sum = (bands.empty() || !keyCol) ? 0.0 : w[0];
-            while (e < cols && sum + w[size_t(e)] <= usable + 0.01) { sum += w[size_t(e)]; ++e; }
-            if (e == k) e = k + 1;                        // a lone over-wide column (already clamped)
-            bands.push_back({k, e - 1});
-            k = e;
+            Band band;
+            qreal sum = 0;
+            if (!bands.empty() && keyCol) { band.cols.push_back({0, w[0]}); sum = w[0]; }
+            band.first = k;
+            while (k < cols) {
+                const qreal avail = usable - sum;
+                if (w[size_t(k)] <= avail + 0.01) { band.cols.push_back({k, w[size_t(k)]}); sum += w[size_t(k)]; ++k; continue; }
+                if (band.cols.size() > (bands.empty() || !keyCol ? 0u : 1u) && lo[size_t(k)] <= avail && avail >= 0.5 * w[size_t(k)]) {
+                    band.cols.push_back({k, avail}); sum = usable; ++k;   // squeezed: the band's last column
+                }
+                break;
+            }
+            if (k == band.first) { band.cols.push_back({k, std::min(w[size_t(k)], usable)}); ++k; }   // a lone over-wide column
+            band.last = k - 1;
+            {   // the leftover goes to the columns that still wrap, by their deficit
+                qreal deficit = 0;
+                for (const auto& [col, bwid] : band.cols) deficit += std::max<qreal>(0.0, ideal[size_t(col)] - bwid);
+                const qreal spare = usable - sum;
+                if (spare > 0 && deficit > 0)
+                    for (auto& [col, bwid] : band.cols) {
+                        const qreal d = std::max<qreal>(0.0, ideal[size_t(col)] - bwid);
+                        bwid += std::min(d, spare * d / deficit);
+                    }
+            }
+            bands.push_back(std::move(band));
         }
         c.first = false;
         tableHead = th;
         c.cellPt = kPdfCellPt;
         for (size_t b = 0; b < bands.size(); ++b) {
             std::vector<int> bc;                          // the band's columns, key column first
-            if (b > 0 && keyCol && bands[b].first != 0) bc.push_back(0);
-            for (int k = bands[b].first; k <= bands[b].second; ++k) bc.push_back(k);
+            std::vector<qreal> bw(static_cast<size_t>(cols), 0.0);   // this band's widths by column
+            for (const auto& [col, bwid] : bands[b].cols) { bc.push_back(col); bw[size_t(col)] = bwid; }
             if (b > 0) {
                 QTextBlockFormat bf; bf.setTopMargin(10); bf.setBottomMargin(0);
                 QTextCharFormat st; st.setForeground(kPdfMuted); st.setFontPointSize(8.0);
                 c.newBlock(bf, st);
-                c.cur.insertText(QStringLiteral("columns %1–%2 of %3").arg(bands[b].first + 1).arg(bands[b].second + 1).arg(cols), st);
+                c.cur.insertText(QStringLiteral("columns %1–%2 of %3").arg(bands[b].first + 1).arg(bands[b].last + 1).arg(cols), st);
             }
             QTextTableFormat tf;
             tf.setBorder(kLine);
@@ -3906,7 +3968,7 @@ void buildPdfDoc(PdfCtx& c) {
             tf.setTopMargin(6); tf.setBottomMargin(6);
             tf.setHeaderRowCount(hdr);
             QList<QTextLength> cons;
-            for (int k : bc) cons.append(QTextLength(QTextLength::FixedLength, w[size_t(k)]));
+            for (int k : bc) cons.append(QTextLength(QTextLength::FixedLength, bw[size_t(k)]));
             tf.setColumnWidthConstraints(cons);
             QTextTable* t = c.cur.insertTable(rows, int(bc.size()), tf);
             for (int r = 0; r < rows; ++r)
@@ -3920,7 +3982,9 @@ void buildPdfDoc(PdfCtx& c) {
                     c.laneCol = int(j);
                     c.cur = t->cellAt(r, int(j)).firstCursorPosition();
                     c.first = true;
-                    c.contentW = std::max<qreal>(8.0, w[size_t(k)] - 2 * kPad - 2);
+                    // Images in cells print at most kPdfImgColW wide even when text widened the
+                    // column: the picture rows are what set a band's page count.
+                    c.contentW = std::max<qreal>(8.0, std::min(bw[size_t(k)] - 2 * kPad - 2, kPdfImgColW));
                     const int al = m->tableColAlign(th, k);
                     c.cellAlign = al == 1 ? Qt::AlignHCenter : al == 2 ? Qt::AlignRight : Qt::Alignment{};
                     const QString fg = m->tableCellFg(th, r, k);

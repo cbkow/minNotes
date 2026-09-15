@@ -7260,8 +7260,9 @@ static void testGridTableDocxPdf() {
             CHECK(best > int((bravo.right() - name.left()) * scale * 0.8), "PDF: a grid rule runs between the header row and the first body row (%d px)", best);
         }
     }
-    {   // A table wider than the page prints in column BANDS at its column widths (walk 2): six
-        // 300-wide columns → three bands of two, a "columns a–b of 6" line before the 2nd and 3rd,
+    {   // A table wider than the page prints in column BANDS (walk 2): print widths follow the
+        // CONTENT (a column's widest line at the cell size, capped at 300), so six columns of
+        // long sentences → three bands of two, a "columns a–b of 6" line before the 2nd and 3rd,
         // every cell's text present, nothing squeezed (the last column's word extracts whole).
         BlockModel wide;
         wide.newDocument();
@@ -7271,8 +7272,8 @@ static void testGridTableDocxPdf() {
         static const char* words[6] = { "apple", "banana", "cherry", "damson", "elder", "figleaf" };
         for (int k = 0; k < 6; ++k) {
             wide.setContent(wide.tableCellAt(wh, 0, k), QStringLiteral("H%1").arg(k + 1));
-            wide.setContent(wide.tableCellAt(wh, 1, k), QLatin1String(words[k]));
-            wide.setTableColumnWidth(wh, k, 300);
+            wide.setContent(wide.tableCellAt(wh, 1, k),
+                            QLatin1String(words[k]) + QStringLiteral(" is the fruit in this column and the sentence runs long enough that the column asks for the full print width"));
         }
         Exporter wex;
         wex.setModel(&wide);
