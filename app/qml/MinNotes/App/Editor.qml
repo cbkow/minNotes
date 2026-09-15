@@ -6336,7 +6336,10 @@ FocusScope {
         // above the canvas and let the pen RESIZE the layout under the ink.
         visible: row >= 0 && !root.inkMode
                  && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-        readonly property real imgX: (row >= 0 ? root.columnX(row) : root.leftEdge) - flick.contentX
+        // A cell's media sits inside the cell inset (BlockView's colLeft: 8 px); the fit width is the
+        // lane minus both insets.
+        readonly property real inset: (blockModel.contentRevision, row >= 0 && blockModel.tableColumnOf(row) >= 0) ? 8 : 0
+        readonly property real imgX: (row >= 0 ? root.columnX(row) : root.leftEdge) + inset - flick.contentX
         readonly property real imgTopV: row >= 0
             ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
         readonly property real imgW: row >= 0
@@ -6365,7 +6368,7 @@ FocusScope {
                     visible: !root.imageResizing
                     anchors.centerIn: parent
                     width: 9; height: 9; radius: 0
-                    color: cornerMA.containsMouse ? Theme.colors.accent : Theme.colors.textBright
+                    color: cornerMA.containsMouse ? Theme.colors.textBright : Theme.colors.accent   // accent at rest (user ruling: not bright)
                     border.width: 1; border.color: Theme.colors.accent
                 }
                 MouseArea {
@@ -6399,7 +6402,7 @@ FocusScope {
                     }
                     onCanceled: { root.imageResizing = false; root.imageResizeRow = -1 }
                     onDoubleClicked: {   // fit the lane (the page at top level); at the fit already → intrinsic
-                        const fit = Math.round(root.measureForRow(imgResize.row))
+                        const fit = Math.round(root.measureForRow(imgResize.row) - 2 * imgResize.inset)
                         blockModel.setMediaWidth(imgResize.row, Math.abs(imgResize.imgW - fit) < 1 ? 0 : fit)
                     }
                 }
@@ -6412,7 +6415,7 @@ FocusScope {
     Rectangle {
         visible: root.imageResizing
         z: 58
-        x: (root.imageResizeRow >= 0 ? root.columnX(root.imageResizeRow) : root.leftEdge) - flick.contentX
+        x: (root.imageResizeRow >= 0 ? root.columnX(root.imageResizeRow) : root.leftEdge) + imgResize.inset - flick.contentX
         y: (blockModel.layoutRevision, root.imageResizeRow >= 0
             ? blockModel.yForRow(root.imageResizeRow) : 0) + 6 - flick.contentY
         width: root.imageResizeW
