@@ -3635,6 +3635,7 @@ FocusScope {
     // number a table entering the view should shrink.
     readonly property bool perfLog: Qt.application.arguments.indexOf("--perf-log") >= 0
     readonly property bool noSticky: Qt.application.arguments.indexOf("--no-sticky") >= 0   // A/B: no sticky header / frozen column
+    readonly property bool noRail: Qt.application.arguments.indexOf("--no-rail") >= 0         // A/B: no rail numbers / row rules
     property int rebindBurst: 0
     property int rebindTotal: 0
     property int imagesReady: 0        // MediaBlock counts decoded images here (perfLog only)
@@ -3802,7 +3803,7 @@ FocusScope {
                      // whole field, text column included — a line that INFORMS
                      // ("a block starts here") and stays put under editing,
                      // unlike zebra parity.
-            model: poolModel   // grows by insertion: never a full regenerate
+            model: root.noRail ? 0 : poolModel   // grows by insertion: never a full regenerate
             delegate: Rectangle {
                 required property int index
                 readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
@@ -5911,8 +5912,13 @@ FocusScope {
         Behavior on opacity { NumberAnimation { duration: 150 } }
         // (No backing, no own stripes: the rail rides transparently on the
         // desk's zebra — wide tables passing beneath carry their own paper.)
+        // The numbers live in CONTENT coordinates inside one item translated by -contentY: one binding
+        // per scroll frame instead of 480 (2026-09-15: every number re-ran its y and setY per frame).
+        Item {
+            width: parent.width
+            y: -flick.contentY
         Repeater {
-            model: poolModel   // grows by insertion: never a full regenerate
+            model: root.noRail ? 0 : poolModel   // grows by insertion: never a full regenerate
             delegate: Item {
                 id: rnum
                 required property int index
@@ -5923,7 +5929,7 @@ FocusScope {
                          && !(blockModel.layoutRevision, blockModel.rowHidden(prow))                // T4 filter
                 width: blockRuler.width
                 height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
-                y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY
+                y: (blockModel.layoutRevision, blockModel.yForRow(prow))
                 // Being dragged → the rail chip is the block's body; its slot dims.
                 opacity: root.blockDragging && rnum.prow >= root.blockDragRow
                          && rnum.prow < root.blockDragRow + root.blockDragCount ? 0.3 : 1
@@ -5940,7 +5946,9 @@ FocusScope {
                               // reorder (the left gutter's twin; reuses the
                               // whole blockDrag lifecycle incl. auto-scroll)
                     anchors.fill: parent
-                    hoverEnabled: true
+                    // NOT hoverEnabled (2026-09-15): 480 hover areas made every mouse and wheel event
+                    // a hit-test over all of them. The cursor shape needs no hover; the drag needs none.
+                    hoverEnabled: false
                     cursorShape: root.blockDragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                     property real pressY: 0
                     onPressed: (m) => { pressY = m.y }
@@ -5970,6 +5978,7 @@ FocusScope {
                 }
             }
         }
+        }   // the -contentY translation
         Rectangle {   // the drag's BODY: a zebra-toned chip riding the rail
                       // under the cursor (the content area shows only the
                       // drop-line locator — no ghosted content).
