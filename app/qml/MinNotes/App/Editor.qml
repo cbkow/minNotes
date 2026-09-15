@@ -3620,11 +3620,20 @@ FocusScope {
     readonly property int delegateCount: poolSize
     ListModel { id: poolModel }
     function sizePool() {
-        const want = Math.min(blockModel.count, Math.ceil(poolNeed / 16) * 16)
+        const want = Math.min(blockModel.count, Math.ceil(poolNeed / 8) * 8)
         while (poolModel.count < want) poolModel.append({ slot: poolModel.count })
         while (poolModel.count > want && poolModel.count > blockModel.count) poolModel.remove(poolModel.count - 1)
     }
     onPoolNeedChanged: sizePool()
+    // Pre-warm (2026-09-15 walk: the first scroll into a dense table hitched while slots were
+    // created mid-flick): while the view rests, grow the pool a couple of slots per tick up to a
+    // few screens of small cells, so a table is met with delegates already built.
+    readonly property int poolPrewarm: Math.min(blockModel.count, 4 * (Math.ceil(root.height / 38) + 2 * overscan + 4))
+    Timer {
+        interval: 40; repeat: true
+        running: blockModel.documentOpen && !flick.moving && !flick.dragging && poolModel.count < root.poolPrewarm
+        onTriggered: { for (let k = 0; k < 2 && poolModel.count < root.poolPrewarm; ++k) poolModel.append({ slot: poolModel.count }) }
+    }
     // Which block each pool slot renders. Blocks that stay in view keep their
     // delegate. sync RETURNS the revision and runs inside this binding, so everything
     // reading slotRev before rowForSlot() sees the updated table.

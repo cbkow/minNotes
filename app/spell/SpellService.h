@@ -120,6 +120,7 @@ private:
     BlockModel* model_ = nullptr;
     quint64 gen_ = 0;
     int revision_ = 0;
+    bool revisionQueued_ = false;   // a revisionChanged is already queued for this turn (results coalesce)
     QString appVersion_;
     QHash<QString, Entry> cache_;
     QHash<QString, int> dirty_;                  // key → row hint

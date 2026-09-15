@@ -313,10 +313,23 @@ Item {
     // baseline of every flagged range, the overlay pattern (one
     // QSyntaxHighlighter per document is already taken). The issue
     // under a collapsed caret is withheld while the word is typed.
-    property var spellRects: {
+    // A STABLE array: a spell revision fires for every row checked anywhere in the document, so
+    // the rects are rebuilt only when this row's issues actually changed — otherwise the Repeater
+    // would regenerate its tiles on every result (the 2026-09-15 first-scroll hitch).
+    property var spellRects: []
+    readonly property string spellKey: {
         var dep = blockModel.contentRevision + blockModel.layoutRevision + spell.revision
-        if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6) return []
-        if (!spell.checkSpelling && !spell.checkGrammar) return []
+        if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6) return ""
+        if (!spell.checkSpelling && !spell.checkGrammar) return ""
+        var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
+        var issues = spell.issuesForRow(cell.logicalRow, caret)
+        if (issues.length === 0) return ""
+        var key = cell.logicalRow + "|" + te.width + "|" + te.lineCount
+        for (var i = 0; i < issues.length; ++i) key += "|" + issues[i].s + "-" + issues[i].e + ":" + issues[i].kind
+        return key
+    }
+    onSpellKeyChanged: {
+        if (spellKey === "") { if (spellRects.length) spellRects = []; return }
         var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
         var issues = spell.issuesForRow(cell.logicalRow, caret)
         var out = []
@@ -325,7 +338,7 @@ Item {
             var rs = editor.selectionRects(te, it.s, Math.min(it.e, te.length))
             for (var j = 0; j < rs.length; ++j) out.push({ r: rs[j], k: it.kind })
         }
-        return out
+        spellRects = out
     }
     Repeater {
         model: cell.spellRects.length ? cell.spellRects : 0

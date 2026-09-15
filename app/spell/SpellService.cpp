@@ -284,8 +284,14 @@ void SpellService::applyResult(const Result& r) {
     e.issues = r.issues;
     e.pending = false;
     e.suggestionsComputed = r.suggestionsComputed;
+    // One revision per event-loop turn, not per result: the background pass streams thousands
+    // of results on a big document and every bump re-evaluates every visible delegate's overlay
+    // (the 2026-09-15 first-scroll hitch).
     ++revision_;
-    emit revisionChanged();
+    if (!revisionQueued_) {
+        revisionQueued_ = true;
+        QMetaObject::invokeMethod(this, [this] { revisionQueued_ = false; emit revisionChanged(); }, Qt::QueuedConnection);
+    }
 }
 
 // ---- reads ----------------------------------------------------------------
