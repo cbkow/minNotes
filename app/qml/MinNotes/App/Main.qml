@@ -343,7 +343,9 @@ ApplicationWindow {
                 : win._exportFormat === "pdf"
                 ? exporter.exportPdf(f, win._exportNotes, exportPrefs.ufbLinks)
                 : exporter.exportMarkdown(f, win._exportNotes, exportPrefs.ufbLinks)
-            if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f))
+            // The folder too (2026-09-15): the panel remembers its last folder, and an export that
+            // landed elsewhere read as "the file wasn't overwritten".
+            if (ok) Toasts.show(qsTr("Exported ") + win.baseName(f) + qsTr(" in ") + win._folderName(f))
             else    Toasts.show(qsTr("Export failed — ") + exporter.lastError, 2)
         }
     }
@@ -850,6 +852,8 @@ ApplicationWindow {
         recentsStore.paths = JSON.stringify(list)
     }
     function baseName(path) { var n = ("" + path).split("/").pop(); return n.replace(/\.(mnd|mnpkg)$/i, "") }
+    // The enclosing folder's name ("Desktop"), from a path or file URL.
+    function _folderName(path) { var p = ("" + path).replace(/^file:\/\//, "").split("/"); p.pop(); return decodeURIComponent(p.pop() || "/") }
     function removeRecent(path) {
         recentsStore.paths = JSON.stringify(
             recentPaths().filter(function (p) { return p !== path }))
