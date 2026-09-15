@@ -5,6 +5,8 @@
 #include <QColorSpace>
 #include <QStyleHints>
 #include <QTimer>
+#include <QPdfDocument>
+#include <QPainter>
 #include <QUrl>
 #include <QLocalServer>      // Windows single-instance: primary listens,
 #include <QLocalSocket>      // secondary forwards its file/URI args here
@@ -242,10 +244,32 @@ int main(int argc, char *argv[])
     const QStringList pending = app.takePending();
     for (const QString &s : pending) resolveAndOpen(docs, s);
     const QStringList args = app.arguments();
+    QString exportPdfTo;
     for (int i = 1; i < args.size(); ++i) {
+        if (args[i].startsWith(QLatin1String("--export-pdf="))) { exportPdfTo = args[i].mid(13); continue; }
         if (args[i].startsWith(QLatin1Char('-'))) continue;   // skip flags
         resolveAndOpen(docs, args[i]);
     }
+    // Dev-only (SR-4 walk 2): `minNotes --export-pdf=<out.pdf> <doc.mnd>` writes the active
+    // document's PDF export headlessly (QT_QPA_PLATFORM=offscreen) and exits — 0 on success,
+    // 102 when the export fails. Lets a PDF report be reproduced without driving the GUI.
+    if (!exportPdfTo.isEmpty())
+        QTimer::singleShot(0, &app, [&app, &exporter, exportPdfTo] {
+            const bool ok = exporter.exportPdf(exportPdfTo, true, false);
+            if (ok) {   // …and one PNG per page beside it (<out>-pageN.png) for eyeballing
+                QPdfDocument pdoc;
+                if (pdoc.load(exportPdfTo) == QPdfDocument::Error::None)
+                    for (int pg = 0; pg < pdoc.pageCount(); ++pg) {
+                        const QSizeF pts = pdoc.pagePointSize(pg);
+                        const QImage r = pdoc.render(pg, QSize(int(pts.width() * 2), int(pts.height() * 2)));
+                        QImage page(r.size(), QImage::Format_RGB32);   // on paper: the render is transparent
+                        page.fill(Qt::white);
+                        { QPainter p(&page); p.drawImage(0, 0, r); }
+                        page.save(exportPdfTo.chopped(4) + QStringLiteral("-page%1.png").arg(pg + 1));
+                    }
+            }
+            app.exit(ok ? 0 : 102);
+        });
 
 #ifdef Q_OS_WIN
     // ── Single-instance primary: serve forwarded launches ─────────────
