@@ -3881,62 +3881,77 @@ void buildPdfDoc(PdfCtx& c) {
         const QFontMetricsF fm([] { QFont f(QStringLiteral("Aspekta")); f.setPixelSize(qRound(kPdfCellPt * 96.0 / 72.0)); return f; }());
         const qreal inner = 2 * kPad + 2;                // padding + a hair, both sides
         std::vector<qreal> w(static_cast<size_t>(cols), 0.0), ideal(static_cast<size_t>(cols), 0.0), lo(static_cast<size_t>(cols), 0.0);
+        std::vector<char> mediaCol(static_cast<size_t>(cols), 0);
+        std::vector<double> filled(static_cast<size_t>(cols), 0.0);   // share of body cells with text
         for (int k = 0; k < cols; ++k) {
-            // Per cell: its widest line. The column's ideal is the 90th percentile of its cells
-            // (not the maximum: one long note in a column of five-character ids must wrap, not
-            // widen every row); the longest word over all cells is the floor.
+            // Per cell: its widest line (an empty cell counts as 0). The column's ideal is the 90th
+            // percentile of its cells (not the maximum: one long note in a column of five-character
+            // ids must wrap, not widen every row); the longest word over all cells is the floor.
             std::vector<qreal> cellW;
             qreal word = 0;
-            bool media = false;
+            int textCells = 0;
             for (int r = 0; r < rows; ++r) {
                 for (const QVariant& v : m->tableCellRows(th, r, k))
-                    if (m->typeForRow(v.toInt()) == BlockModel::Media) media = true;
+                    if (m->typeForRow(v.toInt()) == BlockModel::Media) mediaCol[size_t(k)] = 1;
                 const QString text = m->tableCellText(th, r, k);
-                if (text.isEmpty()) continue;
                 qreal widest = 0;
                 for (const QString& line : text.split(QLatin1Char('\n'))) {
                     widest = std::max(widest, fm.horizontalAdvance(line) + (r < hdr ? 6.0 : 0.0));
                     for (const QString& wd : line.split(QLatin1Char(' '), Qt::SkipEmptyParts))
                         word = std::max(word, fm.horizontalAdvance(wd));
                 }
+                if (!text.isEmpty() && r >= hdr) ++textCells;
                 cellW.push_back(widest);
             }
-            qreal widest = 0;
-            if (!cellW.empty()) {
-                std::sort(cellW.begin(), cellW.end());
-                widest = cellW[std::min(cellW.size() - 1, size_t(std::lround(0.9 * double(cellW.size() - 1))))];
-            }
-            if (media) { widest = std::max(widest, kPdfImgColW); word = std::max(word, kPdfImgMinW); }
+            filled[size_t(k)] = rows > hdr ? double(textCells) / double(rows - hdr) : 0.0;
+            std::sort(cellW.begin(), cellW.end());
+            qreal widest = cellW.empty() ? 0.0 : cellW[std::min(cellW.size() - 1, size_t(std::lround(0.9 * double(cellW.size() - 1))))];
+            if (mediaCol[size_t(k)]) { widest = std::max(widest, kPdfImgColW); word = std::max(word, kPdfImgMinW); }
             ideal[size_t(k)] = std::min(widest + inner, kPdfMaxColW);
             lo[size_t(k)] = std::clamp(word + inner, 24.0, kPdfWordCapW);   // not below the longest (sane) word
             w[size_t(k)] = std::min(usable, std::max(lo[size_t(k)], ideal[size_t(k)]));
         }
-        const bool keyCol = cols > 1 && w[0] <= usable / 3;
-        // Bands: columns at their widths while they fit; the last column of a band may take what's
-        // left when that is at least half its width (never below its floor) — so a band fills the
-        // page instead of stopping 150 units short. What a band still has spare goes to the
-        // columns that wrap, by their deficit.
+        // The key column, repeated on every band after the first so its rows stay identifiable: the
+        // first narrow text column that is filled in most rows (column 0 when it's an id column; a
+        // grid that starts with a picture column uses its first label column instead).
+        int keyIdx = -1;
+        for (int k = 0; k < cols && keyIdx < 0; ++k)
+            if (!mediaCol[size_t(k)] && w[size_t(k)] <= usable / 3 && filled[size_t(k)] >= 0.5) keyIdx = k;
+        // Bands: columns at their widths while they fit. When the next column doesn't, the band —
+        // that column included — may SHRINK, every column proportionally, down to half its width
+        // (never below its floor), the way a sheet prints "fit to page" for a small overflow; a
+        // column that still can't fit starts the next band. What a band has spare afterwards goes
+        // to the columns that wrap, by their deficit.
         struct Band { std::vector<std::pair<int, qreal>> cols; int first = 0, last = 0; };
         std::vector<Band> bands;
+        auto minW = [&](int k) { return std::max(lo[size_t(k)], 0.5 * w[size_t(k)]); };
         for (int k = 0; k < cols;) {
             Band band;
             qreal sum = 0;
-            if (!bands.empty() && keyCol) { band.cols.push_back({0, w[0]}); sum = w[0]; }
+            if (!bands.empty() && keyIdx >= 0 && keyIdx != k) { band.cols.push_back({keyIdx, w[size_t(keyIdx)]}); sum = w[size_t(keyIdx)]; }
             band.first = k;
             while (k < cols) {
                 const qreal avail = usable - sum;
                 if (w[size_t(k)] <= avail + 0.01) { band.cols.push_back({k, w[size_t(k)]}); sum += w[size_t(k)]; ++k; continue; }
-                if (band.cols.size() > (bands.empty() || !keyCol ? 0u : 1u) && lo[size_t(k)] <= avail && avail >= 0.5 * w[size_t(k)]) {
-                    band.cols.push_back({k, avail}); sum = usable; ++k;   // squeezed: the band's last column
+                const qreal need = w[size_t(k)] - avail;
+                qreal slack = std::max<qreal>(0.0, w[size_t(k)] - minW(k));
+                for (const auto& [col, bwid] : band.cols) slack += std::max<qreal>(0.0, bwid - minW(col));
+                if (need > slack + 0.01) break;
+                for (auto& [col, bwid] : band.cols) {                   // shrink by each column's share of the slack
+                    const qreal give = std::max<qreal>(0.0, bwid - minW(col));
+                    bwid -= need * give / slack;
                 }
-                break;
+                const qreal give = std::max<qreal>(0.0, w[size_t(k)] - minW(k));
+                band.cols.push_back({k, w[size_t(k)] - need * give / slack});
+                sum = usable;
+                ++k;
             }
             if (k == band.first) { band.cols.push_back({k, std::min(w[size_t(k)], usable)}); ++k; }   // a lone over-wide column
             band.last = k - 1;
             {   // the leftover goes to the columns that still wrap, by their deficit
-                qreal deficit = 0;
-                for (const auto& [col, bwid] : band.cols) deficit += std::max<qreal>(0.0, ideal[size_t(col)] - bwid);
-                const qreal spare = usable - sum;
+                qreal used = 0, deficit = 0;
+                for (const auto& [col, bwid] : band.cols) { used += bwid; deficit += std::max<qreal>(0.0, ideal[size_t(col)] - bwid); }
+                const qreal spare = usable - used;
                 if (spare > 0 && deficit > 0)
                     for (auto& [col, bwid] : band.cols) {
                         const qreal d = std::max<qreal>(0.0, ideal[size_t(col)] - bwid);

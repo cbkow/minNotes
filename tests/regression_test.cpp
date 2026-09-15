@@ -7294,8 +7294,10 @@ static void testGridTableDocxPdf() {
             }
             return QRegularExpression(pat).match(all).hasMatch();
         };
-        CHECK(has(QStringLiteral("columns 3-4 of 6")) && has(QStringLiteral("columns 5-6 of 6")) && !has(QStringLiteral("columns 1-2")),
-              "wide PDF: bands 2 and 3 announce their columns (%s)", qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(240)));
+        // Six 300-wide columns: two fit, the band shrinks to take a third and a fourth (four at ~165,
+        // half is the limit), a fifth can't → bands of four and two.
+        CHECK(has(QStringLiteral("columns 5-6 of 6")) && !has(QStringLiteral("columns 3-4")) && !has(QStringLiteral("columns 1-")),
+              "wide PDF: band 2 announces columns 5–6 (%s)", qPrintable(QString(all).replace(QLatin1Char('\n'), QLatin1Char('|')).left(240)));
         bool allWords = true;
         for (const char* w : words) if (!has(QLatin1String(w))) allWords = false;
         const QRectF fig = [&] {   // the last column's word sits on ONE line: no letter-by-letter wrapping
