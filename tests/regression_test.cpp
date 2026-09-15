@@ -6506,6 +6506,22 @@ static void testTableAttrsBulkSort() {
                   && m.tableRowBg(1, 3).isEmpty(), "colour a row set");
         m.undo();
         CHECK(m.tableRowBg(1, 1).isEmpty() && m.tableRowBg(1, 2).isEmpty(), "…one undo step");
+        {   // A cell TEXT colour is the whole cell's colour (walk 2): a run coloured earlier with the
+            // palette loses its text-colour span inside the coloured cells — and only there.
+            const int a1 = m.tableCellAt(1, 1, 0), b2 = m.tableCellAt(1, 2, 1);
+            m.setTextColor(a1, 0, 2, QStringLiteral("#ff0000"));
+            m.setTextColor(b2, 0, 2, QStringLiteral("#ff0000"));
+            CHECK(m.hasFormat(a1, 0, 2, QStringLiteral("color")) && m.hasFormat(b2, 0, 2, QStringLiteral("color")), "two runs carry a text colour");
+            CHECK(m.tableSetRowsColor(1, { 1 }, true, teal) && m.tableCellFg(1, 1, 0) == teal
+                      && !m.hasFormat(a1, 0, 2, QStringLiteral("color")) && m.hasFormat(b2, 0, 2, QStringLiteral("color")),
+                  "colouring row 1's text strips the run colour in row 1, not in row 2");
+            CHECK(m.tableSetColsColor(1, { 1 }, true, teal) && !m.hasFormat(b2, 0, 2, QStringLiteral("color")), "…a column set likewise");
+            CHECK(m.tableSetRowsColor(1, { 2 }, false, teal) && m.tableSetCellColor(1, 2, 1, 2, 1, false, teal), "backgrounds never touch spans");
+            m.undo(); m.undo(); m.undo(); m.undo();
+            CHECK(m.hasFormat(a1, 0, 2, QStringLiteral("color")) && m.hasFormat(b2, 0, 2, QStringLiteral("color")) && m.tableCellFg(1, 1, 0).isEmpty(),
+                  "…each step undoes as one, spans come back");
+            m.undo(); m.undo();
+        }
         CHECK(m.tableSetColsAlign(1, { 0, 1 }, 1) && m.tableColAlign(1, 0) == 1 && m.tableColAlign(1, 1) == 1 && m.tableColAlign(1, 2) == 0,
               "align a column set");
         m.undo();
@@ -7922,10 +7938,13 @@ static void testExcelPicturePaste() {
         "<html><body><table border=0 cellpadding=0 cellspacing=0 width=152 style='border-collapse:collapse;width:114pt'>"
         "<col width=87 style='width:65pt'><col width=65 style='width:49pt'>"
         "<tr height=20 style='height:15.0pt'><td width=87 style='width:65pt'>Name</td><td width=65 style='width:49pt'>Pic</td></tr>"
-        "<tr height=88 style='height:66.0pt'><td>alpha</td><td><!--[if gte vml 1]>%1%2%3<![endif]--><![if !vml]><img width=45 height=200 src=\"\" v:shapes=\"Picture_x0020_1 Picture_x0020_2 Picture_x0020_3\"><![endif]></td></tr>"
+        "<tr height=88 style='height:66.0pt'><td>alpha</td><td><!--[if gte vml 1]>%1%2%3"
+        // …and Excel's clipped overhang of a picture anchored ABOVE the copied range: a generated id, ignored.
+        "<v:shape id=\"_x0000_s1062\" style='position:absolute;margin-left:0;margin-top:-20pt;width:45pt;height:8pt'><v:imagedata src=\"%4\" o:title=\"\"/></v:shape>"
+        "<![endif]--><![if !vml]><img width=45 height=200 src=\"\" v:shapes=\"Picture_x0020_1 Picture_x0020_2 Picture_x0020_3 _x0000_s1062\"><![endif]></td></tr>"
         "<tr height=88 style='height:66.0pt'><td>beta</td><td></td></tr>"
         "<tr height=88 style='height:66.0pt'><td>gamma</td><td></td></tr>"
-        "</table></body></html>").arg(shape(0, 1.5), shape(1, 67.5), shape(2, 133.5));
+        "</table></body></html>").arg(shape(0, 1.5), shape(1, 67.5), shape(2, 133.5), src.at(2));
     const QString fixed = Importer::inlineExcelPictures(html);
     CHECK(!fixed.contains(QStringLiteral("v:shapes=")) && fixed.count(QStringLiteral("<img src=")) == 3,
           "the composite <img> goes; three real <img src> tags land (%d)", int(fixed.count(QStringLiteral("<img src="))));

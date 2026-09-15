@@ -289,6 +289,7 @@ QString Importer::inlineExcelPictures(const QString& html) {
     static const QRegularExpression shapeRe(QStringLiteral("<v:shape\\b.*?</v:shape>"),
                                             QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
     static const QRegularExpression srcRe(QStringLiteral("v:imagedata[^>]*\\bsrc=\"([^\"]+)\""), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression idRe(QStringLiteral("<v:shape\\b[^>]*\\bid=\"([^\"]*)\""), QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression topRe(QStringLiteral("margin-top:\\s*([0-9.]+)pt"), QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression leftRe(QStringLiteral("margin-left:\\s*([0-9.]+)pt"), QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression compositeRe(QStringLiteral("<img\\b[^>]*v:shapes=[^>]*>"), QRegularExpression::CaseInsensitiveOption);
@@ -321,6 +322,12 @@ QString Importer::inlineExcelPictures(const QString& html) {
         const QString body = m.captured(0);
         const auto src = srcRe.match(body);
         if (!src.hasMatch()) continue;
+        // Excel names a picture's shape after the drawing ("image1.png", "Picture_x0020_3"); a shape
+        // with a GENERATED id (_x0000_s1062) is the clipped overhang of a picture anchored OUTSIDE
+        // the copied range (pictures taller than their rows spill into the next row — walk 2: a
+        // 23pt strip of the row above's picture landed in the header). Not part of the copy.
+        const auto id = idRe.match(body);
+        if (id.hasMatch() && id.captured(1).startsWith(QLatin1String("_x0000_s"))) continue;
         size_t ri = 0;
         while (ri + 1 < rows.size() && rows[ri + 1].start < m.capturedStart()) ++ri;
         if (rows[ri].start > m.capturedStart() || rows[ri].tdStart.empty()) continue;
