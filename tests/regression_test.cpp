@@ -842,8 +842,8 @@ static void testExportMarkdown() {
     RecordingSink hsink;
     const QString html = ex.toHtml(Exporter::Options{}, hsink);
     CHECK(html.contains(QStringLiteral("Title</h2>"))
-              && html.contains(QStringLiteral("class=\"bnum\"")),
-          "HTML heading tag carries its block number");
+              && !html.contains(QStringLiteral("bnum")),
+          "HTML heading tag, no block-number ledger (dropped 2026-09-15)");
     CHECK(html.contains(QStringLiteral("<span style=\"color:#ff6f68\">plain</span>")),
           "HTML keeps the color span markdown dropped");
     CHECK(html.contains(QStringLiteral("<strong>bold <em>bolditalic</em></strong>"))

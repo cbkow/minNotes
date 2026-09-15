@@ -1564,20 +1564,11 @@ main li,main figure,main .tablewrap,main .blkw,main .lanes{position:relative}
    gap. Blocks in a lane size to it; only the row carries a ledger number. */
 .lanes{display:flex;gap:24px;align-items:flex-start}
 .lane{min-width:0}
-.lane .bnum{display:none}
-td .bnum,th .bnum{display:none}
 td>:first-child,th>:first-child{margin-top:0}
 td>:last-child,th>:last-child{margin-bottom:0}
 td img:not(.ink),th img:not(.ink){max-width:100%!important;height:auto}
 .lane pre{width:auto;min-width:0;overflow-x:auto}
 .lane img:not(.ink){max-width:100%!important;height:auto}
-.bnum{position:absolute;left:772px;top:4px;width:calc(100vw - 932px);   /* 932 = the 836
-   ledger constant + the 96px the wider left gutter shifted every block */
-min-width:48px;padding-top:3px;
-text-align:right;font-family:ui-monospace,Menlo,Consolas,monospace;
-font-size:11px;color:var(--subtle);user-select:none;pointer-events:none}
-/* (Block click-select was built then removed 2026-08-20 — user veto; the
-   ledger stays a passive reference like the app's rail at rest.) */
 /* Media-ink z-stack: frame-normalized margin ink rides its media exactly;
    the Annotations toggle governs it like the note-thumb layers. */
 img.ink{pointer-events:none}
@@ -1613,7 +1604,6 @@ border:solid var(--bright);border-width:0 2px 2px 0;transform:rotate(45deg)}
    scrollbar instead of a nested one). Narrow tables still fill the column.
    32px vertical margins, matching the app's user-tuned table pocket. */
 .tablewrap{margin:32px 0;width:fit-content;min-width:100%}
-.tablewrap>.bnum{top:-28px}
 table{border-collapse:collapse;width:max-content;min-width:100%;font-size:14px;
 background:var(--bg)}
 td,th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word}
@@ -1730,13 +1720,12 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // an inline offset compensating their nesting indent so all numbers
     // align on one ledger line.
     // A clipboard FRAGMENT (S8c) carries no numbers, ink or page chrome.
-    auto bnum = [fragment](int row) {
-        return fragment ? QString() : QStringLiteral("<span class=\"bnum\">%1</span>").arg(row + 1);
-    };
-    auto bnumLi = [pw, fragment](int row, int depth) {
-        return fragment ? QString() : QStringLiteral("<span class=\"bnum\" style=\"left:%1px\">%2</span>")
-            .arg((pw + 12) - 24 * (depth + 1)).arg(row + 1);
-    };
+    // The block-number ledger is GONE (2026-09-15 walk): with table cells as blocks the numbers
+    // counted every cell, and the app's rail shows dots now. The hooks stay so every block
+    // element keeps its shape (and a future badge has its slot); they emit nothing.
+    auto bnum = [](int) { return QString(); };
+    auto bnumLi = [](int, int) { return QString(); };
+    Q_UNUSED(pw);
     // Page ink rides INSIDE its block element (the positioned ancestor):
     // injected before the block's final closing tag. X anchors to the page
     // center (pw/2 — 380 in the classic 760 frame), minus the element's
