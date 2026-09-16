@@ -93,9 +93,14 @@ FocusScope {
     property real _zoomAx: 0
     property real _zoomAy: 0
     Timer { id: zoomSettle; interval: 150; onTriggered: root.docZoomSettle() }
-    readonly property real docX: flick.contentX / zoom     // scroll offset, content units
-    readonly property real docY: flick.contentY / zoom
-    readonly property real viewW: flick.width / zoom       // the viewport, content units
+    // The scroll offset in content units reads the LIVE view zoom: a zoom step moves contentX/Y to
+    // keep the anchored word put, and the pool's row window must follow that position at once —
+    // dividing by the settled zoom put the window on rows that were NOT on screen and a dense table
+    // vanished mid-drag (2026-09-16). The window's SIZE (viewW/viewH) still reads the settled zoom, so
+    // the pool re-sizes once at the settle rather than per pixel. Position moves are like scrolling.
+    readonly property real docX: flick.contentX / viewZoom
+    readonly property real docY: flick.contentY / viewZoom
+    readonly property real viewW: flick.width / zoom       // the viewport, content units (settled)
     readonly property real viewH: flick.height / zoom
     // Content → viewport px through the LIVE view zoom (the page layer's transform), so every
     // overlay outside the layer — desk edges, the image outline, drop lines, the rail — tracks a
