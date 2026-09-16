@@ -209,8 +209,12 @@ FocusScope {
     // page's left edge and overflows right as before. Continuous, prose never moves. View
     // geometry only: the model's table x stays 0-based; `tableX(head)` is the content x of
     // a table's left edge and every table site adds THAT, not leftEdge.
+    // A table that overflows the WINDOW may use the gutter too, down to tableMinLeft from the edge
+    // (2026-09-16: 120 px of dead strip beside a table you pan to read; 24 keeps the row grips and a
+    // hair of desk). A table narrower than the window still centres — its half-overhang is smaller.
+    readonly property real tableMinLeft: 24
     function tableShiftFor(tw) {
-        return -Math.min(Math.round(Math.max(0, (tw - pageWidth) / 2)), Math.max(0, leftEdge - inkGutter))
+        return -Math.min(Math.round(Math.max(0, (tw - pageWidth) / 2)), Math.max(0, leftEdge - tableMinLeft))
     }
     function tableShift(head) { return head < 0 ? 0 : tableShiftFor((blockModel.layoutRevision, blockModel.tableWidth(head))) }
     function tableX(head) { return leftEdge + tableShift(head) }
@@ -5850,7 +5854,7 @@ FocusScope {
         contentY: flick.contentY
         zoom: root.viewZoom   // live: ink tracks the layer during a zoom drag
         leftEdgeContent: root.leftEdge
-        inkGutter: root.inkGutter
+        inkGutter: root.tableMinLeft    // the table-shift floor (the canvas mirrors tableShiftFor)
         pageWidth: root.pageWidth
         inkMode: root.inkMode
         // The Inspector Draw trio — the exact studio/sketch binding shape.

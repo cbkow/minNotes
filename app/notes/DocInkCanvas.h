@@ -55,7 +55,7 @@ class DocInkCanvas : public QQuickPaintedItem
     // gesture latch reads it so the sheet can't recentre under a gesture (PLAN-centred-page).
     Q_PROPERTY(bool gesturing READ isGesturing NOTIFY gesturingChanged FINAL)
     // The editor's ink gutter (120): a table wider than the page shifts left by half its overhang,
-    // capped at leftEdge − gutter (Editor.qml tableShiftFor — the SAME formula lives here so ink
+    // capped at leftEdge − the table-shift floor (Editor.qml tableShiftFor / tableMinLeft — the SAME formula lives here so ink
     // anchored to a table record rides the table). Bound from QML.
     Q_PROPERTY(qreal inkGutter READ inkGutter WRITE setInkGutter NOTIFY transformChanged FINAL)
     // The editor's view zoom (PLAN-zoom Z2). contentX/contentY are the Flickable's SCALED offsets;

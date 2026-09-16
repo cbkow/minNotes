@@ -1876,11 +1876,12 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         }
         const QString open = QStringLiteral("<table style=\"table-layout:fixed;width:%1px;min-width:0\">").arg(qRound(total));
         // A table wider than the page CENTRES under it (the app, 2026-09-16): half the overhang to
-        // the left — but never past the gutter, so a narrow window slides it back to the page's
-        // left edge and it overflows right. 100% here = the page measure (main's content box);
-        // the second term is −(the centred page's left margin) = the room before the gutter.
+        // the left — but never past 24 px from the window's edge (the app's tableMinLeft: a table
+        // that overflows the window may use the gutter, a narrower one centres). 100% here = the
+        // page measure (main's content box); the second term is −(the room before that floor) =
+        // −(leftEdge − 24) with leftEdge = max(120, (W − page)/2), i.e. min(−96px, (page + 48 − W)/2).
         const QString wrapStyle = total > pw
-            ? QStringLiteral(" style=\"margin-left:max(calc((100% - %1px) / 2),min(0px,calc((100% + 240px - 100vw) / 2)))\"").arg(qRound(total))
+            ? QStringLiteral(" style=\"margin-left:max(calc((100% - %1px) / 2),min(-96px,calc((100% + 48px - 100vw) / 2)))\"").arg(qRound(total))
             : QString();
         return QStringLiteral("<div class=\"tablewrap\"%4>%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags, wrapStyle);
     };

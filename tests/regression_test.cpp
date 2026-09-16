@@ -7207,7 +7207,7 @@ static void testGridTableExports() {
     }
     RecordingSink ws;
     const QString wide = ex.toHtml(Exporter::Options{}, ws);
-    CHECK(wide.contains(QStringLiteral("<div class=\"tablewrap\" style=\"margin-left:max(calc((100% - 1200px) / 2),min(0px,calc((100% + 240px - 100vw) / 2)))\">")),
+    CHECK(wide.contains(QStringLiteral("<div class=\"tablewrap\" style=\"margin-left:max(calc((100% - 1200px) / 2),min(-96px,calc((100% + 48px - 100vw) / 2)))\">")),
           "HTML: a wide table centres under the page, never past the gutter (%s)", qPrintable(wide.mid(std::max<qsizetype>(0, wide.indexOf(QStringLiteral("tablewrap")) - 10), 160)));
     const int tr0 = wide.indexOf(QStringLiteral("<tr>")), ink = wide.indexOf(QStringLiteral("<img class=\"ink\"")), tdClose = wide.indexOf(QStringLiteral("</th>"), tr0);
     CHECK(tr0 >= 0 && ink > tr0 && ink < tdClose && wide.contains(QStringLiteral("--sheetw:1440px")),
