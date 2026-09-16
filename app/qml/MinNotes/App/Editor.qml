@@ -104,6 +104,34 @@ FocusScope {
         ? (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0 ? pdfZoom * pdfFitPageW / blockModel.mediaW(activePdfRow) : 1)
         : activeSketchRow >= 0 ? sketchEditCanvas.zoom : zoom
     function zoomStep(dir) { if (activePdfRow >= 0) pdfZoomStep(dir); else if (activeSketchRow >= 0) sketchStage.zoomStep(dir); else docZoomStep(dir) }
+    // The rail's slider (BottomRail): the active surface's range in TRUE-scale units, mapped
+    // the Word way — 100 % dead centre, a linear half either side.
+    readonly property real pdfTrueK: pdfFitPageW > 0 && activePdfRow >= 0 && blockModel.mediaW(activePdfRow) > 0
+                                     ? pdfFitPageW / blockModel.mediaW(activePdfRow) : 1
+    readonly property real zoomFloor: activePdfRow >= 0 ? 0.25 * pdfTrueK : activeSketchRow >= 0 ? 0.10 : zoomSteps[0]
+    readonly property real zoomCeil:  activePdfRow >= 0 ? 4 * pdfTrueK    : activeSketchRow >= 0 ? 8    : zoomSteps[zoomSteps.length - 1]
+    readonly property bool zoomHasFitInk: activeSketchRow >= 0 && sketchEditCanvas.hasOverflow
+    function zoomTo(v) {   // true scale, on the active surface, about its centre
+        v = Math.max(zoomFloor, Math.min(zoomCeil, v))
+        if (activePdfRow >= 0) pdfZoomTo(v / pdfTrueK)
+        else if (activeSketchRow >= 0) sketchStage.zoomAt(sketchStage.width / 2, sketchStage.height / 2, v)
+        else docZoomTo(v)
+    }
+    function zoomFitInk() { if (activeSketchRow >= 0) sketchStage.fitInkCamera() }
+    readonly property real zoomSliderPos: {
+        const v = zoomValue, f = zoomFloor, c = zoomCeil
+        if (f < 1 && 1 < c) return v <= 1 ? 0.5 * (v - f) / (1 - f) : 0.5 + 0.5 * (v - 1) / (c - 1)
+        return c > f ? (v - f) / (c - f) : 0.5
+    }
+    function zoomSliderTo(p) {
+        const f = zoomFloor, c = zoomCeil
+        if (f < 1 && 1 < c) zoomTo(p <= 0.5 ? f + (1 - f) * p / 0.5 : 1 + (c - 1) * (p - 0.5) / 0.5)
+        else zoomTo(f + (c - f) * p)
+    }
+    // The hand (PLAN-zoom): hold SPACE in annotation mode (the sketch / PDF tabs' convention —
+    // in writing mode space types) and a left-drag pans the Flickable natively; the document
+    // mouse layer and the ink canvas step aside while it's held. Middle-drag pans any time.
+    property bool docSpaceHeld: false                     // (cleared in onInkModeChanged below)
     function zoomFit()     { if (activePdfRow >= 0) pdfZoomFit();     else if (activeSketchRow >= 0) sketchStage.fitCamera(); else docZoomFit() }
     function zoom100()     { if (activePdfRow >= 0) pdfZoom100();     else if (activeSketchRow >= 0) sketchStage.zoomTo100(); else docZoom100() }
     // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
@@ -217,6 +245,7 @@ FocusScope {
     // Mode-edge side effects (the old setInkMode body, minus the tool writes —
     // the tool now drives, so writing it from here would loop).
     onInkModeChanged: {
+        if (!inkMode) docSpaceHeld = false                // never leave the hand stuck outside annotation mode
         inkTextSession.commit()   // an open chip session never straddles the mode edge
         if (inkMode) {
             inkLayerVisible = true
@@ -2902,6 +2931,10 @@ FocusScope {
             root.pdfSpaceHeld = false
             event.accepted = true
         }
+        else if (root.docSpaceHeld && event.key === Qt.Key_Space && !event.isAutoRepeat) {
+            root.docSpaceHeld = false
+            event.accepted = true
+        }
     }
 
     Keys.onPressed: (event) => {
@@ -3116,6 +3149,8 @@ FocusScope {
         else if (root.inkMode) {
             if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && inkCanvas.hasSelection)
                 inkCanvas.deleteSelection()
+            else if (k === Qt.Key_Space && !event.isAutoRepeat)
+                root.docSpaceHeld = true              // hold the hand
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4201,6 +4236,7 @@ FocusScope {
         // for a flick; wheel/trackpad scroll still works since we don't take it).
         MouseArea {
             id: mouse
+            enabled: !root.docSpaceHeld                    // the hand: the Flickable's own drag pans
             width: root.contentSpan
             height: blockModel.totalHeight
             acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -4497,6 +4533,24 @@ FocusScope {
             }
         }
 
+        // The hand: the open-hand cursor while space is held (the PDF tab's affordance), closed
+        // while the Flickable drags; a middle-button drag pans in any mode.
+        HoverHandler {
+            enabled: root.docSpaceHeld
+            cursorShape: flick.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        }
+        DragHandler {
+            acceptedButtons: Qt.MiddleButton
+            target: null
+            cursorShape: Qt.ClosedHandCursor
+            property point last: Qt.point(0, 0)
+            onActiveChanged: last = Qt.point(0, 0)
+            onTranslationChanged: {
+                flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), flick.contentX - (translation.x - last.x)))
+                flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), flick.contentY - (translation.y - last.y)))
+                last = Qt.point(translation.x, translation.y)
+            }
+        }
         // ⌘-wheel and the trackpad pinch zoom about the pointer (PLAN-zoom Z3; the PDF tab's pair).
         WheelHandler {
             acceptedModifiers: Qt.ControlModifier
@@ -4515,21 +4569,6 @@ FocusScope {
         ScrollBar.horizontal: MnScrollBar {}
     }
 
-    // The document view's zoom chrome — the frame tabs' badge verbatim (ruling 2026-09-16: one
-    // interface). Bottom-right like theirs; hidden in a full-frame tab, which mounts its own.
-    ZoomBadge {
-        visible: flick.visible && blockModel.documentOpen
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.rightMargin: 10 + Theme.dim.scrollBarWidth
-        anchors.bottomMargin: 10 + Theme.dim.scrollBarWidth
-        z: 60
-        zoomValue: root.zoom
-        fitLabel: qsTr("Fit width")
-        showFitInk: false
-        onFitRequested: root.docZoomFit()
-        onHundredRequested: root.docZoom100()
-    }
 
     // --- Full-frame kanban board (the active table tab in board mode). Scrolls
     // both ways; the board view owns all card interaction directly (a dedicated
@@ -4920,20 +4959,6 @@ FocusScope {
                         // Escape COMMITS (the sketch-session precedent; blanking deletes).
                         Keys.onEscapePressed: pdfTextSession.commit()
                     }
-                }
-                ZoomBadge {   // the tab's only zoom chrome (the sketch-tab pattern)
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.rightMargin: 10 + Theme.dim.scrollBarWidth
-                    anchors.bottomMargin: 10
-                    // Readout is TRUE page scale: 100% = one unit per PDF point,
-                    // whatever the fit ratio happens to be.
-                    zoomValue: root.pdfFitPageW > 0 && blockModel.mediaW(root.activePdfRow) > 0
-                               ? root.pdfZoom * root.pdfFitPageW / blockModel.mediaW(root.activePdfRow)
-                               : 1
-                    showFitInk: false
-                    onFitRequested: root.pdfZoomFit()
-                    onHundredRequested: root.pdfZoom100()
                 }
             }
         }
@@ -5476,15 +5501,6 @@ FocusScope {
                 y: sketchEditCanvas.panY - 11
                 color: Theme.colors.textSubtle
             }
-            ZoomBadge {   // the tab's only zoom chrome (readout + menu)
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                zoomValue: sketchEditCanvas.zoom
-                showFitInk: sketchEditCanvas.hasOverflow
-                onFitRequested: sketchStage.fitCamera()
-                onHundredRequested: sketchStage.zoomTo100()
-                onFitInkRequested: sketchStage.fitInkCamera()
-            }
 
             // --- Text-box editing session. The canvas paints COMMITTED text;
             // while a session is open the overlay TextEdit is the only visual
@@ -5751,6 +5767,7 @@ FocusScope {
         anchors.rightMargin: Theme.dim.scrollBarWidth
         z: 45
         visible: flick.visible          // hidden in full-frame tabs, like the doc
+        enabled: !root.docSpaceHeld     // the hand: presses fall through to the Flickable's drag
         model: blockModel
         contentX: flick.contentX
         contentY: flick.contentY

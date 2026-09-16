@@ -27,6 +27,8 @@ Shift, **⌥** is Alt/Option.
 | Zoom to 100% | ⌘0 |
 | Fit width (page and margins) — a PDF or sketch: fit the page | ⌘1 |
 | Zoom about the pointer | ⌘-wheel, or pinch |
+| Pan with the hand (annotation mode, PDF and sketch tabs) | hold Space and drag |
+| Pan in any mode | middle-button drag |
 
 ## Editing
 

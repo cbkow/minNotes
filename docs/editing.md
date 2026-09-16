@@ -46,10 +46,14 @@ a table wider than the page centres under it.
 
 **Zoom** the view with `⌘+` / `⌘−`, `⌘0` for 100%, `⌘1` to fit the page and
 its margins to the window, `⌘`-wheel or a trackpad pinch to zoom about the
-pointer. The percent badge in the bottom-right corner is the readout and
-a menu. Zoom is a view setting for the tab: it changes nothing in the
-note, is not saved with it, and a freshly opened tab starts at 100%. The
-same keys and badge zoom a PDF or a sketch opened full-frame.
+pointer. The zoom group in the bottom strip, beside Undo and Redo, is the
+readout: − and + step, the slider sits at 100% in the middle, and the
+percent opens Fit width / 100%. Zoom is a view setting for the tab: it
+changes nothing in the note, is not saved with it, and a freshly opened
+tab starts at 100%. The same keys and the same group zoom a PDF or a
+sketch opened full-frame. To **pan** a zoomed page, hold Space in
+annotation mode (or in a PDF or sketch tab) and drag with the hand, or
+drag with the middle mouse button at any time.
 
 ![The page-width ruler](images/mn008.png)
 
