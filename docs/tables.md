@@ -10,7 +10,8 @@ A table is rows of cells, and every cell holds blocks — text with
 formatting, images, video, lists. Insert one from the block menu
 (**Insert table below**) or the left rail, paste tab-separated text (a
 spreadsheet selection pastes straight in), or import a CSV, spreadsheet,
-or HTML table. Wide tables extend past the page rather than squeezing.
+or HTML table. A table wider than the page centres under it and extends
+past it rather than squeezing.
 
 ![A table with the grip handles showing](images/mn011.png)
 

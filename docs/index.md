@@ -26,7 +26,10 @@ LucidLink — and open on either platform and dodge some typical file-locking is
   choice chips (To do / Doing / Done anywhere in text)
 - Spelling and grammar checking as you type — on-device, US and UK English
   both accepted
-- Per-note page width, from a prose measure to a wide board
+- Per-note page width, from a prose measure to a wide board; the page
+  centres in a wide window
+- View zoom from 50% to 200% with fit-to-width, a slider in the bottom
+  strip, and a hand to pan
 - Blocks side by side: drag any block next to another to make lanes,
   resize them by dragging the gap
 - A block rail down the right side — drag a block's dot to reorder
@@ -38,6 +41,8 @@ LucidLink — and open on either platform and dodge some typical file-locking is
 - Grip-select rows, columns, or cell ranges for bulk operations —
   delete, clear, color, retype, copy-as-table — each a single undo
 - Sort, drag-reorder columns, a tab per table with a row filter
+- A table wider than the page centres under it and extends past it
+  rather than squeezing
 - One-click kanban board view grouped by any choice or check column
 
 ### Media & Review
