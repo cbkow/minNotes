@@ -49,25 +49,46 @@ FocusScope {
     // never moves, so there is nothing to suspend. 2026-07-12.)
     // Horizontal reach past the page for margin ink (each side, ink mode only).
     readonly property real inkGutter: 120
-    // The document's CONTENT width: the viewport, grown to hold the widest
-    // measured block (wide tables — blockModel.maxContentWidth) so the PAGE
-    // scrolls horizontally, plus a right breathing margin. In ink mode wide
-    // enough for the locked page + gutters, so the Flickable pans natively
-    // (the kanban board's 2D-pan pattern).
-    readonly property real contentSpan: inkMode
-        ? Math.max(flick.width, leftEdge + pageWidth + inkGutter)
-        : Math.max(flick.width,
-                   leftEdge + Math.max(pageWidth, blockModel.maxContentWidth) + 16)
-    // Left-anchored: a fixed margin, NOT centered. ALWAYS the ink gutter
-    // (user ruling 2026-08-18): margin annotations stay visible in writing
-    // mode, and the page no longer jumps 72px when annotation mode toggles.
-    readonly property real leftEdge: inkGutter
-    // The SHEET's width: page + equal margins — but never narrower than the
-    // widest content plus the same trailing margin (user ruling 2026-08-20:
-    // an uncapped wide table extends the sheet rather than being cropped by
-    // the desk tone at the page boundary).
-    readonly property real sheetSpan:
-        leftEdge * 2 + Math.max(pageWidth, blockModel.maxContentWidth)
+    // The document's CONTENT width: the viewport, grown to hold the sheet
+    // (page or the widest measured block — wide tables — plus the trailing
+    // gutter) so the PAGE scrolls horizontally when the window is narrower
+    // than the sheet. In ink mode the same number: both gutters are part of
+    // the sheet, so the Flickable pans natively (the kanban board's 2D-pan
+    // pattern) exactly when they don't fit.
+    readonly property real contentSpan: Math.max(flick.width, sheetRight)
+    // The SHEET = page + one ink gutter each side. CENTRED in the viewport
+    // when there is room (PLAN-centred-page, 2026-09-16 — overturns the
+    // "fixed left margin" half of the 2026-08-18 ruling; the gutter itself
+    // stays: margin annotations stay visible in writing mode and nothing
+    // jumps when annotation mode toggles). Narrower windows hug the left
+    // gutter as before and pan. Keyed off the COMMITTED page width, never
+    // the ruler's live preview: a scrub grows the page rightward from its
+    // current edge and the sheet recentres on release (no feedback loop
+    // through the ruler's own origin). `/ zoom` is written in for a future
+    // view zoom (1 today) so centring composes with it untouched.
+    readonly property real zoom: 1
+    readonly property real centredEdge: Math.max(inkGutter, Math.floor((flick.width / zoom
+                                                 - (blockModel.pageWidth > 0 ? blockModel.pageWidth : Theme.dim.columnWidth)) / 2))
+    // The gesture latch: the edge may only move BETWEEN gestures. Anything
+    // that cached a content x at press (block-drag auto-scroll re-aim, the
+    // pull arm point, image resize deltas, the 4 px click thresholds, an ink
+    // stroke's press origin) would drift if a window resize or an Inspector
+    // toggle moved the sheet mid-drag.
+    readonly property bool gestureActive: mouse.pressed || widthDragging || blockDragging
+                                          || dragging || pulling || dividerDragging || imageResizing
+                                          || tableGripPressed || inkCanvas.drawing
+    property real gestureEdge: -1
+    onGestureActiveChanged: gestureEdge = gestureActive ? centredEdge : -1
+    readonly property real leftEdge: gestureEdge >= 0 ? gestureEdge : centredEdge
+    // The sheet's extent in content x — never narrower than the widest
+    // content plus the trailing gutter (user ruling 2026-08-20: an uncapped
+    // wide table extends the sheet rather than being cropped by the desk
+    // tone at the page boundary). A wide table grows RIGHTWARD from the
+    // page's left edge (ruling 2026-09-16: sheets left-align; centring on
+    // the widest content would feed measured widths back into layout).
+    readonly property real sheetLeft: leftEdge - inkGutter
+    readonly property real sheetRight:
+        leftEdge + Math.max(pageWidth, blockModel.maxContentWidth) + inkGutter
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return laneOf(row).w }   // a lane block measures its lane
     // An image's "fit" width: its lane, minus a table cell's two 8 px insets (BlockView's colLeft).
@@ -709,16 +730,24 @@ FocusScope {
     // page shares the desk grey and the desk RULES alone carry structure.
     Rectangle { anchors.fill: parent; color: Theme.colors.bgAlt }
     // AMENDED 2026-08-20 (user ruling): the SHEET — the page plus EQUAL
-    // left/right margins (leftEdge each side), stretched by wide content
-    // (sheetSpan) — keeps the field tone; the area beyond it drops to the
+    // left/right margins (an ink gutter each side), stretched by wide content
+    // (sheetRight) — keeps the field tone; the area beyond it drops to the
     // window-shell tone, so the document reads as a constrained shape that
-    // follows the width setting. Tracks the pan and the ruler's live width
-    // preview (pageWidth includes previewWidth).
+    // follows the width setting. Both sides since the sheet centres
+    // (2026-09-16). Tracks the pan and the ruler's live width preview
+    // (pageWidth includes previewWidth).
     Rectangle {
-        readonly property real sheetRight: root.sheetSpan - flick.contentX
+        readonly property real sheetRight: root.sheetRight - flick.contentX
         visible: flick.visible && width > 0
         x: sheetRight
         width: Math.max(0, parent.width - sheetRight)
+        height: parent.height
+        color: Theme.colors.bg
+    }
+    Rectangle {
+        visible: flick.visible && width > 0
+        x: 0
+        width: Math.max(0, root.sheetLeft - flick.contentX)
         height: parent.height
         color: Theme.colors.bg
     }
@@ -3786,7 +3815,7 @@ FocusScope {
         Rectangle {
             visible: root.widthDragging
             z: -1
-            x: 0; width: root.leftEdge
+            x: root.sheetLeft; width: root.inkGutter
             y: flick.contentY; height: flick.height
             color: Theme.colors.bgAlt2
         }
@@ -3820,15 +3849,21 @@ FocusScope {
             // on focusRow change — a "# " conversion's height settle wouldn't
             // reach it until Return moved the caret.
             height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(fillRow)))
-            readonly property real sheetW: root.sheetSpan   // matches the sheet tint
+            readonly property real sheetL: root.sheetLeft    // matches the sheet tint, both edges
+            readonly property real sheetR: root.sheetRight
             Rectangle {
-                x: 0; width: Math.min(parent.width, parent.sheetW)
+                x: 0; width: Math.max(0, parent.sheetL)
+                height: parent.height
+                color: Theme.colors.bgAlt
+            }
+            Rectangle {
+                x: parent.sheetL; width: Math.max(0, Math.min(parent.width, parent.sheetR) - parent.sheetL)
                 height: parent.height
                 color: Theme.colors.bgAlt2
             }
             Rectangle {
-                x: parent.sheetW
-                width: Math.max(0, parent.width - parent.sheetW)
+                x: parent.sheetR
+                width: Math.max(0, parent.width - parent.sheetR)
                 height: parent.height
                 color: Theme.colors.bgAlt
             }
