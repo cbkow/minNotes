@@ -885,8 +885,8 @@ public:
 
     // --- Per-document page width (v3). setPageWidth = the ONE width mutator:
     // clamps, migrates px-space ink by DERIVED edge affinity (an element
-    // fully in a margin keeps its CONTENT position — the left page edge is
-    // fixed, so its center-relative X shifts by ∓Δw/2; in-column marks stay
+    // fully in a margin keeps its distance from its page edge, so its
+    // center-relative X shifts by ∓Δw/2; in-column marks stay
     // center-relative; Frame anchors are width-immune), persists to doc_meta,
     // and lands as ONE undo step (ink blobs + the width flip, atomic).
     qreal pageWidth() const { return pageWidth_; }

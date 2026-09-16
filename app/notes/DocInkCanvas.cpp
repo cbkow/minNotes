@@ -125,6 +125,7 @@ void DocInkCanvas::setInkMode(bool on)
         annot_.cancelActiveStroke();
         eraseGesture_ = false; eraseDirty_.clear();
         setDrawing(false);
+        endGesture();
         clearSelection();
         rebuildCache();          // drop any uncommitted erase-gesture edits
     }
@@ -217,11 +218,11 @@ DocInkCanvas::Placement DocInkCanvas::placementFor(const QString& blockId,
     if (space == mn::DocInkAnchor::Frame) {
         const qreal fw = std::max<qreal>(1.0, model_->mediaDispWidth(row));
         const qreal fh = std::max<qreal>(1.0, model_->mediaDisplayHeight(row));
-        pl.origin = QPointF(leftEdgeContent_, top + kMediaTopPad);
+        pl.origin = QPointF(placementEdge(), top + kMediaTopPad);
         pl.scale = QSizeF(fw, fh);
         pl.widthScale = fw / std::max(1, model_->mediaW(row));
     } else {
-        pl.origin = QPointF(leftEdgeContent_ + pageWidth_ / 2.0, top);
+        pl.origin = QPointF(placementEdge() + pageWidth_ / 2.0, top);
         pl.scale = QSizeF(1, 1);
         pl.widthScale = 1.0;
     }
@@ -381,9 +382,25 @@ void DocInkCanvas::mousePressEvent(QMouseEvent* e)
         e->accept();
         return;
     }
+    beginGesture();
     if (inSelectMode()) { selectPress(e->position(), e->modifiers()); e->accept(); return; }
     route(qcv::PointerPhase::Press, e->position(), qint64(e->timestamp()));
     e->accept();
+}
+
+void DocInkCanvas::beginGesture()
+{
+    if (gestureEdge_ >= 0) return;
+    gestureEdge_ = leftEdgeContent_;
+    emit gesturingChanged();
+}
+
+void DocInkCanvas::endGesture()
+{
+    if (gestureEdge_ < 0) return;
+    gestureEdge_ = -1;
+    emit gesturingChanged();
+    update();   // the frozen origin may differ from the live one now
 }
 
 void DocInkCanvas::mouseMoveEvent(QMouseEvent* e)
@@ -395,8 +412,9 @@ void DocInkCanvas::mouseMoveEvent(QMouseEvent* e)
 
 void DocInkCanvas::mouseReleaseEvent(QMouseEvent* e)
 {
-    if (inSelectMode()) { selectRelease(); e->accept(); return; }
+    if (inSelectMode()) { selectRelease(); endGesture(); e->accept(); return; }
     route(qcv::PointerPhase::Release, e->position(), qint64(e->timestamp()));
+    endGesture();
     e->accept();
 }
 
@@ -439,6 +457,7 @@ void DocInkCanvas::setDrawing(bool d)
 void DocInkCanvas::cancelStroke()
 {
     annot_.cancelActiveStroke();
+    endGesture();
     if (eraseGesture_) {          // Esc mid-erase: nothing reached the model —
         eraseGesture_ = false;    // re-parsing restores the erased strokes.
         eraseDirty_.clear();

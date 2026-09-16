@@ -76,7 +76,7 @@ FocusScope {
     // toggle moved the sheet mid-drag.
     readonly property bool gestureActive: mouse.pressed || widthDragging || blockDragging
                                           || dragging || pulling || dividerDragging || imageResizing
-                                          || tableGripPressed || inkCanvas.drawing
+                                          || tableGripPressed || inkCanvas.gesturing
     property real gestureEdge: -1
     onGestureActiveChanged: gestureEdge = gestureActive ? centredEdge : -1
     readonly property real leftEdge: gestureEdge >= 0 ? gestureEdge : centredEdge
@@ -3388,6 +3388,23 @@ FocusScope {
                 next(phaseStep >= 160)
             } else if (phase === 10) {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
+                if (phaseStep === 1) {   // the centred sheet: the formula at rest, the latch across a commit
+                    const centred = function(w) { return Math.max(root.inkGutter, Math.floor((flick.width / root.zoom - w) / 2)) }
+                    ++checks
+                    if (root.gestureActive || root.leftEdge !== centred(blockModel.pageWidth))
+                        fail("at rest the edge is " + root.leftEdge + ", not " + centred(blockModel.pageWidth) + " (gesture " + root.gestureActive + ")")
+                    const before = root.leftEdge
+                    root.widthDragging = true                      // a ruler scrub in flight…
+                    blockModel.setPageWidth(1000)                  // …commits the width before releasing
+                    ++checks
+                    if (root.leftEdge !== before) fail("the edge moved mid-gesture: " + before + " → " + root.leftEdge)
+                    root.widthDragging = false
+                    ++checks
+                    if (root.leftEdge !== centred(1000)) fail("no recentre on release: " + root.leftEdge + " vs " + centred(1000))
+                    blockModel.undo()
+                    ++checks
+                    if (root.leftEdge !== centred(blockModel.pageWidth)) fail("undo left the edge at " + root.leftEdge)
+                }
                 else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
                 // Every third step sideways (the frozen column), then back.
                 if (holdX > 0) { --holdX; next(false); return }
@@ -6087,11 +6104,12 @@ FocusScope {
     }
     Rectangle {
         visible: root.blockDragging && root.dropGap >= 0 && !root.dropGapIsNoop(root.dropGap)
-        // A top-level gap spans the field; a lane gap only its lane (SR-3 S7c).
+        // A top-level gap spans the SHEET (page + gutters, wherever it sits — 2026-09-16);
+        // a lane gap only its lane (SR-3 S7c).
         readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
                                      root.dropLineGeom(root.dropGap, root.dropLane))
-        x: geom.x - flick.contentX
-        width: geom.w >= 0 ? geom.w : root.width - x
+        x: (geom.w >= 0 ? geom.x : root.sheetLeft) - flick.contentX
+        width: geom.w >= 0 ? geom.w : root.sheetRight - root.sheetLeft
         height: 2; radius: 0
         y: geom.y - flick.contentY - 1
         color: Theme.colors.accent

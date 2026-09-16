@@ -30,7 +30,7 @@ Rectangle {
     enabled: !inked && blockModel.documentOpen
 
     readonly property real cx: editor ? editor.viewContentX : 0
-    readonly property real left0: editor ? editor.leftEdge : 120
+    readonly property real left0: editor ? editor.leftEdge : 0
     readonly property real curW: editor ? editor.pageWidth : 760
     property bool dragging: false
     property int dragW: 760

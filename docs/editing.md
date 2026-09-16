@@ -41,6 +41,8 @@ Each note has its **own page width**. The slim ruler above the page shows
 the stops (760 up to 1600) — drag the handle or click a stop; the page
 reflows live and one Undo puts it back. Margin ink rides along as the page
 widens. Pick a wide page for image boards, the classic measure for prose.
+In a window wider than the page, the page sits centred with its margins;
+a table wider than the page centres under it.
 
 ![The page-width ruler](images/mn008.png)
 

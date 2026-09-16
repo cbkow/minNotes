@@ -63,7 +63,6 @@ QtObject {
         readonly property int radius:         0    // squared corners everywhere (user ruling); was 4
         readonly property int scrollBarWidth: 14   // macOS always-on scrollbar width
         readonly property int columnWidth:    760    // prose reading measure (comfortable)
-        readonly property int pageMargin:     48     // LEFT-ANCHORED page: fixed left margin (grip gutter lives in it)
         readonly property int docTopPad:      28     // breathing room above block 0
         readonly property int toolStripHeight: 34    // flat-button row height / rail width
         readonly property int rulerHeight: 22        // PageRuler strip (14px instrument + 2×4 pad);

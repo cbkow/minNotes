@@ -51,6 +51,9 @@ class DocInkCanvas : public QQuickPaintedItem
     // select/move when not). Render happens regardless of mode.
     Q_PROPERTY(bool inkMode READ inkMode WRITE setInkMode NOTIFY inkModeChanged FINAL)
     Q_PROPERTY(bool drawing READ isDrawing NOTIFY drawingChanged FINAL)
+    // Any press→release on the canvas (stroke, erase, marquee, chip move/resize). The editor's
+    // gesture latch reads it so the sheet can't recentre under a gesture (PLAN-centred-page).
+    Q_PROPERTY(bool gesturing READ isGesturing NOTIFY gesturingChanged FINAL)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
     // The selected TEXT chip (-1s unless one is selected) — the Inspector
     // Size slider retargets it. Row is the anchor's current model row.
@@ -89,6 +92,7 @@ public:
     bool inkMode() const { return inkMode_; }
     void setInkMode(bool on);
     bool isDrawing() const { return drawing_; }
+    bool isGesturing() const { return gestureEdge_ >= 0; }
     bool hasSelection() const { return !sel_.empty(); }
     int strokeCount() const { return strokeCount_; }
     QString textFamily() const { return textFamily_; }
@@ -145,6 +149,7 @@ signals:
     void strokeWidthChanged();
     void inkModeChanged();
     void drawingChanged();
+    void gesturingChanged();
     void selectionChanged();
     void strokeCountChanged();
     void textFamilyChanged();
@@ -216,6 +221,13 @@ private:
     BlockModel* model_ = nullptr;
     qreal contentX_ = 0, contentY_ = 0;
     qreal leftEdgeContent_ = 0, pageWidth_ = 760;
+    // The page's left edge FROZEN at press (-1 = no gesture): the sheet centres in the viewport
+    // (2026-09-16) so leftEdgeContent can move under a gesture; a stroke committed through a
+    // moved origin would land offset. Belt and braces with the editor's latch.
+    qreal gestureEdge_ = -1;
+    qreal placementEdge() const { return gestureEdge_ >= 0 ? gestureEdge_ : leftEdgeContent_; }
+    void beginGesture();
+    void endGesture();
     QString toolName_;
     bool inkMode_ = false;
     bool drawing_ = false;

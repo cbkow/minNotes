@@ -477,9 +477,9 @@ static void testPageWidth() {
     m.setBlockInk(0, kInk);
     CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "fresh doc reads the classic 760");
 
-    // 760 → 1000: Δw/2 = 120. Left marginalia shifts -120 (keeps its content
-    // position against the FIXED left edge), right marginalia +120, the
-    // in-column stroke stays center-relative.
+    // 760 → 1000: Δw/2 = 120. Left marginalia shifts -120 (keeps its distance
+    // from the page's left edge), right marginalia +120, the in-column stroke
+    // stays center-relative.
     m.setPageWidth(1000);
     CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "setPageWidth applied");
     mn::DocInkAnchor mig;

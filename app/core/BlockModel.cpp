@@ -4245,10 +4245,11 @@ void BlockModel::applyUndoWidth(qreal w) {
 }
 
 // Edge-affinity migration (PLAN-page-width, affinity DERIVED not stored):
-// a px-space element fully in a margin keeps its CONTENT position — the
-// left page edge never moves, so left-margin X (center-relative) shifts
-// by -Δw/2 and right-margin by +Δw/2; anything overlapping the column
-// stays center-relative. Frame (media) anchors are width-immune.
+// a px-space element fully in a margin keeps its distance from ITS page
+// edge (the margins are the page's, wherever the sheet sits in the
+// viewport), so left-margin X (center-relative) shifts by -Δw/2 and
+// right-margin by +Δw/2; anything overlapping the column stays
+// center-relative. Frame (media) anchors are width-immune.
 QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW) {
     if (qFuzzyCompare(oldW, newW)) return {};
     const qreal halfOld = oldW / 2.0;
