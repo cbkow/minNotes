@@ -3987,7 +3987,11 @@ FocusScope {
 
         Connections {
             target: blockModel
-            function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta * root.zoom }
+            function onHeightSettled(row, delta) {
+                if (row >= root.firstVisible) return
+                flick.contentY += delta * root.zoom
+                smoothWheel.shift(delta * root.zoom)   // a glide in flight keeps its target under the nudge
+            }
         }
 
         // PLAN-zoom Z1: everything PAGE-SPACE lives in this one scaled layer — delegates, the
@@ -4556,8 +4560,15 @@ FocusScope {
                 last = Qt.point(translation.x, translation.y)
             }
         }
-        // ⌘-wheel and the trackpad pinch zoom about the pointer (PLAN-zoom Z3; the PDF tab's pair).
-        WheelHandler {
+        // Wheel-mouse notches glide (SmoothWheel; trackpads stay native); ⌘-wheel and the trackpad
+        // pinch zoom about the pointer (PLAN-zoom Z3; the PDF tab's pair).
+        SmoothWheel {
+            id: smoothWheel
+            flick: flick
+            onZoomRequested: (dir, x, y) => root.docZoomStep(dir, x, y)
+        }
+        WheelHandler {   // the trackpad's ⌘-wheel (SmoothWheel only takes mouse devices)
+            acceptedDevices: PointerDevice.TouchPad
             acceptedModifiers: Qt.ControlModifier
             onWheel: (event) => root.docZoomStep(event.angleDelta.y > 0 ? 1 : -1, event.x, event.y)
         }
@@ -4821,8 +4832,14 @@ FocusScope {
                         enabled: root.pdfSpaceHeld
                         cursorShape: Qt.OpenHandCursor
                     }
-                    // ⌘-wheel zoom (the sketch-canvas convention), √2 steps.
+                    // Wheel-mouse notches glide; ⌘-wheel zoom (the sketch-canvas convention), √2 steps.
+                    SmoothWheel {
+                        flick: pdfList
+                        horizontalToo: false
+                        onZoomRequested: (dir, x, y) => root.pdfZoomStep(dir)
+                    }
                     WheelHandler {
+                        acceptedDevices: PointerDevice.TouchPad
                         acceptedModifiers: Qt.ControlModifier
                         onWheel: (event) => root.pdfZoomStep(event.angleDelta.y > 0 ? 1 : -1)
                     }

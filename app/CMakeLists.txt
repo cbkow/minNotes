@@ -163,6 +163,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Editor.qml
         qml/MinNotes/App/Theme.qml
         qml/MinNotes/App/MnScrollBar.qml
+        qml/MinNotes/App/SmoothWheel.qml
         qml/MinNotes/App/ThemedMenu.qml
         qml/MinNotes/App/ThemedMenuSeparator.qml
         qml/MinNotes/App/Icon.qml
