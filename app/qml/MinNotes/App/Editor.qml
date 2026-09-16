@@ -55,7 +55,7 @@ FocusScope {
     // than the sheet. In ink mode the same number: both gutters are part of
     // the sheet, so the Flickable pans natively (the kanban board's 2D-pan
     // pattern) exactly when they don't fit.
-    readonly property real contentSpan: Math.max(flick.width, sheetRight)
+    readonly property real contentSpan: Math.max(viewW, sheetRight)
     // The SHEET = page + one ink gutter each side. CENTRED in the viewport
     // when there is room (PLAN-centred-page, 2026-09-16 — overturns the
     // "fixed left margin" half of the 2026-08-18 ruling; the gutter itself
@@ -66,7 +66,17 @@ FocusScope {
     // current edge and the sheet recentres on release (no feedback loop
     // through the ruler's own origin). `/ zoom` is written in for a future
     // view zoom (1 today) so centring composes with it untouched.
-    readonly property real zoom: 1
+    // Session view zoom (PLAN-zoom, Z1): a pure TRANSFORM — the layout in page units never
+    // changes; `pageLayer` (inside the Flickable) scales everything page-space, the Flickable's
+    // content size is the page's × zoom, and these read the scroll offsets back in CONTENT units.
+    // Never persisted (ruling 2026-09-16: documents are multi-user; zoom is display).
+    property real zoom: 1
+    readonly property real docX: flick.contentX / zoom     // scroll offset, content units
+    readonly property real docY: flick.contentY / zoom
+    readonly property real viewW: flick.width / zoom       // the viewport, content units
+    readonly property real viewH: flick.height / zoom
+    function vx(cx) { return cx * zoom - flick.contentX }  // content → viewport px
+    function vy(cy) { return cy * zoom - flick.contentY }
     // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
     // the panel floats over the editor instead of pushing it, so the raw viewport is wider by
     // the panel — centring on it would shift the page by half the panel every time annotation
@@ -1699,7 +1709,7 @@ FocusScope {
             if (h.row !== cursor.focusRow) blockModel.commitMarkdown(cursor.focusRow)
             cursor.setCaret(h.row, h.col)
         }
-        if (drag) { dragging = true; dragX = px; dragViewY = py - flick.contentY }
+        if (drag) { dragging = true; dragX = px; dragViewY = vy(py) }
     }
     // --- Lane gestures (SR-3 S7b) ---
     // The lane gap under a page-relative x in the split row holding `row`: {record, index}, or null.
@@ -3163,7 +3173,7 @@ FocusScope {
                 if (byRow[c.logicalRow] !== undefined) fail("row " + c.logicalRow + " in two delegates")
                 byRow[c.logicalRow] = c
             }
-            const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
+            const inView = blockModel.visibleBlocks(root.docY, root.docY + root.viewH)   // content units (zoom)
             for (var vi = 0; vi < inView.length; ++vi) {
                 const r = inView[vi]
                 ++checks
@@ -3187,11 +3197,11 @@ FocusScope {
             maxRows = Math.max(maxRows, inView.length)
             // T3: while a table's body is under the viewport top with its header scrolled away,
             // the sticky header shows.
-            const st = blockModel.tableStickyAt(flick.contentY)
-            if (st.head !== undefined && flick.contentY > st.headerTop
-                    && flick.contentY < st.tableBottom - (st.headerBottom - st.headerTop)) {
+            const st = blockModel.tableStickyAt(root.docY)
+            if (st.head !== undefined && root.docY > st.headerTop
+                    && root.docY < st.tableBottom - (st.headerBottom - st.headerTop)) {
                 ++checks
-                if (!stickyHeader.visible) fail("sticky header hidden over table " + st.head + " at contentY " + flick.contentY)
+                if (!stickyHeader.visible) fail("sticky header hidden over table " + st.head + " at docY " + root.docY)
                 else if (!stickyShot) {                    // one inspection artifact next to the fixture
                     stickyShot = true
                     const arg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
@@ -3202,15 +3212,30 @@ FocusScope {
         property bool stickyShot: false
         property bool frozenShot: false
         property int holdX: 0
+        // Z1: the scaled layer — the Flickable's content is the page's × zoom, the visible-row window
+        // covers the viewport in content units, and the layer maps a content point to the viewport at × zoom.
+        function verifyZoom() {
+            const z = root.zoom
+            ++checks
+            if (Math.abs(flick.contentHeight - blockModel.totalHeight * z) > 1)
+                fail("contentHeight " + flick.contentHeight + " vs totalHeight × zoom " + blockModel.totalHeight * z)
+            // (firstVisible/lastVisible deliberately lag height settles — rule 1e — so the row window
+            // is not asserted here; the per-step delegate check covers coverage.)
+            const y = blockModel.yForRow(root.firstVisible)
+            const m = pageLayer.mapToItem(flick, root.leftEdge, y)
+            ++checks
+            if (Math.abs(m.x - root.vx(root.leftEdge)) > 0.5 || Math.abs(m.y - root.vy(y)) > 0.5)
+                fail("pageLayer maps (" + root.leftEdge + "," + y + ") to " + m.x + "," + m.y + " not " + root.vx(root.leftEdge) + "," + root.vy(y) + " at zoom " + z)
+        }
         // T3: sideways past the left of the page, every table row in view has a frozen first cell.
         function verifyFrozen() {
-            if (flick.contentX <= root.leftEdge + 1) return
-            const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
+            if (root.docX <= root.leftEdge + 1) return
+            const inView = blockModel.visibleBlocks(root.docY, root.docY + root.viewH)
             let tableRows = 0
             for (let i = 0; i < inView.length; ++i) {
                 const head = blockModel.typeForRow(inView[i]) === 10 ? blockModel.tableHeadOf(inView[i]) : -1
-                if (head >= 0 && flick.contentX > root.tableX(head) + 1
-                    && root.tableX(head) + blockModel.tableWidth(head) > flick.contentX) ++tableRows
+                if (head >= 0 && root.docX > root.tableX(head) + 1
+                    && root.tableX(head) + blockModel.tableWidth(head) > root.docX) ++tableRows
             }
             ++checks
             if (frozenColumn.rows.length !== tableRows)
@@ -3234,6 +3259,7 @@ FocusScope {
         onTriggered: {
             verify()
             verifyFrozen()
+            verifyZoom()
             ++step
             var maxY = Math.max(0, flick.contentHeight - flick.height)
             if (phase === 0) {
@@ -3394,6 +3420,15 @@ FocusScope {
                 next(phaseStep >= 160)
             } else if (phase === 10) {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
+                // Z1: part of the sweep runs zoomed out and zoomed in (the pool must cover a taller window).
+                if (phaseStep === 3) root.zoom = 0.5
+                else if (phaseStep === 9) root.zoom = 1.5
+                else if (phaseStep === 15) root.zoom = 1
+                if (phaseStep === 6 || phaseStep === 12) {   // inspection artifacts at 50 % / 150 %
+                    const zarg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
+                    const zdir = zarg.substring("--pool-probe=".length).replace(/[^\/]*$/, "")
+                    flick.grabToImage(function(res) { res.saveToFile(zdir + "zoom-" + step + ".png") })
+                }
                 if (phaseStep === 1) {   // the centred sheet: the formula at rest, the latch across a commit
                     const centred = function(w) { return Math.max(root.inkGutter, Math.floor((root.centringWidth / root.zoom - w) / 2)) }
                     ++checks
@@ -3415,7 +3450,9 @@ FocusScope {
                 // Every third step sideways (the frozen column), then back.
                 if (holdX > 0) { --holdX; next(false); return }
                 flick.contentX = phaseStep % 3 === 2 ? Math.max(0, flick.contentWidth - flick.width) : 0
-                next(phaseStep > 0 && flick.contentY >= maxY)
+                const sweepDone = phaseStep > 0 && flick.contentY >= maxY
+                if (sweepDone) root.zoom = 1                   // the zoom sweep never leaks into the next phase
+                next(sweepDone)
             } else if (phase === 11) {
                 // Table keys (SR-4 S6a), through the functions the key handler calls: Enter walks down
                 // a column (appending at the end, exiting on an empty last body row), Tab and
@@ -3621,10 +3658,10 @@ FocusScope {
     // window; pure height settles are already handled by onHeightSettled's
     // contentY nudge below.
     readonly property int firstVisible: (blockModel.contentRevision,
-                                         blockModel.rowForY(flick.contentY))
+                                         blockModel.rowForY(root.docY))
     readonly property int lastVisible: (blockModel.contentRevision,
                                         Math.min(blockModel.count - 1,
-                                                 blockModel.rowForY(flick.contentY + flick.height - 1)))
+                                                 blockModel.rowForY(root.docY + root.viewH - 1)))
     // EVERY video row in the document — the per-video transport toolbars are all
     // built up front (on load), NOT lazily as rows scroll into view, so scrolling
     // never creates/destroys a toolbar (zero flicker; the scrubber never resets).
@@ -3715,7 +3752,7 @@ FocusScope {
     // lanes' visible blocks. layoutRevision is safe here since SR-2: the slot table
     // is stable, so a height settle only hands ENTERING blocks to free slots (no
     // re-render, no re-measure), and measure-back is asynchronous anyway.
-    readonly property real overscanPx: Math.max(200, flick.height * 0.5)
+    readonly property real overscanPx: Math.max(200, root.viewH * 0.5)
     // The overscan is half a screen of PIXELS each side — ~15 paragraphs, but hundreds of cells
     // where a table is dense (2026-09-15 walk: a table entering the band rebound ~700 delegates
     // in one frame at 0.3 ms each). Cap it by ROWS beyond the viewport: still screens of prose,
@@ -3723,7 +3760,7 @@ FocusScope {
     readonly property int overscanRows: Qt.application.arguments.indexOf("--no-overscan-cap") >= 0 ? 1000000 : 60   // the switch: an A/B on the same build
     readonly property var poolRows: {
         const dep = blockModel.contentRevision + blockModel.layoutRevision
-        const y0 = flick.contentY, y1 = flick.contentY + flick.height
+        const y0 = root.docY, y1 = root.docY + root.viewH
         const all = blockModel.visibleBlocks(Math.max(0, y0 - overscanPx), y1 + overscanPx)
         const view = blockModel.visibleBlocks(y0, y1)
         if (view.length === 0 || all.length <= view.length + 2 * overscanRows) return all
@@ -3736,7 +3773,7 @@ FocusScope {
     // delegate whenever the count changed, and with a table in view (records + cells) the visible
     // count changed on every scroll step — the 2026-09-14 big-table crawl.
     readonly property int poolNeed: Math.min(blockModel.count,
-        Math.max(poolRows.length, Math.ceil(root.height / 38) + 2 * overscan + 4))
+        Math.max(poolRows.length, Math.ceil(root.height / root.zoom / 38) + 2 * overscan + 4))
     readonly property int poolSize: poolModel.count
     readonly property int delegateCount: poolSize
     // Instrument (2026-09-15 walk): `--perf-log` counts delegate rebinds per burst and the
@@ -3798,7 +3835,7 @@ FocusScope {
     // where the pool GREW mid-flick — ~0.8 ms per delegate created on top of ~0.13 ms per rebind —
     // and the old 2-per-40 ms warm-up never got ahead of the scroll. Target: eight screens of small
     // cells (never fewer than 480), four slots per tick while the view rests.
-    readonly property int poolPrewarm: Math.min(blockModel.count, Math.max(480, 8 * (Math.ceil(root.height / 38) + 2 * overscan + 4)))
+    readonly property int poolPrewarm: Math.min(blockModel.count, Math.max(480, 8 * (Math.ceil(root.height / root.zoom / 38) + 2 * overscan + 4)))
     Timer {
         interval: 20; repeat: true
         running: blockModel.documentOpen && !flick.moving && !flick.dragging && poolModel.count < root.poolPrewarm
@@ -3838,8 +3875,8 @@ FocusScope {
         // In ink mode the content is wider than the viewport (locked page +
         // margins) and pans natively; contentSpan == width otherwise, so this
         // is a no-op outside the mode.
-        contentWidth: root.contentSpan
-        contentHeight: blockModel.totalHeight
+        contentWidth: root.contentSpan * root.zoom
+        contentHeight: blockModel.totalHeight * root.zoom
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         // A resize (or leaving ink mode) can strand contentX past the new
@@ -3853,8 +3890,17 @@ FocusScope {
 
         Connections {
             target: blockModel
-            function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta }
+            function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta * root.zoom }
         }
+
+        // PLAN-zoom Z1: everything PAGE-SPACE lives in this one scaled layer — delegates, the
+        // document mouse layer (Qt maps its events through the transform, so hit-tests stay in
+        // content units), the sticky header / frozen column, the tints and the focus fill.
+        // Viewport chrome (scrollbars, the auto-scroll timer, root-level overlays) stays outside.
+        Item {
+        id: pageLayer
+        width: root.contentSpan; height: blockModel.totalHeight
+        transform: Scale { xScale: root.zoom; yScale: root.zoom }
 
         // Gutter tints while the PageRuler drags a width: the marginalia
         // zones travel visibly with the edge (transient drag feedback).
@@ -3862,14 +3908,14 @@ FocusScope {
             visible: root.widthDragging
             z: -1
             x: root.sheetLeft; width: root.inkGutter
-            y: flick.contentY; height: flick.height
+            y: root.docY; height: root.viewH
             color: Theme.colors.bgAlt2
         }
         Rectangle {
             visible: root.widthDragging
             z: -1
             x: root.leftEdge + root.pageWidth; width: root.inkGutter
-            y: flick.contentY; height: flick.height
+            y: root.docY; height: root.viewH
             color: Theme.colors.bgAlt2
         }
 
@@ -3885,7 +3931,7 @@ FocusScope {
             visible: cursor.focusRow >= 0 && cursor.focusRow < blockModel.count
             z: -1
             x: 0
-            width: Math.max(flick.width, root.contentSpan)
+            width: Math.max(root.viewW, root.contentSpan)
             // In a lane, the whole split row is "here" — its record spans the row.
             readonly property int fillRow: (blockModel.contentRevision,
                 blockModel.splitRowOf(cursor.focusRow) >= 0 ? blockModel.splitRowOf(cursor.focusRow)
@@ -3946,15 +3992,15 @@ FocusScope {
                 const dep = blockModel.layoutRevision + blockModel.contentRevision + flick.contentY + flick.contentX
                 if (root.noSticky) return []
                 const out = []
-                const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
+                const inView = blockModel.visibleBlocks(root.docY, root.docY + root.viewH)
                 for (let i = 0; i < inView.length; ++i) {
                     const r = inView[i]
                     if (blockModel.typeForRow(r) !== 10) continue
                     const head = blockModel.tableHeadOf(r)
                     if (head < 0) continue
                     const tw = blockModel.tableWidth(head), tx = root.tableX(head)
-                    if (flick.contentX <= tx + 1) continue                // the table's left edge is still in view
-                    if (tx + tw <= flick.contentX) continue               // the whole table is scrolled away
+                    if (root.docX <= tx + 1) continue                     // the table's left edge is still in view
+                    if (tx + tw <= root.docX) continue                    // the whole table is scrolled away
                     const padTop = blockModel.tablePadTop(r)
                     out.push({ head: head, gr: blockModel.tableRowOf(r), header: blockModel.isHeaderRow(r),
                                y: blockModel.yForRow(r) + padTop,
@@ -3963,7 +4009,7 @@ FocusScope {
                 }
                 return out
             }
-            x: flick.contentX
+            x: root.docX
             z: 2.5
             Repeater {
                 model: frozenColumn.rows
@@ -3972,7 +4018,7 @@ FocusScope {
                     readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(modelData.head, modelData.gr, 0))
                     readonly property string fg: (blockModel.contentRevision, blockModel.tableCellFg(modelData.head, modelData.gr, 0))
                     // Pushed off to the left as the table's right edge arrives (never over its last column).
-                    x: Math.min(0, modelData.tx + modelData.tw - modelData.w - flick.contentX)
+                    x: Math.min(0, modelData.tx + modelData.tw - modelData.w - root.docX)
                     y: modelData.y
                     width: modelData.w
                     height: modelData.h
@@ -3996,10 +4042,10 @@ FocusScope {
         Rectangle {   // the corner: the header's first cell, pinned at the top and the left
             id: frozenCorner
             readonly property int head: stickyHeader.stHead
-            visible: stickyHeader.visible && head >= 0 && flick.contentX > root.tableX(head) + 1
-                     && root.tableX(head) + (blockModel.layoutRevision, blockModel.tableWidth(head)) > flick.contentX
-            x: flick.contentX + (head >= 0 ? Math.min(0, root.tableX(head) + (blockModel.layoutRevision, blockModel.tableWidth(head))
-                                                         - width - flick.contentX) : 0)
+            visible: stickyHeader.visible && head >= 0 && root.docX > root.tableX(head) + 1
+                     && root.tableX(head) + (blockModel.layoutRevision, blockModel.tableWidth(head)) > root.docX
+            x: root.docX + (head >= 0 ? Math.min(0, root.tableX(head) + (blockModel.layoutRevision, blockModel.tableWidth(head))
+                                                    - width - root.docX) : 0)
             y: stickyHeader.y
             z: 4
             width: head >= 0 ? (blockModel.layoutRevision, blockModel.tableColumnWidth(head, 0)) : 0
@@ -4026,7 +4072,7 @@ FocusScope {
         Item {
             id: stickyHeader
             readonly property var st: (blockModel.layoutRevision, blockModel.contentRevision,
-                                       root.noSticky ? ({}) : blockModel.tableStickyAt(flick.contentY))
+                                       root.noSticky ? ({}) : blockModel.tableStickyAt(root.docY))
             readonly property bool has: st.head !== undefined
             readonly property real headerH: has ? st.headerBottom - st.headerTop : 0
             readonly property real headerTop: has ? st.headerTop : 0
@@ -4044,11 +4090,11 @@ FocusScope {
                 stHead = h
                 headerRows = rows
             }
-            visible: has && flick.contentY > st.headerTop && flick.contentY < st.tableBottom - headerH
+            visible: has && root.docY > st.headerTop && root.docY < st.tableBottom - headerH
             x: 0
-            y: flick.contentY + (has ? Math.min(0, st.tableBottom - headerH - flick.contentY) : 0)
+            y: root.docY + (has ? Math.min(0, st.tableBottom - headerH - root.docY) : 0)
             z: 3
-            width: flick.contentWidth
+            width: root.contentSpan
             height: headerH
             Repeater {
                 model: stickyHeader.headerRows
@@ -4098,8 +4144,8 @@ FocusScope {
         // for a flick; wheel/trackpad scroll still works since we don't take it).
         MouseArea {
             id: mouse
-            width: flick.contentWidth
-            height: flick.contentHeight
+            width: root.contentSpan
+            height: blockModel.totalHeight
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             preventStealing: true
             hoverEnabled: true
@@ -4128,7 +4174,7 @@ FocusScope {
                     root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
                     var bi = spell.issueAt(rh.row, rh.col)
                     root.menuIssue = bi.ruleId !== undefined ? bi : null
-                    root.openBlockMenu(m.x - flick.contentX, m.y - flick.contentY, trow)
+                    root.openBlockMenu(root.vx(m.x), root.vy(m.y), trow)
                     return
                 }
                 // (Block drag-reorder starts from the ruler's number handles
@@ -4212,7 +4258,7 @@ FocusScope {
                     if (crange.length === 2) {
                         cursor.setCaret(h.row, crange[1])
                         root.openInlineChoicePicker(h.row, crange[0],
-                            m.x - flick.contentX, m.y - flick.contentY)
+                            root.vx(m.x), root.vy(m.y))
                         return
                     }
                 }
@@ -4226,7 +4272,7 @@ FocusScope {
                     cursor.setCaret(h.row, h.col)
                 }
                 root.dragging = true
-                root.dragX = m.x; root.dragViewY = m.y - flick.contentY
+                root.dragX = m.x; root.dragViewY = root.vy(m.y)
             }
             onPositionChanged: (m) => {
                 if (root.pullArmed) {   // the pull strip's press decides on its first move
@@ -4246,7 +4292,7 @@ FocusScope {
                 if (root.dividerDragging) { root.updateDividerDrag(m.x - root.leftEdge); return }
                 if (root.pulling) { root.updatePull(m.x - root.leftEdge); return }
                 if (root.blockDragging) {
-                    root.blockDragViewY = m.y - flick.contentY
+                    root.blockDragViewY = root.vy(m.y)
                     root.blockDragX = m.x
                     root.aimBlockDrag(m.x, m.y)
                     return
@@ -4259,7 +4305,7 @@ FocusScope {
                         const run = root.dragRunFor(blockModel.tableRecords(root.tableGripPressHead)[root.tableGripPressIndex])
                         root.blockDragRow = run[0]; root.blockDragCount = run[1]
                         root.blockDragging = true
-                        root.blockDragViewY = m.y - flick.contentY; root.blockDragX = m.x
+                        root.blockDragViewY = root.vy(m.y); root.blockDragX = m.x
                         root.aimBlockDrag(m.x, m.y)
                     } else {
                         root.tableColDragging = true
@@ -4269,7 +4315,7 @@ FocusScope {
                 }
                 if (root.tableColDragging) { root.tableColGap = root.tableColGapAt(root.tableGripPressHead, m.x - root.leftEdge); return }
                 if (root.dragging) {
-                    root.dragX = m.x; root.dragViewY = m.y - flick.contentY
+                    root.dragX = m.x; root.dragViewY = root.vy(m.y)
                     var h = root.hitTest(m.x, m.y)
                     cursor.move(h.row, h.col, true)
                     return
@@ -4317,7 +4363,7 @@ FocusScope {
                     // tracked the mouse, moving up to click it would chase it away.
                     if (lurl !== root.hoverLinkUrl) {
                         root.hoverLinkUrl = lurl
-                        root.hoverLinkX = m.x - flick.contentX; root.hoverLinkViewY = m.y - flick.contentY
+                        root.hoverLinkX = root.vx(m.x); root.hoverLinkViewY = root.vy(m.y)
                     }
                     linkTipHide.stop()
                 } else if (root.hoverLinkUrl.length > 0) {
@@ -4373,6 +4419,8 @@ FocusScope {
 
         // Edge auto-scroll while drag-selecting OR drag-reordering near the
         // top/bottom (the persistent `mouse` area keeps its grab through scroll).
+        }   // pageLayer
+
         Timer {
             interval: 16; repeat: true
             running: root.dragging || root.blockDragging || root.mergeDragActive
@@ -4384,7 +4432,7 @@ FocusScope {
                 else if (viewY > flick.height - margin) sp = Math.max(6, viewY - (flick.height - margin))
                 if (sp === 0) return
                 flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, flick.contentY + sp))
-                var cy = viewY + flick.contentY               // content point under the held cursor
+                var cy = (viewY + flick.contentY) / root.zoom   // content point under the held cursor
                 if (root.mergeDragActive) { root.mergeDropGap = root.mergeGapForY(cy); return }
                 if (root.blockDragging) { root.aimBlockDrag(root.blockDragX, cy); return }
                 var h = root.hitTest(root.dragX, cy)

@@ -183,7 +183,7 @@ Item {
     // The delegate spans the whole field (row fill, washes); content sits at colLeft.
     z: isTableRecord ? -1 : 0
     x: 0
-    width: flick.contentWidth   // == flick.width outside ink mode
+    width: editor.contentSpan   // content units (the page layer scales); == the viewport unless the sheet is wider
     visible: active && (editor.frameLo < 0 || (logicalRow >= editor.frameLo && logicalRow <= editor.frameHi))   // the grid frame shows one table
              && !(blockModel.layoutRevision, blockModel.rowHidden(logicalRow))                                  // T4: a filtered-out row
     y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
@@ -764,7 +764,7 @@ Item {
         // A block in a lane bands only its lane — the neighbouring lane isn't selected.
         x: cell.inLane ? cell.colLeft : 0
         y: 0
-        width: cell.inLane ? cell.measure : Math.max(flick.width, editor.contentSpan)
+        width: cell.inLane ? cell.measure : Math.max(editor.viewW, editor.contentSpan)
         height: cell.height
     }
     Rectangle {  // opaque-row range wash (2026-09-09): media/table/divider
