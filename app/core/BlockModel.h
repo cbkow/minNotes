@@ -47,6 +47,10 @@ class BlockModel : public QAbstractListModel {
     // does). Drives the view's horizontal content extent — the page scrolls
     // for wide tables instead of tables scrolling inside themselves.
     Q_PROPERTY(qreal maxContentWidth READ maxContentWidth NOTIFY maxContentWidthChanged)
+    // The same maximum split by what the view can shift: tables (centred under the page when
+    // wider than it, 2026-09-16) vs everything else (pinned to the page's left edge).
+    Q_PROPERTY(qreal maxTableWidth READ maxTableWidth NOTIFY maxContentWidthChanged)
+    Q_PROPERTY(qreal maxBlockWidth READ maxBlockWidth NOTIFY maxContentWidthChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
     // Bumped on EVERY stack mutation (push, coalesce, undo, redo, clear) —
@@ -423,6 +427,8 @@ public:
     // cache; see maxContentWidth).
     Q_INVOKABLE void setMeasuredWidth(int row, qreal w);
     qreal maxContentWidth() const { return maxContentWidth_; }
+    qreal maxTableWidth() const { return maxTableWidth_; }
+    qreal maxBlockWidth() const { return maxBlockWidth_; }
     // Media is known-geometry: its height is a pure function of the probed dims
     // and the page width the doc is laid out at, so the view never measures it
     // back — it sets the width here (on load + resize) and the model re-derives
@@ -1104,6 +1110,8 @@ private:
 
     void refreshMaxContentWidth();
     double maxContentWidth_ = 0.0;
+    double maxTableWidth_ = 0.0;      // widest table geometry
+    double maxBlockWidth_ = 0.0;      // widest measured block outside any table
     qreal pageWidth_ = 760;   // the open doc's page measure (synced on load/close)
     int clampRow(int row) const;
     // Media / Table / Divider: content is a descriptor, never prose. Text

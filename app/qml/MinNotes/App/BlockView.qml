@@ -100,7 +100,7 @@ Item {
         delegate: Rectangle {
             required property int index
             readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(cell.tableHead, cell.tableRow, index))
-            x: editor.leftEdge + (blockModel.geomRevision, blockModel.tableColumnLeft(cell.tableHead, index))
+            x: editor.tableX(cell.tableHead) + (blockModel.geomRevision, blockModel.tableColumnLeft(cell.tableHead, index))
             y: cell.padTop
             width: (blockModel.geomRevision, blockModel.tableColumnWidth(cell.tableHead, index))
             height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
@@ -145,12 +145,12 @@ Item {
     }
     Rectangle {   // the table's left edge
         visible: cell.isTableRecord
-        x: editor.leftEdge; y: cell.padTop; width: 1; height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
+        x: editor.tableX(cell.tableHead); y: cell.padTop; width: 1; height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
         color: Theme.colors.border
     }
     Rectangle {   // the top edge, on the table's first row
         visible: cell.isTableRecord && cell.tableRow === 0
-        x: editor.leftEdge; y: cell.padTop; height: 1
+        x: editor.tableX(cell.tableHead); y: cell.padTop; height: 1
         width: (blockModel.geomRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
     }
@@ -161,7 +161,7 @@ Item {
             && editor.tableGripPressHead === cell.tableHead && editor.tableGripPressIndex === cell.tableRow
         visible: cell.isTableRecord && (live || (editor.tableGripKind === "row" && editor.tableGripHead === cell.tableHead
                                                  && editor.tableGripIndex === cell.tableRow))
-        x: editor.leftEdge - 13; y: cell.padTop; width: 8
+        x: editor.tableX(cell.tableHead) - 13; y: cell.padTop; width: 8
         height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
         color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover
         border.width: 1; border.color: live ? Theme.colors.accent : Theme.colors.border
@@ -173,7 +173,7 @@ Item {
             : live ? editor.tableGripPressIndex
             : editor.tableGripKind === "col" && editor.tableGripHead === cell.tableHead ? editor.tableGripIndex : -1
         visible: col >= 0
-        x: editor.leftEdge + (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
+        x: editor.tableX(cell.tableHead) + (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
         width: (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnWidth(cell.tableHead, col) : 0)
         y: cell.padTop - 13; height: 8
         color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover

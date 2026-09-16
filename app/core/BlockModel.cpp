@@ -6328,12 +6328,15 @@ void BlockModel::setMeasuredWidth(int row, qreal w) {
 }
 
 void BlockModel::refreshMaxContentWidth() {
-    double m = 0.0;
-    for (const Row& r : rows_) m = std::max(m, static_cast<double>(r.measuredW));
+    double blocks = 0.0, tables = 0.0;
+    const std::vector<int>& heads = tableHeads();
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (heads[i] < 0) blocks = std::max(blocks, static_cast<double>(rows_[i].measuredW));
     tableGeom(-1);                                     // SR-4: tables wider than the page widen the content
-    for (auto it = geoms_.cbegin(); it != geoms_.cend(); ++it) m = std::max(m, it.value().width);
-    if (m != maxContentWidth_) {
-        maxContentWidth_ = m;
+    for (auto it = geoms_.cbegin(); it != geoms_.cend(); ++it) tables = std::max(tables, it.value().width);
+    const double m = std::max(blocks, tables);
+    if (m != maxContentWidth_ || blocks != maxBlockWidth_ || tables != maxTableWidth_) {
+        maxContentWidth_ = m; maxBlockWidth_ = blocks; maxTableWidth_ = tables;
         emit maxContentWidthChanged();
     }
 }

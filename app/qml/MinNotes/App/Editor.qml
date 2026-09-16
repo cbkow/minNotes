@@ -86,9 +86,27 @@ FocusScope {
     // tone at the page boundary). A wide table grows RIGHTWARD from the
     // page's left edge (ruling 2026-09-16: sheets left-align; centring on
     // the widest content would feed measured widths back into layout).
-    readonly property real sheetLeft: leftEdge - inkGutter
+    // A table WIDER than the page centres under it (ruling 2026-09-16): half its overhang
+    // shifts left, but never past the gutter — so in a narrow window it slides back to the
+    // page's left edge and overflows right as before. Continuous, prose never moves. View
+    // geometry only: the model's table x stays 0-based; `tableX(head)` is the content x of
+    // a table's left edge and every table site adds THAT, not leftEdge.
+    function tableShiftFor(tw) {
+        return -Math.min(Math.round(Math.max(0, (tw - pageWidth) / 2)), Math.max(0, leftEdge - inkGutter))
+    }
+    function tableShift(head) { return head < 0 ? 0 : tableShiftFor((blockModel.layoutRevision, blockModel.tableWidth(head))) }
+    function tableX(head) { return leftEdge + tableShift(head) }
+    // Content x → PAGE x (0 = the page's left edge) for the block under (cx, cy): a table row's
+    // x is read against the table's shifted left edge, so the model's 0-based columns resolve.
+    function pageXAt(cx, cy) {
+        const rec = blockModel.rowForY(Math.max(0, cy))
+        const head = rec >= 0 ? blockModel.tableHeadOf(rec) : -1
+        return cx - leftEdge - (head >= 0 ? tableShift(head) : 0)
+    }
+    readonly property real sheetLeft: leftEdge + tableShiftFor(blockModel.maxTableWidth) - inkGutter
     readonly property real sheetRight:
-        leftEdge + Math.max(pageWidth, blockModel.maxContentWidth) + inkGutter
+        leftEdge + Math.max(pageWidth, blockModel.maxBlockWidth,
+                            blockModel.maxTableWidth + tableShiftFor(blockModel.maxTableWidth)) + inkGutter
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return laneOf(row).w }   // a lane block measures its lane
     // An image's "fit" width: its lane, minus a table cell's two 8 px insets (BlockView's colLeft).
@@ -103,7 +121,7 @@ FocusScope {
         const head = blockModel.tableHeadOf(record)
         if (head >= 0) {       // SR-4: table columns are px from the head's spec (C++), past the page too
             const lrev = blockModel.layoutRevision
-            return { x: blockModel.tableColumnLeft(head, lane), w: blockModel.tableColumnWidth(head, lane) }
+            return { x: tableShift(head) + blockModel.tableColumnLeft(head, lane), w: blockModel.tableColumnWidth(head, lane) }
         }
         const ratios = blockModel.splitRatios(record)
         if (lane < 0 || lane >= ratios.length) return { x: 0, w: pageWidth }
@@ -624,7 +642,7 @@ FocusScope {
     }
     function laneDropAim(cx, cy, excludeLo, excludeCount) {
         const top = { gap: tableSafeGap(gapForY(cy), cy, true), lane: -1, besideRow: -1, besideSide: -1 }
-        const pageX = cx - leftEdge
+        const pageX = pageXAt(cx, cy)
         if (pageX < 0) return top
         const hit = blockModel.blockAt(pageX, Math.max(0, cy))
         const head = hit >= 0 ? blockModel.tableHeadOf(hit) : -1
@@ -1508,7 +1526,7 @@ FocusScope {
     }
     // (cx, cy) in CONTENT coordinates → {row, col}.
     function hitTest(cx, cy) {
-        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
+        var row = blockModel.blockAt(root.pageXAt(cx, cy), Math.max(0, cy))
         var cell = cellForRow(row)
         if (!cell || cell.isMedia) return { row: row, col: 0 }
         var te = cell.teItem
@@ -1520,7 +1538,7 @@ FocusScope {
     // delegate can't own a MouseArea (the document mouse layer sits above it), so the
     // central handler hit-tests the glyph zone here.
     function taskCheckboxAt(cx, cy) {
-        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
+        var row = blockModel.blockAt(root.pageXAt(cx, cy), Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 8) return -1
         var cell = cellForRow(row)
         if (!cell) return -1
@@ -1535,7 +1553,7 @@ FocusScope {
     // hit-testing as the task checkbox — the delegate can't own a MouseArea.
     property int codeChipHoverRow: -1
     function codeLangChipAt(cx, cy) {
-        var row = blockModel.blockAt(cx - root.leftEdge, Math.max(0, cy))
+        var row = blockModel.blockAt(root.pageXAt(cx, cy), Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 2) return -1
         var cell = cellForRow(row)
         if (!cell || !cell.langChip || !cell.langChip.visible) return -1
@@ -1684,6 +1702,7 @@ FocusScope {
         if (rec < 0) return null
         const head = blockModel.tableHeadOf(rec)
         if (head >= 0) {   // SR-4 A6: a table column's right border (the last column's too) → its px width
+            pageX -= tableShift(head)
             const cols = blockModel.tableColumnCount(head)
             for (let k = 0; k < cols; ++k)
                 if (Math.abs(pageX - blockModel.tableColumnLeft(head, k) - blockModel.tableColumnWidth(head, k)) <= 4)
@@ -1728,8 +1747,8 @@ FocusScope {
     }
     function updateDividerDrag(pageX) {
         const head = blockModel.tableHeadOf(dividerDragRecord)
-        if (head >= 0) {   // px, no fraction snaps; a column never goes under 48
-            dividerPreviewX = Math.max(blockModel.tableColumnLeft(head, dividerDragIndex) + 48, pageX)
+        if (head >= 0) {   // px, no fraction snaps; a column never goes under 48 (preview = table-space x)
+            dividerPreviewX = Math.max(blockModel.tableColumnLeft(head, dividerDragIndex) + 48, pageX - tableShift(head))
             return
         }
         dividerPreviewX = snapToFractions(pageX, 0, pageWidth)
@@ -1791,9 +1810,10 @@ FocusScope {
         const head = blockModel.tableHeadOf(rec)
         if (head < 0) return null
         const pageX = cx - leftEdge
+        const tx = pageX - tableShift(head)                      // against the table's own left edge
         const top = blockModel.yForRow(rec) + blockModel.tablePadTop(rec)
         const bottom = blockModel.yForRow(rec) + blockModel.heightForRow(rec) - blockModel.tablePadBottom(rec)
-        if (pageX >= -18 && pageX < -2 && cy >= top && cy < bottom)
+        if (tx >= -18 && tx < -2 && cy >= top && cy < bottom)
             return { head: head, kind: "row", index: blockModel.tableRowOf(rec) }
         if (rec === head && cy >= top - 18 && cy < top - 2) {
             const c = tableColumnAtX(head, pageX)
@@ -1802,6 +1822,7 @@ FocusScope {
         return null
     }
     function tableColumnAtX(head, pageX) {
+        pageX -= tableShift(head)
         const cols = blockModel.tableColumnCount(head)
         for (let k = 0; k < cols; ++k) {
             const l = blockModel.tableColumnLeft(head, k)
@@ -1811,6 +1832,7 @@ FocusScope {
     }
     // A column grip drag's gap (0..columns) for a page x: before or after a column by its midpoint.
     function tableColGapAt(head, pageX) {
+        pageX -= tableShift(head)
         const cols = blockModel.tableColumnCount(head)
         for (let k = 0; k < cols; ++k)
             if (pageX < blockModel.tableColumnLeft(head, k) + blockModel.tableColumnWidth(head, k) / 2) return k
@@ -3149,7 +3171,7 @@ FocusScope {
                 if (Math.abs(d.colLeft - d.cellInset - (root.leftEdge + g.x)) > 0.5 || Math.abs(d.measure + 2 * d.cellInset - g.w) > 0.5)
                     fail("row " + r + " column " + d.colLeft + "/" + d.measure + ", lane " + (root.leftEdge + g.x) + "/" + g.w)
                 // A table cell sits at its column (SR-4 S5).
-                if (d.tableCol >= 0 && Math.abs(g.x - blockModel.tableColumnLeft(d.tableHead, d.tableCol)) > 0.5)
+                if (d.tableCol >= 0 && Math.abs(g.x - root.tableShift(d.tableHead) - blockModel.tableColumnLeft(d.tableHead, d.tableCol)) > 0.5)
                     fail("table cell row " + r + " at x " + g.x + ", column " + d.tableCol + " starts at "
                          + blockModel.tableColumnLeft(d.tableHead, d.tableCol))
                 // Pointer path: a point just inside the block's top-left resolves to it.
@@ -3181,7 +3203,8 @@ FocusScope {
             let tableRows = 0
             for (let i = 0; i < inView.length; ++i) {
                 const head = blockModel.typeForRow(inView[i]) === 10 ? blockModel.tableHeadOf(inView[i]) : -1
-                if (head >= 0 && root.leftEdge + blockModel.tableWidth(head) > flick.contentX) ++tableRows
+                if (head >= 0 && flick.contentX > root.tableX(head) + 1
+                    && root.tableX(head) + blockModel.tableWidth(head) > flick.contentX) ++tableRows
             }
             ++checks
             if (frozenColumn.rows.length !== tableRows)
@@ -3428,9 +3451,9 @@ FocusScope {
                         {   // the grip bands: beside a row in the left margin, above a column in the first row's pocket
                             const recs = blockModel.tableRecords(head), rr = rand(recs.length), rec = recs[rr]
                             const rowY = blockModel.yForRow(rec) + blockModel.tablePadTop(rec) + 4
-                            const gRow = root.tableGripAt(root.leftEdge - 10, rowY)
+                            const gRow = root.tableGripAt(root.tableX(head) - 10, rowY)
                             const colY = blockModel.yForRow(head) + blockModel.tablePadTop(head) - 10
-                            const gCol = root.tableGripAt(root.leftEdge + blockModel.tableColumnLeft(head, 0) + 4, colY)
+                            const gCol = root.tableGripAt(root.tableX(head) + blockModel.tableColumnLeft(head, 0) + 4, colY)
                             checks += 2
                             if (!gRow || gRow.kind !== "row" || gRow.head !== head || gRow.index !== rr)
                                 fail("the row grip beside row " + rr + " of table " + head + " at y " + rowY + " answered " + JSON.stringify(gRow))
@@ -3440,7 +3463,7 @@ FocusScope {
                         }
                         const b = blockModel.tableCellAt(head, 0, 0)   // a drop over cell (0,0) targets it
                         if (b >= 0) {
-                            const pt = root.tableCellAtPoint(root.leftEdge + blockModel.tableColumnLeft(head, 0) + 4, blockModel.yForRow(b) + 2)
+                            const pt = root.tableCellAtPoint(root.tableX(head) + blockModel.tableColumnLeft(head, 0) + 4, blockModel.yForRow(b) + 2)
                             ++checks
                             if (!pt || pt.head !== head || pt.r !== 0 || pt.c !== 0) fail("the drop target over cell (0,0) of table " + head + " missed it")
                         }
@@ -3495,7 +3518,7 @@ FocusScope {
                     }
                     case 7: {   // A6: drag a column's right border — its px width, never under 48
                         const c = blockModel.tableColumnOf(row)
-                        const edge = blockModel.tableColumnLeft(head, c) + blockModel.tableColumnWidth(head, c)
+                        const edge = root.tableShift(head) + blockModel.tableColumnLeft(head, c) + blockModel.tableColumnWidth(head, c)
                         root.beginDividerDrag(blockModel.splitRowOf(row), c, edge, false)
                         root.updateDividerDrag(edge + (rand(2) ? 60 : -500))
                         root.commitDividerDrag()
@@ -3898,7 +3921,7 @@ FocusScope {
             }
             readonly property var computed: {
                 const dep = blockModel.layoutRevision + blockModel.contentRevision + flick.contentY + flick.contentX
-                if (root.noSticky || flick.contentX <= root.leftEdge + 1) return []
+                if (root.noSticky) return []
                 const out = []
                 const inView = blockModel.visibleBlocks(flick.contentY, flick.contentY + flick.height)
                 for (let i = 0; i < inView.length; ++i) {
@@ -3906,13 +3929,14 @@ FocusScope {
                     if (blockModel.typeForRow(r) !== 10) continue
                     const head = blockModel.tableHeadOf(r)
                     if (head < 0) continue
-                    const tw = blockModel.tableWidth(head)
-                    if (root.leftEdge + tw <= flick.contentX) continue    // the whole table is scrolled away
+                    const tw = blockModel.tableWidth(head), tx = root.tableX(head)
+                    if (flick.contentX <= tx + 1) continue                // the table's left edge is still in view
+                    if (tx + tw <= flick.contentX) continue               // the whole table is scrolled away
                     const padTop = blockModel.tablePadTop(r)
                     out.push({ head: head, gr: blockModel.tableRowOf(r), header: blockModel.isHeaderRow(r),
                                y: blockModel.yForRow(r) + padTop,
                                h: blockModel.heightForRow(r) - padTop - blockModel.tablePadBottom(r),
-                               w: blockModel.tableColumnWidth(head, 0), tw: tw })
+                               w: blockModel.tableColumnWidth(head, 0), tw: tw, tx: tx })
                 }
                 return out
             }
@@ -3925,7 +3949,7 @@ FocusScope {
                     readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(modelData.head, modelData.gr, 0))
                     readonly property string fg: (blockModel.contentRevision, blockModel.tableCellFg(modelData.head, modelData.gr, 0))
                     // Pushed off to the left as the table's right edge arrives (never over its last column).
-                    x: Math.min(0, root.leftEdge + modelData.tw - modelData.w - flick.contentX)
+                    x: Math.min(0, modelData.tx + modelData.tw - modelData.w - flick.contentX)
                     y: modelData.y
                     width: modelData.w
                     height: modelData.h
@@ -3949,9 +3973,9 @@ FocusScope {
         Rectangle {   // the corner: the header's first cell, pinned at the top and the left
             id: frozenCorner
             readonly property int head: stickyHeader.stHead
-            visible: stickyHeader.visible && flick.contentX > root.leftEdge + 1 && head >= 0
-                     && root.leftEdge + (blockModel.layoutRevision, blockModel.tableWidth(head)) > flick.contentX
-            x: flick.contentX + (head >= 0 ? Math.min(0, root.leftEdge + (blockModel.layoutRevision, blockModel.tableWidth(head))
+            visible: stickyHeader.visible && head >= 0 && flick.contentX > root.tableX(head) + 1
+                     && root.tableX(head) + (blockModel.layoutRevision, blockModel.tableWidth(head)) > flick.contentX
+            x: flick.contentX + (head >= 0 ? Math.min(0, root.tableX(head) + (blockModel.layoutRevision, blockModel.tableWidth(head))
                                                          - width - flick.contentX) : 0)
             y: stickyHeader.y
             z: 4
@@ -4021,7 +4045,7 @@ FocusScope {
                             readonly property int head: stickyHeader.stHead
                             readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(head, stickyRow.index, index))
                             readonly property string fg: (blockModel.contentRevision, blockModel.tableCellFg(head, stickyRow.index, index))
-                            x: root.leftEdge + (blockModel.layoutRevision, blockModel.tableColumnLeft(head, index))
+                            x: root.tableX(head) + (blockModel.layoutRevision, blockModel.tableColumnLeft(head, index))
                             width: (blockModel.layoutRevision, blockModel.tableColumnWidth(head, index))
                             height: stickyRow.height
                             color: bg !== "" ? bg : Theme.colors.surfaceHover
@@ -4075,7 +4099,7 @@ FocusScope {
                 // Right-click anywhere on a block → its context menu (capturing the
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
-                    var trow = blockModel.blockAt(m.x - root.leftEdge, m.y)
+                    var trow = blockModel.blockAt(root.pageXAt(m.x, m.y), m.y)
                     root.menuLinkUrl = ""; root.menuIssue = null
                     var rh = root.hitTest(m.x, m.y)              // link / misspelling under the click?
                     root.menuLinkUrl = blockModel.linkAt(rh.row, rh.col)
@@ -4104,7 +4128,7 @@ FocusScope {
                 }
                 if ((m.modifiers & Qt.ControlModifier) && !(m.modifiers & Qt.ShiftModifier)) {   // ⌘-press on the pull band
                     // Re-test at the press: the hover cue only tracks ⌘ while the pointer moves.
-                    const prow = blockModel.blockAt(m.x - root.leftEdge, m.y), ps = root.pullSideAt(prow, m.x)
+                    const prow = blockModel.blockAt(root.pageXAt(m.x, m.y), m.y), ps = root.pullSideAt(prow, m.x)
                     if (ps >= 0 && root.taskCheckboxAt(m.x, m.y) < 0) {
                         root.pullArmed = true; root.pullArmRow = prow; root.pullArmSide = ps
                         root.pullArmMods = m.modifiers; root.pullArmX = m.x; root.pullArmY = m.y
@@ -4228,7 +4252,7 @@ FocusScope {
                     return
                 }
                 // hover (not pressed).
-                root.hoverRow = blockModel.blockAt(m.x - root.leftEdge, m.y)
+                root.hoverRow = blockModel.blockAt(root.pageXAt(m.x, m.y), m.y)
                 // Over an interactive widget (block task checkbox, an inline
                 // choice chip, or a table check/choice body cell) → a
                 // pointing-hand cursor instead of the I-beam.
@@ -4309,7 +4333,7 @@ FocusScope {
                 // point (which collapsed the word to word-start→cursor).
                 root.dragging = false
                 // Double-click a file-attachment chip → reveal it in Finder/Explorer.
-                var mrow = blockModel.blockAt(m.x - root.leftEdge, m.y)
+                var mrow = blockModel.blockAt(root.pageXAt(m.x, m.y), m.y)
                 if (blockModel.typeForRow(mrow) === 3 && blockModel.mediaKind(mrow) === "file") {
                     blockModel.revealMedia(mrow); return
                 }
@@ -6043,7 +6067,7 @@ FocusScope {
         readonly property int lastRec: root.dividerDragChain.length >= 2
                                        ? root.dividerDragChain[root.dividerDragChain.length - 2] : -1
         visible: root.dividerDragging && topRec >= 0
-        x: root.leftEdge + root.dividerPreviewX - 1 - flick.contentX
+        x: root.tableX(blockModel.tableHeadOf(root.dividerDragRecord)) + root.dividerPreviewX - 1 - flick.contentX
         y: (blockModel.layoutRevision, topRec >= 0 ? blockModel.yForRow(topRec) : 0) - flick.contentY
         width: 2
         height: (blockModel.layoutRevision, lastRec >= 0
@@ -6505,7 +6529,7 @@ FocusScope {
         readonly property int lastRec: recs.length ? recs[recs.length - 1] : -1
         readonly property int gap: root.tableColGap
         visible: lastRec >= 0 && gap >= 0 && gap !== root.tableGripPressIndex && gap !== root.tableGripPressIndex + 1
-        x: root.leftEdge - flick.contentX - 1.5 + (blockModel.layoutRevision, lastRec < 0 || gap < 0 ? 0
+        x: root.tableX(head) - flick.contentX - 1.5 + (blockModel.layoutRevision, lastRec < 0 || gap < 0 ? 0
             : gap >= blockModel.tableColumnCount(head) ? blockModel.tableWidth(head) : blockModel.tableColumnLeft(head, gap))
         y: (blockModel.layoutRevision, lastRec >= 0 ? blockModel.yForRow(head) + blockModel.tablePadTop(head) : 0) - flick.contentY
         width: 3
@@ -6527,7 +6551,7 @@ FocusScope {
         readonly property real bottomC: (blockModel.layoutRevision, lastRec >= 0
             ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.tablePadBottom(lastRec) : 0)
         readonly property real tw: (blockModel.layoutRevision, blockModel.contentRevision, lastRec >= 0 ? blockModel.tableWidth(head) : 0)
-        readonly property real xV: root.leftEdge - flick.contentX
+        readonly property real xV: root.tableX(head) - flick.contentX
         visible: lastRec >= 0
         z: 40
         Rectangle {   // + row, under the last row
