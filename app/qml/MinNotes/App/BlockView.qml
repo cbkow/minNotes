@@ -231,7 +231,9 @@ Item {
     // layout to go quiet, then caches the SETTLED height. Other blocks
     // reflow synchronously, so they keep the instant 0-interval.
     Timer { id: measureTimer; interval: 0; repeat: false; onTriggered: cell.reportHeight() }
-    onHeightChanged: if (active && !isMedia) measureTimer.restart()
+    // (The guards live in reportHeight: `active` / `isMedia` are bindings, and inside a change
+    // handler they can still read their PRE-change values — see onLogicalRowChanged.)
+    onHeightChanged: measureTimer.restart()
     // Re-measure on RECYCLE too, not just on height change: blocks of a
     // type now render at an identical height (the line-height fix), so a
     // delegate recycling between two same-height blocks fires no
@@ -240,7 +242,12 @@ Item {
     // off logicalRow ensures every block the delegate shows is measured.
     onLogicalRowChanged: {
         if (editor.perfLog) editor.noteRebind()   // the rebind instrument (2026-09-15)
-        if (active && !isMedia) measureTimer.restart()
+        // NOT `if (active && …)`: `active` is a binding on logicalRow and is still the OLD value
+        // here. A slot going from empty (-1) to a row read `active` as false, never armed the
+        // timer, and a single-line block whose height never changed afterwards kept its 38 px
+        // ESTIMATE instead of its 31 px measure — for as long as it stayed in that slot
+        // (2026-09-16, found by the export calibration). The timer's reportHeight re-checks.
+        measureTimer.restart()
     }
     onIsFocusChanged: if (isFocus) editor.focusBlockItem = te
     Component.onCompleted: {

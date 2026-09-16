@@ -1663,7 +1663,11 @@ border:solid var(--bright);border-width:0 2px 2px 0;transform:rotate(45deg)}
 table{border-collapse:collapse;width:max-content;min-width:100%;font-size:14px;
 background:var(--bg)}
 td,th{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top;overflow-wrap:break-word}
-th{font-weight:inherit}
+/* Header cells: bold on the app's surfaceHover (a cell colour overrides both, as in the app). A
+   cell's blocks carry no inset of their own — the cell's 6 px is the block's — and stack at the
+   app's 31 px pitch. */
+th{font-weight:700;background:#252525}
+td>p,th>p,td>li,th>li{padding:0}td>p+p,th>p+p{margin-top:12px}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright)}
 .cmt{background:rgba(1,137,241,.13);position:relative}
 .cmt.resolved{background:rgba(140,140,140,.12)}   /* settled conversation */

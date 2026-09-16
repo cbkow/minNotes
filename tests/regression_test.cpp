@@ -8150,6 +8150,98 @@ static void testSplitRowEditing() {
     }
 }
 
+// Dev-only (2026-09-16, the export style audit): MN_STYLE_SAMPLE=<out.mnd> writes a document that
+// carries every style the app can produce — headings 1–6, every inline span, chips, comments, lists
+// (nested / numbered / all three task states), a quote, code with a language, a divider, an image at a
+// set width, and a table with header colours, cell colours, alignment, a choice column, a check column
+// and a two-block cell — for `--shot` / `--export-html` A/B renders. Exit 0 on success.
+static int writeStyleSample(const QString& outPath) {
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    int r = -1;
+    auto add = [&](const QString& text, int type = 0) {
+        m.insertBlock(++r); m.setContent(r, text);
+        if (type) m.setBlockType(r, type);
+        return r;
+    };
+    for (int lvl = 1; lvl <= 6; ++lvl) { add(QStringLiteral("Heading level %1 — bold weight check").arg(lvl)); m.setHeading(r, lvl); }
+    {
+        const int p = add(QStringLiteral("Inline: bold, italic, both, code, strike, underline, link, colour, highlight, chip."));
+        auto span = [&](const char* word, const char* kind) { const int s = m.contentForRow(p).indexOf(QLatin1String(word)); m.setFormat(p, s, s + int(strlen(word)), QLatin1String(kind), true); };
+        span("bold", "bold"); span("italic", "italic"); span("both", "bold"); span("both", "italic"); span("code", "code");
+        span("strike", "strike"); span("underline", "underline");
+        int s = m.contentForRow(p).indexOf(QLatin1String("link")); m.setLink(p, s, s + 4, QStringLiteral("https://minnotes.app"));
+        s = m.contentForRow(p).indexOf(QLatin1String("colour")); m.setTextColor(p, s, s + 6, QStringLiteral("#FF6F68"));
+        s = m.contentForRow(p).indexOf(QLatin1String("highlight")); m.setHighlight(p, s, s + 9, QStringLiteral("#FFEC59"));
+        s = m.contentForRow(p).indexOf(QLatin1String("chip")); m.insertChoiceAt(p, s + 4);
+    }
+    {
+        const int p = add(QStringLiteral("A comment sits on this phrase, and a resolved one on that phrase."));
+        int s = m.contentForRow(p).indexOf(QLatin1String("this phrase"));
+        const QString t1 = m.addComment(p, s, s + 11); m.addCommentMessage(t1, QStringLiteral("An open thread."));
+        s = m.contentForRow(p).indexOf(QLatin1String("that phrase"));
+        const QString t2 = m.addComment(p, s, s + 11); m.addCommentMessage(t2, QStringLiteral("Settled.")); m.setThreadResolved(t2, true);
+    }
+    { const int q = add(QStringLiteral("A quotation with a bold word and an italic word in the serif face."), BlockModel::Quote);
+      int s = m.contentForRow(q).indexOf(QLatin1String("bold")); m.setFormat(q, s, s + 4, QStringLiteral("bold"), true);
+      s = m.contentForRow(q).indexOf(QLatin1String("italic")); m.setFormat(q, s, s + 6, QStringLiteral("italic"), true); }
+    add(QStringLiteral("Bullet one"), BlockModel::ListItem);
+    add(QStringLiteral("Bullet two, nested below"), BlockModel::ListItem);
+    { const int n = add(QStringLiteral("Nested bullet"), BlockModel::ListItem); m.indentBlocks(n, n, 1); }
+    add(QStringLiteral("Numbered one"), BlockModel::OrderedListItem);
+    add(QStringLiteral("Numbered two"), BlockModel::OrderedListItem);
+    add(QStringLiteral("Task to do"), BlockModel::TaskListItem);
+    { const int t = add(QStringLiteral("Task doing"), BlockModel::TaskListItem); m.toggleTask(t); }
+    { const int t = add(QStringLiteral("Task done"), BlockModel::TaskListItem); m.toggleTask(t); m.toggleTask(t); }
+    { const int c = add(QStringLiteral("def hello():\n    return \"world\"  # code"), BlockModel::Code); m.setCodeLanguage(c, QStringLiteral("python")); }
+    add(QString(), BlockModel::Divider);
+    {   // an image at a set width
+        QImage img(600, 200, QImage::Format_RGB32);
+        for (int y = 0; y < 200; ++y) for (int x = 0; x < 600; ++x) img.setPixel(x, y, qRgb(x * 255 / 600, y * 255 / 200, 160));
+        const QString png = QFileInfo(outPath).dir().filePath(QStringLiteral("style-sample.png"));
+        img.save(png);
+        const int mr = m.insertMediaAt(r + 1, -1, QUrl::fromLocalFile(png).toString());
+        if (mr >= 0) { m.setMediaWidth(mr, 420); r = mr; }
+    }
+    add(QStringLiteral("Between the image and the table."));
+    {
+        const int first = m.insertTableRows(r, 4, 4);
+        const int head = first - 1;
+        const char* cells[4][4] = { { "Name", "Status", "Done", "Notes" },
+                                    { "Alpha", "", "", "Left aligned notes" },
+                                    { "Beta", "", "", "Centred notes" },
+                                    { "Gamma", "", "", "Right aligned notes" } };
+        for (int rr = 0; rr < 4; ++rr) for (int c = 0; c < 4; ++c) {
+            const int b = m.tableCellAt(head, rr, c);
+            if (b >= 0 && cells[rr][c][0]) m.setContent(b, QLatin1String(cells[rr][c]));
+        }
+        m.tableSetColumnKind(head, 1, 1);
+        const QString todo = m.tableAddOption(head, 1, QStringLiteral("To do"), QStringLiteral("#8a8a8a"));
+        const QString doing = m.tableAddOption(head, 1, QStringLiteral("Doing"), QStringLiteral("#0189f1"));
+        const QString done = m.tableAddOption(head, 1, QStringLiteral("Done"), QStringLiteral("#4cb050"));
+        m.tableSetCellChoice(head, 1, 1, todo); m.tableSetCellChoice(head, 2, 1, doing); m.tableSetCellChoice(head, 3, 1, done);
+        m.tableSetColumnKind(head, 2, 2);
+        m.tableSetCellCheck(head, 1, 2, 0); m.tableSetCellCheck(head, 2, 2, 1); m.tableSetCellCheck(head, 3, 2, 2);
+        m.tableSetColAlign(head, 3, 0); m.tableSetColAlign(head, 0, 0);
+        m.tableSetCellColor(head, 0, 0, 0, 3, false, QStringLiteral("#2a3a4a"));      // header row background
+        m.tableSetCellColor(head, 1, 0, 1, 0, false, QStringLiteral("#FFEC59"));      // a yellow cell
+        m.tableSetCellColor(head, 1, 0, 1, 0, true, QStringLiteral("#181817"));       // …with dark text
+        m.tableSetCellColor(head, 2, 3, 2, 3, true, QStringLiteral("#FF6F68"));       // a coloured text cell
+        m.tableSetColAlign(head, 3, 2);                                             // notes right-aligned
+        m.tableSetColAlign(head, 0, 1);                                             // names centred
+        const int b = m.tableCellAt(head, 3, 3);
+        if (b >= 0) { m.insertBlock(b + 1); m.setContent(b + 1, QStringLiteral("Second block in the cell")); }
+        const int bb = m.tableCellAt(head, 2, 0);
+        if (bb >= 0) { const int s = m.contentForRow(bb).indexOf(QLatin1String("Beta")); m.setFormat(bb, s, s + 4, QStringLiteral("bold"), true); }
+        r = m.rowCountQml() - 1;
+    }
+    add(QStringLiteral("The end."));
+    if (!m.saveAs(outPath)) { qWarning("style sample: saveAs failed"); return 2; }
+    qInfo("style sample written: %s (%d rows)", qPrintable(outPath), m.rowCountQml());
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -8159,6 +8251,7 @@ int main(int argc, char** argv) {
     if (!qEnvironmentVariable("MN_OPEN_PROBE").isEmpty())
         return runOpenProbe(qEnvironmentVariable("MN_OPEN_PROBE"));
     if (qEnvironmentVariableIsSet("MN_SPELL_PROBE")) return spellProbe();
+    if (!qEnvironmentVariable("MN_STYLE_SAMPLE").isEmpty()) return writeStyleSample(qEnvironmentVariable("MN_STYLE_SAMPLE"));
     // Register the app text font so sketch-text height derivation matches the
     // app. Non-fatal if missing — text assertions are font-relative (computed
     // through the same helper the code under test uses).

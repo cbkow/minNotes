@@ -17,6 +17,19 @@ FocusScope {
     id: root
     focus: true
     Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth); sizePool() }
+    objectName: "editorRoot"
+    // Dev-only (2026-09-16 calibration): log every active delegate's text geometry — what the
+    // model's heightForRow came from. Invoked by main.cpp's --shot.
+    function dumpDelegates() {
+        for (let i = 0; i < pool.count; ++i) {
+            const c = pool.itemAt(i)
+            if (!c || !c.active || c.isMedia) continue
+            const te = c.teItem
+            console.log("[delegate] row", c.logicalRow, "type", te ? te.btype : -1, "px", te ? te.font.pixelSize : -1,
+                        "lines", te ? te.lineCount : -1, "lineH", te ? te.lineH : -1, "teH", te ? te.height : -1,
+                        "cellH", c.height, "modelH", blockModel.heightForRow(c.logicalRow))
+        }
+    }
     // Closing the LAST tab unloads the whole Editor (the docContent Loader goes
     // inactive) — stop the shared decoder/audio deliberately rather than letting
     // child destruction race the decode/audio threads mid-playback.

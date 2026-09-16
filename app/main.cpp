@@ -247,10 +247,12 @@ int main(int argc, char *argv[])
     for (const QString &s : pending) resolveAndOpen(docs, s);
     const QStringList args = app.arguments();
     QString exportPdfTo, exportHtmlTo, shotTo;
+    int shotH = 900;
     for (int i = 1; i < args.size(); ++i) {
         if (args[i].startsWith(QLatin1String("--export-pdf="))) { exportPdfTo = args[i].mid(13); continue; }
         if (args[i].startsWith(QLatin1String("--export-html="))) { exportHtmlTo = args[i].mid(14); continue; }
         if (args[i].startsWith(QLatin1String("--shot="))) { shotTo = args[i].mid(7); continue; }
+        if (args[i].startsWith(QLatin1String("--shot-height="))) { shotH = args[i].mid(14).toInt(); continue; }
         if (args[i].startsWith(QLatin1Char('-'))) continue;   // skip flags
         resolveAndOpen(docs, args[i]);
     }
@@ -260,13 +262,15 @@ int main(int argc, char *argv[])
     // Calibration (2026-09-16): `--shot=<out.png> <doc.mnd>` renders the document view offscreen at
     // 1200 × 900 and saves the window — the A/B against a headless browser's shot of the HTML export.
     if (!shotTo.isEmpty())
-        QTimer::singleShot(2500, &app, [&app, &engine, &docs, shotTo] {
+        QTimer::singleShot(qEnvironmentVariableIntValue("MN_SHOT_DELAY") > 0 ? qEnvironmentVariableIntValue("MN_SHOT_DELAY") : 2500,
+                           &app, [&app, &engine, &docs, shotTo, shotH] {
             QQuickWindow* w = nullptr;
             for (QObject* o : engine.rootObjects()) if ((w = qobject_cast<QQuickWindow*>(o))) break;
             if (!w) { app.exit(103); return; }
-            w->resize(1200, 900);
+            w->resize(1200, shotH);   // --shot-height=N for a taller sample
             QTimer::singleShot(1500, &app, [&app, &docs, w, shotTo] {
                 if (BlockModel* m = docs.activeModel()) m->flushLayoutSpike();   // measured heights, not estimates
+                if (QObject* ed = w->findChild<QObject*>(QStringLiteral("editorRoot"))) QMetaObject::invokeMethod(ed, "dumpDelegates");
                 QTimer::singleShot(600, &app, [&app, &docs, w, shotTo] {
                 const bool ok = w->grabWindow().save(shotTo);
                 // …and the model's block geometry beside it (<out>.rows.txt: row type y h text) —
