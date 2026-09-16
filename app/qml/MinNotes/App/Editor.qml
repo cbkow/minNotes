@@ -70,7 +70,16 @@ FocusScope {
     // changes; `pageLayer` (inside the Flickable) scales everything page-space, the Flickable's
     // content size is the page's × zoom, and these read the scroll offsets back in CONTENT units.
     // Never persisted (ruling 2026-09-16: documents are multi-user; zoom is display).
-    property real zoom: 1
+    property real zoom: 1                                  // the LAYOUT zoom: row window, content size, overlays
+    // The VIEW zoom drives the page layer's transform and follows the slider live; the layout
+    // zoom catches up 150 ms after it settles (Z4 measurement: every intermediate value during a
+    // slider drag re-windowed the pool — 400–1650 delegate rebinds, 100–300 ms each). Same
+    // shape as the PDF pages' settled re-render.
+    property real viewZoom: 1
+    property real _pendingZoom: 1
+    property real _zoomAx: 0
+    property real _zoomAy: 0
+    Timer { id: zoomSettle; interval: 150; onTriggered: root.docZoomSettle() }
     readonly property real docX: flick.contentX / zoom     // scroll offset, content units
     readonly property real docY: flick.contentY / zoom
     readonly property real viewW: flick.width / zoom       // the viewport, content units
@@ -85,15 +94,23 @@ FocusScope {
         z = Math.max(zoomSteps[0], Math.min(zoomSteps[zoomSteps.length - 1], z))
         if (ax === undefined) ax = flick.width / 2
         if (ay === undefined) ay = flick.height / 2
+        _pendingZoom = z; _zoomAx = ax; _zoomAy = ay
+        viewZoom = z                     // the layer scales now
+        zoomSettle.restart()             // the layout follows once the value holds
+    }
+    function docZoomSettle() {           // apply the pending layout zoom, keeping the anchor's content point put
+        zoomSettle.stop()
+        const z = _pendingZoom, ax = _zoomAx, ay = _zoomAy
+        if (z === zoom) return
         const cx = (flick.contentX + ax) / zoom, cy = (flick.contentY + ay) / zoom
         zoom = z
         flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), cx * z - ax))
         flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), cy * z - ay))
     }
     function docZoomStep(dir, ax, ay) {
-        let z = zoom
-        if (dir > 0) { for (let i = 0; i < zoomSteps.length; ++i) if (zoomSteps[i] > zoom + 0.001) { z = zoomSteps[i]; break } }
-        else         { for (let i = zoomSteps.length - 1; i >= 0; --i) if (zoomSteps[i] < zoom - 0.001) { z = zoomSteps[i]; break } }
+        let z = viewZoom
+        if (dir > 0) { for (let i = 0; i < zoomSteps.length; ++i) if (zoomSteps[i] > viewZoom + 0.001) { z = zoomSteps[i]; break } }
+        else         { for (let i = zoomSteps.length - 1; i >= 0; --i) if (zoomSteps[i] < viewZoom - 0.001) { z = zoomSteps[i]; break } }
         docZoomTo(z, ax, ay)
     }
     function docZoom100() { docZoomTo(1) }
@@ -102,7 +119,7 @@ FocusScope {
     // the PDF stage, the sketch stage, or the document. 100 % is true scale on each.
     readonly property real zoomValue: activePdfRow >= 0
         ? (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0 ? pdfZoom * pdfFitPageW / blockModel.mediaW(activePdfRow) : 1)
-        : activeSketchRow >= 0 ? sketchEditCanvas.zoom : zoom
+        : activeSketchRow >= 0 ? sketchEditCanvas.zoom : viewZoom
     function zoomStep(dir) { if (activePdfRow >= 0) pdfZoomStep(dir); else if (activeSketchRow >= 0) sketchStage.zoomStep(dir); else docZoomStep(dir) }
     // The rail's slider (BottomRail): the active surface's range in TRUE-scale units, mapped
     // the Word way — 100 % dead centre, a linear half either side.
@@ -3496,26 +3513,26 @@ FocusScope {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
                 // Z1: part of the sweep runs zoomed out and zoomed in (the pool must cover a taller window).
                 if (phaseStep === 2) {   // Z3: the steps, the fit and the anchor
-                    root.docZoomStep(1); ++checks
+                    root.docZoomStep(1); root.docZoomSettle(); ++checks
                     if (root.zoom !== 1.25) fail("⌘+ from 100 % gave " + root.zoom)
-                    root.docZoomStep(-1); root.docZoomStep(-1); ++checks
+                    root.docZoomStep(-1); root.docZoomStep(-1); root.docZoomSettle(); ++checks
                     if (root.zoom !== 0.75) fail("⌘− twice from 125 % gave " + root.zoom)
-                    root.docZoomFit(); ++checks
+                    root.docZoomFit(); root.docZoomSettle(); ++checks
                     const fit = Math.max(0.5, Math.min(2, flick.width / (root.pageWidth + 2 * root.inkGutter)))
                     if (Math.abs(root.zoom - fit) > 1e-9) fail("Fit width gave " + root.zoom + " not " + fit)
                     if (Math.abs(root.leftEdge - root.inkGutter) > 1 && fit < 2) fail("at Fit width the edge is " + root.leftEdge + ", not the gutter")
-                    root.docZoom100(); ++checks
+                    root.docZoom100(); root.docZoomSettle(); ++checks
                     if (root.zoom !== 1) fail("⌘0 gave " + root.zoom)
                     const before = { x: (flick.contentX + 300) / root.zoom, y: (flick.contentY + 200) / root.zoom }
-                    root.docZoomTo(1.5, 300, 200); ++checks
+                    root.docZoomTo(1.5, 300, 200); root.docZoomSettle(); ++checks
                     const after = { x: (flick.contentX + 300) / root.zoom, y: (flick.contentY + 200) / root.zoom }
                     if (Math.abs(before.x - after.x) > 1 || Math.abs(before.y - after.y) > 1)
                         fail("zoom about (300,200) moved the content point " + JSON.stringify(before) + " → " + JSON.stringify(after))
-                    root.docZoom100()
+                    root.docZoom100(); root.docZoomSettle()
                 }
-                if (phaseStep === 3) root.docZoomTo(0.5)
-                else if (phaseStep === 9) root.docZoomTo(1.5)
-                else if (phaseStep === 15) root.docZoom100()
+                if (phaseStep === 3) { root.docZoomTo(0.5); root.docZoomSettle() }
+                else if (phaseStep === 9) { root.docZoomTo(1.5); root.docZoomSettle() }
+                else if (phaseStep === 15) { root.docZoom100(); root.docZoomSettle() }
                 if (phaseStep === 6 || phaseStep === 12) {   // inspection artifacts at 50 % / 150 %
                     const zarg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
                     const zdir = zarg.substring("--pool-probe=".length).replace(/[^\/]*$/, "")
@@ -3895,7 +3912,7 @@ FocusScope {
             const ms = frameTime * 1000
             const sticky = stickyHeader.stHead
             if (ms > 25)
-                console.log("[frame]", Math.round(ms), "ms  dy", Math.round(flick.contentY - lastY), " pool +" + (poolModel.count - lastPool),
+                console.log("[frame] z" + root.zoom, Math.round(ms), "ms  dy", Math.round(flick.contentY - lastY), " pool +" + (poolModel.count - lastPool),
                             " rebinds", root.rebindTotal - lastRebinds, " images", root.imagesReady - lastImages,
                             " sticky", lastSticky, "→", sticky, " y", Math.round(flick.contentY))
             lastY = flick.contentY; lastPool = poolModel.count; lastRebinds = root.rebindTotal
@@ -3913,7 +3930,7 @@ FocusScope {
     Timer {
         id: rebindTimer; interval: 0
         onTriggered: {   // cascade = first → last rebind (the delegates' own work); turn = to the end of the event-loop turn
-            console.log("[perf] rebind burst:", root.rebindBurst, "delegates, cascade", root.rebindBurstLast - root.rebindBurstStart,
+            console.log("[perf] z" + root.zoom, "rebind burst:", root.rebindBurst, "delegates, cascade", root.rebindBurstLast - root.rebindBurstStart,
                         "ms, turn", Date.now() - root.rebindBurstStart, "ms, pool", poolModel.count, "at y", Math.round(flick.contentY))
             root.rebindBurst = 0
         }
@@ -3997,7 +4014,7 @@ FocusScope {
         Item {
         id: pageLayer
         width: root.contentSpan; height: blockModel.totalHeight
-        transform: Scale { xScale: root.zoom; yScale: root.zoom }
+        transform: Scale { xScale: root.viewZoom; yScale: root.viewZoom }   // live; the layout zoom settles after
 
         // Gutter tints while the PageRuler drags a width: the marginalia
         // zones travel visibly with the edge (transient drag feedback).
