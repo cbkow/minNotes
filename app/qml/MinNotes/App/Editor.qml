@@ -106,22 +106,29 @@ FocusScope {
     // frame there). docZoomTo keeps the content point under the viewport anchor (default: the
     // centre) where it is; the wheel and the pinch pass the pointer.
     readonly property var zoomSteps: [0.5, 0.67, 0.75, 1, 1.25, 1.5, 2]
+    // Every step is complete on its own (2026-09-16, "zooms centred, jumps left, jumps back"): the
+    // layer scales, the sheet recentres (centredEdge reads viewZoom), and the scroll offsets move so
+    // the point under the anchor — a WORD, which the recentre shifts within the content by the
+    // edge's change — stays under it. The settle then only flips the layout zoom and clamps.
     function docZoomTo(z, ax, ay) {
         z = Math.max(zoomSteps[0], Math.min(zoomSteps[zoomSteps.length - 1], z))
         if (ax === undefined) ax = flick.width / 2
         if (ay === undefined) ay = flick.height / 2
-        _pendingZoom = z; _zoomAx = ax; _zoomAy = ay
-        viewZoom = z                     // the layer scales now
+        const z0 = viewZoom, edge0 = leftEdge
+        const px = (flick.contentX + ax) / z0, py = (flick.contentY + ay) / z0   // the anchored content point
+        _pendingZoom = z
+        viewZoom = z                                                         // the layer scales; the edge recentres
+        const nx = (px + (leftEdge - edge0)) * z - ax, ny = py * z - ay
+        flick.contentX = Math.max(0, Math.min(Math.max(0, sheetRight * z - flick.width), nx))
+        flick.contentY = Math.max(0, Math.min(Math.max(0, blockModel.totalHeight * z - flick.height), ny))
         zoomSettle.restart()             // the layout follows once the value holds
     }
-    function docZoomSettle() {           // apply the pending layout zoom, keeping the anchor's content point put
+    function docZoomSettle() {           // apply the pending layout zoom (the view already shows it) and clamp
         zoomSettle.stop()
-        const z = _pendingZoom, ax = _zoomAx, ay = _zoomAy
-        if (z === zoom) return
-        const cx = (flick.contentX + ax) / zoom, cy = (flick.contentY + ay) / zoom
-        zoom = z
-        flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), cx * z - ax))
-        flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), cy * z - ay))
+        if (_pendingZoom === zoom) return
+        zoom = _pendingZoom
+        flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), flick.contentX))
+        flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), flick.contentY))
     }
     function docZoomStep(dir, ax, ay) {
         let z = viewZoom
@@ -178,7 +185,7 @@ FocusScope {
     // mode toggles (the jump the 2026-08-18 ruling forbids, and the frozen ink in writing mode
     // would sit at a different x than the live ink). Same number in both modes.
     readonly property real centringWidth: flick.width - (inspector && inspector.floating ? inspector.width : 0)
-    readonly property real centredEdge: Math.max(inkGutter, Math.floor((centringWidth / zoom
+    readonly property real centredEdge: Math.max(inkGutter, Math.floor((centringWidth / viewZoom   // LIVE: the sheet recentres through a zoom drag
                                                  - (blockModel.pageWidth > 0 ? blockModel.pageWidth : Theme.dim.columnWidth)) / 2))
     // The gesture latch: the edge may only move BETWEEN gestures. Anything
     // that cached a content x at press (block-drag auto-scroll re-aim, the
@@ -3551,9 +3558,9 @@ FocusScope {
                     if (Math.abs(root.leftEdge - root.inkGutter) > 1 && fit < 2) fail("at Fit width the edge is " + root.leftEdge + ", not the gutter")
                     root.docZoom100(); root.docZoomSettle(); ++checks
                     if (root.zoom !== 1) fail("⌘0 gave " + root.zoom)
-                    const before = { x: (flick.contentX + 300) / root.zoom, y: (flick.contentY + 200) / root.zoom }
+                    const before = { x: (flick.contentX + 300) / root.zoom - root.leftEdge, y: (flick.contentY + 200) / root.zoom }
                     root.docZoomTo(1.5, 300, 200); root.docZoomSettle(); ++checks
-                    const after = { x: (flick.contentX + 300) / root.zoom, y: (flick.contentY + 200) / root.zoom }
+                    const after = { x: (flick.contentX + 300) / root.zoom - root.leftEdge, y: (flick.contentY + 200) / root.zoom }
                     if (Math.abs(before.x - after.x) > 1 || Math.abs(before.y - after.y) > 1)
                         fail("zoom about (300,200) moved the content point " + JSON.stringify(before) + " → " + JSON.stringify(after))
                     root.docZoom100(); root.docZoomSettle()
