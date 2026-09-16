@@ -100,8 +100,8 @@ FocusScope {
     // the pool re-sizes once at the settle rather than per pixel. Position moves are like scrolling.
     readonly property real docX: flick.contentX / viewZoom
     readonly property real docY: flick.contentY / viewZoom
-    readonly property real viewW: flick.width / zoom       // the viewport, content units (settled)
-    readonly property real viewH: flick.height / zoom
+    readonly property real viewW: flick.width / viewZoom   // the viewport, content units — LIVE (measured 2026-09-16: growing the window incrementally is cheap once the position is right)
+    readonly property real viewH: flick.height / viewZoom
     // Content → viewport px through the LIVE view zoom (the page layer's transform), so every
     // overlay outside the layer — desk edges, the image outline, drop lines, the rail — tracks a
     // zoom drag frame by frame instead of catching up when the layout zoom settles (2026-09-16).
@@ -3574,7 +3574,10 @@ FocusScope {
                         fail("zoom about (300,200) moved the content point " + JSON.stringify(before) + " → " + JSON.stringify(after))
                     root.docZoom100(); root.docZoomSettle()
                 }
-                if (phaseStep === 3) { root.docZoomTo(0.5); root.docZoomSettle() }
+                if (phaseStep === 3) {   // a DRAG: 20 live steps 1 → 0.5 without a settle (the slider's shape), then settle
+                    for (let zi = 1; zi <= 20; ++zi) { root.docZoomTo(1 - zi * 0.025); blockModel.flushLayoutSpike() }
+                    root.docZoomSettle()
+                }
                 else if (phaseStep === 9) { root.docZoomTo(1.5); root.docZoomSettle() }
                 else if (phaseStep === 15) { root.docZoom100(); root.docZoomSettle() }
                 if (phaseStep === 6 || phaseStep === 12) {   // inspection artifacts at 50 % / 150 %
