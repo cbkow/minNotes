@@ -1748,9 +1748,15 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         const TextInk ti = renderTextInk(m, row);
         if (ti.img.isNull()) return QString();
         if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
-        // A table row's y is measured from the RECORD's top, which for the first row includes the
-        // pocket above the grid (kTablePocket); the cell it lands in starts at the grid — lift it.
-        const double lift = m->tableHeadOf(row) >= 0 ? m->tablePadTop(row) : 0.0;
+        // Ink y is measured from the ROW's top in the app. A table row's record starts a pocket
+        // (kTablePocket) above the grid its cell starts at; a text block's TextEdit sits 6 px below
+        // its row top (12 for code — BlockView's `te.y`), while the HTML element's text starts at
+        // its own top. Lift by the app's inset so the ink sits on the text the way it did in the
+        // app. (What remains is font metrics: the export's system face vs the app's Aspekta.)
+        const int t = m->typeForRow(row);
+        const double lift = m->tableHeadOf(row) >= 0 ? m->tablePadTop(row)
+                          : t == BlockModel::Split ? 0.0
+                          : t == BlockModel::Code ? 12.0 : 6.0;
         const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
         if (src.isEmpty()) return QString();
         ++inkLayers;
