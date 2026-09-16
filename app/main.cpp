@@ -5,7 +5,6 @@
 #include <QColorSpace>
 #include <QStyleHints>
 #include <QTimer>
-#include <QPixmapCache>
 #include <QQuickWindow>
 #include <QTextStream>
 #include <QPdfDocument>
@@ -67,9 +66,6 @@ int main(int argc, char *argv[])
     }
 #endif
     MinNotesApplication app(argc, argv);
-    // Decoded images live in Qt's pixmap cache (default 10 MB): a dense image table blew through it,
-    // every row re-entering the view decoded again and its picture popped (2026-09-16). 256 MB.
-    QPixmapCache::setCacheLimit(256 * 1024);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
 
