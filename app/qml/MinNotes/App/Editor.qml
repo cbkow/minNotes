@@ -3575,7 +3575,23 @@ FocusScope {
                     root.docZoom100(); root.docZoomSettle()
                 }
                 if (phaseStep === 3) {   // a DRAG: 20 live steps 1 → 0.5 without a settle (the slider's shape), then settle
-                    for (let zi = 1; zi <= 20; ++zi) { root.docZoomTo(1 - zi * 0.025); blockModel.flushLayoutSpike() }
+                    // A row on screen before AND after a step keeps its slot (2026-09-16: rows churned
+                    // through slots during a zoom and their images reloaded).
+                    for (let zi = 1; zi <= 20; ++zi) {
+                        const before = {}
+                        const v0 = blockModel.visibleBlocks(root.docY, root.docY + root.viewH)
+                        for (let i = 0; i < v0.length; ++i) before[v0[i]] = viewSlots.slotForRow(v0[i])
+                        root.docZoomTo(1 - zi * 0.025); blockModel.flushLayoutSpike()
+                        const v1 = blockModel.visibleBlocks(root.docY, root.docY + root.viewH)
+                        let lost = 0, sample = -1
+                        for (let i = 0; i < v1.length; ++i) {
+                            const r = v1[i]
+                            if (before[r] !== undefined && before[r] >= 0 && viewSlots.slotForRow(r) !== before[r]) { ++lost; if (sample < 0) sample = r }
+                        }
+                        ++checks
+                        if (lost) fail("zoom step " + zi + " (→ " + root.viewZoom + "): " + lost + " rows on screen before and after changed slot (e.g. row " + sample
+                                       + " " + before[sample] + " → " + viewSlots.slotForRow(sample) + "); docY " + Math.round(root.docY) + " viewH " + Math.round(root.viewH) + " pool " + poolModel.count + " rows " + poolRows.length)
+                    }
                     root.docZoomSettle()
                 }
                 else if (phaseStep === 9) { root.docZoomTo(1.5); root.docZoomSettle() }

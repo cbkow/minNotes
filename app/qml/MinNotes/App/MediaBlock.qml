@@ -57,6 +57,10 @@ Item {
         ? (blockModel.layoutRevision, mb._rev, blockModel.mediaDispWidth(logicalRow))
         : maxWidth
 
+    // Instrument (2026-09-16 zoom pops): --perf-log traces what makes an image reload.
+    readonly property bool _trace: Qt.application.arguments.indexOf("--perf-log") >= 0
+    onDispWChanged: if (_trace && active) console.log("[img] row", logicalRow, "dispW →", dispW)
+    onLogicalRowChanged: if (_trace) console.log("[img] slot rebinds → row", logicalRow)
     implicitWidth:  dispW
     implicitHeight: (iw > 0 && ih > 0) ? Math.round(dispW * ih / iw) : Math.round(dispW * 0.5)
 
@@ -201,12 +205,22 @@ Item {
         // cache:true (2026-09-14): media sources are content-addressed, so a URL never changes
         // its bytes; without it every delegate recycle re-decoded the image on the reader thread.
         asynchronous: true; cache: true
-        onStatusChanged: if (status === Image.Ready) mb.imageReady()   // the frame monitor counts decodes (perfLog)
+        onStatusChanged: {
+            if (mb._trace) console.log("[img] row", mb.logicalRow, "status", status, "sourceSize", sourceSize.width, "x", sourceSize.height)
+            if (status === Image.Ready) mb.imageReady()   // the frame monitor counts decodes (perfLog)
+        }
+        onSourceSizeChanged: if (mb._trace && mb.active) console.log("[img] row", mb.logicalRow, "sourceSize →", sourceSize.width)
         fillMode: Image.PreserveAspectFit
-        sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
+        // Decode size in 64 px buckets (2026-09-16): a table's auto columns shift by a few px as
+        // cells measure in, and every change of sourceSize is a fresh decode — the image blanked
+        // and faded back. A bucket absorbs the jitter; the texture is scaled down slightly.
+        sourceSize.width: Math.ceil(mb.dispW * Screen.devicePixelRatio / 64) * 64
         smooth: true
         // Reveal fades; hide stays INSTANT (visible:false — the glitch never shows).
-        onVisibleChanged: if (visible) imgFade.restart()
+        onVisibleChanged: {
+            if (mb._trace && mb.active) console.log("[img] row", mb.logicalRow, "visible →", visible)
+            if (visible) imgFade.restart()
+        }
         NumberAnimation { id: imgFade; target: img; property: "opacity"
                           from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
     }
