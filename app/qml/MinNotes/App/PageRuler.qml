@@ -31,7 +31,7 @@ Rectangle {
 
     readonly property real cx: editor ? editor.viewContentX : 0
     readonly property real left0: editor ? editor.leftEdge : 0
-    readonly property real pz: editor ? editor.zoom : 1       // the page's view zoom (PLAN-zoom)
+    readonly property real pz: editor ? editor.viewZoom : 1   // the page's LIVE view zoom (PLAN-zoom)
     readonly property real curW: editor ? editor.pageWidth : 760
     property bool dragging: false
     property int dragW: 760
