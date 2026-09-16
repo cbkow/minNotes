@@ -6650,7 +6650,10 @@ FocusScope {
 
         Rectangle {   // the outline (the ghost below takes over during a drag)
             visible: !root.imageResizing
-            x: imgResize.imgX; y: imgResize.imgTopV; width: imgResize.imgW * root.zoom; height: imgResize.imgH * root.zoom
+            // Whole pixels: a hairline outline or a 9 px square straddling a pixel boundary antialiases
+            // into a muddy grey — the image's display width is often fractional (2026-09-16).
+            x: Math.round(imgResize.imgX); y: Math.round(imgResize.imgTopV)
+            width: Math.round(imgResize.imgW * root.zoom); height: Math.round(imgResize.imgH * root.zoom)
             color: "transparent"
             border.width: 1; border.color: Theme.colors.accent
         }
@@ -6662,8 +6665,8 @@ FocusScope {
                 readonly property bool onLeft: index === 0 || index === 3
                 readonly property bool onTop: index < 2
                 width: 18; height: 18   // hit area; the visible square is 9 px
-                x: imgResize.imgX + (onLeft ? 0 : imgResize.imgW * root.zoom) - width / 2
-                y: imgResize.imgTopV + (onTop ? 0 : imgResize.imgH * root.zoom) - height / 2
+                x: Math.round(imgResize.imgX + (onLeft ? 0 : imgResize.imgW * root.zoom)) - width / 2
+                y: Math.round(imgResize.imgTopV + (onTop ? 0 : imgResize.imgH * root.zoom)) - height / 2
                 Rectangle {
                     visible: !root.imageResizing
                     anchors.centerIn: parent
