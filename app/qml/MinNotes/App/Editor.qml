@@ -160,8 +160,8 @@ FocusScope {
     // can sit far past the next top-level row's.
     function rowInView(row) {
         const y = (blockModel.layoutRevision, blockModel.yForRow(row))
-        return y + blockModel.heightForRow(row) >= flick.contentY - 100
-            && y <= flick.contentY + flick.height + 100
+        return y + blockModel.heightForRow(row) >= root.docY - 100
+            && y <= root.docY + root.viewH + 100
     }
 
     // The right Inspector panel (set from Main.qml) — the studio's drawing
@@ -217,7 +217,7 @@ FocusScope {
     readonly property real frameTop: frameLo >= 0 ? (blockModel.layoutRevision, blockModel.yForRow(frameLo)) : 0
     readonly property real frameBottom: frameLo >= 0
         ? (blockModel.layoutRevision, blockModel.yForRow(frameHiRec) + blockModel.heightForRow(frameHiRec)) : 0
-    onFrameLoChanged: if (frameLo >= 0) { flick.contentX = 0; flick.contentY = frameTop - Theme.dim.toolStripHeight }
+    onFrameLoChanged: if (frameLo >= 0) { flick.contentX = 0; flick.contentY = (frameTop - Theme.dim.toolStripHeight) * zoom }
     // T4 (S9c): the grid frame's view-only row filter. Lives with the frame: a tab switch clears it,
     // and it never touches the document (copy / export / undo see every row). Re-applied on edits
     // only through the fold set — a row you're typing in stays put even when it stops matching.
@@ -771,7 +771,7 @@ FocusScope {
     // (2026-09-16). Tracks the pan and the ruler's live width preview
     // (pageWidth includes previewWidth).
     Rectangle {
-        readonly property real sheetRight: root.sheetRight - flick.contentX
+        readonly property real sheetRight: root.vx(root.sheetRight)
         visible: flick.visible && width > 0
         x: sheetRight
         width: Math.max(0, parent.width - sheetRight)
@@ -781,7 +781,7 @@ FocusScope {
     Rectangle {
         visible: flick.visible && width > 0
         x: 0
-        width: Math.max(0, root.sheetLeft - flick.contentX)
+        width: Math.max(0, root.vx(root.sheetLeft))
         height: parent.height
         color: Theme.colors.bg
     }
@@ -1126,7 +1126,7 @@ FocusScope {
         }
         mergeDragActive = true
         mergeDragViewY = ey
-        mergeDropGap = mergeGapForY(ey + flick.contentY)
+        mergeDropGap = mergeGapForY((ey + flick.contentY) / zoom)
     }
     function endMergeDrop() { mergeDragActive = false; mergeDropGap = -1 }
     // A table's cell under the files (SR-4 S7b); −1 = none. When set, the
@@ -1175,11 +1175,11 @@ FocusScope {
         onEntered: (drag) => {
             if (root.activeFrameId !== "") return   // frame tab: no doc indicator
             root.imageDropActive = true
-            root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY)
+            root.aimDrop((drag.x + flick.contentX) / root.zoom, (drag.y + flick.contentY) / root.zoom)
         }
         onPositionChanged: (drag) => {
             if (root.activeFrameId !== "") return
-            root.aimDrop(drag.x + flick.contentX, drag.y + flick.contentY)
+            root.aimDrop((drag.x + flick.contentX) / root.zoom, (drag.y + flick.contentY) / root.zoom)
         }
         onExited: { root.imageDropActive = false; root.clearDropState() }
         onDropped: (drop) => {
@@ -1514,8 +1514,8 @@ FocusScope {
     }
 
     function ensureVisible(rowIdx) {
-        var y = blockModel.yForRow(rowIdx)
-        var h = blockModel.heightForRow(rowIdx)
+        var y = blockModel.yForRow(rowIdx) * zoom          // scrollbar px (the Flickable's units)
+        var h = blockModel.heightForRow(rowIdx) * zoom
         var top = flick.contentY, bot = flick.contentY + flick.height
         if (h >= flick.height) {
             // Block taller than the viewport (a big image/video): forcing its top
@@ -2225,14 +2225,14 @@ FocusScope {
     // block, never an opaque one) and scroll there.
     function navPageDown(shift) {
         cursor.clearMarks()
-        var t = blockModel.rowForY(blockModel.yForRow(cursor.focusRow) + flick.height)
+        var t = blockModel.rowForY(blockModel.yForRow(cursor.focusRow) + root.viewH)
         if (t <= cursor.focusRow) t = cursor.focusRow + 1            // ensure progress past tall blocks
         var row = caretLandRow(Math.min(blockModel.count - 1, t), 1)
         cursor.move(row, 0, shift); root.ensureVisible(row)
     }
     function navPageUp(shift) {
         cursor.clearMarks()
-        var t = blockModel.rowForY(Math.max(0, blockModel.yForRow(cursor.focusRow) - flick.height))
+        var t = blockModel.rowForY(Math.max(0, blockModel.yForRow(cursor.focusRow) - root.viewH))
         if (t >= cursor.focusRow) t = cursor.focusRow - 1
         var row = caretLandRow(Math.max(0, t), -1)
         cursor.move(row, 0, shift); root.ensureVisible(row)
@@ -3445,13 +3445,18 @@ FocusScope {
                     blockModel.undo()
                     ++checks
                     if (root.leftEdge !== centred(blockModel.pageWidth)) fail("undo left the edge at " + root.leftEdge)
+                    flick.contentY = 0   // the undo restores a saved scroll position; the sweep starts at the top
                 }
                 else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
                 // Every third step sideways (the frozen column), then back.
                 if (holdX > 0) { --holdX; next(false); return }
                 flick.contentX = phaseStep % 3 === 2 ? Math.max(0, flick.contentWidth - flick.width) : 0
-                const sweepDone = phaseStep > 0 && flick.contentY >= maxY
-                if (sweepDone) root.zoom = 1                   // the zoom sweep never leaks into the next phase
+                const sweepDone = phaseStep > 1 && flick.contentY >= maxY
+                if (sweepDone) {
+                    root.zoom = 1                              // the zoom sweep never leaks into the next phase
+                    ++checks
+                    if (phaseStep < 16) fail("the zoom sweep did not run: phase 10 ended at step " + phaseStep)
+                }
                 next(sweepDone)
             } else if (phase === 11) {
                 // Table keys (SR-4 S6a), through the functions the key handler calls: Enter walks down
@@ -3870,8 +3875,8 @@ FocusScope {
                  && !(root.activeGridId !== "" && root.boardMode)                 // a table's board covers it
         anchors.fill: parent
         // The grid frame's clamp (S9b): the table's top sits under the tab toolbar, its bottom at the end.
-        topMargin: root.frameLo >= 0 ? -(root.frameTop - Theme.dim.toolStripHeight) : 0
-        bottomMargin: root.frameLo >= 0 ? -Math.max(0, contentHeight - root.frameBottom) : 0
+        topMargin: root.frameLo >= 0 ? -(root.frameTop - Theme.dim.toolStripHeight) * root.zoom : 0
+        bottomMargin: root.frameLo >= 0 ? -Math.max(0, contentHeight - root.frameBottom * root.zoom) : 0
         // In ink mode the content is wider than the viewport (locked page +
         // margins) and pans natively; contentSpan == width otherwise, so this
         // is a no-op outside the mode.
@@ -5669,6 +5674,7 @@ FocusScope {
         model: blockModel
         contentX: flick.contentX
         contentY: flick.contentY
+        zoom: root.zoom
         leftEdgeContent: root.leftEdge
         inkGutter: root.inkGutter
         pageWidth: root.pageWidth
@@ -5824,8 +5830,8 @@ FocusScope {
             enabled: !root.inkMode
             z: 56
             width: 24; height: 24
-            x: root.leftEdge + root.pageWidth + 12 - flick.contentX
-            y: (blockModel.layoutRevision, blockModel.yForRow(prow)) - flick.contentY + 2
+            x: root.vx(root.leftEdge + root.pageWidth) + 12
+            y: root.vy((blockModel.layoutRevision, blockModel.yForRow(prow))) + 2
             // The comment BUBBLE (user ruling 2026-07-12): the margin is real
             // space now, and blue = "a conversation lives here" — one of the
             // few semantic accent uses. A block whose threads are ALL
@@ -5890,10 +5896,9 @@ FocusScope {
             visible: info !== null && arow >= 0 && !root.inkMode
             // Beside the bubble; clamped into the viewport when the window is
             // narrower than the margin (the card may float over the page edge).
-            x: Math.min(root.leftEdge + root.pageWidth + 12 - flick.contentX,
+            x: Math.min(root.vx(root.leftEdge + root.pageWidth) + 12,
                         root.width - width - Theme.dim.scrollBarWidth - 40)
-            y: (blockModel.layoutRevision, arow >= 0 ? blockModel.yForRow(arow) : 0)
-               - flick.contentY + 2
+            y: root.vy((blockModel.layoutRevision, arow >= 0 ? blockModel.yForRow(arow) : 0)) + 2
             width: 300
             height: cardCol.implicitHeight + 20
             color: Theme.colors.surfaceRaised
@@ -6038,7 +6043,7 @@ FocusScope {
         // mouse so the invisible drag handles can't eat clicks on text.
         // (Riding over the DESK and wide tables' paper stays by design.)
         readonly property bool clearOfPage:
-            x >= root.leftEdge + root.pageWidth - flick.contentX + 8
+            x >= root.vx(root.leftEdge + root.pageWidth) + 8
         opacity: clearOfPage ? 1 : 0
         enabled: clearOfPage
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -6060,8 +6065,8 @@ FocusScope {
                          && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))
                          && !(blockModel.layoutRevision, blockModel.rowHidden(prow))                // T4 filter
                 width: blockRuler.width
-                height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)))
-                y: (blockModel.layoutRevision, blockModel.yForRow(prow))
+                height: Math.max(16, (blockModel.layoutRevision, blockModel.heightForRow(prow)) * root.zoom)
+                y: (blockModel.layoutRevision, blockModel.yForRow(prow)) * root.zoom
                 // Being dragged → the rail chip is the block's body; its slot dims.
                 opacity: root.blockDragging && rnum.prow >= root.blockDragRow
                          && rnum.prow < root.blockDragRow + root.blockDragCount ? 0.3 : 1
@@ -6102,8 +6107,8 @@ FocusScope {
                             root.blockDragging = true
                         }
                         root.blockDragViewY = vy
-                        root.blockDragX = mapToItem(root, m.x, m.y).x + flick.contentX
-                        root.aimBlockDrag(root.blockDragX, vy + flick.contentY)
+                        root.blockDragX = (mapToItem(root, m.x, m.y).x + flick.contentX) / root.zoom
+                        root.aimBlockDrag(root.blockDragX, (vy + flick.contentY) / root.zoom)
                     }
                     onReleased: if (root.blockDragging) root.commitBlockDrag()
                 }
@@ -6139,21 +6144,21 @@ FocusScope {
         readonly property int lastRec: root.dividerDragChain.length >= 2
                                        ? root.dividerDragChain[root.dividerDragChain.length - 2] : -1
         visible: root.dividerDragging && topRec >= 0
-        x: root.tableX(blockModel.tableHeadOf(root.dividerDragRecord)) + root.dividerPreviewX - 1 - flick.contentX
-        y: (blockModel.layoutRevision, topRec >= 0 ? blockModel.yForRow(topRec) : 0) - flick.contentY
+        x: root.vx(root.tableX(blockModel.tableHeadOf(root.dividerDragRecord)) + root.dividerPreviewX) - 1
+        y: root.vy((blockModel.layoutRevision, topRec >= 0 ? blockModel.yForRow(topRec) : 0))
         width: 2
         height: (blockModel.layoutRevision, lastRec >= 0
-                 ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.yForRow(topRec) : 0)
+                 ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.yForRow(topRec) : 0) * root.zoom
         color: Theme.colors.accent
         z: 50
     }
     Rectangle {
         visible: root.pulling && Math.abs(root.pullPreviewX - root.pullPressX) >= 12
-        x: root.leftEdge + root.pullPreviewX - 1 - flick.contentX
-        y: (blockModel.layoutRevision, root.pullLo >= 0 ? blockModel.yForRow(root.pullLo) : 0) - flick.contentY
+        x: root.vx(root.leftEdge + root.pullPreviewX) - 1
+        y: root.vy((blockModel.layoutRevision, root.pullLo >= 0 ? blockModel.yForRow(root.pullLo) : 0))
         width: 2
         height: (blockModel.layoutRevision, root.pullHi >= 0
-                 ? blockModel.yForRow(root.pullHi) + blockModel.heightForRow(root.pullHi) - blockModel.yForRow(root.pullLo) : 0)
+                 ? blockModel.yForRow(root.pullHi) + blockModel.heightForRow(root.pullHi) - blockModel.yForRow(root.pullLo) : 0) * root.zoom
         color: Theme.colors.accent
         z: 50
     }
@@ -6163,10 +6168,10 @@ FocusScope {
         // a lane gap only its lane (SR-3 S7c).
         readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
                                      root.dropLineGeom(root.dropGap, root.dropLane))
-        x: (geom.w >= 0 ? geom.x : root.sheetLeft) - flick.contentX
-        width: geom.w >= 0 ? geom.w : root.sheetRight - root.sheetLeft
+        x: root.vx(geom.w >= 0 ? geom.x : root.sheetLeft)
+        width: (geom.w >= 0 ? geom.w : root.sheetRight - root.sheetLeft) * root.zoom
         height: 2; radius: 0
-        y: geom.y - flick.contentY - 1
+        y: root.vy(geom.y) - 1
         color: Theme.colors.accent
         z: 50
     }
@@ -6175,10 +6180,10 @@ FocusScope {
                                  : root.imageDropActive ? root.imageDropBesideRow : -1
         readonly property int side: root.blockDragging ? root.dropBesideSide : root.imageDropBesideSide
         visible: row >= 0
-        x: (row >= 0 ? root.columnX(row) + (side === 0 ? root.laneOf(row).w - 3 : 0) : 0) - flick.contentX
-        y: (blockModel.layoutRevision, row >= 0 ? blockModel.yForRow(row) : 0) - flick.contentY
+        x: root.vx(row >= 0 ? root.columnX(row) + (side === 0 ? root.laneOf(row).w - 3 : 0) : 0)
+        y: root.vy((blockModel.layoutRevision, row >= 0 ? blockModel.yForRow(row) : 0))
         width: 3
-        height: (blockModel.layoutRevision, row >= 0 ? blockModel.heightForRow(row) : 0)
+        height: (blockModel.layoutRevision, row >= 0 ? blockModel.heightForRow(row) : 0) * root.zoom
         color: Theme.colors.accent
         z: 50
     }
@@ -6195,9 +6200,9 @@ FocusScope {
         // A lane gap draws at its lane (SR-3 S7c); a top-level gap across the page.
         readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
             root.dropLineGeom(root.dropIndicatorGap, root.imageDropActive ? root.imageDropLane : -1))
-        readonly property real lineY: geom.y - flick.contentY
-        readonly property real lineX: (geom.w >= 0 ? geom.x : root.leftEdge) - flick.contentX
-        readonly property real lineW: geom.w >= 0 ? geom.w : root.pageWidth
+        readonly property real lineY: root.vy(geom.y)
+        readonly property real lineX: root.vx(geom.w >= 0 ? geom.x : root.leftEdge)
+        readonly property real lineW: (geom.w >= 0 ? geom.w : root.pageWidth) * root.zoom
 
         Rectangle {   // insertion line
             // (was `root.textWidth` — an undefined property; the line had no
@@ -6251,9 +6256,9 @@ FocusScope {
         readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
         readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
                                                          : Math.round(dispW * 0.5)
-        x: (r >= 0 ? root.columnX(r) : root.leftEdge) - flick.contentX   // the block's lane column
-        y: (blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) - flick.contentY + 6
-        width: dispW; height: dispH
+        x: root.vx(r >= 0 ? root.columnX(r) : root.leftEdge)   // the block's lane column
+        y: root.vy((blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) + 6)
+        width: dispW * root.zoom; height: dispH * root.zoom
 
         VideoSurfaceItem {
             id: videoSurface
@@ -6380,9 +6385,9 @@ FocusScope {
             // modes (and matches the HTML export, which has no bars). Clicks
             // still reach the bar — the disarmed canvas refuses mouse.
             z: 44
-            x: root.columnX(row) - flick.contentX
-            y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
-            width: dispW
+            x: root.vx(root.columnX(row))
+            y: root.vy((blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH)
+            width: dispW * root.zoom
             height: root.videoTransportH
 
             VideoTransport {
@@ -6425,9 +6430,9 @@ FocusScope {
             // z:44 like the video bars — ink paints over the strip in regular
             // mode (never occluded, matches export); the bar stays clickable.
             z: 44
-            x: root.columnX(row) - flick.contentX
-            y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH - flick.contentY
-            width: measure
+            x: root.vx(root.columnX(row))
+            y: root.vy((blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH)
+            width: measure * root.zoom
             height: root.pdfNavH
             color: Theme.colors.surfaceRaised      // raised bar — tone separates from the page above (border diet)
 
@@ -6469,9 +6474,9 @@ FocusScope {
         // A cell's media sits inside the cell inset (BlockView's colLeft: 8 px); the fit width is the
         // lane minus both insets.
         readonly property real inset: (blockModel.contentRevision, row >= 0 && blockModel.tableColumnOf(row) >= 0) ? 8 : 0
-        readonly property real imgX: (row >= 0 ? root.columnX(row) : root.leftEdge) + inset - flick.contentX
+        readonly property real imgX: root.vx((row >= 0 ? root.columnX(row) : root.leftEdge) + inset)
         readonly property real imgTopV: row >= 0
-            ? (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 - flick.contentY : 0
+            ? root.vy((blockModel.layoutRevision, blockModel.yForRow(row)) + 6) : 0
         readonly property real imgW: row >= 0
             ? (blockModel.layoutRevision, blockModel.mediaDispWidth(row)) : 0
         readonly property real imgH: row >= 0
@@ -6480,7 +6485,7 @@ FocusScope {
 
         Rectangle {   // the outline (the ghost below takes over during a drag)
             visible: !root.imageResizing
-            x: imgResize.imgX; y: imgResize.imgTopV; width: imgResize.imgW; height: imgResize.imgH
+            x: imgResize.imgX; y: imgResize.imgTopV; width: imgResize.imgW * root.zoom; height: imgResize.imgH * root.zoom
             color: "transparent"
             border.width: 1; border.color: Theme.colors.accent
         }
@@ -6492,8 +6497,8 @@ FocusScope {
                 readonly property bool onLeft: index === 0 || index === 3
                 readonly property bool onTop: index < 2
                 width: 18; height: 18   // hit area; the visible square is 9 px
-                x: imgResize.imgX + (onLeft ? 0 : imgResize.imgW) - width / 2
-                y: imgResize.imgTopV + (onTop ? 0 : imgResize.imgH) - height / 2
+                x: imgResize.imgX + (onLeft ? 0 : imgResize.imgW * root.zoom) - width / 2
+                y: imgResize.imgTopV + (onTop ? 0 : imgResize.imgH * root.zoom) - height / 2
                 Rectangle {
                     visible: !root.imageResizing
                     anchors.centerIn: parent
@@ -6522,7 +6527,7 @@ FocusScope {
                         // measure — the reachable screen is the practical limit, and the page
                         // h-scroll holds the rest.
                         root.imageResizeW = Math.max(80,
-                            root._imgResizeStartW + root._imgResizeSign * (m.x - root._imgResizePressX))
+                            root._imgResizeStartW + root._imgResizeSign * (m.x - root._imgResizePressX) / root.zoom)
                     }
                     onReleased: {
                         if (root.imageResizing) {
@@ -6545,11 +6550,11 @@ FocusScope {
     Rectangle {
         visible: root.imageResizing
         z: 58
-        x: (root.imageResizeRow >= 0 ? root.columnX(root.imageResizeRow) : root.leftEdge) + imgResize.inset - flick.contentX
-        y: (blockModel.layoutRevision, root.imageResizeRow >= 0
-            ? blockModel.yForRow(root.imageResizeRow) : 0) + 6 - flick.contentY
-        width: root.imageResizeW
-        height: root.imageResizeW * root.imageResizeAspect
+        x: root.vx((root.imageResizeRow >= 0 ? root.columnX(root.imageResizeRow) : root.leftEdge) + imgResize.inset)
+        y: root.vy((blockModel.layoutRevision, root.imageResizeRow >= 0
+            ? blockModel.yForRow(root.imageResizeRow) : 0) + 6)
+        width: root.imageResizeW * root.zoom
+        height: root.imageResizeW * root.imageResizeAspect * root.zoom
         color: "transparent"
         border.width: 1; border.color: Theme.colors.accent
         radius: 0
@@ -6584,10 +6589,10 @@ FocusScope {
     Rectangle {
         visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         x: -flick.contentX
-        y: (blockModel.layoutRevision, blockModel.yForRow(blockMenu.runLo)) - flick.contentY
-        width: Math.max(flick.width, root.contentSpan)
+        y: root.vy((blockModel.layoutRevision, blockModel.yForRow(blockMenu.runLo)))
+        width: Math.max(flick.width, root.contentSpan * root.zoom)
         height: (blockModel.layoutRevision, blockModel.yForRow(blockMenu.runHi) + blockModel.heightForRow(blockMenu.runHi)
-                 - blockModel.yForRow(blockMenu.runLo))
+                 - blockModel.yForRow(blockMenu.runLo)) * root.zoom
         z: 45
         readonly property color _c: root.menuHiDanger ? Theme.colors.error : Theme.colors.accent
         color: Qt.rgba(_c.r, _c.g, _c.b, 0.10)
@@ -6602,13 +6607,13 @@ FocusScope {
         readonly property int lastRec: recs.length ? recs[recs.length - 1] : -1
         readonly property int gap: root.tableColGap
         visible: lastRec >= 0 && gap >= 0 && gap !== root.tableGripPressIndex && gap !== root.tableGripPressIndex + 1
-        x: root.tableX(head) - flick.contentX - 1.5 + (blockModel.layoutRevision, lastRec < 0 || gap < 0 ? 0
-            : gap >= blockModel.tableColumnCount(head) ? blockModel.tableWidth(head) : blockModel.tableColumnLeft(head, gap))
-        y: (blockModel.layoutRevision, lastRec >= 0 ? blockModel.yForRow(head) + blockModel.tablePadTop(head) : 0) - flick.contentY
+        x: root.vx(root.tableX(head) + (blockModel.layoutRevision, lastRec < 0 || gap < 0 ? 0
+            : gap >= blockModel.tableColumnCount(head) ? blockModel.tableWidth(head) : blockModel.tableColumnLeft(head, gap))) - 1.5
+        y: root.vy((blockModel.layoutRevision, lastRec >= 0 ? blockModel.yForRow(head) + blockModel.tablePadTop(head) : 0))
         width: 3
         height: (blockModel.layoutRevision, lastRec >= 0
                  ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.tablePadBottom(lastRec)
-                   - blockModel.yForRow(head) - blockModel.tablePadTop(head) : 0)
+                   - blockModel.yForRow(head) - blockModel.tablePadTop(head) : 0) * root.zoom
         color: Theme.colors.accent
         z: 50
     }
@@ -6624,12 +6629,13 @@ FocusScope {
         readonly property real bottomC: (blockModel.layoutRevision, lastRec >= 0
             ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.tablePadBottom(lastRec) : 0)
         readonly property real tw: (blockModel.layoutRevision, blockModel.contentRevision, lastRec >= 0 ? blockModel.tableWidth(head) : 0)
-        readonly property real xV: root.tableX(head) - flick.contentX
+        readonly property real xV: root.vx(root.tableX(head))
+        readonly property real twV: tw * root.zoom
         visible: lastRec >= 0
         z: 40
         Rectangle {   // + row, under the last row
-            x: tableAdd.xV; y: tableAdd.bottomC - flick.contentY + 4
-            width: tableAdd.tw; height: 14; radius: 0
+            x: tableAdd.xV; y: root.vy(tableAdd.bottomC) + 4
+            width: tableAdd.twV; height: 14; radius: 0
             color: tableAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
@@ -6639,8 +6645,8 @@ FocusScope {
             }
         }
         Rectangle {   // + column, right of the last column
-            x: tableAdd.xV + tableAdd.tw + 4; y: tableAdd.topC - flick.contentY
-            width: 14; height: Math.max(0, tableAdd.bottomC - tableAdd.topC); radius: 0
+            x: tableAdd.xV + tableAdd.twV + 4; y: root.vy(tableAdd.topC)
+            width: 14; height: Math.max(0, tableAdd.bottomC - tableAdd.topC) * root.zoom; radius: 0
             color: tableAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }

@@ -31,13 +31,14 @@ Rectangle {
 
     readonly property real cx: editor ? editor.viewContentX : 0
     readonly property real left0: editor ? editor.leftEdge : 0
+    readonly property real pz: editor ? editor.zoom : 1       // the page's view zoom (PLAN-zoom)
     readonly property real curW: editor ? editor.pageWidth : 760
     property bool dragging: false
     property int dragW: 760
 
-    function xFor(w) { return left0 + w - cx }
+    function xFor(w) { return (left0 + w) * pz - cx }
     function nearestDetent(px) {   // item x → the closest detent width
-        var w = px + cx - left0
+        var w = (px + cx) / pz - left0
         var best = detents[0], bd = Math.abs(w - best)
         for (var i = 1; i < detents.length; ++i) {
             var d = Math.abs(w - detents[i])

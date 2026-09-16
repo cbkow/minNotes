@@ -105,8 +105,9 @@ void DocInkCanvas::setColor(const QColor& c)
 
 void DocInkCanvas::setStrokeWidth(qreal w)
 {
-    if (qFuzzyCompare(qreal(annot_.strokeWidth()), w)) return;
-    annot_.setStrokeWidth(float(w));
+    if (qFuzzyCompare(strokeWidth_, w)) return;
+    strokeWidth_ = w;
+    annot_.setStrokeWidth(float(w * zoom_));
     emit strokeWidthChanged();
 }
 
@@ -211,6 +212,14 @@ void DocInkCanvas::setInkGutter(qreal g)
     inkGutter_ = g; emit transformChanged(); update();
 }
 
+void DocInkCanvas::setZoom(qreal z)
+{
+    if (z <= 0 || qFuzzyCompare(zoom_, z)) return;
+    zoom_ = z;
+    annot_.setStrokeWidth(float(strokeWidth_ * zoom_));   // the live stroke draws at page px × zoom
+    emit transformChanged(); update();
+}
+
 // Editor.qml's tableShiftFor, against the FROZEN edge: a table wider than the page centres
 // under it, half the overhang to the left, never past the gutter.
 qreal DocInkCanvas::tableShiftFor(int row) const
@@ -246,6 +255,11 @@ DocInkCanvas::Placement DocInkCanvas::placementFor(const QString& blockId,
         pl.scale = QSizeF(1, 1);
         pl.widthScale = 1.0;
     }
+    // The view zoom scales the whole placement (origins in scaled content px, local → scaled
+    // px, widths × zoom); stored coordinates are page units regardless.
+    pl.origin *= zoom_;
+    pl.scale = QSizeF(pl.scale.width() * zoom_, pl.scale.height() * zoom_);
+    pl.widthScale *= zoom_;
     pl.valid = true;
     return pl;
 }
@@ -297,7 +311,7 @@ void DocInkCanvas::paint(QPainter* p)
                                         std::max(1, model_->mediaH(pl.row)),
                                         pl.widthScale);
                 else
-                    mn::paintSketchText(*p, spec, 1.0, 1.0, 1.0);
+                    mn::paintSketchText(*p, spec, 1.0, 1.0, pl.widthScale);   // = zoom in page space
                 p->restore();
 
                 if (selContains(it.key(), SelText, i)) {
@@ -392,10 +406,11 @@ void DocInkCanvas::mousePressEvent(QMouseEvent* e)
         if (anchorAtContent(contentPt, row, pl)) {
             const QPointF local = contentToLocal(pl, contentPt);
             const bool frame = pl.space == mn::DocInkAnchor::Frame;
-            const double lsize = frame ? textSize_ / pl.widthScale : textSize_;
+            // Stored sizes are page units: strip the zoom from the placement's scales first.
+            const double lsize = frame ? textSize_ / (pl.widthScale / zoom_) : textSize_;
             const double defWPage = std::min(0.5 * pageWidth_,
                                              std::max(240.0, 2.0 * textSize_));
-            const double lw = frame ? std::min(0.9, defWPage / pl.scale.width())
+            const double lw = frame ? std::min(0.9, defWPage / (pl.scale.width() / zoom_))
                                     : defWPage;
             emit textCreateRequested(row, local.x(), local.y(), lw, lsize);
         }
@@ -518,8 +533,9 @@ void DocInkCanvas::commitStroke(std::unique_ptr<qcv::ActiveStroke> stroke)
     if (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2)
         s.points[1] = QPointF(stroke->points[1].x() * width() / pl.scale.width(),
                               stroke->points[1].y() * height() / pl.scale.height());
-    if (space == mn::DocInkAnchor::Frame)   // width stored in media-intrinsic px
-        s.strokeWidth = float(double(s.strokeWidth) / pl.widthScale);
+    // The engine's width is ITEM px (page px × zoom): stored width = page px (Px space,
+    // widthScale = zoom) or media-intrinsic px (Frame space).
+    s.strokeWidth = float(double(s.strokeWidth) / pl.widthScale);
 
     mn::DocInkAnchor a;
     mn::docInkFromJson(model_->inkForRow(row), a);
@@ -546,7 +562,7 @@ bool DocInkCanvas::anchorAtContent(QPointF contentPt, int& rowOut, Placement& pl
 {
     if (!model_) return false;
     const qreal total = std::max<qreal>(1.0, model_->totalHeight());
-    const int row = model_->rowForY(std::clamp(contentPt.y(), qreal(0), total - 1));
+    const int row = model_->rowForY(std::clamp(contentPt.y() / zoom_, qreal(0), total - 1));   // scaled → page y
     if (row < 0 || row >= model_->rowCountQml()) return false;
     const bool media = model_->typeForRow(row) == BlockModel::Media;
     const auto space = media ? mn::DocInkAnchor::Frame : mn::DocInkAnchor::Px;

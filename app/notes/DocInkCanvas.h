@@ -58,6 +58,10 @@ class DocInkCanvas : public QQuickPaintedItem
     // capped at leftEdge − gutter (Editor.qml tableShiftFor — the SAME formula lives here so ink
     // anchored to a table record rides the table). Bound from QML.
     Q_PROPERTY(qreal inkGutter READ inkGutter WRITE setInkGutter NOTIFY transformChanged FINAL)
+    // The editor's view zoom (PLAN-zoom Z2). contentX/contentY are the Flickable's SCALED offsets;
+    // placementFor folds the zoom into every origin / scale / widthScale, so the whole item works in
+    // scaled content px and stored coordinates stay page units.
+    Q_PROPERTY(qreal zoom READ zoom WRITE setZoom NOTIFY transformChanged FINAL)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
     // The selected TEXT chip (-1s unless one is selected) — the Inspector
     // Size slider retargets it. Row is the anchor's current model row.
@@ -86,6 +90,8 @@ public:
     qreal leftEdgeContent() const { return leftEdgeContent_; }
     qreal inkGutter() const { return inkGutter_; }
     void setInkGutter(qreal g);
+    qreal zoom() const { return zoom_; }
+    void setZoom(qreal z);
     void setLeftEdgeContent(qreal v);
     qreal pageWidth() const { return pageWidth_; }
     void setPageWidth(qreal v);
@@ -93,7 +99,7 @@ public:
     void setTool(const QString& tool);
     QColor color() const { return annot_.drawingColor(); }
     void setColor(const QColor& c);
-    qreal strokeWidth() const { return annot_.strokeWidth(); }
+    qreal strokeWidth() const { return strokeWidth_; }   // page px; the engine draws it × zoom
     void setStrokeWidth(qreal w);
     bool inkMode() const { return inkMode_; }
     void setInkMode(bool on);
@@ -226,7 +232,8 @@ private:
 
     BlockModel* model_ = nullptr;
     qreal contentX_ = 0, contentY_ = 0;
-    qreal leftEdgeContent_ = 0, pageWidth_ = 760, inkGutter_ = 120;
+    qreal leftEdgeContent_ = 0, pageWidth_ = 760, inkGutter_ = 120, zoom_ = 1;
+    qreal strokeWidth_ = 6;
     qreal tableShiftFor(int row) const;   // the view shift of the table holding row (0 outside tables)
     // The page's left edge FROZEN at press (-1 = no gesture): the sheet centres in the viewport
     // (2026-09-16) so leftEdgeContent can move under a gesture; a stroke committed through a
