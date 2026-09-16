@@ -696,7 +696,19 @@ FocusScope {
     // Image resize: the hovered image row shows corner affordances; dragging the
     // bottom-right handle previews a target size (a ghost frame — the document does
     // NOT reflow during the drag) and commits the new per-block width on release.
-    property int  imgHandleRow: -1         // image row whose hover handles are shown
+    // The image whose resize outline shows (2026-09-16 ruling: only after an EXPLICIT click on the
+    // image — never on hover — and gone on any press elsewhere, even on the same row beside it).
+    property int  imgSelectedRow: -1
+    // The resizable image under a content point, or -1: inside the image's frame (its lane column
+    // + a cell's 8 px inset, the 6 px media top pad, its display size), not merely on its row.
+    function imageFrameHit(cx, cy) {
+        const row = blockModel.blockAt(pageXAt(cx, cy), Math.max(0, cy))
+        if (!_isResizableMediaRow(row)) return -1
+        const inset = blockModel.tableColumnOf(row) >= 0 ? 8 : 0
+        const x0 = columnX(row) + inset, y0 = blockModel.yForRow(row) + 6
+        const w = blockModel.mediaDispWidth(row), h = blockModel.mediaDisplayHeight(row)
+        return (cx >= x0 && cx < x0 + w && cy >= y0 && cy < y0 + h) ? row : -1
+    }
     property bool imageResizing: false
     property int  imageResizeRow: -1
     property real imageResizeW: 0          // live preview width (px)
@@ -4308,6 +4320,7 @@ FocusScope {
                 // (Block drag-reorder starts from the ruler's number handles
                 // now — the left grip gutter is retired.)
                 cursor.resetGoalX(); cursor.clearMarks()
+                root.imgSelectedRow = root.imageFrameHit(m.x, m.y)   // the outline: on the image, off anywhere else
                 {   // SR-4 S7b: a table grip — a click picks a set, a drag moves (decided on the first move)
                     const gg = root.tableGripAt(m.x, m.y)
                     if (gg) {
@@ -4479,8 +4492,6 @@ FocusScope {
                 // Hovering an image row → show its resize handles. Don't clear on a
                 // non-image *handle* hover (the central layer onExits then); only a
                 // different block hides them.
-                if (root._isResizableMediaRow(root.hoverRow)) root.imgHandleRow = root.hoverRow
-                else root.imgHandleRow = -1
                 // Link under the pointer → anchor the open-link tooltip there. A
                 // grace timer (not an immediate clear) lets the pointer travel up
                 // onto the pill to click it.
@@ -6615,11 +6626,11 @@ FocusScope {
     // Root overlays (above the central mouse layer); images only (kind "image"); Document view only.
     Item {
         id: imgResize
-        // Show while resizing, while hovering the image, OR while the image is the selected block
-        // — so a click (which selects it) can't make the handles vanish.
+        // Show while resizing, or while the image the user CLICKED is still the focused block
+        // (a press anywhere else clears imgSelectedRow; keyboard navigation moves the focus).
         readonly property int row: root.imageResizing ? root.imageResizeRow
-            : (root.imgHandleRow >= 0 ? root.imgHandleRow
-               : (root._isResizableMediaRow(cursor.focusRow) ? cursor.focusRow : -1))
+            : (root.imgSelectedRow >= 0 && cursor.focusRow === root.imgSelectedRow
+               && root._isResizableMediaRow(root.imgSelectedRow) ? root.imgSelectedRow : -1)
         // Also hidden in ink mode: a still-selected image's handles would sit
         // above the canvas and let the pen RESIZE the layout under the ink.
         visible: row >= 0 && !root.inkMode
