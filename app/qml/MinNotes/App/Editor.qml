@@ -67,7 +67,13 @@ FocusScope {
     // through the ruler's own origin). `/ zoom` is written in for a future
     // view zoom (1 today) so centring composes with it untouched.
     readonly property real zoom: 1
-    readonly property real centredEdge: Math.max(inkGutter, Math.floor((flick.width / zoom
+    // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
+    // the panel floats over the editor instead of pushing it, so the raw viewport is wider by
+    // the panel — centring on it would shift the page by half the panel every time annotation
+    // mode toggles (the jump the 2026-08-18 ruling forbids, and the frozen ink in writing mode
+    // would sit at a different x than the live ink). Same number in both modes.
+    readonly property real centringWidth: flick.width - (inspector && inspector.floating ? inspector.width : 0)
+    readonly property real centredEdge: Math.max(inkGutter, Math.floor((centringWidth / zoom
                                                  - (blockModel.pageWidth > 0 ? blockModel.pageWidth : Theme.dim.columnWidth)) / 2))
     // The gesture latch: the edge may only move BETWEEN gestures. Anything
     // that cached a content x at press (block-drag auto-scroll re-aim, the
@@ -3389,7 +3395,7 @@ FocusScope {
             } else if (phase === 10) {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
                 if (phaseStep === 1) {   // the centred sheet: the formula at rest, the latch across a commit
-                    const centred = function(w) { return Math.max(root.inkGutter, Math.floor((flick.width / root.zoom - w) / 2)) }
+                    const centred = function(w) { return Math.max(root.inkGutter, Math.floor((root.centringWidth / root.zoom - w) / 2)) }
                     ++checks
                     if (root.gestureActive || root.leftEdge !== centred(blockModel.pageWidth))
                         fail("at rest the edge is " + root.leftEdge + ", not " + centred(blockModel.pageWidth) + " (gesture " + root.gestureActive + ")")
