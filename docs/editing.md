@@ -44,6 +44,13 @@ widens. Pick a wide page for image boards, the classic measure for prose.
 In a window wider than the page, the page sits centred with its margins;
 a table wider than the page centres under it.
 
+**Zoom** the view with `⌘+` / `⌘−`, `⌘0` for 100%, `⌘1` to fit the page and
+its margins to the window, `⌘`-wheel or a trackpad pinch to zoom about the
+pointer. The percent badge in the bottom-right corner is the readout and
+a menu. Zoom is a view setting for the tab: it changes nothing in the
+note, is not saved with it, and a freshly opened tab starts at 100%. The
+same keys and badge zoom a PDF or a sketch opened full-frame.
+
 ![The page-width ruler](images/mn008.png)
 
 Down the right side runs the **block rail**: a dot for every block, the

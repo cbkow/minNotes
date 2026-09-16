@@ -19,6 +19,15 @@ Shift, **⌥** is Alt/Option.
 | Save As… | ⌘⇧S |
 | Close tab | ⌘W |
 
+## View
+
+| Action | Shortcut |
+|---|---|
+| Zoom in / out | ⌘+ / ⌘− |
+| Zoom to 100% | ⌘0 |
+| Fit width (page and margins) — a PDF or sketch: fit the page | ⌘1 |
+| Zoom about the pointer | ⌘-wheel, or pinch |
+
 ## Editing
 
 | Action | Shortcut |

@@ -77,6 +77,35 @@ FocusScope {
     readonly property real viewH: flick.height / zoom
     function vx(cx) { return cx * zoom - flick.contentX }  // content → viewport px
     function vy(cy) { return cy * zoom - flick.contentY }
+    // Steps (PLAN-zoom Z3): 50 … 200 %, floor 50 (the measured rebind floor doubles the cells per
+    // frame there). docZoomTo keeps the content point under the viewport anchor (default: the
+    // centre) where it is; the wheel and the pinch pass the pointer.
+    readonly property var zoomSteps: [0.5, 0.67, 0.75, 1, 1.25, 1.5, 2]
+    function docZoomTo(z, ax, ay) {
+        z = Math.max(zoomSteps[0], Math.min(zoomSteps[zoomSteps.length - 1], z))
+        if (ax === undefined) ax = flick.width / 2
+        if (ay === undefined) ay = flick.height / 2
+        const cx = (flick.contentX + ax) / zoom, cy = (flick.contentY + ay) / zoom
+        zoom = z
+        flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), cx * z - ax))
+        flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), cy * z - ay))
+    }
+    function docZoomStep(dir, ax, ay) {
+        let z = zoom
+        if (dir > 0) { for (let i = 0; i < zoomSteps.length; ++i) if (zoomSteps[i] > zoom + 0.001) { z = zoomSteps[i]; break } }
+        else         { for (let i = zoomSteps.length - 1; i >= 0; --i) if (zoomSteps[i] < zoom - 0.001) { z = zoomSteps[i]; break } }
+        docZoomTo(z, ax, ay)
+    }
+    function docZoom100() { docZoomTo(1) }
+    function docZoomFit() { docZoomTo(flick.width / (pageWidth + 2 * inkGutter)) }   // the sheet fills the viewport
+    // ONE zoom interface (ruling 2026-09-16): the badge and the keys act on the ACTIVE surface —
+    // the PDF stage, the sketch stage, or the document. 100 % is true scale on each.
+    readonly property real zoomValue: activePdfRow >= 0
+        ? (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0 ? pdfZoom * pdfFitPageW / blockModel.mediaW(activePdfRow) : 1)
+        : activeSketchRow >= 0 ? sketchEditCanvas.zoom : zoom
+    function zoomStep(dir) { if (activePdfRow >= 0) pdfZoomStep(dir); else if (activeSketchRow >= 0) sketchStage.zoomStep(dir); else docZoomStep(dir) }
+    function zoomFit()     { if (activePdfRow >= 0) pdfZoomFit();     else if (activeSketchRow >= 0) sketchStage.fitCamera(); else docZoomFit() }
+    function zoom100()     { if (activePdfRow >= 0) pdfZoom100();     else if (activeSketchRow >= 0) sketchStage.zoomTo100(); else docZoom100() }
     // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
     // the panel floats over the editor instead of pushing it, so the raw viewport is wider by
     // the panel — centring on it would shift the page by half the panel every time annotation
@@ -3079,6 +3108,11 @@ FocusScope {
         // can't edit the document mid-annotation. (⌘Z above stays DOC undo —
         // ink is document content, the sketch precedent.) Delete/Backspace
         // removes the selected stroke.
+        // View zoom (PLAN-zoom Z3): the same chords as the PDF and sketch tabs.
+        else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) { root.docZoomStep(1); event.accepted = true }
+        else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore)) { root.docZoomStep(-1); event.accepted = true }
+        else if (cmd && k === Qt.Key_0) { root.docZoom100(); event.accepted = true }
+        else if (cmd && k === Qt.Key_1) { root.docZoomFit(); event.accepted = true }
         else if (root.inkMode) {
             if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && inkCanvas.hasSelection)
                 inkCanvas.deleteSelection()
@@ -3421,9 +3455,27 @@ FocusScope {
             } else if (phase === 10) {
                 if (phaseStep === 0) flick.contentY = 0   // sweep the whole document with tables present
                 // Z1: part of the sweep runs zoomed out and zoomed in (the pool must cover a taller window).
-                if (phaseStep === 3) root.zoom = 0.5
-                else if (phaseStep === 9) root.zoom = 1.5
-                else if (phaseStep === 15) root.zoom = 1
+                if (phaseStep === 2) {   // Z3: the steps, the fit and the anchor
+                    root.docZoomStep(1); ++checks
+                    if (root.zoom !== 1.25) fail("⌘+ from 100 % gave " + root.zoom)
+                    root.docZoomStep(-1); root.docZoomStep(-1); ++checks
+                    if (root.zoom !== 0.75) fail("⌘− twice from 125 % gave " + root.zoom)
+                    root.docZoomFit(); ++checks
+                    const fit = Math.max(0.5, Math.min(2, flick.width / (root.pageWidth + 2 * root.inkGutter)))
+                    if (Math.abs(root.zoom - fit) > 1e-9) fail("Fit width gave " + root.zoom + " not " + fit)
+                    if (Math.abs(root.leftEdge - root.inkGutter) > 1 && fit < 2) fail("at Fit width the edge is " + root.leftEdge + ", not the gutter")
+                    root.docZoom100(); ++checks
+                    if (root.zoom !== 1) fail("⌘0 gave " + root.zoom)
+                    const before = { x: (flick.contentX + 300) / root.zoom, y: (flick.contentY + 200) / root.zoom }
+                    root.docZoomTo(1.5, 300, 200); ++checks
+                    const after = { x: (flick.contentX + 300) / root.zoom, y: (flick.contentY + 200) / root.zoom }
+                    if (Math.abs(before.x - after.x) > 1 || Math.abs(before.y - after.y) > 1)
+                        fail("zoom about (300,200) moved the content point " + JSON.stringify(before) + " → " + JSON.stringify(after))
+                    root.docZoom100()
+                }
+                if (phaseStep === 3) root.docZoomTo(0.5)
+                else if (phaseStep === 9) root.docZoomTo(1.5)
+                else if (phaseStep === 15) root.docZoom100()
                 if (phaseStep === 6 || phaseStep === 12) {   // inspection artifacts at 50 % / 150 %
                     const zarg = Qt.application.arguments.filter(function(a) { return a.indexOf("--pool-probe=") === 0 })[0]
                     const zdir = zarg.substring("--pool-probe=".length).replace(/[^\/]*$/, "")
@@ -4445,10 +4497,38 @@ FocusScope {
             }
         }
 
+        // ⌘-wheel and the trackpad pinch zoom about the pointer (PLAN-zoom Z3; the PDF tab's pair).
+        WheelHandler {
+            acceptedModifiers: Qt.ControlModifier
+            onWheel: (event) => root.docZoomStep(event.angleDelta.y > 0 ? 1 : -1, event.x, event.y)
+        }
+        PinchHandler {
+            target: null
+            property real startZoom: 1
+            onActiveChanged: if (active) startZoom = root.zoom
+            onActiveScaleChanged: if (active) root.docZoomTo(startZoom * activeScale, centroid.position.x, centroid.position.y)
+        }
+
         ScrollBar.vertical: MnScrollBar {}
         // The page-level horizontal bar — appears only when a wide table (or
         // ink-mode pan span) pushes contentWidth past the viewport.
         ScrollBar.horizontal: MnScrollBar {}
+    }
+
+    // The document view's zoom chrome — the frame tabs' badge verbatim (ruling 2026-09-16: one
+    // interface). Bottom-right like theirs; hidden in a full-frame tab, which mounts its own.
+    ZoomBadge {
+        visible: flick.visible && blockModel.documentOpen
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: 10 + Theme.dim.scrollBarWidth
+        anchors.bottomMargin: 10 + Theme.dim.scrollBarWidth
+        z: 60
+        zoomValue: root.zoom
+        fitLabel: qsTr("Fit width")
+        showFitInk: false
+        onFitRequested: root.docZoomFit()
+        onHundredRequested: root.docZoom100()
     }
 
     // --- Full-frame kanban board (the active table tab in board mode). Scrolls

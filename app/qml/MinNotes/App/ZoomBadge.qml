@@ -12,6 +12,7 @@ Item {
     id: badge
     property real zoomValue: 1.0
     property bool showFitInk: false
+    property string fitLabel: qsTr("Fit")     // the document view says "Fit width" (PLAN-zoom Z3)
     signal fitRequested()
     signal hundredRequested()
     signal fitInkRequested()
@@ -79,7 +80,7 @@ Item {
             border.width: 1; border.color: Theme.colors.border
         }
         contentItem: Column {
-            ZoomRow { text: qsTr("Fit");  shortcut: "⌘ 1"; onActivated: badge.fitRequested() }
+            ZoomRow { text: badge.fitLabel; shortcut: "⌘ 1"; onActivated: badge.fitRequested() }
             ZoomRow { text: qsTr("100%"); shortcut: "⌘ 0"; onActivated: badge.hundredRequested() }
             ZoomRow {
                 visible: badge.showFitInk
