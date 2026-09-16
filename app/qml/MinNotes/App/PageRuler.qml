@@ -16,7 +16,7 @@ import QtQuick
 Rectangle {
     id: ruler
     property var editor: null
-    readonly property var detents: [760, 880, 1000, 1200, 1400, 1600]
+    readonly property var detents: [560, 640, 760, 880, 1000, 1200, 1400, 1600]   // 760 = the default, no longer the floor (2026-09-16)
 
     visible: !!editor && editor.activeFrameId === ""   // Document view only
     // 14px instrument + breathing room (ruling 2026-08-20: the flush strip

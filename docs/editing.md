@@ -38,7 +38,7 @@ scrolls sideways instead of rewrapping your text; a wide table extends past
 the page into the margin.
 
 Each note has its **own page width**. The slim ruler above the page shows
-the stops (760 up to 1600) — drag the handle or click a stop; the page
+the stops (560 up to 1600; 760 is the default) — drag the handle or click a stop; the page
 reflows live and one Undo puts it back. Margin ink rides along as the page
 widens. Pick a wide page for image boards, the classic measure for prose.
 In a window wider than the page, the page sits centred with its margins;
