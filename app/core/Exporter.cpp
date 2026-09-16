@@ -1529,24 +1529,31 @@ const char* kHtmlCss = R"CSS(
 --chipbg:#1d2733;--chiptext:#4aa8ff;--codetext:#d4d4e8;--violet:#b48ef0;--sel:#2a568c;--quote:#3a5e86}
 /* The app's dual-tone ground (user ruling 2026-08-20): the SHEET — page +
    equal gutters, stretched to the widest table (--sheetw = the Editor's
-   sheetSpan) — keeps the field tone; beyond it the ground drops to the
+   sheet extent) — keeps the field tone; beyond it the ground drops to the
    window-shell desk tone, so the document reads as the same constrained
-   shape as in the app. Hard-stop gradient on html = the one paint. */
+   shape as in the app. Hard-stop gradient on html = the one paint.
+   CENTRED (2026-09-16, the app's centred sheet): the band sits centred
+   when the window is wider than it, and hugs the left edge (the page
+   scrolls) when not — exactly what `main{margin:0 auto}` does below. */
 *{box-sizing:border-box}
 /* Explicit size + no-repeat: the root's background image is sized to its
    BOX (≈ viewport) and tiles across the scrollable canvas, so a table
    scrolling past the first viewport-width would repaint the boundary in
-   the wrong place. One oversized image, desk colour beyond it. */
-html{background-color:var(--desk);
-background-image:linear-gradient(90deg,var(--bg) var(--sheetw),var(--desk) var(--sheetw));
-background-size:calc(var(--sheetw) + 100vw) 100%;
+   the wrong place. One oversized image (the box + the sheet), desk colour
+   beyond it. --l = the left desk's width in that image: 50% of it is
+   (box + sheet)/2, so 50% − sheet = (box − sheet)/2 — the centred margin,
+   floored at 0 when the sheet is wider than the box. */
+html{--l:max(0px,calc(50% - var(--sheetw)));background-color:var(--desk);
+background-image:linear-gradient(90deg,var(--desk) var(--l),var(--bg) var(--l),var(--bg) calc(var(--l) + var(--sheetw)),var(--desk) calc(var(--l) + var(--sheetw)));
+background-size:calc(100% + var(--sheetw)) 100%;
 background-repeat:no-repeat}
 body{background:transparent;color:var(--text);margin:0;
 font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
-/* Left-anchored page (user ruling): the prose measure hugs the left edge
-   rather than centering, so wide tables growing rightward read as one
-   left-aligned system instead of breaking a centered frame. */
-main{max-width:1000px;min-width:1000px;margin:0;padding:48px 120px 96px}
+/* Centred page (2026-09-16; was left-anchored): the sheet centres when the
+   window is wider than it and hugs the left edge when not — `auto` margins
+   go to 0 under min-width, so narrow windows scroll instead of reflowing.
+   A wide table centres under the page (.tablewrap's inline margin). */
+main{max-width:1000px;min-width:1000px;margin:0 auto;padding:48px 120px 96px}
 /* content = the app's true 760 measure, flanked by the app's 120px ink
    gutters so margin annotations render instead of cropping at the
    viewport's left origin. min-width == max-width (user ruling 2026-08-20):
@@ -1561,7 +1568,7 @@ color:var(--muted);padding-bottom:10px;margin-bottom:24px;border-bottom:1px soli
    No rule line: the app made its rules focus-reactive, so a static export
    shows numbers only. */
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main blockquote,
-main li,main figure,main .tablewrap,main .blkw,main .lanes{position:relative}
+main li,main figure,main .tablewrap,main .blkw,main .lanes,main td,main th{position:relative}
 /* Split rows (SR-3): lanes side by side at the row's ratios, the app's 24px
    gap. Blocks in a lane size to it; only the row carries a ledger number. */
 .lanes{display:flex;gap:24px;align-items:flex-start}
@@ -1732,17 +1739,21 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // injected before the block's final closing tag. X anchors to the page
     // center (pw/2 — 380 in the classic 760 frame), minus the element's
     // own indent.
-    auto injectInk = [&](QString blk, int row, double indent) -> QString {
-        if (fragment) return blk;
+    // The ink layer for one block (empty when it has none): the app anchors a stroke to the block
+    // under its topmost point — a paragraph, or a TABLE ROW / SPLIT ROW record (2026-09-16: those
+    // now export too — into the row's first cell / the lanes div, whose left edge is the table's
+    // or the page's, which is the frame the stored x is in).
+    auto inkTag = [&](int row, double indent) -> QString {
+        if (fragment) return QString();
         const TextInk ti = renderTextInk(m, row);
-        if (ti.img.isNull()) return blk;
+        if (ti.img.isNull()) return QString();
         if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
         const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
-        if (src.isEmpty()) return blk;
+        if (src.isEmpty()) return QString();
         ++inkLayers;
         // max-width:none: the global img{max-width:100%} would clamp a
         // margin-spanning layer to the 760 block and squeeze its right side.
-        const QString tag = QStringLiteral(
+        return QStringLiteral(
             "<img class=\"ink\" style=\"position:absolute;left:%1px;top:%2px;"
             "width:%3px;height:%4px;max-width:none;z-index:2\" src=\"%5\" alt=\"\">")
             .arg(pw / 2.0 + ti.box.left() - indent)
@@ -1750,11 +1761,19 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             .arg(ti.box.width())
             .arg(ti.box.height())
             .arg(src);
+    };
+    auto injectInk = [&](QString blk, int row, double indent) -> QString {
+        const QString tag = inkTag(row, indent);
+        if (tag.isEmpty()) return blk;
         const int at = blk.lastIndexOf(QStringLiteral("</"));
         if (at < 0) return blk;
         blk.insert(at, tag);
         return blk;
     };
+    // A table row's ink waits for the row's first cell (whichever is emitted first — a padded
+    // empty or the real one): a <td> is the positioned box whose left edge is the table's.
+    QString pendingRowInk;
+    auto takeRowInk = [&]() { const QString t = pendingRowInk; pendingRowInk.clear(); return t; };
 
     // Split rows (SR-3 S8, R-I5 5c): a flex row of lanes at the row's ratios,
     // each lane its real blocks. The record carries the row's number; lane
@@ -1776,7 +1795,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         if (nextLane < 0) {
             if (tableHead >= 0) {
                 for (; cellsInRow < tableCols; ++cellsInRow)          // a ragged row's missing cells
-                    body += QStringLiteral("<%1></%1>").arg(cellTag());
+                    body += QStringLiteral("<%1>%2</%1>").arg(cellTag(), takeRowInk());
                 body += QStringLiteral("</tr>\n");
                 if (nextRow >= m->rowCountQml() || m->tableHeadOf(nextRow) != tableHead) {
                     body += inTbody ? QStringLiteral("</tbody></table></div>\n") : QStringLiteral("</thead></table></div>\n");
@@ -1800,7 +1819,14 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             colTags += QStringLiteral("<col style=\"width:%1px\">").arg(qRound(m->tableColumnWidth(head, c)));
         }
         const QString open = QStringLiteral("<table style=\"table-layout:fixed;width:%1px;min-width:0\">").arg(qRound(total));
-        return QStringLiteral("<div class=\"tablewrap\">%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags);
+        // A table wider than the page CENTRES under it (the app, 2026-09-16): half the overhang to
+        // the left — but never past the gutter, so a narrow window slides it back to the page's
+        // left edge and it overflows right. 100% here = the page measure (main's content box);
+        // the second term is −(the centred page's left margin) = the room before the gutter.
+        const QString wrapStyle = total > pw
+            ? QStringLiteral(" style=\"margin-left:max(calc((100% - %1px) / 2),min(0px,calc((100% + 240px - 100vw) / 2)))\"").arg(qRound(total))
+            : QString();
+        return QStringLiteral("<div class=\"tablewrap\"%4>%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags, wrapStyle);
     };
 
     const int count = m->rowCountQml();
@@ -1821,8 +1847,9 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 if (!rowIsHeader && !inTbody) { body += QStringLiteral("</thead><tbody>\n"); inTbody = true; }
                 cellsInRow = 0;
                 body += QStringLiteral("<tr>\n");
+                pendingRowInk = inkTag(row, 0);                       // lands in the row's first cell
             } else {
-                body += QStringLiteral("<div class=\"lanes\">%1\n").arg(bnum(row));
+                body += QStringLiteral("<div class=\"lanes\">%1%2\n").arg(bnum(row), inkTag(row, 0));
             }
             inLanes = true;
             continue;
@@ -1831,7 +1858,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             if (tableHead >= 0) {
                 if (lane >= tableCols) continue;                     // a trimmed trailing column holds nothing
                 for (; cellsInRow < lane; ++cellsInRow)
-                    body += QStringLiteral("<%1></%1>").arg(cellTag());
+                    body += QStringLiteral("<%1>%2</%1>").arg(cellTag(), takeRowInk());
                 const int r = m->tableRowOf(row);
                 QString st;
                 const QString bg = m->tableCellBg(tableHead, r, lane), fg = m->tableCellFg(tableHead, r, lane);
@@ -1842,7 +1869,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 case 2: st += QStringLiteral("text-align:right;"); break;
                 default: break;
                 }
-                body += QStringLiteral("<%1%2>\n").arg(cellTag(), st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st));
+                body += QStringLiteral("<%1%2>%3\n").arg(cellTag(), st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st), takeRowInk());
                 ++cellsInRow;
             } else {
                 const QVariantList ratios = m->splitRatios(m->splitRowOf(row));

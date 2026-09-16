@@ -7175,6 +7175,29 @@ static void testGridTableExports() {
     CHECK(b1 >= 0 && b1 < b1x && !html.mid(b1, b1x - b1).contains(QStringLiteral("</td>"))
               && html.count(QStringLiteral("<div")) == html.count(QStringLiteral("</div>")),
           "HTML: a cell's blocks are real paragraphs in one <td>; divs balanced");
+
+    // The centred sheet (2026-09-16): main centres, the desk band centres with it, a table wider
+    // than the page centres under it (capped at the gutter), and ink anchored to a table row —
+    // the app's anchor for a stroke over a table — exports into the row's first cell.
+    CHECK(html.contains(QStringLiteral("main{max-width:1000px;min-width:1000px;margin:0 auto;"))
+              && html.contains(QStringLiteral("--l:max(0px,calc(50% - var(--sheetw)))")),
+          "HTML: the page and the sheet band centre");
+    CHECK(!html.contains(QStringLiteral("<div class=\"tablewrap\" style")), "HTML: a table within the page carries no centring margin");
+    for (int c = 0; c < 3; ++c) m.setTableColumnWidth(head, c, 400);   // 1200 wide: 440 past the page
+    {
+        mn::DocInkAnchor a; a.space = mn::DocInkAnchor::Px;
+        qcv::ActiveStroke s; s.tool = qcv::DrawingTool::Freehand; s.strokeWidth = 4;
+        s.points = { QPointF(300.0, 4.0), QPointF(340.0, 30.0) };   // over the table's third column
+        a.strokes.push_back(s);
+        m.setBlockInk(head, mn::docInkToJson(a));
+    }
+    RecordingSink ws;
+    const QString wide = ex.toHtml(Exporter::Options{}, ws);
+    CHECK(wide.contains(QStringLiteral("<div class=\"tablewrap\" style=\"margin-left:max(calc((100% - 1200px) / 2),min(0px,calc((100% + 240px - 100vw) / 2)))\">")),
+          "HTML: a wide table centres under the page, never past the gutter (%s)", qPrintable(wide.mid(std::max<qsizetype>(0, wide.indexOf(QStringLiteral("tablewrap")) - 10), 160)));
+    const int tr0 = wide.indexOf(QStringLiteral("<tr>")), ink = wide.indexOf(QStringLiteral("<img class=\"ink\"")), tdClose = wide.indexOf(QStringLiteral("</th>"), tr0);
+    CHECK(tr0 >= 0 && ink > tr0 && ink < tdClose && wide.contains(QStringLiteral("--sheetw:1440px")),
+          "HTML: the head row's ink rides inside its first cell; the sheet band spans the table + gutters (ink at %d, tr %d, cell close %d)", ink, tr0, tdClose);
 }
 
 static void testGridTableDocxPdf() {

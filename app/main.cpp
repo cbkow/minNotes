@@ -244,15 +244,22 @@ int main(int argc, char *argv[])
     const QStringList pending = app.takePending();
     for (const QString &s : pending) resolveAndOpen(docs, s);
     const QStringList args = app.arguments();
-    QString exportPdfTo;
+    QString exportPdfTo, exportHtmlTo;
     for (int i = 1; i < args.size(); ++i) {
         if (args[i].startsWith(QLatin1String("--export-pdf="))) { exportPdfTo = args[i].mid(13); continue; }
+        if (args[i].startsWith(QLatin1String("--export-html="))) { exportHtmlTo = args[i].mid(14); continue; }
         if (args[i].startsWith(QLatin1Char('-'))) continue;   // skip flags
         resolveAndOpen(docs, args[i]);
     }
     // Dev-only (SR-4 walk 2): `minNotes --export-pdf=<out.pdf> <doc.mnd>` writes the active
     // document's PDF export headlessly (QT_QPA_PLATFORM=offscreen) and exits — 0 on success,
     // 102 when the export fails. Lets a PDF report be reproduced without driving the GUI.
+    // Its twin (2026-09-16): `--export-html=<out.html> <doc.mnd>` — screenshot the result with a
+    // headless browser to eyeball the sheet / tables / ink without the GUI.
+    if (!exportHtmlTo.isEmpty())
+        QTimer::singleShot(0, &app, [&app, &exporter, exportHtmlTo] {
+            app.exit(exporter.exportHtml(exportHtmlTo, true) ? 0 : 102);
+        });
     if (!exportPdfTo.isEmpty())
         QTimer::singleShot(0, &app, [&app, &exporter, exportPdfTo] {
             const bool ok = exporter.exportPdf(exportPdfTo, true, false);
