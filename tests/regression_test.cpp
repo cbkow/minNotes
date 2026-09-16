@@ -5026,13 +5026,17 @@ static void testViewportSlots() {
               && v.slotForRow(50) == s50 && v.slotForRow(900) == s900,
           "rows that stay visible across a gapped change keep their slots");
 
+    // Shrinking keeps whatever visible rows sit in the SURVIVING slots (2026-09-16: a shown row is
+    // never evicted while it is still visible — the old first-N cap popped the rows past the cap
+    // out and back in as the pool caught up); the unplaced rows wait for the pool to grow.
     v.sync(g1, 3);
-    CHECK(slotsConsistent(v, 3, {0, 2, 50}) && v.slotForRow(52) == -1,
-          "shrinking the pool shows the first rows that fit");
+    CHECK(slotsConsistent(v, 3, {0, 52, 2}) && v.slotForRow(50) == -1,
+          "shrinking the pool keeps the rows in the surviving slots; the rest wait");
     CHECK(v.rowForSlot(3) == -1 && v.rowForSlot(-1) == -1, "out-of-range slots read idle");
-    const int s50b = v.slotForRow(50);
+    const int s52b = v.slotForRow(52);
     v.sync(g1, 8);
-    CHECK(slotsConsistent(v, 8, g1) && v.slotForRow(50) == s50b, "growing the pool admits the rest and keeps the placed ones");
+    CHECK(slotsConsistent(v, 8, g1) && v.slotForRow(52) == s52b && v.slotForRow(50) >= 0,
+          "growing the pool admits the rest and keeps the placed ones");
 
     v.sync({5, 5, 6}, 4);
     CHECK(slotsConsistent(v, 4, {5, 6}), "a duplicate visible row is shown once");

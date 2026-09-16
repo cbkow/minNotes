@@ -6,14 +6,16 @@ namespace mn {
 
 bool assignSlots(std::vector<int>& slotRows, const std::vector<int>& visible) {
     const size_t n = slotRows.size();
-    // The rows that fit, first-come, deduplicated.
-    std::vector<int> shown;
-    shown.reserve(std::min(n, visible.size()));
+    // Every visible row wants a slot (deduplicated). A row that ALREADY holds a slot keeps it
+    // whenever it is still visible — even when the visible set outgrows the pool for a moment
+    // (a zoom-out on a dense table, before the pool has grown): the old first-N cap evicted the
+    // rows past the cap and re-added them a beat later, and their images popped out and in
+    // (2026-09-16). New rows take free slots first-come; the rest wait for the pool to grow.
     std::unordered_set<int> want;
-    for (int r : visible) {
-        if (shown.size() == n) break;
-        if (r >= 0 && want.insert(r).second) shown.push_back(r);
-    }
+    std::vector<int> order;
+    order.reserve(visible.size());
+    for (int r : visible)
+        if (r >= 0 && want.insert(r).second) order.push_back(r);
     bool changed = false;
     std::unordered_set<int> kept;
     for (int& r : slotRows) {
@@ -23,9 +25,10 @@ bool assignSlots(std::vector<int>& slotRows, const std::vector<int>& visible) {
         changed = true;
     }
     size_t free = 0;
-    for (int r : shown) {
+    for (int r : order) {
         if (kept.count(r)) continue;
-        while (slotRows[free] >= 0) ++free;   // shown.size() <= n guarantees a free slot
+        while (free < n && slotRows[free] >= 0) ++free;
+        if (free == n) break;                 // the pool is full: the remaining rows wait
         slotRows[free] = r;
         changed = true;
     }
