@@ -108,8 +108,10 @@ FocusScope {
     // the Word way — 100 % dead centre, a linear half either side.
     readonly property real pdfTrueK: pdfFitPageW > 0 && activePdfRow >= 0 && blockModel.mediaW(activePdfRow) > 0
                                      ? pdfFitPageW / blockModel.mediaW(activePdfRow) : 1
+    // A PDF: a quarter of fit width up to 400 % true scale (its own clamp allows 4 × fit, which
+    // is far past useful and made the slider's right half a cliff).
     readonly property real zoomFloor: activePdfRow >= 0 ? 0.25 * pdfTrueK : activeSketchRow >= 0 ? 0.10 : zoomSteps[0]
-    readonly property real zoomCeil:  activePdfRow >= 0 ? 4 * pdfTrueK    : activeSketchRow >= 0 ? 8    : zoomSteps[zoomSteps.length - 1]
+    readonly property real zoomCeil:  activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : activeSketchRow >= 0 ? 8 : zoomSteps[zoomSteps.length - 1]
     readonly property bool zoomHasFitInk: activeSketchRow >= 0 && sketchEditCanvas.hasOverflow
     function zoomTo(v) {   // true scale, on the active surface, about its centre
         v = Math.max(zoomFloor, Math.min(zoomCeil, v))
@@ -118,15 +120,18 @@ FocusScope {
         else docZoomTo(v)
     }
     function zoomFitInk() { if (activeSketchRow >= 0) sketchStage.fitInkCamera() }
+    // Each half is LOGARITHMIC (a doubling takes the same travel everywhere): the document's
+    // 50 … 100 … 200 is symmetric, a PDF's ÷4 … 100 … ×4 too, and nothing near 100 % is touchy.
     readonly property real zoomSliderPos: {
-        const v = zoomValue, f = zoomFloor, c = zoomCeil
-        if (f < 1 && 1 < c) return v <= 1 ? 0.5 * (v - f) / (1 - f) : 0.5 + 0.5 * (v - 1) / (c - 1)
-        return c > f ? (v - f) / (c - f) : 0.5
+        const v = Math.max(zoomFloor, Math.min(zoomCeil, zoomValue)), f = zoomFloor, c = zoomCeil
+        if (f < 1 && 1 < c) return v <= 1 ? 0.5 * Math.log(v / f) / Math.log(1 / f) : 0.5 + 0.5 * Math.log(v) / Math.log(c)
+        return c > f ? Math.log(v / f) / Math.log(c / f) : 0.5
     }
     function zoomSliderTo(p) {
         const f = zoomFloor, c = zoomCeil
-        if (f < 1 && 1 < c) zoomTo(p <= 0.5 ? f + (1 - f) * p / 0.5 : 1 + (c - 1) * (p - 0.5) / 0.5)
-        else zoomTo(f + (c - f) * p)
+        p = Math.max(0, Math.min(1, p))
+        if (f < 1 && 1 < c) zoomTo(p <= 0.5 ? f * Math.pow(1 / f, p / 0.5) : Math.pow(c, (p - 0.5) / 0.5))
+        else zoomTo(f * Math.pow(c / f, p))
     }
     // The hand (PLAN-zoom): hold SPACE in annotation mode (the sketch / PDF tabs' convention —
     // in writing mode space types) and a left-drag pans the Flickable natively; the document
@@ -4836,12 +4841,21 @@ FocusScope {
                             width: pageW; height: parent.height
                             color: "white"; border.width: 1; border.color: Theme.colors.border
                             PdfPageImage {
+                                id: pageImg
                                 anchors.fill: parent
                                 document: pdfFrameDoc
                                 currentFrame: index
                                 fillMode: Image.PreserveAspectFit
                                 asynchronous: true
-                                sourceSize.width: Math.round(parent.width * Screen.devicePixelRatio)
+                                smooth: true
+                                // Render at the SETTLED width (2026-09-16): a zoom drag used to re-render every
+                                // visible page per slider pixel (a flash per render and a stall on the render
+                                // lock). Now the rendered frame scales with the page until the width has held
+                                // for a beat, then one crisp re-render.
+                                property real settledW: parent.width
+                                Timer { id: settle; interval: 150; onTriggered: pageImg.settledW = pageImg.parent.width }
+                                Connections { target: pageImg.parent; function onWidthChanged() { settle.restart() } }
+                                sourceSize.width: Math.round(settledW * Screen.devicePixelRatio)
                             }
                             // Per-PAGE ink overlay (2026-08-19): the sketch canvas in
                             // its inline-embed shape (frame = the page rect), storing
