@@ -6622,7 +6622,8 @@ FocusScope {
     // corners"): a 1px outline around the hovered / selected image with a square handle at each
     // corner. Drag ANY corner to resize proportionally — the image stays anchored at its lane's
     // left edge, so a left-corner drag grows the image the same way a right one does (outward =
-    // bigger). Double-click a corner: fit the lane width; again: back to the intrinsic size.
+    // bigger). Fit width / Original size live in the context menu (the corner double-click is
+    // gone — 2026-09-16, "it doesn't work"); the squares have no hover state (same ruling).
     // Root overlays (above the central mouse layer); images only (kind "image"); Document view only.
     Item {
         id: imgResize
@@ -6667,12 +6668,12 @@ FocusScope {
                     visible: !root.imageResizing
                     anchors.centerIn: parent
                     width: 9; height: 9; radius: 0
-                    color: cornerMA.containsMouse ? Theme.colors.textBright : Theme.colors.accent   // accent at rest (user ruling: not bright)
+                    color: Theme.colors.accent   // accent, no hover state (user ruling 2026-09-16)
                     border.width: 1; border.color: Theme.colors.accent
                 }
                 MouseArea {
                     id: cornerMA
-                    anchors.fill: parent; hoverEnabled: true; preventStealing: true
+                    anchors.fill: parent; preventStealing: true
                     cursorShape: (corner.onLeft === corner.onTop) ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor
                     onPressed: (m) => {
                         // Capture the target row + start geometry BEFORE flipping imageResizing —
@@ -6700,10 +6701,6 @@ FocusScope {
                         }
                     }
                     onCanceled: { root.imageResizing = false; root.imageResizeRow = -1 }
-                    onDoubleClicked: {   // fit the lane (the page at top level); at the fit already → intrinsic
-                        const fit = root.fitWidthForRow(imgResize.row)
-                        blockModel.setMediaWidth(imgResize.row, Math.abs(imgResize.imgW - fit) < 1 ? 0 : fit)
-                    }
                 }
             }
         }
