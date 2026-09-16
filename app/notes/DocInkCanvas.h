@@ -54,6 +54,10 @@ class DocInkCanvas : public QQuickPaintedItem
     // Any press→release on the canvas (stroke, erase, marquee, chip move/resize). The editor's
     // gesture latch reads it so the sheet can't recentre under a gesture (PLAN-centred-page).
     Q_PROPERTY(bool gesturing READ isGesturing NOTIFY gesturingChanged FINAL)
+    // The editor's ink gutter (120): a table wider than the page shifts left by half its overhang,
+    // capped at leftEdge − gutter (Editor.qml tableShiftFor — the SAME formula lives here so ink
+    // anchored to a table record rides the table). Bound from QML.
+    Q_PROPERTY(qreal inkGutter READ inkGutter WRITE setInkGutter NOTIFY transformChanged FINAL)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged FINAL)
     // The selected TEXT chip (-1s unless one is selected) — the Inspector
     // Size slider retargets it. Row is the anchor's current model row.
@@ -80,6 +84,8 @@ public:
     qreal contentY() const { return contentY_; }
     void setContentY(qreal v);
     qreal leftEdgeContent() const { return leftEdgeContent_; }
+    qreal inkGutter() const { return inkGutter_; }
+    void setInkGutter(qreal g);
     void setLeftEdgeContent(qreal v);
     qreal pageWidth() const { return pageWidth_; }
     void setPageWidth(qreal v);
@@ -220,7 +226,8 @@ private:
 
     BlockModel* model_ = nullptr;
     qreal contentX_ = 0, contentY_ = 0;
-    qreal leftEdgeContent_ = 0, pageWidth_ = 760;
+    qreal leftEdgeContent_ = 0, pageWidth_ = 760, inkGutter_ = 120;
+    qreal tableShiftFor(int row) const;   // the view shift of the table holding row (0 outside tables)
     // The page's left edge FROZEN at press (-1 = no gesture): the sheet centres in the viewport
     // (2026-09-16) so leftEdgeContent can move under a gesture; a stroke committed through a
     // moved origin would land offset. Belt and braces with the editor's latch.

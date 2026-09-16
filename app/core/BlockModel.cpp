@@ -4250,7 +4250,7 @@ void BlockModel::applyUndoWidth(qreal w) {
 // viewport), so left-margin X (center-relative) shifts by -Δw/2 and
 // right-margin by +Δw/2; anything overlapping the column stays
 // center-relative. Frame (media) anchors are width-immune.
-QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW) {
+QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW, bool tablePinned) {
     if (qFuzzyCompare(oldW, newW)) return {};
     const qreal halfOld = oldW / 2.0;
     const qreal dxEdge = (newW - oldW) / 2.0;
@@ -4261,7 +4261,8 @@ QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal
     for (qcv::ActiveStroke& s : a.strokes) {
         const QRectF b = qcv::strokeBoundsNorm(s);   // local px, oval-aware
         qreal shift = 0;
-        if (b.right() < -halfOld)     shift = -dxEdge;   // left marginalia
+        if (tablePinned)              shift = -dxEdge;   // the table stays put; the centre moved
+        else if (b.right() < -halfOld) shift = -dxEdge;  // left marginalia
         else if (b.left() > halfOld)  shift = dxEdge;    // right marginalia
         if (shift == 0.0) continue;
         const bool oval = (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2);
@@ -4273,7 +4274,8 @@ QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal
     }
     for (mn::SketchTextSpec& t : a.texts) {
         qreal shift = 0;
-        if (t.x + t.w < -halfOld)  shift = -dxEdge;
+        if (tablePinned)           shift = -dxEdge;
+        else if (t.x + t.w < -halfOld)  shift = -dxEdge;
         else if (t.x > halfOld)    shift = dxEdge;
         if (shift != 0.0) { t.x += shift; changed = true; }
     }
@@ -4291,7 +4293,7 @@ void BlockModel::setPageWidth(qreal w) {
     for (auto it = inkByBlock_.constBegin(); it != inkByBlock_.constEnd(); ++it) {
         const int row = rowForId(it.key());
         if (row < 0) continue;
-        const QString json = migrateInkForWidth(it.value(), oldW, w);
+        const QString json = migrateInkForWidth(it.value(), oldW, w, tableHeadOf(row) >= 0);
         if (!json.isEmpty()) migs.push_back({row, json});
     }
 
@@ -7730,7 +7732,7 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
             if (k == k0 && firstMerged && !inkForRow(r).isEmpty()) continue;
             QString j = ink[k];
             if (migrate) {
-                const QString m = migrateInkForWidth(j, srcPageWidth, pageWidth_);
+                const QString m = migrateInkForWidth(j, srcPageWidth, pageWidth_, tableHeadOf(r) >= 0);
                 if (!m.isEmpty()) j = m;
             }
             setBlockInk(r, j);

@@ -5622,6 +5622,7 @@ FocusScope {
         contentX: flick.contentX
         contentY: flick.contentY
         leftEdgeContent: root.leftEdge
+        inkGutter: root.inkGutter
         pageWidth: root.pageWidth
         inkMode: root.inkMode
         // The Inspector Draw trio — the exact studio/sketch binding shape.

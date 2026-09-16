@@ -895,7 +895,10 @@ public:
     // fully inside a margin keep their content-relative position. Returns the
     // migrated JSON, or an empty string when nothing moved. THE one home of
     // the affinity math — setPageWidth and DocumentMerger both call it.
-    static QString migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW);
+    // tablePinned (2026-09-16): ink anchored to a TABLE record rides the table, whose columns
+    // are px from the page's left edge and never recentre — every element shifts by -Δw/2 so
+    // its table x is constant, instead of edge affinity.
+    static QString migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW, bool tablePinned = false);
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).

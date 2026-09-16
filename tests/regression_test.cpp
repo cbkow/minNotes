@@ -509,6 +509,30 @@ static void testPageWidth() {
               && qFuzzyCompare(fwd.strokes[0].points[0].x(), -580.0),
           "redo re-applies the migrated ink");
 
+    // Ink anchored to a TABLE record is table-pinned (2026-09-16): the table's columns are px
+    // from the page's left edge and never recentre, so every element shifts by -dW/2 (its
+    // table x is constant) — marginalia or in-column alike, chips too.
+    {
+        const int head = m.insertTableRows(0, 2, 2) - 1;
+        CHECK(m.tableHeadOf(head) == head, "a table follows row 0");
+        m.setBlockInk(head, kInk);
+        m.setPageWidth(1200);   // 1000 → 1200: dW/2 = 100
+        mn::DocInkAnchor tp;
+        CHECK(mn::docInkFromJson(m.inkForRow(head), tp) && tp.strokes.size() == 2 && tp.texts.size() == 1,
+              "table-pinned blob keeps every element");
+        CHECK(qFuzzyCompare(tp.strokes[0].points[0].x(), -560.0) && qFuzzyCompare(tp.strokes[1].points[0].x(), -110.0)
+                  && qFuzzyCompare(tp.texts[0].x, 320.0),
+              "table-pinned ink shifts by -dW/2 whole (left, in-column and right alike)");
+        m.undo();
+        mn::DocInkAnchor tb;
+        CHECK(qFuzzyCompare(m.pageWidth(), 1000.0) && mn::docInkFromJson(m.inkForRow(head), tb)
+                  && qFuzzyCompare(tb.strokes[1].points[0].x(), -10.0),
+              "undo restores the table-pinned ink with the width");
+        m.setBlockInk(head, QString());
+        for (int i = 0; i < 3; ++i) m.undo();   // the table + its ink, back to the plain doc
+        while (m.rowCountQml() > 1) m.removeBlock(m.rowCountQml() - 1);
+    }
+
     // Pure width change (no ink): still one undoable step.
     m.setBlockInk(0, QString());
     m.setPageWidth(1200);

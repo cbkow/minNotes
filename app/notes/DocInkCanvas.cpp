@@ -205,6 +205,23 @@ void DocInkCanvas::rebuildTextHeights()
     }
 }
 
+void DocInkCanvas::setInkGutter(qreal g)
+{
+    if (qFuzzyCompare(inkGutter_, g)) return;
+    inkGutter_ = g; emit transformChanged(); update();
+}
+
+// Editor.qml's tableShiftFor, against the FROZEN edge: a table wider than the page centres
+// under it, half the overhang to the left, never past the gutter.
+qreal DocInkCanvas::tableShiftFor(int row) const
+{
+    if (!model_) return 0.0;
+    const int head = model_->tableHeadOf(row);
+    if (head < 0) return 0.0;
+    const qreal overhang = std::round(std::max<qreal>(0.0, (model_->tableWidth(head) - pageWidth_) / 2.0));
+    return -std::min(overhang, std::max<qreal>(0.0, placementEdge() - inkGutter_));
+}
+
 DocInkCanvas::Placement DocInkCanvas::placementFor(const QString& blockId,
                                                    mn::DocInkAnchor::Space space) const
 {
@@ -222,7 +239,10 @@ DocInkCanvas::Placement DocInkCanvas::placementFor(const QString& blockId,
         pl.scale = QSizeF(fw, fh);
         pl.widthScale = fw / std::max(1, model_->mediaW(row));
     } else {
-        pl.origin = QPointF(placementEdge() + pageWidth_ / 2.0, top);
+        // Page-centre coordinates. A TABLE record's origin carries the table's view shift: the
+        // stored x still means "page centre with the table at the page's left edge" (what the
+        // exporters lay out), and the ink rides the table wherever the sheet puts it.
+        pl.origin = QPointF(placementEdge() + tableShiftFor(row) + pageWidth_ / 2.0, top);
         pl.scale = QSizeF(1, 1);
         pl.widthScale = 1.0;
     }
