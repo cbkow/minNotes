@@ -42,8 +42,13 @@ Item {
     property real recent: 0               // notch-equivalents in the rate window (decays with time)
     property bool gliding: false
 
-    function maxX() { return Math.max(0, flick.contentWidth - flick.width) }
-    function maxY() { return Math.max(0, flick.contentHeight - flick.height) }
+    // The Flickable's own range — its MARGINS included: a grid frame (a table's tab) clamps the
+    // document to the table by setting them, and a range that ignored them scrolled the tab
+    // through the whole document (2026-09-16).
+    function minX() { return -flick.leftMargin }
+    function minY() { return -flick.topMargin }
+    function maxX() { return Math.max(minX(), flick.contentWidth - flick.width + flick.rightMargin) }
+    function maxY() { return Math.max(minY(), flick.contentHeight - flick.height + flick.bottomMargin) }
 
     // A trackpad GESTURE (it carries a scroll phase: begin / update / end / momentum) applies its
     // pixel deltas directly — the OS already supplies the momentum as a stream of them. Everything
@@ -61,8 +66,8 @@ Item {
             if (gesture && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)) {   // trackpad: native
                 const f = root.flick
                 root.vx = 0; root.vy = 0; root.gliding = false
-                f.contentY = Math.max(0, Math.min(root.maxY(), f.contentY - event.pixelDelta.y))
-                if (root.horizontalToo) f.contentX = Math.max(0, Math.min(root.maxX(), f.contentX - event.pixelDelta.x))
+                f.contentY = Math.max(root.minY(), Math.min(root.maxY(), f.contentY - event.pixelDelta.y))
+                if (root.horizontalToo) f.contentX = Math.max(root.minX(), Math.min(root.maxX(), f.contentX - event.pixelDelta.x))
                 root.lastMs = now
                 return
             }
@@ -91,10 +96,10 @@ Item {
         onTriggered: {
             const f = root.flick
             const k = Math.max(0.25, Math.min(3, frameTime * 60))   // frames elapsed (dropped frames travel further)
-            const my = root.maxY(), mx = root.maxX()
+            const my = root.maxY(), mx = root.maxX(), ly = root.minY(), lx = root.minX()
             let ny = f.contentY + root.vy * k, nx = f.contentX + root.vx * k
-            if (ny <= 0) { ny = 0; root.vy = 0 } else if (ny >= my) { ny = my; root.vy = 0 }
-            if (nx <= 0) { nx = 0; root.vx = 0 } else if (nx >= mx) { nx = mx; root.vx = 0 }
+            if (ny <= ly) { ny = ly; root.vy = 0 } else if (ny >= my) { ny = my; root.vy = 0 }
+            if (nx <= lx) { nx = lx; root.vx = 0 } else if (nx >= mx) { nx = mx; root.vx = 0 }
             f.contentY = ny; f.contentX = nx
             const decay = Math.pow(root.friction, k)
             root.vy *= decay; root.vx *= decay

@@ -124,16 +124,19 @@ FocusScope {
         _pendingZoom = z
         viewZoom = z                                                         // the layer scales; the edge recentres
         const nx = (px + (leftEdge - edge0)) * z - ax, ny = py * z - ay
+        // Within the visual range at the new zoom, margins included (a grid frame clamps the
+        // Flickable to its table through them; they read the layout zoom until the settle).
+        const minY = -flick.topMargin, maxY = Math.max(minY, blockModel.totalHeight * z - flick.height + flick.bottomMargin)
         flick.contentX = Math.max(0, Math.min(Math.max(0, sheetRight * z - flick.width), nx))
-        flick.contentY = Math.max(0, Math.min(Math.max(0, blockModel.totalHeight * z - flick.height), ny))
+        flick.contentY = Math.max(minY, Math.min(maxY, ny))
         zoomSettle.restart()             // the layout follows once the value holds
     }
     function docZoomSettle() {           // apply the pending layout zoom (the view already shows it) and clamp
         zoomSettle.stop()
         if (_pendingZoom === zoom) return
         zoom = _pendingZoom
-        flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), flick.contentX))
-        flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), flick.contentY))
+        flick.contentX = Math.max(-flick.leftMargin, Math.min(Math.max(-flick.leftMargin, flick.contentWidth - flick.width + flick.rightMargin), flick.contentX))
+        flick.contentY = Math.max(-flick.topMargin, Math.min(Math.max(-flick.topMargin, flick.contentHeight - flick.height + flick.bottomMargin), flick.contentY))
     }
     function docZoomStep(dir, ax, ay) {
         let z = viewZoom
@@ -376,9 +379,15 @@ FocusScope {
     }
     // PDF tab zoom (2026-08-20): 1.0 = fit-width; the ListView grows a
     // horizontal content axis when zoomed past it (space-hand pans both).
-    // Reset per tab — keyed on the ID, not the row (row shifts on inserts).
+    // Remembered PER TAB (2026-09-16), keyed on the ID (a row shifts on inserts); a fresh tab is 1.
     property real pdfZoom: 1.0
-    onActivePdfIdChanged: pdfZoom = 1.0
+    property var pdfZooms: ({})
+    property string _prevPdfId: ""
+    onActivePdfIdChanged: {
+        if (_prevPdfId !== "") pdfZooms[_prevPdfId] = pdfZoom
+        if (activePdfId !== "") pdfZoom = pdfZooms[activePdfId] !== undefined ? pdfZooms[activePdfId] : 1.0
+        _prevPdfId = activePdfId
+    }
     property real pdfFitPageW: 0            // pushed by the list (viewport-derived)
     function pdfZoomTo(z) { pdfZoom = Math.max(0.25, Math.min(4, z)) }
     function pdfZoomStep(dir) { pdfZoomTo(pdfZoom * (dir > 0 ? Math.SQRT2 : 1 / Math.SQRT2)) }
@@ -431,6 +440,20 @@ FocusScope {
     readonly property string activeFrameId: activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
+    // The document view's zoom is remembered per bottom tab too (2026-09-16): the Document tab
+    // and each table's grid tab share the Flickable, so each keeps its own value in docZooms
+    // (keyed by frame id, "" = Document) and gets it back on the switch.
+    property var docZooms: ({})
+    property string _prevFlickFrameId: ""
+    function _isFlickFrame(id) { return id === "" || (blockModel.rowForId(id) >= 0 && blockModel.headerCount(blockModel.rowForId(id)) > 0) }
+    onActiveFrameIdChanged: {
+        if (_isFlickFrame(_prevFlickFrameId)) docZooms[_prevFlickFrameId] = viewZoom
+        if (_isFlickFrame(activeFrameId)) {
+            const z = docZooms[activeFrameId] !== undefined ? docZooms[activeFrameId] : 1
+            if (z !== viewZoom) { docZoomTo(z); docZoomSettle() }
+            _prevFlickFrameId = activeFrameId
+        }
+    }
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
         // Tool rules on view changes (2026-08-19, tightened 2026-08-20):
@@ -482,23 +505,34 @@ FocusScope {
     // The blob is held by the DocumentManager, keyed per tab; Main.qml drives
     // capture-before / restore-after around docs.setActive.
     function captureViewState() {
+        if (_isFlickFrame(activeFrameId)) docZooms[activeFrameId] = viewZoom   // the current tab's zoom, up to date
+        if (activePdfId !== "") pdfZooms[activePdfId] = pdfZoom
         return {
             scrollY:       flick.contentY,
             focusRow:      cursor.focusRow,  focusCol:  cursor.focusCol,
             anchorRow:     cursor.anchorRow, anchorCol: cursor.anchorCol,
             activeFrameId: root.activeFrameId,
-            boardMode:     root.boardMode,   boardCol:  root.boardCol
+            boardMode:     root.boardMode,   boardCol:  root.boardCol,
+            zoom:          viewZoom,         docZooms:  docZooms,   pdfZooms: pdfZooms   // per document tab (2026-09-16)
         }
     }
     function restoreViewState(m) {
         // No saved state (a freshly-opened tab) → the standard fresh-doc reset.
         if (!m || m.focusRow === undefined) {
+            docZooms = ({}); pdfZooms = ({}); _prevFlickFrameId = ""; _prevPdfId = ""
             root.setActiveTab("")
+            if (viewZoom !== 1) { docZoomTo(1); docZoomSettle() }
             cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
             return
         }
         cursor.clearMarks()
+        docZooms = m.docZooms || ({}); pdfZooms = m.pdfZooms || ({})
+        _prevFlickFrameId = ""; _prevPdfId = ""
         root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/sketch)
+        if (_isFlickFrame(m.activeFrameId)) {
+            const z = m.zoom !== undefined ? m.zoom : 1
+            if (z !== viewZoom) { docZoomTo(z); docZoomSettle() }
+        }
         if (m.boardMode && m.boardCol >= 0) { root.boardMode = true; root.boardCol = m.boardCol }
         // Restore the caret (and any selection), then the scroll offset.
         cursor.anchorRow = m.anchorRow; cursor.anchorCol = m.anchorCol
@@ -965,8 +999,7 @@ FocusScope {
     readonly property real videoTransportH: 40
     readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
-        && activePdfRow < 0   // not in a full-frame tab
-        && activeVideoRow < 0 && activeSketchRow < 0   // the studio has its own surface; sketch tab hides the doc
+        && activeFrameId === ""   // not in a full-frame tab — nor a table's grid frame (2026-09-16)
         && videoPlayingRow >= firstVisible && videoPlayingRow <= lastVisible
     // Scrolled away / entered a table or PDF tab → tear the player down. NOT
     // when the studio owns the decoder (its surface replaces the inline one).
@@ -4613,9 +4646,9 @@ FocusScope {
             cursorShape: Qt.ClosedHandCursor
             property point last: Qt.point(0, 0)
             onActiveChanged: last = Qt.point(0, 0)
-            onTranslationChanged: {
-                flick.contentX = Math.max(0, Math.min(Math.max(0, flick.contentWidth - flick.width), flick.contentX - (translation.x - last.x)))
-                flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), flick.contentY - (translation.y - last.y)))
+            onTranslationChanged: {   // within the Flickable's range, margins included (a grid frame's clamp)
+                flick.contentX = Math.max(-flick.leftMargin, Math.min(Math.max(-flick.leftMargin, flick.contentWidth - flick.width + flick.rightMargin), flick.contentX - (translation.x - last.x)))
+                flick.contentY = Math.max(-flick.topMargin, Math.min(Math.max(-flick.topMargin, flick.contentHeight - flick.height + flick.bottomMargin), flick.contentY - (translation.y - last.y)))
                 last = Qt.point(translation.x, translation.y)
             }
         }
@@ -6603,8 +6636,10 @@ FocusScope {
             opacity: root.inkMode ? 0.5 : (blockSelected ? 0.35 : 1.0)
             enabled: !root.inkMode
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
-                     && root.rowInView(row)
+            // Document view only: a grid frame (a table's tab) clamps the same Flickable to the
+            // table, and a PDF just above it was still "in view" — its bar showed in the tab
+            // (2026-09-16).
+            visible: root.activeFrameId === "" && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
             readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)

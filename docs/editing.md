@@ -50,7 +50,8 @@ pointer. The zoom group in the bottom strip, beside Undo and Redo, is the
 readout: − and + step, the slider sits at 100% in the middle, and the
 percent opens Fit width / 100%. Zoom is a view setting for the tab: it
 changes nothing in the note, is not saved with it, and a freshly opened
-tab starts at 100%. The same keys and the same group zoom a PDF or a
+tab starts at 100%. Every tab keeps its own zoom — each note in the tab bar,
+and each table or PDF tab along the bottom. The same keys and the same group zoom a PDF or a
 sketch opened full-frame. To **pan** a zoomed page, hold Space in
 annotation mode (or in a PDF or sketch tab) and drag with the hand, or
 drag with the middle mouse button at any time.
