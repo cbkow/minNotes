@@ -4563,7 +4563,10 @@ FocusScope {
             flick: flick
             onZoomRequested: (dir, x, y) => root.docZoomStep(dir, x, y)
         }
-        WheelHandler { onWheel: (event) => smoothWheel.handle(event) }
+        WheelHandler {
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad   // see SmoothWheel: TouchPad is not optional
+            onWheel: (event) => smoothWheel.handle(event)
+        }
         PinchHandler {
             target: null
             property real startZoom: 1
@@ -4831,7 +4834,10 @@ FocusScope {
                         horizontalToo: false
                         onZoomRequested: (dir, x, y) => root.pdfZoomStep(dir)
                     }
-                    WheelHandler { onWheel: (event) => pdfWheel.handle(event) }
+                    WheelHandler {
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        onWheel: (event) => pdfWheel.handle(event)
+                    }
                     delegate: Item {
                         required property int index
                         readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready

@@ -9,7 +9,12 @@
 // chord: the owner handles it via zoomRequested.
 //
 //   Flickable { SmoothWheel { id: sw; flick: parent; onZoomRequested: … }
-//               WheelHandler { onWheel: (e) => sw.handle(e) } }
+//               WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+//                              onWheel: (e) => sw.handle(e) } }
+//
+// acceptedDevices MUST include TouchPad: WheelHandler takes only a real mouse wheel by default,
+// and macOS reports a remote desktop's relayed wheel (and any precise-delta scroll) as a
+// TouchPad device — the handler saw nothing and the bare Flickable scrolled (2026-09-16).
 //
 // A zero-size Item holding the state + frame animation. The WheelHandler is declared by the
 // OWNER, inside the Flickable: a handler's scope is the item it is declared in — setting its
@@ -20,11 +25,11 @@ import QtQuick
 Item {
     id: root
     required property Flickable flick
-    property real pxPerNotch: 96          // one lone notch's total travel (three lines of body and a bit)
+    property real pxPerNotch: 80          // one lone notch's total travel (about three lines of body)
     property real friction: 0.90          // velocity kept per 60 Hz frame — the tail's length
     property real maxGain: 6              // a sustained burst's kick multiplier, at most
-    property real gainPerNotch: 0.45      // how fast a burst ramps toward maxGain
-    property int  burstGapMs: 250         // notches closer than this are one burst
+    property real gainPerNotch: 0.5       // how fast the gain ramps per extra notch in the window
+    property int  windowMs: 300           // the rate window: notches decay out of it exponentially
     readonly property bool log: Qt.application.arguments.indexOf("--perf-log") >= 0   // [wheel] lines
     property bool horizontalToo: true
     signal zoomRequested(int dir, real x, real y)
@@ -34,24 +39,26 @@ Item {
     property real vx: 0                   // px per 60 Hz frame
     property real vy: 0
     property real lastMs: 0
-    property int  burst: 0
+    property real recent: 0               // notch-equivalents in the rate window (decays with time)
     property bool gliding: false
 
     function maxX() { return Math.max(0, flick.contentWidth - flick.width) }
     function maxY() { return Math.max(0, flick.contentHeight - flick.height) }
 
-    // Every device: a trackpad's PIXEL deltas apply directly (the OS already supplies its
-    // momentum as a stream of them); NOTCH-only events — a mouse wheel, or whatever a remote
-    // desktop relays — take the momentum model below.
+    // A trackpad GESTURE (it carries a scroll phase: begin / update / end / momentum) applies its
+    // pixel deltas directly — the OS already supplies the momentum as a stream of them. Everything
+    // else — a mouse wheel's notches, or whatever a remote desktop relays (pixel deltas WITHOUT a
+    // phase) — takes the momentum model below, counting notches by angleDelta.
     function handle(event) {
             const now = Date.now()
             if (root.log) console.log("[wheel] angle", event.angleDelta.x, event.angleDelta.y, "pixel", event.pixelDelta.x, event.pixelDelta.y,
-                                      "gap", root.lastMs ? now - root.lastMs : -1, "ms", "mods", event.modifiers, "inverted", event.inverted)
+                                      "phase", event.phase, "gap", root.lastMs ? now - root.lastMs : -1, "ms", "mods", event.modifiers, "inverted", event.inverted)
             if (event.modifiers & Qt.ControlModifier) {          // the zoom chord
                 root.zoomRequested(event.angleDelta.y > 0 ? 1 : -1, event.x, event.y)
                 return
             }
-            if (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0) {   // trackpad: native
+            const gesture = event.phase !== Qt.NoScrollPhase
+            if (gesture && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)) {   // trackpad: native
                 const f = root.flick
                 root.vx = 0; root.vy = 0; root.gliding = false
                 f.contentY = Math.max(0, Math.min(root.maxY(), f.contentY - event.pixelDelta.y))
@@ -59,9 +66,14 @@ Item {
                 root.lastMs = now
                 return
             }
-            root.burst = (now - root.lastMs < root.burstGapMs) ? root.burst + 1 : 0
+            // The gain keys on the notch RATE, not the event count: a remote desktop relays one
+            // physical notch as several fractional events 0 ms apart (angleDelta ±40 ×3), which an
+            // event counter read as a burst — a lone slow notch amplified. `recent` accumulates
+            // notch-equivalents and decays over windowMs; the first notch's worth is free.
+            const dt = root.lastMs ? now - root.lastMs : root.windowMs
+            root.recent = root.recent * Math.exp(-dt / root.windowMs) + Math.abs(event.angleDelta.y) / 120
             root.lastMs = now
-            const gain = 1 + Math.min(root.maxGain - 1, root.burst * root.gainPerNotch)
+            const gain = 1 + Math.min(root.maxGain - 1, Math.max(0, root.recent - 1) * root.gainPerNotch)
             const kick = root.pxPerNotch * (1 - root.friction) * gain   // Σ kick·friction^n = pxPerNotch·gain
             let dx = event.angleDelta.x, dy = event.angleDelta.y
             if (event.modifiers & Qt.ShiftModifier) { dx = dy; dy = 0 }   // shift-wheel pans sideways
