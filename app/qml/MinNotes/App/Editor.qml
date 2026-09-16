@@ -6664,12 +6664,12 @@ FocusScope {
                 required property int index
                 readonly property bool onLeft: index === 0 || index === 3
                 readonly property bool onTop: index < 2
-                width: 18; height: 18   // hit area; the visible square is 9 px
-                x: Math.round(imgResize.imgX + (onLeft ? 0 : imgResize.imgW * root.zoom)) - width / 2
-                y: Math.round(imgResize.imgTopV + (onTop ? 0 : imgResize.imgH * root.zoom)) - height / 2
+                width: 19; height: 19   // hit area; the visible 9 px square sits at a WHOLE-pixel inset (5)
+                x: Math.round(imgResize.imgX + (onLeft ? 0 : imgResize.imgW * root.zoom)) - 9
+                y: Math.round(imgResize.imgTopV + (onTop ? 0 : imgResize.imgH * root.zoom)) - 9
                 Rectangle {
                     visible: !root.imageResizing
-                    anchors.centerIn: parent
+                    x: 5; y: 5   // (not centerIn: 18 − 9 halves to a half pixel and antialiases the edges)
                     width: 9; height: 9; radius: 0
                     color: Theme.colors.accent   // accent, no hover state (user ruling 2026-09-16)
                     border.width: 1; border.color: Theme.colors.accent
