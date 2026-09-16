@@ -21,7 +21,8 @@ Item {
     property real friction: 0.90          // velocity kept per 60 Hz frame — the tail's length
     property real maxGain: 6              // a sustained burst's kick multiplier, at most
     property real gainPerNotch: 0.45      // how fast a burst ramps toward maxGain
-    property int  burstGapMs: 160         // notches closer than this are one burst
+    property int  burstGapMs: 250         // notches closer than this are one burst
+    readonly property bool log: Qt.application.arguments.indexOf("--perf-log") >= 0   // [wheel] lines
     property bool horizontalToo: true
     signal zoomRequested(int dir, real x, real y)
 
@@ -38,13 +39,25 @@ Item {
 
     WheelHandler {
         parent: root.flick
-        acceptedDevices: PointerDevice.Mouse  // trackpads keep their native, momentum scroll
+        // Every device: a trackpad's PIXEL deltas apply directly (the OS already supplies its
+        // momentum as a stream of them); NOTCH-only events — a mouse wheel, or whatever a remote
+        // desktop relays — take the momentum model below.
         onWheel: (event) => {
+            const now = Date.now()
+            if (root.log) console.log("[wheel] angle", event.angleDelta.x, event.angleDelta.y, "pixel", event.pixelDelta.x, event.pixelDelta.y,
+                                      "gap", root.lastMs ? now - root.lastMs : -1, "ms", "mods", event.modifiers, "inverted", event.inverted)
             if (event.modifiers & Qt.ControlModifier) {          // the zoom chord
                 root.zoomRequested(event.angleDelta.y > 0 ? 1 : -1, event.x, event.y)
                 return
             }
-            const now = Date.now()
+            if (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0) {   // trackpad: native
+                const f = root.flick
+                root.vx = 0; root.vy = 0; root.gliding = false
+                f.contentY = Math.max(0, Math.min(root.maxY(), f.contentY - event.pixelDelta.y))
+                if (root.horizontalToo) f.contentX = Math.max(0, Math.min(root.maxX(), f.contentX - event.pixelDelta.x))
+                root.lastMs = now
+                return
+            }
             root.burst = (now - root.lastMs < root.burstGapMs) ? root.burst + 1 : 0
             root.lastMs = now
             const gain = 1 + Math.min(root.maxGain - 1, root.burst * root.gainPerNotch)
