@@ -5,6 +5,8 @@
 #include <QColorSpace>
 #include <QStyleHints>
 #include <QTimer>
+#include <QQuickWindow>
+#include <QTextStream>
 #include <QPdfDocument>
 #include <QPainter>
 #include <QUrl>
@@ -244,20 +246,48 @@ int main(int argc, char *argv[])
     const QStringList pending = app.takePending();
     for (const QString &s : pending) resolveAndOpen(docs, s);
     const QStringList args = app.arguments();
-    QString exportPdfTo, exportHtmlTo;
+    QString exportPdfTo, exportHtmlTo, shotTo;
     for (int i = 1; i < args.size(); ++i) {
         if (args[i].startsWith(QLatin1String("--export-pdf="))) { exportPdfTo = args[i].mid(13); continue; }
         if (args[i].startsWith(QLatin1String("--export-html="))) { exportHtmlTo = args[i].mid(14); continue; }
+        if (args[i].startsWith(QLatin1String("--shot="))) { shotTo = args[i].mid(7); continue; }
         if (args[i].startsWith(QLatin1Char('-'))) continue;   // skip flags
         resolveAndOpen(docs, args[i]);
     }
     // Dev-only (SR-4 walk 2): `minNotes --export-pdf=<out.pdf> <doc.mnd>` writes the active
     // document's PDF export headlessly (QT_QPA_PLATFORM=offscreen) and exits — 0 on success,
     // 102 when the export fails. Lets a PDF report be reproduced without driving the GUI.
+    // Calibration (2026-09-16): `--shot=<out.png> <doc.mnd>` renders the document view offscreen at
+    // 1200 × 900 and saves the window — the A/B against a headless browser's shot of the HTML export.
+    if (!shotTo.isEmpty())
+        QTimer::singleShot(2500, &app, [&app, &engine, &docs, shotTo] {
+            QQuickWindow* w = nullptr;
+            for (QObject* o : engine.rootObjects()) if ((w = qobject_cast<QQuickWindow*>(o))) break;
+            if (!w) { app.exit(103); return; }
+            w->resize(1200, 900);
+            QTimer::singleShot(1500, &app, [&app, &docs, w, shotTo] {
+                if (BlockModel* m = docs.activeModel()) m->flushLayoutSpike();   // measured heights, not estimates
+                QTimer::singleShot(600, &app, [&app, &docs, w, shotTo] {
+                const bool ok = w->grabWindow().save(shotTo);
+                // …and the model's block geometry beside it (<out>.rows.txt: row type y h text) —
+                // the app half of the A/B against the browser's element offsets.
+                if (BlockModel* m = docs.activeModel()) {
+                    QFile f(shotTo + QStringLiteral(".rows.txt"));
+                    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                        QTextStream ts(&f);
+                        for (int r = 0; r < m->rowCountQml(); ++r)
+                            ts << r << '\t' << m->typeForRow(r) << '\t' << m->yForRow(r) << '\t' << m->heightForRow(r)
+                               << '\t' << m->contentForRow(r).left(24).replace('\n', ' ') << '\n';
+                    }
+                }
+                app.exit(ok ? 0 : 103);
+                });
+            });
+        });
     // Its twin (2026-09-16): `--export-html=<out.html> <doc.mnd>` — screenshot the result with a
     // headless browser to eyeball the sheet / tables / ink without the GUI.
     if (!exportHtmlTo.isEmpty())
-        QTimer::singleShot(0, &app, [&app, &exporter, exportHtmlTo] {
+        QTimer::singleShot(1500, &app, [&app, &exporter, exportHtmlTo] {   // (after an --import lands)
             app.exit(exporter.exportHtml(exportHtmlTo, true) ? 0 : 102);
         });
     if (!exportPdfTo.isEmpty())

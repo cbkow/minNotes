@@ -1522,6 +1522,38 @@ private:
 
 // the dark page, the 760px measure, squared corners, rationed accent, the
 // QCView-note violet. System font stacks (no bundled fonts in v1).
+// The app's faces as @font-face data (2026-09-16): read from the QML module's resources, so the
+// export renders with the glyph metrics the editor laid out with. All four families are SIL OFL
+// 1.1 (embedding in documents is permitted; the notices ship in LICENSES/). Missing resources
+// degrade to the system stacks silently — the CSS names them as fallbacks.
+static QString embeddedFontCss() {
+    struct Face { const char* family; int weight; const char* style; const char* file; };
+    static const Face faces[] = {
+        { "Aspekta",        400, "normal", "Aspekta-400.ttf" },
+        { "Aspekta",        700, "normal", "Aspekta-700.ttf" },
+        { "JetBrains Mono", 400, "normal", "JetBrainsMono-Regular.ttf" },
+        { "Lora",           400, "normal", "Lora-Regular.ttf" },
+        { "Lora",           400, "italic", "Lora-Italic.ttf" },
+        { "Lora",           700, "normal", "Lora-Bold.ttf" },
+        { "Lora",           700, "italic", "Lora-BoldItalic.ttf" },
+    };
+    QString out;
+    for (const Face& f : faces) {
+        QFile file(QStringLiteral(":/qt/qml/MinNotes/App/qml/MinNotes/App/fonts/") + QLatin1String(f.file));
+        if (!file.exists()) file.setFileName(QStringLiteral(":/qml/MinNotes/App/fonts/") + QLatin1String(f.file));
+        // A build without the QML module's resources (the regression test links the core alone)
+        // may name the fonts directory: MN_FONTS_DIR.
+        if (!file.exists() && !qEnvironmentVariableIsEmpty("MN_FONTS_DIR"))
+            file.setFileName(QString::fromLocal8Bit(qgetenv("MN_FONTS_DIR")) + QLatin1Char('/') + QLatin1String(f.file));
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        out += QStringLiteral("@font-face{font-family:'%1';font-weight:%2;font-style:%3;font-display:block;"
+                              "src:url(data:font/ttf;base64,%4) format('truetype')}\n")
+                   .arg(QLatin1String(f.family)).arg(f.weight).arg(QLatin1String(f.style),
+                        QString::fromLatin1(file.readAll().toBase64()));
+    }
+    return out;
+}
+
 const char* kHtmlCss = R"CSS(
 :root{--bg:#181817;--desk:#121211;--sheetw:1000px;
 --text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
@@ -1547,8 +1579,13 @@ html{--l:max(0px,calc(50% - var(--sheetw)));background-color:var(--desk);
 background-image:linear-gradient(90deg,var(--desk) var(--l),var(--bg) var(--l),var(--bg) calc(var(--l) + var(--sheetw)),var(--desk) calc(var(--l) + var(--sheetw)));
 background-size:calc(100% + var(--sheetw)) 100%;
 background-repeat:no-repeat}
+/* THE APP'S TYPE (2026-09-16): the app's faces ride along as embedded @font-face data (the
+   OFL permits it; ~650 KB beside the images) at the app's sizes and its pinned line height
+   round(size × 1.35), and every block carries the app's 6 px top/bottom inset (code 12) —
+   so Qt and the browser wrap at the same words and page ink lands on the same glyphs. */
 body{background:transparent;color:var(--text);margin:0;
-font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+main p,main h1,main h2,main h3,main h4,main h5,main h6,main li,main figure,main .blkw{margin:0;padding:6px 0}
 /* Centred page (2026-09-16; was left-anchored): the sheet centres when the
    window is wider than it and hugs the left edge when not — `auto` margins
    go to 0 under min-width, so narrow windows scroll instead of reflowing.
@@ -1585,20 +1622,30 @@ img.ink{pointer-events:none}
 .inkwrap img{display:block;max-width:100%}
 .inkwrap .ink{position:absolute;inset:0;width:100%;z-index:1;background:transparent}
 ::selection{background:var(--sel);color:var(--bright)}
-h1,h2,h3,h4,h5,h6{color:var(--bright);line-height:1.25}
+h1,h2,h3,h4,h5,h6{color:var(--bright);font-weight:700}
+h1{font-size:30px;line-height:41px}h2{font-size:26px;line-height:35px}h3{font-size:22px;line-height:30px}
+h4{font-size:19px;line-height:26px}h5{font-size:17px;line-height:23px}h6{font-size:16px;line-height:22px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-hr{border:0;border-top:1px solid var(--divider);margin:24px 0}
-blockquote{font-family:Georgia,'Times New Roman',serif;border-left:3px solid var(--quote);
-margin:0;padding:2px 16px;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--divider);margin:14px 0 15px}   /* the app's 30 px divider row */
+blockquote{font-family:Lora,Georgia,'Times New Roman',serif;border-left:3px solid var(--quote);
+margin:0;padding:6px 0 6px 19px;color:var(--muted)}   /* text at 22 = the app's quote inset */
+blockquote p{padding:0}
 /* Code escapes the measure like tables do (user ruling: capping code is
    purely aesthetic): natural width, page-level scroll, no inner scrollbar. */
-pre{background:var(--recess);border:1px solid var(--border);padding:12px 14px;
-width:max-content;min-width:100%;color:var(--codetext)}
-code{font-family:ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;font-size:.9em}
+pre{background:var(--recess);border:1px solid var(--border);padding:12px 8px;margin:0 -8px;
+width:max-content;min-width:calc(100% + 16px);color:var(--codetext);font-size:13px;line-height:18px}
+main .blkw{padding:0}   /* the pre carries the 12 px inset itself */
+code{font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 :not(pre)>code{background:var(--chipbg);color:var(--chiptext);padding:1px 5px}
 img{max-width:100%}
-figure{margin:16px 0}
-ul,ol{padding-left:24px}li{margin:2px 0}
+/* Lists: the app's text insets — bullets and tasks at 22 + 24 per depth, numbered at 34 + 24
+   per depth; the bullet is the app's small dot, 12 px before the text. */
+ul{margin:0;padding-left:22px}ol{margin:0;padding-left:34px}ul ul,ol ul,ul ol,ol ol{padding-left:24px}
+ul>li{list-style:none}
+ul>li:not(.task)::before{content:"";position:absolute;left:-12px;top:14px;width:3px;height:3px;background:var(--muted)}
+li.task{margin-left:-22px;padding-left:22px}
+li.task.done{color:var(--muted);text-decoration:line-through}   /* the app's done task */
+li.task .cb{position:absolute;left:2px;top:8px}
 /* Tri-state checkboxes, the app's exact recipe (squared, accent = task-state). */
 .cb{display:inline-block;width:14px;height:14px;box-sizing:border-box;position:relative;
 border:1.5px solid var(--muted);vertical-align:-2px;margin-right:6px}
@@ -1615,7 +1662,7 @@ border:solid var(--bright);border-width:0 2px 2px 0;transform:rotate(45deg)}
 .tablewrap{margin:32px 0;width:fit-content;min-width:100%}
 table{border-collapse:collapse;width:max-content;min-width:100%;font-size:14px;
 background:var(--bg)}
-td,th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top;overflow-wrap:break-word}
+td,th{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top;overflow-wrap:break-word}
 th{font-weight:inherit}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright)}
 .cmt{background:rgba(1,137,241,.13);position:relative}
@@ -1748,15 +1795,11 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         const TextInk ti = renderTextInk(m, row);
         if (ti.img.isNull()) return QString();
         if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
-        // Ink y is measured from the ROW's top in the app. A table row's record starts a pocket
-        // (kTablePocket) above the grid its cell starts at; a text block's TextEdit sits 6 px below
-        // its row top (12 for code — BlockView's `te.y`), while the HTML element's text starts at
-        // its own top. Lift by the app's inset so the ink sits on the text the way it did in the
-        // app. (What remains is font metrics: the export's system face vs the app's Aspekta.)
-        const int t = m->typeForRow(row);
-        const double lift = m->tableHeadOf(row) >= 0 ? m->tablePadTop(row)
-                          : t == BlockModel::Split ? 0.0
-                          : t == BlockModel::Code ? 12.0 : 6.0;
+        // Ink y is measured from the ROW's top in the app, and every text element now carries the
+        // app's row inset as its own padding (the CSS mirrors BlockView), so the element's box IS
+        // the row: no lift. The one exception is a table row, whose record starts a pocket
+        // (kTablePocket) above the grid its cell starts at.
+        const double lift = m->tableHeadOf(row) >= 0 ? m->tablePadTop(row) : 0.0;
         const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
         if (src.isEmpty()) return QString();
         ++inkLayers;
@@ -1928,10 +1971,17 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 listStack.push_back(tag);
             }
             QString li = emitInlineHtml(m, row, fn);
-            if (type == BlockModel::TaskListItem)
-                li = taskGlyphHtml(m->taskStateForRow(row)) + li;
-            body += injectInk(QStringLiteral("<li>%1%2</li>\n").arg(bnumLi(row, depth), li),
-                              row, 24.0 * (depth + 1));
+            const bool task = type == BlockModel::TaskListItem;
+            if (task) li = taskGlyphHtml(m->taskStateForRow(row)) + li;
+            // The li box starts at the app's text inset (bullets 22 + 24·depth, numbered 34 + 24·depth;
+            // a task li pulls back to 24·depth and pads its own 22) — the ink's x is page-relative,
+            // so subtract it.
+            const double liLeft = task ? 24.0 * depth
+                                : type == BlockModel::OrderedListItem ? 34.0 + 24.0 * depth : 22.0 + 24.0 * depth;
+            const QString liClass = !task ? QString()
+                                  : m->taskStateForRow(row) == BlockModel::TaskDone ? QStringLiteral(" class=\"task done\"")
+                                                                                     : QStringLiteral(" class=\"task\"");
+            body += injectInk(QStringLiteral("<li%3>%1%2</li>\n").arg(bnumLi(row, depth), li, liClass), row, liLeft);
             break;
         }
         case BlockModel::Divider:
@@ -2011,7 +2061,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // Code blocks fill with the syntax THEME's editor background (the app's
     // recipe, Editor.qml) so the token colours sit on the surface they were
     // designed for — patch it over the static recess tone.
-    QString css = QLatin1String(kHtmlCss);
+    QString css = embeddedFontCss() + QLatin1String(kHtmlCss);
     const QColor codeBg = codeEmitter.themeBackground();
     if (codeBg.isValid())
         css.replace(QLatin1String("pre{background:var(--recess)"),

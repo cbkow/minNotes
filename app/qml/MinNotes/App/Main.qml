@@ -1332,11 +1332,25 @@ ApplicationWindow {
             if (a[i].indexOf("--pool-probe=") === 0) return a[i].substring(13)
         return ""
     }
+    // Dev-only (2026-09-16): --import=<file> opens a fresh tab with the file IMPORTED (markdown,
+    // docx, …) — pairs with --shot / --export-html for calibration samples written as markdown.
+    readonly property string _importFixture: {
+        var a = Qt.application.arguments
+        for (var i = 0; i < a.length; ++i)
+            if (a[i].indexOf("--import=") === 0) return a[i].substring(9)
+        return ""
+    }
     Component.onCompleted: {
         if (_poolProbeFixture !== "") {
             width = 1200; height = 900
             docs.newTab()
             if (!importer.importFile(_poolProbeFixture)) { console.log("POOL-PROBE FAIL import"); Qt.exit(101) }
+            return
+        }
+        if (_importFixture !== "") {
+            width = 1200; height = 900
+            docs.newTab()
+            if (!importer.importFile(_importFixture)) { console.log("IMPORT FAIL"); Qt.exit(101) }
             return
         }
         width = Math.max(640, winState.w)

@@ -17,8 +17,10 @@ small mono label.
   footnotes.
 - **HTML** — one self-contained file you can send anywhere. Colors,
   highlights, syntax-colored code, and tables survive exactly; the page
-  keeps the app's look — the page centred with its margins, a wide table
-  centred under it; annotations ride as
+  keeps the app's look — the app's own typefaces travel inside the file,
+  set at the app's sizes, so lines wrap where they wrap in the note and
+  annotations sit on the same words; the page centred with its margins, a
+  wide table centred under it; annotations ride as
   layers behind an **Annotations** toggle; comment threads pop up on
   hover; click any image — table cells and video-note frames included —
   for the built-in lightbox.

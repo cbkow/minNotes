@@ -7159,7 +7159,7 @@ static void testGridTableExports() {
           "Markdown: the table sits between its neighbours and its cells don't repeat as paragraphs");
 
     RecordingSink hs;
-    const QString html = ex.toHtml(Exporter::Options{}, hs);
+    QString html = ex.toHtml(Exporter::Options{}, hs);
     const int wrap = html.indexOf(QStringLiteral("<div class=\"tablewrap\">")), thead = html.indexOf(QStringLiteral("<thead>"));
     const int nameAt = html.indexOf(QStringLiteral("Name</p>")), tbody = html.indexOf(QStringLiteral("</thead><tbody>"));
     const int endT = html.indexOf(QStringLiteral("</tbody></table></div>")), afterAt = html.indexOf(QStringLiteral("after</p>"));
@@ -7183,6 +7183,20 @@ static void testGridTableExports() {
               && html.contains(QStringLiteral("--l:max(0px,calc(50% - var(--sheetw)))")),
           "HTML: the page and the sheet band centre");
     CHECK(!html.contains(QStringLiteral("<div class=\"tablewrap\" style")), "HTML: a table within the page carries no centring margin");
+    // The app's type rides along (2026-09-16): the faces as @font-face data, the sizes and the
+    // pinned line heights, the 6 px block inset — the export wraps where the editor wraps. (The
+    // test binary has no QML resources: point the exporter at the source fonts.)
+    qputenv("MN_FONTS_DIR", QFileInfo(QStringLiteral(__FILE__)).dir().filePath(QStringLiteral("../app/qml/MinNotes/App/fonts")).toLocal8Bit());
+    RecordingSink fs;
+    html = ex.toHtml(Exporter::Options{}, fs);
+    CHECK(html.count(QStringLiteral("@font-face{font-family:'Aspekta'")) == 2
+              && html.count(QStringLiteral("@font-face{font-family:'Lora'")) == 4
+              && html.contains(QStringLiteral("@font-face{font-family:'JetBrains Mono'"))
+              && html.contains(QStringLiteral("format('truetype')")),
+          "HTML: Aspekta ×2, Lora ×4 and JetBrains Mono embed as @font-face data");
+    CHECK(html.contains(QStringLiteral("font:14px/19px Aspekta,")) && html.contains(QStringLiteral("h1{font-size:30px;line-height:41px}"))
+              && html.contains(QStringLiteral("main .blkw{margin:0;padding:6px 0}")) && html.contains(QStringLiteral("ul{margin:0;padding-left:22px}ol{margin:0;padding-left:34px}")),
+          "HTML: the app's sizes, pinned line heights, block inset and list insets");
     for (int c = 0; c < 3; ++c) m.setTableColumnWidth(head, c, 400);   // 1200 wide: 440 past the page
     {
         mn::DocInkAnchor a; a.space = mn::DocInkAnchor::Px;
