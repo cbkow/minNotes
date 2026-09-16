@@ -2201,26 +2201,22 @@ FocusScope {
         blockModel.endGroup()
         cursor.sync()
     }
-    // Revert-to-default colour: strip fg + bg from the table target (cells / rows / columns) or
-    // from the selected text (colour spans).
-    function revertColors() {
+    // Palette "Revert to default": strip ONE colour kind from the selection — the
+    // palette tab's (text colour or highlight/cell background), never both. Table
+    // sets / rects / a caret cell go through the cell-colour setters ("" = uncoloured;
+    // the text-colour pass also strips text-colour spans inside the cells, the
+    // Excel rule); a text selection strips that kind's spans. Also unarms the
+    // matching pen so typing after a revert is plain. One undo entry either way.
+    function revertColors(isFg) {
+        if (isFg) cursor.armedFg = ""
+        else      cursor.armedBg = ""
         if (root.tableSetLive() || root.cellRect || (!cursor.hasSel && root.caretInCell)) {
-            const head = root.cellRect ? root.cellRect.head : root.tableSetLive() ? root.tableSet.head : blockModel.tableHeadOf(cursor.focusRow)
-            const recs = blockModel.tableRecords(head)
-            blockModel.beginGroup(head, blockModel.splitRowLast(recs[recs.length - 1]))   // fg + bg = ONE undo entry
-            applyTableColor(true, ""); applyTableColor(false, "")
-            blockModel.endGroup()
+            applyTableColor(isFg, "")
             cursor.sync()
             return
         }
         if (!cursor.hasSel) return
-        blockModel.beginGroup(cursor.loRow, cursor.hiRow)
-        for (var r = cursor.loRow; r <= cursor.hiRow; ++r) {
-            blockModel.setTextColor(r, rowSelStart(r), rowSelEnd(r), "")
-            blockModel.setHighlight(r, rowSelStart(r), rowSelEnd(r), "")
-        }
-        blockModel.endGroup()
-        cursor.sync()
+        applyColorToSelection(isFg, "", false)
     }
 
     // Colour is palette-driven: picking a colour applies it LIVE to the current

@@ -104,15 +104,17 @@ Rectangle {
     // would write the OTHER target's colour into the selected swatch.
     onTargetChanged: { selPreset = -1; selUser = -1
                        setPickerValue(targetColor()) }
-    // Reset the picker to defaults AND strip fg/bg colour from the current
-    // selection (table cells or text) — "revert to default" means uncoloured.
+    // Reset the picker to its default AND strip THIS TAB's colour from the current
+    // selection (table cells or text) — "revert to default" means uncoloured, for
+    // the text colour OR the highlight, whichever tab is showing (the other kind
+    // stays; Clear Formatting is the everything button). Draw only resets the pen.
     function revertTarget() {
         selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
         if (target === "fg")      fgColor = Theme.colors.text   // default type colour (E4E3E2)
         else if (target === "bg") bgColor = "#FFEC59"
         else                      drawColor = "#FF0000"
         setPickerValue(targetColor())
-        if (editor) editor.revertColors()               // strip fg+bg from the selection
+        if (editor && target !== "draw") editor.revertColors(target === "fg")
     }
 
     // --- Swatches: a FIXED bright preset grid + a row of user slots. Clicking
