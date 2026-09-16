@@ -7198,6 +7198,11 @@ static void testGridTableExports() {
     const int tr0 = wide.indexOf(QStringLiteral("<tr>")), ink = wide.indexOf(QStringLiteral("<img class=\"ink\"")), tdClose = wide.indexOf(QStringLiteral("</th>"), tr0);
     CHECK(tr0 >= 0 && ink > tr0 && ink < tdClose && wide.contains(QStringLiteral("--sheetw:1440px")),
           "HTML: the head row's ink rides inside its first cell; the sheet band spans the table + gutters (ink at %d, tr %d, cell close %d)", ink, tr0, tdClose);
+    // The head row's record starts 32 px above the grid (the pocket): a stroke 4 px below the record's top
+    // sits 28 px ABOVE the cell it lands in.
+    const QString inkTag = wide.mid(ink, 120);
+    CHECK(inkTag.contains(QStringLiteral("top:-")) && inkTag.contains(QStringLiteral("px;width:")),
+          "HTML: the head row's ink is lifted by the pocket (%s)", qPrintable(inkTag));
 }
 
 static void testGridTableDocxPdf() {

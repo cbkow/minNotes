@@ -1748,6 +1748,9 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         const TextInk ti = renderTextInk(m, row);
         if (ti.img.isNull()) return QString();
         if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
+        // A table row's y is measured from the RECORD's top, which for the first row includes the
+        // pocket above the grid (kTablePocket); the cell it lands in starts at the grid — lift it.
+        const double lift = m->tableHeadOf(row) >= 0 ? m->tablePadTop(row) : 0.0;
         const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
         if (src.isEmpty()) return QString();
         ++inkLayers;
@@ -1757,7 +1760,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             "<img class=\"ink\" style=\"position:absolute;left:%1px;top:%2px;"
             "width:%3px;height:%4px;max-width:none;z-index:2\" src=\"%5\" alt=\"\">")
             .arg(pw / 2.0 + ti.box.left() - indent)
-            .arg(ti.box.top())
+            .arg(ti.box.top() - lift)
             .arg(ti.box.width())
             .arg(ti.box.height())
             .arg(src);
