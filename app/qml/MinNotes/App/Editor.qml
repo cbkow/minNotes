@@ -4563,11 +4563,7 @@ FocusScope {
             flick: flick
             onZoomRequested: (dir, x, y) => root.docZoomStep(dir, x, y)
         }
-        WheelHandler {   // the trackpad's ⌘-wheel (SmoothWheel only takes mouse devices)
-            acceptedDevices: PointerDevice.TouchPad
-            acceptedModifiers: Qt.ControlModifier
-            onWheel: (event) => root.docZoomStep(event.angleDelta.y > 0 ? 1 : -1, event.x, event.y)
-        }
+        WheelHandler { onWheel: (event) => smoothWheel.handle(event) }
         PinchHandler {
             target: null
             property real startZoom: 1
@@ -4830,15 +4826,12 @@ FocusScope {
                     }
                     // Wheel-mouse notches glide; ⌘-wheel zoom (the sketch-canvas convention), √2 steps.
                     SmoothWheel {
+                        id: pdfWheel
                         flick: pdfList
                         horizontalToo: false
                         onZoomRequested: (dir, x, y) => root.pdfZoomStep(dir)
                     }
-                    WheelHandler {
-                        acceptedDevices: PointerDevice.TouchPad
-                        acceptedModifiers: Qt.ControlModifier
-                        onWheel: (event) => root.pdfZoomStep(event.angleDelta.y > 0 ? 1 : -1)
-                    }
+                    WheelHandler { onWheel: (event) => pdfWheel.handle(event) }
                     delegate: Item {
                         required property int index
                         readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready

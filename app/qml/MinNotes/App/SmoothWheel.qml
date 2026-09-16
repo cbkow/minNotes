@@ -8,10 +8,13 @@
 // beat after the wheel stops, the way a flick does. ⌘-wheel (Ctrl on Windows) is the zoom
 // chord: the owner handles it via zoomRequested.
 //
-//   SmoothWheel { flick: someFlickable; onZoomRequested: (dir, x, y) => … }
+//   Flickable { SmoothWheel { id: sw; flick: parent; onZoomRequested: … }
+//               WheelHandler { onWheel: (e) => sw.handle(e) } }
 //
-// A zero-size Item (a handler can't hold the frame animation itself); the handler's scope is
-// the Flickable.
+// A zero-size Item holding the state + frame animation. The WheelHandler is declared by the
+// OWNER, inside the Flickable: a handler's scope is the item it is declared in — setting its
+// `parent` from elsewhere does NOT re-scope it (2026-09-16: events silently went to the bare
+// Flickable).
 import QtQuick
 
 Item {
@@ -37,12 +40,10 @@ Item {
     function maxX() { return Math.max(0, flick.contentWidth - flick.width) }
     function maxY() { return Math.max(0, flick.contentHeight - flick.height) }
 
-    WheelHandler {
-        parent: root.flick
-        // Every device: a trackpad's PIXEL deltas apply directly (the OS already supplies its
-        // momentum as a stream of them); NOTCH-only events — a mouse wheel, or whatever a remote
-        // desktop relays — take the momentum model below.
-        onWheel: (event) => {
+    // Every device: a trackpad's PIXEL deltas apply directly (the OS already supplies its
+    // momentum as a stream of them); NOTCH-only events — a mouse wheel, or whatever a remote
+    // desktop relays — take the momentum model below.
+    function handle(event) {
             const now = Date.now()
             if (root.log) console.log("[wheel] angle", event.angleDelta.x, event.angleDelta.y, "pixel", event.pixelDelta.x, event.pixelDelta.y,
                                       "gap", root.lastMs ? now - root.lastMs : -1, "ms", "mods", event.modifiers, "inverted", event.inverted)
@@ -71,7 +72,6 @@ Item {
             root.vy += ky
             if (root.horizontalToo) root.vx += kx
             root.gliding = true
-        }
     }
 
     FrameAnimation {
