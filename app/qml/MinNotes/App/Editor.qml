@@ -3987,11 +3987,7 @@ FocusScope {
 
         Connections {
             target: blockModel
-            function onHeightSettled(row, delta) {
-                if (row >= root.firstVisible) return
-                flick.contentY += delta * root.zoom
-                smoothWheel.shift(delta * root.zoom)   // a glide in flight keeps its target under the nudge
-            }
+            function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta * root.zoom }
         }
 
         // PLAN-zoom Z1: everything PAGE-SPACE lives in this one scaled layer — delegates, the
