@@ -19,7 +19,7 @@ BUILD_DIR="${1:-build/release}"
 APP_BUNDLE="$BUILD_DIR/app/minNotes.app"
 ENTITLEMENTS="packaging/macos/entitlements.plist"
 SIGNING_IDENTITY="Developer ID Application: Christopher Bialkowski (5Z4S9VHV56)"
-NOTARY_PROFILE="AC_PASSWORD"
+NOTARY_PROFILE="${NOTARY_PROFILE:-QCView}"   # the keychain profile every release flow on this Mac uses
 MACDEPLOYQT="/Users/chris/Qt/6.11.1/macos/bin/macdeployqt"
 QML_SOURCE_DIR="app/qml"
 
