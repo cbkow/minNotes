@@ -46,8 +46,18 @@ static void resolveAndOpen(DocumentManager &docs, const QString &s)
         path = u.toLocalFile();
         if (path.isEmpty()) path = u.path();   // minnotes:///Users/… → /Users/…
     }
-    if (!path.isEmpty())
-        docs.openTab(path);                    // handles file:// + plain paths
+    if (path.isEmpty()) return;
+    // A QCView stream-notes folder (or its notes.json): the document beside it.
+    const QFileInfo fi(path.startsWith(QStringLiteral("file:")) ? QUrl(path).toLocalFile() : path);
+    if (fi.isDir() && QFileInfo::exists(fi.absoluteFilePath() + QStringLiteral("/notes.json"))) {
+        docs.openStreamFolder(fi.absoluteFilePath());
+        return;
+    }
+    if (fi.fileName() == QStringLiteral("notes.json") && fi.exists()) {
+        docs.openStreamFolder(fi.absolutePath());
+        return;
+    }
+    docs.openTab(path);                        // handles file:// + plain paths
 }
 
 int main(int argc, char *argv[])

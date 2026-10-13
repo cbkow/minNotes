@@ -24,6 +24,7 @@
 #include "annotation_note.h"
 
 #include <QFileSystemWatcher>
+#include <QJsonObject>
 #include <QObject>
 #include <QSet>
 #include <QString>
@@ -38,6 +39,15 @@ class VideoNotesModel : public QObject
     Q_OBJECT
     Q_PROPERTY(QString mediaPath READ mediaPath WRITE setMediaPath NOTIFY mediaPathChanged FINAL)
     Q_PROPERTY(double fps READ fps WRITE setFps NOTIFY fpsChanged FINAL)
+    // Stream mode (QCView plan C, 2026-10-13): the notes of a live feed live
+    // in a project sidecar folder — <project>/.qcview/streams/<name>__<id8>/ —
+    // with no media file behind them. Point here instead of mediaPath; the
+    // keys are capture stamps (sorted chronologically), no frame is minted,
+    // no thumbnail extracted; the header (stream, stream_id, stream_url,
+    // created) round-trips untouched.
+    Q_PROPERTY(QString sidecarDir READ sidecarDir WRITE setSidecarDir NOTIFY sidecarDirChanged FINAL)
+    Q_PROPERTY(bool isStream READ isStream NOTIFY sidecarDirChanged FINAL)
+    Q_PROPERTY(QString streamName READ streamName NOTIFY revisionChanged FINAL)
     // Bumped on ANY note change (CRUD, external reload, thumbnail written) —
     // QML bindings tuple through it, the BlockModel revision pattern.
     Q_PROPERTY(int revision READ revision NOTIFY revisionChanged FINAL)
@@ -50,6 +60,16 @@ public:
 
     QString mediaPath() const { return mediaPath_; }
     void setMediaPath(const QString &path);
+    QString sidecarDir() const { return sidecarDir_; }
+    void setSidecarDir(const QString &dir);
+    bool isStream() const { return !sidecarDir_.isEmpty(); }
+    QString streamName() const;
+    // Insert the notes as blocks into `blockModel` (a BlockModel) after
+    // `afterRow`: per note an image block of the clean PNG with the strokes
+    // as frame-space ink, then a paragraph with the capture (or timecode)
+    // line and the text. One undo group. Returns the notes inserted.
+    Q_INVOKABLE int insertNotesAsBlocks(QObject *blockModel, int afterRow) const;
+    static int insertNotesFromDir(QObject *blockModel, const QString &dir, int afterRow);
     double fps() const { return fps_; }
     void setFps(double fps);
     int revision() const { return revision_; }
@@ -90,12 +110,17 @@ public:
 
 signals:
     void mediaPathChanged();
+    void sidecarDirChanged();
     void fpsChanged();
     void revisionChanged();
     void loadingChanged();
 
 private:
     QString mintTimecode(int frame) const;
+    // The source behind the notes: the media path, or the stream folder.
+    QString source() const { return sidecarDir_.isEmpty() ? mediaPath_ : sidecarDir_; }
+    QString notesJsonPath() const;
+    QString imagesFolder() const;
     const qcv::AnnotationNote *noteAt(const QString &timecode) const;
     qcv::AnnotationNote *noteAt(const QString &timecode);
     void bump();
@@ -106,6 +131,8 @@ private:
     void rewatch();                     // watch notes.json, or nearest dir until it exists
 
     QString mediaPath_;
+    QString sidecarDir_;
+    QJsonObject header_;                // stream mode: the notes.json header, round-tripped
     double fps_ = 0.0;
     int revision_ = 0;
     bool loading_ = false;

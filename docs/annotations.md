@@ -65,6 +65,23 @@ made in either app open in the other.
 | Cycle review speed (0.5×–2×) | `R` |
 | Reset speed | `⇧R` |
 
+## Streams
+
+Notes QCView takes on a live feed (a Premiere Pro or After Effects
+sequence over QCBridge, or an SRT stream) have no clip behind them: they
+live in the QCView project, in `.qcview/streams/<stream>/`, each with the
+frame it captured and the time it was taken. QCView's **Open in minNotes**
+hands that folder here; so does opening the folder (or its `notes.json`)
+with minNotes.
+
+The first open creates a document beside the notes with every note
+already in it — the captured frame as an image block carrying QCView's
+strokes as ink, then a line with the capture time, the host's timecode
+when the feed carries one, and the note's text. The document is yours
+from there: edit, reorder, export. The bottom rail keeps the folder in
+view; as QCView adds notes to the stream, **Insert notes** brings the
+folder's notes in again as blocks at the end of the document.
+
 ## Sketches
 
 ![A sketch block](images/mn021b.png)

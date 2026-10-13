@@ -1,3 +1,9 @@
+// annotation_note — VERBATIM port of QCView-Player's
+// src/annotations/annotation_note.cpp (2026-10-13; the stream-notes fields and the
+// folder-rooted sidecar API). The notes sidecar is a two-way interchange
+// contract with QCView: folder layout, JSON shape and filenames must stay
+// byte-compatible — fix QCView first, then re-port.
+//
 #include "annotation_note.h"
 
 #include <QJsonArray>
@@ -14,6 +20,21 @@ QJsonObject noteToJson(const AnnotationNote &note)
     obj.insert(QStringLiteral("timestamp_seconds"), note.timestamp_seconds);
     obj.insert(QStringLiteral("frame"),             note.frame);
     obj.insert(QStringLiteral("image"),             note.image_path);
+    if (!note.viewer_tag.isEmpty()) {
+        obj.insert(QStringLiteral("viewer"),        note.viewer_tag);
+    }
+    if (!note.ocio_chain.isEmpty()) {
+        obj.insert(QStringLiteral("ocio"),          note.ocio_chain);
+    }
+    if (!note.captured_at.isEmpty()) {
+        obj.insert(QStringLiteral("captured_at"),   note.captured_at);
+    }
+    if (!note.host_timecode.isEmpty()) {
+        obj.insert(QStringLiteral("host_timecode"), note.host_timecode);
+    }
+    if (!note.stream.isEmpty()) {
+        obj.insert(QStringLiteral("stream"),        note.stream);
+    }
 
     // annotation_data: in-memory string → on-disk nested object.
     // Empty string serializes as JSON null (matches old app shape).
@@ -49,6 +70,11 @@ bool noteFromJson(const QJsonObject &obj, AnnotationNote &out)
     out.timestamp_seconds = obj.value(QStringLiteral("timestamp_seconds")).toDouble();
     out.frame             = obj.value(QStringLiteral("frame")).toInt();
     out.image_path        = obj.value(QStringLiteral("image")).toString();
+    out.viewer_tag        = obj.value(QStringLiteral("viewer")).toString();
+    out.ocio_chain        = obj.value(QStringLiteral("ocio")).toString();
+    out.captured_at       = obj.value(QStringLiteral("captured_at")).toString();
+    out.host_timecode     = obj.value(QStringLiteral("host_timecode")).toString();
+    out.stream            = obj.value(QStringLiteral("stream")).toString();
 
     // annotation_data: nested object → string. Null / missing → empty.
     if (obj.contains(QStringLiteral("annotation_data"))) {

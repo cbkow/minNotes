@@ -3,10 +3,13 @@
 #include "annotation_io.h"
 #include "annotation_serializer.h"
 #include "annotation_thumbnail.h"
+#include "doc_ink.h"
+#include "../core/BlockModel.h"
 #include "../core/MediaStore.h"
 #include "../player/timecode_formatter.h"
 
 #include <QDateTime>
+#include <QUrl>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -64,7 +67,7 @@ VideoNotesModel::VideoNotesModel(QObject *parent)
     connect(&reloadDebounce_, &QTimer::timeout, this, [this] {
         // Our own QSaveFile rename also fires the watcher — skip those by
         // mtime; anything else is QCView (or the user) editing the sidecar.
-        const qint64 mt = fileMtimeMs(qcv::annotation_io::getNotesJsonPath(mediaPath_));
+        const qint64 mt = fileMtimeMs(notesJsonPath());
         if (selfWriteMtimes_.contains(mt)) return;
         reloadFromDisk();
     });
@@ -73,10 +76,49 @@ VideoNotesModel::VideoNotesModel(QObject *parent)
     connect(&watcher_, &QFileSystemWatcher::directoryChanged, this, poke);
 }
 
+QString VideoNotesModel::notesJsonPath() const
+{
+    if (!sidecarDir_.isEmpty()) return qcv::annotation_io::notesJsonPathIn(sidecarDir_);
+    return mediaPath_.isEmpty() ? QString() : qcv::annotation_io::getNotesJsonPath(mediaPath_);
+}
+
+QString VideoNotesModel::imagesFolder() const
+{
+    if (!sidecarDir_.isEmpty()) return qcv::annotation_io::imagesFolderIn(sidecarDir_);
+    return mediaPath_.isEmpty() ? QString() : qcv::annotation_io::getImagesFolder(mediaPath_);
+}
+
+QString VideoNotesModel::streamName() const
+{
+    return header_.value(QStringLiteral("stream")).toString();
+}
+
+void VideoNotesModel::setSidecarDir(const QString &dir)
+{
+    if (dir == sidecarDir_) return;
+    sidecarDir_ = dir;
+    mediaPath_.clear();
+    header_ = QJsonObject();
+    notes_.clear();
+    tombstones_.clear();
+    selfWriteMtimes_.clear();
+    if (!watcher_.files().isEmpty()) watcher_.removePaths(watcher_.files());
+    if (!watcher_.directories().isEmpty()) watcher_.removePaths(watcher_.directories());
+    emit sidecarDirChanged();
+    emit mediaPathChanged();
+    bump();
+    if (!sidecarDir_.isEmpty()) {
+        qInfo("VideoNotesModel: stream folder -> %s", qPrintable(sidecarDir_));
+        rewatch();
+        reloadFromDisk();
+    }
+}
+
 void VideoNotesModel::setMediaPath(const QString &path)
 {
-    if (path == mediaPath_) return;
+    if (path == mediaPath_ && sidecarDir_.isEmpty()) return;
     mediaPath_ = path;
+    if (!sidecarDir_.isEmpty()) { sidecarDir_.clear(); header_ = QJsonObject(); emit sidecarDirChanged(); }
     notes_.clear();
     tombstones_.clear();
     selfWriteMtimes_.clear();
@@ -100,7 +142,7 @@ void VideoNotesModel::setFps(double fps)
 
 QVariantList VideoNotesModel::noteList() const
 {
-    const QString imagesDir = qcv::annotation_io::getImagesFolder(mediaPath_);
+    const QString imagesDir = imagesFolder();
     QVariantList out;
     out.reserve(static_cast<qsizetype>(notes_.size()));
     for (const qcv::AnnotationNote &n : notes_) {
@@ -117,6 +159,14 @@ QVariantList VideoNotesModel::noteList() const
         m.insert(QStringLiteral("addressed"),  n.addressed);
         m.insert(QStringLiteral("image"),      hasAnn ? annAbs : cleanAbs);
         m.insert(QStringLiteral("hasStrokes"), !n.annotation_data.isEmpty());
+        // Stream notes: when it was captured and the host's timecode.
+        const bool stream = n.isStreamNote();
+        m.insert(QStringLiteral("isStream"),     stream);
+        m.insert(QStringLiteral("capturedAt"),   n.captured_at);
+        m.insert(QStringLiteral("hostTimecode"), n.host_timecode);
+        m.insert(QStringLiteral("stream"),       n.stream);
+        const QDateTime at = QDateTime::fromString(n.captured_at, Qt::ISODateWithMs);
+        m.insert(QStringLiteral("captureLabel"), at.isValid() ? at.toString(QStringLiteral("HH:mm:ss.zzz")) : QString());
         out.append(m);
     }
     return out;
@@ -148,7 +198,7 @@ qcv::AnnotationNote *VideoNotesModel::noteAt(const QString &timecode)
 
 QString VideoNotesModel::addNoteAtFrame(int frame)
 {
-    if (mediaPath_.isEmpty()) return {};
+    if (mediaPath_.isEmpty()) return {};   // a stream's notes are minted by QCView, from the feed
     const QString timecode = mintTimecode(frame);
     if (!noteAt(timecode)) {
         const double ts = fps_ > 0.0 ? frame / fps_ : 0.0;
@@ -190,7 +240,7 @@ void VideoNotesModel::removeNote(const QString &timecode)
     notes_.erase(it);
     tombstones_.insert(timecode);
     // Explicit user delete → wipe the PNGs too (QCView's user-click path).
-    const QString cleanAbs = qcv::annotation_io::getImagesFolder(mediaPath_)
+    const QString cleanAbs = imagesFolder()
         + QLatin1Char('/') + qcv::annotation_io::generateImageFilename(timecode);
     QFile::remove(cleanAbs);
     const QString annAbs = annotatedSibling(cleanAbs);
@@ -235,15 +285,15 @@ void VideoNotesModel::removeNoteKeepFiles(const QString &timecode)
 void VideoNotesModel::writeAnnotatedThumb(const QString &timecode)
 {
     const qcv::AnnotationNote *n = noteAt(timecode);
-    if (!n || mediaPath_.isEmpty()) return;
+    if (!n || source().isEmpty()) return;
     // Snapshot on the GUI thread; the worker only touches files.
-    const QString cleanAbs = qcv::annotation_io::getImagesFolder(mediaPath_)
+    const QString cleanAbs = imagesFolder()
         + QLatin1Char('/') + qcv::annotation_io::generateImageFilename(timecode);
     const QString annAbs = annotatedSibling(cleanAbs);
     const std::vector<qcv::ActiveStroke> strokes =
         qcv::AnnotationSerializer::jsonStringToStrokes(n->annotation_data);
     QPointer<VideoNotesModel> self(this);
-    const QString path = mediaPath_;
+    const QString path = source();
     QThreadPool::globalInstance()->start([self, path, cleanAbs, annAbs, strokes] {
         if (strokes.empty()) {
             QFile::remove(annAbs);
@@ -258,7 +308,7 @@ void VideoNotesModel::writeAnnotatedThumb(const QString &timecode)
             }
         }
         QMetaObject::invokeMethod(self, [self, path] {
-            if (self && self->mediaPath_ == path) self->bump();
+            if (self && self->source() == path) self->bump();
         }, Qt::QueuedConnection);
     });
 }
@@ -271,16 +321,20 @@ void VideoNotesModel::bump()
 
 void VideoNotesModel::reloadFromDisk()
 {
-    if (mediaPath_.isEmpty()) return;
+    if (source().isEmpty()) return;
     loading_ = true;
     emit loadingChanged();
     QPointer<VideoNotesModel> self(this);
-    const QString path = mediaPath_;
-    QThreadPool::globalInstance()->start([self, path] {
+    const QString path = source();
+    const bool stream = isStream();
+    QThreadPool::globalInstance()->start([self, path, stream] {
         std::vector<qcv::AnnotationNote> loaded;
-        qcv::annotation_io::loadNotes(loaded, path);
-        QMetaObject::invokeMethod(self, [self, path, loaded = std::move(loaded)]() mutable {
-            if (!self || self->mediaPath_ != path) return;
+        QJsonObject header;
+        if (stream) qcv::annotation_io::loadNotesAt(path, loaded, &header);
+        else        qcv::annotation_io::loadNotes(loaded, path);
+        QMetaObject::invokeMethod(self, [self, path, header, loaded = std::move(loaded)]() mutable {
+            if (!self || self->source() != path) return;
+            if (self->isStream()) self->header_ = header;
             self->applyLoaded(std::move(loaded));
         }, Qt::QueuedConnection);
     });
@@ -298,24 +352,29 @@ void VideoNotesModel::applyLoaded(std::vector<qcv::AnnotationNote> loaded)
     if (sameNotes(loaded, notes_)) return;   // our own save echoed back — no churn
     qInfo("VideoNotesModel: loaded %d notes from %s",
           int(loaded.size()),
-          qPrintable(qcv::annotation_io::getNotesJsonPath(mediaPath_)));
+          qPrintable(notesJsonPath()));
     notes_ = std::move(loaded);
     bump();
 }
 
 void VideoNotesModel::scheduleSave()
 {
-    if (mediaPath_.isEmpty()) return;
+    if (source().isEmpty()) return;
     QPointer<VideoNotesModel> self(this);
-    const QString path = mediaPath_;
+    const QString path = source();
+    const bool stream = isStream();
+    const QJsonObject header = header_;
+    const QString jsonPath = notesJsonPath();
     const std::vector<qcv::AnnotationNote> snapshot = notes_;
     const QSet<QString> tombstones = tombstones_;
-    QThreadPool::globalInstance()->start([self, path, snapshot, tombstones]() mutable {
+    QThreadPool::globalInstance()->start([self, path, stream, header, jsonPath, snapshot, tombstones]() mutable {
         // Merge-on-save: a QCView save we haven't observed (watcher latency,
         // same-instant edits) must survive. Ours wins per timecode; theirs
         // survives for keys we don't hold and didn't delete.
         std::vector<qcv::AnnotationNote> disk;
-        qcv::annotation_io::loadNotes(disk, path);
+        QJsonObject diskHeader;
+        if (stream) qcv::annotation_io::loadNotesAt(path, disk, &diskHeader);
+        else        qcv::annotation_io::loadNotes(disk, path);
         std::vector<qcv::AnnotationNote> merged = snapshot;
         for (qcv::AnnotationNote &d : disk) {
             const bool ours = std::any_of(merged.cbegin(), merged.cend(),
@@ -325,11 +384,20 @@ void VideoNotesModel::scheduleSave()
         }
         std::sort(merged.begin(), merged.end());
         const bool grew = merged.size() != snapshot.size();
-        if (!qcv::annotation_io::saveNotes(merged, path))
-            qWarning("VideoNotesModel: save FAILED for %s", qPrintable(path));
-        const qint64 mt = fileMtimeMs(qcv::annotation_io::getNotesJsonPath(path));
+        bool saved;
+        if (stream) {
+            // The header on disk is the baseline (QCView refreshes the name);
+            // ours only fills what it lacks.
+            QJsonObject h = diskHeader;
+            for (auto it = header.begin(); it != header.end(); ++it) if (!h.contains(it.key())) h.insert(it.key(), it.value());
+            saved = qcv::annotation_io::saveNotesAt(path, h, merged);
+        } else {
+            saved = qcv::annotation_io::saveNotes(merged, path);
+        }
+        if (!saved) qWarning("VideoNotesModel: save FAILED for %s", qPrintable(path));
+        const qint64 mt = fileMtimeMs(jsonPath);
         QMetaObject::invokeMethod(self, [self, path, mt, grew] {
-            if (!self || self->mediaPath_ != path) return;
+            if (!self || self->source() != path) return;
             self->selfWriteMtimes_.insert(mt);
             self->tombstones_.clear();  // round-tripped — deletes are durable now
             self->rewatch();            // QSaveFile rename drops the file watch
@@ -341,7 +409,7 @@ void VideoNotesModel::scheduleSave()
 
 void VideoNotesModel::captureCleanThumb(QString timecode, int frame)
 {
-    if (mediaPath_.isEmpty()) return;
+    if (mediaPath_.isEmpty()) return;   // stream notes bring their own capture
     QPointer<VideoNotesModel> self(this);
     const QString path = mediaPath_;
     QThreadPool::globalInstance()->start([self, path, timecode, frame] {
@@ -364,10 +432,76 @@ void VideoNotesModel::captureCleanThumb(QString timecode, int frame)
     });
 }
 
+// ---- notes → blocks (plan C) --------------------------------------------------------
+
+namespace {
+int insertNotes(BlockModel *bm, const std::vector<qcv::AnnotationNote> &notes,
+                const QString &imagesDir, int afterRow)
+{
+    if (!bm || notes.empty()) return 0;
+    int row = afterRow;
+    int inserted = 0;
+    bm->beginGroup(std::max(0, afterRow), std::max(0, afterRow));
+    for (const qcv::AnnotationNote &n : notes) {
+        const QString png = imagesDir + QLatin1Char('/')
+            + qcv::annotation_io::generateImageFilename(n.timecode);
+        int r = -1;
+        if (QFileInfo::exists(png)) {
+            r = bm->insertImageFromUrl(row, QUrl::fromLocalFile(png).toString(), /*forceCopy=*/true);
+            if (r >= 0) {
+                row = r;
+                const std::vector<qcv::ActiveStroke> strokes =
+                    qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data);
+                if (!strokes.empty()) {
+                    mn::DocInkAnchor anchor;
+                    anchor.space = mn::DocInkAnchor::Frame;   // QCView's normalized stroke space, 1:1
+                    anchor.strokes = strokes;
+                    bm->setBlockInk(row, mn::docInkToJson(anchor));
+                }
+            }
+        }
+        // The caption: when (a stream) or where (a clip), then the text.
+        QString head;
+        if (n.isStreamNote()) {
+            const QDateTime at = QDateTime::fromString(n.captured_at, Qt::ISODateWithMs);
+            head = at.isValid() ? at.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz")) : n.timecode;
+            if (!n.host_timecode.isEmpty()) head += QStringLiteral("  ·  TC ") + n.host_timecode;
+        } else {
+            head = n.timecode + QStringLiteral("  ·  frame ") + QString::number(n.frame);
+        }
+        QString caption = (n.addressed ? QStringLiteral("✅ ") : QString()) + head;
+        if (!n.text.trimmed().isEmpty()) caption += QStringLiteral(" — ") + n.text.trimmed();
+        const int p = bm->insertParagraphBelow(std::max(0, row));
+        if (p >= 0) { bm->setContent(p, caption); row = p; }
+        ++inserted;
+    }
+    bm->endGroup();
+    return inserted;
+}
+} // namespace
+
+int VideoNotesModel::insertNotesAsBlocks(QObject *blockModel, int afterRow) const
+{
+    auto *bm = qobject_cast<BlockModel *>(blockModel);
+    if (!bm) return 0;
+    return insertNotes(bm, notes_, imagesFolder(), afterRow);
+}
+
+int VideoNotesModel::insertNotesFromDir(QObject *blockModel, const QString &dir, int afterRow)
+{
+    auto *bm = qobject_cast<BlockModel *>(blockModel);
+    if (!bm || dir.isEmpty()) return 0;
+    std::vector<qcv::AnnotationNote> notes;
+    QJsonObject header;
+    qcv::annotation_io::loadNotesAt(dir, notes, &header);
+    std::sort(notes.begin(), notes.end());
+    return insertNotes(bm, notes, qcv::annotation_io::imagesFolderIn(dir), afterRow);
+}
+
 void VideoNotesModel::rewatch()
 {
-    if (mediaPath_.isEmpty()) return;
-    const QString json = qcv::annotation_io::getNotesJsonPath(mediaPath_);
+    if (source().isEmpty()) return;
+    const QString json = notesJsonPath();
     if (QFileInfo::exists(json)) {
         if (!watcher_.files().contains(json)) watcher_.addPath(json);
         return;

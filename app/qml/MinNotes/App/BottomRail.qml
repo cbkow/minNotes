@@ -44,6 +44,33 @@ Rectangle {
         }
     }
 
+    // QCView stream notes (plan C): the folder this document came from. The
+    // notes QCView adds while the feed runs land in the folder; one click
+    // brings them in as blocks (image + ink + caption) below the document.
+    VideoNotesModel {
+        id: streamNotes
+        sidecarDir: docs.activeStreamDir
+    }
+    Row {
+        id: streamGroup
+        anchors { right: zoomGroup.left; rightMargin: 14; verticalCenter: parent.verticalCenter }
+        spacing: 8
+        visible: docs.activeStreamDir.length > 0
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: (streamNotes.streamName.length ? streamNotes.streamName : "stream")
+                  + "  ·  " + streamNotes.count + (streamNotes.count === 1 ? " note" : " notes")
+            color: Theme.colors.textSubtle
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+        }
+        FlatButton {
+            iconName: "download-simple"; text: "Insert notes"; tooltip: "Insert this stream's notes as blocks at the end"; tooltipSide: "top"
+            implicitHeight: 24; radius: 0
+            enabled_: streamNotes.count > 0
+            onClicked: bar.act(function() { streamNotes.insertNotesAsBlocks(blockModel, blockModel.count - 1) })
+        }
+    }
+
     // zoom group (left of undo / redo)
     Row {
         id: zoomGroup

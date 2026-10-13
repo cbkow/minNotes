@@ -1,11 +1,27 @@
-// AnnotationNote — VERBATIM port of QCView-Player's
-// src/annotations/annotation_note.h (2026-06-11). The notes sidecar is a
-// two-way interchange contract with QCView (see PLAN-video-annotations.md):
-// do NOT change field names, types, or on-disk shape here — fix QCView
-// first, then re-port.
+// annotation_note — VERBATIM port of QCView-Player's
+// src/annotations/annotation_note.h (2026-10-13; the stream-notes fields and the
+// folder-rooted sidecar API). The notes sidecar is a two-way interchange
+// contract with QCView: folder layout, JSON shape and filenames must stay
+// byte-compatible — fix QCView first, then re-port.
+//
+// AnnotationNote — direct lift from old QCView's
+// src/annotations/annotation_note.h per Guide 19 §2.4.
 //
 // Per-note metadata. One AnnotationNote per timecode in a piece of
 // media. Notes are always kept sorted by timecode (string compare).
+//
+// JSON schema preserved exactly from old app — same field names, same
+// types, same on-disk layout. Only the serde mechanism changed
+// (nlohmann::json → QJsonDocument) to match the rest of the port (see
+// PresetManager, etc.).
+//
+// Adaptation notes vs old app:
+//   - std::string → QString throughout
+//   - nlohmann::json to_json/from_json ADL pair → free functions
+//     noteToJson() / noteFromJson()
+//   - Schema unchanged: timecode, timestamp_seconds, frame, image,
+//     annotation_data (nested object on disk, JSON string in memory),
+//     text, addressed
 //
 // `annotation_data` is the schema's quirk: in memory it's a JSON
 // string (the stroke list), on disk it's parsed into a nested object
@@ -30,6 +46,25 @@ struct AnnotationNote {
     QString annotation_data;   // JSON string (stroke list); empty if none
     QString text;              // user note (multi-line OK)
     bool    addressed         = false;
+    // Viewer aids in effect when the thumbnail was captured
+    // ("Viewer: −1.5 stops · γ 1.80 · luma · Knee 1000→100"), so a reader
+    // knows the image isn't a 1:1 frame. Empty = none. Optional "viewer"
+    // key on disk.
+    QString viewer_tag;
+    // The OCIO chain the thumbnail was captured through ("OCIO: ACEScg +
+    // Look → sRGB / ACES 2.0") — the clip's own chain when it has one.
+    // Empty = OCIO off. Optional "ocio" key on disk.
+    QString ocio_chain;
+    // Notes on a live stream (plan B1): the key is a capture stamp
+    // (YYYYMMDD-HHMMSS-mmm, sorts chronologically) rather than a
+    // timecode; `frame` is 0 and `timestamp_seconds` counts from the
+    // stream's open. These three say when and from what. Optional
+    // "captured_at" / "host_timecode" / "stream" keys on disk.
+    QString captured_at;       // ISO 8601 local time with offset
+    QString host_timecode;     // the host's sequence time, when the feed carries one
+    QString stream;            // the stream item's display name at capture
+
+    bool isStreamNote() const { return !captured_at.isEmpty(); }
 
     AnnotationNote() = default;
     AnnotationNote(QString tc, double ts, int f, QString img, QString txt)

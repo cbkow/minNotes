@@ -57,6 +57,15 @@ public:
 
     Q_INVOKABLE void newTab();                            // fresh untitled scratch doc
     Q_INVOKABLE bool openTab(const QString& pathOrUrl);   // dedupe by canonical path
+    // A QCView stream-notes folder (<project>/.qcview/streams/<name>__<id8>/,
+    // holding notes.json + images/): opens <folder>/<name>.mnd, creating it
+    // with every note inserted as blocks when it does not exist yet. The
+    // tab remembers the folder (activeStreamDir) so the editor can offer the
+    // notes QCView adds later.
+    Q_INVOKABLE bool openStreamFolder(const QString& dir);
+    Q_INVOKABLE QString streamDirAt(int i) const;
+    Q_PROPERTY(QString activeStreamDir READ activeStreamDir NOTIFY activeChanged)
+    QString activeStreamDir() const { return streamDirAt(active_); }
     // Why the last openTab failed ("" = no reason known) — the failed model is
     // gone by then, so its BlockModel::lastOpenError is kept here for QML.
     Q_INVOKABLE QString lastOpenError() const { return lastOpenError_; }
@@ -74,7 +83,7 @@ signals:
     void dirtyCountChanged();  // any tab's unsaved-edits flag flipped
 
 private:
-    struct Tab { BlockModel* model = nullptr; int id = 0; QVariantMap view; };
+    struct Tab { BlockModel* model = nullptr; int id = 0; QVariantMap view; QString streamDir; };
     QList<Tab> tabs_;
     int active_ = -1;
     int nextId_ = 1;

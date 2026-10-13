@@ -1,4 +1,7 @@
 #include "DocumentManager.h"
+#include "../notes/VideoNotesModel.h"
+
+#include <QFileInfo>
 #include <QFileInfo>
 #include <QUrl>
 
@@ -97,6 +100,40 @@ bool DocumentManager::openTab(const QString& pathOrUrl) {
     emit dirtyCountChanged();
     setActive(static_cast<int>(tabs_.size()) - 1);
     return true;
+}
+
+bool DocumentManager::openStreamFolder(const QString& dir) {
+    lastOpenError_.clear();
+    const QFileInfo fi(dir);
+    if (!fi.isDir() || !QFileInfo::exists(dir + QStringLiteral("/notes.json"))) {
+        lastOpenError_ = tr("Not a stream notes folder (no notes.json): %1").arg(dir);
+        return false;
+    }
+    QString name = fi.fileName();
+    const int sep = name.lastIndexOf(QStringLiteral("__"));
+    if (sep > 0) name = name.left(sep);               // "<name>__<id8>" → "<name>"
+    const QString docPath = dir + QLatin1Char('/') + name + QStringLiteral(".mnd");
+    const bool fresh = !QFileInfo::exists(docPath);
+    if (fresh) {
+        newTab();
+        BlockModel* m = activeModel();
+        if (!m) return false;
+        const int n = VideoNotesModel::insertNotesFromDir(m, dir, 0);
+        if (!m->saveAs(docPath)) {
+            lastOpenError_ = tr("Could not create %1").arg(docPath);
+            return false;
+        }
+        qInfo("DocumentManager: stream folder %s → new %s with %d note(s)", qPrintable(dir), qPrintable(docPath), n);
+    } else if (!openTab(docPath)) {
+        return false;
+    }
+    if (active_ >= 0 && active_ < tabs_.size()) tabs_[active_].streamDir = dir;
+    emit activeChanged();
+    return true;
+}
+
+QString DocumentManager::streamDirAt(int i) const {
+    return (i >= 0 && i < tabs_.size()) ? tabs_[i].streamDir : QString();
 }
 
 void DocumentManager::closeTab(int i) {
