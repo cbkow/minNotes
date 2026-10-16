@@ -24,7 +24,7 @@ Rectangle {
     readonly property var sketchIds: (blockModel.structureRevision,
                                       blockModel.sketchBlockIds())
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
-    visible: ids.length > 0 || pdfIds.length > 0 || videoIds.length > 0 || sketchIds.length > 0
+    visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
     readonly property int rowH: 34
     height: visible ? rowH : 0
     color: Theme.colors.surfaceRaised   // sidebar tone — the item-tab strip is chrome, like the Inspector
@@ -110,6 +110,11 @@ Rectangle {
                 label: "Document"
                 active: tabs.activeId === ""
                 onClicked: tabs._select("")
+            }
+            TabBtn {   // the canvas view (B3): the same document as cards on an infinite surface
+                label: "Canvas"
+                active: tabs.activeId === "canvas"
+                onClicked: tabs._select("canvas")
             }
             Repeater {
                 model: tabs.ids
@@ -228,6 +233,7 @@ Rectangle {
                 id: menuCol
                 width: flick.width
                 MenuItem { label: "Document"; tabId: "" }
+                MenuItem { label: "Canvas"; tabId: "canvas" }
                 SectionHeader { visible: tabs.ids.length > 0; title: "Tables" }
                 Repeater {
                     model: tabs.ids

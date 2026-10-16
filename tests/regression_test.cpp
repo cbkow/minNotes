@@ -31,6 +31,7 @@
 #include "SpellService.h"
 #include "ViewportSlots.h"
 #include "CanvasLayout.h"
+#include "CanvasCameraMath.h"
 #include "LayoutIndex.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -6298,6 +6299,27 @@ static void testCanvasLayout() {
     }
 }
 
+static void testCanvasCamera() {
+    qInfo("[113] canvas camera maths (B3): zoom about a point keeps it put, clamps, fit centres, screen/world round-trip");
+    using namespace mn::cam;
+    State s; s.panX = 40; s.panY = -20; s.zoom = 0.5;
+    const QPointF under = screenToWorld(s, 300, 200);
+    const State z = zoomAbout(s, 1.25, 300, 200);
+    const QPointF after = worldToScreen(z, under.x(), under.y());
+    CHECK(qFuzzyCompare(z.zoom, 1.25) && qAbs(after.x() - 300) < 1e-9 && qAbs(after.y() - 200) < 1e-9,
+          "the world point under the anchor stays under it (%g, %g)", after.x(), after.y());
+    CHECK(zoomAbout(s, 100, 0, 0).zoom == kMaxZoom && zoomAbout(s, 0.001, 0, 0).zoom == kMinZoom && clampZoom(1) == 1, "zoom clamps to [0.05, 4]");
+    const State f = fitRect(QRectF(100, 200, 1000, 500), 800, 600, 50);
+    const QPointF c = worldToScreen(f, 600, 450);
+    CHECK(qFuzzyCompare(f.zoom, 0.7) && qAbs(c.x() - 400) < 1e-9 && qAbs(c.y() - 300) < 1e-9,
+          "fit: the tighter axis sets the zoom (%g), the rect's centre lands on the viewport's", f.zoom);
+    CHECK(fitRect(QRectF(0, 0, 10, 10), 800, 600, 50).zoom == kMaxZoom && fitRect(QRectF(), 800, 600, 50).zoom == 1.0
+              && fitRect(QRectF(0, 0, 100, 100), 0, 600, 50).zoom == 1.0,
+          "fit clamps a tiny document to the max zoom; an empty rect or viewport leaves the identity");
+    const QPointF w = screenToWorld(z, 123.5, -77.25), back = worldToScreen(z, w.x(), w.y());
+    CHECK(qAbs(back.x() - 123.5) < 1e-9 && qAbs(back.y() + 77.25) < 1e-9, "screen → world → screen round-trips");
+}
+
 static void testTableModel() {
     qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
     auto fresh = [](BlockModel& m) {
@@ -8599,6 +8621,7 @@ int main(int argc, char** argv) {
     testTableModel();
     testCardModel();
     testCanvasLayout();
+    testCanvasCamera();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

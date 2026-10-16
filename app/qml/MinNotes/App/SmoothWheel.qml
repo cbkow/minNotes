@@ -24,7 +24,11 @@ import QtQuick
 
 Item {
     id: root
-    required property Flickable flick
+    // The target: a Flickable (the page; margins respected, clamped), OR a `sink` with
+    // scrollBy(dx, dy) in screen px (the canvas camera, B3) — the sink path is unclamped (an infinite
+    // surface) and shares the momentum model unchanged.
+    property Flickable flick: null
+    property var sink: null
     property real pxPerNotch: 80          // one lone notch's total travel (about three lines of body)
     property real friction: 0.90          // velocity kept per 60 Hz frame — the tail's length
     property real maxGain: 6              // a sustained burst's kick multiplier, at most
@@ -64,10 +68,13 @@ Item {
             }
             const gesture = event.phase !== Qt.NoScrollPhase
             if (gesture && (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0)) {   // trackpad: native
-                const f = root.flick
                 root.vx = 0; root.vy = 0; root.gliding = false
-                f.contentY = Math.max(root.minY(), Math.min(root.maxY(), f.contentY - event.pixelDelta.y))
-                if (root.horizontalToo) f.contentX = Math.max(root.minX(), Math.min(root.maxX(), f.contentX - event.pixelDelta.x))
+                if (root.sink) root.sink.scrollBy(root.horizontalToo ? -event.pixelDelta.x : 0, -event.pixelDelta.y)
+                else {
+                    const f = root.flick
+                    f.contentY = Math.max(root.minY(), Math.min(root.maxY(), f.contentY - event.pixelDelta.y))
+                    if (root.horizontalToo) f.contentX = Math.max(root.minX(), Math.min(root.maxX(), f.contentX - event.pixelDelta.x))
+                }
                 root.lastMs = now
                 return
             }
@@ -94,13 +101,16 @@ Item {
     FrameAnimation {
         running: root.gliding
         onTriggered: {
-            const f = root.flick
             const k = Math.max(0.25, Math.min(3, frameTime * 60))   // frames elapsed (dropped frames travel further)
-            const my = root.maxY(), mx = root.maxX(), ly = root.minY(), lx = root.minX()
-            let ny = f.contentY + root.vy * k, nx = f.contentX + root.vx * k
-            if (ny <= ly) { ny = ly; root.vy = 0 } else if (ny >= my) { ny = my; root.vy = 0 }
-            if (nx <= lx) { nx = lx; root.vx = 0 } else if (nx >= mx) { nx = mx; root.vx = 0 }
-            f.contentY = ny; f.contentX = nx
+            if (root.sink) root.sink.scrollBy(root.vx * k, root.vy * k)
+            else {
+                const f = root.flick
+                const my = root.maxY(), mx = root.maxX(), ly = root.minY(), lx = root.minX()
+                let ny = f.contentY + root.vy * k, nx = f.contentX + root.vx * k
+                if (ny <= ly) { ny = ly; root.vy = 0 } else if (ny >= my) { ny = my; root.vy = 0 }
+                if (nx <= lx) { nx = lx; root.vx = 0 } else if (nx >= mx) { nx = mx; root.vx = 0 }
+                f.contentY = ny; f.contentX = nx
+            }
             const decay = Math.pow(root.friction, k)
             root.vy *= decay; root.vx *= decay
             if (Math.abs(root.vy) < 0.05 && Math.abs(root.vx) < 0.05) { root.vy = 0; root.vx = 0; root.gliding = false }

@@ -148,22 +148,24 @@ FocusScope {
     function docZoomFit() { docZoomTo(flick.width / (pageWidth + 2 * inkGutter)) }   // the sheet fills the viewport
     // ONE zoom interface (ruling 2026-09-16): the badge and the keys act on the ACTIVE surface —
     // the PDF stage, the sketch stage, or the document. 100 % is true scale on each.
-    readonly property real zoomValue: activePdfRow >= 0
+    readonly property real zoomValue: activeCanvas ? canvasView.cam.zoom
+        : activePdfRow >= 0
         ? (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0 ? pdfZoom * pdfFitPageW / blockModel.mediaW(activePdfRow) : 1)
         : activeSketchRow >= 0 ? sketchEditCanvas.zoom : viewZoom
-    function zoomStep(dir) { if (activePdfRow >= 0) pdfZoomStep(dir); else if (activeSketchRow >= 0) sketchStage.zoomStep(dir); else docZoomStep(dir) }
+    function zoomStep(dir) { if (activeCanvas) canvasView.zoomStep(dir); else if (activePdfRow >= 0) pdfZoomStep(dir); else if (activeSketchRow >= 0) sketchStage.zoomStep(dir); else docZoomStep(dir) }
     // The rail's slider (BottomRail): the active surface's range in TRUE-scale units, mapped
     // the Word way — 100 % dead centre, a linear half either side.
     readonly property real pdfTrueK: pdfFitPageW > 0 && activePdfRow >= 0 && blockModel.mediaW(activePdfRow) > 0
                                      ? pdfFitPageW / blockModel.mediaW(activePdfRow) : 1
     // A PDF: a quarter of fit width up to 400 % true scale (its own clamp allows 4 × fit, which
     // is far past useful and made the slider's right half a cliff).
-    readonly property real zoomFloor: activePdfRow >= 0 ? 0.25 * pdfTrueK : activeSketchRow >= 0 ? 0.10 : zoomSteps[0]
-    readonly property real zoomCeil:  activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : activeSketchRow >= 0 ? 8 : zoomSteps[zoomSteps.length - 1]
+    readonly property real zoomFloor: activeCanvas ? 0.05 : activePdfRow >= 0 ? 0.25 * pdfTrueK : activeSketchRow >= 0 ? 0.10 : zoomSteps[0]
+    readonly property real zoomCeil:  activeCanvas ? 4 : activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : activeSketchRow >= 0 ? 8 : zoomSteps[zoomSteps.length - 1]
     readonly property bool zoomHasFitInk: activeSketchRow >= 0 && sketchEditCanvas.hasOverflow
     function zoomTo(v) {   // true scale, on the active surface, about its centre
         v = Math.max(zoomFloor, Math.min(zoomCeil, v))
-        if (activePdfRow >= 0) pdfZoomTo(v / pdfTrueK)
+        if (activeCanvas) canvasView.zoomTo(v)
+        else if (activePdfRow >= 0) pdfZoomTo(v / pdfTrueK)
         else if (activeSketchRow >= 0) sketchStage.zoomAt(sketchStage.width / 2, sketchStage.height / 2, v)
         else docZoomTo(v)
     }
@@ -185,8 +187,8 @@ FocusScope {
     // in writing mode space types) and a left-drag pans the Flickable natively; the document
     // mouse layer and the ink canvas step aside while it's held. Middle-drag pans any time.
     property bool docSpaceHeld: false                     // (cleared in onInkModeChanged below)
-    function zoomFit()     { if (activePdfRow >= 0) pdfZoomFit();     else if (activeSketchRow >= 0) sketchStage.fitCamera(); else docZoomFit() }
-    function zoom100()     { if (activePdfRow >= 0) pdfZoom100();     else if (activeSketchRow >= 0) sketchStage.zoomTo100(); else docZoom100() }
+    function zoomFit()     { if (activeCanvas) canvasView.fit();      else if (activePdfRow >= 0) pdfZoomFit();     else if (activeSketchRow >= 0) sketchStage.fitCamera(); else docZoomFit() }
+    function zoom100()     { if (activeCanvas) canvasView.zoomTo(1);  else if (activePdfRow >= 0) pdfZoom100();     else if (activeSketchRow >= 0) sketchStage.zoomTo100(); else docZoom100() }
     // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
     // the panel floats over the editor instead of pushing it, so the raw viewport is wider by
     // the panel — centring on it would shift the page by half the panel every time annotation
@@ -439,7 +441,13 @@ FocusScope {
     onActiveSketchIdChanged: forceActiveFocus()
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
     // active state across table, PDF, video and sketch tabs.
-    readonly property string activeFrameId: activeGridId !== "" ? activeGridId
+    // The canvas (B3) is a per-document view mode, not a block: its tab id is the literal "canvas"
+    // (rowForId("canvas") is -1, so every `activeFrameId !== ""` guard treats it as a frame tab).
+    property bool activeCanvas: false
+    readonly property bool canvasOnLoad: Qt.application.arguments.indexOf("--canvas") >= 0   // dev-only (B3): open on the Canvas tab
+    Timer { interval: 300; running: root.canvasOnLoad; onTriggered: root.setActiveTab("canvas") }   // after the launch's view-state restore
+    readonly property string activeFrameId: activeCanvas ? "canvas"
+                                          : activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
                                           : activeVideoId !== "" ? activeVideoId : activeSketchId
     // The document view's zoom is remembered per bottom tab too (2026-09-16): the Document tab
@@ -458,6 +466,7 @@ FocusScope {
     }
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
+        activeCanvas = false
         // Tool rules on view changes (2026-08-19, tightened 2026-08-20):
         // landing on the Document view always lands TYPING (a leftover armed
         // tool would silently re-engage ink mode); table tabs have no ink
@@ -470,6 +479,10 @@ FocusScope {
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
             activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
+        }
+        if (id === "canvas") {   // B3: read-only in phase 1 — no ink surface, no cell cursor → Type
+            if (inspector && t !== "type") inspector.drawTool = "type"
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeCanvas = true; return
         }
         var r = blockModel.rowForId(id)
         if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a table (S9)
@@ -515,13 +528,15 @@ FocusScope {
             anchorRow:     cursor.anchorRow, anchorCol: cursor.anchorCol,
             activeFrameId: root.activeFrameId,
             boardMode:     root.boardMode,   boardCol:  root.boardCol,
-            zoom:          viewZoom,         docZooms:  docZooms,   pdfZooms: pdfZooms   // per document tab (2026-09-16)
+            zoom:          viewZoom,         docZooms:  docZooms,   pdfZooms: pdfZooms,   // per document tab (2026-09-16)
+            canvasCam:     canvasView.captureCam()                                      // the canvas camera (B3), never persisted
         }
     }
     function restoreViewState(m) {
         // No saved state (a freshly-opened tab) → the standard fresh-doc reset.
         if (!m || m.focusRow === undefined) {
             docZooms = ({}); pdfZooms = ({}); _prevFlickFrameId = ""; _prevPdfId = ""
+            canvasView.resetCam()
             root.setActiveTab("")
             if (viewZoom !== 1) { docZoomTo(1); docZoomSettle() }
             cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
@@ -530,7 +545,8 @@ FocusScope {
         cursor.clearMarks()
         docZooms = m.docZooms || ({}); pdfZooms = m.pdfZooms || ({})
         _prevFlickFrameId = ""; _prevPdfId = ""
-        root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/sketch)
+        root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/sketch/canvas)
+        canvasView.restoreCam(m.canvasCam)
         if (_isFlickFrame(m.activeFrameId)) {
             const z = m.zoom !== undefined ? m.zoom : 1
             if (z !== viewZoom) { docZoomTo(z); docZoomSettle() }
@@ -3064,6 +3080,10 @@ FocusScope {
             root.docSpaceHeld = false
             event.accepted = true
         }
+        else if (root.activeCanvas && event.key === Qt.Key_Space && !event.isAutoRepeat) {
+            canvasView.spaceHeld = false
+            event.accepted = true
+        }
     }
 
     Keys.onPressed: (event) => {
@@ -3280,6 +3300,12 @@ FocusScope {
                 inkCanvas.deleteSelection()
             else if (k === Qt.Key_Space && !event.isAutoRepeat)
                 root.docSpaceHeld = true              // hold the hand
+            event.accepted = true
+        }
+        // The canvas (B3, read-only): Space holds the hand; everything else is swallowed so typing
+        // can't edit the document invisibly (the global chords above still work).
+        else if (root.activeCanvas) {
+            if (k === Qt.Key_Space && !event.isAutoRepeat) canvasView.spaceHeld = true
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4214,6 +4240,7 @@ FocusScope {
     Flickable {
         id: flick
         visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
+                 && !root.activeCanvas                                             // the canvas is a full-frame tab too (B3)
                  && !(root.activeGridId !== "" && root.boardMode)                 // a table's board covers it
         anchors.fill: parent
         // The grid frame's clamp (S9b): the table's top sits under the tab toolbar, its bottom at the end.
@@ -5664,6 +5691,16 @@ FocusScope {
                 }
             }
         }
+    }
+
+    // --- The canvas view (B3): the document's blocks as cards on an infinite surface. A sibling
+    // of the other full-frame tabs; read-only in phase 1; the camera is session state (view state),
+    // never persisted into the document. ---
+    CanvasView {
+        id: canvasView
+        visible: root.activeCanvas
+        anchors.fill: parent
+        editor: root
     }
 
     // --- Full-frame sketch tab: the canvas centered at fit size, editable

@@ -187,11 +187,13 @@ int main(int argc, char *argv[])
     // The editor pool's stable slot table (SR-2). Declared before the engine so
     // it outlives every binding that reads it.
     ViewportSlots viewSlots;
+    ViewportSlots canvasSlots;   // the canvas' card pool (B3): slots keyed by CARD index; never attached (no per-slot revs needed yet)
 
     QQmlApplicationEngine engine;
     engine.addImageProvider("videoframe", new VideoFrameProvider);   // inline video posters
     engine.addImageProvider("pdfpage", new PdfPageProvider);          // inline PDF pages
     engine.rootContext()->setContextProperty("docs", &docs);
+    engine.rootContext()->setContextProperty("canvasSlots", &canvasSlots);
     // Keep `blockModel` pointed at the active tab's model so the existing ~530
     // QML bindings keep working unchanged; re-point it whenever the active tab
     // changes (activeModel() is never null — it falls back to the empty model).

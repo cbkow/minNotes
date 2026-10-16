@@ -20,6 +20,7 @@ qt_add_executable(minnotesapp
     core/LayoutIndex.cpp
     core/CanvasLayout.h
     core/CanvasLayout.cpp
+    core/CanvasCameraMath.h
     core/Importer.cpp
     core/DocxReader.cpp
     core/XlsxReader.cpp
@@ -101,6 +102,8 @@ qt_add_executable(minnotesapp
     notes/doc_ink.cpp
     notes/DocInkCanvas.h
     notes/DocInkCanvas.cpp
+    notes/CanvasCamera.h
+    notes/CanvasCamera.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must
@@ -191,6 +194,8 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Toasts.qml
         qml/MinNotes/App/ZoomBadge.qml
         qml/MinNotes/App/PageRuler.qml
+        qml/MinNotes/App/CanvasView.qml
+        qml/MinNotes/App/CanvasCard.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf
