@@ -1,4 +1,5 @@
 #include "BlockModel.h"
+#include "CanvasLayout.h"
 #include "Importer.h"
 #include "AssetTransfer.h"
 #include "BlockClipboard.h"
@@ -504,6 +505,40 @@ int BlockModel::cardIndexOf(int head) const {
     cardHeads();
     const auto it = std::lower_bound(cards_.begin(), cards_.end(), head);
     return it != cards_.end() && *it == head ? static_cast<int>(it - cards_.begin()) : -1;
+}
+const std::vector<QRectF>& BlockModel::cardRects() const {
+    cardHeads();
+    if (cardRectsLayoutRev_ == layoutRevision_ && cardRectsWidth_ == contentWidth_ && cardRectsHeads_ == cards_) return cardRects_;
+    std::vector<double> heights;
+    heights.reserve(cards_.size());
+    for (size_t i = 0; i < cards_.size(); ++i) {
+        const int first = cards_[i];
+        const int last = i + 1 < cards_.size() ? cards_[i + 1] - 1 : static_cast<int>(rows_.size()) - 1;
+        const double run = layout().y(size_t(last)) + layout().height(size_t(last)) - layout().y(size_t(first));
+        heights.push_back(run + 2.0 * kCardInset);
+    }
+    cardRects_ = mn::defaultCardLayout(heights, contentWidth_ + 2.0 * kCardInset, kCardGap);
+    cardRectsHeads_ = cards_;
+    cardRectsLayoutRev_ = layoutRevision_;
+    cardRectsWidth_ = contentWidth_;
+    return cardRects_;
+}
+QRectF BlockModel::cardRect(int i) const {
+    const auto& rects = cardRects();
+    return i >= 0 && i < static_cast<int>(rects.size()) ? rects[size_t(i)] : QRectF();
+}
+QList<int> BlockModel::visibleCards(qreal x0, qreal y0, qreal x1, qreal y1) const {
+    const QRectF view(QPointF(std::min(x0, x1), std::min(y0, y1)), QPointF(std::max(x0, x1), std::max(y0, y1)));
+    QList<int> out;
+    const auto& rects = cardRects();
+    for (size_t i = 0; i < rects.size(); ++i)
+        if (rects[i].intersects(view)) out << static_cast<int>(i);
+    return out;
+}
+QRectF BlockModel::canvasBounds() const {
+    QRectF b;
+    for (const QRectF& r : cardRects()) b = b.isNull() ? r : b.united(r);
+    return b;
 }
 QStringList BlockModel::cardBlockIds() const {
     cardHeads();

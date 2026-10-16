@@ -255,6 +255,15 @@ public:
     Q_INVOKABLE int cardHeadOf(int row) const;        // first row of the card holding row, or -1
     Q_INVOKABLE int cardIndexOf(int head) const;      // card index of a head row, or -1 (not a head)
     Q_INVOKABLE QStringList cardBlockIds() const;     // the heads' block ids, in order (a stable key per card)
+    // Card geometry (B2): world-space rects from the default grid (mn::defaultCardLayout) — no card
+    // positions are stored in phase 1. A card is the page width plus kCardInset each side; its height
+    // is its run's laid-out height plus the inset top and bottom, so a card's blocks render with the
+    // page pool's own measured heights. Cached on the layout revision, the card set and the width.
+    static constexpr double kCardInset = 24.0;
+    static constexpr double kCardGap = 64.0;
+    Q_INVOKABLE QRectF cardRect(int i) const;                                   // empty rect when out of range
+    Q_INVOKABLE QList<int> visibleCards(qreal x0, qreal y0, qreal x1, qreal y1) const;   // cards intersecting the world rect, in order
+    Q_INVOKABLE QRectF canvasBounds() const;                                    // the union of all card rects
     // T3 sticky header: for the table whose row covers content y (and has body rows),
     // {head, headerTop, headerBottom, tableBottom, headerRows: [records]}; {} otherwise.
     Q_INVOKABLE QVariantMap tableStickyAt(qreal y) const;
@@ -1311,6 +1320,11 @@ private:
     mutable bool cardsDirty_ = true;
     mutable int cardsRev_ = -1;
     const std::vector<int>& cardHeads() const;
+    mutable std::vector<QRectF> cardRects_;
+    mutable std::vector<int> cardRectsHeads_;      // the card set the rects were built for
+    mutable int cardRectsLayoutRev_ = -1;
+    mutable double cardRectsWidth_ = -1.0;
+    const std::vector<QRectF>& cardRects() const;
     std::pair<int,int> splitRunBand(int record) const;   // adjacent top-level split rows around record
     // Per-table column geometry, rebuilt lazily for every table at once. Stale when the
     // grouping rebuilds, a table cell's text changes (persistContent), or a record's

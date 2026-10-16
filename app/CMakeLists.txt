@@ -18,6 +18,8 @@ qt_add_executable(minnotesapp
     core/ViewportSlots.cpp
     core/LayoutIndex.h
     core/LayoutIndex.cpp
+    core/CanvasLayout.h
+    core/CanvasLayout.cpp
     core/Importer.cpp
     core/DocxReader.cpp
     core/XlsxReader.cpp

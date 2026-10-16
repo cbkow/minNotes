@@ -30,6 +30,7 @@
 #include "SpellDictionaryFiles.h"
 #include "SpellService.h"
 #include "ViewportSlots.h"
+#include "CanvasLayout.h"
 #include "LayoutIndex.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -6243,6 +6244,60 @@ static void testCardModel() {
     }
 }
 
+static void testCanvasLayout() {
+    qInfo("[112] canvas card geometry (B2): the default grid is deterministic, overlap-free and in reading order; the model's rects carry the runs' heights");
+    {
+        const std::vector<double> hs{ 100, 200, 150, 120, 80 };
+        const auto a = mn::defaultCardLayout(hs, 808, 64), b = mn::defaultCardLayout(hs, 808, 64);
+        CHECK(a.size() == 5 && a == b, "five cards → five rects, deterministic");
+        CHECK(mn::defaultCardColumns(5) == 2 && mn::defaultCardColumns(1) == 1 && mn::defaultCardColumns(2) == 1
+                  && mn::defaultCardColumns(8) == 2 && mn::defaultCardColumns(18) == 3 && mn::defaultCardColumns(100) == 4 && mn::defaultCardColumns(0) == 1,
+              "column count = clamp(ceil(sqrt(N/2)), 1, 4)");
+        CHECK(a[0] == QRectF(0, 0, 808, 100) && a[1] == QRectF(872, 0, 808, 200) && a[2] == QRectF(0, 264, 808, 150)
+                  && a[3] == QRectF(872, 264, 808, 120) && a[4] == QRectF(0, 478, 808, 80),
+              "two columns: x steps by width + gap, a grid row is as tall as its tallest card (%g %g %g)", a[2].y(), a[3].y(), a[4].y());
+        bool overlap = false, order = true;
+        for (size_t i = 0; i < a.size(); ++i) {
+            for (size_t j = i + 1; j < a.size(); ++j) if (a[i].intersects(a[j])) overlap = true;
+            if (i > 0 && !(a[i].y() > a[i - 1].y() || (a[i].y() == a[i - 1].y() && a[i].x() > a[i - 1].x()))) order = false;
+        }
+        CHECK(!overlap && order, "no two rects overlap; reading order");
+        CHECK(mn::defaultCardLayout({}, 808, 64).empty() && mn::defaultCardLayout({ 50 }, 808, 64) == std::vector<QRectF>{ QRectF(0, 0, 808, 50) },
+              "N = 0 → nothing; N = 1 → one rect at the origin");
+        const auto wide = mn::defaultCardLayout(std::vector<double>(40, 30.0), 100, 10);
+        CHECK(wide[3].x() == 330 && wide[4].x() == 0 && wide[4].y() == 40, "forty cards: four columns, then the next row");
+    }
+    {
+        BlockModel m;
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < 6; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("row %1").arg(i)); }
+        m.setHeading(0, 1); m.setHeading(2, 2); m.setHeading(5, 2);   // cards [0,1] [2,4] [5]
+        m.setMeasuredHeight(1, 100); m.setMeasuredHeight(3, 70); m.setMeasuredHeight(4, 30);
+        const double W = m.pageWidth() + 2 * BlockModel::kCardInset;
+        CHECK(m.cardCount() == 3 && m.cardRect(0).width() == W && m.cardRect(1).width() == W, "three cards at the page width plus the insets");
+        auto runH = [&m](int first, int last) { return m.yForRow(last) + m.heightForRow(last) - m.yForRow(first); };
+        CHECK(qFuzzyCompare(m.cardRect(0).height(), runH(0, 1) + 2 * BlockModel::kCardInset)
+                  && qFuzzyCompare(m.cardRect(1).height(), runH(2, 4) + 2 * BlockModel::kCardInset)
+                  && qFuzzyCompare(m.cardRect(2).height(), runH(5, 5) + 2 * BlockModel::kCardInset),
+              "a card is as tall as its run plus the inset top and bottom");
+        const QRectF b = m.canvasBounds();
+        CHECK(b.contains(m.cardRect(0)) && b.contains(m.cardRect(1)) && b.contains(m.cardRect(2)) && b.topLeft() == QPointF(0, 0),
+              "canvasBounds unites the rects from the origin");
+        CHECK(m.visibleCards(b.left(), b.top(), b.right(), b.bottom()) == (QList<int>{ 0, 1, 2 })
+                  && m.visibleCards(b.right() + 10, b.top(), b.right() + 20, b.bottom()).isEmpty()
+                  && m.visibleCards(m.cardRect(2).center().x(), m.cardRect(2).center().y(), m.cardRect(2).center().x() + 1, m.cardRect(2).center().y() + 1) == (QList<int>{ 2 }),
+              "visibleCards: all, none, one (and a flipped rect is normalised)");
+        CHECK(m.cardRect(3).isEmpty() && m.cardRect(-1).isEmpty(), "out of range → an empty rect");
+        const double h1 = m.cardRect(1).height();
+        m.setMeasuredHeight(3, 170);
+        CHECK(qFuzzyCompare(m.cardRect(1).height(), h1 + 100), "a settled height grows its card (layout revision keys the cache)");
+        m.setHeading(2, 0);
+        CHECK(m.cardCount() == 2 && qFuzzyCompare(m.cardRect(0).height(), runH(0, 4) + 2 * BlockModel::kCardInset),
+              "merging cards re-derives the rects (the card set keys the cache)");
+    }
+}
+
 static void testTableModel() {
     qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
     auto fresh = [](BlockModel& m) {
@@ -8543,6 +8598,7 @@ int main(int argc, char** argv) {
     testSplitRowExports();
     testTableModel();
     testCardModel();
+    testCanvasLayout();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
