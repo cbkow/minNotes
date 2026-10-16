@@ -147,6 +147,8 @@ qt_add_executable(minnotesapp
 # harmless.)
 target_compile_definitions(minnotesapp PRIVATE
     "MINNOTES_APP_VERSION=\"${PROJECT_VERSION}\"")
+# Dev builds only: lets `qmlprofiler` attach (-qmljsdebugger). Release never ships it.
+target_compile_definitions(minnotesapp PRIVATE $<$<NOT:$<CONFIG:Release>>:QT_QML_DEBUG>)
 
 # Mark Theme.qml as a QML singleton BEFORE qt_add_qml_module so the generated
 # qmldir registers it correctly (else `Theme.colors.x` fails to resolve).

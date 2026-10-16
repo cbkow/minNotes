@@ -676,7 +676,9 @@ Item {
         visible: cursor.active && cell.isFocus && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 10
         color: Theme.colors.accent
         width: 2
-        property rect cr: te.positionToRectangle(Math.min(cursor.focusCol, te.length))
+        // Gated on isFocus: a bare read of cursor.focusCol made EVERY pooled delegate recompute this
+        // rect on each caret move (QML profile: 450k evaluations ≈ 1.6 ms per keystroke, A1).
+        property rect cr: cell.isFocus ? te.positionToRectangle(Math.min(cursor.focusCol, te.length)) : Qt.rect(0, 0, 0, 0)
         x: te.x + cr.x
         y: te.y + cr.y
         height: cr.height > 0 ? cr.height : 18

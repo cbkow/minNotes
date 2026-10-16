@@ -1470,7 +1470,17 @@ FocusScope {
             lastSyncRow = focusRow
         }
 
-        function setCaret(r, col) { anchorRow = r; anchorCol = col; focusRow = r; focusCol = col; goalX = -1; sync() }
+        function setCaret(r, col) {
+            const pr = typeProbe.armed; let t = pr ? blockModel.probeNowUs() : 0   // type probe: per-write cost
+            anchorRow = r; anchorCol = col
+            if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("sc.anchor", t1 - t); t = t1 }
+            focusRow = r
+            if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("sc.focusRow", t1 - t); t = t1 }
+            focusCol = col
+            if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("sc.focusCol", t1 - t); t = t1 }
+            goalX = -1; sync()
+            if (pr) blockModel.probeMark("sc.sync", blockModel.probeNowUs() - t)
+        }
         function move(r, col, extend) {
             // Leaving a block with a collapsed caret consumes its markdown → spans.
             if (!extend && r !== focusRow && !root.dragging) blockModel.commitMarkdown(focusRow)
@@ -1552,8 +1562,16 @@ FocusScope {
                 var cir = blockModel.choiceRangeAt(focusRow, focusCol)
                 if (cir.length === 2 && focusCol > cir[0]) setCaret(focusRow, cir[1])
             }
+            const pr = typeProbe.armed                    // type probe: split the key into model vs caret-sync cost
+            let pt = pr ? blockModel.probeNowUs() : 0
             blockModel.insertText(focusRow, focusCol, ch, activeMarks, armedFg, armedBg)   // armed attrs + pens → span the run
+            if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("insertText", t1 - pt); pt = t1 }
+            if (pr && root.focusBlockItem && root.focusBlockItem.positionToRectangle) {   // force the focused block's lazy relayout, timed apart
+                root.focusBlockItem.positionToRectangle(0)
+                const t2 = blockModel.probeNowUs(); blockModel.probeMark("relayout", t2 - pt); pt = t2
+            }
             setCaret(focusRow, focusCol + ch.length)
+            if (pr) blockModel.probeMark("setCaret", blockModel.probeNowUs() - pt)
             // Markdown autoformat fires on the space that completes a prefix
             // (e.g. "## "): the prefix is consumed, so pull the caret back.
             if (ch === " ") {
@@ -2101,8 +2119,10 @@ FocusScope {
     }
     Connections {   // a grip-picked set lasts until the caret moves
         target: cursor
-        function onFocusRowChanged() { root.tableSet = null }
-        function onFocusColChanged() { root.tableSet = null }
+        // Guarded: a `var` write emits tableSetChanged even when null → null, and every visible table
+        // cell's `inSet` re-evaluated on each keystroke (A1 type probe: most of the caret-sync cost).
+        function onFocusRowChanged() { if (root.tableSet !== null) root.tableSet = null }
+        function onFocusColChanged() { if (root.tableSet !== null) root.tableSet = null }
         function onAnchorRowChanged() { root.tableSet = null }
         function onAnchorColChanged() { root.tableSet = null }
     }

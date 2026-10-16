@@ -29,10 +29,11 @@ for line in open(log, encoding="utf-8", errors="replace"):
         print(line.rstrip())
 def pq(s): return f"{s['p50']:>6}/{s['p95']:<6}"
 print(f"\n{label}")
-print(f"{'phase':<11}{'keys':>5} {'key µs p50/p95':>15} {'signal':>13} {'persist':>13} {'snapshot':>13} {'endTxn':>13} {'frame p95':>10} {'rehl/k':>7} {'hlBlk/k':>8} {'ink/k':>6} {'db/k':>5}")
+z = {'p50':0,'p95':0}
+print(f"{'phase':<11}{'keys':>5} {'key µs p50/p95':>15} {'insertText':>13} {'setCaret':>13} {'sc.anchor':>13} {'sc.focusRow':>13} {'sc.focusCol':>13} {'sc.sync':>13} {'signal':>13} {'persist':>13} {'snapshot':>13} {'endTxn':>13} {'frame p95':>10} {'rehl/k':>7} {'hlBlk/k':>8} {'ink/k':>6} {'db/k':>5}")
 for name, s in rows:
     k = max(1, s.get("keys", 0)); c = s.get("counters", {})
-    print(f"{name:<11}{s.get('keys',0):>5} {pq(s.get('key', {'p50':0,'p95':0})):>15} {pq(s['signal']):>13} {pq(s['persist']):>13} {pq(s['snapshot']):>13} {pq(s['endTxn']):>13} {s.get('frame',{'p95':0})['p95']:>10} "
+    print(f"{name:<11}{s.get('keys',0):>5} {pq(s.get('key', z)):>15} {pq(s.get('insertText', z)):>13} {pq(s.get('setCaret', z)):>13} {pq(s.get('sc.anchor', z)):>13} {pq(s.get('sc.focusRow', z)):>13} {pq(s.get('sc.focusCol', z)):>13} {pq(s.get('sc.sync', z)):>13} {pq(s['signal']):>13} {pq(s['persist']):>13} {pq(s['snapshot']):>13} {pq(s['endTxn']):>13} {s.get('frame',{'p95':0})['p95']:>10} "
           f"{c.get('rehighlights',0)/k:>7.1f} {c.get('highlightBlocks',0)/k:>8.1f} {c.get('inkPaints',0)/k:>6.1f} {c.get('dbWrites',0)/k:>5.1f}")
 if not rows:
     print("no PHASE lines — tail of the log:")
