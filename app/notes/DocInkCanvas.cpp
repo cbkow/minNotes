@@ -44,7 +44,11 @@ void DocInkCanvas::setModelObject(QObject* m)
         connect(model_, &BlockModel::documentChanged, this, [this] { rebuildCache(); });
         // Geometry-only shifts (heights settle, rows move) just repaint.
         connect(model_, &BlockModel::layoutChangedSpike, this, [this] { update(); });
-        connect(model_, &BlockModel::contentChangedSpike, this, [this] { update(); });
+        // A content spike (every keystroke anywhere) repaints only when there is ink to
+        // place — an ink-free document paid a full viewport raster + upload per key (A0).
+        // Anchor positions follow heights (the layout spike above) and ink edits arrive
+        // through inkChanged, so this is belt-and-braces for documents that do have ink.
+        connect(model_, &BlockModel::contentChangedSpike, this, [this] { if (model_->hasInk()) update(); });
     }
     rebuildCache();
     emit modelChanged();

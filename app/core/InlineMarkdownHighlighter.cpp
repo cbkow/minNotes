@@ -209,16 +209,27 @@ void InlineMarkdownHighlighter::setSelEnd(int v) {
 QVariantList InlineMarkdownHighlighter::spans() const { return spansCache_; }
 void InlineMarkdownHighlighter::setSpans(const QVariantList& v) {
     spansCache_ = v;
-    hl_->spans.clear();
-    hl_->spans.reserve(v.size());
+    // Parse first, compare, and only then re-highlight: the QML binding hands over a NEW
+    // QVariantList on every contentRevision bump (every keystroke anywhere), so without the
+    // guard every pooled delegate re-highlighted its whole document per key (A0 baseline:
+    // ~480 rehighlights per keystroke). Equal spans = nothing to redo; the document's own
+    // contentsChange path already re-highlights the paragraph whose text changed.
+    std::vector<Impl::SpanFmt> next;
+    next.reserve(v.size());
     for (const QVariant& item : v) {
         const QVariantMap m = item.toMap();
         const int k = m.value(QStringLiteral("k")).toInt();
         QColor c;
         if (k == 7 || k == 8) c = QColor(m.value(QStringLiteral("u")).toString());  // fg / highlight
-        hl_->spans.push_back({m.value(QStringLiteral("s")).toInt(),
-                              m.value(QStringLiteral("e")).toInt(), k, c});
+        next.push_back({m.value(QStringLiteral("s")).toInt(),
+                        m.value(QStringLiteral("e")).toInt(), k, c});
     }
+    const bool same = next.size() == hl_->spans.size()
+        && std::equal(next.begin(), next.end(), hl_->spans.begin(),
+                      [](const Impl::SpanFmt& a, const Impl::SpanFmt& b) {
+                          return a.s == b.s && a.e == b.e && a.k == b.k && a.color == b.color; });
+    if (same) return;
+    hl_->spans = std::move(next);
     emit spansChanged();
     hl_->rehighlight();
 }
