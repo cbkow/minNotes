@@ -10,6 +10,7 @@ Rectangle {
     id: cv
     required property var editor
     color: Theme.colors.bgAlt      // the full-frame tabs' field tone
+    clip: true                     // the world layer is unbounded: without this, cards paint over the rail and the tab strips
     property bool spaceHeld: false // the editor's key handler: Space held = hand (left-drag pans anyway in P1)
     readonly property CanvasCamera cam: CanvasCamera { id: cam }
 
