@@ -65,7 +65,9 @@ Rectangle {
         onTriggered: card.liveRows = Math.min(card.wantRows, card.liveRows + card.kRowsPerFrame)
     }
     readonly property CanvasEditorFacade facade: CanvasEditorFacade { editor: card.editor; inset: card.inset }
+    function delegateAt(i) { return blockRepeater.itemAt(i) }   // probe (B10)
     Repeater {
+        id: blockRepeater
         model: card.liveRows
         delegate: BlockView {
             required property int index
@@ -77,7 +79,9 @@ Rectangle {
     }
 
     // --- ink (B5): the run's margin ink as GPU geometry, over the blocks (the page's z-order) ---
+    readonly property Item inkItem: inkNode   // probe (B10)
     InkNodeItem {
+        id: inkNode
         model: blockModel
         rowLo: card.head; rowHi: card.last
         originY: card.originY; leftEdge: card.inset

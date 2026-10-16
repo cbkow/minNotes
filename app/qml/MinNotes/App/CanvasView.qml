@@ -32,6 +32,10 @@ Rectangle {
     onVisibleCardsChanged: sizePool()
     Component.onCompleted: sizePool()
 
+    // Probe hooks (B10).
+    function cardItemAt(slot) { return cardRepeater.itemAt(slot) }
+    readonly property int poolCount: cardPool.count
+
     // --- camera -----------------------------------------------------------------------------
     function fit() { if (width > 0 && height > 0) cam.fitRect(blockModel.canvasBounds(), width, height, 48) }
     function zoomStep(dir) { cam.zoomAboutPoint(cam.zoom * Math.pow(Math.SQRT2, dir > 0 ? 1 : -1), width / 2, height / 2) }
@@ -58,6 +62,7 @@ Rectangle {
             Translate { x: cam.panX; y: cam.panY }
         ]
         Repeater {
+            id: cardRepeater
             model: cardPool
             delegate: CanvasCard {
                 required property int index

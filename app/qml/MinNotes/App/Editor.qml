@@ -4038,6 +4038,195 @@ FocusScope {
             if (keys >= limit) endPhase(); else ++phaseStep
         }
     }
+    // --- Dev-only canvas probe (B10): `--canvas-probe=<md>` (Main.qml imports the fixture). Offscreen.
+    // P0 setup (sample ink, the Canvas tab, fit) · P1 model invariants · P2 pan sweep (one card per
+    // visible card, at its rect, tier per zoom, inside the overscan) · P3 zoom sweep (the anchored point
+    // stays put; no tier flip inside the dead band) · P4 live content (delegate y/x against the model,
+    // text, heights identical to the page pool across a tab round-trip) · P5 ink (anchors, vertices,
+    // the first point where the page's placement puts it). Prints CANVAS-PROBE PHASE/FAIL/DONE, exits
+    // with the fail count. The shell runner greps the log for TypeError/ReferenceError (facade gaps).
+    Timer {
+        id: canvasProbe
+        readonly property bool armed: Qt.application.arguments.some(function(a) { return a.indexOf("--canvas-probe=") === 0 })
+        running: armed && blockModel.count > 100
+        interval: 40; repeat: true
+        property int phase: 0
+        property int step: 0
+        property int fails: 0
+        property int checks: 0
+        property int waitTicks: 0
+        property var inkRows: []
+        property var heightsBefore: ({})
+        property int liveCard: 1
+        property real seed: 12345
+        property int prevTier: -1
+        property real prevZoom: -1
+        function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+        function fail(msg) { if (++fails <= 40) console.log("CANVAS-PROBE FAIL phase", phase, "step", step, msg) }
+        function check(ok, msg) { ++checks; if (!ok) fail(msg) }
+        function nextPhase(name) { console.log("CANVAS-PROBE PHASE", name, "checks", checks, "fails", fails); ++phase; step = 0; waitTicks = 0 }
+        readonly property real inset: 24
+        function expectedTier(z, prev) {
+            if (z >= 0.40) return 2
+            if (z >= 0.10) return (prev === 2 && z > 0.32) ? 2 : 1
+            return (prev >= 1 && z > 0.08) ? 1 : 0
+        }
+        function activeCards() {   // slot → card index, for every live card item
+            const out = []
+            for (let i = 0; i < canvasView.poolCount; ++i) { const c = canvasView.cardItemAt(i); if (c && c.cardIndex >= 0) out.push(c) }
+            return out
+        }
+        onTriggered: {
+            const cam = canvasView.cam
+            if (phase === 0) {   // P0: ink on card 1's first three rows, the tab, fit
+                if (step === 0) {
+                    const h = blockModel.cardHeadAt(liveCard)
+                    const env = (shapes) => JSON.stringify({ version: "2.0", coordinate_system: "block-local", space: "px", shapes: shapes })
+                    const shape = (type, pts, extra) => Object.assign({ id: "probe-" + type, type: type, color: [0.9, 0.3, 0.2, 1], stroke_width: 4, filled: false, is_modeled: false, points: pts }, extra || {})
+                    blockModel.setBlockInk(h, env([shape("freehand", [[-360, 8], [-330, 30], [-300, 6]])]))
+                    blockModel.setBlockInk(h + 1, env([shape("arrow", [[-400, 40], [-310, 12]]), shape("oval", [[120, 20], [60, 14]])]))
+                    blockModel.setBlockInk(h + 2, env([shape("rect", [[-380, -4], [-100, -4], [-100, 24], [-380, 24]], { stroke_width: 2 })]))
+                    inkRows = [h, h + 1, h + 2]
+                    root.setActiveTab("canvas")
+                } else if (step === 3) { canvasView.fit() }
+                else if (step === 8) {
+                    check(root.activeCanvas && canvasView.visible && !flick.visible, "the Canvas tab shows the canvas and hides the page")
+                    check(!cam.userCam && cam.zoom < 1, "a fresh canvas fits the document (zoom " + cam.zoom + ")")
+                    nextPhase("setup")
+                }
+                ++step; return
+            }
+            if (phase === 1) {   // P1: the model's cards and rects
+                const n = blockModel.count, cards = blockModel.cardCount()
+                let idx = -1, ok = true, sumRun = 0
+                for (let r = 0; r < n; ++r) {
+                    const h = blockModel.cardHeadOf(r)
+                    if (h === r) { ++idx; if (blockModel.cardHeadAt(idx) !== r || blockModel.cardIndexOf(r) !== idx) ok = false }
+                    else if (blockModel.cardIndexOf(r) !== -1 || h !== blockModel.cardHeadAt(idx)) ok = false
+                    if (r > blockModel.cardLastAt(idx)) ok = false
+                    if (blockModel.laneForRow(r) >= 0 && blockModel.cardHeadOf(blockModel.splitRowOf(r)) !== h) ok = false
+                }
+                check(ok && idx === cards - 1 && cards > 10, "every row sits in exactly one card, heads monotone, lanes never straddle (" + cards + " cards)")
+                let overlap = false, order = true, sumRect = 0
+                for (let i = 0; i < cards; ++i) {
+                    const a = blockModel.cardRect(i)
+                    const first = blockModel.cardHeadAt(i), last = blockModel.cardLastAt(i)
+                    sumRun += blockModel.yForRow(last) + blockModel.heightForRow(last) - blockModel.yForRow(first)
+                    sumRect += a.height - 2 * inset
+                    if (i > 0) { const p = blockModel.cardRect(i - 1); if (!(a.y > p.y || (a.y === p.y && a.x > p.x))) order = false }
+                    for (let j = i + 1; j < cards; ++j) {
+                        const b = blockModel.cardRect(j)
+                        if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) overlap = true
+                    }
+                }
+                check(!overlap && order, "card rects never overlap and read left to right, top to bottom")
+                check(Math.abs(sumRect - sumRun) < 0.5, "the cards' heights sum to the runs' (" + sumRect + " vs " + sumRun + ")")
+                const b = blockModel.canvasBounds()
+                check(blockModel.visibleCards(b.x, b.y, b.x + b.width, b.y + b.height).length === cards, "visibleCards over the bounds is every card")
+                nextPhase("model"); return
+            }
+            if (phase === 2) {   // P2: pan sweep at zoom 0.5
+                if (step === 0) { cam.zoomAboutPoint(0.5, canvasView.width / 2, canvasView.height / 2); ++step; return }
+                if (step % 2 === 1) {   // move
+                    const b = blockModel.canvasBounds()
+                    const wx = b.x + rnd() * b.width, wy = b.y + rnd() * b.height
+                    cam.setPan(canvasView.width / 2 - wx * cam.zoom, canvasView.height / 2 - wy * cam.zoom)
+                    ++step; return
+                }
+                const vis = canvasView.visibleCards, items = activeCards()
+                const seen = {}
+                let ok = items.length === vis.length
+                for (const c of items) {
+                    if (seen[c.cardIndex] || vis.indexOf(c.cardIndex) < 0) ok = false
+                    seen[c.cardIndex] = true
+                    const r = blockModel.cardRect(c.cardIndex)
+                    if (Math.abs(c.x - r.x) > 0.5 || Math.abs(c.y - r.y) > 0.5 || Math.abs(c.width - r.width) > 0.5 || Math.abs(c.height - r.height) > 0.5) { ok = false; fail("card " + c.cardIndex + " at " + c.x + "," + c.y + " vs rect " + r.x + "," + r.y) }
+                    if (c.tier !== 2) { ok = false; fail("card " + c.cardIndex + " tier " + c.tier + " at zoom " + cam.zoom) }
+                    const tl = cam.screenToWorld(-canvasView.width * 0.5, -canvasView.height * 0.5), br = cam.screenToWorld(canvasView.width * 1.5, canvasView.height * 1.5)
+                    if (r.x + r.width < tl.x || r.x > br.x || r.y + r.height < tl.y || r.y > br.y) { ok = false; fail("card " + c.cardIndex + " outside the overscan") }
+                }
+                check(ok, "pan step " + step + ": one card item per visible card (" + items.length + " of " + vis.length + "), at its rect, live, inside the overscan")
+                if (++step >= 24) nextPhase("pan"); return
+            }
+            if (phase === 3) {   // P3: zoom sweep about random anchors
+                if (step === 0) { canvasView.fit(); prevTier = -1; prevZoom = -1; ++step; return }
+                const zs = [0.05, 0.07, 0.09, 0.11, 0.2, 0.3, 0.34, 0.37, 0.4, 0.6, 1, 1.5, 2, 3, 4, 0.36, 0.33, 0.31, 0.12, 0.08]
+                const i = step - 1
+                if (i >= zs.length) { nextPhase("zoom"); return }
+                const ax = rnd() * canvasView.width, ay = rnd() * canvasView.height
+                const w = cam.screenToWorld(ax, ay)
+                cam.zoomAboutPoint(zs[i], ax, ay)
+                const s = cam.worldToScreen(w.x, w.y)
+                check(Math.abs(s.x - ax) < 0.5 && Math.abs(s.y - ay) < 0.5 && Math.abs(cam.zoom - zs[i]) < 1e-9, "zoom " + zs[i] + ": the anchored point stays put (" + (s.x - ax) + "," + (s.y - ay) + ")")
+                const items = activeCards()
+                let ok = items.length === canvasView.visibleCards.length   // a deep zoom about a random anchor may show no card at all
+                for (const c of items) if (c.tier !== expectedTier(zs[i], prevTier)) { ok = false; fail("card " + c.cardIndex + " tier " + c.tier + " at zoom " + zs[i] + " (prev tier " + prevTier + ")") }
+                check(ok, "zoom " + zs[i] + ": every live card is in the tier the hysteresis predicts (" + items.length + " cards)")
+                prevTier = items.length ? items[0].tier : expectedTier(zs[i], prevTier)
+                ++step; return
+            }
+            if (phase === 4) {   // P4: live content on card `liveCard` at zoom 1
+                if (step === 0) {
+                    const r = blockModel.cardRect(liveCard)
+                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasView.width / 2 - (r.x + r.width / 2), 80 - r.y)
+                    ++step; return
+                }
+                const card = activeCards().find(c => c.cardIndex === liveCard)
+                if (step < 80 && (!card || card.liveRows < card.wantRows)) { ++step; return }   // the stagger
+                check(!!card && card.tier === 2 && card.liveRows === card.wantRows && card.liveRows > 0, "card " + liveCard + " is live with all its rows (" + (card ? card.liveRows + "/" + card.wantRows : "no card") + ")")
+                if (card) {
+                    let ok = true
+                    heightsBefore = {}
+                    for (let i = 0; i < card.liveRows; ++i) {
+                        const d = card.delegateAt(i), row = card.head + i
+                        if (!d) { ok = false; fail("no delegate " + i); continue }
+                        const lane = root.laneOf(row)
+                        if (Math.abs(d.y + card.originY - blockModel.yForRow(row)) > 0.5) { ok = false; fail("row " + row + " y " + (d.y + card.originY) + " vs " + blockModel.yForRow(row)) }
+                        if (d.colLeft < inset + lane.x - 0.5 || d.colLeft > inset + lane.x + 8.5) { ok = false; fail("row " + row + " colLeft " + d.colLeft + " vs lane " + (inset + lane.x)) }
+                        if (!d.isMedia && d.teItem && d.teItem.text !== blockModel.contentForRow(row)) { ok = false; fail("row " + row + " text differs") }
+                        if (d.editor !== card.facade || d.logicalRow !== row) { ok = false; fail("row " + row + " delegate wiring") }
+                        heightsBefore[row] = blockModel.heightForRow(row)
+                    }
+                    check(ok, "every live delegate sits at its model y, in its lane, with its text, on the facade (" + card.liveRows + " rows)")
+                }
+                nextPhase("live"); return
+            }
+            if (phase === 5) {   // P5: the tab round-trip keeps the heights (both pools measure the same)
+                if (step === 0) { root.setActiveTab(""); root.ensureVisible(blockModel.cardHeadAt(liveCard)); ++step; return }
+                if (step < 25) { ++step; return }
+                if (step === 25) {
+                    let ok = true
+                    for (const row in heightsBefore) if (Math.abs(blockModel.heightForRow(parseInt(row)) - heightsBefore[row]) > 0.5) { ok = false; fail("row " + row + " height " + blockModel.heightForRow(parseInt(row)) + " on the page vs " + heightsBefore[row] + " on the canvas") }
+                    check(ok && flick.visible, "back on the page, the rows keep the heights the canvas measured")
+                    root.setActiveTab("canvas"); ++step; return
+                }
+                if (step < 45) { ++step; return }
+                let ok = true
+                for (const row in heightsBefore) if (Math.abs(blockModel.heightForRow(parseInt(row)) - heightsBefore[row]) > 0.5) ok = false
+                check(ok && root.activeCanvas, "…and back on the canvas they still hold (no alternation)")
+                nextPhase("round-trip"); return
+            }
+            if (phase === 6) {   // P6: ink
+                const card = activeCards().find(c => c.cardIndex === liveCard)
+                if (step < 10 && (!card || card.inkItem.anchorCount < inkRows.length)) { ++step; return }
+                check(!!card && card.inkItem.anchorCount === inkRows.length && card.inkItem.vertexCount > 0,
+                      "the card's ink item holds " + (card ? card.inkItem.anchorCount : -1) + " anchors, " + (card ? card.inkItem.vertexCount : 0) + " vertices")
+                if (card) {
+                    const firsts = { 0: [-360, 8], 1: [-400, 40], 2: [-380, -4] }
+                    let ok = true
+                    for (let k = 0; k < inkRows.length; ++k) {
+                        const row = inkRows[k], p = card.inkItem.firstPointOf(row)
+                        const ex = inset + root.pageWidth / 2 + firsts[k][0], ey = blockModel.yForRow(row) - card.originY + firsts[k][1]
+                        if (Math.abs(p.x - ex) > 0.5 || Math.abs(p.y - ey) > 0.5) { ok = false; fail("ink row " + row + " first point " + p.x + "," + p.y + " vs " + ex + "," + ey) }
+                    }
+                    check(ok, "each anchor's first point lands where the page's placement puts it")
+                }
+                nextPhase("ink")
+                console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "cards", blockModel.cardCount(), "blocks", blockModel.count)
+                Qt.exit(Math.min(fails, 100))
+            }
+        }
+    }
     FrameAnimation {   // frame times while the type probe runs (µs), into the same stats
         running: typeProbe.running
         onTriggered: blockModel.probeMark("frame", Math.round(frameTime * 1e6))

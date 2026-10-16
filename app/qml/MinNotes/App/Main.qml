@@ -1341,6 +1341,13 @@ ApplicationWindow {
             if (a[i].indexOf("--type-probe=") === 0) return a[i].substring(13)
         return ""
     }
+    // Dev-only (canvas B10): --canvas-probe=<md> imports the fixture and runs the canvas probe (Editor.qml).
+    readonly property string _canvasProbeFixture: {
+        var a = Qt.application.arguments
+        for (var i = 0; i < a.length; ++i)
+            if (a[i].indexOf("--canvas-probe=") === 0) return a[i].substring(15)
+        return ""
+    }
     // Dev-only (2026-09-16): --import=<file> opens a fresh tab with the file IMPORTED (markdown,
     // docx, …) — pairs with --shot / --export-html for calibration samples written as markdown.
     readonly property string _importFixture: {
@@ -1360,6 +1367,12 @@ ApplicationWindow {
             width = 1200; height = 900
             docs.newTab()
             if (!importer.importFile(_typeProbeFixture)) { console.log("TYPE-PROBE FAIL import"); Qt.exit(101) }
+            return
+        }
+        if (_canvasProbeFixture !== "") {
+            width = 1200; height = 900
+            docs.newTab()
+            if (!importer.importFile(_canvasProbeFixture)) { console.log("CANVAS-PROBE FAIL import"); Qt.exit(101) }
             return
         }
         if (_importFixture !== "") {
