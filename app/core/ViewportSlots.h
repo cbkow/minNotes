@@ -35,6 +35,9 @@ public:
     void bump() { ++rev_; emit revChanged(); }
 signals:
     void revChanged();
+    // A3: the model's text op for the row this slot shows (routed by ViewportSlots::attach).
+    void textInserted(int col, const QString& text);
+    void textRemoved(int start, int end);
 private:
     int rev_ = 0;
 };

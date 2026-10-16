@@ -955,6 +955,14 @@ signals:
     // Emitted from contentSpike() BEFORE contentChangedSpike, with the model consistent.
     void rowsTouched(int lo, int hi);
     void structureChangedSpike();  // see structureRevision
+    // A3: the exact text op a keystroke made, emitted with the model consistent and BEFORE the
+    // spike. ViewportSlots routes it to the ONE slot showing the row, whose TextEdit applies the
+    // same insert/remove to its document instead of taking a whole-text reset (full relayout +
+    // rehighlight — the focused code block paid ~4 ms per key). The delegate's `text` binding
+    // still re-evaluates on the slot bump; TextEdit's setText then sees equal text and does
+    // nothing — and if the two ever drift, that reset heals it.
+    void textInserted(int row, int col, const QString& text);
+    void textRemoved(int row, int start, int end);
     void maxContentWidthChanged();
     void modelReset();
     void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset

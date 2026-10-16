@@ -191,7 +191,9 @@ Item {
     // The delegate spans the whole field (row fill, washes); content sits at colLeft.
     z: isTableRecord ? -1 : 0
     x: 0
-    width: editor.contentSpan   // content units (the page layer scales); == the viewport unless the sheet is wider
+    // Gated on `active`: an idle slot is invisible and must not ride the content-span cascade (a code
+    // line growing past the page re-evaluated every pooled delegate's width per 64 px step — A3).
+    width: active ? editor.contentSpan : 0   // content units (the page layer scales); == the viewport unless the sheet is wider
     visible: active && (editor.frameLo < 0 || (logicalRow >= editor.frameLo && logicalRow <= editor.frameHi))   // the grid frame shows one table
              && !(blockModel.layoutRevision, blockModel.rowHidden(logicalRow))                                  // T4: a filtered-out row
     y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
@@ -637,6 +639,18 @@ Item {
         height: Math.max(1, lineCount) * lineH
     }
 
+    // A3: the keystroke's own text op, applied to this delegate's document (insert/remove edit
+    // the QTextDocument in place: one paragraph relayouts, the highlighters re-run on that block
+    // only). The `text` binding above still re-evaluates on the slot bump and finds equal text,
+    // so the whole-document reset — a full relayout + rehighlight — is skipped. Only the slot
+    // showing the row hears this (ViewportSlots routes it), not the pool.
+    Connections {
+        target: cell.slotObj
+        enabled: cell.active && !cell.isMedia
+        function onTextInserted(col, s) { if (col >= 0 && col <= te.length) { te.insert(col, s); if (typeProbe.armed) blockModel.probeMark("teOps", 0) } }
+        function onTextRemoved(a, b) { if (a >= 0 && b <= te.length && a < b) te.remove(a, b) }
+    }
+
     // Inline markdown styling: applies bold/italic/mono char formats
     // to te's PlainText document and dims the markers in place. No
     // HTML, identity caret positions. Off for code (markdown is
@@ -782,7 +796,7 @@ Item {
         // A block in a lane bands only its lane — the neighbouring lane isn't selected.
         x: cell.inLane ? cell.colLeft : 0
         y: 0
-        width: cell.inLane ? cell.measure : Math.max(editor.viewW, editor.contentSpan)
+        width: !cell.active ? 0 : cell.inLane ? cell.measure : Math.max(editor.viewW, editor.contentSpan)
         height: cell.height
     }
     Rectangle {  // opaque-row range wash (2026-09-09): media/table/divider

@@ -121,6 +121,16 @@ void ViewportSlots::attach(BlockModel* model) {
         conns_.push_back(connect(model, &QAbstractItemModel::rowsRemoved, this,
                                  [this](const QModelIndex&, int first, int) { note(first, INT_MAX); }));
         conns_.push_back(connect(model, &QAbstractItemModel::modelReset, this, [this] { pendAll_ = true; }));
+        // A3: a keystroke's exact text op goes to the ONE slot showing that row, immediately (the
+        // model is consistent at the emit; no structure changed, so slotByRow_ is current).
+        conns_.push_back(connect(model, &BlockModel::textInserted, this, [this](int row, int col, const QString& s) {
+            const int slot = slotByRow_.value(row, -1);
+            if (slot >= 0 && slot < static_cast<int>(slots_.size()) && slots_[size_t(slot)]) emit slots_[size_t(slot)]->textInserted(col, s);
+        }));
+        conns_.push_back(connect(model, &BlockModel::textRemoved, this, [this](int row, int a, int b) {
+            const int slot = slotByRow_.value(row, -1);
+            if (slot >= 0 && slot < static_cast<int>(slots_.size()) && slots_[size_t(slot)]) emit slots_[size_t(slot)]->textRemoved(a, b);
+        }));
         // …and flush with the model consistent. A structure spike bumps every slot (and a reset
         // emits one even without a following content spike — loadFromStore).
         conns_.push_back(connect(model, &BlockModel::structureChangedSpike, this, [this] { pendAll_ = true; flush(); }));

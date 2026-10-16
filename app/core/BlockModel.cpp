@@ -6377,10 +6377,18 @@ void BlockModel::refreshMaxContentWidth() {
         if (heads[i] < 0) blocks = std::max(blocks, static_cast<double>(rows_[i].measuredW));
     tableGeom(-1);                                     // SR-4: tables wider than the page widen the content
     for (auto it = geoms_.cbegin(); it != geoms_.cend(); ++it) tables = std::max(tables, it.value().width);
+    // A3: the widest BLOCK (a code line past the page) grows by one glyph per keystroke, and every
+    // change of the sheet's right edge cascades through the Flickable's contentWidth into every
+    // delegate's width (~4 ms per key in the type probe). Quantise it UP to 64 px steps: the sheet
+    // still always holds the line (plus the 120 px gutter), and the cascade fires once per ~9
+    // characters instead of once per key. Tables stay exact — they are positioned by their width.
+    if (blocks > 0.0) blocks = std::ceil(blocks / 64.0) * 64.0;
     const double m = std::max(blocks, tables);
     if (m != maxContentWidth_ || blocks != maxBlockWidth_ || tables != maxTableWidth_) {
         maxContentWidth_ = m; maxBlockWidth_ = blocks; maxTableWidth_ = tables;
+        QElapsedTimer ct; if (mn::perf::enabled()) ct.start();
         emit maxContentWidthChanged();
+        if (mn::perf::enabled()) probeMarks_[QStringLiteral("cascade")].push_back(ct.nsecsElapsed());   // the sheet-width cascade (type probe)
     }
 }
 
@@ -6521,6 +6529,7 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     if (probe) t1 = pt.nsecsElapsed();
     persistContent(loRow);
     if (probe) t2 = pt.nsecsElapsed();
+    if (hiRow == loRow && hiClip > loClip) emit textRemoved(loRow, loClip, hiClip);   // A3
     emit dataChanged(index(loRow), index(loRow), {ContentRole});
 
     // Span bookkeeping (rows_[hiRow] still valid — the erase happens below).
@@ -6590,7 +6599,10 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks,
     mn::inl::applyTypingAttributes(spans, col, col + int(text.size()), marks, fgColor, bgColor);
     if (!spans.empty()) persistSpans(row);
     if (probe) t2 = pt.nsecsElapsed();
+    emit textInserted(row, col, text);               // A3: the focused delegate applies the same op
+    if (probe) probeMarks_[QStringLiteral("sig.textIns")].push_back(pt.nsecsElapsed() - t2);
     emit dataChanged(index(row), index(row), {ContentRole});
+    if (probe) probeMarks_[QStringLiteral("sig.dataChg")].push_back(pt.nsecsElapsed() - t2);
     contentSpike();
     if (probe) t3 = pt.nsecsElapsed();
     endTxn(text.size() == 1 ? QStringLiteral("type") : QString());   // coalesce typing
