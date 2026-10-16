@@ -363,18 +363,18 @@ const mn::LayoutIndex& BlockModel::layout() const {
 void BlockModel::reindex(std::vector<double> heights) {
     pendingHeights_ = std::move(heights);
     indexDirty_ = true;
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
 }
 
 void BlockModel::indexInsert(std::size_t at, double h) {
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
     if (!indexDirty_) { pendingHeights_ = layout_.heights(); indexDirty_ = true; }
     at = std::min(at, pendingHeights_.size());
     pendingHeights_.insert(pendingHeights_.begin() + static_cast<std::ptrdiff_t>(at), h);
 }
 
 void BlockModel::indexErase(std::size_t at) {
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
     if (!indexDirty_) { pendingHeights_ = layout_.heights(); indexDirty_ = true; }
     if (at < pendingHeights_.size())
         pendingHeights_.erase(pendingHeights_.begin() + static_cast<std::ptrdiff_t>(at));
@@ -467,6 +467,49 @@ const BlockModel::TableInfo* BlockModel::tableInfo(int head) const {
     tableHeads();
     const auto it = tables_.constFind(head);
     return it == tables_.constEnd() ? nullptr : &it.value();
+}
+
+// === Derived cards (canvas, B1) ===========================================
+const std::vector<int>& BlockModel::cardHeads() const {
+    if (!cardsDirty_ && !structureDirty_ && cardsRev_ == structureRevision_ && cardHeads_.size() == rows_.size())
+        return cardHeads_;
+    cardHeads_.assign(rows_.size(), -1);
+    cards_.clear();
+    int cur = -1;
+    for (size_t i = 0; i < rows_.size(); ++i) {
+        const Row& r = rows_[i];
+        bool starts = i == 0;
+        if (r.cell < 0) {                                        // lane blocks never start a card
+            if (r.type == Heading && r.level >= 1 && r.level <= kCardHeadingMaxLevel) starts = true;
+            else if (i > 0 && rows_[i - 1].cell < 0 && rows_[i - 1].type == Divider) starts = true;
+        }
+        if (starts) { cur = static_cast<int>(i); cards_.push_back(cur); }
+        cardHeads_[i] = cur;
+    }
+    cardsDirty_ = false;
+    cardsRev_ = structureRevision_;
+    return cardHeads_;
+}
+int BlockModel::cardCount() const { cardHeads(); return static_cast<int>(cards_.size()); }
+int BlockModel::cardHeadAt(int i) const { cardHeads(); return i >= 0 && i < static_cast<int>(cards_.size()) ? cards_[size_t(i)] : -1; }
+int BlockModel::cardLastAt(int i) const {
+    cardHeads();
+    if (i < 0 || i >= static_cast<int>(cards_.size())) return -1;
+    return i + 1 < static_cast<int>(cards_.size()) ? cards_[size_t(i) + 1] - 1 : static_cast<int>(rows_.size()) - 1;
+}
+int BlockModel::cardHeadOf(int row) const {
+    return row >= 0 && row < static_cast<int>(rows_.size()) ? cardHeads()[size_t(row)] : -1;
+}
+int BlockModel::cardIndexOf(int head) const {
+    cardHeads();
+    const auto it = std::lower_bound(cards_.begin(), cards_.end(), head);
+    return it != cards_.end() && *it == head ? static_cast<int>(it - cards_.begin()) : -1;
+}
+QStringList BlockModel::cardBlockIds() const {
+    cardHeads();
+    QStringList out; out.reserve(static_cast<int>(cards_.size()));
+    for (int h : cards_) out << ids_[size_t(h)];
+    return out;
 }
 
 // The app's auto column-width rule (mirrors exportColWidth): the widest text line in the
@@ -726,7 +769,7 @@ void BlockModel::rebuildTable(int lo, int hi, const std::vector<GridRow>& grid, 
         }
     }
     replaceBand(lo, hi, nr, ni, nc);
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
     markTableGeomDirty();
 }
 
@@ -2199,10 +2242,10 @@ bool BlockModel::setHeaderRole(int record, int count) {
     }
     r.header = static_cast<uint8_t>(count);
     r.table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
     persistMeta(record);
     normalizeStructure(lo, hi);                       // rows leaving a table follow layout rules
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
     reindex(std::vector<double>(layout().heights())); // the table pockets move with the role
     bumpLayout();
     const int last = std::min(hi, static_cast<int>(rows_.size()) - 1);
@@ -2241,7 +2284,7 @@ int BlockModel::insertTableRows(int afterRow, int nRows, int nCols) {
             put(p);
         }
     }
-    tablesDirty_ = true;
+    tablesDirty_ = true; cardsDirty_ = true;
     bumpLayout();
     contentSpike();
     endTxn();
@@ -3977,7 +4020,7 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
         Row r{}; r.type = s.type; r.level = s.level; r.spans = s.spans; r.lang = s.lang;
         r.cell = s.cell; r.ratios = s.ratios;
         r.header = s.header; r.table = s.table;
-        tablesDirty_ = true;
+        tablesDirty_ = true; cardsDirty_ = true;
         r.taskState = s.taskState;
         r.depth = s.depth;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
@@ -4051,7 +4094,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         if (r.type != s.type || r.cell != s.cell || r.header != s.header) restructured = true;   // header: the pocket moves
         r.cell = s.cell; r.ratios = s.ratios;
         r.header = s.header; r.table = s.table;
-        tablesDirty_ = true;
+        tablesDirty_ = true; cardsDirty_ = true;
         r.type = s.type; r.level = s.level; r.lang = s.lang;
         r.taskState = s.taskState; r.depth = s.depth; r.spans = s.spans;
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));

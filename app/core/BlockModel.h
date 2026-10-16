@@ -244,6 +244,17 @@ public:
     Q_INVOKABLE qreal tablePadTop(int row) const;
     Q_INVOKABLE qreal tablePadBottom(int row) const;
     Q_INVOKABLE QString tableCellText(int head, int r, int c) const;   // the cell's blocks' text, joined
+    // Derived cards (canvas, B1): the document as a run of cards — pure grouping, never stored.
+    // A card starts at row 0, at every top-level Heading, and after a top-level Divider (the
+    // Divider is the LAST row of the card it closes; a Divider right before a Heading makes no
+    // empty card). Split rows and tables stay whole: a lane block never starts a card.
+    static constexpr int kCardHeadingMaxLevel = 6;    // headings deeper than this don't start a card
+    Q_INVOKABLE int cardCount() const;
+    Q_INVOKABLE int cardHeadAt(int i) const;          // first row of card i, or -1
+    Q_INVOKABLE int cardLastAt(int i) const;          // last row of card i, or -1
+    Q_INVOKABLE int cardHeadOf(int row) const;        // first row of the card holding row, or -1
+    Q_INVOKABLE int cardIndexOf(int head) const;      // card index of a head row, or -1 (not a head)
+    Q_INVOKABLE QStringList cardBlockIds() const;     // the heads' block ids, in order (a stable key per card)
     // T3 sticky header: for the table whose row covers content y (and has body rows),
     // {head, headerTop, headerBottom, tableBottom, headerRows: [records]}; {} otherwise.
     Q_INVOKABLE QVariantMap tableStickyAt(qreal y) const;
@@ -1293,6 +1304,13 @@ private:
     mutable QHash<int, TableInfo> tables_;
     mutable std::vector<int> tableRowIndex_;
     const TableInfo* tableInfo(int head) const;         // nullptr unless head is a table head
+    // B1 grouping cache: per row its card's head row; the heads in order. Dirtied wherever the
+    // table cache is, and by any type change (the structure note covers those: the cache also
+    // keys on structureRevision_ and a pending structure note).
+    mutable std::vector<int> cardHeads_, cards_;
+    mutable bool cardsDirty_ = true;
+    mutable int cardsRev_ = -1;
+    const std::vector<int>& cardHeads() const;
     std::pair<int,int> splitRunBand(int record) const;   // adjacent top-level split rows around record
     // Per-table column geometry, rebuilt lazily for every table at once. Stale when the
     // grouping rebuilds, a table cell's text changes (persistContent), or a record's

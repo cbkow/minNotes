@@ -6147,6 +6147,102 @@ static void testSplitRowExports() {
     QDir(dir).removeRecursively();
 }
 
+static void testCardModel() {
+    qInfo("[111] derived cards (canvas B1): headings start, top-level dividers close, lanes never break, undo and reopen");
+    auto fresh = [](BlockModel& m, const QStringList& lines) {   // one paragraph per line; "# x" = heading, "---" = divider
+        m.newDocument();
+        while (m.rowCountQml() > 0) m.removeBlock(0);
+        for (int i = 0; i < lines.size(); ++i) {
+            m.insertBlock(i);
+            const QString& l = lines[i];
+            if (l.startsWith(QLatin1Char('#'))) {
+                int lvl = 0; while (lvl < l.size() && l[lvl] == QLatin1Char('#')) ++lvl;
+                m.setContent(i, l.mid(lvl).trimmed()); m.setHeading(i, lvl);
+            } else if (l == QStringLiteral("---")) {
+                m.removeBlock(i); m.insertDivider(i - 1);
+            } else m.setContent(i, l);
+        }
+    };
+    auto heads = [](const BlockModel& m) { QList<int> v; for (int i = 0; i < m.cardCount(); ++i) v << m.cardHeadAt(i); return v; };
+    auto consistent = [](const BlockModel& m) {   // the cache vs a re-derivation off the public API, plus the invariants
+        int cur = -1, idx = -1;
+        for (int r = 0; r < m.rowCountQml(); ++r) {
+            bool starts = r == 0;
+            if (m.laneForRow(r) < 0) {
+                if (m.typeForRow(r) == BlockModel::Heading) starts = true;
+                else if (r > 0 && m.laneForRow(r - 1) < 0 && m.typeForRow(r - 1) == BlockModel::Divider) starts = true;
+            }
+            if (starts) { cur = r; ++idx; if (m.cardHeadAt(idx) != r || m.cardIndexOf(r) != idx) return false; }
+            else if (m.cardIndexOf(r) != -1) return false;
+            if (m.cardHeadOf(r) != cur) return false;
+            if (m.laneForRow(r) >= 0 && m.cardHeadOf(r) != m.cardHeadOf(m.splitRowOf(r))) return false;   // no run straddles a split row
+            if (r > m.cardLastAt(idx)) return false;
+        }
+        if (m.cardCount() != idx + 1) return false;
+        if (m.rowCountQml() > 0 && m.cardLastAt(m.cardCount() - 1) != m.rowCountQml() - 1) return false;
+        return m.cardBlockIds().size() == m.cardCount();
+    };
+    {
+        BlockModel m;
+        fresh(m, { "# One", "a", "b", "## Two", "c", "### Three" });
+        CHECK(heads(m) == (QList<int>{ 0, 3, 5 }) && m.cardLastAt(0) == 2 && m.cardLastAt(1) == 4 && m.cardLastAt(2) == 5 && consistent(m),
+              "every heading level starts a card (%d cards)", m.cardCount());
+        fresh(m, { "# One", "a", "---", "b", "c" });
+        CHECK(heads(m) == (QList<int>{ 0, 3 }) && m.cardLastAt(0) == 2 && m.typeForRow(2) == BlockModel::Divider && consistent(m),
+              "a top-level divider closes the card and is its last row");
+        fresh(m, { "a", "---", "# One", "b" });
+        CHECK(heads(m) == (QList<int>{ 0, 2 }) && consistent(m), "a divider right before a heading makes no empty card");
+        fresh(m, { "---", "a", "b" });
+        CHECK(heads(m) == (QList<int>{ 0, 1 }) && m.cardLastAt(0) == 0 && consistent(m), "a divider at row 0 is a one-row card");
+        fresh(m, { "a", "b", "c" });
+        CHECK(heads(m) == (QList<int>{ 0 }) && m.cardHeadOf(2) == 0 && consistent(m), "a heading-less document is one card");
+        CHECK(m.cardHeadOf(-1) == -1 && m.cardHeadOf(99) == -1 && m.cardHeadAt(5) == -1 && m.cardLastAt(-1) == -1 && m.cardIndexOf(1) == -1,
+              "out-of-range and non-head queries answer -1");
+    }
+    {   // lanes and tables stay whole
+        BlockModel m;
+        fresh(m, { "# One", "a", "b", "c" });
+        const int first = m.insertTableRows(1, 2, 2);   // 0 H · 1 a · 2 head · 3 · 4 · 5 body · 6 · 7 · 8 b · 9 c
+        CHECK(first == 3 && m.structureValid() && heads(m) == (QList<int>{ 0 }) && consistent(m), "a table inside a card keeps it whole (%d)", first);
+        m.setHeading(first, 2);                          // a heading INSIDE a table cell
+        CHECK(m.typeForRow(first) == BlockModel::Heading && m.laneForRow(first) >= 0 && heads(m) == (QList<int>{ 0 }) && consistent(m),
+              "a heading inside a lane does not start a card");
+        m.insertDivider(first);                          // a divider inside the lane, after the heading
+        CHECK(m.typeForRow(first + 1) == BlockModel::Divider && m.laneForRow(first + 1) >= 0 && heads(m) == (QList<int>{ 0 }) && consistent(m),
+              "a divider inside a lane does not close a card");
+        m.undo(); m.undo();
+        CHECK(heads(m) == (QList<int>{ 0 }) && m.structureValid() && consistent(m), "two undos: still one card");
+        const int tail = m.rowCountQml() - 1;
+        m.setHeading(tail, 1);
+        CHECK(heads(m) == (QList<int>{ 0, tail }) && consistent(m), "a heading after the table starts the next card");
+    }
+    {   // type changes in place, undo rejoins, reopen re-derives
+        BlockModel m;
+        fresh(m, { "# One", "a", "b", "c" });
+        m.setHeading(2, 2);
+        CHECK(heads(m) == (QList<int>{ 0, 2 }) && m.cardLastAt(0) == 1 && consistent(m), "promoting a paragraph splits the card");
+        m.undo();
+        CHECK(heads(m) == (QList<int>{ 0 }) && consistent(m), "undo rejoins it");
+        m.redo();
+        m.setContent(3, QStringLiteral("# Four")); m.applyMarkdownTrigger(3);
+        CHECK(m.typeForRow(3) == BlockModel::Heading && heads(m) == (QList<int>{ 0, 2, 3 }) && consistent(m), "the markdown trigger starts a card");
+        m.setHeading(2, 0);
+        CHECK(heads(m) == (QList<int>{ 0, 3 }) && consistent(m), "demoting the heading merges its card into the one above");
+        const QStringList ids = m.cardBlockIds();
+        CHECK(ids.size() == 2 && ids[0] == m.idForRow(0) && ids[1] == m.idForRow(3), "cardBlockIds are the heads' ids");
+        QTemporaryDir dir;
+        const QString path = dir.path() + QStringLiteral("/cards.mnd");
+        CHECK(m.saveAs(path), "saveAs() succeeded");
+        BlockModel m2;
+        CHECK(m2.openDocument(path) && heads(m2) == (QList<int>{ 0, 3 }) && m2.cardBlockIds() == ids && consistent(m2),
+              "reopened: the same cards with the same ids");
+        m2.removeBlock(3);
+        CHECK(heads(m2) == (QList<int>{ 0 }) && consistent(m2), "removing a head merges its rows upward");
+        m2.undo();
+        CHECK(heads(m2) == (QList<int>{ 0, 3 }) && consistent(m2), "…and undo restores the card");
+    }
+}
+
 static void testTableModel() {
     qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
     auto fresh = [](BlockModel& m) {
@@ -8446,6 +8542,7 @@ int main(int argc, char** argv) {
     testSplitRowInterchange();
     testSplitRowExports();
     testTableModel();
+    testCardModel();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
