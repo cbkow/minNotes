@@ -16,12 +16,12 @@ Rectangle {
     property var editor: null
 
     // Table tabs: the tables by their head record's id (SR-4 S9).
-    readonly property var ids: (blockModel.layoutRevision, blockModel.contentRevision, blockModel.tableBlockIds())
-    readonly property var pdfIds: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property var ids: (blockModel.structureRevision, blockModel.tableBlockIds())
+    readonly property var pdfIds: (blockModel.structureRevision,
                                    blockModel.pdfBlockIds())
-    readonly property var videoIds: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property var videoIds: (blockModel.structureRevision,
                                      blockModel.videoBlockIds())
-    readonly property var sketchIds: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property var sketchIds: (blockModel.structureRevision,
                                       blockModel.sketchBlockIds())
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
     visible: ids.length > 0 || pdfIds.length > 0 || videoIds.length > 0 || sketchIds.length > 0

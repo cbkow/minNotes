@@ -261,7 +261,7 @@ Rectangle {
                 }
                 Repeater {
                     id: threadRep
-                    model: (blockModel.commentsRevision, blockModel.contentRevision,
+                    model: (blockModel.commentsRevision, blockModel.structureRevision,
                             blockModel.commentThreads())
                     delegate: Rectangle {
                         id: card
@@ -730,7 +730,7 @@ Rectangle {
                     property string label: "W"
                     property bool horizontal: true
                     readonly property int row: panel.editor ? panel.editor.activeSketchRow : -1
-                    readonly property int cur: (blockModel.contentRevision,
+                    readonly property int cur: (blockModel.structureRevision,
                         row >= 0 ? (horizontal ? blockModel.mediaW(row) : blockModel.mediaH(row)) : 0)
                     width: 82; height: 26
                     color: Theme.colors.codeBg

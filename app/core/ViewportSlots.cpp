@@ -86,8 +86,11 @@ void ViewportSlots::bumpRows(int lo, int hi) {
 void ViewportSlots::bumpFrom(int fromRow) { bumpRows(fromRow, INT_MAX); }
 
 void ViewportSlots::bumpAll() {
+    // Idle slots (no row) skip: their delegate's bindings short-circuit on `active`, and a row
+    // arriving later changes logicalRow, which re-evaluates them anyway.
     auto& pc = mn::perf::counters();
-    for (SlotRev* s : slots_) if (s) { s->bump(); ++pc.slotBumps; }
+    for (size_t i = 0; i < slots_.size(); ++i)
+        if (slots_[i] && (i >= slotRows_.size() || slotRows_[i] >= 0)) { slots_[i]->bump(); ++pc.slotBumps; }
 }
 
 void ViewportSlots::note(int lo, int hi) {

@@ -1308,6 +1308,11 @@ private:
     void noteTouchedTable(int row);                     // the row's whole table (column geometry moved), else the row
     void noteShift(int from) { noteTouched(from, INT_MAX); }
     void noteStructure() { structureDirty_ = true; }
+    // Comment pins / excerpts key on commentsRevision; a text edit in a commented row (or one that
+    // drops its comment span) must bump it too, now that typing no longer bumps a document counter.
+    void noteCommentsIfAny(int row) { if (rowHasComment(row)) commentsDirty_ = true; }
+    bool rowHasComment(int row) const;
+    bool commentsDirty_ = false;
     int touchedLo_ = INT_MAX, touchedHi_ = -1;
     bool structureDirty_ = false;
     int structureRevision_ = 0;

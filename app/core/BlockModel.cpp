@@ -3866,7 +3866,15 @@ void BlockModel::contentSpike() {
         ++structureRevision_;
         emit structureChangedSpike();
     }
+    if (commentsDirty_) { commentsDirty_ = false; ++commentsRevision_; emit commentsChanged(); }
     emit contentChangedSpike();
+}
+
+bool BlockModel::rowHasComment(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
+    for (const Span& sp : rows_[size_t(row)].spans)
+        if (sp.kind == SpanComment && sp.e > sp.s) return true;
+    return false;
 }
 
 void BlockModel::noteTouched(int lo, int hi) {
@@ -3887,6 +3895,7 @@ void BlockModel::noteTouchedTable(int row) {
 void BlockModel::noteTouchedRow(int row) {
     const int n = static_cast<int>(rows_.size());
     if (row < 0 || row >= n) return;
+    noteCommentsIfAny(row);
     int lo = row, hi = row;
     const Row& r = rows_[size_t(row)];
     if (r.cell >= 0) {                               // a lane block: its record paints the cell chrome
@@ -5888,6 +5897,7 @@ int BlockModel::insertChoiceAt(int row, int col) {
 }
 
 void BlockModel::commitRowTextAndSpans(int row, QString&& text, std::vector<Span>&& spans) {
+    noteCommentsIfAny(row);   // the rewrite may drop a comment span
     beginTxn(row, row);
     content_[row] = std::move(text);
     rows_[row].spans = std::move(spans);
@@ -6464,6 +6474,7 @@ void BlockModel::setContentWidth(qreal w) {
 }
 
 void BlockModel::setContent(int row, const QString& text) {
+    noteCommentsIfAny(row);   // the rewrite may drop a comment span
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);
     const bool hadSpans = !rows_[row].spans.empty();
@@ -6492,6 +6503,7 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     // Editing never merges across a lane edge (SR-0 P2): both ends must sit in the
     // same container. Two top-level ends take any split rows between them whole.
     if (rows_[loRow].cell != rows_[hiRow].cell || splitRowOf(loRow) != splitRowOf(hiRow)) return;
+    noteCommentsIfAny(loRow); noteCommentsIfAny(hiRow);   // the merge may drop a comment span
     // Type probe (A0): single-row deletes (Backspace/Delete) record the same splits as insertText.
     const bool probe = mn::perf::enabled() && hiRow == loRow;
     QElapsedTimer pt; qint64 t0 = 0, t1 = 0, t2 = 0, t3 = 0;
@@ -7973,6 +7985,7 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
 
 // === Spell menu: replace a range as ONE transaction ========================
 void BlockModel::replaceText(int row, int s, int e, const QString& text) {
+    noteCommentsIfAny(row);   // the rewrite may drop a comment span
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     // Engine edit on copies first: an empty no-op must not open a txn. A span
     // covering the replaced range keeps it; others shift or clip (InlineText.h).

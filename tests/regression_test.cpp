@@ -8246,6 +8246,73 @@ static int writeStyleSample(const QString& outPath) {
     return 0;
 }
 
+// A1 (speed programme): the per-row touch range a mutation reports, the structureRevision
+// discipline (typing and span toggles never bump it; type/insert/move/undo do), and the slot
+// bumps ViewportSlots derives from them (one delegate per keystroke; every live slot on a
+// structure change; idle slots never).
+static void testRowsTouchedAndSlots() {
+    qInfo("[90] A1: rowsTouched ranges, structureRevision, per-slot bumps, comments follow edits");
+    BlockModel m; m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    for (int i = 0; i < 6; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("paragraph %1 text body").arg(i)); }
+    std::vector<std::pair<int,int>> touched;
+    QObject::connect(&m, &BlockModel::rowsTouched, [&](int lo, int hi) { touched.push_back({lo, hi}); });
+    ViewportSlots vs; vs.attach(&m);
+    QList<int> vis; for (int i = 0; i < 6; ++i) vis << i;
+    vs.sync(vis, 8);                       // 6 live slots, 2 idle
+    std::vector<SlotRev*> sv; for (int i = 0; i < 8; ++i) sv.push_back(static_cast<SlotRev*>(vs.slot(i)));
+    auto revs = [&] { std::vector<int> r; for (auto* x : sv) r.push_back(x->rev()); return r; };
+    auto bumpedCount = [&](const std::vector<int>& a, const std::vector<int>& b) { int n = 0; for (size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++n; return n; };
+
+    // 1. Typing touches exactly its row, bumps exactly its slot, leaves structure alone.
+    const int s0 = m.structureRevision();
+    auto before = revs(); touched.clear();
+    m.insertText(2, 0, QStringLiteral("x"));
+    auto after = revs();
+    CHECK(touched.size() == 1 && touched[0].first == 2 && touched[0].second == 2, "insertText touches [row, row]");
+    CHECK(bumpedCount(before, after) == 1 && after[size_t(vs.slotForRow(2))] == before[size_t(vs.slotForRow(2))] + 1,
+          "typing bumps the one slot holding its row");
+    CHECK(m.structureRevision() == s0, "typing does not bump structureRevision");
+    // 2. A span toggle: its row only, still no structure.
+    before = revs();
+    m.setFormat(3, 0, 4, QStringLiteral("bold"), true);
+    after = revs();
+    CHECK(m.structureRevision() == s0, "a span toggle is not structure");
+    CHECK(after[size_t(vs.slotForRow(3))] == before[size_t(vs.slotForRow(3))] + 1 && bumpedCount(before, after) == 1,
+          "a span toggle bumps its row's slot only");
+    // 3. A heading change is structure: structureRevision +1, every LIVE slot bumps, idle ones don't.
+    before = revs();
+    m.setHeading(1, 2);
+    after = revs();
+    CHECK(m.structureRevision() == s0 + 1, "setHeading bumps structureRevision once");
+    int live = 0; for (int i = 0; i < 6; ++i) if (after[size_t(i)] > before[size_t(i)]) ++live;
+    CHECK(live == 6 && after[6] == before[6] && after[7] == before[7], "a structure change bumps every live slot; idle slots untouched");
+    // 4. Insert / move / undo are structure.
+    int s = m.structureRevision(); m.insertBlock(1);            CHECK(m.structureRevision() > s, "insertBlock bumps structureRevision");
+    s = m.structureRevision();     m.moveBlocks(0, 1, 3);        CHECK(m.structureRevision() > s, "moveBlocks bumps structureRevision");
+    s = m.structureRevision();     m.undo();                     CHECK(m.structureRevision() > s, "undo bumps structureRevision");
+    // 5. Typing in a table cell touches its whole split row (the record paints the cell chrome).
+    const int cell = m.insertTableRows(m.rowCountQml() - 1, 2, 3);
+    const int rec = m.splitRowOf(cell);
+    touched.clear();
+    m.insertText(cell, 0, QStringLiteral("y"));
+    bool coversRow = false;
+    for (const auto& t : touched) if (t.first <= rec && t.second >= cell) coversRow = true;
+    CHECK(cell >= 0 && rec >= 0 && coversRow, "typing in a cell touches its record..cell range");
+    // 6. Comments: typing in a commented row bumps commentsRevision; typing elsewhere doesn't.
+    const int crow = 4;
+    const QString tid = m.addComment(crow, 0, 9);
+    const int c0 = m.commentsRevision();
+    m.insertText(0, 0, QStringLiteral("z"));
+    CHECK(!tid.isEmpty() && m.commentsRevision() == c0, "typing in an uncommented row leaves commentsRevision alone");
+    m.insertText(crow, 2, QStringLiteral("z"));
+    CHECK(m.commentsRevision() == c0 + 1, "typing in a commented row bumps commentsRevision");
+    // Deleting the commented text drops the span → the pin consumers must hear about it.
+    const int c1 = m.commentsRevision();
+    m.deleteRange(crow, 0, crow, m.contentForRow(crow).size());
+    CHECK(m.commentsRevision() > c1, "wiping a commented row's text bumps commentsRevision");
+}
+
 // Headless floor of the type probe (A0 speed programme): the model + SQLite cost of a
 // keystroke with ZERO QML attached. 1000 insertText + 500 single-char deleteRange on a plain
 // paragraph from the fixture's middle; prints the same stats JSON the app probe prints, so the
@@ -8304,6 +8371,7 @@ int main(int argc, char** argv) {
     testUndoRedoHeights();
     testSaveReopen();
     testUndoBranchCoalesce();
+    testRowsTouchedAndSlots();
     testCanonicalizeAndStamp();
     testListsAndDepth();
     testInkUndoPersist();

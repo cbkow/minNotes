@@ -17,7 +17,7 @@ Rectangle {
     property bool live: false
 
     readonly property int totalFrames: live ? dec.frameCount
-                                            : (blockModel.contentRevision, blockModel.mediaFrames(row))
+                                            : (blockModel.structureRevision, blockModel.mediaFrames(row))
 
     height: editor ? editor.videoTransportH : 40
     color: Theme.colors.surfaceRaised   // the raised-chrome plane (tonal ladder)
@@ -177,7 +177,7 @@ Rectangle {
         // markers work while the clip itself stays in the archive. (An
         // earlier blocking call here serialized package opens behind full
         // video extraction — the transport bar builds with the delegate.)
-        mediaPath: (vt.row >= 0 && blockModel.contentRevision >= 0)
+        mediaPath: (vt.row >= 0 && blockModel.structureRevision >= 0)
                    ? blockModel.mediaAnchorPath(vt.row) : ""
         fps: vt.row >= 0 ? blockModel.mediaFps(vt.row) : 0
     }

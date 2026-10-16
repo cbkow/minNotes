@@ -317,7 +317,7 @@ FocusScope {
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
     // tab shows the board; a table with no grouping column stays in the document.
     property string activeGridId: ""
-    readonly property int activeGridHead: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property int activeGridHead: (blockModel.layoutRevision, blockModel.structureRevision,
         activeGridId === "" ? -1 : blockModel.rowForId(activeGridId))
     onActiveGridHeadChanged: if (activeGridId !== "" && (activeGridHead < 0 || blockModel.headerCount(activeGridHead) <= 0)) activeGridId = ""
     // The grid frame (S9b): the document view restricted to the tab's table — blocks outside it hidden,
@@ -326,11 +326,11 @@ FocusScope {
     readonly property int frameLo: activeGridHead >= 0 && !boardMode ? activeGridHead : -1
     readonly property int frameHiRec: {
         if (frameLo < 0) return -1
-        const dep = blockModel.contentRevision
+        const dep = blockModel.structureRevision
         const recs = blockModel.tableRecords(frameLo)
         return recs.length ? recs[recs.length - 1] : frameLo
     }
-    readonly property int frameHi: frameLo >= 0 ? (blockModel.contentRevision, blockModel.splitRowLast(frameHiRec)) : -1
+    readonly property int frameHi: frameLo >= 0 ? (blockModel.structureRevision, blockModel.splitRowLast(frameHiRec)) : -1
     readonly property real frameTop: frameLo >= 0 ? (blockModel.layoutRevision, blockModel.yForRow(frameLo)) : 0
     readonly property real frameBottom: frameLo >= 0
         ? (blockModel.layoutRevision, blockModel.yForRow(frameHiRec) + blockModel.heightForRow(frameHiRec)) : 0
@@ -373,7 +373,7 @@ FocusScope {
     // Active PDF tab (full-page scroll view); "" = not in a PDF tab. Tables and
     // PDFs are mutually exclusive full-frame modes — setActiveTab keeps one set.
     property string activePdfId: ""
-    readonly property int activePdfRow: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property int activePdfRow: (blockModel.layoutRevision, blockModel.structureRevision,
         activePdfId === "" ? -1 : blockModel.rowForId(activePdfId))
     onActivePdfRowChanged: {
         if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
@@ -416,7 +416,7 @@ FocusScope {
     // in a video tab. Opening it activates the video PAUSED at its remembered
     // playhead so the studio comes up showing a frame, not a void.
     property string activeVideoId: ""
-    readonly property int activeVideoRow: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property int activeVideoRow: (blockModel.layoutRevision, blockModel.structureRevision,
         activeVideoId === "" ? -1 : blockModel.rowForId(activeVideoId))
     onActiveVideoRowChanged: if (activeVideoId !== "" && activeVideoRow < 0) activeVideoId = ""
     onActiveVideoIdChanged: {
@@ -433,7 +433,7 @@ FocusScope {
     }
     // Active sketch tab (full-frame canvas editing); "" = not in a sketch tab.
     property string activeSketchId: ""
-    readonly property int activeSketchRow: (blockModel.layoutRevision, blockModel.contentRevision,
+    readonly property int activeSketchRow: (blockModel.layoutRevision, blockModel.structureRevision,
         activeSketchId === "" ? -1 : blockModel.rowForId(activeSketchId))
     onActiveSketchRowChanged: if (activeSketchId !== "" && activeSketchRow < 0) activeSketchId = ""
     onActiveSketchIdChanged: forceActiveFocus()
@@ -639,7 +639,7 @@ FocusScope {
     // The first choice/check column of the active table (−1 none) — the default
     // grouping for the grid view's "Board view" toggle.
     readonly property int firstGroupCol: {
-        var rev = blockModel.contentRevision
+        var rev = blockModel.structureRevision
         return activeGridHead >= 0 ? firstGroupColOf(activeGridHead) : -1
     }
     readonly property int overscan: 6
@@ -1424,7 +1424,7 @@ FocusScope {
         // SR-0 §4.9 row ranges: ends in different top-level rows (not one table) take the split rows and
         // tables they reach into whole — [lo, hi] widened, or null. Every reader of the selection (washes,
         // copy, delete, the run menu, the rail drag) sees the widened range.
-        readonly property var _span: (blockModel.contentRevision, root.rowRangeSpan(_lo, _hi))
+        readonly property var _span: (blockModel.structureRevision, root.rowRangeSpan(_lo, _hi))
         readonly property int loRow: _span ? _span[0] : _lo
         readonly property int loCol: _span && _span[0] !== _lo ? 0 : _loC
         readonly property int hiRow: _span ? _span[1] : _hi
@@ -2162,7 +2162,7 @@ FocusScope {
     // A7 (SR-4 S6c): a selection whose ends sit in different cells of one table is a cell
     // rectangle {head, r0, c0, r1, c1}; null otherwise (inside one cell it's blocks/characters).
     readonly property var cellRect: {
-        const dep = blockModel.contentRevision
+        const dep = blockModel.structureRevision
         if (!cursor.hasSel) return null
         const ha = blockModel.tableHeadOf(cursor.anchorRow), hf = blockModel.tableHeadOf(cursor.focusRow)
         if (ha < 0 || ha !== hf) return null
@@ -2479,7 +2479,7 @@ FocusScope {
     }
     // The caret sits in a table cell (a cell block, not a record): the palette's target when
     // nothing is selected — the cell itself, not a span (the 2026-09-15 walk).
-    readonly property bool caretInCell: (blockModel.contentRevision, cursor.focusRow >= 0
+    readonly property bool caretInCell: (blockModel.structureRevision, cursor.focusRow >= 0
         && blockModel.tableHeadOf(cursor.focusRow) >= 0 && blockModel.tableColumnOf(cursor.focusRow) >= 0)
     // Table targets (2026-09-15 walk: the Back tab was painting spans inside cells): a grip-picked
     // set colours its rows / columns as a unit, a cell rectangle its cells, a lone caret its cell;
@@ -2582,8 +2582,8 @@ FocusScope {
         cursor.sync()
     }
     // Type/level of the block under the caret — for the rail's heading state.
-    readonly property int caretType:  (blockModel.contentRevision, blockModel.layoutRevision, blockModel.typeForRow(cursor.focusRow))
-    readonly property int caretLevel: (blockModel.contentRevision, blockModel.layoutRevision, blockModel.levelForRow(cursor.focusRow))
+    readonly property int caretType:  (blockModel.structureRevision, blockModel.layoutRevision, blockModel.typeForRow(cursor.focusRow))
+    readonly property int caretLevel: (blockModel.structureRevision, blockModel.layoutRevision, blockModel.levelForRow(cursor.focusRow))
 
     // Set heading `level` (1–5) on the caret's block(s); click the active level
     // again to toggle back to a paragraph. One grouped undo step; no selection
@@ -3967,17 +3967,18 @@ FocusScope {
     // --- HUD telemetry (same surface as the other arms) ---
     // Load-bearing revision read (reactivity rule 1e): rowForY() is a Q_INVOKABLE,
     // so QML can't see that it depends on the Fenwick heights / row count. Without
-    // the contentRevision dep the visible-row WINDOW (firstVisible→firstRow) goes
+    // the structureRevision dep the visible-row WINDOW (firstVisible→firstRow) goes
     // stale after any structural edit (insert/remove/split/undo/redo) until a
     // scroll moves contentY — the delegate pool then renders the wrong rows
-    // (blocks disappear, undo/redo layout corruption). contentRevision (NOT
-    // layoutRevision) is used deliberately: rendering bumps only layoutRevision
+    // (blocks disappear, undo/redo layout corruption). structureRevision (A1: was
+    // contentRevision — a keystroke never moves rows; NOT layoutRevision) is used
+    // deliberately: rendering bumps only layoutRevision
     // (height settle), so depending on it here would loop window→pool→measure→
     // window; pure height settles are already handled by onHeightSettled's
     // contentY nudge below.
-    readonly property int firstVisible: (blockModel.contentRevision,
+    readonly property int firstVisible: (blockModel.structureRevision,
                                          blockModel.rowForY(root.docY))
-    readonly property int lastVisible: (blockModel.contentRevision,
+    readonly property int lastVisible: (blockModel.structureRevision,
                                         Math.min(blockModel.count - 1,
                                                  blockModel.rowForY(root.docY + root.viewH - 1)))
     // EVERY video row in the document — the per-video transport toolbars are all
@@ -4019,7 +4020,7 @@ FocusScope {
     }
     Connections {
         target: blockModel
-        function onContentChangedSpike() {     // insert/delete/type change
+        function onStructureChangedSpike() {   // insert/delete/type change/media descriptor (A1: not per keystroke)
             root._recomputeVideoRows(); root._recomputePdfRows()
             root._reconcileVideoPlayingRow()
         }
@@ -4077,7 +4078,7 @@ FocusScope {
     // half a screen of table.
     readonly property int overscanRows: Qt.application.arguments.indexOf("--no-overscan-cap") >= 0 ? 1000000 : 60   // the switch: an A/B on the same build
     readonly property var poolRows: {
-        const dep = blockModel.contentRevision + blockModel.layoutRevision
+        const dep = blockModel.structureRevision + blockModel.layoutRevision
         const y0 = root.docY, y1 = root.docY + root.viewH
         const all = blockModel.visibleBlocks(Math.max(0, y0 - overscanPx), y1 + overscanPx)
         const view = blockModel.visibleBlocks(y0, y1)
@@ -4251,7 +4252,7 @@ FocusScope {
             x: 0
             width: Math.max(root.viewW, root.contentSpan)
             // In a lane, the whole split row is "here" — its record spans the row.
-            readonly property int fillRow: (blockModel.contentRevision,
+            readonly property int fillRow: (blockModel.structureRevision,
                 blockModel.splitRowOf(cursor.focusRow) >= 0 ? blockModel.splitRowOf(cursor.focusRow)
                                                             : cursor.focusRow)
             y: (blockModel.layoutRevision, blockModel.yForRow(fillRow))
@@ -4308,7 +4309,7 @@ FocusScope {
                 if (!same) rows = a
             }
             readonly property var computed: {
-                const dep = blockModel.layoutRevision + blockModel.contentRevision + flick.contentY + flick.contentX
+                const dep = blockModel.layoutRevision + blockModel.structureRevision + flick.contentY + flick.contentX
                 if (root.noSticky) return []
                 const out = []
                 const inView = blockModel.visibleBlocks(root.docY, root.docY + root.viewH)
@@ -4390,7 +4391,7 @@ FocusScope {
         // Plain text in the header's styling; interaction still goes to the rows beneath.
         Item {
             id: stickyHeader
-            readonly property var st: (blockModel.layoutRevision, blockModel.contentRevision,
+            readonly property var st: (blockModel.layoutRevision, blockModel.structureRevision,
                                        root.noSticky ? ({}) : blockModel.tableStickyAt(root.docY))
             readonly property bool has: st.head !== undefined
             readonly property real headerH: has ? st.headerBottom - st.headerTop : 0
@@ -4427,7 +4428,7 @@ FocusScope {
                     width: stickyHeader.width
                     height: (blockModel.layoutRevision, blockModel.heightForRow(rec)) - pad
                     Repeater {
-                        model: (blockModel.contentRevision, blockModel.tableColumnCount(stickyHeader.stHead))
+                        model: (blockModel.structureRevision, blockModel.tableColumnCount(stickyHeader.stHead))
                         delegate: Rectangle {
                             required property int index
                             readonly property int head: stickyHeader.stHead
@@ -4890,7 +4891,7 @@ FocusScope {
         // Option ops only make sense on a real choice option (not check lanes,
         // not the trailing "No status" lane).
         readonly property bool optionLane: lane !== null && root.boardCol >= 0
-            && (blockModel.contentRevision, root.boardKind()) === 1
+            && (blockModel.structureRevision, root.boardKind()) === 1
             && lane.key !== ""
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -4907,7 +4908,7 @@ FocusScope {
                           text: "Move lane right"
                           onActivated: root.moveBoardOption(laneMenu.lane.key, laneMenu.li + 1) }
             LaneMenuRow { visible: laneMenu.lane !== null && root.boardCol >= 0
-                                   && (blockModel.contentRevision, root.boardKind()) === 1
+                                   && (blockModel.structureRevision, root.boardKind()) === 1
                           text: "Edit options…"
                           onActivated: root.openBoardOptions() }
         }
@@ -4967,7 +4968,7 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.tableFilter !== ""
                 readonly property int total: root.activeGridHead >= 0
-                    ? (blockModel.contentRevision, blockModel.tableRecords(root.activeGridHead).length - blockModel.headerCount(root.activeGridHead)) : 0
+                    ? (blockModel.structureRevision, blockModel.tableRecords(root.activeGridHead).length - blockModel.headerCount(root.activeGridHead)) : 0
                 text: "Showing " + (total - root.tableHiddenCount) + " of " + total + " rows"
                 color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
             }
@@ -6162,7 +6163,7 @@ FocusScope {
     clip: true
     z: 56
     Repeater {
-        model: (blockModel.contentRevision, blockModel.commentsRevision,
+        model: (blockModel.structureRevision, blockModel.commentsRevision,
                 blockModel.commentPinRows())
         delegate: Rectangle {
             required property var modelData
@@ -6181,7 +6182,7 @@ FocusScope {
             // few semantic accent uses. A block whose threads are ALL
             // resolved goes quiet grey (2026-08-21): the conversation ended.
             readonly property bool allResolved: {
-                var dep = blockModel.commentsRevision + blockModel.contentRevision
+                var dep = blockModel.commentsRevision + blockModel.structureRevision
                 var rs = blockModel.commentRangesForRow(prow)
                 if (rs.length === 0) return false
                 for (var i = 0; i < rs.length; ++i)
@@ -6227,7 +6228,7 @@ FocusScope {
             // Arithmetic dep (elision-proof) — re-resolve the thread on any
             // comment/content change; null when the thread vanished.
             readonly property var info: {
-                var dep = blockModel.commentsRevision + blockModel.contentRevision
+                var dep = blockModel.commentsRevision + blockModel.structureRevision
                 if (root.openThreadId === "") return null
                 var ts = blockModel.commentThreads()
                 for (var i = 0; i < ts.length; ++i)
@@ -6405,7 +6406,7 @@ FocusScope {
                 required property int index
                 readonly property int prow: (root.slotRev, viewSlots.rowForSlot(index))
                 visible: prow >= 0 && prow < blockModel.count
-                         && (blockModel.contentRevision, blockModel.laneForRow(prow)) < 0   // top entries only
+                         && (blockModel.structureRevision, blockModel.laneForRow(prow)) < 0   // top entries only
                          && (root.frameLo < 0 || (prow >= root.frameLo && prow <= root.frameHi))
                          && !(blockModel.layoutRevision, blockModel.rowHidden(prow))                // T4 filter
                 width: blockRuler.width
@@ -6510,7 +6511,7 @@ FocusScope {
         visible: root.blockDragging && root.dropGap >= 0 && !root.dropGapIsNoop(root.dropGap)
         // A top-level gap spans the SHEET (page + gutters, wherever it sits — 2026-09-16);
         // a lane gap only its lane (SR-3 S7c).
-        readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
+        readonly property var geom: (blockModel.layoutRevision, blockModel.structureRevision,
                                      root.dropLineGeom(root.dropGap, root.dropLane))
         x: root.vx(geom.w >= 0 ? geom.x : root.sheetLeft)
         width: (geom.w >= 0 ? geom.w : root.sheetRight - root.sheetLeft) * root.viewZoom
@@ -6542,7 +6543,7 @@ FocusScope {
         visible: root.dropIndicatorActive && root.dropIndicatorGap >= 0
         z: 55
         // A lane gap draws at its lane (SR-3 S7c); a top-level gap across the page.
-        readonly property var geom: (blockModel.layoutRevision, blockModel.contentRevision,
+        readonly property var geom: (blockModel.layoutRevision, blockModel.structureRevision,
             root.dropLineGeom(root.dropIndicatorGap, root.imageDropActive ? root.imageDropLane : -1))
         readonly property real lineY: root.vy(geom.y)
         readonly property real lineX: root.vx(geom.w >= 0 ? geom.x : root.leftEdge)
@@ -6718,7 +6719,7 @@ FocusScope {
                      && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
                      && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
-            readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
+            readonly property int vw: (blockModel.structureRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
             readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
             readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
@@ -6766,11 +6767,11 @@ FocusScope {
             // (2026-09-16).
             visible: root.activeFrameId === "" && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
-            readonly property int vw: (blockModel.contentRevision, blockModel.mediaW(row))
+            readonly property int vw: (blockModel.structureRevision, blockModel.mediaW(row))
             readonly property int vh: blockModel.mediaH(row)
             readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(measure * vh / vw)
                                                              : Math.round(measure * 1.3)
-            readonly property int pages: (blockModel.contentRevision, blockModel.mediaPdfPages(row))
+            readonly property int pages: (blockModel.structureRevision, blockModel.mediaPdfPages(row))
             readonly property int page: (root.pdfPageRev, root.pdfPageFor(row))
 
             // z:44 like the video bars — ink paints over the strip in regular
@@ -6820,7 +6821,7 @@ FocusScope {
                  && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         // A cell's media sits inside the cell inset (BlockView's colLeft: 8 px); the fit width is the
         // lane minus both insets.
-        readonly property real inset: (blockModel.contentRevision, row >= 0 && blockModel.tableColumnOf(row) >= 0) ? 8 : 0
+        readonly property real inset: (blockModel.structureRevision, row >= 0 && blockModel.tableColumnOf(row) >= 0) ? 8 : 0
         readonly property real imgX: root.vx((row >= 0 ? root.columnX(row) : root.leftEdge) + inset)
         readonly property real imgTopV: row >= 0
             ? root.vy((blockModel.layoutRevision, blockModel.yForRow(row)) + 6) : 0
@@ -6949,7 +6950,7 @@ FocusScope {
     // A column grip drag's drop line (SR-4 S7b): the gap it would land at, down the whole table.
     Rectangle {
         readonly property int head: root.tableColDragging ? root.tableGripPressHead : -1
-        readonly property var recs: head >= 0 ? (blockModel.contentRevision, blockModel.tableRecords(head)) : []
+        readonly property var recs: head >= 0 ? (blockModel.structureRevision, blockModel.tableRecords(head)) : []
         readonly property int lastRec: recs.length ? recs[recs.length - 1] : -1
         readonly property int gap: root.tableColGap
         visible: lastRec >= 0 && gap >= 0 && gap !== root.tableGripPressIndex && gap !== root.tableGripPressIndex + 1
@@ -6967,14 +6968,14 @@ FocusScope {
     // Root overlays: the document mouse layer stacks over every delegate.
     Item {
         id: tableAdd
-        readonly property int head: (blockModel.contentRevision,
+        readonly property int head: (blockModel.structureRevision,
             flick.visible && root.activeFrameId === "" && !root.inkMode ? blockModel.tableHeadOf(cursor.focusRow) : -1)
-        readonly property var recs: head >= 0 ? (blockModel.contentRevision, blockModel.tableRecords(head)) : []
+        readonly property var recs: head >= 0 ? (blockModel.structureRevision, blockModel.tableRecords(head)) : []
         readonly property int lastRec: recs.length ? recs[recs.length - 1] : -1
         readonly property real topC: (blockModel.layoutRevision, lastRec >= 0 ? blockModel.yForRow(head) + blockModel.tablePadTop(head) : 0)
         readonly property real bottomC: (blockModel.layoutRevision, lastRec >= 0
             ? blockModel.yForRow(lastRec) + blockModel.heightForRow(lastRec) - blockModel.tablePadBottom(lastRec) : 0)
-        readonly property real tw: (blockModel.layoutRevision, blockModel.contentRevision, lastRec >= 0 ? blockModel.tableWidth(head) : 0)
+        readonly property real tw: (blockModel.layoutRevision, blockModel.structureRevision, lastRec >= 0 ? blockModel.tableWidth(head) : 0)
         readonly property real xV: root.vx(root.tableX(head))
         readonly property real twV: tw * root.viewZoom
         visible: lastRec >= 0
@@ -7187,17 +7188,17 @@ FocusScope {
     Popup {
         id: blockMenu
         readonly property bool isCode: !menuInSel && root.menuRow >= 0
-            && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 2)
+            && (blockModel.structureRevision, blockModel.typeForRow(root.menuRow) === 2)
         readonly property bool isMedia: !menuInSel && root.menuRow >= 0
-            && (blockModel.contentRevision, blockModel.typeForRow(root.menuRow) === 3)
+            && (blockModel.structureRevision, blockModel.typeForRow(root.menuRow) === 3)
         readonly property bool isPdf: isMedia
-            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
+            && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
         readonly property bool isVideo: isMedia
-            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "video"
+            && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "video"
         readonly property bool isSketch: isMedia
-            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "sketch"
+            && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "sketch"
         readonly property bool isImage: isMedia
-            && (blockModel.contentRevision, blockModel.mediaKind(root.menuRow)) === "image"
+            && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "image"
         // In a full-frame tab (PDF/video/sketch) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
         readonly property bool inFrameTab: root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
@@ -7213,37 +7214,37 @@ FocusScope {
         readonly property int runHi: menuInSel ? cursor.hiRow : root.menuRow
         // Lanes (SR-3 S7b): the split row under the menu, and what it allows.
         readonly property int laneRecord: menuInSel || root.menuRow < 0 ? -1
-            : (blockModel.contentRevision, blockModel.splitRowOf(root.menuRow))
-        readonly property bool canSplit: root.menuRow >= 0 && (blockModel.contentRevision,
+            : (blockModel.structureRevision, blockModel.splitRowOf(root.menuRow))
+        readonly property bool canSplit: root.menuRow >= 0 && (blockModel.structureRevision,
             blockModel.typeForRow(runLo) !== 10
             && (!menuInSel || (blockModel.laneForRow(runLo) < 0 && blockModel.laneForRow(runHi) < 0)))
-        readonly property bool canAlign: laneRecord >= 0 && (blockModel.contentRevision,
+        readonly property bool canAlign: laneRecord >= 0 && (blockModel.structureRevision,
             blockModel.splitRowLast(laneRecord) - laneRecord > blockModel.laneCount(laneRecord))
         readonly property int mergeBelow: laneRecord < 0 ? -1
-            : (blockModel.contentRevision, root.mergeTargetBelow(laneRecord))
+            : (blockModel.structureRevision, root.mergeTargetBelow(laneRecord))
         // Derived tables (SR-4 S7a): the table cell under the menu.
         readonly property int tableHead: menuInSel || root.menuRow < 0 ? -1
-            : (blockModel.contentRevision, blockModel.tableHeadOf(root.menuRow))
-        readonly property int tableC: tableHead >= 0 ? (blockModel.contentRevision, blockModel.tableColumnOf(root.menuRow)) : -1
-        readonly property bool tableHeaderRow: tableHead >= 0 && (blockModel.contentRevision, blockModel.isHeaderRow(root.menuRow))
-        readonly property int tableKind: tableC >= 0 && !tableHeaderRow ? (blockModel.contentRevision, blockModel.tableColumnKind(tableHead, tableC)) : 0
-        readonly property int tableAlign: tableC >= 0 ? (blockModel.contentRevision, blockModel.tableColAlign(tableHead, tableC)) : 0
-        readonly property int tableCols: tableHead >= 0 ? (blockModel.contentRevision, blockModel.tableColumnCount(tableHead)) : 0
-        readonly property int tableHeaders: tableHead >= 0 ? (blockModel.contentRevision, blockModel.headerCount(tableHead)) : 0
+            : (blockModel.structureRevision, blockModel.tableHeadOf(root.menuRow))
+        readonly property int tableC: tableHead >= 0 ? (blockModel.structureRevision, blockModel.tableColumnOf(root.menuRow)) : -1
+        readonly property bool tableHeaderRow: tableHead >= 0 && (blockModel.structureRevision, blockModel.isHeaderRow(root.menuRow))
+        readonly property int tableKind: tableC >= 0 && !tableHeaderRow ? (blockModel.structureRevision, blockModel.tableColumnKind(tableHead, tableC)) : 0
+        readonly property int tableAlign: tableC >= 0 ? (blockModel.structureRevision, blockModel.tableColAlign(tableHead, tableC)) : 0
+        readonly property int tableCols: tableHead >= 0 ? (blockModel.structureRevision, blockModel.tableColumnCount(tableHead)) : 0
+        readonly property int tableHeaders: tableHead >= 0 ? (blockModel.structureRevision, blockModel.headerCount(tableHead)) : 0
         readonly property bool tableOn: !inFrameTab && tableHead >= 0
         // A grip-picked set of two or more holding the clicked cell (S7b): its ops replace the single-cell rows.
         readonly property var tableSetHit: {
-            const dep = blockModel.contentRevision
+            const dep = blockModel.structureRevision
             const s = root.tableSet
             if (!tableOn || !s || !root.tableSetLive() || s.head !== tableHead || s.items.length < 2) return null
             return s.items.indexOf(s.kind === "row" ? blockModel.tableRowOf(root.menuRow) : tableC) >= 0 ? s : null
         }
         readonly property bool tableOne: tableOn && tableSetHit === null
-        readonly property int tableR: tableHead >= 0 ? (blockModel.contentRevision, blockModel.tableRowOf(root.menuRow)) : -1
-        readonly property int tableRows: tableHead >= 0 ? (blockModel.contentRevision, blockModel.tableRowCount(tableHead)) : 0
+        readonly property int tableR: tableHead >= 0 ? (blockModel.structureRevision, blockModel.tableRowOf(root.menuRow)) : -1
+        readonly property int tableRows: tableHead >= 0 ? (blockModel.structureRevision, blockModel.tableRowCount(tableHead)) : 0
         readonly property bool tableSortable: tableRows - tableHeaders > 1
         readonly property bool tableBodyDeletable: !tableHeaderRow && tableRows - tableHeaders > 1
-        readonly property int tableColKind: tableC >= 0 ? (blockModel.contentRevision, blockModel.tableColumnKind(tableHead, tableC)) : 0   // header rows too
+        readonly property int tableColKind: tableC >= 0 ? (blockModel.structureRevision, blockModel.tableColumnKind(tableHead, tableC)) : 0   // header rows too
         readonly property bool tableSetCols: tableSetHit !== null && tableSetHit.kind === "col"
         readonly property string tableSetNoun: tableSetHit === null ? ""
             : tableSetHit.items.length + (tableSetHit.kind === "row" ? " rows" : " columns")
@@ -7383,7 +7384,7 @@ FocusScope {
                 MenuRow { visible: blockMenu.tableOne && (clipboard.hasBlocks() || clipboard.hasHtml() || clipboard.readText().length > 0)
                           text: "Paste into cells"
                           onActivated: root.pasteIntoCellsAt(root.menuRow) }
-                MenuRow { visible: blockMenu.tableOne && (blockModel.contentRevision, root.firstGroupColOf(blockMenu.tableHead)) >= 0
+                MenuRow { visible: blockMenu.tableOne && (blockModel.structureRevision, root.firstGroupColOf(blockMenu.tableHead)) >= 0
                           scope: "table"; text: "View as board"
                           onActivated: root.openBoard(blockMenu.tableHead, (blockMenu.tableColKind === 1 || blockMenu.tableColKind === 2)
                                                                           ? blockMenu.tableC : root.firstGroupColOf(blockMenu.tableHead)) }
@@ -7394,7 +7395,7 @@ FocusScope {
                           onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
                 MenuRow { visible: !blockMenu.inFrameTab && blockMenu.runLo > 0
                           text: blockMenu.menuInSel ? "Move blocks up" : "Move up"; onActivated: root.moveMenuRow(-1) }
-                MenuRow { visible: !blockMenu.inFrameTab && (blockModel.contentRevision, blockMenu.runHi < blockModel.count - 1)
+                MenuRow { visible: !blockMenu.inFrameTab && (blockModel.structureRevision, blockMenu.runHi < blockModel.count - 1)
                           text: blockMenu.menuInSel ? "Move blocks down" : "Move down"; onActivated: root.moveMenuRow(1) }
                 MenuRow { visible: !blockMenu.inFrameTab
                           text: blockMenu.menuInSel ? "Copy blocks" : "Copy"
@@ -7487,7 +7488,7 @@ FocusScope {
                 MenuSegRow {   // T6: the timecode column's frame rate
                     visible: blockMenu.tableColKind === 3
                     label: "Frame rate"
-                    readonly property real fps: blockMenu.tableColKind === 3 ? (blockModel.contentRevision, blockModel.tableColumnFps(blockMenu.tableHead, blockMenu.tableC)) : 0
+                    readonly property real fps: blockMenu.tableColKind === 3 ? (blockModel.structureRevision, blockModel.tableColumnFps(blockMenu.tableHead, blockMenu.tableC)) : 0
                     Repeater {
                         model: [23.976, 24, 25, 29.97, 30, 60]
                         MenuTextBtn { required property var modelData; text: "" + modelData; on: Math.abs(parent.parent.fps - modelData) < 0.01
@@ -7572,7 +7573,7 @@ FocusScope {
         id: langPopup
         property int targetRow: -1
         readonly property string current: targetRow >= 0
-            ? (blockModel.contentRevision, blockModel.codeLanguageName(targetRow)) : ""
+            ? (blockModel.structureRevision, blockModel.codeLanguageName(targetRow)) : ""
         readonly property var allLangs: blockModel.documentOpen ? blockModel.codeLanguages() : []
         readonly property var shown: {
             var f = langField.text.trim().toLowerCase()
