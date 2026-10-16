@@ -39,7 +39,6 @@ Rectangle {
     readonly property real inset: 24                 // == BlockModel::kCardInset
     readonly property int kCardMaxRows: 120           // a giant run shows this many blocks and a footer
     readonly property int kGreekMaxRows: 400
-    readonly property int kRowsPerFrame: 8            // the live stagger
     // The first block sits at the inset: BlockView.y = yForRow(row) − originY.
     readonly property real originY: head >= 0 ? (blockModel.layoutRevision, blockModel.yForRow(head)) - inset : 0
 
@@ -56,23 +55,26 @@ Rectangle {
     Component.onCompleted: retier()
     Connections { target: card.cam; function onCameraChanged() { card.retier() } }
 
-    // --- live: the real delegates, staggered ---
+    // --- live: the real delegates, staggered through a ListModel ---
+    // The rows arrive by APPENDING to a ListModel: a Repeater on a changing INTEGER model regenerates
+    // every delegate it already has, so a count that grows by eight a frame rebuilt a 77-row card ten
+    // times over (QML profile 2026-10-16: 39 ms a tick, a glide at 7 fps). Appends touch only the new rows.
     readonly property int wantRows: active && tier === 2 ? Math.min(kCardMaxRows, runLength) : 0
-    property int liveRows: 0
-    onWantRowsChanged: { if (wantRows === 0) liveRows = 0; else if (liveRows > wantRows) liveRows = wantRows }
-    FrameAnimation {
-        running: card.liveRows < card.wantRows
-        onTriggered: card.liveRows = Math.min(card.wantRows, card.liveRows + card.kRowsPerFrame)
-    }
+    readonly property int liveRows: liveModel.count
+    readonly property bool needsRows: liveModel.count < wantRows           // CanvasView's per-frame budget feeds the cards that need rows
+    ListModel { id: liveModel }
+    onWantRowsChanged: if (wantRows < liveModel.count) liveModel.clear()   // leaving live, or a shorter run: start over
+    onHeadChanged: liveModel.clear()                                       // a re-pointed slot: the rows belong to another card
+    function feedRows(n) { const want = Math.min(wantRows, liveModel.count + n); while (liveModel.count < want) liveModel.append({ idx: liveModel.count }) }
     readonly property CanvasEditorFacade facade: CanvasEditorFacade { editor: card.editor; inset: card.inset }
     function delegateAt(i) { return blockRepeater.itemAt(i) }   // probe (B10)
     Repeater {
         id: blockRepeater
-        model: card.liveRows
+        model: liveModel
         delegate: BlockView {
-            required property int index
+            required property int idx
             editor: card.facade
-            logicalRow: card.head + index
+            logicalRow: card.head + idx
             originY: card.originY
             measures: true
         }

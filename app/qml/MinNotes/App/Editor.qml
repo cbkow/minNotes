@@ -4425,7 +4425,7 @@ FocusScope {
     readonly property int poolPrewarm: Math.min(blockModel.count, Math.max(480, 8 * (Math.ceil(root.height / root.zoom / 38) + 2 * overscan + 4)))
     Timer {
         interval: 20; repeat: true
-        running: blockModel.documentOpen && !flick.moving && !flick.dragging && poolModel.count < root.poolPrewarm
+        running: blockModel.documentOpen && flick.visible && !flick.moving && !flick.dragging && poolModel.count < root.poolPrewarm   // not behind the canvas (its glide paid 3.6 ms a tick for page delegates)
         onTriggered: { for (let k = 0; k < 4 && poolModel.count < root.poolPrewarm; ++k) poolModel.append({ slot: poolModel.count }) }
     }
     // Which block each pool slot renders. Blocks that stay in view keep their

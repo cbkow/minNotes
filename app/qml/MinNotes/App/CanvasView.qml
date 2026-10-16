@@ -33,6 +33,23 @@ Rectangle {
     onVisibleCardsChanged: sizePool()
     Component.onCompleted: sizePool()
 
+    // The live stagger's budget (B4): ONE FrameAnimation hands out kRowsPerFrame delegate creations a
+    // frame across every card that needs rows (round robin, at least one each), so four cards entering
+    // together cost the same frame time as one. A delegate is ~1 ms to create.
+    readonly property int kRowsPerFrame: 12
+    function needyCards() { const out = []; for (let i = 0; i < cardPool.count; ++i) { const c = cardRepeater.itemAt(i); if (c && c.needsRows) out.push(c) } return out }
+    property bool anyNeedsRows: false
+    function pollNeeds() { anyNeedsRows = needyCards().length > 0 }
+    FrameAnimation {
+        running: cv.visible && cv.anyNeedsRows
+        onTriggered: {
+            const cards = cv.needyCards()
+            if (!cards.length) { cv.anyNeedsRows = false; return }
+            const each = Math.max(1, Math.floor(cv.kRowsPerFrame / cards.length))
+            for (const c of cards) c.feedRows(each)
+        }
+    }
+
     // Probe hooks (B10).
     function cardItemAt(slot) { return cardRepeater.itemAt(slot) }
     readonly property int poolCount: cardPool.count
@@ -70,6 +87,7 @@ Rectangle {
                 editor: cv.editor
                 cam: cv.cam
                 cardIndex: (cv.slotRev, canvasSlots.rowForSlot(index))
+                onNeedsRowsChanged: if (needsRows) cv.anyNeedsRows = true
             }
         }
     }
