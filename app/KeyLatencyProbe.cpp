@@ -28,6 +28,7 @@ KeyLatencyProbe::KeyLatencyProbe(QQuickWindow* w, int synthKeys, QObject* parent
     // Both signals come from the render thread (threaded loop) — stamp into atomics, report later.
     connect(w, &QQuickWindow::afterAnimating, this, [this] {   // GUI thread: polish + animation advance are done
         if (pending_.load() && updNs_ > 0 && polNs_ == 0) polNs_ = t0_.nsecsElapsed();
+        if (glideTrace_ && glideUpdNs_ > 0) { glidePolish_ << (t0_.nsecsElapsed() - glideUpdNs_) / 1e6; glideUpdNs_ = 0; }
     });
     connect(w, &QQuickWindow::beforeSynchronizing, this, [this] {
         if (pending_.load() && syncNs_.load() == 0) syncNs_.store(t0_.nsecsElapsed());
@@ -58,13 +59,23 @@ KeyLatencyProbe::KeyLatencyProbe(QQuickWindow* w, int synthKeys, QObject* parent
                 QCoreApplication::postEvent(win_, new QKeyEvent(QEvent::KeyPress, Qt::Key_A + synthLeft_ % 26, Qt::NoModifier, ch));
                 QCoreApplication::postEvent(win_, new QKeyEvent(QEvent::KeyRelease, Qt::Key_A + synthLeft_ % 26, Qt::NoModifier, ch));
             } else if (*phase == 1) {
-                if (synthLeft_-- <= 0) { *phase = 2; swaps_.store(0); t->setInterval(1200); return; }
+                if (synthLeft_-- <= 0) { *phase = 2; swaps_.store(0); glideTrace_ = true; t->setInterval(1200); return; }
                 const QPointF pos(win_->width() / 2.0, win_->height() / 2.0);
                 QCoreApplication::postEvent(win_, new QWheelEvent(pos, win_->mapToGlobal(pos.toPoint()), QPoint(), QPoint(0, -120),
                                                                   Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false));
             } else {
                 t->stop();
-                qInfo().noquote() << QStringLiteral("[keylat] GLIDE %1 frames/s over 1.2 s after six wheel notches").arg(swaps_.load() / 1.2, 0, 'f', 0);
+                glideTrace_ = false;
+                qInfo().noquote() << QStringLiteral("[keylat] GLIDE %1 frames/s over 1.2 s after six wheel notches; polish per frame p50/p95 %2/%3 ms (n %4)")
+                    .arg(swaps_.load() / 1.2, 0, 'f', 0).arg(pct(glidePolish_, .5), 0, 'f', 2).arg(pct(glidePolish_, .95), 0, 'f', 2).arg(glidePolish_.size());
+                auto dump = [](const char* what, const QHash<QString, int>& h) {
+                    QList<QPair<int, QString>> v; for (auto it = h.cbegin(); it != h.cend(); ++it) v.append({it.value(), it.key()});
+                    std::sort(v.begin(), v.end(), [](const QPair<int, QString>& a, const QPair<int, QString>& b) { return a.first > b.first; });
+                    int total = 0; for (const auto& e : v) total += e.first;
+                    qInfo().noquote() << QStringLiteral("[keylat] GLIDE %1: %2 total").arg(what).arg(total);
+                    for (int i = 0; i < v.size() && i < 12; ++i) qInfo().noquote() << QStringLiteral("[keylat]    %1  %2").arg(v[i].first, 5).arg(v[i].second);
+                };
+                dump("visibility flips", glideVis_); dump("children changes", glideChildren_);
                 summary(); QCoreApplication::exit(0);
             }
         });
@@ -75,10 +86,20 @@ KeyLatencyProbe::KeyLatencyProbe(QQuickWindow* w, int synthKeys, QObject* parent
     if (qEnvironmentVariableIntValue("MN_KEYLAT_TRAP") > 0) QTimer::singleShot(2400, this, [] { raise(SIGSTOP); });
 }
 
+QString KeyLatencyProbe::chainOf(QQuickItem* item, int depth) {
+    QString chain;
+    for (QQuickItem* p = item; p && depth-- > 0; p = p->parentItem()) {
+        const QQmlContext* ctx = qmlContext(p);
+        chain += QStringLiteral("%1%2[%3] ").arg(p == item ? "" : "< ", QString::fromLatin1(p->metaObject()->className()), ctx ? ctx->baseUrl().fileName() : QStringLiteral("-"));
+    }
+    return chain;
+}
+
 // Every item in the tree reports its effective-visibility flips (MN_KEYLAT_CHILDREN=1 names them).
 void KeyLatencyProbe::hookVisibility(QQuickItem* item) {
     if (!item) return;
     connect(item, &QQuickItem::visibleChanged, this, [this, item] {
+        if (glideTrace_) { ++glideVis_[chainOf(item, 3)]; return; }
         if (!pending_.load()) return;
         ++visFlips_;
         static const bool verbose = qEnvironmentVariableIntValue("MN_KEYLAT_CHILDREN") > 0;
@@ -94,6 +115,15 @@ void KeyLatencyProbe::hookVisibility(QQuickItem* item) {
     // QML-created items get their parent without a ChildAdded event (QQml_setParent_noEvent), so the
     // Repeater/Loader churn shows up here instead: the PARENT's childrenChanged.
     connect(item, &QQuickItem::childrenChanged, this, [this, item] {
+        if (glideTrace_) {   // name the delegate type by its first QML-declared property (index/rr/h/sr/span/bg…)
+            QString kind;
+            if (!item->childItems().isEmpty()) {
+                const QMetaObject* mo = item->childItems().last()->metaObject();
+                kind = QString::fromLatin1(mo->className());
+                for (int i = mo->propertyOffset(); i < mo->propertyCount() && i < mo->propertyOffset() + 3; ++i) kind += QLatin1Char('.') + QString::fromLatin1(mo->property(i).name());
+            }
+            ++glideChildren_[QStringLiteral("%1 in %2").arg(kind, chainOf(item, 1))]; return;
+        }
         if (!pending_.load()) return;
         ++childEvents_;
         static const bool verbose = qEnvironmentVariableIntValue("MN_KEYLAT_CHILDREN") > 0;
@@ -132,7 +162,8 @@ bool KeyLatencyProbe::eventFilter(QObject* o, QEvent* e) {
         }
     }
     if (o == win_ && e->type() == QEvent::UpdateRequest && pending_.load() && updNs_ == 0 && syncNs_.load() == 0)
-        updNs_ = t0_.nsecsElapsed();   // the render loop's (display-link or timer) tick the change waited for
+        updNs_ = t0_.nsecsElapsed();
+    if (o == win_ && e->type() == QEvent::UpdateRequest && glideTrace_) glideUpdNs_ = t0_.nsecsElapsed();   // the render loop's (display-link or timer) tick the change waited for
     if (o == win_ && e->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(e);
         const bool typed = ke->text().size() == 1 && ke->text().at(0) >= QChar(' ')

@@ -1757,7 +1757,7 @@ FocusScope {
         var row = blockModel.blockAt(root.pageXAt(cx, cy), Math.max(0, cy))
         if (blockModel.typeForRow(row) !== 2) return -1
         var cell = cellForRow(row)
-        if (!cell || !cell.langChip || !cell.langChip.visible) return -1
+        if (!cell || !cell.langChip || !cell.langChip.shown) return -1
         var p = cell.langChip.mapFromItem(mouse, cx, cy)
         var pad = 2
         if (p.x >= -pad && p.x <= cell.langChip.width + pad

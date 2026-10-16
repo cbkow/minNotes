@@ -86,14 +86,13 @@ Item {
         || editor.dividerHoverRecord < 0 || blockModel.tableHeadOf(editor.dividerHoverRecord) !== tableHead
         ? -1 : editor.dividerHoverIndex
     Rectangle {
-        visible: cell.active && !cell.isRecord && !editor.pulling && !editor.dividerDragging
-                 && editor.pullHoverRow === cell.logicalRow
+        opacity: cell.active && !cell.isRecord && !editor.pulling && !editor.dividerDragging
+                 && editor.pullHoverRow === cell.logicalRow ? 0.55 : 0
         x: editor.leftEdge + cell.lane.x + (editor.pullHoverSide === 1 ? 0 : cell.lane.w - 3)
         y: 0
         width: 3
         height: cell.height
         color: Theme.colors.accent
-        opacity: 0.55
         z: 2
     }
 
@@ -135,7 +134,7 @@ Item {
                 return inSet ? 1 : 0
             }
             Rectangle {
-                visible: parent.wash > 0
+                opacity: parent.wash > 0 ? 1 : 0
                 anchors.fill: parent
                 readonly property color tone: parent.wash === 2 && editor.menuHiDanger ? Theme.colors.error : Theme.colors.accent
                 color: parent.wash === 1 ? Theme.colors.selectionBg
@@ -152,12 +151,12 @@ Item {
         }
     }
     Rectangle {   // the table's left edge
-        visible: cell.isTableRecord
+        opacity: cell.isTableRecord ? 1 : 0
         x: editor.tableX(cell.tableHead); y: cell.padTop; width: 1; height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
         color: Theme.colors.border
     }
     Rectangle {   // the top edge, on the table's first row
-        visible: cell.isTableRecord && cell.tableRow === 0
+        opacity: cell.isTableRecord && cell.tableRow === 0 ? 1 : 0
         x: editor.tableX(cell.tableHead); y: cell.padTop; height: 1
         width: (blockModel.geomRevision, cell.rev, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
@@ -167,8 +166,8 @@ Item {
     Rectangle {
         readonly property bool live: editor.tableGripPressed && editor.tableGripPressKind === "row"
             && editor.tableGripPressHead === cell.tableHead && editor.tableGripPressIndex === cell.tableRow
-        visible: cell.isTableRecord && (live || (editor.tableGripKind === "row" && editor.tableGripHead === cell.tableHead
-                                                 && editor.tableGripIndex === cell.tableRow))
+        opacity: cell.isTableRecord && (live || (editor.tableGripKind === "row" && editor.tableGripHead === cell.tableHead
+                                                 && editor.tableGripIndex === cell.tableRow)) ? 1 : 0
         x: editor.tableX(cell.tableHead) - 13; y: cell.padTop; width: 8
         height: Math.max(0, cell.height - cell.padTop - cell.padBottom)
         color: live ? Theme.colors.accentMuted : Theme.colors.surfaceHover
@@ -180,7 +179,7 @@ Item {
         readonly property int col: !cell.isTableRecord || cell.tableRow !== 0 ? -1
             : live ? editor.tableGripPressIndex
             : editor.tableGripKind === "col" && editor.tableGripHead === cell.tableHead ? editor.tableGripIndex : -1
-        visible: col >= 0
+        opacity: col >= 0 ? 1 : 0
         x: editor.tableX(cell.tableHead) + (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnLeft(cell.tableHead, col) : 0)
         width: (blockModel.geomRevision, col >= 0 ? blockModel.tableColumnWidth(cell.tableHead, col) : 0)
         y: cell.padTop - 13; height: 8
@@ -194,8 +193,16 @@ Item {
     // Gated on `active`: an idle slot is invisible and must not ride the content-span cascade (a code
     // line growing past the page re-evaluated every pooled delegate's width per 64 px step — A3).
     width: active ? editor.contentSpan : 0   // content units (the page layer scales); == the viewport unless the sheet is wider
-    visible: active && (editor.frameLo < 0 || (logicalRow >= editor.frameLo && logicalRow <= editor.frameHi))   // the grid frame shows one table
-             && !(blockModel.layoutRevision, blockModel.rowHidden(logicalRow))                                  // T4: a filtered-out row
+    // VISIBILITY RULE (2026-10-16, key-latency probe): nothing in a delegate toggles `visible` on a
+    // per-frame path. Every effective-visibility flip marks its parent ChildrenStackingChanged, and Qt
+    // 6.11's polish then walks the WHOLE item tree (QQuickWindowPrivate::updateChildWindowStackingOrder,
+    // ~5 ms here) before the frame can sync — an idle slot going dark, a slot re-pointing from a task to
+    // a paragraph, a caret moving rows all paid it. So: idle slots and type-dependent decorations ride
+    // OPACITY (+ `enabled` for input); `visible` keeps only the rare states (grid frame, filtered row).
+    visible: !active || ((editor.frameLo < 0 || (logicalRow >= editor.frameLo && logicalRow <= editor.frameHi))   // the grid frame shows one table
+                         && !(blockModel.layoutRevision, blockModel.rowHidden(logicalRow)))                       // T4: a filtered-out row
+    opacity: active ? 1 : 0
+    enabled: active
     y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
     // Code blocks get double vertical padding (24 vs 12) so the
     // syntax-themed background has breathing room above/below.
@@ -505,7 +512,7 @@ Item {
 
 
     Rectangle {  // code background — matches the syntax theme's fill
-        visible: cell.active && !cell.isMedia && te.btype === 2
+        opacity: cell.active && !cell.isMedia && te.btype === 2 ? 1 : 0
         anchors.fill: te; anchors.margins: -8
         z: -1   // behind the selection highlight (else it hides the selection)
         color: codeHl.backgroundColor.a > 0 ? codeHl.backgroundColor : Theme.colors.codeBg
@@ -518,7 +525,8 @@ Item {
         // Click → the full language picker. No MouseArea — the central
         // mouse layer hit-tests it via cell.langChip.
         id: codeLangChip
-        visible: cell.active && !cell.isMedia && te.btype === 2
+        readonly property bool shown: cell.active && !cell.isMedia && te.btype === 2   // the editor's hit-test reads this (not `visible`)
+        opacity: shown ? 1 : 0
         readonly property string lname: (cell.rev,
             cell.active && te.btype === 2
                 ? blockModel.codeLanguageName(cell.logicalRow) : "")
@@ -550,8 +558,9 @@ Item {
 
     TextEdit {
         id: te
-        visible: !cell.isMedia && btype !== 6 && btype !== 10   // hidden for divider/record
-        opacity: cell.colKind === 2 ? 0 : 1   // a check cell: its checkbox stands in for the text (still laid out)
+        // Hidden for media/divider/record, and in a check cell (its checkbox stands in for the text) —
+        // by opacity, never `visible` (see the delegate's VISIBILITY RULE); the text is still laid out.
+        opacity: !cell.isMedia && btype !== 6 && btype !== 10 && cell.colKind !== 2 ? 1 : 0
         readOnly: true
         activeFocusOnPress: false
         selectByMouse: false
@@ -687,14 +696,12 @@ Item {
     }
 
     Rectangle {  // caret
-        // `visible` moves only with the focus row / block type; the blink and the selection state ride
-        // OPACITY. Reason (2026-10-16 key-latency probe): every effective-visibility flip marks the
+        // Everything rides OPACITY, never `visible`. Reason (2026-10-16 key-latency probe): every effective-visibility flip marks the
         // parent ChildrenStackingChanged, and Qt 6.11's polish then walks the WHOLE item tree
         // (QQuickWindowPrivate::updateChildWindowStackingOrder — ~5 ms here) before the frame can sync.
         // setCaret's anchor-then-focus writes made hasSel flap once per keystroke, so the caret
         // blinked off and on inside every key and paid that walk each time. Opacity never does.
-        visible: cell.isFocus && !cell.isMedia && te.btype !== 6 && te.btype !== 10
-        opacity: cursor.active && editor.caretOn && !cursor.hasSel ? 1 : 0
+        opacity: cell.isFocus && cursor.active && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 10 ? 1 : 0
         color: Theme.colors.accent
         width: 2
         // Gated on isFocus: a bare read of cursor.focusCol made EVERY pooled delegate recompute this
@@ -707,19 +714,19 @@ Item {
     }
 
     Rectangle {  // quote: left bar
-        visible: cell.active && te.btype === 4
+        opacity: cell.active && te.btype === 4 ? 1 : 0
         x: cell.colLeft + 4; y: te.y
         width: 3; height: te.implicitHeight
         radius: 0; color: Theme.colors.quoteBar
     }
     Text {  // list: bullet (hollow at odd depths — cheap level cue)
-        visible: cell.active && te.btype === 5
+        opacity: cell.active && te.btype === 5 ? 1 : 0
         x: cell.colLeft + 6 + te.bdepth * 24; y: te.y
         text: te.bdepth % 2 ? "◦" : "•"
         color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeBody
     }
     Text {  // ordered list: computed number, right-aligned before the text
-        visible: cell.active && te.btype === 9
+        opacity: cell.active && te.btype === 9 ? 1 : 0
         x: cell.colLeft + te.bdepth * 24; width: 28
         y: te.y
         horizontalAlignment: Text.AlignRight
@@ -730,7 +737,7 @@ Item {
         font.family: Theme.font.body; font.pixelSize: Theme.font.sizeBody
     }
     Item {  // task: tri-state checkbox (0 todo / 1 doing / 2 done)
-        visible: cell.active && te.btype === 8
+        opacity: cell.active && te.btype === 8 ? 1 : 0
         x: cell.colLeft + 2 + te.bdepth * 24; y: te.y + Math.round((te.lineH - 14) / 2)
         width: 14; height: 14
         Rectangle {
@@ -741,13 +748,13 @@ Item {
             border.color: te.taskState === 1 ? Theme.colors.accent : Theme.colors.textMuted
         }
         Rectangle {  // in-progress: centred dash
-            visible: te.taskState === 1
+            opacity: te.taskState === 1 ? 1 : 0
             anchors.centerIn: parent
             width: 7; height: 2; radius: 0
             color: Theme.colors.accent
         }
         Text {  // done: check mark
-            visible: te.taskState === 2
+            opacity: te.taskState === 2 ? 1 : 0
             anchors.centerIn: parent
             text: "✓"
             color: Theme.colors.textBright
@@ -755,7 +762,7 @@ Item {
         }
     }
     Item {  // table check cell (SR-4 S5): the painted tri-state box, the task item's recipe
-        visible: cell.active && cell.colKind === 2
+        opacity: cell.active && cell.colKind === 2 ? 1 : 0
         x: cell.colLeft + 2; y: te.y + Math.round((te.lineH - 14) / 2)
         width: 14; height: 14
         Rectangle {
@@ -766,13 +773,13 @@ Item {
             border.color: cell.checkState === 1 ? Theme.colors.accent : Theme.colors.textMuted
         }
         Rectangle {
-            visible: cell.checkState === 1
+            opacity: cell.checkState === 1 ? 1 : 0
             anchors.centerIn: parent
             width: 7; height: 2; radius: 0
             color: Theme.colors.accent
         }
         Text {
-            visible: cell.checkState === 2
+            opacity: cell.checkState === 2 ? 1 : 0
             anchors.centerIn: parent
             text: "✓"
             color: Theme.colors.textBright
@@ -780,7 +787,7 @@ Item {
         }
     }
     Rectangle {  // divider: horizontal rule
-        visible: cell.active && te.btype === 6
+        opacity: cell.active && te.btype === 6 ? 1 : 0
         x: cell.colLeft; y: cell.height / 2 - 1
         width: cell.measure; height: 1
         color: Theme.colors.divider
@@ -793,10 +800,10 @@ Item {
                  // text-only; opaque rows add their wash on top.
         // Runs the FULL FIELD like the focused block's fill (page
         // and margins alike) — one row treatment, not two widths.
-        visible: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
+        opacity: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
                  && !(cell.inTable && editor.cellRect !== null)
                  // a lane block whose split row is selected whole rides its record's full-field band
-                 && !(cell.inLane && (cell.rev, blockModel.splitRowOf(cell.logicalRow)) >= cursor.loRow)
+                 && !(cell.inLane && (cell.rev, blockModel.splitRowOf(cell.logicalRow)) >= cursor.loRow) ? 1 : 0
         z: -0.5                                  // above the block rules + focus fill, below text + rects
         radius: 0
         color: Theme.colors.selectionBand
@@ -811,7 +818,7 @@ Item {
                  // translucent selection wash OVER the block. Never for
                  // a table's own cell selection (that collapses cursor).
         readonly property bool opaqueRow: te.btype === 3 || te.btype === 6
-        visible: cell.active && cell.inSel && cursor.hasSel && opaqueRow
+        opacity: cell.active && cell.inSel && cursor.hasSel && opaqueRow ? 1 : 0
         z: 1
         radius: 0
         color: Theme.colors.selectionWash

@@ -17,6 +17,7 @@
 #include <QObject>
 #include <QElapsedTimer>
 #include <QVector>
+#include <QHash>
 #include <atomic>
 
 class QQuickWindow;
@@ -44,5 +45,9 @@ private:
     int keys_ = 0;
     int childEvents_ = 0, visFlips_ = 0;   // visFlips_: effective-visibility changes since the key (each one ALSO forces the stacking walk: qquickitem.cpp:6751)
     void hookVisibility(QQuickItem* item);
-    bool hooked_ = false;                // QQuickItem children added/removed since the key (each one forces the window's full stacking walk)
+    bool hooked_ = false;
+    bool glideTrace_ = false;            // phase 2 of --key-probe: aggregate flips/churn by item instead of per key
+    QHash<QString, int> glideVis_, glideChildren_;
+    qint64 glideUpdNs_ = 0; QVector<double> glidePolish_;   // per-frame polish during the glide
+    static QString chainOf(QQuickItem* item, int depth);                // QQuickItem children added/removed since the key (each one forces the window's full stacking walk)
 };
