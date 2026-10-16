@@ -447,7 +447,7 @@ Item {
         var dep = cell.rev + te.width + te.height + te.lineCount   // re-eval triggers: the text's own geometry
         // Opaque rows (media/table/divider) show membership via the
         // wash rectangle below, never via text rects over a hidden te.
-        if (!cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6) return []
+        if (!cursor.hasSel || !cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6) return []   // hasSel first: it masks setCaret's half-written state
         if (cell.inTable && editor.cellRect !== null) return []   // a cell rectangle washes whole cells (the record)
         var sp = (cell.logicalRow === cursor.loRow) ? Math.min(cursor.loCol, te.length) : 0
         var ep = (cell.logicalRow === cursor.hiRow) ? Math.min(cursor.hiCol, te.length) : te.length
@@ -687,7 +687,14 @@ Item {
     }
 
     Rectangle {  // caret
-        visible: cursor.active && cell.isFocus && editor.caretOn && !cursor.hasSel && !cell.isMedia && te.btype !== 6 && te.btype !== 10
+        // `visible` moves only with the focus row / block type; the blink and the selection state ride
+        // OPACITY. Reason (2026-10-16 key-latency probe): every effective-visibility flip marks the
+        // parent ChildrenStackingChanged, and Qt 6.11's polish then walks the WHOLE item tree
+        // (QQuickWindowPrivate::updateChildWindowStackingOrder — ~5 ms here) before the frame can sync.
+        // setCaret's anchor-then-focus writes made hasSel flap once per keystroke, so the caret
+        // blinked off and on inside every key and paid that walk each time. Opacity never does.
+        visible: cell.isFocus && !cell.isMedia && te.btype !== 6 && te.btype !== 10
+        opacity: cursor.active && editor.caretOn && !cursor.hasSel ? 1 : 0
         color: Theme.colors.accent
         width: 2
         // Gated on isFocus: a bare read of cursor.focusCol made EVERY pooled delegate recompute this

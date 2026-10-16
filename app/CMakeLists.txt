@@ -3,6 +3,8 @@
 # (ld: "Is a directory"). The app title and URI stay "minNotes".
 qt_add_executable(minnotesapp
     main.cpp
+    KeyLatencyProbe.h
+    KeyLatencyProbe.cpp
     MinNotesApplication.h
     MinNotesApplication.cpp
     AppUpdater.h                 # Q_OBJECT — Sparkle "Check for Updates" bridge

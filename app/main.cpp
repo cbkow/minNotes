@@ -6,6 +6,7 @@
 #include <QStyleHints>
 #include <QTimer>
 #include <QQuickWindow>
+#include "KeyLatencyProbe.h"
 #include <QTextStream>
 #include <QPdfDocument>
 #include <QPainter>
@@ -76,6 +77,10 @@ int main(int argc, char *argv[])
     {
         QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
         fmt.setColorSpace(QColorSpace::SRgb);
+        // EXPERIMENT (2026-10-16, key latency): swap interval 0 makes Cocoa deliver update requests
+        // from a timer (QT_QPA_UPDATE_IDLE_TIME) instead of the display link, so a change renders
+        // at once and lands at the next refresh instead of the one after. Env-gated while measured.
+        if (qEnvironmentVariableIntValue("MN_NOVSYNC") > 0) fmt.setSwapInterval(0);
         QSurfaceFormat::setDefaultFormat(fmt);
     }
 #endif
@@ -304,6 +309,20 @@ int main(int argc, char *argv[])
                 });
             });
         });
+    // Dev-only (2026-10-16): the keystroke's full pipeline (queue → turn → sync → swap) per key under
+    // `--perf-log`; `--key-probe=N` posts N synthetic keys, prints percentiles and exits (the A/B
+    // harness for render-loop settings: QSG_RENDER_LOOP, QT_QPA_UPDATE_IDLE_TIME, swap interval).
+    {
+        int synth = 0; bool arm = false;
+        for (const QString& a : args) {
+            if (a == QLatin1String("--perf-log")) arm = true;
+            else if (a.startsWith(QLatin1String("--key-probe="))) { synth = a.mid(12).toInt(); arm = true; }
+        }
+        if (arm) QTimer::singleShot(0, &app, [&engine, synth] {
+            for (QObject* o : engine.rootObjects())
+                if (auto* w = qobject_cast<QQuickWindow*>(o)) { new KeyLatencyProbe(w, synth, w); break; }
+        });
+    }
     // Its twin (2026-09-16): `--export-html=<out.html> <doc.mnd>` — screenshot the result with a
     // headless browser to eyeball the sheet / tables / ink without the GUI.
     if (!exportHtmlTo.isEmpty())

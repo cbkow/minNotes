@@ -1429,7 +1429,12 @@ FocusScope {
         readonly property int loCol: _span && _span[0] !== _lo ? 0 : _loC
         readonly property int hiRow: _span ? _span[1] : _hi
         readonly property int hiCol: _span && _span[1] !== _hi ? blockModel.contentForRow(_span[1]).length : _hiC
-        readonly property bool hasSel: loRow !== hiRow || loCol !== hiCol
+        // `settling` masks the half-written state inside setCaret/move: four separate property writes
+        // can't avoid a moment where anchor ≠ focus, and that moment used to READ as a selection — a
+        // selection rect was created and destroyed on every keystroke, and each such child churn makes
+        // Qt 6.11's polish walk the whole item tree (~5 ms; see the caret note in BlockView.qml).
+        property bool settling: false
+        readonly property bool hasSel: !settling && (loRow !== hiRow || loCol !== hiCol)
 
         // Sticky goal-x for vertical nav: the x the caret aims for across a RUN
         // of up/down presses, so it doesn't drift toward shorter lines. te-local
@@ -1472,20 +1477,23 @@ FocusScope {
 
         function setCaret(r, col) {
             const pr = typeProbe.armed; let t = pr ? blockModel.probeNowUs() : 0   // type probe: per-write cost
+            settling = true
             anchorRow = r; anchorCol = col
             if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("sc.anchor", t1 - t); t = t1 }
             focusRow = r
             if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("sc.focusRow", t1 - t); t = t1 }
             focusCol = col
             if (pr) { const t1 = blockModel.probeNowUs(); blockModel.probeMark("sc.focusCol", t1 - t); t = t1 }
+            settling = false
             goalX = -1; sync()
             if (pr) blockModel.probeMark("sc.sync", blockModel.probeNowUs() - t)
         }
         function move(r, col, extend) {
             // Leaving a block with a collapsed caret consumes its markdown → spans.
             if (!extend && r !== focusRow && !root.dragging) blockModel.commitMarkdown(focusRow)
+            if (!extend) settling = true
             focusRow = r; focusCol = col
-            if (!extend) { anchorRow = r; anchorCol = col }
+            if (!extend) { anchorRow = r; anchorCol = col; settling = false }
             root.ensureVisible(r)
             sync()
         }
