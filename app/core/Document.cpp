@@ -1,4 +1,5 @@
 #include "Document.h"
+#include "PerfCounters.h"   // dbWrites counter (type probe)
 #include <atomic>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -273,6 +274,7 @@ void Document::appendBlock(const QString& id, const QString& rank, int depth,
     q.addBindValue(content.isNull() ? QString(QLatin1String("")) : content);
     q.addBindValue(now);
     q.addBindValue(now);
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document appendBlock failed:" << q.lastError().text();
 }
@@ -286,6 +288,7 @@ void Document::updateContent(const QString& id, const QString& content) {
     q.addBindValue(content.isNull() ? QString(QLatin1String("")) : content);
     q.addBindValue(QDateTime::currentMSecsSinceEpoch());
     q.addBindValue(id);
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document updateContent failed:" << q.lastError().text();
 }
@@ -298,6 +301,7 @@ void Document::updateMeta(const QString& id, const QString& type, const QString&
     q.addBindValue(depth);
     q.addBindValue(QDateTime::currentMSecsSinceEpoch());
     q.addBindValue(id);
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document updateMeta failed:" << q.lastError().text();
 }
@@ -308,6 +312,7 @@ void Document::updateRank(const QString& id, const QString& rank) {
     q.addBindValue(rank);
     q.addBindValue(QDateTime::currentMSecsSinceEpoch());
     q.addBindValue(id);
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document updateRank failed:" << q.lastError().text();
 }
@@ -316,6 +321,7 @@ void Document::deleteBlock(const QString& id) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare("DELETE FROM blocks WHERE id = ?");
     q.addBindValue(id);
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document deleteBlock failed:" << q.lastError().text();
 }
@@ -339,6 +345,7 @@ void Document::upsertInk(const QString& blockId, const QString& ink) {
     q.addBindValue(blockId);
     q.addBindValue(ink);
     q.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document upsertInk failed:" << q.lastError().text();
 }
@@ -348,6 +355,7 @@ void Document::deleteInk(const QString& blockId) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare("DELETE FROM block_ink WHERE block_id = ?");
     q.addBindValue(blockId);
+    ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document deleteInk failed:" << q.lastError().text();
 }

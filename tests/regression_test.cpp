@@ -8246,6 +8246,40 @@ static int writeStyleSample(const QString& outPath) {
     return 0;
 }
 
+// Headless floor of the type probe (A0 speed programme): the model + SQLite cost of a
+// keystroke with ZERO QML attached. 1000 insertText + 500 single-char deleteRange on a plain
+// paragraph from the fixture's middle; prints the same stats JSON the app probe prints, so the
+// "signal" split here (no bindings) measured against the app's tells how much is QML.
+//   MN_TYPE_PROBE_HEADLESS=tests/fixtures/type-probe.md build/debug/tests/mn_regression_test
+static int runTypeProbeHeadless(const QString& fixture) {
+    qputenv("MN_TYPE_PROBE", "1");   // before the first insertText: mn::perf::enabled() reads it once
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0);
+    Importer imp; imp.setModel(&m);
+    if (!imp.importFile(QUrl::fromLocalFile(fixture).toString())) { qWarning("type probe: import failed"); return 2; }
+    const int n = m.rowCountQml();
+    int row = -1;
+    for (int i = n / 2, k = 0; k < n; ++k, i = (i + 1) % n)
+        if (m.typeForRow(i) == BlockModel::Paragraph && m.laneForRow(i) < 0 && m.tableHeadOf(i) < 0
+                && m.contentForRow(i).size() > 20) { row = i; break; }
+    if (row < 0) { qWarning("type probe: no paragraph in the fixture"); return 2; }
+    auto print = [&](const char* label) {
+        const QVariantMap st = m.probeStats(true);
+        qInfo("TYPE-PROBE-HEADLESS %s %s", label,
+              qPrintable(QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(st)).toJson(QJsonDocument::Compact))));
+    };
+    m.probeStats(true);
+    const QString s = QStringLiteral("The quick brown fox jumps over the lazy dog ");
+    for (int i = 0; i < 1000; ++i) m.insertText(row, m.contentForRow(row).size(), QString(s.at(i % s.size())));
+    print("insert");
+    for (int i = 0; i < 500; ++i) { const int len = m.contentForRow(row).size(); m.deleteRange(row, len - 1, row, len); }
+    print("delete");
+    qInfo("type probe: %d blocks, row %d", n, row);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -8254,6 +8288,8 @@ int main(int argc, char** argv) {
     app.setOrganizationName("minNotes");
     if (!qEnvironmentVariable("MN_OPEN_PROBE").isEmpty())
         return runOpenProbe(qEnvironmentVariable("MN_OPEN_PROBE"));
+    if (!qEnvironmentVariable("MN_TYPE_PROBE_HEADLESS").isEmpty())
+        return runTypeProbeHeadless(qEnvironmentVariable("MN_TYPE_PROBE_HEADLESS"));
     if (qEnvironmentVariableIsSet("MN_SPELL_PROBE")) return spellProbe();
     if (!qEnvironmentVariable("MN_STYLE_SAMPLE").isEmpty()) return writeStyleSample(qEnvironmentVariable("MN_STYLE_SAMPLE"));
     // Register the app text font so sketch-text height derivation matches the

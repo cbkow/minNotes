@@ -3840,6 +3840,128 @@ FocusScope {
         }
     }
 
+    // --- Dev-only type probe (A0 of the speed programme, 2026-10-16). Inert unless launched
+    // with --type-probe=<file.md> (Main.qml imports the fixture into a fresh tab; main.cpp sets
+    // MN_TYPE_PROBE so the model records its C++ timing splits). Scrolls to the dense middle of
+    // the document, types into a block of each kind one character per tick, times every
+    // keystroke (QML wall time around cursor.insertChar + the model's splits + frame times) and
+    // checks after each key that the model and the focused delegate agree. Prints one
+    // TYPE-PROBE PHASE line per phase (JSON: p50/p95/max µs per split, counter totals, keys) and
+    // exits with the failure count. scripts/type-probe.sh runs it offscreen and tabulates.
+    Timer {
+        id: typeProbe
+        readonly property bool armed: Qt.application.arguments.some(
+            function(a) { return a.indexOf("--type-probe=") === 0 })
+        readonly property var phases: ["para-mid", "para-spans", "table-cell", "code", "task", "backspace", "struct"]
+        readonly property string sentence: "The quick brown fox jumps over the lazy dog while the probe measures every keystroke in the dense middle of this document, "
+        readonly property int keysPerPhase: 160
+        property int phase: 0
+        property int phaseStep: 0
+        property int keys: 0
+        property int fails: 0
+        property int checks: 0
+        property int row: -1
+        property string expected: ""
+        property int countBefore: 0
+        interval: 16; repeat: true
+        running: armed && flick.visible && blockModel.count > 1000
+        onRunningChanged: if (running) console.log("TYPE-PROBE START blocks", blockModel.count)
+        function fail(msg) { if (++fails <= 40) console.log("TYPE-PROBE FAIL phase", phases[phase], "step", phaseStep, msg) }
+        // The first row from the document's middle that satisfies pred (wrapping).
+        function findRow(pred) {
+            const n = blockModel.count
+            for (let i = Math.floor(n / 2), k = 0; k < n; ++k, i = (i + 1) % n) if (pred(i)) return i
+            return -1
+        }
+        function isPlainPara(r) {
+            return blockModel.typeForRow(r) === 0 && blockModel.laneForRow(r) < 0 && blockModel.tableHeadOf(r) < 0
+                && blockModel.contentForRow(r).length > 20
+        }
+        function pickRow() {
+            switch (phases[phase]) {
+            case "para-mid":   return findRow(function(r) { return isPlainPara(r) && blockModel.spansForRow(r).length === 0 })
+            case "para-spans": return findRow(function(r) { return isPlainPara(r) && blockModel.spansForRow(r).length > 0 })
+            case "table-cell": return findRow(function(r) {
+                const head = blockModel.tableHeadOf(r)
+                return head >= 0 && blockModel.typeForRow(r) === 0 && !blockModel.isHeaderRow(r)
+                    && blockModel.tableColumnKind(head, blockModel.tableColumnOf(r)) === 0 })
+            case "code":       return findRow(function(r) { return blockModel.typeForRow(r) === 2 })
+            case "task":       return findRow(function(r) { return blockModel.typeForRow(r) === 8 && blockModel.laneForRow(r) < 0 })
+            case "backspace":  return findRow(function(r) { return isPlainPara(r) && blockModel.contentForRow(r).length >= 140 })
+            case "struct":     return findRow(function(r) { return isPlainPara(r) })
+            }
+            return -1
+        }
+        function checkAgree() {
+            ++checks
+            const model = blockModel.contentForRow(row)
+            if (model !== expected) { fail("model text differs from expected (" + model.length + " vs " + expected.length + " chars)"); expected = model }
+            if (cursor.focusRow !== row) fail("caret left the row: " + cursor.focusRow)
+            const d = root.cellForRow(row)
+            if (!d) { fail("no active delegate for the focus row " + row); return }
+            if (d.teItem && d.teItem.text !== model) fail("delegate text differs from the model on row " + row)
+        }
+        function endPhase() {
+            const s = blockModel.probeStats(true)
+            s.keys = keys
+            console.log("TYPE-PROBE PHASE", phases[phase], JSON.stringify(s))
+            ++phase; phaseStep = 0; keys = 0; row = -1; expected = ""
+        }
+        onTriggered: {
+            if (phase >= phases.length) {
+                running = false
+                console.log("TYPE-PROBE DONE fails", fails, "checks", checks, "blocks", blockModel.count)
+                Qt.exit(Math.min(fails, 100))
+                return
+            }
+            const name = phases[phase]
+            if (phaseStep === 0) {   // setup: pick the row, caret at its end, scroll it into view, reset the stats
+                row = pickRow()
+                if (row < 0) { fail("no row for the phase"); endPhase(); return }
+                cursor.setCaret(row, blockModel.contentForRow(row).length)
+                root.ensureVisible(row)
+                expected = blockModel.contentForRow(row)
+                countBefore = blockModel.count
+                blockModel.flushLayoutSpike()
+                blockModel.probeStats(true)
+                ++phaseStep
+                return
+            }
+            if (phaseStep === 1) { ++phaseStep; return }   // one idle tick so the pool settles before timing starts
+            if (name === "backspace") {
+                const t0 = blockModel.probeNowUs()
+                cursor.backspace(false)
+                blockModel.probeMark("key", blockModel.probeNowUs() - t0)
+                expected = expected.substring(0, expected.length - 1)
+            } else if (name === "struct") {   // 20 splits at the row's end, then 20 undos
+                const t0 = blockModel.probeNowUs()
+                if (keys < 20) { cursor.setCaret(row, blockModel.contentForRow(row).length); cursor.splitLine(false, false) }
+                else blockModel.undo()
+                blockModel.probeMark("key", blockModel.probeNowUs() - t0)
+            } else {
+                const ch = sentence.charAt(keys % sentence.length)
+                const t0 = blockModel.probeNowUs()
+                cursor.insertChar(ch)
+                blockModel.probeMark("key", blockModel.probeNowUs() - t0)
+                expected += ch
+            }
+            ++keys
+            blockModel.flushLayoutSpike()
+            if (name === "struct") {
+                ++checks
+                if (!blockModel.structureValid()) fail("structure invalid after a struct step")
+                if (keys === 40 && blockModel.count !== countBefore)
+                    fail("undo did not restore the block count: " + blockModel.count + " vs " + countBefore)
+            } else checkAgree()
+            const limit = name === "backspace" ? 120 : name === "struct" ? 40 : keysPerPhase
+            if (keys >= limit) endPhase(); else ++phaseStep
+        }
+    }
+    FrameAnimation {   // frame times while the type probe runs (µs), into the same stats
+        running: typeProbe.running
+        onTriggered: blockModel.probeMark("frame", Math.round(frameTime * 1e6))
+    }
+
     // --- HUD telemetry (same surface as the other arms) ---
     // Load-bearing revision read (reactivity rule 1e): rowForY() is a Q_INVOKABLE,
     // so QML can't see that it depends on the Fenwick heights / row count. Without

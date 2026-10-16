@@ -5,6 +5,8 @@
 #include <QVariant>
 #include <QStringList>
 #include <vector>
+#include <algorithm>
+#include "PerfCounters.h"
 
 // The actual highlighter. Owns the colours/flags/spans and does the work; the
 // outer QObject just forwards property writes and re-highlights.
@@ -13,6 +15,9 @@ public:
     explicit Impl(QObject* parent) : QSyntaxHighlighter(parent) {}
 
     struct SpanFmt { int s; int e; int k; QColor color; };   // color set for k 7 (fg) / 8 (highlight)
+
+    // Counted whole-document re-run (the type probe attributes per-keystroke cost to it).
+    void rehighlight() { ++mn::perf::counters().rehighlights; QSyntaxHighlighter::rehighlight(); }
 
     bool enabled = true;
     bool hlOverlay = false;   // highlight spans drawn by the view, not as char bg
@@ -36,6 +41,7 @@ protected:
     // italic/mono, no markers). Spans are applied last so they win on overlap.
     void highlightBlock(const QString& text) override {
         if (!enabled) return;
+        ++mn::perf::counters().highlightBlocks;
         const int pos = currentBlock().position();   // this block's doc offset (multi-line content)
         const int n = text.size();
 

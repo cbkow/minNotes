@@ -62,6 +62,10 @@ static void resolveAndOpen(DocumentManager &docs, const QString &s)
 
 int main(int argc, char *argv[])
 {
+    // Dev-only type probe (A0 speed programme): `--type-probe=<md>` turns the model's per-keystroke
+    // timing splits on. Set BEFORE anything can call insertText (mn::perf::enabled() reads it once).
+    for (int i = 1; i < argc; ++i)
+        if (QByteArray(argv[i]).startsWith("--type-probe=")) { qputenv("MN_TYPE_PROBE", "1"); break; }
 #ifdef Q_OS_MACOS
     // Pin the default surface format to sRGB on macOS (the ufb recipe).
     // Qt 6's RHI lets the platform pick the swapchain colour space, and on

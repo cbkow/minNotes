@@ -1,4 +1,5 @@
 #include "DocInkCanvas.h"
+#include "../core/PerfCounters.h"
 #include "annotation_thumbnail.h"   // qcv::paintStroke
 #include "../core/BlockModel.h"
 
@@ -279,6 +280,7 @@ QPointF DocInkCanvas::contentToLocal(const Placement& pl, QPointF content) const
 void DocInkCanvas::paint(QPainter* p)
 {
     if (!model_) return;
+    ++mn::perf::counters().inkPaints;   // a full viewport raster + texture upload (type probe)
     const QRectF viewport(0, 0, width(), height());
 
     for (auto it = cache_.constBegin(); it != cache_.constEnd(); ++it) {

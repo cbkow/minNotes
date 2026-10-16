@@ -423,6 +423,18 @@ public:
     // the Flickable arm can compensate contentY when an off-screen block settles.
     Q_INVOKABLE void setMeasuredHeight(int row, qreal h);
     Q_INVOKABLE void flushLayoutSpike();   // emit a coalesced measure-back spike now (the probe verifies synchronously)
+
+    // --- Dev-only type probe (A0 of the speed programme, 2026-10-16) ---
+    // insertText/deleteRange record per-keystroke timing splits when MN_TYPE_PROBE
+    // is set (snapshot / mutate / persist / signal / endTxn — "signal" is the
+    // synchronous QML binding fan-out inside contentChangedSpike). QML adds its own
+    // marks (insertChar wall time, frame times). probeStats returns p50/p95/max/n in
+    // µs per key plus the mn::perf counters, and resets everything when asked.
+    Q_INVOKABLE qint64 probeNowUs() const;
+    Q_INVOKABLE void probeMark(const QString& key, qint64 us);
+    Q_INVOKABLE QVariantMap probeStats(bool reset);
+    // Any margin ink / text chips in this document (DocInkCanvas skips content-spike repaints without).
+    bool hasInk() const { return !inkByBlock_.isEmpty(); }
     // Width sibling of the height report (tables only — soft measure-once
     // cache; see maxContentWidth).
     Q_INVOKABLE void setMeasuredWidth(int row, qreal w);
@@ -1267,6 +1279,10 @@ private:
     QSet<QString> hiddenIds_;                 // T4: folded records, by block id (view-only; not in the document)
     mutable std::size_t geomRows_ = 0;
     bool layoutSpikePending_ = false;                   // a coalesced layoutChangedSpike is queued (measure-backs)
+    // Type probe samples (ns): one per instrumented keystroke; keyed marks from QML.
+    struct KeySample { qint64 snapshot, mutate, persist, signal, endTxn; };
+    std::vector<KeySample> keySamples_;
+    QHash<QString, std::vector<qint64>> probeMarks_;
     mutable int geomRevision_ = 0;                      // table geometry (see the property)
     mutable bool geomSpikePending_ = false;
     void markTableGeomDirty() const;                    // tableGeomDirty_ + one geomChangedSpike per turn (const: the cache is)

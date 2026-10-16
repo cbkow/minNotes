@@ -37,6 +37,9 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QDateTime>
+#include <QElapsedTimer>
+#include <algorithm>
+#include "PerfCounters.h"                   // type probe splits + counters (A0)
 #include <functional>
 #include <algorithm>
 #include <limits>
@@ -6464,7 +6467,12 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     // Editing never merges across a lane edge (SR-0 P2): both ends must sit in the
     // same container. Two top-level ends take any split rows between them whole.
     if (rows_[loRow].cell != rows_[hiRow].cell || splitRowOf(loRow) != splitRowOf(hiRow)) return;
+    // Type probe (A0): single-row deletes (Backspace/Delete) record the same splits as insertText.
+    const bool probe = mn::perf::enabled() && hiRow == loRow;
+    QElapsedTimer pt; qint64 t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+    if (probe) pt.start();
     beginTxn(loRow, hiRow);
+    if (probe) t0 = pt.nsecsElapsed();
 
     // Merge surviving head of lo block with surviving tail of hi block.
     const QString loText = textAt(loRow);
@@ -6473,7 +6481,9 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     const int hiClip = isOpaqueRow(hiRow) ? hiText.size() : std::min<int>(hiCol, hiText.size());
     const QString merged = loText.left(loClip) + hiText.mid(hiClip);
     content_[loRow] = merged;
+    if (probe) t1 = pt.nsecsElapsed();
     persistContent(loRow);
+    if (probe) t2 = pt.nsecsElapsed();
     emit dataChanged(index(loRow), index(loRow), {ContentRole});
 
     // Span bookkeeping (rows_[hiRow] still valid — the erase happens below).
@@ -6513,17 +6523,27 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     }
     ++contentRevision_;
     emit contentChangedSpike();
+    if (probe) t3 = pt.nsecsElapsed();
     // Single-char same-block deletes (backspace/delete key) coalesce.
     endTxn((hiRow == loRow && hiClip - loClip == 1) ? QStringLiteral("del") : QString());
+    // (persist here = persistContent only; persistMeta ran before the spike and is folded into "signal"
+    // for deletes — small, and the probe's delete phase is read against insertText's split.)
+    if (probe) keySamples_.push_back({t0, t1 - t0, t2 - t1, t3 - t2, pt.nsecsElapsed() - t3});
 }
 
 void BlockModel::insertText(int row, int col, const QString& text, int marks,
                             const QString& fgColor, const QString& bgColor) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     if (isOpaqueRow(row)) return;                    // never type into a descriptor
+    // Type probe (A0): timing splits, only when MN_TYPE_PROBE is set.
+    const bool probe = mn::perf::enabled();
+    QElapsedTimer pt; qint64 t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+    if (probe) pt.start();
     beginTxn(row, row);
+    if (probe) t0 = pt.nsecsElapsed();
     std::vector<Span>& spans = rows_[row].spans;
     col = mn::inl::insertText(content_[row], spans, col, text);   // clamps; existing spans shift
+    if (probe) t1 = pt.nsecsElapsed();
     persistContent(row);
     // Code blocks are multi-line: keep the line-count param honest when the
     // insert carries newlines (verbatim paste; single Enter presses too).
@@ -6533,10 +6553,67 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks,
     // Armed typing attributes (marks + colour pens) span the new run.
     mn::inl::applyTypingAttributes(spans, col, col + int(text.size()), marks, fgColor, bgColor);
     if (!spans.empty()) persistMeta(row);
+    if (probe) t2 = pt.nsecsElapsed();
     emit dataChanged(index(row), index(row), {ContentRole});
     ++contentRevision_;
     emit contentChangedSpike();
+    if (probe) t3 = pt.nsecsElapsed();
     endTxn(text.size() == 1 ? QStringLiteral("type") : QString());   // coalesce typing
+    if (probe) keySamples_.push_back({t0, t1 - t0, t2 - t1, t3 - t2, pt.nsecsElapsed() - t3});
+}
+
+// --- Type probe (A0 of the speed programme) ---
+qint64 BlockModel::probeNowUs() const {
+    static QElapsedTimer clock;
+    if (!clock.isValid()) clock.start();
+    return clock.nsecsElapsed() / 1000;
+}
+
+void BlockModel::probeMark(const QString& key, qint64 us) {
+    probeMarks_[key].push_back(us * 1000);   // stored in ns like the splits
+}
+
+QVariantMap BlockModel::probeStats(bool reset) {
+    auto stats = [](std::vector<qint64> v) {   // by value: nth_element reorders
+        QVariantMap m;
+        const int n = static_cast<int>(v.size());
+        m.insert(QStringLiteral("n"), n);
+        if (n == 0) { m.insert(QStringLiteral("p50"), 0); m.insert(QStringLiteral("p95"), 0); m.insert(QStringLiteral("max"), 0); return m; }
+        auto pct = [&](double p) {
+            const int k = std::clamp<int>(static_cast<int>(p * (n - 1)), 0, n - 1);
+            std::nth_element(v.begin(), v.begin() + k, v.end());
+            return static_cast<qint64>(v[static_cast<size_t>(k)] / 1000);   // µs
+        };
+        m.insert(QStringLiteral("p50"), pct(0.50));
+        m.insert(QStringLiteral("p95"), pct(0.95));
+        m.insert(QStringLiteral("max"), static_cast<qint64>(*std::max_element(v.begin(), v.end()) / 1000));
+        return m;
+    };
+    QVariantMap out;
+    std::vector<qint64> a, b, c, d, e;
+    a.reserve(keySamples_.size()); b.reserve(keySamples_.size()); c.reserve(keySamples_.size());
+    d.reserve(keySamples_.size()); e.reserve(keySamples_.size());
+    for (const KeySample& s : keySamples_) {
+        a.push_back(s.snapshot); b.push_back(s.mutate); c.push_back(s.persist);
+        d.push_back(s.signal);   e.push_back(s.endTxn);
+    }
+    out.insert(QStringLiteral("snapshot"), stats(a));
+    out.insert(QStringLiteral("mutate"),   stats(b));
+    out.insert(QStringLiteral("persist"),  stats(c));
+    out.insert(QStringLiteral("signal"),   stats(d));
+    out.insert(QStringLiteral("endTxn"),   stats(e));
+    for (auto it = probeMarks_.cbegin(); it != probeMarks_.cend(); ++it)
+        out.insert(it.key(), stats(it.value()));
+    QVariantMap counters;
+    auto& pc = mn::perf::counters();
+    counters.insert(QStringLiteral("rehighlights"),    pc.rehighlights.load());
+    counters.insert(QStringLiteral("highlightBlocks"), pc.highlightBlocks.load());
+    counters.insert(QStringLiteral("inkPaints"),       pc.inkPaints.load());
+    counters.insert(QStringLiteral("slotBumps"),       pc.slotBumps.load());
+    counters.insert(QStringLiteral("dbWrites"),        pc.dbWrites.load());
+    out.insert(QStringLiteral("counters"), counters);
+    if (reset) { keySamples_.clear(); probeMarks_.clear(); pc.reset(); }
+    return out;
 }
 
 // A GFM pipe table starting at line i (R-I3 3e): a row of |cells| followed by a delimiter row of
