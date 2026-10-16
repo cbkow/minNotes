@@ -77,10 +77,19 @@ int main(int argc, char *argv[])
     {
         QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
         fmt.setColorSpace(QColorSpace::SRgb);
-        // EXPERIMENT (2026-10-16, key latency): swap interval 0 makes Cocoa deliver update requests
-        // from a timer (QT_QPA_UPDATE_IDLE_TIME) instead of the display link, so a change renders
-        // at once and lands at the next refresh instead of the one after. Env-gated while measured.
-        if (qEnvironmentVariableIntValue("MN_NOVSYNC") > 0) fmt.setSwapInterval(0);
+        // Key latency (2026-10-16, A4): with the default swap interval Qt's threaded render loop asks
+        // Cocoa for an update, Cocoa answers on the CVDisplayLink tick (0–16 ms later at 60 Hz), the
+        // frame renders then and shows at the refresh AFTER that — a typed glyph waited a whole extra
+        // frame. Swap interval 0 makes the update request timer-driven (QT_QPA_UPDATE_IDLE_TIME, set to
+        // 0 below) and lets Metal present as soon as the frame is done; the compositor still shows it
+        // at its own refresh, so nothing tears. Measured key→swap p50 11.9 → 3.4 ms; a wheel glide
+        // still paces at ~60 fps (Qt drives animations from a refresh-rate timer when a window is
+        // unthrottled — qsgthreadedrenderloop.cpp, "unthrottledWindows"); idle stays idle (5 swaps in
+        // 3 s, the caret blink). MN_VSYNC=1 restores the display-link path for an A/B.
+        if (qEnvironmentVariableIntValue("MN_VSYNC") <= 0) {
+            fmt.setSwapInterval(0);
+            if (!qEnvironmentVariableIsSet("QT_QPA_UPDATE_IDLE_TIME")) qputenv("QT_QPA_UPDATE_IDLE_TIME", "0");
+        }
         QSurfaceFormat::setDefaultFormat(fmt);
     }
 #endif

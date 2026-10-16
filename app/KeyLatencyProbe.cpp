@@ -35,6 +35,7 @@ KeyLatencyProbe::KeyLatencyProbe(QQuickWindow* w, int synthKeys, QObject* parent
     }, Qt::DirectConnection);
     connect(w, &QQuickWindow::frameSwapped, this, [this] {
         ++swaps_;
+        if (glideTrace_) { QMutexLocker l(&swapMx_); glideSwapNs_ << t0_.nsecsElapsed(); }
         if (pending_.load() && syncNs_.load() > 0 && swapNs_.load() == 0) {
             swapNs_.store(t0_.nsecsElapsed());
             QMetaObject::invokeMethod(this, [this] { report(); }, Qt::QueuedConnection);
@@ -63,11 +64,18 @@ KeyLatencyProbe::KeyLatencyProbe(QQuickWindow* w, int synthKeys, QObject* parent
                 const QPointF pos(win_->width() / 2.0, win_->height() / 2.0);
                 QCoreApplication::postEvent(win_, new QWheelEvent(pos, win_->mapToGlobal(pos.toPoint()), QPoint(), QPoint(0, -120),
                                                                   Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false));
+            } else if (*phase == 2) {
+                glideTrace_ = false;
+                QVector<double> iv; { QMutexLocker l(&swapMx_); for (int i = 1; i < glideSwapNs_.size(); ++i) iv << (glideSwapNs_[i] - glideSwapNs_[i - 1]) / 1e6; }
+                int late = 0; for (double d : iv) if (d > 25.0) ++late;
+                qInfo().noquote() << QStringLiteral("[keylat] GLIDE pacing: swap interval p50/p95/max %1/%2/%3 ms, %4 gaps > 25 ms of %5")
+                    .arg(pct(iv, .5), 0, 'f', 1).arg(pct(iv, .95), 0, 'f', 1).arg(iv.isEmpty() ? 0.0 : *std::max_element(iv.begin(), iv.end()), 0, 'f', 1).arg(late).arg(iv.size());
+                *phase = 3; swaps_.store(0); idleTrace_ = true; t->setInterval(3000);   // then 3 s of nothing
             } else {
                 t->stop();
-                glideTrace_ = false;
+                qInfo().noquote() << QStringLiteral("[keylat] IDLE %1 swaps in 3 s with no input (caret blink = ~6)").arg(swaps_.load());
                 qInfo().noquote() << QStringLiteral("[keylat] GLIDE %1 frames/s over 1.2 s after six wheel notches; polish per frame p50/p95 %2/%3 ms (n %4)")
-                    .arg(swaps_.load() / 1.2, 0, 'f', 0).arg(pct(glidePolish_, .5), 0, 'f', 2).arg(pct(glidePolish_, .95), 0, 'f', 2).arg(glidePolish_.size());
+                    .arg(glideSwapNs_.size() / 1.2, 0, 'f', 0).arg(pct(glidePolish_, .5), 0, 'f', 2).arg(pct(glidePolish_, .95), 0, 'f', 2).arg(glidePolish_.size());
                 auto dump = [](const char* what, const QHash<QString, int>& h) {
                     QList<QPair<int, QString>> v; for (auto it = h.cbegin(); it != h.cend(); ++it) v.append({it.value(), it.key()});
                     std::sort(v.begin(), v.end(), [](const QPair<int, QString>& a, const QPair<int, QString>& b) { return a.first > b.first; });

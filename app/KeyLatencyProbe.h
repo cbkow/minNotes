@@ -12,13 +12,14 @@
 //                  (each one triggers that walk; MN_KEYLAT_CHILDREN=1 names the items).
 // Armed by `--perf-log` (logs real keys, with the OS queue time) or `--key-probe=N` (posts N
 // synthetic keys ~13/s to the window, then six wheel notches for the glide's frames/s, prints the
-// percentiles and exits — the A/B harness for render-loop settings: MN_NOVSYNC=1,
+// percentiles and exits — the A/B harness for render-loop settings: MN_VSYNC=1 (display-link path back),
 // QT_QPA_UPDATE_IDLE_TIME, QSG_RENDER_LOOP). MN_KEYLAT_TRAP=1 stops for lldb once the document is up.
 #include <QObject>
 #include <QElapsedTimer>
 #include <QVector>
 #include <QHash>
 #include <atomic>
+#include <QMutex>
 
 class QQuickWindow;
 class QQuickItem;
@@ -49,5 +50,7 @@ private:
     bool glideTrace_ = false;            // phase 2 of --key-probe: aggregate flips/churn by item instead of per key
     QHash<QString, int> glideVis_, glideChildren_;
     qint64 glideUpdNs_ = 0; QVector<double> glidePolish_;   // per-frame polish during the glide
+    QMutex swapMx_; QVector<qint64> glideSwapNs_;            // swap times during the glide (render thread) → pacing
+    std::atomic<bool> idleTrace_{false};                     // phase 3: swaps while nothing happens (a spinning loop would show here)
     static QString chainOf(QQuickItem* item, int depth);                // QQuickItem children added/removed since the key (each one forces the window's full stacking walk)
 };
