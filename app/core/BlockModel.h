@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <vector>
 #include <cstdint>
+#include <climits>
 #include <functional>
 #include <memory>
 #include "LayoutIndex.h"
@@ -43,6 +44,14 @@ class BlockModel : public QAbstractListModel {
     // Bump on any CONTENT change (edit/delete). The Flickable arm's text
     // binding includes it to re-read contentForRow() without repositioning.
     Q_PROPERTY(int contentRevision READ contentRevision NOTIFY contentChangedSpike)
+    // A1 (speed programme): the ROW SET / row META changed — insert, remove, move, undo
+    // apply, a type/level/depth/task/lane/table/lang change, a media or split
+    // descriptor edit, a path-map re-resolve. NOT plain typing or span toggles. The
+    // document-wide consumers (id→row lookups, the tab strip's id lists, the visible-row
+    // window, frozen/sticky mirrors) key on this instead of contentRevision, so a
+    // keystroke no longer re-runs their O(n) scans. Bumped synchronously, emitted from
+    // contentSpike() right after rowsTouched and before contentChangedSpike.
+    Q_PROPERTY(int structureRevision READ structureRevision NOTIFY structureChangedSpike)
     // Widest measured block (tables report their natural width; 0 until one
     // does). Drives the view's horizontal content extent — the page scrolls
     // for wide tables instead of tables scrolling inside themselves.
@@ -143,6 +152,7 @@ public:
     int layoutRevision() const { return layoutRevision_; }
     int geomRevision() const { return geomRevision_; }
     int contentRevision() const { return contentRevision_; }
+    int structureRevision() const { return structureRevision_; }
 
     // --- Build / reconfigure (driven by Main.qml controls) ---
     Q_INVOKABLE void rebuild(int n, int distribution);
@@ -939,6 +949,12 @@ signals:
     void layoutChangedSpike();
     void geomChangedSpike();      // table geometry changed (coalesced; see geomRevision)
     void contentChangedSpike();
+    // A1: rows [lo, hi] may read differently (content, attrs, derived media dims); hi ==
+    // INT_MAX means "lo to the end" (rows shifted). ViewportSlots bumps exactly the pool
+    // slots holding those rows, so a keystroke re-evaluates one delegate, not the pool.
+    // Emitted from contentSpike() BEFORE contentChangedSpike, with the model consistent.
+    void rowsTouched(int lo, int hi);
+    void structureChangedSpike();  // see structureRevision
     void maxContentWidthChanged();
     void modelReset();
     void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset
@@ -1279,6 +1295,26 @@ private:
     QSet<QString> hiddenIds_;                 // T4: folded records, by block id (view-only; not in the document)
     mutable std::size_t geomRows_ = 0;
     bool layoutSpikePending_ = false;                   // a coalesced layoutChangedSpike is queued (measure-backs)
+    // A1: the ONE content-spike chokepoint. Every mutator ends with contentSpike() once the
+    // model is consistent (reactivity rule 2); it bumps contentRevision, flushes the touched
+    // row range as rowsTouched(lo, hi), emits structureChangedSpike if structure changed,
+    // then contentChangedSpike. noteTouched* widen conservatively: a lane block touches its
+    // whole split row (the record paints cell chrome), a table head's meta touches the whole
+    // table (its column spec feeds every cell). A touched range not followed by a spike is
+    // flushed by the next one (harmless extra bump).
+    void contentSpike();
+    void noteTouched(int lo, int hi);                   // merge into the pending range
+    void noteTouchedRow(int row);                       // row, widened per the rules above
+    void noteTouchedTable(int row);                     // the row's whole table (column geometry moved), else the row
+    void noteShift(int from) { noteTouched(from, INT_MAX); }
+    void noteStructure() { structureDirty_ = true; }
+    int touchedLo_ = INT_MAX, touchedHi_ = -1;
+    bool structureDirty_ = false;
+    int structureRevision_ = 0;
+    // Row attrs → DB without a structure bump (span-only edits: typing with armed marks,
+    // bold/italic/link/comment/colour). persistMeta = the same write + noteStructure().
+    void persistSpans(int row);
+    void persistAttrs(int row);                         // the shared write (both of the above)
     // Type probe samples (ns): one per instrumented keystroke; keyed marks from QML.
     struct KeySample { qint64 snapshot, mutate, persist, signal, endTxn; };
     std::vector<KeySample> keySamples_;

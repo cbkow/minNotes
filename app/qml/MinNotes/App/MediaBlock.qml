@@ -23,7 +23,10 @@ Item {
     // reserved geometry until the size settles.
     property bool suspended: false
 
-    readonly property int _rev: blockModel.contentRevision
+    // A1: the host delegate's slot revision (BlockView passes cell.rev); standalone use keeps
+    // the document-wide counter. Every media prop below re-resolves on it.
+    property int rev: blockModel.contentRevision
+    readonly property int _rev: rev
     readonly property string kind: active ? (mb._rev, blockModel.mediaKind(logicalRow)) : ""
     readonly property bool   isVideo: kind === "video"
     readonly property bool   isFile: kind === "file"

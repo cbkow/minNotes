@@ -182,8 +182,10 @@ int main(int argc, char *argv[])
     // QML bindings keep working unchanged; re-point it whenever the active tab
     // changes (activeModel() is never null — it falls back to the empty model).
     engine.rootContext()->setContextProperty("blockModel", docs.activeModel());
-    QObject::connect(&docs, &DocumentManager::activeChanged, &engine, [&engine, &docs] {
+    viewSlots.attach(docs.activeModel());   // A1: per-slot revisions follow the active model's row signals
+    QObject::connect(&docs, &DocumentManager::activeChanged, &engine, [&engine, &docs, &viewSlots] {
         engine.rootContext()->setContextProperty("blockModel", docs.activeModel());
+        viewSlots.attach(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);

@@ -245,12 +245,14 @@ FocusScope {
     // its share of the page less the gaps between lanes. Computed from pageWidth and
     // the row's ratios (not read from the model) so a page-width change can't race
     // setContentWidth; the model's own geometry uses the same formula. Reads
-    // contentRevision so every binding calling it follows structure changes.
+    // structureRevision so every binding calling it follows structure changes (lane ratios,
+    // column widths and table membership are structure; a keystroke isn't — A1).
     function laneSpan(record, lane) {
-        const rev = blockModel.contentRevision
+        const rev = blockModel.structureRevision
         const head = blockModel.tableHeadOf(record)
         if (head >= 0) {       // SR-4: table columns are px from the head's spec (C++), past the page too
             const lrev = blockModel.layoutRevision
+            const grev = blockModel.geomRevision   // A1: column geometry has its own revision; every cell's lane follows it
             return { x: tableShift(head) + blockModel.tableColumnLeft(head, lane), w: blockModel.tableColumnWidth(head, lane) }
         }
         const ratios = blockModel.splitRatios(record)
@@ -263,7 +265,7 @@ FocusScope {
     }
     // A block's lane: the page for a top-level block.
     function laneOf(row) {
-        const rev = blockModel.contentRevision
+        const rev = blockModel.structureRevision
         const lane = blockModel.laneForRow(row)
         return lane < 0 ? { x: 0, w: pageWidth } : laneSpan(blockModel.splitRowOf(row), lane)
     }
@@ -2030,7 +2032,7 @@ FocusScope {
         return [rec, blockModel.splitRowLast(rec) - rec + 1]
     }
     function tableSetLive() {
-        return tableSet !== null && tableSet.rev === blockModel.contentRevision && blockModel.headerCount(tableSet.head) > 0
+        return tableSet !== null && tableSet.rev === blockModel.structureRevision && blockModel.headerCount(tableSet.head) > 0
     }
     // A grip click (the v0.4.1 set gestures): plain → that row / column alone; Shift → the span from
     // the set's last pick; ⌘ → toggle. Sets are homogeneous — a pick of the other kind starts over.
@@ -2048,7 +2050,7 @@ FocusScope {
         const rows = blockModel.tableRowCount(head)
         if (kind === "row") root.landInCell(head, index, 0)
         else root.landInCell(head, Math.min(blockModel.headerCount(head), rows - 1), index)
-        tableSet = items.length ? { head: head, kind: kind, items: items, last: index, rev: blockModel.contentRevision } : null
+        tableSet = items.length ? { head: head, kind: kind, items: items, last: index, rev: blockModel.structureRevision } : null
     }
     // A set op from the menu or a key: `fn(head, items, kind)`, then the caret back into the table
     // (or onto the nearest block when the table is gone).
@@ -2085,7 +2087,7 @@ FocusScope {
                 : Math.min(blockModel.headerCount(head), blockModel.tableRowCount(head) - 1)
         if (!blockModel.tableMoveColumn(head, from, to)) return
         root.landInCell(head, r, to)
-        tableSet = { head: head, kind: "col", items: [to], last: to, rev: blockModel.contentRevision }   // the moved column stays picked
+        tableSet = { head: head, kind: "col", items: [to], last: to, rev: blockModel.structureRevision }   // the moved column stays picked
     }
     function tableAddRow(head) {
         const rows = blockModel.tableRowCount(head)
@@ -4284,6 +4286,7 @@ FocusScope {
             delegate: BlockView {
                 required property int index
                 editor: root
+                slotObj: viewSlots.slot(index)   // A1: the slot's own revision (see BlockView.rev)
                 logicalRow: (root.slotRev, viewSlots.rowForSlot(index))
             }
         }

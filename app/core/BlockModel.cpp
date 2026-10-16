@@ -99,6 +99,13 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
     connect(this, &QAbstractItemModel::rowsInserted, this, &BlockModel::countChanged);
     connect(this, &QAbstractItemModel::rowsRemoved,  this, &BlockModel::countChanged);
     connect(this, &QAbstractItemModel::modelReset,   this, &BlockModel::countChanged);
+    // A1: the row set changed → structureRevision. Insert/remove mutators always end with
+    // contentSpike(), which emits the spike; a RESET (load/close/undo band/permutation) may
+    // not be followed by one (loadFromStore isn't), so it emits directly, consistent state.
+    connect(this, &QAbstractItemModel::rowsInserted, this, [this] { structureDirty_ = true; });
+    connect(this, &QAbstractItemModel::rowsRemoved,  this, [this] { structureDirty_ = true; });
+    connect(this, &QAbstractItemModel::modelReset,   this, [this] {
+        structureDirty_ = false; ++structureRevision_; emit structureChangedSpike(); });
 }
 
 // --- Document lifecycle ----------------------------------------------------
@@ -729,8 +736,7 @@ bool BlockModel::commitGrid(int head, const std::vector<GridRow>& grid, const QJ
     beginTxn(lo, hi);
     rebuildTable(lo, hi, grid, cols, headerCount);
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -944,9 +950,8 @@ bool BlockModel::editTableAttrs(int head, const std::function<void(int r, int re
         rows_[size_t(rec)].table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
         persistMeta(rec);
     }
-    ++contentRevision_;
     emit dataChanged(index(lo), index(hi));
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -984,7 +989,7 @@ void BlockModel::stripFgSpans(int block) {
     std::vector<Span>& v = rows_[size_t(block)].spans;
     const size_t before = v.size();
     v.erase(std::remove_if(v.begin(), v.end(), [](const Span& sp) { return sp.kind == SpanFgColor; }), v.end());
-    if (v.size() != before) persistMeta(block);
+    if (v.size() != before) persistSpans(block);
 }
 
 bool BlockModel::tableSetCellColor(int head, int r0, int c0, int r1, int c1, bool fg, const QString& color) {
@@ -1194,8 +1199,7 @@ bool BlockModel::joinTableByLabel(int target, int source) {
     rebuildTable(lo, hi, grid, cols, rows_[size_t(target)].header);
     adaptJoinedChips(target, static_cast<int>(tg.size()));     // chips adapt by label (A9)
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -1448,8 +1452,7 @@ bool BlockModel::tableSetColumnFps(int head, int c, double fps) {
     if (tableColumnKind(head, c) == 3)
         for (int r = headerCount(head); r < tableRowCount(head); ++r) normalizeTimecodeCell(tableCellAt(head, r, c));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -1504,8 +1507,7 @@ bool BlockModel::tableSetColumnKind(int head, int c, int kind) {
     if (kind == 3)                                           // T6: frame counts / timecodes → canonical
         for (int r = headerCount(head); r < tableRowCount(head); ++r) normalizeTimecodeCell(tableCellAt(head, r, c));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -1542,8 +1544,7 @@ bool BlockModel::sweepColumnOptions(int head, int c, const QJsonArray& options,
         writeCellValue(b, options, remap(p.value(QStringLiteral("v")).toString()));
     }
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -1654,8 +1655,7 @@ bool BlockModel::tableSetCellChoice(int head, int r, int c, const QString& id) {
     const int b = ensureGridCell(head, r, c);
     if (b >= 0) writeCellValue(b, opts, id);
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return b >= 0;
 }
@@ -1672,8 +1672,7 @@ bool BlockModel::tableSetCellCheck(int head, int r, int c, int state) {
     const int b = ensureGridCell(head, r, c);
     if (b >= 0) writeCellValue(b, checkOptions(), state == 0 ? QString() : QString::number(state));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return b >= 0;
 }
@@ -1811,8 +1810,7 @@ int BlockModel::tablePasteTSV(int head, int r0, int c0, const QString& text) {
             land = tableCellAt(head, r, c);
         }
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return land;
 }
@@ -2006,8 +2004,7 @@ int BlockModel::pasteGrid(int head, int r, int c, const GridPaste& grid, bool fo
             }
     }
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return land;
 }
@@ -2027,7 +2024,7 @@ int BlockModel::tableInsertMedia(int head, int r, int c, const QVariantList& fil
             if (nr >= 0) last = nr;
         }
     }
-    if (ragged && last < 0) { bumpLayout(); ++contentRevision_; emit contentChangedSpike(); }
+    if (ragged && last < 0) { bumpLayout(); contentSpike(); }
     endTxn();
     return last;
 }
@@ -2105,8 +2102,8 @@ void BlockModel::applyPermutation(int lo, const std::vector<std::pair<QString, Q
     }
     reindex(std::move(heights));
     endResetModel();
-    ++layoutRevision_; ++contentRevision_;
-    emit modelReset(); emit layoutChangedSpike(); emit contentChangedSpike();
+    ++layoutRevision_;
+    emit modelReset(); emit layoutChangedSpike(); contentSpike();
     applying_ = false;
 }
 
@@ -2129,9 +2126,8 @@ bool BlockModel::setTableColumnWidth(int head, int column, qreal width) {
     persistMeta(head);
     rederiveMedia(head, end);                          // cell media re-fit their column
     bumpLayout();
-    ++contentRevision_;
     emit dataChanged(index(head), index(end));
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -2209,10 +2205,9 @@ bool BlockModel::setHeaderRole(int record, int count) {
     tablesDirty_ = true;
     reindex(std::vector<double>(layout().heights())); // the table pockets move with the role
     bumpLayout();
-    ++contentRevision_;
     const int last = std::min(hi, static_cast<int>(rows_.size()) - 1);
     if (lo <= last) emit dataChanged(index(lo), index(last));
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -2248,8 +2243,7 @@ int BlockModel::insertTableRows(int afterRow, int nRows, int nCols) {
     }
     tablesDirty_ = true;
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return gap + 1;
 }
@@ -2487,8 +2481,7 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
         emit dataChanged(index(rec), index(band.second + 1));
     }
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return freshRow;
 }
@@ -2699,6 +2692,11 @@ QString BlockModel::rankBetween(const QString& a, const QString& b) {
 void BlockModel::persistContent(int row) {
     if (doc_.isOpen() && row >= 0 && row < static_cast<int>(ids_.size()))
         doc_.updateContent(ids_[row], content_[row]);
+    if (row >= 0 && row < static_cast<int>(rows_.size())) {
+        noteTouchedRow(row);
+        // A media / split descriptor IS structure: kind, dims and lane layout live in the content.
+        if (rows_[size_t(row)].type == Media || rows_[size_t(row)].type == Split) noteStructure();
+    }
     // SR-4: a table cell's text can move its column's auto width — and every column right of it.
     if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[size_t(row)].cell < 0) return;
     const int head = tableHeadOf(row);
@@ -3006,6 +3004,7 @@ std::vector<double> BlockModel::laneWidths() const {
 
 void BlockModel::rederiveMedia(int lo, int hi) {
     hi = std::min(hi, static_cast<int>(rows_.size()) - 1);
+    noteTouched(lo, hi);                             // derived media dims feed MediaBlock bindings
     for (int i = std::max(0, lo); i <= hi; ++i)
         if (rows_[size_t(i)].type == Media)
             setIndexHeight(size_t(i), estimatedHeight(rows_[size_t(i)], contentWidthOfRow(i)));
@@ -3161,8 +3160,7 @@ bool BlockModel::setSplitRatios(int record, const QVariantList& ratios) {
     rederiveMedia(record, end);
     emit dataChanged(index(record), index(end));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -3234,8 +3232,7 @@ bool BlockModel::moveDivider(int record, int divider, qreal pageX, bool alone) {
     }
     emit dataChanged(index(lo), index(hi));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -3273,8 +3270,7 @@ int BlockModel::wrapRun(int lo, int hi, int side, qreal ratio) {
     rederiveMedia(lo, hi + 2);
     emit dataChanged(index(lo), index(hi + 2));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return freshRow;
 }
@@ -3340,10 +3336,9 @@ void BlockModel::replaceBand(int lo, int hi, const std::vector<Row>& nr,
             }
         }
     ++layoutRevision_;
-    ++contentRevision_;
     emit modelReset();
     emit layoutChangedSpike();
-    emit contentChangedSpike();
+    contentSpike();
 }
 
 int BlockModel::alignLanes(int record) {
@@ -3459,8 +3454,7 @@ QVariantList BlockModel::clearLanes(int record, int laneLo, int laneHi) {
     }
     emit dataChanged(index(record), index(splitRowEnd(record)));
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return { laneFirst(record, laneLo), 0 };
 }
@@ -3499,8 +3493,7 @@ int BlockModel::insertParagraphBelow(int row) {
         persistMeta(at);
     }
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return at;
 }
@@ -3692,8 +3685,7 @@ void BlockModel::toggleTask(int row) {
     rows_[row].taskState = static_cast<uint8_t>((rows_[row].taskState + 1) % TaskStateCount);
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole});
-    ++contentRevision_;            // glyph + (future) strikethrough re-render
-    emit contentChangedSpike();
+    contentSpike();            // glyph + (future) strikethrough re-render
     endTxn();
 }
 
@@ -3724,8 +3716,7 @@ void BlockModel::indentBlocks(int loRow, int hiRow, int delta) {
     }
     emit dataChanged(index(lo), index(hi), {TypeRole});
     bumpLayout();                  // indent narrows the text column → re-wrap/re-measure
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -3847,12 +3838,69 @@ QString BlockModel::attrsJson(uint8_t type, uint8_t level, const QString& lang,
 }
 
 void BlockModel::persistMeta(int row) {
-    if (row >= 0 && row < static_cast<int>(rows_.size()) && rows_[size_t(row)].type == Split)
-        markTableGeomDirty();                        // a head's column spec may have changed
+    noteStructure();                                 // type/level/depth/task/lane/table/lang changed
+    persistAttrs(row);
+}
+void BlockModel::persistSpans(int row) { persistAttrs(row); }   // span-only: no structure bump
+void BlockModel::persistAttrs(int row) {
+    if (row >= 0 && row < static_cast<int>(rows_.size())) {
+        if (rows_[size_t(row)].type == Split) markTableGeomDirty();   // a head's column spec may have changed
+        noteTouchedRow(row);
+    }
     if (!doc_.isOpen() || row < 0 || row >= static_cast<int>(ids_.size())) return;
     const Row& r = rows_[row];
     doc_.updateMeta(ids_[row], QString::fromLatin1(typeToString(r.type)),
                     attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), r.depth);
+}
+
+// --- A1: the content-spike chokepoint + touched-row bookkeeping (see BlockModel.h) ---
+void BlockModel::contentSpike() {
+    ++contentRevision_;
+    if (touchedHi_ >= touchedLo_) {
+        const int lo = touchedLo_, hi = touchedHi_;
+        touchedLo_ = INT_MAX; touchedHi_ = -1;
+        emit rowsTouched(lo, hi);
+    }
+    if (structureDirty_) {
+        structureDirty_ = false;
+        ++structureRevision_;
+        emit structureChangedSpike();
+    }
+    emit contentChangedSpike();
+}
+
+void BlockModel::noteTouched(int lo, int hi) {
+    if (hi < lo) return;
+    touchedLo_ = std::min(touchedLo_, std::max(0, lo));
+    touchedHi_ = std::max(touchedHi_, hi);
+}
+
+void BlockModel::noteTouchedTable(int row) {
+    const int n = static_cast<int>(rows_.size());
+    if (row < 0 || row >= n) return;
+    const int head = tableHeadOf(row);
+    if (head < 0) { noteTouchedRow(row); return; }
+    const QVariantList recs = tableRecords(head);
+    noteTouched(head, recs.isEmpty() ? splitRowEnd(head) : splitRowEnd(recs.back().toInt()));
+}
+
+void BlockModel::noteTouchedRow(int row) {
+    const int n = static_cast<int>(rows_.size());
+    if (row < 0 || row >= n) return;
+    int lo = row, hi = row;
+    const Row& r = rows_[size_t(row)];
+    if (r.cell >= 0) {                               // a lane block: its record paints the cell chrome
+        const int rec = splitRowOf(row);
+        if (rec >= 0) { lo = rec; hi = splitRowEnd(rec); }
+    } else if (r.type == Split) {                    // a record: its whole split row…
+        hi = splitRowEnd(row);
+        const int head = tableHeadOf(row);
+        if (head == row) {                           // …and a table HEAD feeds every cell (column spec, header count)
+            const QVariantList recs = tableRecords(head);
+            if (!recs.isEmpty()) hi = std::max(hi, splitRowEnd(recs.back().toInt()));
+        }
+    }
+    noteTouched(lo, hi);
 }
 
 // === Undo / redo: region-snapshot transactions ===========================
@@ -3976,9 +4024,9 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     }
     reindex(std::move(heights));
     endResetModel();
-    ++layoutRevision_; ++contentRevision_;
+    ++layoutRevision_;
     if (inkTouched) { ++inkRevision_; emit inkChanged(); }
-    emit modelReset(); emit layoutChangedSpike(); emit contentChangedSpike();
+    emit modelReset(); emit layoutChangedSpike(); contentSpike();
     applying_ = false;
 }
 
@@ -4000,6 +4048,7 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         r.param = static_cast<uint16_t>(std::max<int>(1, s.content.count(QLatin1Char('\n')) + 1));
         fillMediaMeta(r, s.content);   // media: dims/video/param from descriptor
         r.measured = false;            // estimate now, delegate re-reports on render
+        if (content_[p.row] != s.content) r.natW = -1;   // a cell's natural width follows its text (auto column widths)
         content_[p.row] = s.content;
         ranks_[p.row] = s.rank;
         // Keep the CURRENT fenwick height (2026-08-20): same id, in-place
@@ -4025,10 +4074,14 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
         emit dataChanged(index(p.row), index(p.row));   // all roles — type/spans/content may differ
     }
     if (restructured) reindex(std::vector<double>(layout().heights()));
-    ++contentRevision_;
+    // A1: a restored cell text / record attr moves its table's column geometry, which every
+    // cell of that table lays out from — widen the touch past the patched rows themselves.
+    markTableGeomDirty();
+    for (const UndoPatch& p : ps) noteTouchedTable(p.row);
+    noteStructure();
     if (inkTouched) { ++inkRevision_; emit inkChanged(); }
     bumpLayout();
-    emit contentChangedSpike();
+    contentSpike();
     applying_ = false;
 }
 
@@ -4178,10 +4231,9 @@ bool BlockModel::payloadSpanCovers(int row, int start, int end,
 void BlockModel::commitRowSpans(int row, std::vector<Span>&& spans, const QString& coalesce) {
     beginTxn(row, row);
     rows_[row].spans = std::move(spans);
-    persistMeta(row);
+    persistSpans(row);
     emit dataChanged(index(row), index(row), {});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn(coalesce);
 }
 
@@ -4503,8 +4555,7 @@ void BlockModel::setHeading(int row, int level) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole});
     bumpLayout();                                                    // heading height differs
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -4528,8 +4579,7 @@ void BlockModel::setBlockType(int row, int type) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -4553,8 +4603,7 @@ int BlockModel::insertDivider(int afterRow) {
     if (doc_.isOpen())
         doc_.appendBlock(newId, newRank, 0, QStringLiteral("divider"), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), QString());
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return at;
   });
@@ -4576,8 +4625,7 @@ void BlockModel::makeCodeBlock(int row, const QString& lang) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -4588,8 +4636,7 @@ void BlockModel::setCodeLanguage(int row, const QString& lang) {
     beginTxn(row, row);
     r.lang = lang;
     persistMeta(row);
-    ++contentRevision_;          // CodeHighlighter.language binding depends on contentRevision
-    emit contentChangedSpike();
+    contentSpike();          // CodeHighlighter.language binding depends on contentRevision
     endTxn();
 }
 
@@ -4613,8 +4660,7 @@ bool BlockModel::makeCodeBlockIfFence(int row) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -4700,8 +4746,7 @@ int BlockModel::insertSketch(int afterRow) {
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
 
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return at;
   });
@@ -4724,8 +4769,7 @@ void BlockModel::sketchSetShapes(int row, const QString& strokesJson) {
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();   // no coalesce — one undo step per stroke (ruling 2026-06-11)
 }
 
@@ -4756,8 +4800,7 @@ bool BlockModel::sketchAppendImage(int row, const QString& src, int iw, int ih) 
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();   // one undo step per pasted image
     return true;
 }
@@ -4809,8 +4852,7 @@ void BlockModel::sketchSetImageRect(int row, int idx,
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -4826,8 +4868,7 @@ void BlockModel::sketchRemoveImage(int row, int idx) {
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -4992,8 +5033,7 @@ void BlockModel::sketchResizeCanvas(int row, int dl, int dt, int dr, int db) {
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn(QStringLiteral("skrz:") + ids_[row]);   // frame nudges coalesce (see setMediaWidth)
 }
 
@@ -5039,8 +5079,7 @@ int BlockModel::sketchAddText(int row, qreal x, qreal y, qreal w,
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return texts.size() - 1;
 }
@@ -5064,8 +5103,7 @@ void BlockModel::sketchSetText(int row, int idx, const QString& text) {
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -5089,8 +5127,7 @@ void BlockModel::sketchSetTextBox(int row, int idx, qreal x, qreal y,
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -5106,8 +5143,7 @@ void BlockModel::sketchRemoveText(int row, int idx) {
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -5166,8 +5202,7 @@ int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectPa
         doc_.appendBlock(newId, newRank, 0, QString::fromLatin1(typeToString(r.type)), attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), json);
 
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return at;
   });
@@ -5333,8 +5368,7 @@ int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
         persistContent(me.row);
         emit dataChanged(index(me.row), index(me.row), {ContentRole});
     }
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return count;
 }
@@ -5388,8 +5422,9 @@ QString BlockModel::mediaLocalPath(int row) const {
     return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
 }
 void BlockModel::refreshMedia() {
-    ++contentRevision_;
-    emit contentChangedSpike();
+    noteTouched(0, INT_MAX);                         // every media-url binding re-resolves
+    noteStructure();
+    contentSpike();
 }
 void BlockModel::revealMedia(int row) const {
     const QString path = mediaLocalPath(row);
@@ -5487,8 +5522,7 @@ void BlockModel::writePdfPageObject(int row, int page, QJsonObject pageObj) {
     content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -5666,8 +5700,7 @@ int BlockModel::applyMarkdownTrigger(int row) {
         persistMeta(row);
         emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
         bumpLayout();
-        ++contentRevision_;
-        emit contentChangedSpike();
+        contentSpike();
         endTxn();
         return tstrip;
     }
@@ -5688,8 +5721,7 @@ int BlockModel::applyMarkdownTrigger(int row) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
     bumpLayout();                 // type change → height changes; delegate re-measures
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return strip;
 }
@@ -5709,8 +5741,7 @@ bool BlockModel::makeDividerIfMarker(int row) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {TypeRole, ContentRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return true;
 }
@@ -5781,10 +5812,9 @@ void BlockModel::setPayloadSpan(int row, int start, int end, uint8_t kind,
         if (!(sp.kind == kind && sp.s < end && sp.e > start)) kept.push_back(sp);
     if (!payload.isEmpty()) kept.push_back({start, end, kind, payload});
     v = std::move(kept);
-    persistMeta(row);
+    persistSpans(row);
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn(coalesce);
 }
 void BlockModel::setLink(int row, int start, int end, const QString& url) {
@@ -5862,11 +5892,10 @@ void BlockModel::commitRowTextAndSpans(int row, QString&& text, std::vector<Span
     content_[row] = std::move(text);
     rows_[row].spans = std::move(spans);
     persistContent(row);
-    persistMeta(row);
+    persistSpans(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -6023,11 +6052,10 @@ void BlockModel::unlinkThread(const QString& threadId) {
                                        return sp.kind == SpanComment && sp.href == threadId;
                                    }),
                     spans.end());
-        persistMeta(r);
+        persistSpans(r);
         emit dataChanged(index(r), index(r), {});
     }
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -6260,7 +6288,7 @@ void BlockModel::commitMarkdown(int row) {
         const auto [lo, hi] = tableBand(tableHeadOf(row));
         beginTxn(lo, hi);
         const bool changed = normalizeTimecodeCell(row);
-        if (changed) { bumpLayout(); ++contentRevision_; emit contentChangedSpike(); }
+        if (changed) { bumpLayout(); contentSpike(); }
         endTxn();
         return;
     }
@@ -6276,8 +6304,7 @@ void BlockModel::commitMarkdown(int row) {
     persistMeta(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();                            // markers gone → height may change
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();                                // distinct undo step (Cmd-Z restores the markdown)
 }
 
@@ -6412,8 +6439,7 @@ void BlockModel::setMediaWidth(int row, int w) {
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     // Coalesce a nudge-run (2026-08-21): consecutive resizes of the same
     // media block merge like a typing run — ⌘Z returns to the pre-run size
     // instead of replaying every intermediate width.
@@ -6443,11 +6469,10 @@ void BlockModel::setContent(int row, const QString& text) {
     const bool hadSpans = !rows_[row].spans.empty();
     mn::inl::setText(content_[row], rows_[row].spans, text);   // spans clamp to the new text
     persistContent(row);                          // write-through to SQLite
-    if (hadSpans) persistMeta(row);
+    if (hadSpans) persistSpans(row);
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     // Height re-measure follows from the delegate's implicitHeight change.
 }
@@ -6499,7 +6524,7 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
         }
         rows_[loRow].spans = kept;
     }
-    persistMeta(loRow);
+    persistSpans(loRow);
 
     if (hiRow > loRow) {
         const int first = loRow + 1, last = hiRow, cnt = last - first + 1;
@@ -6521,8 +6546,7 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
         endRemoveRows();
         bumpLayout();
     }
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     if (probe) t3 = pt.nsecsElapsed();
     // Single-char same-block deletes (backspace/delete key) coalesce.
     endTxn((hiRow == loRow && hiClip - loClip == 1) ? QStringLiteral("del") : QString());
@@ -6552,11 +6576,10 @@ void BlockModel::insertText(int row, int col, const QString& text, int marks,
             std::clamp<int>(content_[row].count(QLatin1Char('\n')) + 1, 1, 65535));
     // Armed typing attributes (marks + colour pens) span the new run.
     mn::inl::applyTypingAttributes(spans, col, col + int(text.size()), marks, fgColor, bgColor);
-    if (!spans.empty()) persistMeta(row);
+    if (!spans.empty()) persistSpans(row);
     if (probe) t2 = pt.nsecsElapsed();
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     if (probe) t3 = pt.nsecsElapsed();
     endTxn(text.size() == 1 ? QStringLiteral("type") : QString());   // coalesce typing
     if (probe) keySamples_.push_back({t0, t1 - t0, t2 - t1, t3 - t2, pt.nsecsElapsed() - t3});
@@ -6885,8 +6908,7 @@ QVariantList BlockModel::pasteText(int row, int col, const QString& text) {
     }
 
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return QVariantList{ caretRow, caretCol };
 }
@@ -6935,8 +6957,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& htmlIn) {
         persistMeta(row);
         emit dataChanged(index(row), index(row), {ContentRole});
         bumpLayout();
-        ++contentRevision_;
-        emit contentChangedSpike();
+        contentSpike();
         endTxn();
         return QVariantList{ row, col + static_cast<int>(sp.text.size()) };
     }
@@ -7162,8 +7183,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
     }
 
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
     return { caretRow, caretCol };
 }
@@ -7215,8 +7235,7 @@ void BlockModel::updateMediaDescriptor(const QString& blockId, const QString& js
     persistContent(row);
     emit dataChanged(index(row), index(row), {ContentRole});
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
 }
 
 void BlockModel::splitBlock(int row, int col) {
@@ -7272,8 +7291,7 @@ void BlockModel::splitBlock(int row, int col) {
     if (!rightS.empty() || r.type != Paragraph || r.cell >= 0) persistMeta(at);   // spans / list / lane meta
 
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -7308,8 +7326,7 @@ void BlockModel::insertBlock(int row) {
     beginTxn(row, row - 1);                      // empty `before`; after = [row,row]
     insertParagraphRaw(row);
     bumpLayout();
-    ++contentRevision_;            // row→content mapping shifted: refresh content bindings
-    emit contentChangedSpike();
+    contentSpike();            // row→content mapping shifted: refresh content bindings
     endTxn();
 }
 
@@ -7338,8 +7355,7 @@ void BlockModel::duplicateBlock(int row) {
                          attrsJson(r.type, r.level, r.lang, r.spans, r.taskState, r.cell, r.ratios, r.header, r.table), text);
 
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -7375,8 +7391,7 @@ void BlockModel::removeBlocks(int loRow, int hiRow) {
     // paragraph (delta = -cnt + 1 → after = [lo, lo]).
     if (rows_.empty()) insertParagraphRaw(0);
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -7442,8 +7457,7 @@ void BlockModel::removeBlock(int row) {
     for (int i = last; i >= row; --i) removeRowRaw(i);
     normalizeStructure(band.first, band.second - (last - row + 1));
     bumpLayout();
-    ++contentRevision_;            // row→content mapping shifted: refresh content bindings
-    emit contentChangedSpike();
+    contentSpike();            // row→content mapping shifted: refresh content bindings
     endTxn();
 }
 
@@ -7524,10 +7538,11 @@ void BlockModel::moveBlocks(int from, int count, int to, int targetLane) {
     }
     normalizeStructure(band.first, band.second);   // the lane the run left may be empty now
     rederiveMedia(band.first, band.second);        // moved media lays out at its new width
+    noteTouched(band.first, band.second);          // ids permuted: every slot in the band re-reads
+    noteStructure();
 
     bumpLayout();                 // positions change; cells re-read yForRow/content
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -7817,8 +7832,7 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
     };
     auto finish = [&]() {
         bumpLayout();
-        ++contentRevision_;
-        emit contentChangedSpike();
+        contentSpike();
     };
 
     // A split row or a table can't sit in a lane: with the caret in one, the
@@ -7953,8 +7967,7 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
     for (size_t k = 0; k < ink.size(); ++k)
         if (!ink[k].isEmpty()) setBlockInk(gap + static_cast<int>(k), ink[k]);
     bumpLayout();
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }
 
@@ -7972,12 +7985,11 @@ void BlockModel::replaceText(int row, int s, int e, const QString& text) {
     persistContent(row);
     if (hadSpans) {
         rows_[row].spans = std::move(spans);
-        persistMeta(row);
+        persistSpans(row);
     }
     if (rows_[row].type == Code)
         rows_[row].param = static_cast<uint16_t>(std::clamp<int>(content_[row].count(QLatin1Char('\n')) + 1, 1, 65535));
     emit dataChanged(index(row), index(row), {ContentRole});
-    ++contentRevision_;
-    emit contentChangedSpike();
+    contentSpike();
     endTxn();
 }

@@ -12,56 +12,64 @@ Item {
     readonly property var cursor: editor.cursorObj
     readonly property var flick: editor.flickItem
     property int logicalRow: -1   // the row this slot renders — set by the pool (Editor.qml)
+    // A1 (speed programme): this slot's own revision (ViewportSlots.slot(index), a SlotRev).
+    // The model bumps it for exactly the rows a mutation touched (rowsTouched / dataChanged /
+    // a shift from an insert or remove above / a reset), so every row-scoped binding below
+    // keys on `rev` instead of the document-wide contentRevision — a keystroke re-evaluates
+    // the one delegate whose row changed, not all ~480 pooled ones. Without a slot object
+    // (a standalone BlockView) it falls back to contentRevision, the old behaviour.
+    property var slotObj: null
+    readonly property int rev: slotObj ? slotObj.rev : cell.rev
     readonly property bool active: logicalRow >= 0 && logicalRow < blockModel.count
-    // contentRevision covers row-shifts (insert/remove/move all bump it,
-    // reactivity rule 2) so a recycled delegate can't mis-render. NOT
-    // layoutRevision: isMedia drives this delegate's height, whose settle
-    // bumps layoutRevision — depending on it here forms a binding loop
-    // (same trap the `measure` binding below documents).
+    // `rev` covers row-shifts (an insert/remove above bumps every slot at or past
+    // it) so a recycled delegate can't mis-render. NOT layoutRevision: isMedia
+    // drives this delegate's height, whose settle bumps layoutRevision —
+    // depending on it here forms a binding loop (same trap the `measure`
+    // binding below documents).
     readonly property bool isMedia: active
-        && (blockModel.contentRevision, blockModel.typeForRow(logicalRow)) === 3
+        && (cell.rev, blockModel.typeForRow(logicalRow)) === 3
     readonly property bool isVideoMedia: isMedia
-        && (blockModel.contentRevision, blockModel.mediaKind(logicalRow)) === "video"
+        && (cell.rev, blockModel.mediaKind(logicalRow)) === "video"
     readonly property bool isPdfMedia: isMedia
-        && (blockModel.contentRevision, blockModel.mediaKind(logicalRow)) === "pdf"
+        && (cell.rev, blockModel.mediaKind(logicalRow)) === "pdf"
     readonly property bool isFocus: active && logicalRow === cursor.focusRow
     readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
     readonly property Item teItem: te    // layout oracle, for hit-testing
     readonly property Item langChip: codeLangChip // code language chip, for hit-testing
     // Lane geometry (SR-3): {x, w} page-relative — the page for a top-level block, its
-    // lane otherwise. contentRevision covers structure changes, pageWidth the measure.
+    // lane otherwise. The slot's rev covers structure changes, pageWidth the measure.
     // NOT the layout revision: the measure drives the height, whose settle bumps it.
-    readonly property var lane: (blockModel.contentRevision, editor.pageWidth,
+    readonly property var lane: (cell.rev, editor.pageWidth,
                                  active ? editor.laneOf(logicalRow) : ({ x: 0, w: editor.pageWidth }))
     // Horizontal measure: the lane's width (the page's for a top-level block).
     readonly property real measure: lane.w - 2 * cellInset
     readonly property bool isRecord: active && te.btype === 10   // a split row's record: no text of its own
-    readonly property bool inLane: active && (blockModel.contentRevision, blockModel.laneForRow(logicalRow)) >= 0
+    readonly property bool inLane: active && (cell.rev, blockModel.laneForRow(logicalRow)) >= 0
     // Derived tables (SR-4 S5): the table this record or cell block belongs to (-1 = none), its
-    // row in the table, and a cell block's column. contentRevision only (no layout deps: these
+    // row in the table, and a cell block's column. The slot's rev only (no layout deps: these
     // feed the text's font and so the height).
-    readonly property int tableHead: active ? (blockModel.contentRevision, blockModel.tableHeadOf(logicalRow)) : -1
+    readonly property int tableHead: active ? (cell.rev, blockModel.tableHeadOf(logicalRow)) : -1
     readonly property bool inTable: tableHead >= 0
     readonly property bool isTableRecord: isRecord && inTable
-    readonly property int tableRow: inTable ? (blockModel.contentRevision, blockModel.tableRowOf(logicalRow)) : -1
-    readonly property int tableCol: inTable && !isRecord ? (blockModel.contentRevision, blockModel.tableColumnOf(logicalRow)) : -1
-    readonly property bool headerCell: inTable && (blockModel.contentRevision, blockModel.isHeaderRow(logicalRow))
+    readonly property int tableRow: inTable ? (cell.rev, blockModel.tableRowOf(logicalRow)) : -1
+    readonly property int tableCol: inTable && !isRecord ? (cell.rev, blockModel.tableColumnOf(logicalRow)) : -1
+    readonly property bool headerCell: inTable && (cell.rev, blockModel.isHeaderRow(logicalRow))
     readonly property int colKind: tableCol >= 0 && !headerCell
-        ? (blockModel.contentRevision, blockModel.tableColumnKind(tableHead, tableCol)) : 0
-    readonly property int colAlign: tableCol >= 0 ? (blockModel.contentRevision, blockModel.tableColAlign(tableHead, tableCol)) : 0
+        ? (cell.rev, blockModel.tableColumnKind(tableHead, tableCol)) : 0
+    readonly property int colAlign: tableCol >= 0 ? (cell.rev, blockModel.tableColAlign(tableHead, tableCol)) : 0
     readonly property string cellFg: tableCol >= 0
-        ? (blockModel.contentRevision, blockModel.tableCellFg(tableHead, tableRow, tableCol)) : ""
+        ? (cell.rev, blockModel.tableCellFg(tableHead, tableRow, tableCol)) : ""
     readonly property int checkState: colKind === 2
-        ? (blockModel.contentRevision, blockModel.tableCellCheck(tableHead, tableRow, tableCol)) : 0
+        ? (cell.rev, blockModel.tableCellCheck(tableHead, tableRow, tableCol)) : 0
     readonly property real cellInset: tableCol >= 0 ? 8 : 0   // a table cell's text sits inside its column
 
     // A record draws the dividers between its lanes: a hairline centred in each gap,
     // the full height of the row (S7 makes them draggable).
     Repeater {
-        model: cell.isRecord && !cell.inTable ? Math.max(0, (blockModel.contentRevision, blockModel.laneCount(cell.logicalRow)) - 1) : 0
+        model: cell.isRecord && !cell.inTable ? Math.max(0, (cell.rev, blockModel.laneCount(cell.logicalRow)) - 1) : 0
         delegate: Rectangle {
             required property int index
-            readonly property var span: editor.laneSpan(cell.logicalRow, index)
+            readonly property var span: (cell.rev, editor.laneSpan(cell.logicalRow, index))
             // Accent on hover only (2026-09-14 walk) — a drag shows its own preview line.
             readonly property bool hot: !editor.dividerDragging && !editor.pulling
                 && editor.dividerHoverRecord === cell.logicalRow && editor.dividerHoverIndex === index
@@ -93,13 +101,13 @@ Item {
     // background (cell > row > column colour; header rows tinted) and the grid lines. It
     // stacks below the cell blocks' delegates.
     // The row's cells sit between its pockets (S5b: the first row's top, the last row's bottom).
-    readonly property real padTop: isTableRecord ? (blockModel.contentRevision, blockModel.tablePadTop(logicalRow)) : 0
-    readonly property real padBottom: isTableRecord ? (blockModel.contentRevision, blockModel.tablePadBottom(logicalRow)) : 0
+    readonly property real padTop: isTableRecord ? (cell.rev, blockModel.tablePadTop(logicalRow)) : 0
+    readonly property real padBottom: isTableRecord ? (cell.rev, blockModel.tablePadBottom(logicalRow)) : 0
     Repeater {
-        model: cell.isTableRecord ? (blockModel.contentRevision, blockModel.tableColumnCount(cell.tableHead)) : 0
+        model: cell.isTableRecord ? (cell.rev, blockModel.tableColumnCount(cell.tableHead)) : 0
         delegate: Rectangle {
             required property int index
-            readonly property string bg: (blockModel.contentRevision, blockModel.tableCellBg(cell.tableHead, cell.tableRow, index))
+            readonly property string bg: (cell.rev, blockModel.tableCellBg(cell.tableHead, cell.tableRow, index))
             x: editor.tableX(cell.tableHead) + (blockModel.geomRevision, blockModel.tableColumnLeft(cell.tableHead, index))
             y: cell.padTop
             width: (blockModel.geomRevision, blockModel.tableColumnWidth(cell.tableHead, index))
@@ -111,7 +119,7 @@ Item {
             // (selection). 0 = none.
             readonly property bool inSet: {
                 const s = editor.tableSet
-                return s !== null && s.head === cell.tableHead && s.rev === blockModel.contentRevision
+                return s !== null && s.head === cell.tableHead && s.rev === blockModel.structureRevision
                     && (s.kind === "row" ? s.items.indexOf(cell.tableRow) >= 0 : s.items.indexOf(index) >= 0)
             }
             readonly property int wash: {
@@ -151,7 +159,7 @@ Item {
     Rectangle {   // the top edge, on the table's first row
         visible: cell.isTableRecord && cell.tableRow === 0
         x: editor.tableX(cell.tableHead); y: cell.padTop; height: 1
-        width: (blockModel.geomRevision, blockModel.contentRevision, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
+        width: (blockModel.geomRevision, cell.rev, cell.isTableRecord ? blockModel.tableWidth(cell.tableHead) : 0)
         color: Theme.colors.border
     }
     // Grips (SR-4 S7b): the hovered row's pill in the left margin, the hovered column's in the pocket
@@ -194,7 +202,7 @@ Item {
     // authoritative value (mediaDisplayHeight — dims + content width),
     // so the delegate exactly matches the Fenwick reservation: no
     // transient, no scroll-in jump. layoutRevision dep picks up resize.
-    height: isMedia      ? 12 + (blockModel.layoutRevision, blockModel.contentRevision,
+    height: isMedia      ? 12 + (blockModel.layoutRevision, cell.rev,
                                  blockModel.mediaDisplayHeight(logicalRow))
                            + (isVideoMedia ? editor.videoTransportH
                                            : isPdfMedia ? editor.pdfNavH : 0)
@@ -262,7 +270,7 @@ Item {
     // regenerates on any new model object — so each Repeater takes the constant 0 while its array
     // is empty (the common case: only a real array resets it), and records compute nothing.
     property var hlRects: {
-        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount   // the text's OWN geometry (a height settling elsewhere can't move these)
+        var dep = cell.rev + te.width + te.height + te.lineCount   // the text's OWN geometry (a height settling elsewhere can't move these)
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.highlightRangesForRow(cell.logicalRow)
         var out = []
@@ -290,7 +298,7 @@ Item {
     // ranges (the margin pin is the interactive affordance; plain
     // clicks here keep editing text). One rect per visual line.
     property var commentRects: {
-        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount
+        var dep = cell.rev + te.width + te.height + te.lineCount
                 + blockModel.commentsRevision
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.commentRangesForRow(cell.logicalRow)
@@ -328,7 +336,7 @@ Item {
     // would regenerate its tiles on every result (the 2026-09-15 first-scroll hitch).
     property var spellRects: []
     readonly property string spellKey: {
-        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount + spell.revision
+        var dep = cell.rev + te.width + te.height + te.lineCount + spell.revision
         if (!cell.active || cell.isMedia || cell.isRecord || te.btype === 2 || te.btype === 6) return ""
         if (!spell.checkSpelling && !spell.checkGrammar) return ""
         var caret = (cell.isFocus && cursor.active && !cursor.hasSel) ? cursor.focusCol : -1
@@ -367,7 +375,7 @@ Item {
     // the highlight, and below the glyphs. NOT a char-format
     // background (that paints inside the TextEdit, above selection).
     property var codeRects: {
-        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount
+        var dep = cell.rev + te.width + te.height + te.lineCount
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         var ranges = blockModel.codeRangesForRow(cell.logicalRow)
         var out = []
@@ -398,7 +406,7 @@ Item {
     // The label is the block's own text; this is only the pill
     // behind it.
     property var choiceRects: {
-        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount
+        var dep = cell.rev + te.width + te.height + te.lineCount
         if (!cell.active || cell.isMedia || cell.isRecord) return []
         if (cell.colKind === 2) return []   // a check cell shows its checkbox, not the chip
         var ranges = blockModel.choiceRangesForRow(cell.logicalRow)
@@ -434,7 +442,7 @@ Item {
 
     // selection highlight (behind text), one rect per visual line.
     property var selRects: {
-        var dep = blockModel.contentRevision + te.width + te.height + te.lineCount   // re-eval triggers: the text's own geometry
+        var dep = cell.rev + te.width + te.height + te.lineCount   // re-eval triggers: the text's own geometry
         // Opaque rows (media/table/divider) show membership via the
         // wash rectangle below, never via text rects over a hidden te.
         if (!cell.inSel || cell.isMedia || cell.isRecord || te.btype === 6) return []
@@ -458,6 +466,7 @@ Item {
     }
 
     MediaBlock {  // image + video (poster = decoded frame thumbnail)
+        rev: cell.rev
         id: mediaHost
         visible: cell.active && cell.isMedia
         active: cell.active && cell.isMedia
@@ -473,7 +482,7 @@ Item {
         // Frame height = the model's authoritative value (same as the
         // cell reservation), so the rendered media never disagrees with
         // the reserved space.
-        height: (blockModel.layoutRevision, blockModel.contentRevision,
+        height: (blockModel.layoutRevision, cell.rev,
                  blockModel.mediaDisplayHeight(cell.logicalRow))
         // Poster frame: the remembered playhead (0 until first play).
         posterFrame: cell.isVideoMedia
@@ -508,7 +517,7 @@ Item {
         // mouse layer hit-tests it via cell.langChip.
         id: codeLangChip
         visible: cell.active && !cell.isMedia && te.btype === 2
-        readonly property string lname: (blockModel.contentRevision,
+        readonly property string lname: (cell.rev,
             cell.active && te.btype === 2
                 ? blockModel.codeLanguageName(cell.logicalRow) : "")
         readonly property bool hot: editor.codeChipHoverRow === cell.logicalRow
@@ -549,14 +558,14 @@ Item {
         // right-aligned numbers up to "999." fit without touching
         // the text (the old 20px slot overflowed from item 10);
         // list nesting adds 24px per depth level.
-        readonly property int bdepth: (blockModel.contentRevision,
+        readonly property int bdepth: (cell.rev,
                                        cell.active && (btype === 5 || btype === 8 || btype === 9)
                                            ? blockModel.depthForRow(cell.logicalRow) : 0)
         readonly property real deco: btype === 9 ? 34 + bdepth * 24
                                    : (btype === 5 || btype === 8) ? 22 + bdepth * 24
                                    : btype === 4 ? 22 : 0
         // task items (type 8): tri-state status 0 todo / 1 doing / 2 done
-        readonly property int taskState: (blockModel.contentRevision,
+        readonly property int taskState: (cell.rev,
                                           cell.active && btype === 8 ? blockModel.taskStateForRow(cell.logicalRow) : 0)
         x: cell.colLeft + deco
         // Code is UNCAPPED like tables (user ruling: capping code
@@ -571,7 +580,7 @@ Item {
         // Quotes are upright Lora (serif + bar + muted colour
         // mark them); italic/bold come from spans so all four faces
         // are reachable, rather than forcing the whole block italic.
-        text: (blockModel.contentRevision, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
+        text: (cell.rev, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
         wrapMode: btype === 2 ? TextEdit.NoWrap : TextEdit.Wrap
         horizontalAlignment: cell.colAlign === 1 ? TextEdit.AlignHCenter
                            : cell.colAlign === 2 ? TextEdit.AlignRight : TextEdit.AlignLeft
@@ -596,7 +605,7 @@ Item {
         // bumps layoutRevision, so depending on it is a latent loop (dormant
         // until the async poster decode forces a relayout). Same trap the
         // isMedia/maxWidth bindings document.
-        readonly property int btype: (blockModel.contentRevision,
+        readonly property int btype: (cell.rev,
                                       cell.active ? blockModel.typeForRow(cell.logicalRow) : 0)
         readonly property var headingSizes: [26, 30, 26, 22, 19, 17, 16]   // index by level (1–6)
         color: cell.cellFg !== "" ? cell.cellFg
@@ -609,7 +618,7 @@ Item {
                    : btype === 4 ? Theme.font.serif   // quote → Merriweather
                    : Theme.font.body                  // document body → Aspekta
         font.pixelSize: {
-            var _ = blockModel.contentRevision   // dep (NOT layoutRevision: the size feeds the height)
+            var _ = cell.rev   // dep (NOT layoutRevision: the size feeds the height)
             if (btype === 2) return Theme.font.sizeMono
             if (btype !== 1 || !cell.active) return Theme.font.sizeBody
             return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
@@ -651,7 +660,7 @@ Item {
         // renders only part of the word. Markers stay accent-blue when
         // selected (markers only appear while typing, rarely selected).
         // semantic format spans (clean bold/italic/mono, no markers)
-        spans: (blockModel.contentRevision, blockModel.spansForRow(cell.logicalRow))
+        spans: (cell.rev, blockModel.spansForRow(cell.logicalRow))
     }
 
     // Code-block syntax colouring (KSyntaxHighlighting). Attaches only
@@ -660,7 +669,7 @@ Item {
     CodeHighlighter {
         id: codeHl
         document: te.btype === 2 ? te.textDocument : null
-        language: te.btype === 2 ? (blockModel.contentRevision, blockModel.languageForRow(cell.logicalRow)) : ""
+        language: te.btype === 2 ? (cell.rev, blockModel.languageForRow(cell.logicalRow)) : ""
     }
 
     Rectangle {  // caret
@@ -691,7 +700,7 @@ Item {
         x: cell.colLeft + te.bdepth * 24; width: 28
         y: te.y
         horizontalAlignment: Text.AlignRight
-        text: (blockModel.contentRevision,
+        text: (cell.rev,
                cell.active && te.btype === 9
                    ? blockModel.orderedNumberForRow(cell.logicalRow) + "." : "")
         color: Theme.colors.textMuted
@@ -764,7 +773,7 @@ Item {
         visible: cell.active && cell.inSel && cursor.hasSel && cursor.loRow !== cursor.hiRow
                  && !(cell.inTable && editor.cellRect !== null)
                  // a lane block whose split row is selected whole rides its record's full-field band
-                 && !(cell.inLane && (blockModel.contentRevision, blockModel.splitRowOf(cell.logicalRow)) >= cursor.loRow)
+                 && !(cell.inLane && (cell.rev, blockModel.splitRowOf(cell.logicalRow)) >= cursor.loRow)
         z: -0.5                                  // above the block rules + focus fill, below text + rects
         radius: 0
         color: Theme.colors.selectionBand

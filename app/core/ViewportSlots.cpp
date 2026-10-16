@@ -1,5 +1,8 @@
 #include "ViewportSlots.h"
+#include "BlockModel.h"
+#include "PerfCounters.h"
 #include <algorithm>
+#include <climits>
 #include <unordered_set>
 
 namespace mn {
@@ -61,4 +64,64 @@ int ViewportSlots::rowForSlot(int slot) const {
 
 int ViewportSlots::slotForRow(int row) const {
     return slotByRow_.value(row, -1);
+}
+
+QObject* ViewportSlots::slot(int index) {
+    if (index < 0) return nullptr;
+    const size_t i = static_cast<size_t>(index);
+    if (i >= slots_.size()) slots_.resize(i + 1, nullptr);
+    if (!slots_[i]) slots_[i] = new SlotRev(this);
+    return slots_[i];
+}
+
+void ViewportSlots::bumpRows(int lo, int hi) {
+    if (hi < lo) return;
+    auto& pc = mn::perf::counters();
+    for (size_t i = 0; i < slotRows_.size() && i < slots_.size(); ++i) {
+        const int r = slotRows_[i];
+        if (r >= lo && r <= hi && slots_[i]) { slots_[i]->bump(); ++pc.slotBumps; }
+    }
+}
+
+void ViewportSlots::bumpFrom(int fromRow) { bumpRows(fromRow, INT_MAX); }
+
+void ViewportSlots::bumpAll() {
+    auto& pc = mn::perf::counters();
+    for (SlotRev* s : slots_) if (s) { s->bump(); ++pc.slotBumps; }
+}
+
+void ViewportSlots::note(int lo, int hi) {
+    if (hi < lo) return;
+    pendLo_ = std::min(pendLo_, std::max(0, lo));
+    pendHi_ = std::max(pendHi_, hi);
+}
+
+void ViewportSlots::flush() {
+    if (pendAll_) bumpAll();
+    else if (pendHi_ >= pendLo_) bumpRows(pendLo_, pendHi_);
+    pendAll_ = false; pendLo_ = INT_MAX; pendHi_ = -1;
+}
+
+void ViewportSlots::attach(BlockModel* model) {
+    if (model == model_) return;
+    for (auto& c : conns_) QObject::disconnect(c);
+    conns_.clear();
+    model_ = model;
+    pendAll_ = false; pendLo_ = INT_MAX; pendHi_ = -1;
+    if (model) {
+        // Accumulate…
+        conns_.push_back(connect(model, &BlockModel::rowsTouched, this, &ViewportSlots::note));
+        conns_.push_back(connect(model, &QAbstractItemModel::dataChanged, this,
+                                 [this](const QModelIndex& tl, const QModelIndex& br) { note(tl.row(), br.row()); }));
+        conns_.push_back(connect(model, &QAbstractItemModel::rowsInserted, this,
+                                 [this](const QModelIndex&, int first, int) { note(first, INT_MAX); }));
+        conns_.push_back(connect(model, &QAbstractItemModel::rowsRemoved, this,
+                                 [this](const QModelIndex&, int first, int) { note(first, INT_MAX); }));
+        conns_.push_back(connect(model, &QAbstractItemModel::modelReset, this, [this] { pendAll_ = true; }));
+        // …and flush with the model consistent. A structure spike bumps every slot (and a reset
+        // emits one even without a following content spike — loadFromStore).
+        conns_.push_back(connect(model, &BlockModel::structureChangedSpike, this, [this] { pendAll_ = true; flush(); }));
+        conns_.push_back(connect(model, &BlockModel::contentChangedSpike, this, &ViewportSlots::flush));
+    }
+    bumpAll();   // a different document behind every slot
 }
