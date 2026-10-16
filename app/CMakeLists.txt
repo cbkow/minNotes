@@ -196,6 +196,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/PageRuler.qml
         qml/MinNotes/App/CanvasView.qml
         qml/MinNotes/App/CanvasCard.qml
+        qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
         qml/MinNotes/App/fonts/Phosphor.ttf

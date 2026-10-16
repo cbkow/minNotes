@@ -444,8 +444,21 @@ FocusScope {
     // The canvas (B3) is a per-document view mode, not a block: its tab id is the literal "canvas"
     // (rowForId("canvas") is -1, so every `activeFrameId !== ""` guard treats it as a frame tab).
     property bool activeCanvas: false
-    readonly property bool canvasOnLoad: Qt.application.arguments.indexOf("--canvas") >= 0   // dev-only (B3): open on the Canvas tab
-    Timer { interval: 300; running: root.canvasOnLoad; onTriggered: root.setActiveTab("canvas") }   // after the launch's view-state restore
+    // Dev-only (B3): `--canvas` opens on the Canvas tab (fit); `--canvas=<zoom>` then zooms about the
+    // top-left card's origin so a --shot shows live cards. After the launch's view-state restore.
+    readonly property string canvasOnLoad: {
+        const a = Qt.application.arguments
+        for (let i = 0; i < a.length; ++i) if (a[i] === "--canvas") return "fit"; else if (a[i].indexOf("--canvas=") === 0) return a[i].substring(9)
+        return ""
+    }
+    Timer {
+        interval: 300; running: root.canvasOnLoad !== ""
+        onTriggered: {
+            root.setActiveTab("canvas")
+            const z = parseFloat(root.canvasOnLoad)
+            if (z > 0) { canvasView.fit(); const o = canvasView.cam.worldToScreen(0, 0); canvasView.cam.zoomAboutPoint(z, o.x, o.y) }
+        }
+    }
     readonly property string activeFrameId: activeCanvas ? "canvas"
                                           : activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId

@@ -14,7 +14,10 @@ Rectangle {
     readonly property CanvasCamera cam: CanvasCamera { id: cam }
 
     // --- culling → pool ---------------------------------------------------------------------
-    readonly property var visibleCards: (blockModel.structureRevision, blockModel.layoutRevision, cam.rev, width, height, _cull())
+    // Gated on `visible`: a hidden canvas holds NO cards (its delegates key on the document-wide
+    // contentRevision, so live cards behind the Document tab would put the old per-key fan-out back —
+    // measured 2026-10-16: 338 → 3200 µs per key).
+    readonly property var visibleCards: (blockModel.structureRevision, blockModel.layoutRevision, cam.rev, width, height, visible ? _cull() : [])
     function _cull() {
         if (width <= 0 || height <= 0) return []
         const tl = cam.screenToWorld(-width * 0.5, -height * 0.5), br = cam.screenToWorld(width * 1.5, height * 1.5)
@@ -59,6 +62,7 @@ Rectangle {
             delegate: CanvasCard {
                 required property int index
                 editor: cv.editor
+                cam: cv.cam
                 cardIndex: (cv.slotRev, canvasSlots.rowForSlot(index))
             }
         }

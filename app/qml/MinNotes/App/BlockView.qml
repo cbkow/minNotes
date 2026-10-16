@@ -19,8 +19,14 @@ Item {
     // the one delegate whose row changed, not all ~480 pooled ones. Without a slot object
     // (a standalone BlockView) it falls back to contentRevision, the old behaviour.
     property var slotObj: null
-    readonly property int rev: slotObj ? slotObj.rev : cell.rev
+    readonly property int rev: slotObj ? slotObj.rev : blockModel.contentRevision
     readonly property bool active: logicalRow >= 0 && logicalRow < blockModel.count
+    // Canvas seams (B3) — default-neutral for the page pool: a card places its blocks relative to
+    // its own top (originY = the run's first y, less the inset); `measures` is the kill switch for a
+    // host that must never feed heights back; textRenderType picks the glyph path per LOD tier.
+    property real originY: 0
+    property bool measures: true
+    property int textRenderType: TextEdit.QtRendering
     // `rev` covers row-shifts (an insert/remove above bumps every slot at or past
     // it) so a recycled delegate can't mis-render. NOT layoutRevision: isMedia
     // drives this delegate's height, whose settle bumps layoutRevision —
@@ -203,7 +209,7 @@ Item {
                          && !(blockModel.layoutRevision, blockModel.rowHidden(logicalRow)))                       // T4: a filtered-out row
     opacity: active ? 1 : 0
     enabled: active
-    y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) : 0)
+    y: (blockModel.layoutRevision, active ? blockModel.yForRow(logicalRow) - originY : 0)
     // Code blocks get double vertical padding (24 vs 12) so the
     // syntax-themed background has breathing room above/below.
     // Every video block reserves room for its always-on transport
@@ -227,7 +233,7 @@ Item {
     // height to the Fenwick → contentY/firstVisible churn and a
     // scroll-in jump. Text/code/table still measure (reflow is unknown).
     function reportHeight() {
-        if (!active || isMedia || te.btype === 10) return   // media and records never measure back
+        if (!active || !measures || isMedia || te.btype === 10) return   // media and records never measure back
         blockModel.setMeasuredHeight(logicalRow, height)
     }
     // Measure-back is DEFERRED (coalesced) via a 0-interval timer: on
@@ -564,6 +570,7 @@ Item {
         readOnly: true
         activeFocusOnPress: false
         selectByMouse: false
+        renderType: cell.textRenderType
         // quote/list get a left indent; the decoration sits in it.
         // Ordered items reserve a 28px number slot + 6px gap —
         // right-aligned numbers up to "999." fit without touching
@@ -602,7 +609,7 @@ Item {
         // leaving code releases the width its cached lines held.
         // Tables/media report via their own components.
         function reportW() {
-            if (!cell.active || cell.isMedia) return
+            if (!cell.active || !cell.measures || cell.isMedia) return
             blockModel.setMeasuredWidth(cell.logicalRow,
                 btype === 2 ? implicitWidth + 16 : 0)
         }
