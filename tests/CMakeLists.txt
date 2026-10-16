@@ -9,6 +9,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/ViewportSlots.cpp
     ${CMAKE_SOURCE_DIR}/app/core/LayoutIndex.cpp
     ${CMAKE_SOURCE_DIR}/app/core/CanvasLayout.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/ink_tessellate.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Importer.cpp
     ${CMAKE_SOURCE_DIR}/app/core/DocxReader.cpp
     ${CMAKE_SOURCE_DIR}/app/core/XlsxReader.cpp
@@ -63,6 +64,7 @@ qt_add_resources(mn_regression_test "mn_test_spell"
 )
 target_include_directories(mn_regression_test PRIVATE
     ${CMAKE_SOURCE_DIR}/app/core
+    ${CMAKE_SOURCE_DIR}/app/notes
     ${CMAKE_SOURCE_DIR}/app/spell
     ${CMAKE_SOURCE_DIR}/external/miniz)
 # The bundled app fonts: the harness registers Inter so sketch-text height

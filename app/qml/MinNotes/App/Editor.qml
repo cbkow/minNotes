@@ -451,9 +451,21 @@ FocusScope {
         for (let i = 0; i < a.length; ++i) if (a[i] === "--canvas") return "fit"; else if (a[i].indexOf("--canvas=") === 0) return a[i].substring(9)
         return ""
     }
+    readonly property bool inkOnLoad: Qt.application.arguments.indexOf("--canvas-ink") >= 0   // dev-only: inject sample ink (page or canvas)
     Timer {
-        interval: 300; running: root.canvasOnLoad !== ""
+        interval: 300; running: root.canvasOnLoad !== "" || root.inkOnLoad
         onTriggered: {
+            if (root.inkOnLoad && blockModel.count > 1) {   // dev: ink on the first two rows (page-centre px)
+                const env = (shapes) => JSON.stringify({ version: "2.0", coordinate_system: "block-local", space: "px", shapes: shapes })
+                const shape = (type, pts, extra) => Object.assign({ id: "probe-" + type, type: type, color: [0.93, 0.26, 0.21, 1], stroke_width: 4, filled: false, is_modeled: false, points: pts }, extra || {})
+                blockModel.setBlockInk(0, env([shape("freehand", [[-360, 8], [-330, 40], [-300, 6], [-270, 42], [-240, 10]]),
+                                               shape("arrow", [[60, 46], [200, 10]], { stroke_width: 6 })]))
+                blockModel.setBlockInk(1, env([shape("rect", [[-380, -4], [-60, -4], [-60, 26], [-380, 26]], { stroke_width: 2 }),
+                                               shape("oval", [[160, 12], [70, 16]], { color: [0.2, 0.6, 1, 1] }),
+                                               shape("line", [[240, 0], [370, 30]], { filled: false }),
+                                               shape("rect", [[300, -10], [340, -10], [340, 6], [300, 6]], { filled: true, color: [0.3, 0.8, 0.4, 1] })]))
+            }
+            if (root.canvasOnLoad === "") return
             root.setActiveTab("canvas")
             const z = parseFloat(root.canvasOnLoad)
             if (z > 0) { canvasView.fit(); const o = canvasView.cam.worldToScreen(0, 0); canvasView.cam.zoomAboutPoint(z, o.x, o.y) }

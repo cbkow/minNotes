@@ -15,7 +15,7 @@ namespace {
 // on a 1920 frame; page-space picks a similar feel).
 constexpr double kHitTolPx = 12.0;
 // MediaBlock renders its frame at y: 6 inside the cell (12px total v-pad).
-constexpr double kMediaTopPad = 6.0;
+constexpr double kMediaTopPad = mn::kInkMediaTopPad;
 } // namespace
 
 DocInkCanvas::DocInkCanvas(QQuickItem* parent)
@@ -245,21 +245,15 @@ DocInkCanvas::Placement DocInkCanvas::placementFor(const QString& blockId,
     if (row < 0) return pl;
     pl.row = row;
     pl.space = space;
-    const qreal top = model_->yForRow(row);
-    if (space == mn::DocInkAnchor::Frame) {
-        const qreal fw = std::max<qreal>(1.0, model_->mediaDispWidth(row));
-        const qreal fh = std::max<qreal>(1.0, model_->mediaDisplayHeight(row));
-        pl.origin = QPointF(placementEdge(), top + kMediaTopPad);
-        pl.scale = QSizeF(fw, fh);
-        pl.widthScale = fw / std::max(1, model_->mediaW(row));
-    } else {
-        // Page-centre coordinates. A TABLE record's origin carries the table's view shift: the
-        // stored x still means "page centre with the table at the page's left edge" (what the
-        // exporters lay out), and the ink rides the table wherever the sheet puts it.
-        pl.origin = QPointF(placementEdge() + tableShiftFor(row) + pageWidth_ / 2.0, top);
-        pl.scale = QSizeF(1, 1);
-        pl.widthScale = 1.0;
-    }
+    // The SHARED placement (doc_ink.h: mn::inkPlacement — the canvas' InkNodeItem uses the same
+    // function, so its ink lands where the page's does). Page-centre coordinates for text anchors;
+    // a TABLE record's origin carries the table's view shift: the stored x still means "page centre
+    // with the table at the page's left edge" (what the exporters lay out), and the ink rides the
+    // table wherever the sheet puts it.
+    const mn::InkPlacement ip = mn::inkPlacement(*model_, row, space, placementEdge(), pageWidth_, tableShiftFor(row));
+    pl.origin = ip.origin;
+    pl.scale = ip.scale;
+    pl.widthScale = ip.widthScale;
     // The view zoom scales the whole placement (origins in scaled content px, local → scaled
     // px, widths × zoom); stored coordinates are page units regardless.
     pl.origin *= zoom_;

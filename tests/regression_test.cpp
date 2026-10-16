@@ -32,6 +32,7 @@
 #include "ViewportSlots.h"
 #include "CanvasLayout.h"
 #include "CanvasCameraMath.h"
+#include "ink_tessellate.h"
 #include "LayoutIndex.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -41,6 +42,7 @@
 #include <QXmlStreamReader>
 #include <QTextStream>
 #include <QTemporaryDir>
+#include <cstring>
 #include <QMimeData>
 #include "RtfConvert.h"
 #include <private/qzipreader_p.h>
@@ -6320,6 +6322,57 @@ static void testCanvasCamera() {
     CHECK(qAbs(back.x() - 123.5) < 1e-9 && qAbs(back.y() + 77.25) < 1e-9, "screen → world → screen round-trips");
 }
 
+static void testInkTessellate() {
+    qInfo("[114] ink tessellation (canvas B5): capsule quads per segment, shapes, fills, bounds, determinism");
+    using qcv::ActiveStroke; using qcv::DrawingTool; using mn::ink::Mesh;
+    auto stroke = [](DrawingTool t, std::vector<QPointF> pts, float w = 4.0f, bool filled = false) {
+        ActiveStroke s; s.tool = t; s.points = std::move(pts); s.strokeWidth = w; s.filled = filled; s.color = QColor(10, 200, 30, 255); return s;
+    };
+    {   // a dot: one capsule with a == b, six verts, every corner within halfW + margin of the point
+        Mesh m; mn::ink::tessellateStroke(stroke(DrawingTool::Freehand, { { 10, 20 } }), QSizeF(1, 1), 1.0, 1.0, m);
+        bool ok = m.verts.size() == 6;
+        for (const auto& v : m.verts) ok = ok && v.ax == 10 && v.ay == 20 && v.bx == 10 && v.by == 20 && v.halfW == 2.0f
+                                              && std::abs(v.x - 10) <= 3.0001f && std::abs(v.y - 20) <= 3.0001f && v.r == 10 && v.g == 200 && v.b == 30 && v.a == 255;
+        CHECK(ok, "dot → 6 verts of one capsule a == b, rgba copied (%zu verts)", m.verts.size());
+    }
+    {   // a line: the quad contains both endpoints grown by halfW + margin
+        Mesh m; mn::ink::tessellateStroke(stroke(DrawingTool::Line, { { 0, 0 }, { 100, 0 } }, 6), QSizeF(1, 1), 1.0, 2.0, m);
+        CHECK(m.verts.size() == 6 && m.bounds == QRectF(-5, -5, 110, 10), "line: one quad, bounds = endpoints ± (halfW + margin) (%g %g %g %g)",
+              m.bounds.x(), m.bounds.y(), m.bounds.width(), m.bounds.height());
+    }
+    {   // rect: four capsules; filled: two solid tris + a four-capsule outline
+        Mesh m; mn::ink::tessellateStroke(stroke(DrawingTool::Rectangle, { { 0, 0 }, { 50, 0 }, { 50, 30 }, { 0, 30 } }), QSizeF(1, 1), 1.0, 1.0, m);
+        Mesh f; mn::ink::tessellateStroke(stroke(DrawingTool::Rectangle, { { 0, 0 }, { 50, 0 }, { 50, 30 }, { 0, 30 } }, 4, true), QSizeF(1, 1), 1.0, 1.0, f);
+        bool solid = f.verts.size() >= 6;
+        for (size_t i = 0; i < 6 && solid; ++i) solid = f.verts[i].ax == f.verts[i].x && f.verts[i].halfW > 1e5f;
+        CHECK(m.verts.size() == 24 && f.verts.size() == 6 + 24 && solid, "rect 24 verts; filled = 2 solid tris (a == pos, huge halfW) + outline (%zu, %zu)", m.verts.size(), f.verts.size());
+    }
+    {   // oval: 64 closed segments; radii scale as a vector; filled = 64 fan tris + outline
+        Mesh m; mn::ink::tessellateStroke(stroke(DrawingTool::Oval, { { 0.5, 0.5 }, { 0.25, 0.1 } }), QSizeF(200, 100), 2.0, 1.0, m);
+        Mesh f; mn::ink::tessellateStroke(stroke(DrawingTool::Oval, { { 0.5, 0.5 }, { 0.25, 0.1 } }, 4, true), QSizeF(200, 100), 2.0, 1.0, f);
+        CHECK(m.verts.size() == 64 * 6 && f.verts.size() == 64 * 3 + 64 * 6, "oval 64 segments; filled fan + outline (%zu, %zu)", m.verts.size(), f.verts.size());
+        // The ring's leftmost quad corner sits a diagonal (≤ r·√2) outside the capsule it covers, never inside.
+        CHECK(m.bounds.left() <= 45 + 1e-3 && m.bounds.left() >= 45 - 5 * 1.4143 && m.bounds.top() <= 35 + 1e-3 && m.bounds.top() >= 35 - 5 * 1.4143,
+              "oval centre and radii scale with the frame, pen width × widthScale (%g %g)", m.bounds.left(), m.bounds.top());
+    }
+    {   // arrow: shaft capsule + solid head + head outline (3 capsules)
+        Mesh m; mn::ink::tessellateStroke(stroke(DrawingTool::Arrow, { { 0, 0 }, { 100, 0 } }), QSizeF(1, 1), 1.0, 1.0, m);
+        CHECK(m.verts.size() == 6 + 3 + 18 && m.bounds.right() >= 100, "arrow: shaft + solid head + outline (%zu verts)", m.verts.size());
+    }
+    {   // degenerate, empty, determinism
+        Mesh z; mn::ink::tessellateStroke(stroke(DrawingTool::Line, { { 5, 5 }, { 5, 5 } }), QSizeF(1, 1), 1.0, 1.0, z);
+        Mesh e; mn::ink::tessellateStroke(stroke(DrawingTool::Freehand, {}), QSizeF(1, 1), 1.0, 1.0, e);
+        Mesh a, b;
+        const auto s = stroke(DrawingTool::Freehand, { { 0, 0 }, { 10, 3 }, { 10, 3 }, { 25, -4 } }, 3);
+        mn::ink::tessellateStroke(s, QSizeF(1, 1), 1.0, 1.0, a); mn::ink::tessellateStroke(s, QSizeF(1, 1), 1.0, 1.0, b);
+        bool same = a.verts.size() == b.verts.size() && a.verts.size() == 12;   // the zero-length middle segment is skipped
+        for (size_t i = 0; same && i < a.verts.size(); ++i) same = std::memcmp(&a.verts[i], &b.verts[i], sizeof(mn::ink::Vertex)) == 0;
+        CHECK(z.verts.size() == 6 && e.empty() && same, "a zero-length LINE is a dot, an empty stroke nothing, a repeated point skipped, byte-identical twice (%zu)", a.verts.size());
+        Mesh w; mn::ink::tessellateStroke(stroke(DrawingTool::Line, { { 0, 0 }, { 10, 0 } }, 0.2f), QSizeF(1, 1), 1.0, 0.0, w);
+        CHECK(w.verts[0].halfW == 0.5f, "the pen floors at one px like the painter");
+    }
+}
+
 static void testTableModel() {
     qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
     auto fresh = [](BlockModel& m) {
@@ -8622,6 +8675,7 @@ int main(int argc, char** argv) {
     testCardModel();
     testCanvasLayout();
     testCanvasCamera();
+    testInkTessellate();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

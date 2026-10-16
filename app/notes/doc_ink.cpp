@@ -1,4 +1,6 @@
 #include "doc_ink.h"
+#include "BlockModel.h"
+#include <algorithm>
 #include "annotation_serializer.h"
 
 #include <QJsonArray>
@@ -71,6 +73,27 @@ bool docInkHasContent(const QString& json)
 {
     DocInkAnchor a;
     return docInkFromJson(json, a) && (!a.strokes.empty() || !a.texts.empty());
+}
+
+} // namespace mn
+
+namespace mn {
+
+InkPlacement inkPlacement(const BlockModel& m, int row, int space, qreal edge, qreal pageWidth, qreal tableShift) {
+    InkPlacement pl;
+    const qreal top = m.yForRow(row);
+    if (space == DocInkAnchor::Frame) {
+        const qreal fw = std::max<qreal>(1.0, m.mediaDispWidth(row));
+        const qreal fh = std::max<qreal>(1.0, m.mediaDisplayHeight(row));
+        pl.origin = QPointF(edge, top + kInkMediaTopPad);
+        pl.scale = QSizeF(fw, fh);
+        pl.widthScale = fw / std::max(1, m.mediaW(row));
+    } else {
+        pl.origin = QPointF(edge + tableShift + pageWidth / 2.0, top);
+        pl.scale = QSizeF(1, 1);
+        pl.widthScale = 1.0;
+    }
+    return pl;
 }
 
 } // namespace mn

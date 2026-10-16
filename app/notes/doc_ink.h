@@ -24,10 +24,28 @@
 #include "active_stroke.h"
 #include "sketch_text.h"
 
+#include <QPointF>
+#include <QSizeF>
 #include <QString>
 #include <vector>
 
+class BlockModel;
+
 namespace mn {
+
+// The anchor's placement in CONTENT px (no view zoom): where a stroke's local (0,0) sits and how
+// its units scale. ONE function for the page (DocInkCanvas applies the zoom after it) and the
+// canvas (InkNodeItem subtracts the card's origin) — so canvas ink lands exactly where page ink does.
+//   px anchors:    origin = (edge + tableShift + pageWidth/2, block top); units 1:1; width 1:1
+//   frame anchors: origin = (edge, block top + kInkMediaTopPad); units = the media display frame;
+//                  width = frame px per media-intrinsic px
+constexpr double kInkMediaTopPad = 6.0;
+struct InkPlacement {
+    QPointF origin;
+    QSizeF scale{ 1, 1 };
+    double widthScale = 1.0;
+};
+InkPlacement inkPlacement(const BlockModel& m, int row, int space /* DocInkAnchor::Space */, qreal edge, qreal pageWidth, qreal tableShift);
 
 struct DocInkAnchor {
     enum Space { Px, Frame };

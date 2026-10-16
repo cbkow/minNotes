@@ -104,6 +104,10 @@ qt_add_executable(minnotesapp
     notes/DocInkCanvas.cpp
     notes/CanvasCamera.h
     notes/CanvasCamera.cpp
+    notes/ink_tessellate.h
+    notes/ink_tessellate.cpp
+    notes/InkNodeItem.h
+    notes/InkNodeItem.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must
@@ -233,6 +237,13 @@ target_include_directories(minnotesapp PRIVATE
 # PREFIX is kept as "/ufb" so VideoSurfaceItem.cpp (a verbatim port) finds them
 # at ":/ufb/player/shaders/..." — keeping the engine a pure copy makes future
 # re-syncs from ufb trivial.
+# Canvas ink (B5): capsule-SDF quads, #version 440 → .qsb for every RHI backend.
+qt_add_shaders(minnotesapp "minnotes_ink_shaders"
+    PREFIX "/mn"
+    FILES
+        notes/shaders/ink.vert
+        notes/shaders/ink.frag
+)
 qt_add_shaders(minnotesapp "minnotes_player_shaders"
     PREFIX "/ufb"
     FILES
