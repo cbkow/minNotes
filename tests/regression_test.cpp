@@ -5500,6 +5500,206 @@ static void testMediaInkMove() {
     CHECK(again.openDocument(path) && shapeCount(again.mediaPageInk(img, 0)) == 1, "reopening the untouched original moves it again");
 }
 
+// [117] The canvas schema (2.0 stage 2): elements + canvas_meta + blocks.page_id, created ONLY by
+// ensureCanvasSchema() — a plain open still writes a 1.0 file (versions not flipped yet).
+static void testElements() {
+    qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
+    QTemporaryDir dir;
+    const QString path = dir.path() + QStringLiteral("/elements.mnd");
+    {
+        Document d;
+        CHECK(d.open(path), "a fresh file opens");
+        CHECK(!d.hasColumn(QStringLiteral("blocks"), QStringLiteral("page_id")) && !d.hasCanvasSchema(),
+              "a plain open() creates NO canvas tables (a 1.0 file stays a 1.0 file)");
+        CHECK(d.hasColumn(QStringLiteral("blocks"), QStringLiteral("rank")) && !d.hasColumn(QStringLiteral("blocks"), QStringLiteral("nope")),
+              "hasColumn reads the table info");
+        d.ensureCanvasSchema();
+        CHECK(d.hasCanvasSchema() && d.hasColumn(QStringLiteral("blocks"), QStringLiteral("page_id")),
+              "ensureCanvasSchema adds elements + blocks.page_id");
+        d.ensureCanvasSchema();
+        CHECK(d.hasCanvasSchema(), "ensureCanvasSchema is idempotent");
+        d.stampMeta();
+        CHECK(d.schemaVersion() == Document::kSchemaVersion && d.format() == QLatin1String(Document::kFormat),
+              "the version is NOT flipped by the schema (still %d / %s)", d.schemaVersion(), Document::kFormat);
+
+        // CRUD + ordering: z first, then creation.
+        Document::Element page; page.id = QStringLiteral("P1"); page.kind = QStringLiteral("page");
+        page.x = 10; page.y = 20; page.w = 808; page.h = 600; page.z = 5; page.json = QStringLiteral("{\"title\":\"A\"}");
+        Document::Element ink; ink.id = QStringLiteral("I1"); ink.kind = QStringLiteral("ink"); ink.z = 2; ink.created = 1000; ink.modified = 1000;
+        Document::Element media; media.id = QStringLiteral("M1"); media.kind = QStringLiteral("media"); media.z = 2; media.created = 2000; media.modified = 2000;
+        media.parentId = QStringLiteral("P1");
+        d.begin();
+        d.insertElement(page); d.insertElement(media); d.insertElement(ink);
+        d.commit();
+        CHECK(d.elementCount() == 3, "three elements inserted (%d)", d.elementCount());
+        auto all = d.allElements();
+        CHECK(all.size() == 3 && all[0].id == QLatin1String("I1") && all[1].id == QLatin1String("M1") && all[2].id == QLatin1String("P1"),
+              "allElements orders by z, then created (%s %s %s)",
+              all.size() > 0 ? qPrintable(all[0].id) : "-", all.size() > 1 ? qPrintable(all[1].id) : "-", all.size() > 2 ? qPrintable(all[2].id) : "-");
+        const auto p = d.element(QStringLiteral("P1"));
+        CHECK(p && p->kind == QLatin1String("page") && p->x == 10 && p->y == 20 && p->w == 808 && p->h == 600 && p->z == 5
+                  && p->json == QLatin1String("{\"title\":\"A\"}") && p->created > 0 && p->modified > 0 && p->parentId.isEmpty(),
+              "element() reads every column; created/modified stamped when 0");
+        const auto i = d.element(QStringLiteral("I1"));
+        CHECK(i && i->created == 1000 && i->modified == 1000 && i->json == QLatin1String("{}"),
+              "explicit timestamps kept; empty json defaults to {}");
+        const auto mm = d.element(QStringLiteral("M1"));
+        CHECK(mm && mm->parentId == QLatin1String("P1"), "parent_id round-trips");
+        CHECK(!d.element(QStringLiteral("nope")), "a missing element reads as nullopt");
+
+        d.updateElementRect(QStringLiteral("P1"), 1, 2, 3, 4);
+        d.updateElementJson(QStringLiteral("P1"), QStringLiteral("{\"title\":\"B\"}"));
+        d.updateElementZ(QStringLiteral("P1"), 0);
+        d.updateElementParent(QStringLiteral("M1"), QString());
+        const auto p2 = d.element(QStringLiteral("P1"));
+        CHECK(p2 && p2->x == 1 && p2->y == 2 && p2->w == 3 && p2->h == 4 && p2->json == QLatin1String("{\"title\":\"B\"}") && p2->z == 0,
+              "rect / json / z updates land");
+        CHECK(d.element(QStringLiteral("M1"))->parentId.isEmpty(), "parent cleared to NULL reads as empty");
+        all = d.allElements();
+        CHECK(all.size() == 3 && all[0].id == QLatin1String("P1"), "z update re-sorts (P1 now first)");
+
+        // canvas_meta
+        CHECK(d.canvasMeta(QStringLiteral("camera")).isEmpty(), "absent meta reads as empty");
+        d.setCanvasMeta(QStringLiteral("camera"), QStringLiteral("{\"x\":1}"));
+        d.setCanvasMeta(QStringLiteral("camera"), QStringLiteral("{\"x\":2}"));
+        CHECK(d.canvasMeta(QStringLiteral("camera")) == QLatin1String("{\"x\":2}"), "setCanvasMeta upserts");
+
+        // A page's blocks cascade with the element.
+        Document sp = d.scoped(QStringLiteral("P1"));
+        sp.begin();
+        sp.appendBlock(QStringLiteral("B1"), QStringLiteral("a"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("one"));
+        sp.appendBlock(QStringLiteral("B2"), QStringLiteral("b"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("two"));
+        sp.commit();
+        CHECK(sp.count() == 2 && d.count() == 2, "two blocks on P1");
+        d.deleteElement(QStringLiteral("P1"));
+        CHECK(d.elementCount() == 2 && d.count() == 0 && sp.count() == 0, "deleting a page element cascades its blocks (%d left)", d.count());
+        // Deleting the parent of M1 would have nulled parent_id — M1 is already unparented; the other elements survive.
+        CHECK(d.element(QStringLiteral("M1")) && d.element(QStringLiteral("I1")), "the other elements survive");
+        d.checkpoint();
+    }
+    {   // The schema persists; a plain reopen does not need ensureCanvasSchema to read it.
+        Document d;
+        CHECK(d.open(path) && d.hasCanvasSchema() && d.elementCount() == 2 && d.canvasMeta(QStringLiteral("camera")) == QLatin1String("{\"x\":2}"),
+              "reopened: canvas tables + rows persist");
+    }
+}
+
+// [118] Page scoping on one shared connection (2.0 stage 2): copies share the connection, scoped
+// handles see one page, transactions nest as SAVEPOINTs, raw page rows round-trip for the canvas undo.
+static void testPageScoping() {
+    qInfo("[118] Document handle (2.0 stage 2): shared connection, copy semantics, page scope, SAVEPOINT nesting, rawBlocksOfPage/restoreRawBlocks");
+    QTemporaryDir dir;
+    const QString path = dir.path() + QStringLiteral("/scoped.mnd");
+    QString connName;
+    {
+        Document root;
+        CHECK(root.open(path), "opens");
+        root.ensureCanvasSchema();
+        connName = root.connectionName();
+        CHECK(!connName.isEmpty() && QSqlDatabase::contains(connName), "an open handle has a live Qt connection");
+
+        // 1.0-style rows (no page) through the unscoped handle, then two pages.
+        root.begin();
+        root.appendBlock(QStringLiteral("L1"), QStringLiteral("a"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("legacy"));
+        Document::Element p1; p1.id = QStringLiteral("P1"); p1.kind = QStringLiteral("page");
+        Document::Element p2; p2.id = QStringLiteral("P2"); p2.kind = QStringLiteral("page");
+        root.insertElement(p1); root.insertElement(p2);
+        root.commit();
+
+        Document s1 = root.scoped(QStringLiteral("P1"));
+        Document s2 = root.scoped(QStringLiteral("P2"));
+        CHECK(s1.isOpen() && s1.isScoped() && s1.pageScope() == QLatin1String("P1") && !root.isScoped()
+                  && s1.connectionName() == connName && s2.connectionName() == connName,
+              "scoped handles share the root's connection");
+        CHECK(!root.scoped(QString()).isScoped(), "scoped(\"\") is unscoped");
+
+        s1.begin();
+        s1.appendBlock(QStringLiteral("A2"), QStringLiteral("b"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("p1 second"));
+        s1.appendBlock(QStringLiteral("A1"), QStringLiteral("a"), 1, QStringLiteral("heading"), QStringLiteral("{\"level\":1}"), QStringLiteral("p1 first"));
+        s1.commit();
+        s2.begin();
+        s2.appendBlock(QStringLiteral("Z1"), QStringLiteral("a"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("p2"));
+        s2.commit();
+
+        const auto scan1 = s1.skinnyScan();
+        CHECK(scan1.size() == 2 && scan1[0].id == QLatin1String("A1") && scan1[1].id == QLatin1String("A2")
+                  && scan1[0].depth == 1 && scan1[0].type == QLatin1String("heading") && scan1[0].attrs == QLatin1String("{\"level\":1}"),
+              "a scoped skinnyScan returns ONLY that page's rows in rank order (%d)", int(scan1.size()));
+        CHECK(s1.count() == 2 && s2.count() == 1 && s2.skinnyScan().size() == 1 && s2.skinnyScan()[0].id == QLatin1String("Z1"),
+              "scoped count/scan per page (%d / %d)", s1.count(), s2.count());
+        CHECK(root.count() == 4 && root.skinnyScan().size() == 4, "the unscoped handle sees every row incl. the legacy one (%d)", root.count());
+        CHECK(s1.contentFor(QStringLiteral("Z1")) == QLatin1String("p2") && s2.contentFor(QStringLiteral("A1")) == QLatin1String("p1 first"),
+              "by-id reads are global (ids are unique across pages)");
+        root.assignOrphanBlocks(QStringLiteral("P2"));
+        CHECK(s2.count() == 2 && root.count() == 4, "assignOrphanBlocks re-homes page-less rows (P2 now %d)", s2.count());
+
+        // Transactions nest on the shared connection.
+        root.begin();
+        CHECK(root.transactionDepth() == 1 && s1.transactionDepth() == 1, "depth is a property of the connection");
+        s1.begin();                                                 // SAVEPOINT
+        s1.appendBlock(QStringLiteral("A3"), QStringLiteral("c"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("nested"));
+        CHECK(s2.transactionDepth() == 2, "nested begin is depth 2");
+        s1.commit();                                                // RELEASE
+        s2.begin();
+        s2.appendBlock(QStringLiteral("Z9"), QStringLiteral("z"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("doomed"));
+        s2.rollback();                                              // ROLLBACK TO + RELEASE
+        root.commit();
+        CHECK(root.transactionDepth() == 0 && s1.count() == 3 && s1.contentFor(QStringLiteral("A3")) == QLatin1String("nested"),
+              "the released savepoint's row persists through the outer commit");
+        CHECK(s2.count() == 2 && s2.contentFor(QStringLiteral("Z9")).isEmpty(), "the rolled-back savepoint's row is gone; the outer level survived");
+        root.begin();
+        root.appendBlock(QStringLiteral("R1"), QStringLiteral("r"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("x"));
+        root.rollback();
+        CHECK(root.count() == 5 && root.contentFor(QStringLiteral("R1")).isEmpty() && root.transactionDepth() == 0, "a depth-0 rollback is a real ROLLBACK");
+        root.commit();   // a stray commit is ignored (warns), never underflows
+        CHECK(root.transactionDepth() == 0, "commit without begin is ignored");
+
+        // Raw page rows round-trip (the canvas undo of a page removal).
+        const auto raw = root.rawBlocksOfPage(QStringLiteral("P1"));
+        CHECK(raw.size() == 3 && raw[0].id == QLatin1String("A1") && raw[0].pageId == QLatin1String("P1")
+                  && raw[0].created > 0 && raw[0].content == QLatin1String("p1 first") && raw[0].attrs == QLatin1String("{\"level\":1}"),
+              "rawBlocksOfPage captures every column in rank order (%d)", int(raw.size()));
+        const auto before = s1.skinnyScan();
+        const Document::Element p1el = *root.element(QStringLiteral("P1"));
+        root.deleteElement(QStringLiteral("P1"));
+        CHECK(s1.count() == 0 && root.count() == 2 && root.rawBlocksOfPage(QStringLiteral("P1")).empty(), "removing the page removes its rows");
+        root.begin();
+        root.insertElement(p1el);
+        root.restoreRawBlocks(raw);
+        root.commit();
+        const auto after = s1.skinnyScan();
+        bool same = after.size() == before.size();
+        for (size_t i = 0; same && i < after.size(); ++i)
+            same = after[i].id == before[i].id && after[i].rank == before[i].rank && after[i].depth == before[i].depth
+                   && after[i].type == before[i].type && after[i].attrs == before[i].attrs;
+        const auto raw2 = root.rawBlocksOfPage(QStringLiteral("P1"));
+        CHECK(same && raw2.size() == raw.size() && raw2[0].created == raw[0].created && raw2[0].modified == raw[0].modified
+                  && s1.contentFor(QStringLiteral("A3")) == QLatin1String("nested") && root.count() == 5,
+              "restoreRawBlocks puts the page back verbatim (ids, ranks, timestamps, content)");
+
+        // Copy semantics: the connection lives while ANY handle does.
+        Document copy = root;
+        root.close();
+        CHECK(!root.isOpen() && copy.isOpen() && s1.isOpen() && QSqlDatabase::contains(connName) && copy.count() == 5,
+              "closing one handle leaves the shared connection open for the others");
+        copy.close(); s1.close();
+        CHECK(QSqlDatabase::contains(connName) && s2.count() == 2, "still open while the last scoped handle lives");
+        s2.close();
+        CHECK(!QSqlDatabase::contains(connName), "the last handle closes the Qt connection");
+    }
+    {   // A handle that goes out of scope mid-transaction rolls back instead of leaving the file locked.
+        QString n;
+        {
+            Document d; d.open(path); n = d.connectionName();
+            d.begin();
+            d.appendBlock(QStringLiteral("T1"), QStringLiteral("t"), 0, QStringLiteral("paragraph"), QString(), QStringLiteral("t"));
+        }
+        CHECK(!QSqlDatabase::contains(n), "destroyed mid-transaction: connection gone");
+        Document d; d.open(path);
+        CHECK(d.count() == 5 && d.contentFor(QStringLiteral("T1")).isEmpty(), "…and the open transaction was rolled back");
+    }
+}
+
 static void testReflowEstimate() {
     qInfo("[116] responsive width (2.0 stage 1C): setContentWidth re-seeds wrapping text with a width-aware estimate; cells, code and media keep their rules");
     BlockModel m;
@@ -7810,6 +8010,8 @@ int main(int argc, char** argv) {
     testInkTessellate();
     testMediaInkMove();
     testReflowEstimate();
+    testElements();
+    testPageScoping();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
