@@ -5715,6 +5715,124 @@ static void testConverter() {
     }
 }
 
+// [121] The canvas undo (2.0 stage 2 step 5): element mutators, coalescing drags, page add/remove
+// round-trips with the page's blocks, history rows, jump, revisions.
+static void testCanvasUndo() {
+    qInfo("[121] canvas undo (2.0 stage 2): one entry per mutator, drags coalesce, page removal restores blocks verbatim, history/jump mirror the page log");
+    QTemporaryDir dir;
+    CanvasDocument c;
+    CHECK(c.newCanvas() && !c.canUndo() && !c.canRedo() && c.undoHistory().size() == 1, "a new canvas has an empty log (baseline row only)");
+    const QString p1 = c.firstPageId();
+    const int rev0 = c.elementsRevision(), geo0 = c.geometryRevision(), ink0 = c.inkRevision();
+    const QString ink = c.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[{\"type\":\"freehand\",\"points\":[[0,0],[10,10]]}]}"),
+                                        QRectF(1000, 10, 50, 40));
+    CHECK(!ink.isEmpty() && c.elementCount() == 2 && c.elementKind(ink) == QLatin1String("ink") && c.elementRect(ink) == QRectF(1000, 10, 50, 40)
+              && c.elementZ(ink) == 1 && c.canUndo() && !c.canRedo() && c.dirty(),
+          "addInkElement: one entry, z above the page, dirty");
+    CHECK(c.elementsRevision() == rev0 + 1 && c.geometryRevision() == geo0 + 1 && c.inkRevision() == ink0 + 1, "set + geometry + ink revisions bumped");
+    c.undo();
+    CHECK(c.elementCount() == 1 && !c.element(ink) && !c.canUndo() && c.canRedo(), "undo removes it; redo available");
+    c.redo();
+    CHECK(c.elementCount() == 2 && c.element(ink) && c.elementRect(ink) == QRectF(1000, 10, 50, 40) && c.elementIdAt(1) == ink,
+          "redo re-inserts it with the same id and rect");
+
+    // A drag coalesces into ONE entry.
+    const int histBefore = c.undoHistory().size();
+    c.setElementRect(ink, QRectF(1010, 10, 50, 40), QStringLiteral("move:") + ink);
+    c.setElementRect(ink, QRectF(1020, 10, 50, 40), QStringLiteral("move:") + ink);
+    c.setElementRect(ink, QRectF(1030, 12, 50, 40), QStringLiteral("move:") + ink);
+    CHECK(c.undoHistory().size() == histBefore + 1 && c.elementRect(ink) == QRectF(1030, 12, 50, 40), "three coalesced moves = one history row");
+    CHECK(c.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QLatin1String("Move ink")
+              && c.undoHistory().last().toMap().value(QStringLiteral("current")).toBool(),
+          "…labelled Move ink, current (%s)", qPrintable(c.undoHistory().last().toMap().value(QStringLiteral("label")).toString()));
+    c.undo();
+    CHECK(c.elementRect(ink) == QRectF(1000, 10, 50, 40), "one undo returns to the pre-drag rect");
+    c.redo();
+    c.setElementRect(ink, QRectF(1030, 12, 80, 60), QStringLiteral("resize:") + ink);
+    CHECK(c.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QLatin1String("Resize ink"), "a size change is labelled Resize");
+    // A different key after a redo-less run still starts a NEW entry; the same key after an undo never folds into a parent.
+    c.undo();
+    c.setElementRect(ink, QRectF(1040, 12, 50, 40), QStringLiteral("move:") + ink);
+    CHECK(!c.canRedo() && c.undoHistory().size() == histBefore + 2, "a mutation after undo starts a new branch (redo gone)");
+
+    // JSON edits: ink → inkRevision; coalesced by key.
+    const int inkRev = c.inkRevision();
+    c.setElementJson(ink, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}"), QStringLiteral("ink:") + ink);
+    c.setElementJson(ink, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[{\"type\":\"line\",\"points\":[[1,1],[2,2]]}]}"), QStringLiteral("ink:") + ink);
+    CHECK(c.inkRevision() == inkRev + 2 && c.undoHistory().size() == histBefore + 3, "two coalesced ink edits = one entry, two ink revisions");
+    c.undo();
+    CHECK(c.elementJson(ink).contains(QStringLiteral("freehand")), "undo restores the pre-run JSON");
+    c.redo();
+
+    // Z order + removal of a non-page element.
+    const QString shape = c.addShapeElement(QStringLiteral("{\"shape\":\"rect\"}"), QRectF(0, 900, 100, 100));
+    CHECK(c.elementZ(shape) == 2 && c.elementIdAt(2) == shape, "a new element lands on top");
+    CHECK(c.bringToFront(ink) && c.elementZ(ink) == 3 && c.elementIdAt(2) == ink, "bringToFront reorders the mirror");
+    CHECK(c.visibleElements(-10, -10, 2000, 100).contains(ink) && !c.visibleElements(-10, -10, 2000, 100).contains(shape)
+              && c.canvasBounds().bottom() >= 1000 && c.canvasBounds().right() >= 1090,
+          "visibleElements culls by rect; canvasBounds unites");
+    CHECK(c.removeElement(shape) && !c.element(shape) && c.elementCount() == 2, "removeElement drops a shape");
+    c.undo();
+    CHECK(c.element(shape) && c.elementRect(shape) == QRectF(0, 900, 100, 100) && c.elementJson(shape) == QLatin1String("{\"shape\":\"rect\"}") && c.elementZ(shape) == 2,
+          "undo brings it back verbatim");
+
+    // Media element ink: lives under json.ink[page]; bumps inkRevision; "" clears.
+    const QString media = c.addMediaElement(QStringLiteral("{\"kind\":\"image\",\"src\":\"x.png\",\"w\":100,\"h\":80}"), QRectF(500, 900, 100, 80));
+    const int inkRev2 = c.inkRevision();
+    CHECK(c.setMediaElementInk(media, 0, QStringLiteral("{\"shapes\":[{\"type\":\"line\",\"points\":[[0.1,0.1],[0.9,0.9]]}]}"))
+              && c.mediaElementInk(media, 0).contains(QStringLiteral("line")) && c.inkRevision() == inkRev2 + 1,
+          "media element ink sets under json.ink[0] and bumps inkRevision");
+    CHECK(c.setMediaElementInk(media, 0, QString()) && c.mediaElementInk(media, 0).isEmpty() && !c.elementJson(media).contains(QStringLiteral("\"ink\"")),
+          "clearing removes the key");
+    c.undo();
+    CHECK(c.mediaElementInk(media, 0).contains(QStringLiteral("line")), "undo restores the ink");
+
+    // Pages: add (one entry) → edit → remove → undo restores the blocks verbatim.
+    const int pagesRev = c.pagesRevision();
+    const QString p2 = c.addPage();
+    CHECK(c.pageIds() == (QStringList{ p1, p2 }) && c.pagesRevision() == pagesRev + 1
+              && c.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QLatin1String("Add page"),
+          "addPage is one labelled entry");
+    BlockModel* m2 = c.pageModel(p2);
+    m2->setContent(0, QStringLiteral("alpha"));
+    m2->insertBlock(1);
+    m2->setContent(1, QStringLiteral("beta"));
+    const QString b0 = m2->idForRow(0), b1 = m2->idForRow(1);
+    c.setFocusPage(p2);
+    CHECK(c.removePage(p2) && c.pageIds() == (QStringList{ p1 }) && c.focusPage() == p1 && !m2->documentOpen() && c.db().count() == 1,
+          "removePage: the page, its model and its rows are gone; focus fell back");
+    c.undo();
+    CHECK(c.pageIds() == (QStringList{ p1, p2 }) && c.db().scoped(p2).count() == 2, "undo re-inserts the page with its two rows");
+    BlockModel* m2b = c.pageModel(p2);
+    CHECK(m2b && m2b != m2 && m2b->rowCountQml() == 2 && m2b->idForRow(0) == b0 && m2b->idForRow(1) == b1
+              && m2b->contentForRow(0) == QLatin1String("alpha") && m2b->contentForRow(1) == QLatin1String("beta") && !m2b->canUndo(),
+          "…a fresh model reloads them verbatim (same ids; the page's own history is gone)");
+    c.redo();
+    CHECK(c.pageIds() == (QStringList{ p1 }) && !m2b->documentOpen(), "redo removes it again");
+    c.undo();
+    c.undo();   // undo the Add page too
+    CHECK(c.pageIds() == (QStringList{ p1 }) && c.canRedo(), "undoing Add page removes it");
+    // Jump to the baseline and back: the whole log replays.
+    c.undoJumpTo(-1);
+    CHECK(c.elementCount() == 1 && c.pageIds() == (QStringList{ p1 }) && !c.canUndo(), "undoJumpTo(-1) is the fresh canvas");
+    const QVariantList hist = c.undoHistory();
+    CHECK(hist.first().toMap().value(QStringLiteral("current")).toBool() && hist.last().toMap().value(QStringLiteral("future")).toBool(),
+          "history: baseline current, the rest future (%d rows)", int(hist.size()));
+    c.undoJumpTo(hist.last().toMap().value(QStringLiteral("idx")).toInt());
+    CHECK(c.pageIds() == (QStringList{ p1 }) && c.elementCount() == 4 && c.element(ink) && c.element(shape) && c.element(media) && !c.canRedo(),
+          "jumping to the newest state replays everything: page + ink + shape + media, the page removal redone (%d elements)", c.elementCount());
+    // Persistence: elements survive; the log does not.
+    const QString path = dir.path() + QStringLiteral("/undo.mnd");
+    CHECK(c.saveAs(path), "saved");
+    CanvasDocument c2;
+    CHECK(c2.open(path) && c2.elementCount() == 4 && !c2.canUndo() && c2.elementRect(ink) == c.elementRect(ink) && c2.elementJson(media) == c.elementJson(media),
+          "reopened: the elements persisted, the log is fresh");
+    CHECK(!c2.setElementRect(QStringLiteral("nope"), QRectF()) && !c2.removeElement(QStringLiteral("nope")) && !c2.setMediaElementInk(ink, 0, QString()),
+          "mutators refuse unknown ids / wrong kinds");
+    CHECK(c2.setElementRect(p1, QRectF(0, 0, 100, 10)) && c2.elementRect(p1).width() == CanvasDocument::kMinPageMeasure + 2 * CanvasDocument::kPageInset,
+          "a page's measure is clamped to the readable minimum (%g)", c2.elementRect(p1).width());
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8227,6 +8345,7 @@ int main(int argc, char** argv) {
     testPageScoping();
     testCanvasDocument();
     testConverter();
+    testCanvasUndo();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

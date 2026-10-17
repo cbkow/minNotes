@@ -8,7 +8,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QVariantMap>
+#include <algorithm>
 #include <QPointer>
 #include <QStandardPaths>
 #include <QUrl>
@@ -146,6 +149,7 @@ bool CanvasDocument::acceptOpenedFormat() {
 void CanvasDocument::ensurePages() {
     db_.begin();
     db_.ensureCanvasSchema();
+    reloadElements();
     if (pageIds().isEmpty()) {
         Document::Element p;
         p.id = makeUlid();
@@ -155,6 +159,7 @@ void CanvasDocument::ensurePages() {
         if (db_.canvasMeta(QStringLiteral("focusPage")).isEmpty())
             db_.setCanvasMeta(QStringLiteral("focusPage"), p.id);
     }
+    reloadElements();
     db_.assignOrphanBlocks(firstPageId());
     db_.commit();
 }
@@ -162,6 +167,8 @@ void CanvasDocument::ensurePages() {
 void CanvasDocument::finishOpen() {
     ensurePages();
     if (readOnly_) mn::convertV1(*this, firstPageId(), report_);
+    reloadElements();
+    clearUndo();
 }
 
 bool CanvasDocument::loadFile(const QString& path, bool untitled) {
@@ -283,6 +290,7 @@ bool CanvasDocument::newCanvas() {
     db_.begin();
     seedPage(page);
     db_.commit();
+    clearUndo();                     // a fresh canvas has no history
     focusPage_ = page;
     dirty_ = false;                  // a pristine empty file isn't dirty (still untitled)
     setSaveState(SaveClean);
@@ -321,6 +329,9 @@ void CanvasDocument::closeCanvas() {
     const bool wasOpen = db_.isOpen();
     detachAllPages();
     db_.close();
+    elements_.clear();
+    indexById_.clear();
+    clearUndo();
     cleanupScratch();            // working copy is ephemeral — discard it on close
     mediaStore_.reset();
     docPath_.clear();
@@ -459,25 +470,29 @@ bool CanvasDocument::snapshotTo(const QString& path) {
 
 QStringList CanvasDocument::pageIds() const {
     QStringList out;
-    if (!db_.isOpen()) return out;
-    for (const Document::Element& e : db_.allElements())
+    for (const Document::Element& e : elements_)
         if (e.kind == QLatin1String("page")) out << e.id;
     return out;
 }
 
 QString CanvasDocument::firstPageId() const {
-    const QStringList ids = pageIds();
-    return ids.isEmpty() ? QString() : ids.first();
+    for (const Document::Element& e : elements_)
+        if (e.kind == QLatin1String("page")) return e.id;
+    return QString();
+}
+
+int CanvasDocument::nextZ() const {
+    int z = 0;
+    for (const Document::Element& e : elements_) z = std::max(z, e.z + 1);
+    return z;
 }
 
 QString CanvasDocument::insertPageElement() {
     double right = 0.0;
-    int z = 0;
     bool any = false;
-    for (const Document::Element& e : db_.allElements()) {
+    for (const Document::Element& e : elements_) {
         if (e.kind != QLatin1String("page")) continue;
         right = any ? std::max(right, e.x + e.w) : e.x + e.w;
-        z = std::max(z, e.z + 1);
         any = true;
     }
     Document::Element p;
@@ -487,7 +502,7 @@ QString CanvasDocument::insertPageElement() {
     p.y = 0.0;
     p.w = kDefaultMeasure + 2.0 * kPageInset;
     p.h = 0.0;
-    p.z = z;
+    p.z = nextZ();
     db_.insertElement(p);
     return p.id;
 }
@@ -505,9 +520,13 @@ QString CanvasDocument::addPage() {
     const QString id = insertPageElement();
     seedPage(id);
     db_.commit();
-    markDirty();
-    ++pagesRevision_;
-    emit pagesChanged();
+    reloadElements();
+    UndoEntry e;
+    e.id = id;
+    e.after = snapshot(id, /*withBlocks*/true);
+    e.label = tr("Add page");
+    pushEntry(std::move(e), QString());
+    noteChanged(QStringLiteral("page"), true, true, false);
     return id;
 }
 
@@ -515,18 +534,13 @@ bool CanvasDocument::removePage(const QString& id) {
     if (!db_.isOpen()) return false;
     const QStringList ids = pageIds();
     if (ids.size() <= 1 || !ids.contains(id)) return false;   // a canvas always keeps one page
-    if (BlockModel* m = pages_.value(id, nullptr)) {
-        m->detachPage();                                        // erases itself from pages_
-        if (m->parent() == this) m->deleteLater();
-    }
-    db_.deleteElement(id);                                      // the page's blocks cascade
-    if (focusPage_ == id) {
-        focusPage_ = firstPageId();
-        emit focusChanged();
-    }
-    markDirty();
-    ++pagesRevision_;
-    emit pagesChanged();
+    UndoEntry e;
+    e.id = id;
+    e.before = snapshot(id, /*withBlocks*/true);
+    e.label = tr("Remove page");
+    applySnap(id, ElementSnap{});
+    pushEntry(std::move(e), QString());
+    noteChanged(QStringLiteral("page"), true, true, false);
     return true;
 }
 
@@ -551,7 +565,7 @@ QString CanvasDocument::pageTitle(const QString& id) const {
 BlockModel* CanvasDocument::pageModel(const QString& id) {
     if (!db_.isOpen() || id.isEmpty()) return nullptr;
     if (BlockModel* m = pages_.value(id, nullptr)) return m;
-    const auto e = db_.element(id);
+    const auto e = element(id);
     if (!e || e->kind != QLatin1String("page")) return nullptr;
     auto* m = new BlockModel(this);
     m->attachPage(this, id);   // registers itself via adoptPageModel
@@ -583,4 +597,374 @@ QString CanvasDocument::focusedPageId() const {
 
 BlockModel* CanvasDocument::focusedModel() {
     return pageModel(focusedPageId());
+}
+
+// ---------------------------------------------------------------------------
+// Elements: the mirror
+
+void CanvasDocument::reloadElements() {
+    elements_ = db_.isOpen() ? db_.allElements() : std::vector<Document::Element>{};
+    indexById_.clear();
+    for (int i = 0; i < static_cast<int>(elements_.size()); ++i) indexById_.insert(elements_[size_t(i)].id, i);
+}
+
+std::optional<Document::Element> CanvasDocument::element(const QString& id) const {
+    const int i = indexById_.value(id, -1);
+    if (i < 0) return std::nullopt;
+    return elements_[size_t(i)];
+}
+
+QString CanvasDocument::elementIdAt(int i) const {
+    return i >= 0 && i < static_cast<int>(elements_.size()) ? elements_[size_t(i)].id : QString();
+}
+QString CanvasDocument::elementKind(const QString& id) const { const auto e = element(id); return e ? e->kind : QString(); }
+QRectF CanvasDocument::elementRect(const QString& id) const { const auto e = element(id); return e ? QRectF(e->x, e->y, e->w, e->h) : QRectF(); }
+QString CanvasDocument::elementJson(const QString& id) const { const auto e = element(id); return e ? e->json : QString(); }
+int CanvasDocument::elementZ(const QString& id) const { const auto e = element(id); return e ? e->z : 0; }
+
+QStringList CanvasDocument::visibleElements(qreal x0, qreal y0, qreal x1, qreal y1) const {
+    const QRectF view(QPointF(std::min(x0, x1), std::min(y0, y1)), QPointF(std::max(x0, x1), std::max(y0, y1)));
+    QStringList out;
+    for (const Document::Element& e : elements_)
+        if (QRectF(e.x, e.y, e.w, e.h).intersects(view)) out << e.id;
+    return out;
+}
+
+QRectF CanvasDocument::canvasBounds() const {
+    QRectF b;
+    for (const Document::Element& e : elements_) {
+        const QRectF r(e.x, e.y, e.w, e.h);
+        b = b.isNull() ? r : b.united(r);
+    }
+    return b;
+}
+
+QString CanvasDocument::mediaElementInk(const QString& id, int page) const {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return QString();
+    const QJsonObject ink = QJsonDocument::fromJson(e->json.toUtf8()).object().value(QStringLiteral("ink")).toObject();
+    const QJsonValue v = ink.value(QString::number(page));
+    return v.isObject() ? QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)) : QString();
+}
+
+// ---------------------------------------------------------------------------
+// Elements: mutators
+
+namespace {
+QString kindLabel(const QString& kind) {
+    if (kind == QLatin1String("page")) return CanvasDocument::tr("page");
+    if (kind == QLatin1String("media")) return CanvasDocument::tr("media");
+    if (kind == QLatin1String("ink")) return CanvasDocument::tr("ink");
+    if (kind == QLatin1String("shape")) return CanvasDocument::tr("shape");
+    if (kind == QLatin1String("connector")) return CanvasDocument::tr("connector");
+    return kind;
+}
+}
+
+void CanvasDocument::noteChanged(const QString& kind, bool set, bool geometry, bool ink) {
+    markDirty();
+    if (set) { ++elementsRevision_; emit elementsChanged(); }
+    if (geometry) { ++geometryRevision_; emit geometryChanged(); }
+    if (ink) { ++inkRevision_; emit inkChanged(); }
+    if (kind == QLatin1String("page") && set) { ++pagesRevision_; emit pagesChanged(); }
+}
+
+QString CanvasDocument::addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label) {
+    if (!db_.isOpen()) return QString();
+    Document::Element e;
+    e.id = makeUlid();
+    e.kind = kind;
+    e.x = r.x(); e.y = r.y(); e.w = r.width(); e.h = r.height();
+    e.z = nextZ();
+    e.json = json.isEmpty() ? QStringLiteral("{}") : json;
+    db_.begin();
+    db_.insertElement(e);
+    db_.commit();
+    reloadElements();
+    UndoEntry u;
+    u.id = e.id;
+    u.after = snapshot(e.id, false);
+    u.label = label;
+    pushEntry(std::move(u), QString());
+    noteChanged(kind, true, true, kind == QLatin1String("ink"));
+    return e.id;
+}
+
+QString CanvasDocument::addMediaElement(const QString& mediaDescriptorJson, const QRectF& rect) {
+    QJsonObject o;
+    o.insert(QStringLiteral("media"), QJsonDocument::fromJson(mediaDescriptorJson.toUtf8()).object());
+    return addElement(QStringLiteral("media"), rect, QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)), tr("Add media"));
+}
+QString CanvasDocument::addInkElement(const QString& inkJson, const QRectF& rect) {
+    return addElement(QStringLiteral("ink"), rect, inkJson, tr("Draw"));
+}
+QString CanvasDocument::addShapeElement(const QString& shapeJson, const QRectF& rect) {
+    return addElement(QStringLiteral("shape"), rect, shapeJson, tr("Add shape"));
+}
+QString CanvasDocument::addConnector(const QString& connectorJson) {
+    return addElement(QStringLiteral("connector"), QRectF(), connectorJson, tr("Connect"));
+}
+
+bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, const QString& coalesce) {
+    const auto cur = element(id);
+    if (!cur) return false;
+    QRectF rect = rectIn;
+    if (cur->kind == QLatin1String("page")) {   // a page's measure stays readable: [400, 4000] + the insets
+        rect.setWidth(std::clamp(rect.width(), kMinPageMeasure + 2.0 * kPageInset, kMaxPageMeasure + 2.0 * kPageInset));
+        rect.setHeight(std::max(rect.height(), 2.0 * kPageInset));
+    }
+    if (QRectF(cur->x, cur->y, cur->w, cur->h) == rect) return true;
+    UndoEntry u;
+    u.id = id;
+    u.before = snapshot(id, false);
+    const bool resize = std::abs(rect.width() - cur->w) > 0.01 || std::abs(rect.height() - cur->h) > 0.01;
+    u.label = (resize ? tr("Resize %1") : tr("Move %1")).arg(kindLabel(cur->kind));
+    db_.updateElementRect(id, rect.x(), rect.y(), rect.width(), rect.height());
+    reloadElements();
+    u.after = snapshot(id, false);
+    pushEntry(std::move(u), coalesce);
+    noteChanged(cur->kind, false, true, false);
+    return true;
+}
+
+bool CanvasDocument::setElementJson(const QString& id, const QString& json, const QString& coalesce) {
+    const auto cur = element(id);
+    if (!cur) return false;
+    const QString next = json.isEmpty() ? QStringLiteral("{}") : json;
+    if (cur->json == next) return true;
+    UndoEntry u;
+    u.id = id;
+    u.before = snapshot(id, false);
+    u.label = cur->kind == QLatin1String("ink") ? tr("Edit ink") : tr("Edit %1").arg(kindLabel(cur->kind));
+    db_.updateElementJson(id, next);
+    reloadElements();
+    u.after = snapshot(id, false);
+    pushEntry(std::move(u), coalesce);
+    const bool ink = cur->kind == QLatin1String("ink")
+                  || (cur->kind == QLatin1String("media")
+                      && QJsonDocument::fromJson(cur->json.toUtf8()).object().value(QStringLiteral("ink"))
+                             != QJsonDocument::fromJson(next.toUtf8()).object().value(QStringLiteral("ink")));
+    noteChanged(cur->kind, true, false, ink);
+    return true;
+}
+
+bool CanvasDocument::setElementZ(const QString& id, int z) {
+    const auto cur = element(id);
+    if (!cur) return false;
+    if (cur->z == z) return true;
+    UndoEntry u;
+    u.id = id;
+    u.before = snapshot(id, false);
+    u.label = tr("Reorder %1").arg(kindLabel(cur->kind));
+    db_.updateElementZ(id, z);
+    reloadElements();
+    u.after = snapshot(id, false);
+    pushEntry(std::move(u), QString());
+    noteChanged(cur->kind, true, false, false);
+    return true;
+}
+
+bool CanvasDocument::bringToFront(const QString& id) {
+    const auto cur = element(id);
+    if (!cur) return false;
+    const int top = nextZ() - 1;
+    return cur->z == top ? true : setElementZ(id, top + 1);
+}
+
+bool CanvasDocument::removeElement(const QString& id) {
+    const auto cur = element(id);
+    if (!cur) return false;
+    if (cur->kind == QLatin1String("page")) return removePage(id);
+    UndoEntry u;
+    u.id = id;
+    u.before = snapshot(id, false);
+    u.label = tr("Remove %1").arg(kindLabel(cur->kind));
+    applySnap(id, ElementSnap{});
+    pushEntry(std::move(u), QString());
+    noteChanged(cur->kind, true, true, cur->kind == QLatin1String("ink"));
+    return true;
+}
+
+bool CanvasDocument::setMediaElementInk(const QString& id, int page, const QString& envelope) {
+    const auto cur = element(id);
+    if (!cur || cur->kind != QLatin1String("media")) return false;
+    QJsonObject root = QJsonDocument::fromJson(cur->json.toUtf8()).object();
+    QJsonObject ink = root.value(QStringLiteral("ink")).toObject();
+    const QString key = QString::number(page);
+    const QJsonObject env = QJsonDocument::fromJson(envelope.toUtf8()).object();
+    const bool empty = envelope.isEmpty() || env.value(QStringLiteral("shapes")).toArray().isEmpty();
+    if (empty) ink.remove(key); else ink.insert(key, env);
+    if (ink.isEmpty()) root.remove(QStringLiteral("ink")); else root.insert(QStringLiteral("ink"), ink);
+    return setElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)), QString());
+}
+
+// ---------------------------------------------------------------------------
+// The canvas undo
+
+CanvasDocument::ElementSnap CanvasDocument::snapshot(const QString& id, bool withBlocks) const {
+    ElementSnap s;
+    const auto e = element(id);
+    if (!e) return s;
+    s.present = true;
+    s.el = *e;
+    if (withBlocks && e->kind == QLatin1String("page")) s.blocks = db_.rawBlocksOfPage(id);
+    return s;
+}
+
+void CanvasDocument::detachPageModel(const QString& id) {
+    if (BlockModel* m = pages_.value(id, nullptr)) {
+        m->detachPage();                                        // erases itself from pages_
+        if (m->parent() == this) m->deleteLater();
+    }
+}
+
+// Make the store match `s` for element `id`: absent → delete (a page's blocks cascade, its model
+// detaches); present → update in place, or re-insert with its raw blocks when it is gone.
+void CanvasDocument::applySnap(const QString& id, const ElementSnap& s) {
+    const auto cur = element(id);
+    db_.begin();
+    if (!s.present) {
+        if (cur) {
+            if (cur->kind == QLatin1String("page")) {
+                if (pageIds().size() <= 1) { db_.commit(); return; }   // never the last page
+                detachPageModel(id);
+            }
+            db_.deleteElement(id);
+        }
+    } else if (cur) {
+        if (cur->x != s.el.x || cur->y != s.el.y || cur->w != s.el.w || cur->h != s.el.h)
+            db_.updateElementRect(id, s.el.x, s.el.y, s.el.w, s.el.h);
+        if (cur->json != s.el.json) db_.updateElementJson(id, s.el.json);
+        if (cur->z != s.el.z) db_.updateElementZ(id, s.el.z);
+        if (cur->parentId != s.el.parentId) db_.updateElementParent(id, s.el.parentId);
+    } else {
+        db_.insertElement(s.el);
+        if (!s.blocks.empty()) db_.restoreRawBlocks(s.blocks);
+    }
+    db_.commit();
+    reloadElements();
+    if (!focusPage_.isEmpty() && !indexById_.contains(focusPage_)) {
+        focusPage_ = firstPageId();
+        emit focusChanged();
+    }
+}
+
+void CanvasDocument::pushEntry(UndoEntry e, const QString& coalesce) {
+    e.ts = QDateTime::currentMSecsSinceEpoch();
+    e.coalesce = coalesce;
+    // A live run (drag) folds into the current entry: same key, same element, nothing to redo —
+    // the entry keeps its `before`, takes the new `after` (BlockModel::endTxn's rule).
+    if (!coalesce.isEmpty() && undoCur_ >= 0 && !canRedo()) {
+        UndoEntry& prev = undo_[size_t(undoCur_)];
+        if (prev.coalesce == coalesce && prev.id == e.id) {
+            prev.after = std::move(e.after);
+            prev.label = e.label;
+            ++undoRev_;
+            emit undoStackChanged();
+            return;
+        }
+    }
+    e.parent = undoCur_;
+    undo_.push_back(std::move(e));
+    undoCur_ = static_cast<int>(undo_.size()) - 1;
+    ++undoRev_;
+    emit undoStackChanged();
+}
+
+bool CanvasDocument::canRedo() const {
+    for (int i = static_cast<int>(undo_.size()) - 1; i >= 0; --i)
+        if (undo_[size_t(i)].parent == undoCur_) return true;
+    return false;
+}
+
+void CanvasDocument::undo() {
+    if (undoCur_ < 0) return;
+    const UndoEntry e = undo_[size_t(undoCur_)];
+    applySnap(e.id, e.before);
+    undoCur_ = e.parent;
+    ++undoRev_;
+    emit undoStackChanged();
+    noteChanged(e.before.present ? e.before.el.kind : e.after.el.kind, true, true, true);
+}
+
+void CanvasDocument::redo() {
+    int child = -1;
+    for (int i = static_cast<int>(undo_.size()) - 1; i >= 0; --i)
+        if (undo_[size_t(i)].parent == undoCur_) { child = i; break; }
+    if (child < 0) return;
+    const UndoEntry e = undo_[size_t(child)];
+    applySnap(e.id, e.after);
+    undoCur_ = child;
+    ++undoRev_;
+    emit undoStackChanged();
+    noteChanged(e.after.present ? e.after.el.kind : e.before.el.kind, true, true, true);
+}
+
+void CanvasDocument::clearUndo() {
+    const bool had = !undo_.empty() || undoCur_ >= 0;
+    undo_.clear();
+    undoCur_ = -1;
+    if (had) { ++undoRev_; emit undoStackChanged(); }
+}
+
+QVariantList CanvasDocument::undoHistory() const {
+    std::vector<int> path;
+    for (int n = undoCur_; n >= 0; n = undo_[size_t(n)].parent) path.push_back(n);
+    std::reverse(path.begin(), path.end());
+    for (int n = undoCur_;;) {
+        int child = -1;
+        for (int i = static_cast<int>(undo_.size()) - 1; i >= 0; --i)
+            if (undo_[size_t(i)].parent == n) { child = i; break; }
+        if (child < 0) break;
+        path.push_back(child);
+        n = child;
+    }
+    QVariantList out;
+    constexpr size_t kMax = 200;
+    size_t first = 0;
+    if (path.size() > kMax) {
+        first = path.size() - kMax;
+        QVariantMap m;
+        m.insert(QStringLiteral("idx"), -2);
+        m.insert(QStringLiteral("label"), tr("… %1 earlier steps").arg(qint64(first)));
+        m.insert(QStringLiteral("ts"), 0);
+        m.insert(QStringLiteral("current"), false);
+        m.insert(QStringLiteral("future"), false);
+        out.push_back(m);
+    } else {
+        QVariantMap m;
+        m.insert(QStringLiteral("idx"), -1);
+        m.insert(QStringLiteral("label"), tr("Opened"));
+        m.insert(QStringLiteral("ts"), 0);
+        m.insert(QStringLiteral("current"), undoCur_ == -1);
+        m.insert(QStringLiteral("future"), false);
+        out.push_back(m);
+    }
+    bool past = undoCur_ >= 0;
+    for (size_t i = first; i < path.size(); ++i) {
+        const int idx = path[i];
+        const UndoEntry& e = undo_[size_t(idx)];
+        QVariantMap m;
+        m.insert(QStringLiteral("idx"), idx);
+        m.insert(QStringLiteral("label"), e.label);
+        m.insert(QStringLiteral("ts"), e.ts);
+        const bool cur = idx == undoCur_;
+        m.insert(QStringLiteral("current"), cur);
+        m.insert(QStringLiteral("future"), !past && !cur);
+        if (cur) past = false;
+        out.push_back(m);
+    }
+    return out;
+}
+
+void CanvasDocument::undoJumpTo(int target) {
+    if (target == undoCur_ || target < -1 || target >= static_cast<int>(undo_.size())) return;
+    int n = undoCur_;
+    while (n >= 0 && n != target) n = undo_[size_t(n)].parent;
+    if (n == target) {
+        while (undoCur_ != target) undo();
+        return;
+    }
+    int prev = -2;
+    while (undoCur_ != target && undoCur_ != prev) { prev = undoCur_; redo(); }
 }
