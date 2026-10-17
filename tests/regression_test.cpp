@@ -6373,6 +6373,34 @@ static void testInkTessellate() {
     }
 }
 
+static void testMediaInkMove() {
+    qInfo("[115] media ink (2.0 stage 1): page ink on any media kind; a 1.0 file's frame-space margin ink moves into the media block's JSON at load");
+    const QString path = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
+    BlockModel m;
+    CHECK(m.openDocument(path), "the v1 fixture opens");
+    int img = -1, pdfInked = -1, pdfPlain = -1, textInk = -1;
+    for (int r = 0; r < m.rowCountQml(); ++r) {
+        if (m.typeForRow(r) == BlockModel::Media && m.mediaKind(r) == QLatin1String("image")) img = r;
+        if (m.typeForRow(r) == BlockModel::Media && m.mediaKind(r) == QLatin1String("pdf")) { if (pdfInked < 0) pdfInked = r; else pdfPlain = r; }
+        if (textInk < 0 && m.typeForRow(r) == BlockModel::Paragraph && !m.inkForRow(r).isEmpty()) textInk = r;
+    }
+    auto shapeCount = [](const QString& env) { return QJsonDocument::fromJson(env.toUtf8()).object().value(QStringLiteral("shapes")).toArray().size(); };
+    CHECK(img >= 0 && shapeCount(m.mediaPageInk(img, 0)) == 1 && m.inkForRow(img).isEmpty(),
+          "the image's frame-space margin ink became its page-0 media ink and left the ink table (row %d)", img);
+    CHECK(pdfInked >= 0 && shapeCount(m.mediaPageInk(pdfInked, 0)) == 1 && pdfPlain >= 0 && m.mediaPageInk(pdfPlain, 0).isEmpty(),
+          "PDF page ink reads through the media API; the plain PDF has none");
+    CHECK(textInk >= 0, "text-anchored margin ink is untouched by the move (row %d)", textInk);
+    // Page ink on an IMAGE is undoable content like a PDF page's.
+    m.setMediaPageInk(img, 0, QStringLiteral("{\"shapes\":[]}"));
+    CHECK(m.mediaPageInk(img, 0).isEmpty(), "clearing an image's page ink drops the key");
+    m.undo();
+    CHECK(shapeCount(m.mediaPageInk(img, 0)) == 1, "…and undo restores it");
+    CHECK(m.mediaPageInk(0, 0).isEmpty(), "a text row has no media ink");
+    // The fixture's original on disk is untouched (the move happens in the working copy).
+    BlockModel again;
+    CHECK(again.openDocument(path) && shapeCount(again.mediaPageInk(img, 0)) == 1, "reopening the untouched original moves it again");
+}
+
 static void testTableModel() {
     qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
     auto fresh = [](BlockModel& m) {
@@ -8677,6 +8705,7 @@ int main(int argc, char** argv) {
     testCanvasLayout();
     testCanvasCamera();
     testInkTessellate();
+    testMediaInkMove();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

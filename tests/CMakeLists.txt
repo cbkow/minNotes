@@ -71,6 +71,7 @@ target_include_directories(mn_regression_test PRIVATE
 # derivation matches the app (assertions stay font-relative regardless).
 target_compile_definitions(mn_regression_test PRIVATE
     MN_FONTS_DIR="${CMAKE_SOURCE_DIR}/app/qml/MinNotes/App/fonts"
+    MN_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
     # Source root: the streaming test finds the vendored ffmpeg CLI with it.
     MN_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     MN_SPELL_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")

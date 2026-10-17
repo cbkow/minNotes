@@ -2912,6 +2912,42 @@ void BlockModel::loadFromStore() {
         }
         doc_.commit();
     }
+    // 2.0 Stage 1: a MEDIA block's frame-space margin ink (a 1.0 file's block_ink row with
+    // space "frame" — an inserted QCView note, an annotated image or PDF poster) moves INTO the
+    // block's descriptor as page-0 media ink, the home PDF page ink always had. One-off, at load,
+    // persisted to the working copy like the other normalizations (no undo, no dirty flag). Text-
+    // anchored ink is left in the table for the 2.0 converter (world ink) and is not read here.
+    if (doc_.isOpen()) {
+        const QHash<QString, QString> legacy = doc_.allInk();
+        bool began = false;
+        for (auto it = legacy.constBegin(); it != legacy.constEnd(); ++it) {
+            const int row = rowForId(it.key());
+            if (row < 0 || rows_[row].type != Media) continue;
+            const QJsonObject env = QJsonDocument::fromJson(it.value().toUtf8()).object();
+            if (env.value(QStringLiteral("space")).toString() != QLatin1String("frame")) continue;
+            QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+            QJsonObject ink = root.value(QStringLiteral("ink")).toObject();
+            if (!ink.contains(QStringLiteral("0"))) {   // never clobber page ink already there
+                QJsonObject page;
+                page.insert(QStringLiteral("version"), QStringLiteral("2.0"));
+                page.insert(QStringLiteral("coordinate_system"), QStringLiteral("normalized"));
+                const QJsonArray shapes = env.value(QStringLiteral("shapes")).toArray();
+                const QJsonArray texts = env.value(QStringLiteral("texts")).toArray();
+                if (!shapes.isEmpty()) page.insert(QStringLiteral("shapes"), shapes);
+                if (!texts.isEmpty()) page.insert(QStringLiteral("texts"), texts);
+                if (!shapes.isEmpty() || !texts.isEmpty()) {
+                    ink.insert(QStringLiteral("0"), page);
+                    root.insert(QStringLiteral("ink"), ink);
+                    content_[row] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+                    if (!began) { doc_.begin(); began = true; }
+                    doc_.updateContent(ids_[row], content_[row]);
+                }
+            }
+            if (!began) { doc_.begin(); began = true; }
+            doc_.deleteInk(it.key());
+        }
+        if (began) doc_.commit();
+    }
     // Margin ink: one SELECT for the whole doc. Guard against orphans (an ink
     // row whose block is gone — shouldn't happen with the FK cascade, but a
     // doc edited by a build predating v2 could in principle leave one).
@@ -5574,8 +5610,8 @@ int BlockModel::mediaPdfPages(int row) const {
                .object().value(QStringLiteral("pages")).toInt();
 }
 
-QString BlockModel::pdfPageInk(int row, int page) const {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return {};
+QString BlockModel::mediaPageInk(int row, int page) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return {};
     const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     const QJsonValue pageV = root.value(QStringLiteral("ink"))
                                  .toObject().value(QString::number(page));
@@ -5613,8 +5649,8 @@ void BlockModel::writePdfPageObject(int row, int page, QJsonObject pageObj) {
     endTxn();
 }
 
-void BlockModel::pdfSetPageInk(int row, int page, const QString& strokesJson) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+void BlockModel::setMediaPageInk(int row, int page, const QString& strokesJson) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
     const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     const QJsonObject prior = root.value(QStringLiteral("ink")).toObject()
                                   .value(QString::number(page)).toObject();
@@ -5643,7 +5679,7 @@ void BlockModel::pdfSetPageInk(int row, int page, const QString& strokesJson) {
 int BlockModel::pdfAddPageText(int row, int page, qreal x, qreal y, qreal w,
                                const QString& text, qreal size,
                                const QString& colorHex) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return -1;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return -1;
     if (page < 0 || text.trimmed().isEmpty() || size <= 0) return -1;
     const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     const double srcW = root.value(QStringLiteral("w")).toInt(612);
@@ -5664,7 +5700,7 @@ int BlockModel::pdfAddPageText(int row, int page, qreal x, qreal y, qreal w,
 }
 
 void BlockModel::pdfSetPageText(int row, int page, int idx, const QString& text) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
     QJsonObject pageObj = QJsonDocument::fromJson(content_[row].toUtf8()).object()
                               .value(QStringLiteral("ink")).toObject()
                               .value(QString::number(page)).toObject();
@@ -5684,7 +5720,7 @@ void BlockModel::pdfSetPageText(int row, int page, int idx, const QString& text)
 
 void BlockModel::pdfSetPageTextBox(int row, int page, int idx, qreal x, qreal y,
                                    qreal w, qreal size) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
     if (size <= 0) return;
     const QJsonObject root = QJsonDocument::fromJson(content_[row].toUtf8()).object();
     const double srcW = root.value(QStringLiteral("w")).toInt(612);
@@ -5703,7 +5739,7 @@ void BlockModel::pdfSetPageTextBox(int row, int page, int idx, qreal x, qreal y,
 }
 
 void BlockModel::pdfRemovePageText(int row, int page, int idx) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !rows_[row].isPdf) return;
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media) return;
     QJsonObject pageObj = QJsonDocument::fromJson(content_[row].toUtf8()).object()
                               .value(QStringLiteral("ink")).toObject()
                               .value(QString::number(page)).toObject();

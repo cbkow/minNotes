@@ -3,7 +3,6 @@
 #include "annotation_io.h"
 #include "annotation_serializer.h"
 #include "annotation_thumbnail.h"
-#include "doc_ink.h"
 #include "../core/BlockModel.h"
 #include "../core/MediaStore.h"
 #include "../player/timecode_formatter.h"
@@ -452,12 +451,8 @@ int insertNotes(BlockModel *bm, const std::vector<qcv::AnnotationNote> &notes,
                 row = r;
                 const std::vector<qcv::ActiveStroke> strokes =
                     qcv::AnnotationSerializer::jsonStringToStrokes(n.annotation_data);
-                if (!strokes.empty()) {
-                    mn::DocInkAnchor anchor;
-                    anchor.space = mn::DocInkAnchor::Frame;   // QCView's normalized stroke space, 1:1
-                    anchor.strokes = strokes;
-                    bm->setBlockInk(row, mn::docInkToJson(anchor));
-                }
+                if (!strokes.empty())   // the note's strokes stay VECTOR, as the image's page-0 media ink:
+                    bm->setMediaPageInk(row, 0, qcv::AnnotationSerializer::strokesToJsonString(strokes));   // QCView's normalized space, 1:1 with the sidecar
             }
         }
         // The caption: when (a stream) or where (a clip), then the text.

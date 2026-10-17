@@ -860,14 +860,16 @@ public:
     Q_INVOKABLE int insertVideoFromUrl(int afterRow, const QString& fileUrl);
     // PDF → inline page view (kind:"pdf", referenced in place).
     Q_INVOKABLE int insertPdfFromUrl(int afterRow, const QString& fileUrl);
-    // PDF page ink (2026-08-19): per-PAGE stroke overlays for kind:"pdf"
-    // media, stored in the block's content JSON under "ink" keyed by page
-    // index (the sketch storage precedent — document-owned, txn undo,
-    // cascades with the block, travels in .mnd/.mnpkg; the PDF file itself
-    // is never modified). Envelope per page = the engine's QCView schema
-    // {version, coordinate_system, shapes} exactly as sketchSetShapes keeps it.
-    Q_INVOKABLE QString pdfPageInk(int row, int page) const;   // "" = no ink on that page
-    Q_INVOKABLE void pdfSetPageInk(int row, int page, const QString& strokesJson);
+    // Media ink (2.0 Stage 1, generalising the 2026-08-19 PDF page ink): per-PAGE stroke overlays
+    // for ANY media block — a PDF's pages, an image's page 0 (a QCView note inserted from the
+    // video studio keeps its strokes here, 1:1 with the .qcview sidecar) — stored in the block's
+    // content JSON under "ink" keyed by page index (document-owned, txn undo, cascades with the
+    // block, travels in .mnd/.mnpkg; the media file itself is never modified). Envelope per page =
+    // the engine's QCView schema {version, coordinate_system:"normalized", shapes, texts}.
+    Q_INVOKABLE QString mediaPageInk(int row, int page) const;   // "" = no ink on that page
+    Q_INVOKABLE void setMediaPageInk(int row, int page, const QString& strokesJson);
+    Q_INVOKABLE QString pdfPageInk(int row, int page) const { return mediaPageInk(row, page); }   // the older names
+    Q_INVOKABLE void pdfSetPageInk(int row, int page, const QString& strokesJson) { setMediaPageInk(row, page, strokesJson); }
     // PDF page text chips (2026-08-20): the sketch text quartet applied to
     // one page's envelope ("ink" → page → "texts"). Same schema/rules —
     // 2em width floor, blank text deletes, unchanged text = no-op, one undo
