@@ -643,6 +643,17 @@ void Document::assignOrphanBlocks(const QString& pageId) {
         qWarning() << "Document assignOrphanBlocks failed:" << q.lastError().text();
 }
 
+QStringList Document::pagesMentioning(const QString& needle) const {
+    QStringList out;
+    if (!isOpen() || needle.isEmpty()) return out;
+    QSqlQuery q(db());
+    q.prepare("SELECT DISTINCT page_id FROM blocks WHERE page_id IS NOT NULL AND attrs LIKE ?");
+    q.addBindValue(QLatin1Char('%') + needle + QLatin1Char('%'));
+    if (!q.exec()) return out;
+    while (q.next()) out << q.value(0).toString();
+    return out;
+}
+
 QString Document::canvasMeta(const QString& key) const {
     if (!isOpen()) return {};
     QSqlQuery q(db());

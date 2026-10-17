@@ -23,6 +23,7 @@
 #include "sparkle_updater_macos.h"
 #include "core/BlockModel.h"
 #include "core/DocumentManager.h"
+#include "core/CanvasDocument.h"
 #include "core/Exporter.h"
 #include "core/Importer.h"
 #include "core/PackageExporter.h"
@@ -197,11 +198,18 @@ int main(int argc, char *argv[])
     // Keep `blockModel` pointed at the active tab's model so the existing ~530
     // QML bindings keep working unchanged; re-point it whenever the active tab
     // changes (activeModel() is never null — it falls back to the empty model).
+    // 2.0: `blockModel` is the active canvas's FOCUSED PAGE model and `canvas` the active canvas;
+    // activeModelChanged fires on a tab switch, a close, or a focus change inside the active canvas
+    // (only when the pointer actually moved — re-setting a context property re-evaluates everything).
     engine.rootContext()->setContextProperty("blockModel", docs.activeModel());
+    engine.rootContext()->setContextProperty("canvas", docs.activeCanvas());
     viewSlots.attach(docs.activeModel());   // A1: per-slot revisions follow the active model's row signals
-    QObject::connect(&docs, &DocumentManager::activeChanged, &engine, [&engine, &docs, &viewSlots] {
+    QObject::connect(&docs, &DocumentManager::activeModelChanged, &engine, [&engine, &docs, &viewSlots] {
         engine.rootContext()->setContextProperty("blockModel", docs.activeModel());
         viewSlots.attach(docs.activeModel());
+    });
+    QObject::connect(&docs, &DocumentManager::activeChanged, &engine, [&engine, &docs] {
+        engine.rootContext()->setContextProperty("canvas", docs.activeCanvas());
     });
     engine.rootContext()->setContextProperty("clipboard", &clipboard);
     engine.rootContext()->setContextProperty("appUpdater", &appUpdater);
@@ -211,7 +219,7 @@ int main(int argc, char *argv[])
     // same way `blockModel` does.
     Exporter exporter;
     exporter.setModel(docs.activeModel());
-    QObject::connect(&docs, &DocumentManager::activeChanged, &exporter, [&exporter, &docs] {
+    QObject::connect(&docs, &DocumentManager::activeModelChanged, &exporter, [&exporter, &docs] {
         exporter.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("exporter", &exporter);
@@ -220,24 +228,24 @@ int main(int argc, char *argv[])
     // opened first, so the import lands in the new active model.
     Importer importer;
     importer.setModel(docs.activeModel());
-    QObject::connect(&docs, &DocumentManager::activeChanged, &importer, [&importer, &docs] {
+    QObject::connect(&docs, &DocumentManager::activeModelChanged, &importer, [&importer, &docs] {
         importer.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("importer", &importer);
     // .mnpkg package export (File ▸ Export as Package…). Same model-following.
     PackageExporter packageExporter;
-    packageExporter.setModel(docs.activeModel());
+    packageExporter.setCanvas(docs.activeCanvas());   // packs the whole FILE: every page + media elements
     QObject::connect(&docs, &DocumentManager::activeChanged, &packageExporter,
                      [&packageExporter, &docs] {
-        packageExporter.setModel(docs.activeModel());
+        packageExporter.setCanvas(docs.activeCanvas());
     });
     engine.rootContext()->setContextProperty("packageExporter", &packageExporter);
     // Collect Media (Document ▸ Collect Media…). Same model-following.
     MediaCollector mediaCollector;
-    mediaCollector.setModel(docs.activeModel());
+    mediaCollector.setCanvas(docs.activeCanvas());
     QObject::connect(&docs, &DocumentManager::activeChanged, &mediaCollector,
                      [&mediaCollector, &docs] {
-        mediaCollector.setModel(docs.activeModel());
+        mediaCollector.setCanvas(docs.activeCanvas());
     });
     engine.rootContext()->setContextProperty("mediaCollector", &mediaCollector);
     // Tab merge (drag a tab onto another tab). Models are passed per call —
@@ -253,7 +261,7 @@ int main(int argc, char *argv[])
     // which runs before the models go — declared after `docs`).
     SpellService spell(QStringLiteral(MINNOTES_APP_VERSION));
     spell.setModel(docs.activeModel());
-    QObject::connect(&docs, &DocumentManager::activeChanged, &spell,
+    QObject::connect(&docs, &DocumentManager::activeModelChanged, &spell,
                      [&spell, &docs] { spell.setModel(docs.activeModel()); });
     engine.rootContext()->setContextProperty("spell", &spell);
     // Quit gate: QEvent::Quit (⌘Q / logout / last-window-closed) is vetoed in

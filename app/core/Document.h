@@ -1,6 +1,7 @@
 #pragma once
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -151,6 +152,8 @@ public:
     void restoreRawBlocks(const std::vector<RawBlock>& rows);
     // Re-home every block without a page (1.0 rows, converter) onto one page element.
     void assignOrphanBlocks(const QString& pageId);
+    // The distinct page ids whose blocks' attrs contain `needle` (a thread id: which pages anchor it).
+    QStringList pagesMentioning(const QString& needle) const;
 
     QString canvasMeta(const QString& key) const;        // "" when absent
     void setCanvasMeta(const QString& key, const QString& value);

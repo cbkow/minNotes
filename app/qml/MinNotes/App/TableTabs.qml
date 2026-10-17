@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 
-// Bottom tab strip — appears when the document contains a table or an inline PDF.
-// The first tab is always the whole Document; each table gets a "Table N" tab and
-// each PDF/video a tab labelled by its file name. Tabs are keyed by block id (so
-// the active tab follows its block across reorders) while the label/position is
-// derived live from current order.
+// Bottom tab strip (2.0): the FILE's views. "Canvas" first (the canvas itself: no page focused),
+// then one tab per PAGE (its title; the focused page's Document view), a "+" that adds a page, then
+// the focused page's frame tabs — each table gets a "Table N" tab and each PDF/video a tab labelled
+// by its file name. Frame tabs are keyed by block id (so the active tab follows its block across
+// reorders) while the label/position is derived live from current order.
 //
 // The strip is a SINGLE row that clips when it overflows; a menu button pinned at
 // the right opens a scrollable, sectioned popup (Tables / Videos / PDFs)
@@ -31,6 +31,14 @@ Rectangle {
     Rectangle { width: parent.width; height: 1; color: Theme.colors.border; z: 1 }
 
     function _select(id) { if (editor) editor.setActiveTab(id) }
+    // A page tab: focus the page FIRST (the manager re-points blockModel), then the Document view.
+    function _selectPage(id) { if (id === "") return; canvas.focusPage = id; _select("") }
+    function _addPage() { const id = canvas.addPage(); if (id !== "") _selectPage(id) }
+    function _pageLabel(id, index) {
+        var t = canvas.pageTitle(id)
+        if (t === "" || t === "Untitled page") return "Page " + (index + 1)
+        return t.length > 22 ? t.substring(0, 20) + "…" : t
+    }
 
     // Media tabs are labelled by file name (PDFs and videos alike). Truncate
     // in the MIDDLE: production filenames share long prefixes and differ at
@@ -104,15 +112,27 @@ Rectangle {
         Row {
             id: row
             anchors.left: parent.left; anchors.top: parent.top; height: parent.height
-            TabBtn {
-                label: "Document"
-                active: tabs.activeId === ""
-                onClicked: tabs._select("")
-            }
-            TabBtn {   // the canvas view (B3): the same document as cards on an infinite surface
+            TabBtn {   // the file's canvas: pages (and, later, media / ink) as elements on an infinite surface
                 label: "Canvas"
                 active: tabs.activeId === "canvas"
                 onClicked: tabs._select("canvas")
+            }
+            Repeater {   // one tab per page: the focused page's Document view
+                model: (canvas.pagesRevision, canvas.pageIds)
+                delegate: TabBtn {
+                    required property int index
+                    required property string modelData
+                    label: (canvas.pagesRevision, blockModel.contentRevision, tabs._pageLabel(modelData, index))
+                    tooltip: (canvas.pagesRevision, blockModel.contentRevision, canvas.pageTitle(modelData))
+                    active: tabs.activeId === "" && canvas.focusPage === modelData
+                    onClicked: tabs._selectPage(modelData)
+                }
+            }
+            TabBtn {   // add a page (lands focused, ready to type)
+                label: "+"
+                tooltip: "Add a page"
+                visible: canvas.documentOpen
+                onClicked: tabs._addPage()
             }
             Repeater {
                 model: tabs.ids
@@ -182,8 +202,10 @@ Rectangle {
     component MenuItem: Rectangle {
         property string label: ""
         property string tabId: ""
+        property string pageId: ""   // a page row: focus it, then the Document view
         width: menuCol.width; height: 28
-        readonly property bool active: tabs.activeId === tabId
+        readonly property bool active: pageId !== "" ? (tabs.activeId === "" && canvas.focusPage === pageId)
+                                                     : tabs.activeId === tabId
         color: itemMA.containsMouse ? Theme.colors.surfaceHover
              : (active ? Theme.colors.divider : "transparent")
         Text {
@@ -197,7 +219,7 @@ Rectangle {
         }
         MouseArea { id: itemMA; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: { tabs._select(parent.tabId); tabMenu.close() } }
+                    onClicked: { if (parent.pageId !== "") tabs._selectPage(parent.pageId); else tabs._select(parent.tabId); tabMenu.close() } }
     }
 
     Popup {
@@ -220,8 +242,16 @@ Rectangle {
             Column {
                 id: menuCol
                 width: flick.width
-                MenuItem { label: "Document"; tabId: "" }
                 MenuItem { label: "Canvas"; tabId: "canvas" }
+                SectionHeader { title: "Pages" }
+                Repeater {
+                    model: (canvas.pagesRevision, canvas.pageIds)
+                    delegate: MenuItem {
+                        required property int index
+                        required property string modelData
+                        label: (canvas.pagesRevision, blockModel.contentRevision, tabs._pageLabel(modelData, index)); pageId: modelData
+                    }
+                }
                 SectionHeader { visible: tabs.ids.length > 0; title: "Tables" }
                 Repeater {
                     model: tabs.ids

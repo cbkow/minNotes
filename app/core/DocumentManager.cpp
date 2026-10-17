@@ -2,17 +2,24 @@
 #include "../notes/VideoNotesModel.h"
 
 #include <QFileInfo>
-#include <QFileInfo>
 #include <QUrl>
 
 DocumentManager::DocumentManager(QObject* parent) : QObject(parent) {
-    // The no-document fallback: backs the welcome state so `blockModel` (which
-    // points here when there are no tabs) is never null.
+    // The no-document fallbacks: back the welcome state so `blockModel` and `canvas`
+    // (which point here when there are no tabs) are never null.
     empty_ = new BlockModel(this);
+    emptyCanvas_ = new CanvasDocument(this);
+    lastActive_ = empty_;
+}
+
+CanvasDocument* DocumentManager::activeCanvas() const {
+    if (active_ >= 0 && active_ < tabs_.size()) return tabs_[active_].canvas;
+    return emptyCanvas_;
 }
 
 BlockModel* DocumentManager::activeModel() const {
-    if (active_ >= 0 && active_ < tabs_.size()) return tabs_[active_].model;
+    if (active_ >= 0 && active_ < tabs_.size())
+        if (BlockModel* m = tabs_[active_].canvas->focusedModel()) return m;
     return empty_;
 }
 
@@ -20,7 +27,7 @@ QVariantList DocumentManager::models() const {
     QVariantList out;
     out.reserve(tabs_.size());
     for (const Tab& t : tabs_)
-        out << QVariant::fromValue(static_cast<QObject*>(t.model));
+        out << QVariant::fromValue(static_cast<QObject*>(t.canvas));
     return out;
 }
 
@@ -28,26 +35,40 @@ int DocumentManager::tabIdAt(int i) const {
     return (i >= 0 && i < tabs_.size()) ? tabs_[i].id : -1;
 }
 
-BlockModel* DocumentManager::modelForTabId(int tabId) const {
+CanvasDocument* DocumentManager::canvasForTabId(int tabId) const {
     for (const Tab& t : tabs_)
-        if (t.id == tabId) return t.model;
+        if (t.id == tabId) return t.canvas;
     return nullptr;
+}
+
+BlockModel* DocumentManager::modelForTabId(int tabId) const {
+    CanvasDocument* c = canvasForTabId(tabId);
+    return c ? c->focusedModel() : nullptr;
+}
+
+CanvasDocument* DocumentManager::canvasAt(int i) const {
+    return (i >= 0 && i < tabs_.size()) ? tabs_[i].canvas : nullptr;
+}
+
+BlockModel* DocumentManager::modelAt(int i) const {
+    CanvasDocument* c = canvasAt(i);
+    return c ? c->focusedModel() : nullptr;
 }
 
 int DocumentManager::dirtyCount() const {
     int n = 0;
-    for (const Tab& t : tabs_) if (t.model->dirty()) ++n;
+    for (const Tab& t : tabs_) if (t.canvas->dirty()) ++n;
     return n;
 }
 
 int DocumentManager::firstDirtyIndex() const {
-    for (int i = 0; i < tabs_.size(); ++i) if (tabs_[i].model->dirty()) return i;
+    for (int i = 0; i < tabs_.size(); ++i) if (tabs_[i].canvas->dirty()) return i;
     return -1;
 }
 
 bool DocumentManager::saveAllTitled() {
     for (const Tab& t : tabs_)
-        if (t.model->dirty() && !t.model->untitled()) t.model->save();
+        if (t.canvas->dirty() && !t.canvas->untitled()) t.canvas->save();
     return dirtyCount() == 0;   // untitled docs + unresolved conflicts can't be saved here
 }
 
@@ -62,21 +83,43 @@ QString DocumentManager::canonical(const QString& pathOrUrl) {
 int DocumentManager::indexOfPath(const QString& canonicalPath) const {
     if (canonicalPath.isEmpty()) return -1;
     for (int i = 0; i < tabs_.size(); ++i) {
-        const QString p = tabs_[i].model->documentPath();
+        const QString p = tabs_[i].canvas->documentPath();
         if (!p.isEmpty() && canonical(p) == canonicalPath) return i;
     }
     return -1;
 }
 
 void DocumentManager::refreshMedia() {
-    for (const Tab& t : tabs_) t.model->refreshMedia();
+    for (const Tab& t : tabs_) t.canvas->refreshMedia();
+}
+
+void DocumentManager::syncActiveModel() {
+    BlockModel* now = activeModel();
+    if (now == lastActive_) return;
+    lastActive_ = now;
+    emit activeModelChanged();
+}
+
+CanvasDocument* DocumentManager::makeCanvas() {
+    auto* c = new CanvasDocument(this);
+    connect(c, &CanvasDocument::dirtyChanged, this, &DocumentManager::dirtyCountChanged);
+    // A focus change inside the ACTIVE canvas re-points blockModel (page ↔ canvas, page → page);
+    // background canvases change focus silently.
+    connect(c, &CanvasDocument::focusChanged, this, [this, c] {
+        if (activeCanvas() != c) return;
+        const BlockModel* before = lastActive_;
+        syncActiveModel();
+        if (lastActive_ != before) emit activeFocusChanged();
+    });
+    // Pages added / removed can move the focused model too (a removed focus page falls back).
+    connect(c, &CanvasDocument::pagesChanged, this, [this, c] { if (activeCanvas() == c) syncActiveModel(); });
+    return c;
 }
 
 void DocumentManager::newTab() {
-    auto* m = new BlockModel(this);
-    connect(m, &BlockModel::dirtyChanged, this, &DocumentManager::dirtyCountChanged);
-    m->newDocument();
-    tabs_.append({ m, nextId_++, {} });
+    CanvasDocument* c = makeCanvas();
+    if (!c->newCanvas()) { delete c; return; }
+    tabs_.append({ c, nextId_++, {}, {} });
     emit tabsChanged();
     emit dirtyCountChanged();
     setActive(static_cast<int>(tabs_.size()) - 1);
@@ -88,14 +131,13 @@ bool DocumentManager::openTab(const QString& pathOrUrl) {
     const int existing = indexOfPath(canonical(pathOrUrl));
     if (existing >= 0) { setActive(existing); return true; }
 
-    auto* m = new BlockModel(this);
-    connect(m, &BlockModel::dirtyChanged, this, &DocumentManager::dirtyCountChanged);
-    if (!m->openDocument(pathOrUrl)) {
-        lastOpenError_ = m->lastOpenError();
-        delete m;
+    CanvasDocument* c = makeCanvas();
+    if (!c->open(pathOrUrl)) {
+        lastOpenError_ = c->lastOpenError();
+        delete c;
         return false;
     }
-    tabs_.append({ m, nextId_++, {} });
+    tabs_.append({ c, nextId_++, {}, {} });
     emit tabsChanged();
     emit dirtyCountChanged();
     setActive(static_cast<int>(tabs_.size()) - 1);
@@ -117,9 +159,10 @@ bool DocumentManager::openStreamFolder(const QString& dir) {
     if (fresh) {
         newTab();
         BlockModel* m = activeModel();
-        if (!m) return false;
+        CanvasDocument* c = activeCanvas();
+        if (!m || !c->documentOpen()) return false;
         const int n = VideoNotesModel::insertNotesFromDir(m, dir, 0);
-        if (!m->saveAs(docPath)) {
+        if (!c->saveAs(docPath)) {
             lastOpenError_ = tr("Could not create %1").arg(docPath);
             return false;
         }
@@ -139,8 +182,8 @@ QString DocumentManager::streamDirAt(int i) const {
 void DocumentManager::closeTab(int i) {
     if (i < 0 || i >= tabs_.size()) return;
     Tab t = tabs_.takeAt(i);
-    t.model->closeDocument();
-    t.model->deleteLater();
+    t.canvas->closeCanvas();
+    t.canvas->deleteLater();
 
     // Keep the active tab pointed at a sensible neighbour (or the welcome state).
     if (tabs_.isEmpty())      active_ = -1;
@@ -151,6 +194,7 @@ void DocumentManager::closeTab(int i) {
     emit tabsChanged();
     emit dirtyCountChanged();
     emit activeChanged();
+    syncActiveModel();
 }
 
 void DocumentManager::setActive(int i) {
@@ -160,6 +204,7 @@ void DocumentManager::setActive(int i) {
     if (next == active_) return;
     active_ = next;
     emit activeChanged();
+    syncActiveModel();
 }
 
 QVariantMap DocumentManager::viewState(int tabId) const {

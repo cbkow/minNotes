@@ -232,8 +232,7 @@ bool CanvasDocument::loadFile(const QString& path, bool untitled) {
             mediaStore_->setLazyNotify([self] {
                 if (self)
                     QMetaObject::invokeMethod(self, [self] {
-                        if (!self) return;
-                        for (BlockModel* m : self->pages_) m->refreshMedia();
+                        if (self) self->refreshMedia();
                     }, Qt::QueuedConnection);
             });
         }
@@ -331,6 +330,7 @@ void CanvasDocument::closeCanvas() {
     db_.close();
     elements_.clear();
     indexById_.clear();
+    titleCache_.clear();
     clearUndo();
     cleanupScratch();            // working copy is ephemeral — discard it on close
     mediaStore_.reset();
@@ -546,12 +546,18 @@ bool CanvasDocument::removePage(const QString& id) {
 
 QString CanvasDocument::pageTitle(const QString& id) const {
     if (!db_.isOpen()) return QString();
+    if (const BlockModel* m = pages_.value(id, nullptr)) {
+        const QString t = m->pageTitleHint();
+        return t.isEmpty() ? tr("Untitled page") : t;
+    }
+    const auto cached = titleCache_.constFind(id);
+    if (cached != titleCache_.constEnd()) return cached.value();
     const Document page = db_.scoped(id);
     QString firstText;
     for (const Document::BlockMeta& bm : page.skinnyScan()) {
         if (bm.type == QLatin1String("heading")) {
             const QString t = page.contentFor(bm.id).section(QLatin1Char('\n'), 0, 0).trimmed();
-            if (!t.isEmpty()) return t;
+            if (!t.isEmpty()) { firstText = t; break; }
         }
         if (firstText.isEmpty() && bm.type != QLatin1String("media") && bm.type != QLatin1String("split")
             && bm.type != QLatin1String("divider")) {
@@ -559,7 +565,9 @@ QString CanvasDocument::pageTitle(const QString& id) const {
             if (!t.isEmpty()) firstText = t.left(60);
         }
     }
-    return firstText.isEmpty() ? tr("Untitled page") : firstText;
+    const QString title = firstText.isEmpty() ? tr("Untitled page") : firstText;
+    titleCache_.insert(id, title);
+    return title;
 }
 
 BlockModel* CanvasDocument::pageModel(const QString& id) {
@@ -599,10 +607,37 @@ BlockModel* CanvasDocument::focusedModel() {
     return pageModel(focusedPageId());
 }
 
+void CanvasDocument::refreshMedia() {
+    for (BlockModel* m : pages_) m->refreshMedia();
+}
+
+int CanvasDocument::rewriteMediaElementSrcs(const QHash<QString, QString>& absToRel) {
+    if (!db_.isOpen() || !mediaStore_ || absToRel.isEmpty()) return 0;
+    int count = 0;
+    db_.begin();
+    for (const Document::Element& e : elements_) {
+        if (e.kind != QLatin1String("media")) continue;
+        QJsonObject root = QJsonDocument::fromJson(e.json.toUtf8()).object();
+        QJsonObject media = root.value(QStringLiteral("media")).toObject();
+        const QString url = mediaStore_->resolveUrl(media.value(QStringLiteral("src")));
+        if (url.isEmpty() || !url.startsWith(QLatin1String("file:"))) continue;
+        const auto it = absToRel.constFind(QDir::cleanPath(QUrl(url).toLocalFile()));
+        if (it == absToRel.constEnd()) continue;
+        media.insert(QStringLiteral("src"), it.value());
+        root.insert(QStringLiteral("media"), media);
+        db_.updateElementJson(e.id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+        ++count;
+    }
+    db_.commit();
+    if (count) { reloadElements(); noteChanged(QStringLiteral("media"), true, false, false); }
+    return count;
+}
+
 // ---------------------------------------------------------------------------
 // Elements: the mirror
 
 void CanvasDocument::reloadElements() {
+    titleCache_.clear();   // pages may have come or gone (undo of a removal restores rows)
     elements_ = db_.isOpen() ? db_.allElements() : std::vector<Document::Element>{};
     indexById_.clear();
     for (int i = 0; i < static_cast<int>(elements_.size()); ++i) indexById_.insert(elements_[size_t(i)].id, i);

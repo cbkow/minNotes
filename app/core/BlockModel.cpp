@@ -198,6 +198,26 @@ bool BlockModel::openDocument(const QString& pathOrUrl) {
     return true;
 }
 
+QString BlockModel::pageTitleHint() const {
+    QString firstText;
+    for (size_t i = 0; i < rows_.size(); ++i) {
+        const Row& r = rows_[i];
+        if (r.type == Media || r.type == Split || r.type == Divider) continue;
+        const QString& c = content_[i];
+        if (r.type == Heading) {
+            const QString t = c.section(QLatin1Char('\n'), 0, 0).trimmed();
+            if (!t.isEmpty()) return t;
+            continue;
+        }
+        if (firstText.isEmpty()) {
+            const QString t = c.section(QLatin1Char('\n'), 0, 0).trimmed();
+            if (!t.isEmpty()) firstText = t.left(60);
+            // keep scanning: a heading further down still wins
+        }
+    }
+    return firstText;
+}
+
 bool BlockModel::save()          { return canvas_ && canvas_->save(); }
 bool BlockModel::overwriteSave() { return canvas_ && canvas_->overwriteSave(); }
 bool BlockModel::saveAs(const QString& pathOrUrl) { return canvas_ && canvas_->saveAs(pathOrUrl); }
@@ -5291,6 +5311,14 @@ QVariantList BlockModel::commentThreads() const {
         m.insert(QStringLiteral("resolved"), t.resolved);
         m.insert(QStringLiteral("created"), t.created);
         const int row = threadAnchorRow(t.id);
+        // Threads are global to the FILE (2.0): one anchored in ANOTHER page is not this page's
+        // orphan — leave it to that page. A thread anchored nowhere lists on every page.
+        if (row < 0 && canvas_) {
+            bool elsewhere = false;
+            for (const QString& pid : canvas_->db().pagesMentioning(t.id))
+                if (pid != pageId_) { elsewhere = true; break; }
+            if (elsewhere) continue;
+        }
         m.insert(QStringLiteral("row"), row);              // -1 = orphaned ("Unanchored")
         QString excerpt;
         int col = 0;

@@ -120,7 +120,11 @@ public:
     void attachPage(CanvasDocument* canvas, const QString& pageId);
     void detachPage();
     CanvasDocument* canvas() const { return canvas_; }
-    QString pageId() const { return pageId_; }
+    Q_INVOKABLE QString pageId() const { return pageId_; }
+    // The page's title for the tab strip: the first heading's first line, else the first non-empty
+    // text line (≤ 60 chars), "" when the page is blank. In-memory, stops at the first heading — it
+    // is read on every keystroke by the strip's bindings, so it must never touch the store.
+    Q_INVOKABLE QString pageTitleHint() const;
     ~BlockModel() override;
     // Lexicographic fractional rank strictly between a and b (DESIGN §4).
     // Empty a = "before all", empty b = "after all". O(shared-prefix length).

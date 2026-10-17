@@ -916,6 +916,12 @@ ApplicationWindow {
         if (ed && docs.activeIndex >= 0)
             ed.restoreViewState(docs.viewState(docs.tabIdAt(docs.activeIndex)))
     }
+    // A focus change INSIDE the active canvas (page ↔ canvas, page → page) re-points blockModel
+    // (main.cpp, synchronously, before this fires) without a tab switch: a fresh page view.
+    Connections {
+        target: docs
+        function onActiveFocusChanged() { var ed = win._editor(); if (ed) ed.resetForPage() }
+    }
     function switchToTab(i) {
         if (i === docs.activeIndex) return
         var ed = win._editor()
@@ -982,11 +988,11 @@ ApplicationWindow {
         var srcModel = docs.modelForTabId(srcId)
         if (!srcModel) return
         if (hi >= 0 && docs.tabIdAt(hi) !== srcId) {
-            var destModel = docs.models[hi]
-            if (destModel === srcModel) return
+            var destModel = docs.modelAt(hi)   // that tab's focused PAGE model (merge is page → page)
+            if (!destModel || destModel === srcModel) return
             win._startMerge(srcModel, destModel, destModel.count)   // on a tab = at the end
         } else if (overEditor && gap >= 0) {
-            var dm = docs.models[docs.activeIndex]
+            var dm = docs.activeModel
             if (!dm || dm === srcModel) return
             win._startMerge(srcModel, dm, gap)
         }

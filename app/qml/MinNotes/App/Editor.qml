@@ -434,7 +434,13 @@ FocusScope {
     // active state across table, PDF, video and canvas tabs.
     // The canvas (B3) is a per-document view mode, not a block: its tab id is the literal "canvas"
     // (rowForId("canvas") is -1, so every `activeFrameId !== ""` guard treats it as a frame tab).
-    property bool activeCanvas: false
+    // 2.0: the canvas is the FILE's view when no page is focused (canvas.focusPage === ""); the page
+    // view is the focused page's. setActiveTab("canvas") / setActiveTab("") WRITE the focus (the manager
+    // re-points blockModel); this reads it.
+    readonly property bool activeCanvas: canvas.documentOpen && canvas.focusPage === ""
+    // ⌘Z / ⌘⇧Z / the History panel / the rail buttons route by focus: the canvas log on the canvas, the
+    // page log on a page (two logs, one ⌘Z — ruling 8).
+    readonly property var undoTarget: activeCanvas ? canvas : blockModel
     // Dev-only (B3): `--canvas` opens on the Canvas tab (fit); `--canvas=<zoom>` then zooms about the
     // top-left card's origin so a --shot shows live cards. After the launch's view-state restore.
     readonly property string canvasOnLoad: {
@@ -468,9 +474,18 @@ FocusScope {
             _prevFlickFrameId = activeFrameId
         }
     }
+    // Drop the per-page frame state (tables / PDF / video tabs, the board) without touching the
+    // canvas-vs-page focus — what a document change or a focus change needs.
+    function clearFrames() { boardMode = false; boardCol = -1; activeGridId = ""; activePdfId = ""; activeVideoId = "" }
+    // blockModel just re-pointed to another page of the same file (a focus change, not a tab switch):
+    // a fresh page view at the top, laid out at the view's width.
+    function resetForPage() {
+        clearFrames()
+        blockModel.setContentWidth(pageWidth)
+        cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
+    }
     function setActiveTab(id) {
         boardMode = false; boardCol = -1
-        activeCanvas = false
         // Tool rules on view changes (2026-08-19, tightened 2026-08-20):
         // landing on the Document view always lands TYPING (a leftover armed
         // tool would silently re-engage ink mode); table tabs have no ink
@@ -480,13 +495,16 @@ FocusScope {
         // chips since 2026-08-20). The text-chip tool alone drops to Select
         // in video tabs (text boxes are not part of the QCView flow).
         var t = inspector ? inspector.drawTool : "type"
+        if (id === "canvas") {   // the file's canvas: no page focused (no ink surface here yet → Type)
+            if (inspector && t !== "type") inspector.drawTool = "type"
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""
+            if (canvas.documentOpen) canvas.focusPage = ""
+            return
+        }
+        if (canvas.documentOpen && canvas.focusPage === "") canvas.focusPage = canvas.focusedPageId()   // leaving the canvas → the page view
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
             activeGridId = ""; activePdfId = ""; activeVideoId = ""; return
-        }
-        if (id === "canvas") {   // B3: read-only in phase 1 — no ink surface, no cell cursor → Type
-            if (inspector && t !== "type") inspector.drawTool = "type"
-            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeCanvas = true; return
         }
         var r = blockModel.rowForId(id)
         if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a table (S9)
@@ -509,7 +527,7 @@ FocusScope {
     Connections {
         target: blockModel
         function onDocumentChanged() {
-            root.setActiveTab("")
+            root.clearFrames()   // (not setActiveTab(""): an existing file opens on its CANVAS — the focus is the file's)
             cursor.clearMarks()
             cursor.setCaret(0, 0)
             root.ensureVisible(0)
@@ -541,7 +559,7 @@ FocusScope {
         if (!m || m.focusRow === undefined) {
             docZooms = ({}); pdfZooms = ({}); _prevFlickFrameId = ""; _prevPdfId = ""
             canvasView.resetCam()
-            root.setActiveTab("")
+            root.clearFrames()
             if (viewZoom !== 1) { docZoomTo(1); docZoomSettle() }
             cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
             return
@@ -3054,6 +3072,7 @@ FocusScope {
                 const th = blockModel.tableHeadOf(rec)   // a table row picked this way is an object (Delete removes it)
                 root.selObject = th >= 0 ? { kind: "row", head: th, r: blockModel.tableRowOf(rec), lo: first, hi: last } : null
             }
+            else if (root.activeFrameId === "" && canvas.documentOpen) { root.setActiveTab("canvas") }   // nothing to cancel: the canvas is one Esc away (ruling 6)
             event.accepted = true
         }
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
@@ -3102,9 +3121,9 @@ FocusScope {
                  && root.activeVideoRow >= 0) {
             event.accepted = true
         }
-        else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
-        else if (cmd && k === Qt.Key_Z) { blockModel.undo(); event.accepted = true }
-        else if (cmd && k === Qt.Key_Y) { blockModel.redo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_Z && shift) { root.undoTarget.redo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_Z) { root.undoTarget.undo(); event.accepted = true }
+        else if (cmd && k === Qt.Key_Y) { root.undoTarget.redo(); event.accepted = true }
         // ⌘] / ⌘[ (SR-0 §4.7): list indent / outdent everywhere — inside a lane Tab moves
         // between lanes, so indent needs its own keys.
         else if (cmd && (k === Qt.Key_BracketRight || k === Qt.Key_BracketLeft)) {
@@ -3936,6 +3955,7 @@ FocusScope {
                 } else if (step === 3) { canvasView.fit() }
                 else if (step === 8) {
                     check(root.activeCanvas && canvasView.visible && !flick.visible, "the Canvas tab shows the canvas and hides the page")
+                    check(canvas.focusPage === "" && root.undoTarget === canvas && blockModel.pageId() === canvas.firstPageId(), "the Canvas tab = no focused page; ⌘Z targets the canvas log; blockModel falls back to the first page")
                     check(!cam.userCam && cam.zoom < 1, "a fresh canvas fits the document (zoom " + cam.zoom + ")")
                     nextPhase("setup")
                 }

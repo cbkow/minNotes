@@ -89,10 +89,13 @@ public:
     // --- Pages ---
     QStringList pageIds() const;                    // page elements in z order, then creation
     int pagesRevision() const { return pagesRevision_; }
-    QString firstPageId() const;
+    Q_INVOKABLE QString firstPageId() const;
     Q_INVOKABLE QString addPage();                  // one empty paragraph, right of the others; "" if closed
     Q_INVOKABLE bool removePage(const QString& id); // refuses the last page; the page's blocks cascade
-    Q_INVOKABLE QString pageTitle(const QString& id) const;   // first heading, else first text line
+    // The page's title: first heading, else first text line, else "Untitled page". A LOADED page
+    // answers from memory (the strip re-reads it per keystroke); an unloaded page's title comes
+    // from the store once and is cached (it cannot change until the page loads).
+    Q_INVOKABLE QString pageTitle(const QString& id) const;
     // The page's model, created on first use (owned by the canvas). nullptr for a non-page id.
     BlockModel* pageModel(const QString& id);
     BlockModel* pageModelIfLoaded(const QString& id) const { return pages_.value(id, nullptr); }
@@ -103,8 +106,13 @@ public:
     // while the file is open: it falls back to the first page.
     QString focusPage() const { return focusPage_; }
     void setFocusPage(const QString& id);
-    QString focusedPageId() const;
+    Q_INVOKABLE QString focusedPageId() const;
     BlockModel* focusedModel();
+    // Every loaded page re-resolves its media (path mappings / a package extraction landed).
+    void refreshMedia();
+    // Collect Media: re-point media ELEMENTS whose resolved source is in the map (abs path → rel).
+    // Direct writes, no undo entry (the page half is BlockModel::rewriteMediaSrcs). Returns the count.
+    int rewriteMediaElementSrcs(const QHash<QString, QString>& absToRel);
 
     // --- Elements (read): a z-ordered in-memory mirror of the `elements` table ---
     const std::vector<Document::Element>& elements() const { return elements_; }
@@ -217,6 +225,7 @@ private:
     qint64 origSize_ = -1;
     std::unique_ptr<MediaStore> mediaStore_;
     QHash<QString, BlockModel*> pages_;   // page id → its model (loaded pages only)
+    mutable QHash<QString, QString> titleCache_;   // unloaded pages' titles (cleared on open/close/page changes)
     QString focusPage_;
     int pagesRevision_ = 0;
     std::vector<Document::Element> elements_;   // z order, then creation (the table's order)

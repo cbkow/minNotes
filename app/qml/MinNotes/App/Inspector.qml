@@ -497,7 +497,9 @@ Rectangle {
             spacing: 1
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: MnScrollBar {}
-            model: (blockModel.undoRevision, blockModel.undoHistory())
+            // The log that ⌘Z would walk: the canvas's on the Canvas tab, the page's otherwise.
+            readonly property var log: panel.editor ? panel.editor.undoTarget : blockModel
+            model: (log.undoRevision, log.undoHistory())
             onModelChanged: Qt.callLater(function() {   // keep "now" in view
                 for (var i = 0; i < historyList.count; ++i)
                     if (historyList.model[i].current) {
@@ -538,7 +540,7 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     enabled: !parent.marker && !parent.modelData.current
                     onClicked: {
-                        blockModel.undoJumpTo(parent.modelData.idx)
+                        historyList.log.undoJumpTo(parent.modelData.idx)
                         if (panel.editor) panel.editor.forceActiveFocus()
                     }
                 }

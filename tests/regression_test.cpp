@@ -8,6 +8,7 @@
 // of failed checks (0 = all pass).
 #include "BlockModel.h"
 #include "CanvasDocument.h"
+#include "DocumentManager.h"
 #include "Exporter.h"
 #include "Importer.h"
 #include "TableGrid.h"
@@ -5833,6 +5834,67 @@ static void testCanvasUndo() {
           "a page's measure is clamped to the readable minimum (%g)", c2.elementRect(p1).width());
 }
 
+// [122] DocumentManager over canvases (2.0 stage 2 step 6): tabs are files; blockModel follows the
+// active canvas's focused page; focus changes re-point without a tab switch.
+static void testDocumentManager() {
+    qInfo("[122] DocumentManager (2.0 stage 2): never-null fallbacks, tabs = canvases, activeModel = the focused page, re-point on focus, dedupe, close");
+    QTemporaryDir dir;
+    DocumentManager docs;
+    CHECK(docs.count() == 0 && docs.activeIndex() == -1 && docs.activeModel() && !docs.activeModel()->documentOpen()
+              && docs.activeCanvas() && !docs.activeCanvas()->documentOpen(),
+          "welcome state: never-null fallbacks, nothing open");
+    int modelChanges = 0, focusChanges = 0, actives = 0;
+    QObject::connect(&docs, &DocumentManager::activeModelChanged, [&] { ++modelChanges; });
+    QObject::connect(&docs, &DocumentManager::activeFocusChanged, [&] { ++focusChanges; });
+    QObject::connect(&docs, &DocumentManager::activeChanged, [&] { ++actives; });
+    docs.newTab();
+    CanvasDocument* c = docs.activeCanvas();
+    CHECK(docs.count() == 1 && docs.activeIndex() == 0 && c->documentOpen() && c->untitled() && !c->focusPage().isEmpty(),
+          "newTab: one canvas, focused on its page");
+    CHECK(docs.activeModel() == c->focusedModel() && docs.activeModel()->pageId() == c->focusPage() && modelChanges == 1 && actives == 1 && focusChanges == 0,
+          "activeModel is the focused page model; one activeModelChanged for the switch");
+    docs.activeModel()->setContent(0, QStringLiteral("one"));
+    CHECK(docs.dirtyCount() == 1 && docs.firstDirtyIndex() == 0, "dirty counts canvases");
+    const QString path = dir.path() + QStringLiteral("/a.mnd");
+    CHECK(c->saveAs(path) && docs.dirtyCount() == 0, "saved");
+    docs.newTab();
+    CHECK(docs.count() == 2 && docs.activeIndex() == 1 && modelChanges == 2, "a second tab is active");
+    CHECK(docs.openTab(path) && docs.count() == 2 && docs.activeIndex() == 0 && docs.activeCanvas() == c && modelChanges == 3,
+          "openTab dedupes by path and focuses the existing tab");
+    // A focus change inside the ACTIVE canvas re-points without a tab switch.
+    const QString p2 = c->addPage();
+    c->setFocusPage(p2);
+    CHECK(docs.activeModel()->pageId() == p2 && modelChanges == 4 && focusChanges == 1 && actives == 3,
+          "focusing another page re-points blockModel (activeFocusChanged, no activeChanged)");
+    c->setFocusPage(QString());
+    CHECK(docs.activeModel()->pageId() == c->firstPageId() && modelChanges == 5 && focusChanges == 2,
+          "the canvas view: blockModel falls back to the first page");
+    c->setFocusPage(c->firstPageId());
+    CHECK(modelChanges == 5 && focusChanges == 2, "a focus change that keeps the same model is silent");
+    // A background canvas's focus change is silent.
+    docs.setActive(1);
+    const int before = modelChanges;
+    c->setFocusPage(p2);
+    CHECK(modelChanges == before + 0 && docs.activeModel() != c->focusedModel(), "a background canvas changing focus does not re-point");
+    CHECK(docs.modelAt(0) == c->focusedModel() && docs.modelForTabId(docs.tabIdAt(0)) == c->focusedModel() && docs.canvasAt(0) == c
+              && docs.canvasForTabId(docs.tabIdAt(0)) == c && !docs.modelAt(9) && !docs.canvasForTabId(99),
+          "per-tab lookups resolve to the tab's focused page model / canvas");
+    CHECK(docs.models().size() == 2 && docs.models()[0].value<QObject*>() == c, "models() lists the canvases");
+    // Removing the focused page of the ACTIVE canvas re-points (pagesChanged).
+    docs.setActive(0);
+    const int mc = modelChanges;
+    CHECK(docs.activeModel()->pageId() == p2, "back on tab 0: its focus page p2");
+    CHECK(c->removePage(p2) && docs.activeModel()->pageId() == c->firstPageId() && modelChanges == mc + 1, "removing the focused page falls back and re-points");
+    docs.closeTab(0);
+    CHECK(docs.count() == 1 && docs.activeIndex() == 0 && docs.activeCanvas() != c && docs.activeModel()->documentOpen(), "closing the active tab moves to the neighbour");
+    docs.closeTab(0);
+    CHECK(docs.count() == 0 && docs.activeIndex() == -1 && !docs.activeModel()->documentOpen() && !docs.activeCanvas()->documentOpen(),
+          "closing the last tab returns to the welcome state");
+    const QString foreign = dir.path() + QStringLiteral("/foreign.mnd");
+    execOnFile(foreign, QStringLiteral("CREATE TABLE notes (x TEXT)"));
+    CHECK(!docs.openTab(foreign) && docs.count() == 0 && !docs.lastOpenError().isEmpty(), "a refused open adds no tab and keeps the reason (%s)", qPrintable(docs.lastOpenError()));
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8346,6 +8408,7 @@ int main(int argc, char** argv) {
     testCanvasDocument();
     testConverter();
     testCanvasUndo();
+    testDocumentManager();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

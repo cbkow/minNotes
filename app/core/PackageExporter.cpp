@@ -1,5 +1,6 @@
 #include "PackageExporter.h"
 #include "BlockModel.h"
+#include "CanvasDocument.h"
 #include "Document.h"
 #include "MediaStore.h"
 #include "PackageFormat.h"
@@ -126,7 +127,7 @@ PackageExporter::~PackageExporter() {
 
 QVariantMap PackageExporter::scan() const {
     QVariantMap out;
-    const PackPlan plan = buildPackPlan(model_, /*includeVideos*/true);
+    const PackPlan plan = buildPackPlan(canvas_, /*includeVideos*/true);
     out.insert(QStringLiteral("videos"), plan.videoCount);
     out.insert(QStringLiteral("videoBytes"), plan.videoBytes);
     out.insert(QStringLiteral("mediaCount"), static_cast<int>(plan.items.size()));
@@ -134,44 +135,55 @@ QVariantMap PackageExporter::scan() const {
     return out;
 }
 
-PackageExporter::PackPlan PackageExporter::buildPackPlan(BlockModel* m,
+void PackageExporter::setModel(BlockModel* m) { canvas_ = m ? m->canvas() : nullptr; }
+
+PackageExporter::PackPlan PackageExporter::buildPackPlan(BlockModel* m, bool includeVideos) {
+    return buildPackPlan(m ? m->canvas() : nullptr, includeVideos);
+}
+
+PackageExporter::PackPlan PackageExporter::buildPackPlan(CanvasDocument* c,
                                                          bool includeVideos) {
     PackPlan plan;
-    if (!m || !m->mediaStore()) return plan;
-    MediaStore* store = m->mediaStore();
+    if (!c || !c->mediaStore()) return plan;
+    MediaStore* store = c->mediaStore();
     plan.sourcePackage = store->packageSource();
     const QHash<QString, qint64> pkgEntries =
         plan.sourcePackage.isEmpty() ? QHash<QString, qint64>()
                                      : mnpkg::entrySizes(plan.sourcePackage);
     QSet<QString> taken;
-    const int n = m->rowCountQml();
-    for (int r = 0; r < n; ++r) {
-        const int t = m->typeForRow(r);
-        if (t == BlockModel::Media) {
-            const QJsonObject root =
-                QJsonDocument::fromJson(m->contentForRow(r).toUtf8()).object();
-            if (root.value(QStringLiteral("kind")).toString() == QLatin1String("sketch")) {
-                for (const QJsonValue& v : root.value(QStringLiteral("images")).toArray())
-                    planItem(plan, taken,
-                             resolveNoExtract(store, v.toObject().value(QStringLiteral("src")), pkgEntries),
-                             /*isVideo*/false, includeVideos);
-            } else {
-                const bool isVideo =
-                    root.value(QStringLiteral("kind")).toString() == QLatin1String("video");
+    auto planDescriptor = [&](const QJsonObject& root) {
+        if (root.value(QStringLiteral("kind")).toString() == QLatin1String("sketch")) {
+            for (const QJsonValue& v : root.value(QStringLiteral("images")).toArray())
                 planItem(plan, taken,
-                         resolveNoExtract(store, root.value(QStringLiteral("src")), pkgEntries),
-                         isVideo, includeVideos);
-            }
+                         resolveNoExtract(store, v.toObject().value(QStringLiteral("src")), pkgEntries),
+                         /*isVideo*/false, includeVideos);
+        } else {
+            const bool isVideo =
+                root.value(QStringLiteral("kind")).toString() == QLatin1String("video");
+            planItem(plan, taken,
+                     resolveNoExtract(store, root.value(QStringLiteral("src")), pkgEntries),
+                     isVideo, includeVideos);
         }
+    };
+    for (const QString& pid : c->pageIds()) {
+        BlockModel* m = c->pageModel(pid);
+        if (!m) continue;
+        const int n = m->rowCountQml();
+        for (int r = 0; r < n; ++r)
+            if (m->typeForRow(r) == BlockModel::Media)
+                planDescriptor(QJsonDocument::fromJson(m->contentForRow(r).toUtf8()).object());
     }
+    for (const Document::Element& e : c->elements())
+        if (e.kind == QLatin1String("media"))
+            planDescriptor(QJsonDocument::fromJson(e.json.toUtf8()).object().value(QStringLiteral("media")).toObject());
     return plan;
 }
 
-bool PackageExporter::prepareDb(BlockModel* m, const PackPlan& plan,
+bool PackageExporter::prepareDb(CanvasDocument* c, const PackPlan& plan,
                                 const QString& tmpDb) {
     QFile::remove(tmpDb);
-    if (!m->snapshotTo(tmpDb)) return false;
-    MediaStore* store = m->mediaStore();
+    if (!c || !c->snapshotTo(tmpDb)) return false;
+    MediaStore* store = c->mediaStore();
     const QHash<QString, qint64> pkgEntries =
         plan.sourcePackage.isEmpty() ? QHash<QString, qint64>()
                                      : mnpkg::entrySizes(plan.sourcePackage);
@@ -199,6 +211,15 @@ bool PackageExporter::prepareDb(BlockModel* m, const PackPlan& plan,
                 d2.updateContent(bm.id, QString::fromUtf8(
                     QJsonDocument(root).toJson(QJsonDocument::Compact)));
         }
+    }
+    // Media ELEMENTS carry the same descriptor under json.media.
+    for (const Document::Element& e : d2.allElements()) {
+        if (e.kind != QLatin1String("media")) continue;
+        QJsonObject root = QJsonDocument::fromJson(e.json.toUtf8()).object();
+        QJsonObject media = root.value(QStringLiteral("media")).toObject();
+        if (!rewriteSrc(media, store, plan, pkgEntries)) continue;
+        root.insert(QStringLiteral("media"), media);
+        d2.updateElementJson(e.id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
     }
     d2.checkpoint();
     d2.close();
@@ -274,6 +295,11 @@ bool PackageExporter::assembleZip(const PackPlan& plan, const QString& tmpDb,
 
 bool PackageExporter::packDocument(BlockModel* m, const QString& destPath,
                                    bool includeVideos, QString* error) {
+    return packDocument(m ? m->canvas() : nullptr, destPath, includeVideos, error);
+}
+
+bool PackageExporter::packDocument(CanvasDocument* m, const QString& destPath,
+                                   bool includeVideos, QString* error) {
     auto fail = [&](const QString& why) { if (error) *error = why; return false; };
     if (!m || !m->mediaStore()) return fail(QStringLiteral("No document"));
     const PackPlan plan = buildPackPlan(m, includeVideos);
@@ -319,7 +345,7 @@ void PackageExporter::finishOnGui(bool ok, const QString& error) {
 }
 
 void PackageExporter::startExport(const QString& fileUrlOrPath, bool includeVideos) {
-    if (running_ || !model_ || !model_->mediaStore()) return;
+    if (running_ || !canvas_ || !canvas_->mediaStore()) return;
     if (worker_.joinable()) worker_.join();   // reap the previous run
     lastError_.clear();
     cancel_ = false;
@@ -331,10 +357,10 @@ void PackageExporter::startExport(const QString& fileUrlOrPath, bool includeVide
         dest += QStringLiteral(".mnpkg");
 
     // GUI-thread phase: everything that touches the model (fast).
-    const PackPlan plan = buildPackPlan(model_, includeVideos);
+    const PackPlan plan = buildPackPlan(canvas_, includeVideos);
     const QString tmpDb = BlockModel::scratchDir() + QStringLiteral("/pack-")
                         + QFileInfo(dest).completeBaseName() + QStringLiteral(".mnd");
-    if (!prepareDb(model_, plan, tmpDb)) {
+    if (!prepareDb(canvas_, plan, tmpDb)) {
         QFile::remove(tmpDb);
         lastError_ = QStringLiteral("Snapshot failed");
         emit exportFinished(false, lastError_);
@@ -386,7 +412,16 @@ MediaCollector::~MediaCollector() {
     if (worker_.joinable()) worker_.join();
 }
 
-MediaCollector::CollectPlan MediaCollector::buildCollectPlan(BlockModel* m,
+void MediaCollector::setModel(BlockModel* m) { canvas_ = m ? m->canvas() : nullptr; }
+
+void MediaCollector::applyCollectMap(CanvasDocument* c, const QHash<QString, QString>& absToRel) {
+    if (!c) return;
+    for (const QString& pid : c->pageIds())
+        if (BlockModel* m = c->pageModel(pid)) m->rewriteMediaSrcs(absToRel);
+    c->rewriteMediaElementSrcs(absToRel);
+}
+
+MediaCollector::CollectPlan MediaCollector::buildCollectPlan(CanvasDocument* m,
                                                              bool includeVideos) {
     CollectPlan cp;
     if (!m || !m->mediaStore()) return cp;
@@ -429,7 +464,7 @@ MediaCollector::CollectPlan MediaCollector::buildCollectPlan(BlockModel* m,
 }
 
 QVariantMap MediaCollector::scan() const {
-    const CollectPlan cp = buildCollectPlan(model_, /*includeVideos*/true);
+    const CollectPlan cp = buildCollectPlan(canvas_, /*includeVideos*/true);
     QVariantMap out;
     out.insert(QStringLiteral("files"), cp.files);
     out.insert(QStringLiteral("fileBytes"), cp.fileBytes);
@@ -502,6 +537,11 @@ bool MediaCollector::copyAll(const CollectPlan& plan, const QString& assetsDir,
 
 bool MediaCollector::collectDocument(BlockModel* m, bool includeVideos,
                                      int* copied, QString* error) {
+    return collectDocument(m ? m->canvas() : nullptr, includeVideos, copied, error);
+}
+
+bool MediaCollector::collectDocument(CanvasDocument* m, bool includeVideos,
+                                     int* copied, QString* error) {
     auto fail = [&](const QString& why) { if (error) *error = why; return false; };
     if (!m || !m->mediaStore()) return fail(QStringLiteral("No document"));
     const CollectPlan cp = buildCollectPlan(m, includeVideos);
@@ -514,7 +554,7 @@ bool MediaCollector::collectDocument(BlockModel* m, bool includeVideos,
         QHash<QString, QString> map;
         for (const CollectItem& it : cp.items)
             map.insert(it.srcPath, QStringLiteral(".minnotes/") + it.destName);
-        m->rewriteMediaSrcs(map);
+        applyCollectMap(m, map);
     }
     if (copied) *copied = static_cast<int>(cp.items.size());
     return true;
@@ -529,18 +569,18 @@ void MediaCollector::setProgress(double p, const QString& item) {
 }
 
 void MediaCollector::startCollect(bool includeVideos) {
-    if (running_ || !model_ || !model_->mediaStore()) return;
+    if (running_ || !canvas_ || !canvas_->mediaStore()) return;
     if (worker_.joinable()) worker_.join();   // reap the previous run
     cancel_ = false;
 
     // GUI-thread phase: plan against the live model (fast, no side effects).
-    const CollectPlan plan = buildCollectPlan(model_, includeVideos);
+    const CollectPlan plan = buildCollectPlan(canvas_, includeVideos);
     if (plan.package) {
         emit collectFinished(false, 0, QStringLiteral("Packages are sealed"));
         return;
     }
     if (plan.items.empty()) { emit collectFinished(true, 0, QString()); return; }
-    const QString assets = QDir::cleanPath(model_->mediaStore()->docDir())
+    const QString assets = QDir::cleanPath(canvas_->mediaStore()->docDir())
                          + QStringLiteral("/.minnotes");
 
     running_ = true;
@@ -549,9 +589,9 @@ void MediaCollector::startCollect(bool includeVideos) {
     emit runningChanged();
     emit progressChanged();
 
-    // The rewrite must land on the model this plan was built FROM, even if
-    // the user switches tabs mid-copy (setModel re-points at the active doc).
-    QPointer<BlockModel> target(model_);
+    // The rewrite must land on the FILE this plan was built FROM, even if
+    // the user switches tabs mid-copy (setCanvas re-points at the active one).
+    QPointer<CanvasDocument> target(canvas_);
     worker_ = std::thread([this, plan, assets, target] {
         // Worker phase: pure file IO. Throttle progress like the packer.
         qint64 lastEmit = -1;
@@ -572,7 +612,7 @@ void MediaCollector::startCollect(bool includeVideos) {
                 QHash<QString, QString> map;
                 for (const CollectItem& it : plan.items)
                     map.insert(it.srcPath, QStringLiteral(".minnotes/") + it.destName);
-                target->rewriteMediaSrcs(map);
+                applyCollectMap(target, map);
                 copied = static_cast<int>(plan.items.size());
             }
             running_ = false;

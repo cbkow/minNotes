@@ -35,6 +35,13 @@ Rectangle {
             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             anchors.verticalCenter: parent.verticalCenter
         }
+        Text {   // File ▸ Page breadcrumb (2.0): the focused page's title when the file has several pages
+            visible: canvas.documentOpen && canvas.pageIds.length > 1 && canvas.focusPage !== ""
+            text: (canvas.pagesRevision, blockModel.contentRevision, "▸ " + canvas.pageTitle(canvas.focusPage))
+            color: Theme.colors.text
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            anchors.verticalCenter: parent.verticalCenter
+        }
         Text {
             width: Math.min(implicitWidth, parent.width - 120)
             text: bar.dir; color: Theme.colors.textSubtle
@@ -117,14 +124,14 @@ Rectangle {
         FlatButton {
             iconName: "arrow-counter-clockwise"; tooltip: "Undo  (⌘Z)"; tooltipSide: "top"
             implicitHeight: 24; implicitWidth: 30; iconSize: 15; radius: 0
-            enabled_: blockModel.canUndo
-            onClicked: bar.act(function() { blockModel.undo() })
+            enabled_: !!bar.editor && bar.editor.undoTarget.canUndo   // routes by focus: the canvas log on the canvas
+            onClicked: bar.act(function() { bar.editor.undoTarget.undo() })
         }
         FlatButton {
             iconName: "arrow-clockwise"; tooltip: "Redo  (⌘⇧Z)"; tooltipSide: "top"
             implicitHeight: 24; implicitWidth: 30; iconSize: 15; radius: 0
-            enabled_: blockModel.canRedo
-            onClicked: bar.act(function() { blockModel.redo() })
+            enabled_: !!bar.editor && bar.editor.undoTarget.canRedo
+            onClicked: bar.act(function() { bar.editor.undoTarget.redo() })
         }
     }
 }

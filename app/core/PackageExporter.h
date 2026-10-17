@@ -31,6 +31,7 @@
 #include <vector>
 
 class BlockModel;
+class CanvasDocument;
 class MediaStore;
 
 class PackageExporter : public QObject {
@@ -42,7 +43,10 @@ public:
     explicit PackageExporter(QObject* parent = nullptr) : QObject(parent) {}
     ~PackageExporter() override;
 
-    void setModel(BlockModel* m) { model_ = m; }
+    // The FILE to pack (2.0: a canvas — every page + its media elements). setModel keeps the 1.0
+    // shape: a page model stands for its canvas.
+    void setCanvas(CanvasDocument* c) { canvas_ = c; }
+    void setModel(BlockModel* m);
 
     bool running() const { return running_; }
     double progress() const { return progress_; }
@@ -77,8 +81,10 @@ public:
         int excludedVideos = 0;
     };
 
-    // Walk the model's media carriers into a plan WITHOUT extracting
-    // anything. Missing/remote sources are skipped (descriptors stay as-is).
+    // Walk the file's media carriers — every page's media blocks + the canvas's media elements —
+    // into a plan WITHOUT extracting anything. Missing/remote sources are skipped (descriptors
+    // stay as-is). The BlockModel* form packs the page's whole canvas.
+    static PackPlan buildPackPlan(CanvasDocument* c, bool includeVideos);
     static PackPlan buildPackPlan(BlockModel* m, bool includeVideos);
 
     // --- Shared plan primitives (public statics since the tab-merge
@@ -99,6 +105,8 @@ public:
     static QString uniqueName(const QString& fileName, QSet<QString>& taken);
 
     // Synchronous core: plan → snapshot+rewrite → zip → atomic replace.
+    static bool packDocument(CanvasDocument* c, const QString& destPath,
+                             bool includeVideos, QString* error = nullptr);
     static bool packDocument(BlockModel* m, const QString& destPath,
                              bool includeVideos, QString* error = nullptr);
 
@@ -108,8 +116,8 @@ signals:
     void exportFinished(bool ok, const QString& error);
 
 private:
-    // Snapshot the doc + rewrite descriptors on the copy (GUI thread; fast).
-    static bool prepareDb(BlockModel* m, const PackPlan& plan, const QString& tmpDb);
+    // Snapshot the file + rewrite descriptors on the copy — blocks AND media elements (GUI thread; fast).
+    static bool prepareDb(CanvasDocument* c, const PackPlan& plan, const QString& tmpDb);
     // Assemble the zip (worker-safe: file IO only). `progress` is called with
     // (doneBytes, totalBytes, currentName); null cancel/progress are fine.
     static bool assembleZip(const PackPlan& plan, const QString& tmpDb,
@@ -120,7 +128,7 @@ private:
     void setProgress(double p, const QString& item);
     void finishOnGui(bool ok, const QString& error);
 
-    BlockModel* model_ = nullptr;
+    CanvasDocument* canvas_ = nullptr;
     QString lastError_;
     bool running_ = false;
     double progress_ = 0.0;
@@ -150,7 +158,8 @@ public:
     explicit MediaCollector(QObject* parent = nullptr) : QObject(parent) {}
     ~MediaCollector() override;
 
-    void setModel(BlockModel* m) { model_ = m; }
+    void setCanvas(CanvasDocument* c) { canvas_ = c; }
+    void setModel(BlockModel* m);
     bool running() const { return running_; }
     double progress() const { return progress_; }
     QString currentItem() const { return currentItem_; }
@@ -165,7 +174,10 @@ public:
     // Cancel any time (mid-file included): copies made so far are removed.
     Q_INVOKABLE void cancel() { cancel_ = true; }
 
-    // Synchronous core (headless tests). copied ← files copied in.
+    // Synchronous core (headless tests). copied ← files copied in. The whole FILE: every page's
+    // descriptors (one undo entry per page) + the media elements.
+    static bool collectDocument(CanvasDocument* c, bool includeVideos,
+                                int* copied = nullptr, QString* error = nullptr);
     static bool collectDocument(BlockModel* m, bool includeVideos,
                                 int* copied = nullptr, QString* error = nullptr);
 
@@ -184,7 +196,9 @@ private:
     // The pack plan filtered to external disk items, renamed against BOTH the
     // plan and the files already in .minnotes/. Videos are counted even when
     // excluded (the scan needs them).
-    static CollectPlan buildCollectPlan(BlockModel* m, bool includeVideos);
+    static CollectPlan buildCollectPlan(CanvasDocument* c, bool includeVideos);
+    // Land the copies: rewrite every page's descriptors + the media elements.
+    static void applyCollectMap(CanvasDocument* c, const QHash<QString, QString>& absToRel);
     // Worker-safe copy phase (file IO only). Rolls back everything it made on
     // cancel or failure.
     static bool copyAll(const CollectPlan& plan, const QString& assetsDir,
@@ -194,7 +208,7 @@ private:
 
     void setProgress(double p, const QString& item);
 
-    BlockModel* model_ = nullptr;
+    CanvasDocument* canvas_ = nullptr;
     bool running_ = false;
     double progress_ = 0.0;
     QString currentItem_;
