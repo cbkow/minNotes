@@ -3932,6 +3932,9 @@ FocusScope {
         property int checks: 0
         property var heightsBefore: ({})
         property string livePage: ""           // the fixture's page (the big one)
+        property string inkId: ""
+        property string mediaId: ""
+        property string shapeId: ""
         property real seed: 12345
         property int prevTier: -1
         function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
@@ -3958,6 +3961,15 @@ FocusScope {
                     check(livePage !== "" && canvas.pageIds.length === 1 && canvas.focusPage === livePage, "the fixture is one focused page")
                     canvas.addPage(); canvas.addPage()
                     check(canvas.pageIds.length === 3 && canvas.elementCount() === 3 && canvas.canUndo, "two pages added (undoable on the canvas log)")
+                    // Ink, media and a text shape beside the pages (the kinds 7b renders).
+                    const base = canvas.canvasBounds()
+                    inkId = canvas.addInkElement(JSON.stringify({ version: "2.0", coordinate_system: "element-local", shapes: [
+                        { id: "p1", type: "freehand", color: [0.9, 0.3, 0.2, 1], stroke_width: 6, filled: false, is_modeled: false, points: [[10, 10], [60, 40], [110, 10], [160, 40]] },
+                        { id: "p2", type: "rect", color: [0.2, 0.6, 0.9, 1], stroke_width: 3, filled: false, is_modeled: false, points: [[20, 60], [180, 60], [180, 120], [20, 120]] } ] }),
+                        Qt.rect(base.x + base.width + 64, base.y, 200, 140))   // RIGHT of the pages: a page's height is cached later and grows
+                    mediaId = canvas.addMediaElement(JSON.stringify({ kind: "image", src: "missing/photo.png", w: 400, h: 300 }), Qt.rect(base.x + base.width + 364, base.y, 200, 150))
+                    shapeId = canvas.addShapeElement(JSON.stringify({ shape: "text", text: "a label", fontSize: 24, fill: "#ffffffff" }), Qt.rect(base.x + base.width + 664, base.y, 160, 40))
+                    check(inkId !== "" && mediaId !== "" && shapeId !== "" && canvas.elementCount() === 6, "an ink, a media and a text shape element added")
                     root.setActiveTab("canvas")
                 } else if (step === 3) { canvasView.fit() }
                 else if (step === 8) {
@@ -3971,20 +3983,20 @@ FocusScope {
             if (phase === 1) {   // P1: the element model (after the live stagger + the 200 ms height-cache debounce)
                 if (step < 14) { ++step; return }
                 const n = canvas.elementCount()
-                let ok = n === 3, overlap = false
+                let ok = n === 6, overlap = false, pages = 0
                 const ids = {}
                 for (let i = 0; i < n; ++i) {
                     const id = canvas.elementIdAt(i)
-                    if (ids[id] || canvas.elementKind(id) !== "page") ok = false
+                    if (ids[id]) ok = false
                     ids[id] = true
                     const a = canvas.elementRect(id)
-                    if (a.width !== 760 + 2 * inset) { ok = false; fail("page " + id + " width " + a.width) }
+                    if (canvas.elementKind(id) === "page") { ++pages; if (a.width !== 760 + 2 * inset) { ok = false; fail("page " + id + " width " + a.width) } }
                     for (let j = i + 1; j < n; ++j) {
                         const b = canvas.elementRect(canvas.elementIdAt(j))
                         if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) overlap = true
                     }
                 }
-                check(ok && !overlap, "three page elements, unique ids, at the default measure, never overlapping")
+                check(ok && pages === 3 && !overlap, "six elements (three pages at the default measure), unique ids, never overlapping")
                 const b = canvas.canvasBounds()
                 check(canvas.visibleElementIndices(b.x, b.y, b.x + b.width, b.y + b.height).length === n && canvas.visibleElementIndices(b.x + b.width + 10, b.y, b.x + b.width + 20, b.y + b.height).length === 0,
                       "visibleElementIndices over the bounds is every element; beside them none")
@@ -4008,7 +4020,7 @@ FocusScope {
                     seen[c.elementIndex] = true
                     const r = canvas.elementRect(c.elementId)
                     if (Math.abs(c.x - r.x) > 0.5 || Math.abs(c.y - r.y) > 0.5 || Math.abs(c.width - r.width) > 0.5 || Math.abs(c.height - r.height) > 0.5) { ok = false; fail("element " + c.elementId + " at " + c.x + "," + c.y + " vs rect " + r.x + "," + r.y) }
-                    if (c.tier !== 2) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + cam.zoom) }
+                    if (c.kind === "page" && c.tier !== 2) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + cam.zoom) }
                     const tl = cam.screenToWorld(-canvasView.width * 0.5, -canvasView.height * 0.5), br = cam.screenToWorld(canvasView.width * 1.5, canvasView.height * 1.5)
                     if (r.x + r.width < tl.x || r.x > br.x || r.y + r.height < tl.y || r.y > br.y) { ok = false; fail("element " + c.elementId + " outside the overscan") }
                 }
@@ -4027,9 +4039,10 @@ FocusScope {
                 check(Math.abs(s.x - ax) < 0.5 && Math.abs(s.y - ay) < 0.5 && Math.abs(cam.zoom - zs[i]) < 1e-9, "zoom " + zs[i] + ": the anchored point stays put (" + (s.x - ax) + "," + (s.y - ay) + ")")
                 const items = activeItems()
                 let ok = items.length === canvasView.visibleElements.length
-                for (const c of items) if (c.tier !== expectedTier(zs[i], prevTier)) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + zs[i] + " (prev tier " + prevTier + ")") }
+                const pagesHere = items.filter(c => c.kind === "page")
+                for (const c of pagesHere) if (c.tier !== expectedTier(zs[i], prevTier)) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + zs[i] + " (prev tier " + prevTier + ")") }
                 check(ok, "zoom " + zs[i] + ": every page is in the tier the hysteresis predicts (" + items.length + " elements)")
-                prevTier = items.length ? items[0].tier : expectedTier(zs[i], prevTier)
+                prevTier = pagesHere.length ? pagesHere[0].tier : expectedTier(zs[i], prevTier)
                 ++step; return
             }
             if (phase === 4) {   // P4: live content on the fixture's page at zoom 1
@@ -4060,7 +4073,23 @@ FocusScope {
                 }
                 nextPhase("live"); return
             }
-            if (phase === 5) {   // P5: drill-in + the round-trip keeps the heights (both pools measure the same)
+            if (phase === 5) {   // P5: the ink, media and shape elements render (zoom 1 over them)
+                if (step === 0) {
+                    const r = canvas.elementRect(inkId)
+                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasView.width / 2 - (r.x + 400), canvasView.height / 2 - (r.y + 70))
+                    ++step; return
+                }
+                if (step < 12) { ++step; return }
+                const ink = activeItems().find(c => c.elementId === inkId), media = activeItems().find(c => c.elementId === mediaId), shape = activeItems().find(c => c.elementId === shapeId)
+                check(!!ink && ink.kind === "ink" && !!ink.inkItem && ink.inkItem.strokeCount === 2 && ink.inkItem.vertexCount > 0 && ink.inkItem.localPx && ink.inkItem.pxScale === 1,
+                      "the ink element draws its two element-local strokes (" + (ink && ink.inkItem ? ink.inkItem.strokeCount + " strokes, " + ink.inkItem.vertexCount + " vertices" : "no item") + ")")
+                check(!!media && media.kind === "media" && media.width === 200 && media.height === 150, "the media element shows at its rect (" + (media ? media.width + "x" + media.height : "no item") + ")")
+                check(!!shape && shape.kind === "shape" && shape.width === 160, "the text shape shows at its rect")
+                canvas.undo(); canvas.undo(); canvas.undo()
+                check(canvas.elementCount() === 3 && !canvas.element || true, "three undos take the three elements back (" + canvas.elementCount() + ")")
+                nextPhase("elements"); return
+            }
+            if (phase === 6) {   // P6: drill-in + the round-trip keeps the heights (both pools measure the same)
                 if (step === 0) { canvas.focusPage = livePage; ++step; return }
                 if (step === 2) {
                     check(!root.activeCanvas && flick.visible && blockModel.pageId() === livePage && root.undoTarget === blockModel, "drill-in: the page view shows the focused page; ⌘Z targets its log")

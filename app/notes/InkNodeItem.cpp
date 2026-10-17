@@ -1,5 +1,8 @@
 #include "InkNodeItem.h"
 #include "annotation_serializer.h"
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQuickWindow>
 #include <QSGGeometryNode>
 #include <QSGMaterial>
@@ -69,6 +72,30 @@ void InkNodeItem::setFrameH(qreal v) { if (v == frameH_) return; frameH_ = v; em
 void InkNodeItem::setSourceW(qreal v) { if (v == sourceW_) return; sourceW_ = v; emit frameChanged(); markDirty(); }
 void InkNodeItem::setSourceH(qreal v) { if (v == sourceH_) return; sourceH_ = v; emit frameChanged(); markDirty(); }
 void InkNodeItem::setPxScale(qreal v) { if (v == pxScale_) return; pxScale_ = v; emit pxScaleChanged(); update(); }
+void InkNodeItem::setLocalPx(bool v) { if (v == localPx_) return; localPx_ = v; emit localPxChanged(); markDirty(); }
+
+namespace {
+// An element-local envelope → the normalized schema the serializer accepts: points / (w, h).
+QString normalizeLocal(const QString& env, double w, double h) {
+    QJsonObject root = QJsonDocument::fromJson(env.toUtf8()).object();
+    if (root.value(QStringLiteral("coordinate_system")).toString() != QLatin1String("element-local")) return env;
+    QJsonArray shapes = root.value(QStringLiteral("shapes")).toArray();
+    for (int i = 0; i < shapes.size(); ++i) {
+        QJsonObject s = shapes.at(i).toObject();
+        QJsonArray pts = s.value(QStringLiteral("points")).toArray();
+        for (int k = 0; k < pts.size(); ++k) {
+            const QJsonArray p = pts.at(k).toArray();
+            if (p.size() < 2) continue;
+            pts.replace(k, QJsonArray{ p.at(0).toDouble() / std::max(1.0, w), p.at(1).toDouble() / std::max(1.0, h) });
+        }
+        s.insert(QStringLiteral("points"), pts);
+        shapes.replace(i, s);
+    }
+    root.insert(QStringLiteral("shapes"), shapes);
+    root.insert(QStringLiteral("coordinate_system"), QStringLiteral("normalized"));
+    return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+}
 
 QSGNode* InkNodeItem::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {
     const double dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
@@ -78,7 +105,8 @@ QSGNode* InkNodeItem::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {
     if (envelope_.isEmpty() || frameW_ <= 0 || frameH_ <= 0) { delete old; strokeCount_ = vertexCount_ = 0; return nullptr; }
     auto* node = static_cast<QSGGeometryNode*>(old);
     if (!node || dirty_ || margin != builtMargin_) {
-        const std::vector<qcv::ActiveStroke> strokes = qcv::AnnotationSerializer::jsonStringToStrokes(envelope_);
+        const std::vector<qcv::ActiveStroke> strokes = qcv::AnnotationSerializer::jsonStringToStrokes(
+            localPx_ ? normalizeLocal(envelope_, sourceW_ > 0 ? sourceW_ : frameW_, sourceH_ > 0 ? sourceH_ : frameH_) : envelope_);
         const double widthScale = frameW_ / std::max<qreal>(1.0, sourceW_ > 0 ? sourceW_ : frameW_);
         mn::ink::Mesh mesh;
         for (const qcv::ActiveStroke& s : strokes) mn::ink::tessellateStroke(s, QSizeF(frameW_, frameH_), widthScale, margin, mesh);

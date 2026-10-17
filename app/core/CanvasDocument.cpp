@@ -743,6 +743,23 @@ QString CanvasDocument::mediaElementInk(const QString& id, int page) const {
     return v.isObject() ? QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)) : QString();
 }
 
+QString CanvasDocument::resolveMediaUrl(const QVariant& src) const {
+    if (!mediaStore_ || src.isNull()) return QString();
+    return mediaStore_->resolveUrlAsync(QJsonValue::fromVariant(src));
+}
+QString CanvasDocument::resolveMediaPath(const QVariant& src) const {
+    const QString url = resolveMediaUrl(src);
+    return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
+}
+QString CanvasDocument::mediaPlaybackSource(const QVariant& src) const {
+    if (!mediaStore_ || src.isNull()) return QString();
+    return mediaStore_->playbackSourceFor(QJsonValue::fromVariant(src));
+}
+bool CanvasDocument::mediaExtracting(const QVariant& src) const {
+    if (!mediaStore_ || src.isNull()) return false;
+    return mediaStore_->extractionPending(src.toString());
+}
+
 // ---------------------------------------------------------------------------
 // Elements: mutators
 

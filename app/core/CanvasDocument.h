@@ -136,6 +136,11 @@ public:
     Q_INVOKABLE void setCamera(qreal x, qreal y, qreal z);
     Q_INVOKABLE QRectF canvasBounds() const;                                                // union of rects
     Q_INVOKABLE QString mediaElementInk(const QString& id, int page) const;                 // "" = none
+    // A media element's descriptor src through the file's MediaStore (the page model's rules).
+    Q_INVOKABLE QString resolveMediaUrl(const QVariant& src) const;        // non-blocking display url ("" while pending)
+    Q_INVOKABLE QString resolveMediaPath(const QVariant& src) const;       // its local path
+    Q_INVOKABLE QString mediaPlaybackSource(const QVariant& src) const;
+    Q_INVOKABLE bool mediaExtracting(const QVariant& src) const;
 
     // --- Element mutators. Each is ONE undo entry; a non-empty `coalesce` key merges a live run
     // (a drag: "move:<id>", "resize:<id>", "ink:<id>") into the current entry, like typing. ---

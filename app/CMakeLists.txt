@@ -198,6 +198,9 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasView.qml
         qml/MinNotes/App/CanvasElement.qml
         qml/MinNotes/App/CanvasPage.qml
+        qml/MinNotes/App/CanvasInkItem.qml
+        qml/MinNotes/App/CanvasMediaItem.qml
+        qml/MinNotes/App/CanvasShapeItem.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js

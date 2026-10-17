@@ -19,6 +19,9 @@ class InkNodeItem : public QQuickItem {
     Q_PROPERTY(qreal sourceW READ sourceW WRITE setSourceW NOTIFY frameChanged)   // the media's intrinsic px (stroke-width units)
     Q_PROPERTY(qreal sourceH READ sourceH WRITE setSourceH NOTIFY frameChanged)
     Q_PROPERTY(qreal pxScale READ pxScale WRITE setPxScale NOTIFY pxScaleChanged) // screen px per item px (the view zoom; DPR applied here)
+    // 2.0 canvas: the envelope's points are ELEMENT-LOCAL px ({coordinate_system:"element-local"}) —
+    // normalised against (sourceW, sourceH) before tessellation (frame == source: identity).
+    Q_PROPERTY(bool localPx READ localPx WRITE setLocalPx NOTIFY localPxChanged)
     Q_PROPERTY(int strokeCount READ strokeCount NOTIFY statsChanged)
     Q_PROPERTY(int vertexCount READ vertexCount NOTIFY statsChanged)
 public:
@@ -35,12 +38,15 @@ public:
     void setSourceH(qreal v);
     qreal pxScale() const { return pxScale_; }
     void setPxScale(qreal v);
+    bool localPx() const { return localPx_; }
+    void setLocalPx(bool v);
     int strokeCount() const { return strokeCount_; }
     int vertexCount() const { return vertexCount_; }
 signals:
     void envelopeChanged();
     void frameChanged();
     void pxScaleChanged();
+    void localPxChanged();
     void statsChanged();
 protected:
     QSGNode* updatePaintNode(QSGNode* old, UpdatePaintNodeData*) override;
@@ -48,6 +54,7 @@ private:
     void markDirty() { dirty_ = true; update(); }
     QString envelope_;
     qreal frameW_ = 0, frameH_ = 0, sourceW_ = 0, sourceH_ = 0, pxScale_ = 1;
+    bool localPx_ = false;
     bool dirty_ = true;
     double builtMargin_ = -1;
     int strokeCount_ = 0, vertexCount_ = 0;

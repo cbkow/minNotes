@@ -43,6 +43,7 @@
 #include <QXmlStreamReader>
 #include <QTextStream>
 #include <QTemporaryDir>
+#include <QImage>
 #include <cstring>
 #include <QMimeData>
 #include "RtfConvert.h"
@@ -5808,6 +5809,25 @@ static void testCanvasViewState() {
     }
 }
 
+// [124] A media element's descriptor resolves through the file's MediaStore like a page's media row.
+static void testMediaElementResolve() {
+    qInfo("[124] media elements (2.0 stage 2): descriptor src → url / path / playback source through the file's store");
+    QTemporaryDir dir;
+    const QString img = dir.path() + QStringLiteral("/pic.png");
+    { QImage im(4, 4, QImage::Format_ARGB32); im.fill(Qt::red); im.save(img); }
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString id = c.addMediaElement(QStringLiteral("{\"kind\":\"image\",\"src\":\"%1\",\"w\":4,\"h\":4}").arg(img), QRectF(0, 900, 40, 40));
+    CHECK(!id.isEmpty() && c.elementKind(id) == QLatin1String("media"), "a media element");
+    const QString url = c.resolveMediaUrl(img);
+    CHECK(url.startsWith(QStringLiteral("file:")) && QUrl(url).toLocalFile() == img && c.resolveMediaPath(img) == img, "an absolute src resolves to its file url / path (%s)", qPrintable(url));
+    CHECK(!c.mediaExtracting(img) && c.mediaPlaybackSource(img) == img, "not extracting; playback source = the file");
+    CHECK(c.resolveMediaUrl(QVariant()).isEmpty() && c.resolveMediaPath(QStringLiteral("")).isEmpty(), "empty srcs resolve to nothing");
+    CHECK(c.setMediaElementInk(id, 0, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[{\"type\":\"line\",\"points\":[[0.1,0.1],[0.9,0.9]]}]}"))
+              && c.mediaElementInk(id, 0).contains(QStringLiteral("line")),
+          "element-local frame ink stores under json.ink[0] (MediaBlock's own ink item reads it)");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8322,6 +8342,7 @@ int main(int argc, char** argv) {
     testCanvasUndo();
     testDocumentManager();
     testCanvasViewState();
+    testMediaElementResolve();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
