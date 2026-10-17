@@ -8573,6 +8573,74 @@ static int runTypeProbeHeadless(const QString& fixture) {
     return 0;
 }
 
+
+// TEMPORARY (2.0 step 0): write the 1.0 converter fixture with the CURRENT writers, before Stage 1 removes
+// them. `MN_GEN_V1_FIXTURE=<path.mnd> mn_regression_test` → tests/fixtures/v1-sample.mnd. Removed after commit.
+static int genV1Fixture(const QString& path) {
+    auto env = [](const char* space, const QString& shapes) {
+        return QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"block-local\",\"space\":\"%1\",\"shapes\":[%2]}")
+            .arg(QLatin1String(space), shapes);
+    };
+    auto shape = [](const char* id, const char* type, const QString& pts, int width) {
+        return QStringLiteral("{\"id\":\"%1\",\"type\":\"%2\",\"color\":[0.9,0.3,0.2,1],\"stroke_width\":%3,\"filled\":false,\"is_modeled\":false,\"points\":[%4]}")
+            .arg(QLatin1String(id), QLatin1String(type)).arg(width).arg(pts);
+    };
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    int r = 0;
+    auto para = [&](const QString& t) { m.insertBlock(r); m.setContent(r, t); return r++; };
+    const int h1 = para(QStringLiteral("Converter fixture")); m.setHeading(h1, 1);
+    const int p1 = para(QStringLiteral("A paragraph with margin ink circled around its first words, pinned to the block."));
+    m.setBlockInk(p1, env("px", shape("fx-free", "freehand", QStringLiteral("[-360,4],[-330,28],[-300,6],[-270,30]"), 4)
+                           + QStringLiteral(",") + shape("fx-arrow", "arrow", QStringLiteral("[60,40],[200,8]"), 6)));
+    const int p2 = para(QStringLiteral("A second paragraph carrying a comment thread on its first word."));
+    const QString tid = m.addComment(p2, 0, 1);
+    m.addCommentMessage(tid, QStringLiteral("Anchored thread message."));
+    const int h2 = para(QStringLiteral("Section with a split row and a table")); m.setHeading(h2, 2);
+    const int sp = para(QStringLiteral("Left lane text of the split row."));
+    m.splitIntoColumns(sp, 1, 0.5);                     // a split row: record + two lanes
+    r = m.rowCountQml();
+    const int firstCell = m.insertTableRows(r - 1, 3, 3);   // head + 2 body rows × 3 cells
+    if (firstCell >= 0) m.setContent(firstCell, QStringLiteral("cell 0,0"));
+    r = m.rowCountQml();
+    {   // an image block (descriptor only, no pixels) with FRAME-space margin ink
+        BlockModel::BlockSpec sp2; sp2.type = BlockModel::Media;
+        sp2.mediaJson = QStringLiteral("{\"src\":\"missing/photo.png\",\"w\":400,\"h\":300,\"kind\":\"image\"}");
+        m.insertSpecs(r - 1, { sp2 }, false);
+        const int img = m.rowCountQml() - 1;
+        m.setBlockInk(img, env("frame", shape("fx-rect", "rect", QStringLiteral("[0.1,0.1],[0.6,0.1],[0.6,0.5],[0.1,0.5]"), 3)));
+    }
+    r = m.rowCountQml();
+    {   // a sketch block: strokes + a text element
+        const int sk = m.insertSketch(r - 1);
+        m.sketchSetShapes(sk, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[%1,%2]}")
+                                  .arg(shape("sk-1", "freehand", QStringLiteral("[0.1,0.2],[0.4,0.6],[0.7,0.3]"), 5),
+                                       shape("sk-2", "oval", QStringLiteral("[0.5,0.5],[0.2,0.1]"), 3)));
+        m.sketchAddText(sk, 0.1, 0.8, 0.5, QStringLiteral("sketch label"), 24, QStringLiteral("#ffffff"));
+    }
+    r = m.rowCountQml();
+    {   // two PDFs: one with page-0 ink (to be promoted), one without (stays inline)
+        BlockModel::BlockSpec pdfA; pdfA.type = BlockModel::Media;
+        pdfA.mediaJson = QStringLiteral("{\"src\":\"missing/inked.pdf\",\"w\":612,\"h\":792,\"kind\":\"pdf\",\"pages\":3}");
+        BlockModel::BlockSpec pdfB = pdfA;
+        pdfB.mediaJson = QStringLiteral("{\"src\":\"missing/plain.pdf\",\"w\":612,\"h\":792,\"kind\":\"pdf\",\"pages\":2}");
+        m.insertSpecs(r - 1, { pdfA, pdfB }, false);
+        const int pa = m.rowCountQml() - 2;
+        m.pdfSetPageInk(pa, 0, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[%1]}")
+                                   .arg(shape("pdf-1", "line", QStringLiteral("[0.2,0.2],[0.8,0.4]"), 4)));
+    }
+    r = m.rowCountQml();
+    const int p3 = para(QStringLiteral("A closing paragraph whose comment thread will be orphaned."));
+    const QString orphan = m.addComment(p3, 2, 9);
+    m.addCommentMessage(orphan, QStringLiteral("This thread loses its anchor."));
+    m.unlinkThread(orphan);
+    m.setPageWidth(880);                                 // a non-default page width the converter must honour
+    if (!m.saveAs(path)) { qWarning("saveAs failed"); return 1; }
+    qInfo("fixture written: %s rows=%d ink=%d", qPrintable(path), m.rowCountQml(), int(m.inkBlockIds().size()));
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // Uses the native platform (the test creates no windows). QGuiApplication —
     // not QCoreApplication — because BlockModel/MediaStore touch QImage/QPixmap.
@@ -8584,6 +8652,7 @@ int main(int argc, char** argv) {
     if (!qEnvironmentVariable("MN_TYPE_PROBE_HEADLESS").isEmpty())
         return runTypeProbeHeadless(qEnvironmentVariable("MN_TYPE_PROBE_HEADLESS"));
     if (qEnvironmentVariableIsSet("MN_SPELL_PROBE")) return spellProbe();
+    if (!qEnvironmentVariable("MN_GEN_V1_FIXTURE").isEmpty()) return genV1Fixture(qEnvironmentVariable("MN_GEN_V1_FIXTURE"));
     if (!qEnvironmentVariable("MN_STYLE_SAMPLE").isEmpty()) return writeStyleSample(qEnvironmentVariable("MN_STYLE_SAMPLE"));
     // Register the app text font so sketch-text height derivation matches the
     // app. Non-fatal if missing — text assertions are font-relative (computed
