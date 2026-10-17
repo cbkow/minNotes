@@ -33,11 +33,22 @@ void CanvasGestures::doubleClick(QQuickItem* item, qreal x, qreal y) {
 }
 
 void CanvasGestures::drag(QQuickItem* item, qreal x0, qreal y0, qreal x1, qreal y1, int steps) {
+    dragWith(item, int(Qt::LeftButton), x0, y0, x1, y1, steps);
+}
+
+void CanvasGestures::dragWith(QQuickItem* item, int button, qreal x0, qreal y0, qreal x1, qreal y1, int steps) {
+    const Qt::MouseButton b = Qt::MouseButton(button);
     nextStamp(1000);
-    press(item, x0, y0);
+    mouse(item, QEvent::MouseButtonPress, x0, y0, b, b);
     const int n = std::max(1, steps);
-    for (int i = 1; i <= n; ++i) move(item, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n);
-    release(item, x1, y1);
+    for (int i = 1; i <= n; ++i) mouse(item, QEvent::MouseMove, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, Qt::NoButton, b);
+    mouse(item, QEvent::MouseButtonRelease, x1, y1, b, Qt::NoButton);
+}
+
+void CanvasGestures::rightClick(QQuickItem* item, qreal x, qreal y) {
+    nextStamp(1000);
+    mouse(item, QEvent::MouseButtonPress, x, y, Qt::RightButton, Qt::RightButton);
+    mouse(item, QEvent::MouseButtonRelease, x, y, Qt::RightButton, Qt::NoButton);
 }
 
 void CanvasGestures::type(QQuickItem* item, const QString& text) {

@@ -6,6 +6,7 @@
 // (canvas_meta on save); a canvas without one fits every element and keeps re-fitting on resize
 // until the user takes the camera (wheel, drag, pinch, zoom keys).
 import QtQuick
+import QtQuick.Controls
 
 Rectangle {
     id: cv
@@ -20,6 +21,9 @@ Rectangle {
     readonly property string tool: editor.inspector ? editor.inspector.drawTool : "type"
     readonly property bool drawing: !spaceHeld && (tool === "freehand" || tool === "rect" || tool === "oval" || tool === "arrow" || tool === "line" || tool === "eraser")
     readonly property bool textTool: !spaceHeld && tool === "text"
+    readonly property bool pageTool: !spaceHeld && tool === "page"
+    readonly property bool handTool: spaceHeld || tool === "hand"
+    readonly property bool pointerTool: !spaceHeld && (tool === "select" || tool === "type")
 
     // --- creating things on the canvas ---
     // Double-click on empty canvas (pointer tools): a new page there, opened for typing (ruling 6).
@@ -44,21 +48,53 @@ Rectangle {
     readonly property var textEditorItem: textEditor   // probe
     function emptyAt(sx, sy) { const w = cam.screenToWorld(sx, sy); return canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01).length === 0 }
 
-    // --- selection ---
-    property string selectedId: ""
+    // --- selection: a SET of ids; selectedId is the one id when exactly one is selected ---
+    property var selectedIds: []
+    readonly property string selectedId: selectedIds.length === 1 ? selectedIds[0] : ""
+    readonly property int selectionCount: selectedIds.length
     property int elementDrags: 0   // probe diagnostics: element drags / view pans that activated
     property int pans: 0
-    function select(id) { selectedId = id }
-    function clearSelection() { selectedId = "" }
-    readonly property string selectedKind: selectedId !== "" ? (canvas.elementsRevision, canvas.elementKind(selectedId)) : ""
-    onSelectedKindChanged: if (selectedId !== "" && selectedKind === "") selectedId = ""   // the element went away
-    Connections { target: canvas; function onDocumentChanged() { cv.clearSelection() } }
-    // World-space moves and resizes of the selection (the handlers and the probe share these).
-    function moveSelectedBy(dx, dy) {
-        if (selectedId === "") return
-        const r = canvas.elementRect(selectedId)
-        canvas.setElementRect(selectedId, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + selectedId)
+    function select(id) { selectedIds = id !== "" ? [id] : [] }
+    function selectMany(ids) { selectedIds = ids.slice() }
+    function toggleSelect(id) { const i = selectedIds.indexOf(id); const a = selectedIds.slice(); if (i >= 0) a.splice(i, 1); else a.push(id); selectedIds = a }
+    function isSelected(id) { return selectedIds.indexOf(id) >= 0 }
+    function clearSelection() { if (selectedIds.length) selectedIds = [] }
+    function selectionRect() {   // the union of the selected elements' world rects
+        let r = null
+        for (const id of selectedIds) {
+            const e = canvas.elementRect(id)
+            if (e.width <= 0 && e.height <= 0) continue
+            r = r ? Qt.rect(Math.min(r.x, e.x), Math.min(r.y, e.y), Math.max(r.x + r.width, e.x + e.width) - Math.min(r.x, e.x), Math.max(r.y + r.height, e.y + e.height) - Math.min(r.y, e.y)) : e
+        }
+        return r || Qt.rect(0, 0, 0, 0)
     }
+    Connections {   // elements that went away leave the selection
+        target: canvas
+        function onElementsChanged() { const keep = cv.selectedIds.filter(id => canvas.elementKind(id) !== ""); if (keep.length !== cv.selectedIds.length) cv.selectedIds = keep }
+    }
+    Connections { target: canvas; function onDocumentChanged() { cv.clearSelection() } }
+    // World-space moves and resizes of the selection (the handlers and the probe share these). A move
+    // of several elements is one history row (a batch); a drag opens the batch at its start.
+    function moveSelectedBy(dx, dy) {
+        if (!selectedIds.length) return
+        canvas.beginBatch(qsTr("Move"))
+        for (const id of selectedIds) {
+            const r = canvas.elementRect(id)
+            canvas.setElementRect(id, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + id)
+        }
+        canvas.endBatch()
+    }
+    // A drag: starts of every selected element, then absolute positions per step inside one batch.
+    property var dragStarts: ({})
+    function beginSelectionDrag() {
+        dragStarts = {}
+        for (const id of selectedIds) dragStarts[id] = canvas.elementRect(id)
+        canvas.beginBatch(qsTr("Move"))
+    }
+    function dragSelectionTo(dx, dy) {
+        for (const id in dragStarts) { const r = dragStarts[id]; canvas.setElementRect(id, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + id) }
+    }
+    function endSelectionDrag() { canvas.endBatch(); dragStarts = {} }
     function resizeSelected(rect) { if (selectedId !== "") canvas.setElementRect(selectedId, rect, "resize:" + selectedId) }
     function edgeResize(start, dx, dy, ddx, ddy) {   // a handle's drag → the new world rect (min 8 px)
         let x = start.x, y = start.y, w = start.width, h = start.height
@@ -68,8 +104,23 @@ Rectangle {
         else if (dy > 0) h = Math.max(8, start.height + ddy)
         return Qt.rect(x, y, w, h)
     }
-    function deleteSelected() { if (selectedId !== "" && canvas.removeElement(selectedId)) selectedId = "" }
+    function deleteSelected() {
+        if (!selectedIds.length) return
+        canvas.beginBatch(qsTr("Delete"))
+        for (const id of selectedIds.slice()) canvas.removeElement(id)
+        canvas.endBatch()
+        selectedIds = selectedIds.filter(id => canvas.elementKind(id) !== "")   // (a last page refuses)
+    }
     function drillSelected() { if (selectedId !== "" && canvas.elementKind(selectedId) === "page") canvas.focusPage = selectedId }
+    function duplicateSelected() {
+        const made = []
+        canvas.beginBatch(qsTr("Duplicate"))
+        for (const id of selectedIds) { const n = canvas.duplicateElement(id); if (n !== "") made.push(n) }
+        canvas.endBatch()
+        if (made.length) selectedIds = made
+    }
+    function frontSelected() { canvas.beginBatch(qsTr("Bring to front")); for (const id of selectedIds) canvas.bringToFront(id); canvas.endBatch() }
+    function backSelected() { canvas.beginBatch(qsTr("Send to back")); for (const id of selectedIds.slice().reverse()) canvas.sendToBack(id); canvas.endBatch() }
     // The topmost ink element under a world point (the eraser).
     function inkAt(wx, wy) {
         const ids = canvas.visibleElements(wx, wy, wx + 0.01, wy + 0.01)
@@ -146,7 +197,7 @@ Rectangle {
     function frameHit(p) { const f = selFrame; return f.shown && p.x >= f.x - 8 && p.x <= f.x + f.width + 8 && p.y >= f.y - 8 && p.y <= f.y + f.height + 8 }
     PointHandler {
         acceptedButtons: Qt.LeftButton
-        onActiveChanged: if (active) cv.pressOnElement = !cv.emptyAt(point.position.x, point.position.y) || cv.frameHit(point.position)
+        onActiveChanged: cv.pressOnElement = active ? (!cv.emptyAt(point.position.x, point.position.y) || cv.frameHit(point.position)) : false
     }
 
     Item {
@@ -202,18 +253,116 @@ Rectangle {
             cv.editor.forceActiveFocus()
         }
     }
-    // Empty-canvas gestures: tap clears / makes a text chip (text tool); double-tap makes a page.
+    // Empty-canvas gestures: tap clears / makes a text chip (text tool) / places a page (page tool);
+    // double-tap with the pointer makes a page too (the hidden shortcut; the page tool is the shown one).
     TapHandler {
-        enabled: !cv.drawing
+        enabled: !cv.drawing && !cv.handTool
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
         onSingleTapped: (ev) => {
             ++cv.taps
             if (!cv.emptyAt(ev.position.x, ev.position.y)) return
             if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
+            else if (cv.pageTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addPageAt(w.x, w.y); if (id !== "") cv.select(id) }
             else { textEditor.commit(); cv.clearSelection(); cv.editor.forceActiveFocus() }
         }
-        onDoubleTapped: (ev) => { ++cv.doubleTaps; if (!cv.textTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
+        onDoubleTapped: (ev) => { ++cv.doubleTaps; if (cv.pointerTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
+    }
+    // Right-click: the context menu for the element under the pointer (joins the selection) or for empty canvas.
+    property int rightClicks: 0   // probe diagnostics
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        onTapped: (ev) => {
+            ++cv.rightClicks
+            const w = cam.screenToWorld(ev.position.x, ev.position.y)
+            const ids = canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01)
+            const hit = ids.length ? ids[ids.length - 1] : ""
+            if (hit !== "" && !cv.isSelected(hit)) cv.select(hit)
+            else if (hit === "") cv.clearSelection()
+            ctxMenu.worldX = w.x; ctxMenu.worldY = w.y
+            ctxMenu.popup(ev.position.x, ev.position.y)
+        }
+    }
+    ThemedMenu {
+        id: ctxMenu
+        property real worldX: 0
+        property real worldY: 0
+        readonly property bool onePage: cv.selectedId !== "" && canvas.elementKind(cv.selectedId) === "page"
+        readonly property bool oneText: cv.selectedId !== "" && canvas.elementKind(cv.selectedId) === "shape"
+        readonly property bool any: cv.selectionCount > 0
+        Action { text: qsTr("Open page");      enabled: ctxMenu.onePage; onTriggered: cv.drillSelected() }
+        Action { text: qsTr("Edit text");      enabled: ctxMenu.oneText; onTriggered: cv.editText(cv.selectedId) }
+        Action { text: qsTr("Duplicate");      enabled: ctxMenu.any && cv.selectedIds.some(id => canvas.elementKind(id) !== "page"); onTriggered: cv.duplicateSelected() }
+        Action { text: qsTr("Bring to front"); enabled: ctxMenu.any; onTriggered: cv.frontSelected() }
+        Action { text: qsTr("Send to back");   enabled: ctxMenu.any; onTriggered: cv.backSelected() }
+        Action { text: qsTr("Delete");         enabled: ctxMenu.any; onTriggered: cv.deleteSelected() }
+        Action { text: qsTr("New page here");  enabled: !ctxMenu.any; onTriggered: { const id = canvas.addPageAt(ctxMenu.worldX, ctxMenu.worldY); if (id !== "") cv.select(id) } }
+    }
+    readonly property var contextMenu: ctxMenu   // probe
+    // The marquee (pointer tool, empty canvas): a screen-space box; the elements it crosses get selected.
+    property rect marqueeRect: Qt.rect(0, 0, 0, 0)
+    property bool marqueeActive: false
+    DragHandler {
+        id: marquee
+        target: null
+        acceptedButtons: Qt.LeftButton
+        enabled: cv.pointerTool && !cv.pressOnElement
+        onActiveChanged: {
+            if (active) { cv.marqueeActive = true; cv.marqueeRect = Qt.rect(centroid.pressPosition.x, centroid.pressPosition.y, 0, 0) }
+            else if (cv.marqueeActive) {
+                cv.marqueeActive = false
+                const r = cv.marqueeRect
+                if (r.width > 2 || r.height > 2) {
+                    const a = cam.screenToWorld(r.x, r.y), b = cam.screenToWorld(r.x + r.width, r.y + r.height)
+                    cv.selectMany(canvas.visibleElements(a.x, a.y, b.x, b.y))
+                }
+            }
+        }
+        onCentroidChanged: {
+            if (!active) return
+            const p0 = centroid.pressPosition, p1 = centroid.position
+            cv.marqueeRect = Qt.rect(Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), Math.abs(p1.x - p0.x), Math.abs(p1.y - p0.y))
+        }
+    }
+    Rectangle {
+        visible: cv.marqueeActive
+        x: cv.marqueeRect.x; y: cv.marqueeRect.y; width: cv.marqueeRect.width; height: cv.marqueeRect.height
+        z: 9
+        color: Qt.rgba(Theme.colors.accent.r, Theme.colors.accent.g, Theme.colors.accent.b, 0.08)
+        border.width: 1; border.color: Theme.colors.accent
+    }
+    // The page tool's drag: a box whose width becomes the new page's measure.
+    property rect pageDragRect: Qt.rect(0, 0, 0, 0)
+    property bool pageDragActive: false
+    DragHandler {
+        target: null
+        acceptedButtons: Qt.LeftButton
+        enabled: cv.pageTool
+        onActiveChanged: {
+            if (active) { cv.pageDragActive = true; cv.pageDragRect = Qt.rect(centroid.pressPosition.x, centroid.pressPosition.y, 0, 0) }
+            else if (cv.pageDragActive) {
+                cv.pageDragActive = false
+                const r = cv.pageDragRect
+                if (r.width > 8) {
+                    const w = cam.screenToWorld(r.x, r.y)
+                    const id = canvas.addPageAt(w.x, w.y, r.width / cam.zoom - 2 * 24)
+                    if (id !== "") cv.select(id)
+                }
+            }
+        }
+        onCentroidChanged: {
+            if (!active) return
+            const p0 = centroid.pressPosition, p1 = centroid.position
+            cv.pageDragRect = Qt.rect(Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), Math.abs(p1.x - p0.x), Math.abs(p1.y - p0.y))
+        }
+    }
+    Rectangle {
+        visible: cv.pageDragActive
+        x: cv.pageDragRect.x; y: cv.pageDragRect.y; width: cv.pageDragRect.width; height: Math.max(cv.pageDragRect.height, 400 * cam.zoom)
+        z: 9
+        color: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g, Theme.colors.surface.b, 0.5)
+        border.width: 1; border.color: Theme.colors.accent
     }
     // The selection frame (screen space), the text editor and the pen overlay sit above the world layer.
     CanvasSelectionFrame { id: selFrame; view: cv; z: 10 }
@@ -227,7 +376,7 @@ Rectangle {
         strokeWidth: cv.editor.inspector ? cv.editor.inspector.drawWidth : 6
         zoom: cam.zoom; panX: cam.panX; panY: cam.panY
         onStrokeCommitted: (json, rect) => { const id = canvas.addInkElement(json, rect); if (id !== "") cv.select(id) }
-        onEraseAt: (wx, wy) => { const id = cv.inkAt(wx, wy); if (id !== "") { if (cv.selectedId === id) cv.clearSelection(); canvas.removeElement(id) } }
+        onEraseAt: (wx, wy) => { const id = cv.inkAt(wx, wy); if (id !== "") { if (cv.isSelected(id)) cv.toggleSelect(id); canvas.removeElement(id) } }
         InkNodeItem {   // the in-progress stroke, at this zoom
             anchors.fill: parent
             envelope: capture.liveEnvelope
@@ -238,10 +387,18 @@ Rectangle {
     readonly property var inkCapture: capture   // probe
     readonly property var selectionFrame: selFrame
 
-    DragHandler {   // left-drag on EMPTY canvas pans (an element's own handler moves it); middle-drag always
+    DragHandler {   // middle-drag ALWAYS pans — selection, tool or element under the pointer notwithstanding
         target: null
-        enabled: !cv.drawing && !cv.pressOnElement
-        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+        acceptedButtons: Qt.MiddleButton
+        property real sx: 0
+        property real sy: 0
+        onActiveChanged: if (active) { sx = cam.panX; sy = cam.panY; ++cv.pans }
+        onActiveTranslationChanged: if (active) cam.setPan(sx + activeTranslation.x, sy + activeTranslation.y)
+    }
+    DragHandler {   // left-drag pans with the hand tool or Space held
+        target: null
+        enabled: cv.handTool
+        acceptedButtons: Qt.LeftButton
         property real sx: 0
         property real sy: 0
         onActiveChanged: if (active) { sx = cam.panX; sy = cam.panY; ++cv.pans }

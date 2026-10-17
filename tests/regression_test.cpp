@@ -5965,6 +5965,46 @@ static void testPageHeightCap() {
     CHECK(pr.height() >= 400 && pr.height() <= CanvasDocument::pageHeightCap(pr.width()), "the converter's page height sits inside [floor, cap] (%g of %g)", pr.height(), CanvasDocument::pageHeightCap(pr.width()));
 }
 
+// [128] Batch undo (one history row for a multi-element gesture), send to back, duplicate, a sized page.
+static void testCanvasBatch() {
+    qInfo("[128] canvas batch undo (2.0 stage 2): begin/endBatch = one row, coalescing inside, undo/redo in order; sendToBack; duplicate; addPageAt(measure)");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString a = c.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}"), QRectF(1000, 0, 10, 10));
+    const QString b = c.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}"), QRectF(1100, 0, 10, 10));
+    const int rows = c.undoHistory().size();
+    c.beginBatch(QStringLiteral("Move"));
+    c.setElementRect(a, QRectF(1010, 0, 10, 10), QStringLiteral("move:") + a);
+    c.setElementRect(b, QRectF(1110, 0, 10, 10), QStringLiteral("move:") + b);
+    c.setElementRect(a, QRectF(1020, 5, 10, 10), QStringLiteral("move:") + a);   // folds into a's part
+    c.beginBatch(QStringLiteral("nested"));                                      // nests into the outer batch
+    c.setElementRect(b, QRectF(1120, 5, 10, 10), QStringLiteral("move:") + b);
+    c.endBatch();
+    CHECK(c.undoHistory().size() == rows, "nothing lands on the log until the outer batch ends");
+    c.endBatch();
+    CHECK(c.undoHistory().size() == rows + 1 && c.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QLatin1String("Move"), "the batch is ONE row, labelled");
+    c.undo();
+    CHECK(c.elementRect(a) == QRectF(1000, 0, 10, 10) && c.elementRect(b) == QRectF(1100, 0, 10, 10), "one undo restores every part's before");
+    c.redo();
+    CHECK(c.elementRect(a) == QRectF(1020, 5, 10, 10) && c.elementRect(b) == QRectF(1120, 5, 10, 10), "one redo re-applies every part's after");
+    c.beginBatch(QStringLiteral("one")); c.setElementZ(a, 7); c.endBatch();
+    CHECK(c.undoHistory().last().toMap().value(QStringLiteral("label")).toString() == QLatin1String("Reorder ink"), "a batch of one part is that part");
+    c.beginBatch(QStringLiteral("empty")); c.endBatch();
+    CHECK(c.undoHistory().size() == rows + 2, "an empty batch is nothing");
+    c.beginBatch(QStringLiteral("Delete")); c.removeElement(a); c.removeElement(b); c.endBatch();
+    CHECK(!c.element(a) && !c.element(b) && c.undoHistory().size() == rows + 3, "a delete batch");
+    c.undo();
+    CHECK(c.element(a) && c.element(b) && c.elementZ(a) == 7, "…undone together, with a's z");
+    CHECK(c.sendToBack(a) && c.elementZ(a) < 0 && c.elementIdAt(0) == a, "sendToBack puts it under the page");
+    const QString d = c.duplicateElement(b);
+    CHECK(!d.isEmpty() && d != b && c.elementRect(d) == QRectF(1144, 29, 10, 10) && c.elementJson(d) == c.elementJson(b) && c.elementIdAt(c.elementCount() - 1) == d,
+          "duplicate: a copy beside the original, on top");
+    CHECK(c.duplicateElement(c.firstPageId()).isEmpty(), "pages are not duplicated");
+    const QString p = c.addPageAt(0, 2000, 1000);
+    CHECK(c.elementRect(p).width() == 1000 + 2 * CanvasDocument::kPageInset && c.addPageAt(0, 3000, 50) != QString() && c.elementRect(c.pageIds().last()).width() == 400 + 2 * CanvasDocument::kPageInset,
+          "addPageAt takes a measure, clamped (%g)", c.elementRect(p).width());
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8483,6 +8523,7 @@ int main(int argc, char** argv) {
     testInkCapture();
     testCanvasCreate();
     testPageHeightCap();
+    testCanvasBatch();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

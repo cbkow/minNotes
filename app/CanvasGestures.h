@@ -19,6 +19,8 @@ public:
     Q_INVOKABLE void doubleClick(QQuickItem* item, qreal x, qreal y);
     // A drag in `steps` moves (each a real move event with advancing timestamps).
     Q_INVOKABLE void drag(QQuickItem* item, qreal x0, qreal y0, qreal x1, qreal y1, int steps = 8);
+    Q_INVOKABLE void dragWith(QQuickItem* item, int button, qreal x0, qreal y0, qreal x1, qreal y1, int steps = 8);   // Qt.MiddleButton etc.
+    Q_INVOKABLE void rightClick(QQuickItem* item, qreal x, qreal y);
     // Keys to the focused item: a character per call (text + the key for letters), or a named key.
     Q_INVOKABLE void type(QQuickItem* item, const QString& text);
     Q_INVOKABLE void key(QQuickItem* item, int key, int modifiers = 0);

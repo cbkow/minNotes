@@ -530,8 +530,9 @@ void CanvasDocument::seedPage(const QString& pageId) {
 
 QString CanvasDocument::addPage() { return addPageWithRect(QRectF()); }
 
-QString CanvasDocument::addPageAt(qreal wx, qreal wy) {
-    return addPageWithRect(QRectF(wx, wy, kDefaultMeasure + 2.0 * kPageInset, kMinPageHeight));
+QString CanvasDocument::addPageAt(qreal wx, qreal wy, qreal measure) {
+    const double m = std::clamp(measure > 0 ? measure : double(kDefaultMeasure), kMinPageMeasure, kMaxPageMeasure);
+    return addPageWithRect(QRectF(wx, wy, m + 2.0 * kPageInset, kMinPageHeight));
 }
 
 // A null rect = right of the other pages (the "+" tab); a rect = the canvas gesture's point.
@@ -954,6 +955,20 @@ bool CanvasDocument::bringToFront(const QString& id) {
     return cur->z == top ? true : setElementZ(id, top + 1);
 }
 
+bool CanvasDocument::sendToBack(const QString& id) {
+    const auto cur = element(id);
+    if (!cur) return false;
+    int bottom = 0;
+    for (const Document::Element& e : elements_) bottom = std::min(bottom, e.z);
+    return cur->z == bottom && elements_.size() > 1 && elements_.front().id == id ? true : setElementZ(id, bottom - 1);
+}
+
+QString CanvasDocument::duplicateElement(const QString& id) {
+    const auto cur = element(id);
+    if (!cur || cur->kind == QLatin1String("page")) return QString();
+    return addElement(cur->kind, QRectF(cur->x + 24, cur->y + 24, cur->w, cur->h), cur->json, tr("Duplicate %1").arg(kindLabel(cur->kind)));
+}
+
 bool CanvasDocument::removeElement(const QString& id) {
     const auto cur = element(id);
     if (!cur) return false;
@@ -1032,9 +1047,40 @@ void CanvasDocument::applySnap(const QString& id, const ElementSnap& s) {
     }
 }
 
+void CanvasDocument::beginBatch(const QString& label) {
+    if (batchDepth_++ == 0) { batch_ = UndoEntry{}; batch_.label = label; }
+}
+
+void CanvasDocument::endBatch() {
+    if (batchDepth_ <= 0) return;
+    if (--batchDepth_ > 0) return;
+    UndoEntry b = std::move(batch_);
+    batch_ = UndoEntry{};
+    if (b.parts.empty()) return;
+    if (b.parts.size() == 1) {   // a batch of one part is that part — with its own key, so a run of nudges still coalesces
+        UndoEntry one = std::move(b.parts.front());
+        const QString key = one.coalesce;
+        pushEntry(std::move(one), key);
+        return;
+    }
+    b.ts = QDateTime::currentMSecsSinceEpoch();
+    b.parent = undoCur_;
+    undo_.push_back(std::move(b));
+    undoCur_ = static_cast<int>(undo_.size()) - 1;
+    ++undoRev_;
+    emit undoStackChanged();
+}
+
 void CanvasDocument::pushEntry(UndoEntry e, const QString& coalesce) {
     e.ts = QDateTime::currentMSecsSinceEpoch();
     e.coalesce = coalesce;
+    if (batchDepth_ > 0) {   // inside a batch: a run on the same element folds into its part
+        if (!coalesce.isEmpty())
+            for (UndoEntry& part : batch_.parts)
+                if (part.coalesce == coalesce && part.id == e.id) { part.after = std::move(e.after); return; }
+        batch_.parts.push_back(std::move(e));
+        return;
+    }
     // A live run (drag) folds into the current entry: same key, same element, nothing to redo —
     // the entry keeps its `before`, takes the new `after` (BlockModel::endTxn's rule).
     if (!coalesce.isEmpty() && undoCur_ >= 0 && !canRedo()) {
@@ -1060,14 +1106,22 @@ bool CanvasDocument::canRedo() const {
     return false;
 }
 
+void CanvasDocument::applyEntry(const UndoEntry& e, bool before) {
+    if (e.parts.empty()) { applySnap(e.id, before ? e.before : e.after); return; }
+    if (before) for (size_t i = e.parts.size(); i-- > 0;) applySnap(e.parts[i].id, e.parts[i].before);
+    else        for (const UndoEntry& p : e.parts) applySnap(p.id, p.after);
+}
+
 void CanvasDocument::undo() {
     if (undoCur_ < 0) return;
+    if (batchDepth_ > 0) { batchDepth_ = 0; batch_ = UndoEntry{}; }   // an undo mid-gesture ends the gesture's batch unrecorded
     const UndoEntry e = undo_[size_t(undoCur_)];
-    applySnap(e.id, e.before);
+    applyEntry(e, true);
     undoCur_ = e.parent;
     ++undoRev_;
     emit undoStackChanged();
-    noteChanged(e.before.present ? e.before.el.kind : e.after.el.kind, true, true, true);
+    const UndoEntry& k = e.parts.empty() ? e : e.parts.front();
+    noteChanged(k.before.present ? k.before.el.kind : k.after.el.kind, true, true, true);
 }
 
 void CanvasDocument::redo() {
@@ -1076,16 +1130,19 @@ void CanvasDocument::redo() {
         if (undo_[size_t(i)].parent == undoCur_) { child = i; break; }
     if (child < 0) return;
     const UndoEntry e = undo_[size_t(child)];
-    applySnap(e.id, e.after);
+    applyEntry(e, false);
     undoCur_ = child;
     ++undoRev_;
     emit undoStackChanged();
-    noteChanged(e.after.present ? e.after.el.kind : e.before.el.kind, true, true, true);
+    const UndoEntry& k = e.parts.empty() ? e : e.parts.front();
+    noteChanged(k.after.present ? k.after.el.kind : k.before.el.kind, true, true, true);
 }
 
 void CanvasDocument::clearUndo() {
     const bool had = !undo_.empty() || undoCur_ >= 0;
     undo_.clear();
+    batchDepth_ = 0;
+    batch_ = UndoEntry{};
     undoCur_ = -1;
     if (had) { ++undoRev_; emit undoStackChanged(); }
 }

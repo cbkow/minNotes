@@ -323,6 +323,7 @@ FocusScope {
     // tool/color/width live there (its Draw target).
     property var inspector: null
     property var tabsItem: null   // the bottom strip (set from Main.qml; the canvas probe counts its tabs)
+    property var toolbarItem: null   // the top strip's view toolbar (set from Main.qml; the probe)
 
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
     // tab shows the board; a table with no grouping column stays in the document.
@@ -3181,7 +3182,11 @@ FocusScope {
         // The canvas (B3, read-only): Space holds the hand; everything else is swallowed so typing
         // can't edit the document invisibly (the global chords above still work).
         else if (root.activeCanvas) {
+            const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+            const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
+                               [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" }
             if (k === Qt.Key_Space && !event.isAutoRepeat) canvasView.spaceHeld = true
+            else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
             else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasView.deleteSelected()
             else if (k === Qt.Key_Escape) {
                 if (canvasView.inkCapture.drawing) canvasView.inkCapture.cancelStroke()
@@ -3959,6 +3964,7 @@ FocusScope {
         property string penId: ""
         property int penN0: 0
         property string textId: ""
+        property var multiIds: []
         property bool probeFocusTrace: false
         property real seed: 12345
         property int prevTier: -1
@@ -3979,6 +3985,7 @@ FocusScope {
         }
         function pageItem(id) { return activeItems().find(c => c.elementId === id) || null }
         function cv_textTool() { return canvasView.textTool }
+        function win_toolbar() { return root.toolbarItem }
         function selFrameX() { return canvasView.selectionFrame.x }
         function selFrameW() { return canvasView.selectionFrame.width }
         onTriggered: {
@@ -4355,6 +4362,85 @@ FocusScope {
                     if (!root.activeCanvas) root.setActiveTab("canvas")
                     ++step; return
                 }
+                if (step === 26) {   // multi-select: a marquee over two strokes, one drag moves both as ONE row, Delete + one undo
+                    root.inspector.drawTool = "select"
+                    cvw.clearSelection()
+                    const base = canvas.canvasBounds()
+                    const i1 = canvas.addInkElement(JSON.stringify({ version: "2.0", coordinate_system: "element-local", shapes: [{ type: "line", color: [0.2, 0.6, 0.9, 1], stroke_width: 4, filled: false, is_modeled: false, points: [[0, 0], [60, 40]] }] }), Qt.rect(base.x + base.width + 1200, base.y, 70, 50))
+                    const i2 = canvas.addInkElement(JSON.stringify({ version: "2.0", coordinate_system: "element-local", shapes: [{ type: "line", color: [0.2, 0.6, 0.9, 1], stroke_width: 4, filled: false, is_modeled: false, points: [[0, 40], [60, 0]] }] }), Qt.rect(base.x + base.width + 1300, base.y + 80, 70, 50))
+                    multiIds = [i1, i2]
+                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(cvw.width / 2 - (base.x + base.width + 1270), cvw.height / 2 - (base.y + 90))
+                    ++step; return
+                }
+                if (step === 28) {
+                    const [i1, i2] = multiIds
+                    const a = cam.worldToScreen(canvas.elementRect(i1).x - 30, canvas.elementRect(i1).y - 30), b = cam.worldToScreen(canvas.elementRect(i2).x + 100, canvas.elementRect(i2).y + 80)
+                    g.drag(cvw, a.x, a.y, b.x, b.y, 6)
+                    check(cvw.selectionCount === 2 && cvw.isSelected(i1) && cvw.isSelected(i2) && cvw.selectedId === "", "a marquee over two strokes selects both (" + cvw.selectionCount + ")")
+                    const f = cvw.selectionFrame, u = cvw.selectionRect(), tl = cam.worldToScreen(u.x, u.y)
+                    check(Math.abs(f.x - tl.x) < 0.5 && Math.abs(f.width - u.width * cam.zoom) < 0.5, "the frame is the union of the set")
+                    const r1 = canvas.elementRect(i1), r2 = canvas.elementRect(i2), hist0 = canvas.undoHistory().length
+                    const c = cam.worldToScreen(r1.x + r1.width / 2, r1.y + r1.height / 2)
+                    g.drag(cvw, c.x, c.y, c.x + 40, c.y + 20, 5)
+                    const m1 = canvas.elementRect(i1), m2 = canvas.elementRect(i2)
+                    check(Math.abs(m1.x - r1.x - 40) < 0.01 && Math.abs(m2.x - r2.x - 40) < 0.01 && Math.abs(m2.y - r2.y - 20) < 0.01 && canvas.undoHistory().length === hist0 + 1,
+                          "dragging one selected element moves the set, as ONE history row (" + (canvas.undoHistory().length - hist0) + ")")
+                    canvas.undo()
+                    check(canvas.elementRect(i1).x === r1.x && canvas.elementRect(i2).x === r2.x, "one undo restores both")
+                    cvw.selectMany(multiIds)
+                    g.key(cvw, Qt.Key_Delete)
+                    check(canvas.elementKind(i1) === "" && canvas.elementKind(i2) === "" && cvw.selectionCount === 0, "Delete removes the set")
+                    canvas.undo()
+                    check(canvas.elementKind(i1) === "ink" && canvas.elementKind(i2) === "ink", "…and one undo brings both back")
+                    ++step; return
+                }
+                if (step === 29) {   // middle-drag pans with a selection; the page tool; tool keys
+                    cvw.selectMany(multiIds)
+                    const pan0 = cam.panX, c = cam.worldToScreen(canvas.elementRect(multiIds[0]).x + 20, canvas.elementRect(multiIds[0]).y + 20), r0 = canvas.elementRect(multiIds[0])
+                    g.dragWith(cvw, Qt.MiddleButton, c.x, c.y, c.x + 50, c.y, 4)
+                    check(Math.abs(cam.panX - pan0 - 50) < 0.5 && canvas.elementRect(multiIds[0]).x === r0.x, "middle-drag over a selected element pans, never moves (panΔ " + (cam.panX - pan0) + ")")
+                    g.key(cvw, Qt.Key_N)
+                    check(root.inspector.drawTool === "page" && cvw.pageTool, "N arms the page tool")
+                    const n0 = canvas.pageIds.length
+                    g.click(cvw, 60, cvw.height - 60)
+                    check(canvas.pageIds.length === n0 + 1 && root.activeCanvas && cvw.selectedId !== "" && canvas.elementKind(cvw.selectedId) === "page", "a page-tool click places a page and stays on the canvas")
+                    g.drag(cvw, 60, 60, 560, 160, 5)
+                    const pid = cvw.selectedId
+                    check(canvas.pageIds.length === n0 + 2 && Math.abs(canvas.elementRect(pid).width - (500 / cam.zoom)) < 0.5, "a page-tool drag sizes the page to its width (" + canvas.elementRect(pid).width + ")")
+                    g.key(cvw, Qt.Key_V)
+                    check(root.inspector.drawTool === "select", "V returns to the pointer")
+                    canvas.undo(); canvas.undo()   // the two pages this step placed cover the strokes the next step right-clicks
+                    check(canvas.pageIds.length === n0, "…two undos take the placed pages back (" + canvas.pageIds.length + ")")
+                    ++step; return
+                }
+                if (step === 30) {   // the context menu
+                    const id = multiIds[0], r = canvas.elementRect(id), c = cam.worldToScreen(r.x + 20, r.y + 20)
+                    cvw.clearSelection()
+                    const rc0 = cvw.rightClicks
+                    g.rightClick(cvw, c.x, c.y)
+                    check(cvw.contextMenu.visible && cvw.selectedId === id, "a right-click on an element selects it and opens the context menu (taps +" + (cvw.rightClicks - rc0) + ", menu visible " + cvw.contextMenu.visible + " opened " + cvw.contextMenu.opened + ", selected '" + cvw.selectedId + "')")
+                    cvw.contextMenu.close()
+                    const n0 = canvas.elementCount()
+                    cvw.duplicateSelected()
+                    check(canvas.elementCount() === n0 + 1 && cvw.selectedId !== "" && cvw.selectedId !== id && Math.abs(canvas.elementRect(cvw.selectedId).x - r.x - 24) < 0.01, "Duplicate makes a copy beside it, selected")
+                    canvas.undo()
+                    cvw.select(id)
+                    const z0 = canvas.elementZ(id)
+                    cvw.backSelected()
+                    check(canvas.elementZ(id) < 0 && canvas.elementIdAt(0) === id, "Send to back puts it under every page")
+                    cvw.frontSelected()
+                    check(canvas.elementIdAt(canvas.elementCount() - 1) === id, "Bring to front puts it on top")
+                    ++step; return
+                }
+                if (step === 31) {   // the toolbar follows the view
+                    const tb = win_toolbar()
+                    check(!!tb && tb.visible && tb.view === "canvas", "the top strip shows the canvas tools on the canvas (" + (tb ? tb.view : "none") + ")")
+                    canvas.focusPage = livePage
+                    check(!!tb && !tb.visible && tb.view === "", "…and nothing in the page view")
+                    root.setActiveTab("canvas")
+                    ++step; return
+                }
+                if (step === 33) { nextPhase("gestures"); return }
                 if (step === 25) {   // …and with the page SELECTED first (the user's report)
                     const r = canvas.elementRect(livePage), m = cam.worldToScreen(r.x + r.width - 300, r.y + r.height - 10)   // inside the card, on screen (the bottom-right is centred)
                     g.click(cvw, m.x, m.y)
@@ -4366,7 +4452,7 @@ FocusScope {
                     if (p) g.click(cvw, p.x, p.y)
                     check(!!link && !root.activeCanvas && canvas.focusPage === livePage, "a click on the link of a SELECTED page opens it (link taps +" + ((item && item.page ? item.page.linkTaps : -1) - taps0) + ", focus '" + canvas.focusPage + "', frameHit " + (p ? cvw.frameHit(p) : "-") + ")")
                     root.setActiveTab("canvas")
-                    nextPhase("gestures"); return
+                    ++step; return
                 }
                 ++step; return
             }

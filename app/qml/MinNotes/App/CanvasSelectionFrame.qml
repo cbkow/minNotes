@@ -7,10 +7,11 @@ import QtQuick
 Item {
     id: frame
     required property var view        // the CanvasView (cam, selectedId)
-    readonly property string id_: view.selectedId
-    readonly property bool shown: id_ !== "" && canvas.elementKind(id_) !== ""
-    readonly property bool isPage: shown && canvas.elementKind(id_) === "page"
-    readonly property rect world: shown ? (canvas.geometryRevision, canvas.elementRect(id_)) : Qt.rect(0, 0, 0, 0)
+    readonly property string id_: view.selectedId          // the one id when exactly one is selected
+    readonly property bool shown: view.selectionCount > 0
+    readonly property bool single: view.selectionCount === 1 && canvas.elementKind(id_) !== ""
+    readonly property bool isPage: single && canvas.elementKind(id_) === "page"
+    readonly property rect world: shown ? (canvas.geometryRevision, view.selectedIds, view.selectionRect()) : Qt.rect(0, 0, 0, 0)
     readonly property point tl: (view.cam.rev, view.cam.worldToScreen(world.x, world.y))
     x: tl.x; y: tl.y
     width: Math.max(1, world.width * view.cam.zoom); height: Math.max(1, world.height * view.cam.zoom)
@@ -24,7 +25,7 @@ Item {
     component Handle: Rectangle {
         required property int dx     // -1 left edge, 1 right edge, 0 neither
         required property int dy
-        visible: frame.shown && (!frame.isPage || dy === 0)
+        visible: frame.single && (!frame.isPage || dy === 0)   // handles resize ONE element; a set only moves
         width: 8; height: 8; radius: 0
         color: Theme.colors.accent
         x: (dx < 0 ? 0 : dx > 0 ? frame.width : frame.width / 2) - 4

@@ -37,28 +37,36 @@ Item {
     // undo entry ("move:<id>"). Space held = hand: the view's pan handler takes over.
     readonly property var view: parent && parent.parent ? parent.parent : null   // canvasLayer → CanvasView
     TapHandler {
-        enabled: el.active && el.view && !el.view.drawing
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
-        onSingleTapped: { ++el.view.taps; el.view.select(el.elementId); el.editor.forceActiveFocus() }
+        onSingleTapped: (ev) => {
+            ++el.view.taps
+            if (ev.modifiers & Qt.ShiftModifier) el.view.toggleSelect(el.elementId)
+            else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
+            el.editor.forceActiveFocus()
+        }
         onDoubleTapped: {
             ++el.view.doubleTaps
             if (el.kind === "page") canvas.focusPage = el.elementId
             else if (el.kind === "shape") el.view.editText(el.elementId)
         }
     }
-    DragHandler {
-        enabled: el.active && el.view && !el.view.drawing && !el.view.spaceHeld
+    DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool
         acceptedButtons: Qt.LeftButton
         target: null
-        property rect start
-        onActiveChanged: if (active) { start = canvas.elementRect(el.elementId); el.view.select(el.elementId); ++el.view.elementDrags }
+        onActiveChanged: {
+            if (active) {
+                if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
+                el.view.beginSelectionDrag()
+                ++el.view.elementDrags
+            } else el.view.endSelectionDrag()
+        }
         onCentroidChanged: {
             if (!active) return
             const z = el.view.cam.zoom
-            const dx = (centroid.scenePosition.x - centroid.scenePressPosition.x) / z
-            const dy = (centroid.scenePosition.y - centroid.scenePressPosition.y) / z
-            canvas.setElementRect(el.elementId, Qt.rect(start.x + dx, start.y + dy, start.width, start.height), "move:" + el.elementId)
+            el.view.dragSelectionTo((centroid.scenePosition.x - centroid.scenePressPosition.x) / z, (centroid.scenePosition.y - centroid.scenePressPosition.y) / z)
         }
     }
     Loader {

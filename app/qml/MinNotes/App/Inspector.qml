@@ -563,9 +563,10 @@ Rectangle {
             anchors.top: header.bottom; anchors.topMargin: 6
             x: 12; spacing: 8
 
-            // === Tools (drawing) — above the colour interface ===
-            Rectangle { width: panel.contentW; height: 1; color: Theme.colors.divider }
-            Text { text: "Tools"
+            // === Tools (drawing) — moved to the top strip's toolbar (2.0); the grid stays as the state's
+            // home (drawTool / drawColor / drawWidth live on this panel) but is not shown. ===
+            Rectangle { width: panel.contentW; height: 1; color: Theme.colors.divider; visible: false }
+            Text { text: "Tools"; visible: false
                    color: Theme.colors.textBright
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
 
@@ -580,6 +581,7 @@ Rectangle {
             // not part of the QCView flow).
             Grid {
                 columns: 5; spacing: 4
+                visible: false   // the toolbar (CanvasToolbar) shows the tools now
                 Repeater {
                     model: [
                         { tool: "type",     icon: "cursor-text",   tip: qsTr("Type — regular editing") },

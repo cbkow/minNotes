@@ -103,7 +103,7 @@ public:
     int pagesRevision() const { return pagesRevision_; }
     Q_INVOKABLE QString firstPageId() const;
     Q_INVOKABLE QString addPage();                  // one empty paragraph, right of the others; "" if closed
-    Q_INVOKABLE QString addPageAt(qreal wx, qreal wy);   // …at a world point (the canvas gesture)
+    Q_INVOKABLE QString addPageAt(qreal wx, qreal wy, qreal measure = kDefaultMeasure);   // …at a world point, at a measure (the page tool)
     Q_INVOKABLE bool removePage(const QString& id); // refuses the last page; the page's blocks cascade
     // The page's title: first heading, else first text line, else "Untitled page". A LOADED page
     // answers from memory (the strip re-reads it per keystroke); an unloaded page's title comes
@@ -170,6 +170,9 @@ public:
     Q_INVOKABLE bool setElementJson(const QString& id, const QString& json, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementZ(const QString& id, int z);
     Q_INVOKABLE bool bringToFront(const QString& id);
+    Q_INVOKABLE bool sendToBack(const QString& id);
+    // A copy beside the original (+24, +24), on top. Pages are not duplicated (their blocks would need new ids).
+    Q_INVOKABLE QString duplicateElement(const QString& id);
     Q_INVOKABLE bool removeElement(const QString& id);            // a page follows removePage's rules
     Q_INVOKABLE bool setMediaElementInk(const QString& id, int page, const QString& envelope);   // "" clears
     // Pages are elements too: a page's canvas measure is its rect width less the insets. [400, 4000].
@@ -190,6 +193,10 @@ public:
     Q_INVOKABLE QVariantList undoHistory() const;
     Q_INVOKABLE void undoJumpTo(int target);
     void clearUndo();
+    // A BATCH: every entry pushed between begin and end becomes ONE history row (a multi-element drag,
+    // a selection's delete). Nested begins fold into the outer batch; a batch of one part is that part.
+    Q_INVOKABLE void beginBatch(const QString& label);
+    Q_INVOKABLE void endBatch();
 
     Document& db() { return db_; }
     const Document& db() const { return db_; }
@@ -232,7 +239,9 @@ private:
         QString label;
         int parent = -1;
         qint64 ts = 0;
+        std::vector<UndoEntry> parts;   // a batch: applied in order on redo, in reverse on undo
     };
+    void applyEntry(const UndoEntry& e, bool before);
     ElementSnap snapshot(const QString& id, bool withBlocks) const;
     void applySnap(const QString& id, const ElementSnap& s);   // the db + loaded models follow the snapshot
     void pushEntry(UndoEntry e, const QString& coalesce);
@@ -272,6 +281,8 @@ private:
     std::vector<Document::Element> elements_;   // z order, then creation (the table's order)
     QHash<QString, int> indexById_;
     std::vector<UndoEntry> undo_;
+    int batchDepth_ = 0;
+    UndoEntry batch_;                 // the open batch's parts
     int undoCur_ = -1;
     int undoRev_ = 0;
     int elementsRevision_ = 0, geometryRevision_ = 0, inkRevision_ = 0;

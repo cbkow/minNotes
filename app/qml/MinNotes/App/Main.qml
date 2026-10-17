@@ -1478,7 +1478,7 @@ ApplicationWindow {
             Row {
                 id: tabRow
                 anchors.left: parent.left; anchors.top: parent.top
-                anchors.right: navBtn.left
+                anchors.right: viewTools.left
                 height: parent.height
                 clip: true
                 Repeater {
@@ -1565,6 +1565,14 @@ ApplicationWindow {
             // strip stays usable when many docs are open (the tabs clip; this
             // is always one click away). Mirrors TableTabs' overflow menu, but
             // opens DOWNWARD (the strip is at the window's top edge).
+            // The view's tools (2.0): the canvas's pointer / hand / page / text / ink tools, a PDF or video
+            // tab's ink tools; nothing for the page view. Right of the file tabs, before the strip buttons.
+            CanvasToolbar {
+                id: viewTools
+                anchors.right: navBtn.left; anchors.rightMargin: visible ? 8 : 0; anchors.top: parent.top
+                height: docTabBar.height
+                editor: win.activeEditor
+            }
             Rectangle {
                 id: navBtn
                 anchors.right: newTabBtn.left; anchors.top: parent.top
@@ -1696,7 +1704,7 @@ ApplicationWindow {
                     // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
                     Editor { id: editorInner; width: parent.width
                              height: parent.height - innerTabs.height - innerBottom.height
-                             inspector: inspectorPanel; tabsItem: innerTabs }
+                             inspector: inspectorPanel; tabsItem: innerTabs; toolbarItem: viewTools }
                     TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
                     BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
                 }
