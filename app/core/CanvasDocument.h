@@ -57,6 +57,12 @@ public:
     // A page card is never shorter than this (world px): an empty page still reads as a page; a
     // page with more content grows past it (the cached height is floored here).
     static constexpr double kMinPageHeight = 400.0;
+    // …and never taller than a PAGE LENGTH: measure × √2 (an A4 proportion; 1075 at 760). A longer
+    // page shows its top on the canvas under a fade and a footer; the page view holds the rest
+    // (ruling 2026-10-17: cap the card, never the document). The cache stores the capped height, so
+    // bounds, fit, culling and the poster never see a 195,000 px card.
+    static double pageHeightCap(double elementWidth);
+    static double clampPageHeight(double elementWidth, double h);
     static constexpr double kDropMediaWidth = 480.0;   // a dropped image / video / PDF lands this wide
 
     explicit CanvasDocument(QObject* parent = nullptr);

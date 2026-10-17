@@ -678,6 +678,15 @@ QRectF CanvasDocument::elementRect(const QString& id) const { const auto e = ele
 QString CanvasDocument::elementJson(const QString& id) const { const auto e = element(id); return e ? e->json : QString(); }
 int CanvasDocument::elementZ(const QString& id) const { const auto e = element(id); return e ? e->z : 0; }
 
+double CanvasDocument::pageHeightCap(double elementWidth) {
+    const double measure = std::max(kMinPageMeasure, elementWidth - 2.0 * kPageInset);
+    return std::round(measure * 1.41421356237);
+}
+
+double CanvasDocument::clampPageHeight(double elementWidth, double h) {
+    return std::clamp(h, kMinPageHeight, std::max(kMinPageHeight, pageHeightCap(elementWidth)));
+}
+
 QRectF CanvasDocument::cullRect(const Document::Element& e) {
     const double minH = e.kind == QLatin1String("page") ? 2.0 * kPageInset + 1.0 : 1.0;
     return QRectF(e.x, e.y, std::max(e.w, 1.0), std::max(e.h, minH));
@@ -704,7 +713,7 @@ void CanvasDocument::cachePageHeight(const QString& id, qreal h) {
     const int i = indexById_.value(id, -1);
     if (i < 0 || !db_.isOpen()) return;
     Document::Element& e = elements_[size_t(i)];
-    h = std::max(h, kMinPageHeight);   // an empty page still reads as a page
+    h = clampPageHeight(e.w, h);       // an empty page still reads as a page; a long one stops at a page length
     if (e.kind != QLatin1String("page") || std::abs(e.h - h) < 1.0) return;
     e.h = h;
     db_.updateElementRect(id, e.x, e.y, e.w, h);
@@ -867,9 +876,9 @@ bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, con
     const auto cur = element(id);
     if (!cur) return false;
     QRectF rect = rectIn;
-    if (cur->kind == QLatin1String("page")) {   // a page's measure stays readable: [400, 4000] + the insets
+    if (cur->kind == QLatin1String("page")) {   // a page's measure stays readable: [400, 4000] + the insets; its height is the content's, within the cap
         rect.setWidth(std::clamp(rect.width(), kMinPageMeasure + 2.0 * kPageInset, kMaxPageMeasure + 2.0 * kPageInset));
-        rect.setHeight(std::max(rect.height(), 2.0 * kPageInset));
+        rect.setHeight(clampPageHeight(rect.width(), rect.height()));
     }
     if (QRectF(cur->x, cur->y, cur->w, cur->h) == rect) return true;
     UndoEntry u;

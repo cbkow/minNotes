@@ -5938,6 +5938,31 @@ static void testCanvasCreate() {
     CHECK(c.addMediaElementFromUrl(QString(), 0, 0).isEmpty() && reqs == 1, "an empty url does nothing");
 }
 
+// [127] A page card stops at a page length (measure × √2) and never below the floor; the cap
+// follows the measure; the converter stores the capped height.
+static void testPageHeightCap() {
+    qInfo("[127] page height cap (2.0 stage 2): measure × √2, floor 400, re-clamped on resize, the converter's page too");
+    CHECK(CanvasDocument::pageHeightCap(760 + 2 * CanvasDocument::kPageInset) == 1075 && CanvasDocument::pageHeightCap(400 + 48) == 566
+              && CanvasDocument::pageHeightCap(10) == 566,
+          "the cap is round(measure × √2), the measure never below 400 (%g)", CanvasDocument::pageHeightCap(808));
+    CHECK(CanvasDocument::clampPageHeight(808, 50) == 400 && CanvasDocument::clampPageHeight(808, 900) == 900 && CanvasDocument::clampPageHeight(808, 195200) == 1075,
+          "clamp: floor, pass-through, cap");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString p = c.firstPageId();
+    c.cachePageHeight(p, 195200);
+    CHECK(c.elementRect(p).height() == 1075, "a 195,200 px document caches a 1075 px card");
+    c.setElementRect(p, QRectF(0, 0, 1000 + 48, 5000));
+    CHECK(c.elementRect(p).width() == 1048 && c.elementRect(p).height() == 1414, "a wider page lifts the cap with its measure (%g)", c.elementRect(p).height());
+    c.setElementRect(p, QRectF(0, 0, 400 + 48, 5000));
+    CHECK(c.elementRect(p).height() == 566, "…and a narrow one lowers it");
+    const QString v1 = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
+    BlockModel m;
+    CHECK(m.openDocument(v1), "the v1 fixture opens");
+    const QRectF pr = m.canvas()->elementRect(m.pageId());
+    CHECK(pr.height() >= 400 && pr.height() <= CanvasDocument::pageHeightCap(pr.width()), "the converter's page height sits inside [floor, cap] (%g of %g)", pr.height(), CanvasDocument::pageHeightCap(pr.width()));
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8455,6 +8480,7 @@ int main(int argc, char** argv) {
     testMediaElementResolve();
     testInkCapture();
     testCanvasCreate();
+    testPageHeightCap();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

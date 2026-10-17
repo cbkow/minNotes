@@ -4031,7 +4031,7 @@ FocusScope {
                 check(canvas.visibleElementIndices(b.x, b.y, b.x + b.width, b.y + b.height).length === n && canvas.visibleElementIndices(b.x + b.width + 10, b.y, b.x + b.width + 20, b.y + b.height).length === 0,
                       "visibleElementIndices over the bounds is every element; beside them none")
                 const live = canvas.elementRect(livePage)
-                check(live.height > 2 * inset + 100, "the fixture's page element carries a laid-out height (" + live.height + ")")
+                check(live.height === Math.round(760 * Math.SQRT2), "the fixture's page (1915 blocks) is capped at a page length, measure × √2 (" + live.height + ")")
                 nextPhase("model"); return
             }
             if (phase === 2) {   // P2: pan sweep at zoom 0.5
@@ -4083,7 +4083,8 @@ FocusScope {
                 }
                 const c = pageItem(livePage)
                 if (step < 80 && (!c || c.liveRows < c.wantRows)) { ++step; return }   // the stagger
-                check(!!c && c.tier === 2 && c.liveRows === c.wantRows && c.liveRows > 0, "the fixture's page is live with all its rows (" + (c ? c.liveRows + "/" + c.wantRows : "no item") + ")")
+                check(!!c && c.tier === 2 && c.liveRows === c.wantRows && c.liveRows > 0 && c.liveRows < 120 && c.page.overflows && c.page.rowsBelow === blockModel.count - c.liveRows,
+                      "the fixture's page is live with the rows inside the page length, the rest counted in the footer (" + (c ? c.liveRows + "/" + c.wantRows + ", " + c.page.rowsBelow + " below" : "no item") + ")")
                 if (c) {
                     const pm = c.pageModel
                     let ok = pm === blockModel && !!c.facade && c.facade.pageWidth === 760

@@ -19,7 +19,9 @@ Rectangle {
     required property var cam
     property string elementId: ""
     readonly property bool active: elementId !== ""
-    readonly property var pageModel: active ? canvas.pageModel(elementId) : null
+    // The page's model loads at GREEK zoom and above (a ghost card is a frame and a title from the
+    // element's persisted height and the cached title — fifty long pages zoomed out load nothing).
+    readonly property var pageModel: active && tier > 0 ? canvas.pageModel(elementId) : null
     anchors.fill: parent
     clip: true
     color: Theme.colors.surface
@@ -53,6 +55,12 @@ Rectangle {
         function onStructureChangedSpike() { heightSync.restart() }
     }
     Timer { id: heightSync; interval: 200; onTriggered: if (page.active && page.pageModel) canvas.cachePageHeight(page.elementId, page.pageModel.totalHeight + 2 * page.inset) }
+
+    // The card stops at a page length (CanvasDocument::pageHeightCap): rows below it are clipped
+    // under a fade, and the footer counts them. rowsShown = the rows whose top is inside the card.
+    readonly property int rowsShown: pageModel ? (pageModel.layoutRevision, pageModel.structureRevision, Math.min(pageModel.count, pageModel.rowForY(Math.max(0, height - inset)) + 1)) : 0
+    readonly property int rowsBelow: pageModel ? Math.max(0, pageModel.count - rowsShown) : 0
+    readonly property bool overflows: rowsBelow > 0
 
     // --- LOD tier with hysteresis ---
     property int tier: 0
@@ -96,8 +104,8 @@ Rectangle {
         Item {   // `blockModel` here is THE PAGE's model (the loader's child context)
             id: body
             anchors.fill: parent
-            readonly property int runLength: blockModel.count
-            readonly property int kCardMaxRows: 120           // a giant page shows this many blocks and a footer
+            readonly property int runLength: page.rowsShown    // the rows inside the page length (the cap)
+            readonly property int kCardMaxRows: 120           // a safety cap on live delegates per card
             readonly property int kGreekMaxRows: 400
             // --- live: the real delegates, staggered through a ListModel (appends touch only the new rows) ---
             readonly property int wantRows: page.tier === 2 ? Math.min(kCardMaxRows, runLength) : 0
@@ -137,16 +145,26 @@ Rectangle {
                     color: t === 1 ? Theme.colors.textMuted : t === 2 ? Theme.colors.codeBg : t === 3 ? Theme.colors.surfaceHover : Theme.colors.divider
                 }
             }
-            Text {   // the row cap's footer
-                anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: page.inset
-                opacity: page.tier === 2 && body.runLength > body.kCardMaxRows ? 1 : 0
-                text: body.runLength > body.kCardMaxRows ? (body.runLength - body.kCardMaxRows) + " more blocks — open the page" : ""
-                color: Theme.colors.textSubtle
-                font.family: Theme.font.body; font.pixelSize: Theme.font.sizeChrome
-            }
+
         }
     }
 
+    Rectangle {   // the page length's edge: the rows below fade out under the footer
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        height: 72
+        opacity: page.overflows && page.tier > 0 ? 1 : 0
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g, Theme.colors.surface.b, 0) }
+            GradientStop { position: 0.6; color: Theme.colors.surface }
+            GradientStop { position: 1.0; color: Theme.colors.surface }
+        }
+        Text {
+            anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: page.inset
+            text: page.rowsBelow + (page.rowsBelow === 1 ? " more block — open the page" : " more blocks — open the page")
+            color: Theme.colors.textSubtle
+            font.family: Theme.font.body; font.pixelSize: page.tier === 1 ? 20 : Theme.font.sizeChrome
+        }
+    }
     Text {   // ghost and greek: the page's title
         x: page.inset; y: page.inset; width: page.width - 2 * page.inset
         opacity: page.active && page.tier < 2 ? 1 : 0
