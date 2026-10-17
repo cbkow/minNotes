@@ -52,11 +52,10 @@ public:
     // doc_meta.format of the open doc; "" = not a .mnd file (an earlier
     // minNotes file, or a database this app didn't write).
     QString format() const;
-    // Per-document page measure (v3). 760 when absent/unset — every pre-v3
-    // document reads as the classic width. Setter upserts doc_meta so the
-    // width survives even before the first stampMeta.
+    // The 1.0 per-document page measure (doc_meta.page_width; 760 when absent). Nothing in the
+    // app reads it any more (the page is responsive, 2.0 stage 1C); the 2.0 converter reads it
+    // once to size the page element. Never written.
     int pageWidth() const;
-    void setPageWidth(int w);
 
     int count() const;
 

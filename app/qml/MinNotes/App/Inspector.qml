@@ -186,15 +186,14 @@ Rectangle {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
 
-        // Top bar (ruling 2026-08-20): reserves the PageRuler's band inside
-        // the panel — same height, same tone, same baseline hairline — so
-        // the ruler line reads as carrying across when the rail is open.
-        // The close X lives here now (was in the header row).
+        // Top bar (ruling 2026-08-20; the PageRuler it mirrored went with the fixed measure in
+        // 2.0 stage 1C — the band stays as the panel's header strip): same tone, a baseline
+        // hairline, and the close X.
         Rectangle {
             id: topBar
             width: parent.width; height: Theme.dim.rulerHeight
             color: Theme.colors.surface
-            Rectangle {   // the ruler's baseline hairline, carried across
+            Rectangle {   // the baseline hairline
                 anchors.bottom: parent.bottom
                 width: parent.width; height: 1
                 color: Theme.colors.border

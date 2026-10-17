@@ -62,10 +62,10 @@ QtObject {
         readonly property int paddingLoose:   16
         readonly property int radius:         0    // squared corners everywhere (user ruling); was 4
         readonly property int scrollBarWidth: 14   // macOS always-on scrollbar width
-        readonly property int columnWidth:    760    // prose reading measure (comfortable)
+        readonly property int columnWidth:    760    // the readable-measure CAP (2.0 stage 1C: the page follows the window under it)
         readonly property int docTopPad:      28     // breathing room above block 0
         readonly property int toolStripHeight: 34    // flat-button row height / rail width
-        readonly property int rulerHeight: 22        // PageRuler strip (14px instrument + 2×4 pad);
+        readonly property int rulerHeight: 22        // the Inspector's top bar (was the PageRuler's band);
                                                      // the Inspector's top bar matches it (2026-08-20)
     }
 

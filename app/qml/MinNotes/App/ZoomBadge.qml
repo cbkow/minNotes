@@ -10,7 +10,8 @@ import QtQuick.Controls.Basic
 Item {
     id: badge
     property real zoomValue: 1.0
-    property string fitLabel: qsTr("Fit")     // the document view says "Fit width" (PLAN-zoom Z3)
+    property string fitLabel: qsTr("Fit")     // the document view says "Full width" (2.0 stage 1C: a toggle)
+    property bool fitChecked: false            // the toggle's state (the document's Full width); Fit rows never check
     signal fitRequested()
     signal hundredRequested()
 
@@ -77,7 +78,7 @@ Item {
             border.width: 1; border.color: Theme.colors.border
         }
         contentItem: Column {
-            ZoomRow { text: badge.fitLabel; shortcut: "⌘ 1"; onActivated: badge.fitRequested() }
+            ZoomRow { text: (badge.fitChecked ? "✓ " : "") + badge.fitLabel; shortcut: "⌘ 1"; onActivated: badge.fitRequested() }
             ZoomRow { text: qsTr("100%"); shortcut: "⌘ 0"; onActivated: badge.hundredRequested() }
         }
     }

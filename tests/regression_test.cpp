@@ -377,7 +377,7 @@ static void testUndoHistory() {
                      [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
 
     const int rev0 = m.undoRevision();
-    m.setPageWidth(1000);        // → "Page width 1000"
+    m.setHeading(0, 1);          // → "Block type" (a content edit would coalesce with the typing above)
     m.insertBlock(1);            // → "Insert block"
     CHECK(m.undoRevision() > rev0, "undoRevision advances with the stack");
 
@@ -387,13 +387,13 @@ static void testUndoHistory() {
           "baseline row leads");
     QStringList labels;
     for (const QVariant& v : h) labels << v.toMap().value("label").toString();
-    CHECK(labels.contains(QStringLiteral("Page width 1000")), "width entry labeled");
+    CHECK(labels.contains(QStringLiteral("Block type")), "heading entry labeled");
     CHECK(labels.contains(QStringLiteral("Insert block")), "insert entry labeled");
     CHECK(h.last().toMap().value("current").toBool(), "current = the newest state");
 
-    // Time-travel to the baseline: one call unwinds width + insert.
+    // Time-travel to the baseline: one call unwinds the edit + insert.
     m.undoJumpTo(-1);
-    CHECK(qFuzzyCompare(m.pageWidth(), 760.0) && m.rowCountQml() == 1,
+    CHECK(m.typeForRow(0) == BlockModel::Paragraph && m.rowCountQml() == 1,
           "jump to baseline undoes everything");
     const QVariantList h2 = m.undoHistory();
     CHECK(h2.first().toMap().value("current").toBool(), "baseline is now current");
@@ -402,7 +402,7 @@ static void testUndoHistory() {
     // And forward again to the leaf in one jump.
     const int leaf = h2.last().toMap().value("idx").toInt();
     m.undoJumpTo(leaf);
-    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0) && m.rowCountQml() == 2,
+    CHECK(m.typeForRow(0) == BlockModel::Heading && m.rowCountQml() == 2,
           "jump forward replays to the leaf");
     // A stale/off-path target is a safe no-op.
     m.undoJumpTo(9999);
@@ -3120,7 +3120,7 @@ static void testBlockClipboardRoundTrip() {
     qInfo("[49] BlockClipboard: encode/decode every block type, span kind, ink, gate");
     BlockClipboard::Payload p;
     p.docPath = QStringLiteral("/tmp/x.mnd"); p.docDir = QStringLiteral("/tmp");
-    p.package = QString(); p.pageWidth = 900;
+    p.package = QString();
     auto text = [](uint8_t type, const QString& t) { BlockModel::BlockSpec s; s.type = type; s.text = t; return s; };
     BlockModel::BlockSpec h = text(BlockModel::Heading, QStringLiteral("Title")); h.level = 3;
     BlockModel::BlockSpec code = text(BlockModel::Code, QStringLiteral("int x;\nreturn x;")); code.lang = QStringLiteral("cpp");
@@ -3171,7 +3171,7 @@ static void testBlockClipboardRoundTrip() {
               && q.threads[0].messages[0].modified == 9, "thread bodies round-trip");
     CHECK(q.assets.size() == 1 && q.assets[0].entry == QStringLiteral("media/a.png")
               && q.assets[0].bytes == 99, "asset snapshot round-trips");
-    CHECK(q.docPath == p.docPath && q.docDir == p.docDir && qFuzzyCompare(q.pageWidth, 900.0),
+    CHECK(q.docPath == p.docPath && q.docDir == p.docDir,
           "provenance round-trips");
     // Version / format gate.
     QJsonObject bad = QJsonDocument::fromJson(json).object();
@@ -5378,7 +5378,7 @@ static void testCanvasLayout() {
         for (int i = 0; i < 6; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("row %1").arg(i)); }
         m.setHeading(0, 1); m.setHeading(2, 2); m.setHeading(5, 2);   // cards [0,1] [2,4] [5]
         m.setMeasuredHeight(1, 100); m.setMeasuredHeight(3, 70); m.setMeasuredHeight(4, 30);
-        const double W = m.pageWidth() + 2 * BlockModel::kCardInset;
+        const double W = m.contentWidth() + 2 * BlockModel::kCardInset;
         CHECK(m.cardCount() == 3 && m.cardRect(0).width() == W && m.cardRect(1).width() == W, "three cards at the page width plus the insets");
         auto runH = [&m](int first, int last) { return m.yForRow(last) + m.heightForRow(last) - m.yForRow(first); };
         CHECK(qFuzzyCompare(m.cardRect(0).height(), runH(0, 1) + 2 * BlockModel::kCardInset)

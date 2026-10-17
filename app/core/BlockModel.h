@@ -71,8 +71,6 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
     Q_PROPERTY(bool untitled READ untitled NOTIFY documentChanged)
     Q_PROPERTY(bool documentOpen READ documentOpen NOTIFY documentChanged)
-    // Per-document page measure (v3; 760 for every pre-v3 doc). ONE undo step — see setPageWidth.
-    Q_PROPERTY(qreal pageWidth READ pageWidth NOTIFY pageWidthChanged)
     // Unsaved-edits flag (drives the tab dot + close/quit guards) and the explicit
     // save lifecycle (drives the title-bar status + conflict/failure UI).
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
@@ -435,7 +433,7 @@ public:
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so
     // the Flickable arm can compensate contentY when an off-screen block settles.
     Q_INVOKABLE void setMeasuredHeight(int row, qreal h);
-    qreal contentWidth() const { return contentWidth_; }   // the width the document is laid out at (view-set)
+    Q_INVOKABLE qreal contentWidth() const { return contentWidth_; }   // the width the document is laid out at (view-set)
     Q_INVOKABLE void flushLayoutSpike();   // emit a coalesced measure-back spike now (the probe verifies synchronously)
 
     // --- Dev-only type probe (A0 of the speed programme, 2026-10-16) ---
@@ -855,10 +853,9 @@ public:
     // which every media-url binding depends on). No model/layout reset.
     Q_INVOKABLE void    refreshMedia();
 
-    // --- Per-document page width (v3). setPageWidth = the ONE width mutator: clamps, persists
-    // to doc_meta, and lands as ONE undo step. (Goes with the responsive width, 2.0 stage 1C.)
-    qreal pageWidth() const { return pageWidth_; }
-    Q_INVOKABLE void setPageWidth(qreal w);
+    // (The per-document page width went with the responsive page, 2.0 stage 1C: the VIEW owns the
+    // width and tells the model through setContentWidth. doc_meta.page_width is read once more by
+    // the 2.0 converter, to size the page element.)
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
@@ -914,7 +911,6 @@ signals:
     // nothing was inserted; QML raises the import flow for `fileUrl`.
     void importFileRequested(const QString& fileUrl);
     void documentChanged();
-    void pageWidthChanged();   // the per-document page measure changed (set/undo/open)
     void dirtyChanged();       // unsaved-edits flag flipped
     void saveStateChanged();   // save lifecycle state changed (Saving/Failed/Conflict/Clean)
 
@@ -995,8 +991,6 @@ private:
         int cRowA = 0, cColA = 0, aRowA = 0, aColA = 0;   // caret after
         int parent = -1;
         QString coalesce;   // non-empty + equal + contiguous ⇒ merge into prev
-        // A page-width change rode this entry (0 = none): undo/redo restore the width with it.
-        qreal widthBefore = 0, widthAfter = 0;
         qint64 ts = 0;      // wall-clock at push (coalesce keeps the first)
     };
 
@@ -1064,7 +1058,6 @@ private:
     void beginTxn(int lo, int hi);              // snapshot `before` for [lo,hi]
     void endTxn(const QString& coalesce = {});  // snapshot `after`, push (or coalesce)
     void clearUndo();
-    void applyUndoWidth(qreal w);               // restore an entry's page width (0 = none)
     // PDF page-envelope write-back: shared drop rules (page key gone when
     // shapes AND texts are empty; empty "ink" leaves the root) + the txn.
     void writePdfPageObject(int row, int page, QJsonObject pageObj);
@@ -1081,7 +1074,6 @@ private:
     double maxContentWidth_ = 0.0;
     double maxTableWidth_ = 0.0;      // widest table geometry
     double maxBlockWidth_ = 0.0;      // widest measured block outside any table
-    qreal pageWidth_ = 760;   // the open doc's page measure (synced on load/close)
     int clampRow(int row) const;
     // Media / Table / Divider: content is a descriptor, never prose. Text
     // mutators refuse these rows outright (out of range → false).

@@ -131,7 +131,6 @@ void BlockModel::closeDocument() {
     reindex(std::vector<double>{});
     endResetModel();
     clearUndo();
-    if (!qFuzzyCompare(pageWidth_, 760.0)) { pageWidth_ = 760; emit pageWidthChanged(); markTableGeomDirty(); }
     emit documentChanged();
     emit dirtyChanged();
 }
@@ -2949,9 +2948,6 @@ void BlockModel::loadFromStore() {
     endResetModel();
     ++layoutRevision_;
     clearUndo();
-    // The document's page measure (v3; 760 for pre-v3 docs).
-    const qreal docW = doc_.pageWidth();
-    if (!qFuzzyCompare(pageWidth_, docW)) { pageWidth_ = docW; emit pageWidthChanged(); markTableGeomDirty(); }
     emit modelReset();
     emit layoutChangedSpike();
 }
@@ -4299,14 +4295,12 @@ void BlockModel::undo() {
     if (undoCur_ < 0) return;
     awaitingAfter_ = false;
     const UndoEntry e = undo_[undoCur_];          // copy (applySnapshot won't touch undo_, but be safe)
-    // Pure width entries carry no snaps — skip the (view-resetting) apply.
     if (!e.permBefore.empty())
         applyPermutation(e.lo, e.permBefore);
     else if (!e.before.empty() || !e.after.empty())
         applySnapshot(e.lo, static_cast<int>(e.after.size()), e.before);
     else if (!e.patches.empty())
         applyPatches(e.patches, /*beforeSide=*/true);
-    applyUndoWidth(e.widthBefore);
     undoCur_ = e.parent;
     markDirty();                                  // undo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowB, e.cColB, e.aRowB, e.aColB);
@@ -4326,57 +4320,16 @@ void BlockModel::redo() {
         applySnapshot(e.lo, static_cast<int>(e.before.size()), e.after);
     else if (!e.patches.empty())
         applyPatches(e.patches, /*beforeSide=*/false);
-    applyUndoWidth(e.widthAfter);
     undoCur_ = child;
     markDirty();                                  // redo mutates the doc → unsaved
     emit caretRestoreRequested(e.cRowA, e.cColA, e.aRowA, e.aColA);
     ++undoRev_; emit undoStackChanged();
 }
 
-// Restore the page width an undo/redo entry recorded (0 = the entry carried
-// no width change). Persists to doc_meta so save-after-undo keeps the file
-// consistent with what's on screen.
-void BlockModel::applyUndoWidth(qreal w) {
-    if (w <= 0 || qFuzzyCompare(w, pageWidth_)) return;
-    pageWidth_ = w;
-    doc_.setPageWidth(int(std::lround(w)));
-    emit pageWidthChanged(); markTableGeomDirty();
-}
-
-// Edge-affinity migration (PLAN-page-width, affinity DERIVED not stored):
-// a px-space element fully in a margin keeps its distance from ITS page
-// edge (the margins are the page's, wherever the sheet sits in the
-// viewport), so left-margin X (center-relative) shifts by -Δw/2 and
-void BlockModel::setPageWidth(qreal w) {
-    if (!documentOpen()) return;
-    w = std::clamp<qreal>(w, 400.0, 4000.0);   // sanity; the UI offers detents
-    if (qFuzzyCompare(w, pageWidth_)) return;
-    const qreal oldW = pageWidth_;
-
-    pageWidth_ = w;
-    doc_.setPageWidth(int(std::lround(w)));
-    markDirty();
-    {
-        UndoEntry e;
-        e.cRowB = cRow_; e.cColB = cCol_; e.aRowB = aRow_; e.aColB = aCol_;
-        e.cRowA = cRow_; e.cColA = cCol_; e.aRowA = aRow_; e.aColA = aCol_;
-        e.parent = undoCur_;
-        e.widthBefore = oldW;
-        e.widthAfter = w;
-        e.ts = QDateTime::currentMSecsSinceEpoch();
-        undo_.push_back(std::move(e));
-        undoCur_ = static_cast<int>(undo_.size()) - 1;
-        ++undoRev_; emit undoStackChanged();
-    }
-    emit pageWidthChanged(); markTableGeomDirty();
-}
-
 // History-panel label: a read-time heuristic over the entry's snapshots —
 // honest, cheap, and no mutator had to learn to describe itself. Order
 // matters: width > count change > single-facet diffs > fallbacks.
 QString BlockModel::entryLabel(const UndoEntry& e) const {
-    if (e.widthBefore > 0)
-        return tr("Page width %1").arg(int(std::lround(e.widthAfter)));
     const auto& b = e.before;
     const auto& a = e.after;
     if (!e.permBefore.empty()) return tr("Reorder rows");
@@ -7217,7 +7170,6 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
     p.docPath = docPath_;
     p.docDir = mediaAnchorDir();
     p.package = mediaStore_ ? mediaStore_->packageSource() : QString();
-    p.pageWidth = pageWidth_;
     p.specs = specsForRange(loRow, loCol, hiRow, hiCol);
     if (p.specs.empty()) return {};
 
@@ -7325,7 +7277,6 @@ QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const
     p.docPath = docPath_;
     p.docDir = mediaAnchorDir();
     p.package = mediaStore_ ? mediaStore_->packageSource() : QString();
-    p.pageWidth = pageWidth_;
     const int hc = headerCount(head);
     const QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     QJsonArray cols;

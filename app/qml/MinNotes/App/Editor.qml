@@ -16,7 +16,7 @@ import QtCore
 FocusScope {
     id: root
     focus: true
-    Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); blockModel.setContentWidth(pageWidth); sizePool() }
+    Component.onCompleted: { forceActiveFocus(); cursor.setCaret(0, 0); _recomputeVideoRows(); _recomputePdfRows(); commitPageWidth(0); blockModel.setContentWidth(pageWidth); sizePool() }
     objectName: "editorRoot"
     // Dev-only (2026-09-16 calibration): log every active delegate's text geometry — what the
     // model's heightForRow came from. Invoked by main.cpp's --shot.
@@ -42,26 +42,64 @@ FocusScope {
     // The page is LEFT-ANCHORED at a fixed margin, matching the HTML
     // export's layout language; the space to the right is where wide
     // tables grow.
-    // PER-DOCUMENT width (v3, PLAN-page-width): the model owns the measure —
-    // 760 for pre-v3 docs, detents up to 1600 for image-board documents.
-    // Guarded so a transient 0 during document switches never reaches layout.
-    // previewWidth (the PageRuler drives it mid-drag) overrides WITHOUT
-    // committing; release commits via blockModel.setPageWidth then clears it.
-    property real previewWidth: 0
-    property bool widthDragging: false   // the ruler's drag → gutter tints below
-    property real pageWidth: previewWidth > 0 ? previewWidth
-                           : (blockModel.pageWidth > 0 ? blockModel.pageWidth
-                                                       : Theme.dim.columnWidth)
-    readonly property real viewContentX: flick.contentX   // the ruler rides the pan
-    // Media is known-geometry: tell the model the width it derives media heights
-    // from, and re-tell it on resize so reserved height stays exact (no jump).
+    // RESPONSIVE page (2.0 stage 1C — replaces the per-document measure + ruler): the page is as
+    // wide as its window, under a readable-measure CAP (a VIEW preference, never file state —
+    // ruling 5), or the full window when "Full width" is on. pageWidth is a COMMITTED VIEW FACT
+    // written by ONE function, commitPageWidth — the only caller that moves layout and the only
+    // place that re-anchors the scroll. Everything downstream (laneOf, leftEdge, tableX, the sheet,
+    // contentSpan, BlockView's lane, the frozen column, pins, drop lines) reads pageWidth as before.
+    Settings {
+        id: viewPrefs
+        category: "view"
+        property int measureCap: Theme.dim.columnWidth   // 760: every calibrated number is 760-based
+        property bool fullWidth: false
+    }
+    readonly property real pageMargin: 48      // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair)
+    readonly property real minPageWidth: 320   // two lanes stay legal (2 · 120 + 24)
+    // The width the page COULD take: the viewport at the SETTLED zoom (a slider drag never
+    // touches layout) less the two margins; the target applies the cap unless Full width is on.
+    readonly property real availPageWidth: Math.max(minPageWidth, Math.floor(centringWidth / zoom) - 2 * pageMargin)
+    readonly property real targetPageWidth: viewPrefs.fullWidth ? availPageWidth : Math.min(availPageWidth, viewPrefs.measureCap)
+    readonly property bool fullWidth: viewPrefs.fullWidth
+    property real pageWidth: Theme.dim.columnWidth   // committed by commitPageWidth ONLY
+    // Resize coalescing: one width change costs setContentWidth O(n) + the layout spike fan-out +
+    // every pooled slot's lane binding + a real text re-layout of the live rows + the contentSpan
+    // cascade — tens of ms, never per frame. The page keeps its old width through a drag and
+    // commits 120 ms after the last change (< docZoomSettle's 150, so a zoom settle that also
+    // changes the width never races a pending commit). Capped mode recentres per frame meanwhile
+    // (x-only bindings); full width shows the old width left-aligned, then snaps once.
+    onTargetPageWidthChanged: widthSettle.restart()
+    Timer { id: widthSettle; interval: 120; onTriggered: root.commitPageWidth(0) }
+    // The anchored row of the last reflow: onHeightSettled keeps ITS top put (rather than
+    // firstVisible's) while the delegates re-measure the rows above it, then lets go.
+    property int reflowAnchorRow: -1
+    Timer { id: reflowAnchorClear; interval: 400; onTriggered: root.reflowAnchorRow = -1 }
+    // The row whose TOP stays at the same viewport y across a reflow: the caret's row when it is on
+    // screen, else the row under the anchor (a content point inside a row has no meaning after a
+    // re-wrap; its top edge does). A lane row resolves to its split row (top-level rows own y).
+    function reflowAnchorFor(anchorY) {
+        let a = cursor.focusRow >= 0 && rowInView(cursor.focusRow) ? cursor.focusRow
+                                                                    : blockModel.rowForY(Math.max(0, docY + anchorY / viewZoom))
+        const split = blockModel.splitRowOf(a)
+        return Math.max(0, split >= 0 ? split : a)
+    }
+    function commitPageWidth(anchorY) {
+        widthSettle.stop()
+        if (gestureActive) { widthSettle.restart(); return }           // never mid-gesture (the latch below)
+        const w = Math.round(targetPageWidth)
+        if (Math.abs(w - pageWidth) < 1) return
+        const a = reflowAnchorFor(anchorY)
+        const topBefore = vy(blockModel.yForRow(a))
+        pageWidth = w                                                 // → setContentWidth → re-estimate → bumpLayout
+        flick.contentY = blockModel.yForRow(a) * viewZoom - topBefore  // the anchored row's TOP stays put
+        reflowAnchorRow = a; reflowAnchorClear.restart()
+        Qt.callLater(flick.returnToBounds)
+    }
+    function toggleFullWidth() { viewPrefs.fullWidth = !viewPrefs.fullWidth; commitPageWidth(0) }
+    function setMeasureCap(w) { viewPrefs.measureCap = Math.max(minPageWidth, Math.round(w)); commitPageWidth(0) }
+    // Media is known-geometry: tell the model the width it derives media heights from (and, 1C,
+    // the width its text estimates wrap at). The one layout-moving write.
     onPageWidthChanged: blockModel.setContentWidth(pageWidth)
-    // (The resize-suspension machinery is GONE: it existed because the page
-    // SQUEEZED on window resize, reflowing media live. The measure is a fixed
-    // 760 now — a window resize changes only the viewport, media geometry
-    // never moves, so there is nothing to suspend. 2026-07-12.)
-    // Horizontal reach past the page for margin ink (each side, ink mode only).
-    readonly property real inkGutter: 120
     // The document's CONTENT width: the viewport, grown to hold the sheet
     // (page or the widest measured block — wide tables — plus the trailing
     // gutter) so the PAGE scrolls horizontally when the window is narrower
@@ -69,16 +107,9 @@ FocusScope {
     // the sheet, so the Flickable pans natively (the kanban board's 2D-pan
     // pattern) exactly when they don't fit.
     readonly property real contentSpan: Math.max(viewW, sheetRight)
-    // The SHEET = page + one ink gutter each side. CENTRED in the viewport
-    // when there is room (PLAN-centred-page, 2026-09-16 — overturns the
-    // "fixed left margin" half of the 2026-08-18 ruling; the gutter itself
-    // stays: margin annotations stay visible in writing mode and nothing
-    // jumps when annotation mode toggles). Narrower windows hug the left
-    // gutter as before and pan. Keyed off the COMMITTED page width, never
-    // the ruler's live preview: a scrub grows the page rightward from its
-    // current edge and the sheet recentres on release (no feedback loop
-    // through the ruler's own origin). `/ zoom` is written in for a future
-    // view zoom (1 today) so centring composes with it untouched.
+    // The SHEET = page + one margin each side. CENTRED in the viewport when the cap leaves
+    // room (PLAN-centred-page, 2026-09-16); at full width it IS the viewport (the desk
+    // rectangles beside it collapse to 0 and hide). Keyed off the COMMITTED page width.
     // Session view zoom (PLAN-zoom, Z1): a pure TRANSFORM — the layout in page units never
     // changes; `pageLayer` (inside the Flickable) scales everything page-space, the Flickable's
     // content size is the page's × zoom, and these read the scroll offsets back in CONTENT units.
@@ -119,6 +150,7 @@ FocusScope {
         z = Math.max(zoomSteps[0], Math.min(zoomSteps[zoomSteps.length - 1], z))
         if (ax === undefined) ax = flick.width / 2
         if (ay === undefined) ay = flick.height / 2
+        _zoomAx = ax; _zoomAy = ay                                           // the settle's reflow anchors here
         const z0 = viewZoom, edge0 = leftEdge
         const px = (flick.contentX + ax) / z0, py = (flick.contentY + ay) / z0   // the anchored content point
         _pendingZoom = z
@@ -137,6 +169,10 @@ FocusScope {
         zoom = _pendingZoom
         flick.contentX = Math.max(-flick.leftMargin, Math.min(Math.max(-flick.leftMargin, flick.contentWidth - flick.width + flick.rightMargin), flick.contentX))
         flick.contentY = Math.max(-flick.topMargin, Math.min(Math.max(-flick.topMargin, flick.contentHeight - flick.height + flick.bottomMargin), flick.contentY))
+        // REFLOW zoom (2.0 stage 1C): the layout width follows the zoom (availPageWidth reads the
+        // settled zoom), so a slider drag = the scaled frames + ONE reflow here, anchored on the
+        // row under the zoom anchor. The pending resize commit, if any, folds into this one.
+        commitPageWidth(_zoomAy)
     }
     function docZoomStep(dir, ax, ay) {
         let z = viewZoom
@@ -145,7 +181,8 @@ FocusScope {
         docZoomTo(z, ax, ay)
     }
     function docZoom100() { docZoomTo(1) }
-    function docZoomFit() { docZoomTo(flick.width / (pageWidth + 2 * inkGutter)) }   // the sheet fills the viewport
+    // (docZoomFit is gone with the fixed measure: the page always fits. ⌘1 / the badge's row toggle
+    // Full width on the document view — ruling C.)
     // ONE zoom interface (ruling 2026-09-16): the badge and the keys act on the ACTIVE surface —
     // the PDF stage, the canvas, or the document. 100 % is true scale on each.
     readonly property real zoomValue: activeCanvas ? canvasView.cam.zoom
@@ -184,22 +221,22 @@ FocusScope {
     // in writing mode space types) and a left-drag pans the Flickable natively; the document
     // mouse layer and the ink canvas step aside while it's held. Middle-drag pans any time.
     property bool docSpaceHeld: false                     // (cleared in onInkModeChanged below)
-    function zoomFit()     { if (activeCanvas) canvasView.fit();      else if (activePdfRow >= 0) pdfZoomFit();     else docZoomFit() }
+    function zoomFit()     { if (activeCanvas) canvasView.fit();      else if (activePdfRow >= 0) pdfZoomFit();     else toggleFullWidth() }
     function zoom100()     { if (activeCanvas) canvasView.zoomTo(1);  else if (activePdfRow >= 0) pdfZoom100();     else docZoom100() }
-    // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
-    // the panel floats over the editor instead of pushing it, so the raw viewport is wider by
-    // the panel — centring on it would shift the page by half the panel every time annotation
-    // mode toggles (the jump the 2026-08-18 ruling forbids, and the frozen ink in writing mode
-    // would sit at a different x than the live ink). Same number in both modes.
-    readonly property real centringWidth: flick.width - (inspector && inspector.floating ? inspector.width : 0)
-    readonly property real centredEdge: Math.max(inkGutter, Math.floor((centringWidth / viewZoom   // LIVE: the sheet recentres through a zoom drag
-                                                 - (blockModel.pageWidth > 0 ? blockModel.pageWidth : Theme.dim.columnWidth)) / 2))
+    // The width the sheet centres in: the viewport (the Inspector docks — it pushes the editor,
+    // so flick.width already excludes it; the floating mode went with annotations).
+    readonly property real centringWidth: flick.width
+    // Placement, ONE formula for both modes: capped with room → centred (the 2026-09-16 look);
+    // full width → the bracket is 0 → left-aligned at the fixed margin. Reads viewZoom LIVE so the
+    // sheet recentres through a zoom drag; the COMMITTED pageWidth, so a pending resize never
+    // moves the edge before its reflow lands.
+    readonly property real centredEdge: pageMargin + Math.max(0, Math.floor((centringWidth / viewZoom - 2 * pageMargin - pageWidth) / 2))
     // The gesture latch: the edge may only move BETWEEN gestures. Anything
     // that cached a content x at press (block-drag auto-scroll re-aim, the
     // pull arm point, image resize deltas, the 4 px click thresholds, an ink
     // stroke's press origin) would drift if a window resize or an Inspector
     // toggle moved the sheet mid-drag.
-    readonly property bool gestureActive: mouse.pressed || widthDragging || blockDragging
+    readonly property bool gestureActive: mouse.pressed || blockDragging
                                           || dragging || pulling || dividerDragging || imageResizing
                                           || tableGripPressed
     property real gestureEdge: -1
@@ -216,9 +253,9 @@ FocusScope {
     // page's left edge and overflows right as before. Continuous, prose never moves. View
     // geometry only: the model's table x stays 0-based; `tableX(head)` is the content x of
     // a table's left edge and every table site adds THAT, not leftEdge.
-    // A table that overflows the WINDOW may use the gutter too, down to tableMinLeft from the edge
-    // (2026-09-16: 120 px of dead strip beside a table you pan to read; 24 keeps the row grips and a
-    // hair of desk). A table narrower than the window still centres — its half-overhang is smaller.
+    // A table that overflows the WINDOW may use the margin too, down to tableMinLeft from the edge
+    // (2026-09-16; 24 keeps the row grips and a hair of desk). A table narrower than the window
+    // still centres — its half-overhang is smaller. In full width the room is exactly 24 px.
     readonly property real tableMinLeft: 24
     function tableShiftFor(tw) {
         return -Math.min(Math.round(Math.max(0, (tw - pageWidth) / 2)), Math.max(0, leftEdge - tableMinLeft))
@@ -232,10 +269,10 @@ FocusScope {
         const head = rec >= 0 ? blockModel.tableHeadOf(rec) : -1
         return cx - leftEdge - (head >= 0 ? tableShift(head) : 0)
     }
-    readonly property real sheetLeft: leftEdge + tableShiftFor(blockModel.maxTableWidth) - inkGutter
+    readonly property real sheetLeft: leftEdge + tableShiftFor(blockModel.maxTableWidth) - pageMargin
     readonly property real sheetRight:
         leftEdge + Math.max(pageWidth, blockModel.maxBlockWidth,
-                            blockModel.maxTableWidth + tableShiftFor(blockModel.maxTableWidth)) + inkGutter
+                            blockModel.maxTableWidth + tableShiftFor(blockModel.maxTableWidth)) + pageMargin
     function measureForType(t) { return pageWidth }
     function measureForRow(row) { return laneOf(row).w }   // a lane block measures its lane
     // An image's "fit" width: its lane, minus a table cell's two 8 px insets (BlockView's colLeft).
@@ -498,6 +535,7 @@ FocusScope {
         }
     }
     function restoreViewState(m) {
+        blockModel.setContentWidth(pageWidth)   // the width is the VIEW's: the incoming model lays out at it (1C)
         // No saved state (a freshly-opened tab) → the standard fresh-doc reset.
         if (!m || m.focusRow === undefined) {
             docZooms = ({}); pdfZooms = ({}); _prevFlickFrameId = ""; _prevPdfId = ""
@@ -850,8 +888,7 @@ FocusScope {
     // (sheetRight) — keeps the field tone; the area beyond it drops to the
     // window-shell tone, so the document reads as a constrained shape that
     // follows the width setting. Both sides since the sheet centres
-    // (2026-09-16). Tracks the pan and the ruler's live width preview
-    // (pageWidth includes previewWidth).
+    // (2026-09-16). Tracks the pan; width 0 (hidden) at full width.
     Rectangle {
         readonly property real sheetRight: root.vx(root.sheetRight)
         visible: flick.visible && width > 0
@@ -3110,7 +3147,7 @@ FocusScope {
         else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) { root.docZoomStep(1); event.accepted = true }
         else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore)) { root.docZoomStep(-1); event.accepted = true }
         else if (cmd && k === Qt.Key_0) { root.docZoom100(); event.accepted = true }
-        else if (cmd && k === Qt.Key_1) { root.docZoomFit(); event.accepted = true }
+        else if (cmd && k === Qt.Key_1) { root.zoomFit(); event.accepted = true }   // the document: Full width toggle
         // The canvas (B3, read-only): Space holds the hand; everything else is swallowed so typing
         // can't edit the document invisibly (the global chords above still work).
         else if (root.activeCanvas) {
@@ -3459,18 +3496,22 @@ FocusScope {
                     if (root.zoom !== 1.25) fail("⌘+ from 100 % gave " + root.zoom)
                     root.docZoomStep(-1); root.docZoomStep(-1); root.docZoomSettle(); ++checks
                     if (root.zoom !== 0.75) fail("⌘− twice from 125 % gave " + root.zoom)
-                    root.docZoomFit(); root.docZoomSettle(); ++checks
-                    const fit = Math.max(0.5, Math.min(2, flick.width / (root.pageWidth + 2 * root.inkGutter)))
-                    if (Math.abs(root.zoom - fit) > 1e-9) fail("Fit width gave " + root.zoom + " not " + fit)
-                    if (Math.abs(root.leftEdge - root.inkGutter) > 1 && fit < 2) fail("at Fit width the edge is " + root.leftEdge + ", not the gutter")
                     root.docZoom100(); root.docZoomSettle(); ++checks
                     if (root.zoom !== 1) fail("⌘0 gave " + root.zoom)
-                    const before = { x: (flick.contentX + 300) / root.zoom - root.leftEdge, y: (flick.contentY + 200) / root.zoom }
-                    root.docZoomTo(1.5, 300, 200); root.docZoomSettle(); ++checks
-                    const after = { x: (flick.contentX + 300) / root.zoom - root.leftEdge, y: (flick.contentY + 200) / root.zoom }
+                    // Reflow zoom (1C): the STEP keeps the content point under the anchor; the SETTLE
+                    // re-lays the page out at the zoomed width and keeps the anchored row's TOP put.
+                    const before = { x: (flick.contentX + 300) / root.viewZoom - root.leftEdge, y: (flick.contentY + 200) / root.viewZoom }
+                    root.docZoomTo(1.5, 300, 200); ++checks
+                    const after = { x: (flick.contentX + 300) / root.viewZoom - root.leftEdge, y: (flick.contentY + 200) / root.viewZoom }
                     if (Math.abs(before.x - after.x) > 1 || Math.abs(before.y - after.y) > 1)
                         fail("zoom about (300,200) moved the content point " + JSON.stringify(before) + " → " + JSON.stringify(after))
-                    root.docZoom100(); root.docZoomSettle()
+                    const za = root.reflowAnchorFor(200), zTop = root.vy(blockModel.yForRow(za))
+                    root.docZoomSettle(); ++checks
+                    const zw = Math.round(Math.min(root.availPageWidth, viewPrefs.measureCap))
+                    if (root.pageWidth !== zw || blockModel.contentWidth() !== zw) fail("at 150 % the page is " + root.pageWidth + " / model " + blockModel.contentWidth() + ", not " + zw)
+                    if (Math.abs(root.vy(blockModel.yForRow(za)) - zTop) > 1) fail("the settle moved row " + za + "'s top " + zTop + " → " + root.vy(blockModel.yForRow(za)))
+                    root.docZoom100(); root.docZoomSettle(); ++checks
+                    if (root.pageWidth !== Math.round(Math.min(root.availPageWidth, viewPrefs.measureCap))) fail("back at 100 % the page is " + root.pageWidth)
                 }
                 if (phaseStep === 3) {   // a DRAG: 20 live steps 1 → 0.5 without a settle (the slider's shape), then settle
                     for (let zi = 1; zi <= 20; ++zi) { root.docZoomTo(1 - zi * 0.025); blockModel.flushLayoutSpike() }
@@ -3483,23 +3524,50 @@ FocusScope {
                     const zdir = zarg.substring("--pool-probe=".length).replace(/[^\/]*$/, "")
                     flick.grabToImage(function(res) { res.saveToFile(zdir + "zoom-" + step + ".png") })
                 }
-                if (phaseStep === 1) {   // the centred sheet: the formula at rest, the latch across a commit
-                    const centred = function(w) { return Math.max(root.inkGutter, Math.floor((root.centringWidth / root.zoom - w) / 2)) }
+                if (phaseStep === 1) {   // the responsive page (1C): the rest formula, the latch, Full width, the cap
+                    const centred = function(w) { return root.pageMargin + Math.max(0, Math.floor((root.centringWidth / root.zoom - 2 * root.pageMargin - w) / 2)) }
+                    const capped = function() { return Math.round(Math.min(root.availPageWidth, viewPrefs.measureCap)) }
+                    const full0 = viewPrefs.fullWidth, cap0 = viewPrefs.measureCap
+                    if (full0) root.toggleFullWidth()
                     ++checks
-                    if (root.gestureActive || root.leftEdge !== centred(blockModel.pageWidth))
-                        fail("at rest the edge is " + root.leftEdge + ", not " + centred(blockModel.pageWidth) + " (gesture " + root.gestureActive + ")")
-                    const before = root.leftEdge
-                    root.widthDragging = true                      // a ruler scrub in flight…
-                    blockModel.setPageWidth(1000)                  // …commits the width before releasing
+                    if (root.gestureActive || root.pageWidth !== capped() || root.leftEdge !== centred(root.pageWidth))
+                        fail("at rest the page is " + root.pageWidth + " at edge " + root.leftEdge + ", not " + capped() + " at " + centred(capped()) + " (gesture " + root.gestureActive + ")")
+                    const before = root.leftEdge, wBefore = root.pageWidth
+                    root.blockDragging = true                      // a gesture in flight…
+                    root.toggleFullWidth()                         // …asks for a reflow before it ends
                     ++checks
-                    if (root.leftEdge !== before) fail("the edge moved mid-gesture: " + before + " → " + root.leftEdge)
-                    root.widthDragging = false
+                    if (root.pageWidth !== wBefore || root.leftEdge !== before) fail("the page moved mid-gesture: " + wBefore + "@" + before + " → " + root.pageWidth + "@" + root.leftEdge)
+                    root.blockDragging = false
+                    root.commitPageWidth(0)                        // (the settle timer's work, done now)
                     ++checks
-                    if (root.leftEdge !== centred(1000)) fail("no recentre on release: " + root.leftEdge + " vs " + centred(1000))
-                    blockModel.undo()
+                    if (root.pageWidth !== Math.round(root.availPageWidth) || root.leftEdge !== root.pageMargin || blockModel.contentWidth() !== root.pageWidth)
+                        fail("full width gave " + root.pageWidth + " at " + root.leftEdge + " (avail " + root.availPageWidth + ", model " + blockModel.contentWidth() + ")")
+                    root.toggleFullWidth()
                     ++checks
-                    if (root.leftEdge !== centred(blockModel.pageWidth)) fail("undo left the edge at " + root.leftEdge)
-                    flick.contentY = 0   // the undo restores a saved scroll position; the sweep starts at the top
+                    if (root.pageWidth !== capped() || root.leftEdge !== centred(root.pageWidth)) fail("capped again gave " + root.pageWidth + " at " + root.leftEdge)
+                    // The LONGEST top-level paragraph re-seeds with the model's width-aware estimate
+                    // (textHeightEstimate mirrored: body 7.2 px a glyph, hard lines wrap alone, 22 + 16).
+                    let longRow = -1, longLen = 0
+                    for (let r = 0; r < blockModel.count; ++r)
+                        if (blockModel.laneForRow(r) < 0 && blockModel.tableHeadOf(r) < 0 && blockModel.typeForRow(r) === 0 && blockModel.contentForRow(r).length > longLen) { longRow = r; longLen = blockModel.contentForRow(r).length }
+                    const estimate = function(text, w) {
+                        const cpl = Math.max(8, w / 7.2); let lines = 0
+                        for (const part of text.split("\n")) lines += Math.max(1, Math.ceil(part.length / cpl))
+                        return lines * 22 + 16
+                    }
+                    const hBefore = longRow >= 0 ? blockModel.heightForRow(longRow) : 0
+                    root.setMeasureCap(600)
+                    ++checks
+                    if (root.pageWidth !== 600 || root.leftEdge !== centred(600)) fail("a 600 cap gave " + root.pageWidth + " at " + root.leftEdge)
+                    if (longRow >= 0) {
+                        const text = blockModel.contentForRow(longRow), h600 = blockModel.heightForRow(longRow)
+                        if (h600 !== estimate(text, 600)) fail("the longest paragraph (" + longLen + " chars) re-seeded to " + h600 + ", not the 600-wide estimate " + estimate(text, 600) + " (was " + hBefore + ")")
+                        if (estimate(text, 600) > estimate(text, capped()) && h600 <= hBefore) fail("the longest paragraph did not grow at 600: " + hBefore + " → " + h600)
+                    }
+                    root.setMeasureCap(cap0); if (full0) root.toggleFullWidth()
+                    ++checks
+                    if (root.pageWidth !== (full0 ? Math.round(root.availPageWidth) : capped())) fail("restoring the prefs left the page at " + root.pageWidth)
+                    flick.contentY = 0   // the sweep starts at the top
                 }
                 else flick.contentY = Math.min(maxY, flick.contentY + flick.height * 0.37)
                 // Every third step sideways (the frozen column), then back.
@@ -4237,7 +4305,11 @@ FocusScope {
 
         Connections {
             target: blockModel
-            function onHeightSettled(row, delta) { if (row < root.firstVisible) flick.contentY += delta * root.zoom }
+            // A row above the viewport (or, through a reflow, above the anchored row) changing
+            // height moves everything below it: nudge the scroll so what the reader sees stays put.
+            function onHeightSettled(row, delta) {
+                if (row < (root.reflowAnchorRow >= 0 ? root.reflowAnchorRow : root.firstVisible)) flick.contentY += delta * root.zoom
+            }
         }
 
         // PLAN-zoom Z1: everything PAGE-SPACE lives in this one scaled layer — delegates, the
@@ -4248,23 +4320,6 @@ FocusScope {
         id: pageLayer
         width: root.contentSpan; height: blockModel.totalHeight
         transform: Scale { xScale: root.viewZoom; yScale: root.viewZoom }   // live; the layout zoom settles after
-
-        // Gutter tints while the PageRuler drags a width: the marginalia
-        // zones travel visibly with the edge (transient drag feedback).
-        Rectangle {
-            visible: root.widthDragging
-            z: -1
-            x: root.sheetLeft; width: root.inkGutter
-            y: root.docY; height: root.viewH
-            color: Theme.colors.bgAlt2
-        }
-        Rectangle {
-            visible: root.widthDragging
-            z: -1
-            x: root.leftEdge + root.pageWidth; width: root.inkGutter
-            y: root.docY; height: root.viewH
-            color: Theme.colors.bgAlt2
-        }
 
         Item {        // "you are here" — the FOCUSED block's full row, page and
                       // margins alike. The one fill on the field, and it MEANS

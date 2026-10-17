@@ -102,7 +102,8 @@ Rectangle {
         ZoomBadge {   // the readout + Fit / 100 % menu (opens upward)
             anchors.verticalCenter: parent.verticalCenter
             zoomValue: bar.editor ? bar.editor.zoomValue : 1
-            fitLabel: bar.editor && bar.editor.activePdfRow >= 0 ? qsTr("Fit") : qsTr("Fit width")
+            fitLabel: bar.editor && (bar.editor.activePdfRow >= 0 || bar.editor.activeCanvas) ? qsTr("Fit") : qsTr("Full width")
+            fitChecked: !!bar.editor && bar.editor.activePdfRow < 0 && !bar.editor.activeCanvas && bar.editor.fullWidth
             onFitRequested: bar.act(function() { bar.editor.zoomFit() })
             onHundredRequested: bar.act(function() { bar.editor.zoom100() })
         }

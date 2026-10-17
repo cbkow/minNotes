@@ -112,7 +112,6 @@ QByteArray encode(const Payload& p) {
     source.insert(QStringLiteral("docPath"), p.docPath);
     source.insert(QStringLiteral("docDir"), p.docDir);
     source.insert(QStringLiteral("package"), p.package);
-    source.insert(QStringLiteral("pageWidth"), p.pageWidth);
     root.insert(QStringLiteral("source"), source);
     QJsonArray blocks;
     for (size_t i = 0; i < p.specs.size(); ++i)
@@ -171,8 +170,7 @@ bool decode(const QByteArray& json, Payload* out, QString* error) {
     p.docPath = source.value(QStringLiteral("docPath")).toString();
     p.docDir = source.value(QStringLiteral("docDir")).toString();
     p.package = source.value(QStringLiteral("package")).toString();
-    p.pageWidth = source.value(QStringLiteral("pageWidth")).toDouble(760);
-    if (p.pageWidth <= 0) p.pageWidth = 760;
+    // (1.0 payloads carry source.pageWidth — the page is responsive now; ignored.)
     p.grid = root.value(QStringLiteral("grid")).toObject();
     for (const QJsonValue& v : root.value(QStringLiteral("blocks")).toArray()) {
         QString ink;

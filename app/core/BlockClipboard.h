@@ -41,7 +41,6 @@ struct Payload {
     QString docPath;          // source document identity ("" = untitled)
     QString docDir;           // where ".minnotes/" srcs resolve (BlockModel::mediaAnchorDir)
     QString package;          // the source .mnpkg ("" = none)
-    qreal pageWidth = 760;
     std::vector<BlockModel::BlockSpec> specs;
     std::vector<QString> ink;                       // parallel to specs ("" = none)
     std::vector<BlockModel::ThreadImport> threads;  // SOURCE ids — remapped at paste

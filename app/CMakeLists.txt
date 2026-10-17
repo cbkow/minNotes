@@ -191,7 +191,6 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/PathMappingsDialog.qml
         qml/MinNotes/App/Toasts.qml
         qml/MinNotes/App/ZoomBadge.qml
-        qml/MinNotes/App/PageRuler.qml
         qml/MinNotes/App/CanvasView.qml
         qml/MinNotes/App/CanvasCard.qml
         qml/MinNotes/App/CanvasEditorFacade.qml

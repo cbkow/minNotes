@@ -199,24 +199,6 @@ int Document::pageWidth() const {
     return 760;   // absent/0 = the classic measure (every pre-v3 doc)
 }
 
-void Document::setPageWidth(int w) {
-    if (!open_) return;
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    QSqlQuery q(QSqlDatabase::database(conn_));
-    q.prepare(QStringLiteral(
-        "INSERT INTO doc_meta (id, schema_version, app_version, created, modified, page_width) "
-        "VALUES (1, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(id) DO UPDATE SET page_width = excluded.page_width, "
-        "modified = excluded.modified"));
-    q.addBindValue(kSchemaVersion);
-    q.addBindValue(QStringLiteral(MINNOTES_APP_VERSION));
-    q.addBindValue(now);
-    q.addBindValue(now);
-    q.addBindValue(w);
-    if (!q.exec())
-        qWarning() << "Document: page_width write failed:" << q.lastError().text();
-}
-
 int Document::count() const {
     QSqlQuery q(QSqlDatabase::database(conn_));
     if (q.exec("SELECT COUNT(*) FROM blocks") && q.next())
