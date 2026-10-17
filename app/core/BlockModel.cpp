@@ -9,7 +9,6 @@
 #include "CodeSyntax.h"                     // the language chip's picker feed
 #include "../player/timecode_formatter.h"   // timecode columns (SR-4 T6)
 #include "../notes/sketch_text.h"
-#include "../notes/doc_ink.h"               // page-width ink migration (setPageWidth)
 #include "../notes/annotation_thumbnail.h"  // qcv::strokeBoundsNorm (oval-aware bbox)
 #include <QStringBuilder>
 #include <QStandardPaths>
@@ -132,7 +131,6 @@ void BlockModel::closeDocument() {
     reindex(std::vector<double>{});
     endResetModel();
     clearUndo();
-    if (!inkByBlock_.isEmpty()) { inkByBlock_.clear(); ++inkRevision_; emit inkChanged(); }
     if (!qFuzzyCompare(pageWidth_, 760.0)) { pageWidth_ = 760; emit pageWidthChanged(); markTableGeomDirty(); }
     emit documentChanged();
     emit dirtyChanged();
@@ -2454,7 +2452,6 @@ int8_t BlockModel::laneAt(int at) const {
 }
 
 void BlockModel::removeRowRaw(int row) {
-    dropBlockInk(ids_[size_t(row)]);   // DB side cascades with the block row (FK)
     if (doc_.isOpen()) doc_.deleteBlock(ids_[size_t(row)]);
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);
@@ -2948,19 +2945,6 @@ void BlockModel::loadFromStore() {
         }
         if (began) doc_.commit();
     }
-    // Margin ink: one SELECT for the whole doc. Guard against orphans (an ink
-    // row whose block is gone — shouldn't happen with the FK cascade, but a
-    // doc edited by a build predating v2 could in principle leave one).
-    inkByBlock_ = doc_.isOpen() ? doc_.allInk() : QHash<QString, QString>{};
-    if (!inkByBlock_.isEmpty()) {
-        const QSet<QString> live(ids_.begin(), ids_.end());
-        for (auto it = inkByBlock_.begin(); it != inkByBlock_.end();) {
-            if (!live.contains(it.key())) { doc_.deleteInk(it.key()); it = inkByBlock_.erase(it); }
-            else ++it;
-        }
-    }
-    ++inkRevision_;
-    emit inkChanged();
     reindex(std::move(heights));
     endResetModel();
     ++layoutRevision_;
@@ -3402,7 +3386,6 @@ void BlockModel::replaceBand(int lo, int hi, const std::vector<Row>& nr,
     const QSet<QString> newIds(ni.begin(), ni.end());
     for (int i = lo; i <= hi; ++i)
         if (!newIds.contains(ids_[size_t(i)])) {
-            dropBlockInk(ids_[size_t(i)]);
             if (doc_.isOpen()) doc_.deleteBlock(ids_[size_t(i)]);
         }
     const QString nextRank = hi + 1 < n ? ranks_[size_t(hi + 1)] : QString();
@@ -3561,7 +3544,6 @@ QVariantList BlockModel::clearLanes(int record, int laneLo, int laneHi) {
         fresh.cell = r.cell;
         r = fresh;
         content_[size_t(first)].clear();
-        dropBlockInk(ids_[size_t(first)]);
         persistContent(first);
         persistMeta(first);
         setIndexHeight(size_t(first), estimatedHeight(r, contentWidthOfRow(first)));
@@ -3834,42 +3816,6 @@ void BlockModel::indentBlocks(int loRow, int hiRow, int delta) {
     endTxn();
 }
 
-// --- Block-pinned margin ink (tier 2 annotations) -----------------------
-QString BlockModel::inkForBlock(const QString& blockId) const {
-    return inkByBlock_.value(blockId);
-}
-
-QString BlockModel::inkForRow(int row) const {
-    if (row < 0 || row >= static_cast<int>(ids_.size())) return {};
-    return inkByBlock_.value(ids_[row]);
-}
-
-QStringList BlockModel::inkBlockIds() const {
-    return QStringList(inkByBlock_.keyBegin(), inkByBlock_.keyEnd());
-}
-
-void BlockModel::setBlockInk(int row, const QString& inkJson) {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return;
-    if (!doc_.isOpen()) return;
-    const QString& id = ids_[row];
-    if (inkByBlock_.value(id) == inkJson) return;   // no-op (also skips undo entry)
-    beginTxn(row, row);   // one undo step per stroke; gestures group callers
-    if (inkJson.isEmpty()) {
-        inkByBlock_.remove(id);
-        doc_.deleteInk(id);
-    } else {
-        inkByBlock_.insert(id, inkJson);
-        doc_.upsertInk(id, inkJson);
-    }
-    ++inkRevision_;
-    emit inkChanged();
-    endTxn();
-}
-
-void BlockModel::dropBlockInk(const QString& blockId) {
-    if (inkByBlock_.remove(blockId)) { ++inkRevision_; emit inkChanged(); }
-}
-
 int BlockModel::orderedNumberForRow(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return 0;
     if (rows_[row].type != OrderedListItem) return 0;
@@ -4038,7 +3984,6 @@ BlockModel::BlockSnap BlockModel::snapAt(int row) const {
     s.ratios = rows_[row].ratios;
     s.header = rows_[row].header;
     s.table = rows_[row].table;
-    s.ink = inkByBlock_.value(s.id);   // "" when uninked (the common case)
     return s;
 }
 
@@ -4073,12 +4018,10 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     }
     const int last = std::min(lo + oldCount, static_cast<int>(rows_.size()));
     QSet<QString> newIds, oldIds;
-    bool inkTouched = false;
     for (const BlockSnap& s : snaps) newIds.insert(s.id);
     for (int i = lo; i < last; ++i) {
         oldIds.insert(ids_[i]);
         if (!newIds.contains(ids_[i])) {                     // left the region
-            if (inkByBlock_.remove(ids_[i])) inkTouched = true;   // DB cascades
             if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);
         }
     }
@@ -4111,14 +4054,6 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
                 doc_.appendBlock(s.id, s.rank, s.depth, type, attrs, s.content);   // re-born (undo of a delete)
             }
         }
-        // Restore the snap's ink (after appendBlock — the FK needs the block
-        // row to exist). This is how undoing a block deletion brings its
-        // margin ink back.
-        if (s.ink != inkByBlock_.value(s.id)) {
-            inkTouched = true;
-            if (s.ink.isEmpty()) { inkByBlock_.remove(s.id); if (doc_.isOpen()) doc_.deleteInk(s.id); }
-            else { inkByBlock_.insert(s.id, s.ink); if (doc_.isOpen()) doc_.upsertInk(s.id, s.ink); }
-        }
         ++at;
     }
     const int regionEnd = lo + static_cast<int>(snaps.size());   // [lo,regionEnd) = restored snaps
@@ -4148,14 +4083,12 @@ void BlockModel::applySnapshot(int lo, int oldCount, const std::vector<BlockSnap
     reindex(std::move(heights));
     endResetModel();
     ++layoutRevision_;
-    if (inkTouched) { ++inkRevision_; emit inkChanged(); }
     emit modelReset(); emit layoutChangedSpike(); contentSpike();
     applying_ = false;
 }
 
 void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide) {
     applying_ = true;
-    bool inkTouched = false;
     bool restructured = false;   // a patch moved a block between lanes (or retyped a record)
     for (const UndoPatch& p : ps) {
         const BlockSnap& s = beforeSide ? p.before : p.after;
@@ -4189,11 +4122,6 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
                             s.depth);
             doc_.updateRank(s.id, s.rank);
         }
-        if (s.ink != inkByBlock_.value(s.id)) {
-            inkTouched = true;
-            if (s.ink.isEmpty()) { inkByBlock_.remove(s.id); if (doc_.isOpen()) doc_.deleteInk(s.id); }
-            else { inkByBlock_.insert(s.id, s.ink); if (doc_.isOpen()) doc_.upsertInk(s.id, s.ink); }
-        }
         emit dataChanged(index(p.row), index(p.row));   // all roles — type/spans/content may differ
     }
     if (restructured) reindex(std::vector<double>(layout().heights()));
@@ -4202,7 +4130,6 @@ void BlockModel::applyPatches(const std::vector<UndoPatch>& ps, bool beforeSide)
     markTableGeomDirty();
     for (const UndoPatch& p : ps) noteTouchedTable(p.row);
     noteStructure();
-    if (inkTouched) { ++inkRevision_; emit inkChanged(); }
     bumpLayout();
     contentSpike();
     applying_ = false;
@@ -4236,8 +4163,7 @@ void BlockModel::endTxn(const QString& coalesce) {
             || x.content != y.content || x.lang != y.lang
             || x.cell != y.cell || x.ratios != y.ratios
             || x.header != y.header || x.table != y.table
-            || x.spans.size() != y.spans.size()
-            || x.ink != y.ink) return false;   // last: usually shared → O(1) equal
+            || x.spans.size() != y.spans.size()) return false;
         for (size_t j = 0; j < x.spans.size(); ++j)
             if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
                 || x.spans[j].kind != y.spans[j].kind || x.spans[j].href != y.spans[j].href) return false;
@@ -4426,73 +4352,16 @@ void BlockModel::applyUndoWidth(qreal w) {
 // a px-space element fully in a margin keeps its distance from ITS page
 // edge (the margins are the page's, wherever the sheet sits in the
 // viewport), so left-margin X (center-relative) shifts by -Δw/2 and
-// right-margin by +Δw/2; anything overlapping the column stays
-// center-relative. Frame (media) anchors are width-immune.
-QString BlockModel::migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW, bool tablePinned) {
-    if (qFuzzyCompare(oldW, newW)) return {};
-    const qreal halfOld = oldW / 2.0;
-    const qreal dxEdge = (newW - oldW) / 2.0;
-    mn::DocInkAnchor a;
-    if (!mn::docInkFromJson(inkJson, a)) return {};
-    if (a.space != mn::DocInkAnchor::Px) return {};
-    bool changed = false;
-    for (qcv::ActiveStroke& s : a.strokes) {
-        const QRectF b = qcv::strokeBoundsNorm(s);   // local px, oval-aware
-        qreal shift = 0;
-        if (tablePinned)              shift = -dxEdge;   // the table stays put; the centre moved
-        else if (b.right() < -halfOld) shift = -dxEdge;  // left marginalia
-        else if (b.left() > halfOld)  shift = dxEdge;    // right marginalia
-        if (shift == 0.0) continue;
-        const bool oval = (s.tool == qcv::DrawingTool::Oval && s.points.size() >= 2);
-        for (size_t i = 0; i < s.points.size(); ++i) {
-            if (oval && i == 1) continue;   // radii vector: never translated
-            s.points[i].rx() += shift;
-        }
-        changed = true;
-    }
-    for (mn::SketchTextSpec& t : a.texts) {
-        qreal shift = 0;
-        if (tablePinned)           shift = -dxEdge;
-        else if (t.x + t.w < -halfOld)  shift = -dxEdge;
-        else if (t.x > halfOld)    shift = dxEdge;
-        if (shift != 0.0) { t.x += shift; changed = true; }
-    }
-    return changed ? mn::docInkToJson(a) : QString();
-}
-
 void BlockModel::setPageWidth(qreal w) {
     if (!documentOpen()) return;
     w = std::clamp<qreal>(w, 400.0, 4000.0);   // sanity; the UI offers detents
     if (qFuzzyCompare(w, pageWidth_)) return;
     const qreal oldW = pageWidth_;
 
-    struct Mig { int row; QString json; };
-    std::vector<Mig> migs;
-    for (auto it = inkByBlock_.constBegin(); it != inkByBlock_.constEnd(); ++it) {
-        const int row = rowForId(it.key());
-        if (row < 0) continue;
-        const QString json = migrateInkForWidth(it.value(), oldW, w, tableHeadOf(row) >= 0);
-        if (!json.isEmpty()) migs.push_back({row, json});
-    }
-
-    // Ink rewrites (if any) fold into one txn; the width stamps onto that
-    // entry so ⌘Z restores blobs + width atomically. With no ink to migrate,
-    // a pure width entry is pushed by hand (endTxn drops empty snapshots).
-    const size_t stackBefore = undo_.size();
-    if (!migs.empty()) {
-        int lo = INT_MAX, hi = -1;
-        for (const Mig& m : migs) { lo = std::min(lo, m.row); hi = std::max(hi, m.row); }
-        beginTxn(lo, hi);
-        for (const Mig& m : migs) setBlockInk(m.row, m.json);
-        endTxn();
-    }
     pageWidth_ = w;
     doc_.setPageWidth(int(std::lround(w)));
     markDirty();
-    if (undo_.size() > stackBefore && undoCur_ == static_cast<int>(undo_.size()) - 1) {
-        undo_.back().widthBefore = oldW;
-        undo_.back().widthAfter = w;
-    } else {
+    {
         UndoEntry e;
         e.cRowB = cRow_; e.cColB = cCol_; e.aRowB = aRow_; e.aColB = aCol_;
         e.cRowA = cRow_; e.cColA = cCol_; e.aRowA = aRow_; e.aColA = aCol_;
@@ -4524,7 +4393,7 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         const int n = int(b.size() - a.size());
         return n == 1 ? tr("Delete block") : tr("Delete %1 blocks").arg(n);
     }
-    bool contentDiff = false, inkDiff = false, spanDiff = false;
+    bool contentDiff = false, spanDiff = false;
     bool metaDiff = false, rankDiff = false, commentAdded = false, langDiff = false;
     bool mediaContent = false;
     int contentRows = 0;
@@ -4539,7 +4408,6 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
             ++contentRows;
             if (y.type == Media) mediaContent = true;
         }
-        if (x.ink != y.ink) inkDiff = true;
         if (x.rank != y.rank) rankDiff = true;
         if (x.lang != y.lang) langDiff = true;
         if (x.type != y.type || x.level != y.level
@@ -4562,7 +4430,6 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         }
     }
     if (langDiff && !contentDiff && !spanDiff && !metaDiff) return tr("Code language");
-    if (inkDiff && !contentDiff && !spanDiff && !metaDiff) return tr("Ink");
     if (commentAdded) return tr("Comment");
     if (spanDiff && !contentDiff && !metaDiff) return tr("Formatting");
     if (rankDiff && !contentDiff && !metaDiff) return tr("Move block");
@@ -5288,7 +5155,7 @@ bool BlockModel::isConsumableAnchor(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
     if (rows_[row].type != Paragraph) return false;
     if (!content_[row].isEmpty()) return false;
-    return inkForRow(row).isEmpty();   // ink pins its block — never consume it
+    return true;
 }
 
 int BlockModel::insertReplacingEmpty(int afterRow, const std::function<int(int)>& ins) {
@@ -6664,7 +6531,6 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     if (hiRow > loRow) {
         const int first = loRow + 1, last = hiRow, cnt = last - first + 1;
         for (int i = first; i <= last; ++i) {
-            dropBlockInk(ids_[i]);   // hash sync; DB cascades via FK
             if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);   // ids still valid pre-erase
         }
         beginRemoveRows({}, first, last);
@@ -6769,7 +6635,6 @@ QVariantMap BlockModel::probeStats(bool reset) {
     auto& pc = mn::perf::counters();
     counters.insert(QStringLiteral("rehighlights"),    pc.rehighlights.load());
     counters.insert(QStringLiteral("highlightBlocks"), pc.highlightBlocks.load());
-    counters.insert(QStringLiteral("inkPaints"),       pc.inkPaints.load());
     counters.insert(QStringLiteral("slotBumps"),       pc.slotBumps.load());
     counters.insert(QStringLiteral("dbWrites"),        pc.dbWrites.load());
     out.insert(QStringLiteral("counters"), counters);
@@ -7510,7 +7375,6 @@ void BlockModel::removeBlocks(int loRow, int hiRow) {
     const auto band = wholeSplitRows(loRow, hiRow);   // A4 below may reshape a split row
     beginTxn(band.first, band.second);           // after = the reshaped band, or the refill row
     for (int i = loRow; i <= hiRow; ++i) {
-        dropBlockInk(ids_[i]);   // hash sync; DB cascades via FK
         if (doc_.isOpen()) doc_.deleteBlock(ids_[i]);
     }
     beginRemoveRows({}, loRow, hiRow);
@@ -7767,18 +7631,6 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
     p.specs = specsForRange(loRow, loCol, hiRow, hiCol);
     if (p.specs.empty()) return {};
 
-    // Ink is pinned to the WHOLE block: only rows copied whole carry it.
-    p.ink.reserve(p.specs.size());
-    for (int r = loRow; r <= hiRow; ++r) {
-        bool whole = isOpaqueRow(r);
-        if (!whole) {
-            const int len = content_[r].size();
-            const int from = (r == loRow) ? std::clamp(loCol, 0, len) : 0;
-            const int to   = (r == hiRow) ? std::clamp(hiCol, 0, len) : len;
-            whole = (from == 0 && to == len);
-        }
-        p.ink.push_back(whole ? inkForRow(r) : QString());
-    }
     return finishClipboardPayload(*this, p);
 }
 
@@ -7913,7 +7765,6 @@ QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const
         }
         rs.table = t.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(t).toJson(QJsonDocument::Compact));
         p.specs.push_back(rs);
-        p.ink.push_back(inkForRow(rec));
         for (int k = 0; k < colsIn.size(); ++k) {
             const QVariantList blocks = tableCellRows(head, r, colsIn[k].toInt());
             if (blocks.isEmpty()) {                                        // a ragged cell: the fragment stays rectangular
@@ -7921,7 +7772,6 @@ QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const
                 e.type = Paragraph;
                 e.cell = static_cast<int8_t>(k);
                 p.specs.push_back(e);
-                p.ink.push_back(QString());
                 continue;
             }
             for (const QVariant& bv : blocks) {
@@ -7929,7 +7779,6 @@ QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const
                 BlockSpec sp = specForRow(b);
                 sp.cell = static_cast<int8_t>(k);
                 p.specs.push_back(sp);
-                p.ink.push_back(inkForRow(b));
             }
         }
     }
@@ -7938,10 +7787,8 @@ QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const
     return finishClipboardPayload(*this, p);
 }
 
-std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
-                                            const std::vector<QString>& inkIn, qreal srcPageWidth) {
+std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs) {
     lastPasteRelocated_ = false;
-    const std::vector<QString>& ink = inkIn;
     const int n = static_cast<int>(rows_.size());
     if (n == 0) return { 0, 0 };
     row = std::clamp(row, 0, n - 1);
@@ -7950,23 +7797,6 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
 
     auto textish = [](const BlockSpec& sp) {
         return sp.mediaJson.isEmpty() && sp.type != Divider && sp.type != Split;
-    };
-    const bool migrate = srcPageWidth > 0 && !qFuzzyCompare(srcPageWidth, pageWidth_);
-    // Lay ink for specs[k0..] onto rows firstRow.. (parallel). The FIRST one
-    // may be a merged row: never overwrite ink it already has.
-    auto layInk = [&](int firstRow, size_t k0, size_t k1, bool firstMerged) {
-        for (size_t k = k0; k < k1 && k < specs.size() && k < ink.size(); ++k) {
-            if (ink[k].isEmpty()) continue;
-            const int r = firstRow + static_cast<int>(k - k0);
-            if (r < 0 || r >= static_cast<int>(rows_.size())) continue;
-            if (k == k0 && firstMerged && !inkForRow(r).isEmpty()) continue;
-            QString j = ink[k];
-            if (migrate) {
-                const QString m = migrateInkForWidth(j, srcPageWidth, pageWidth_, tableHeadOf(r) >= 0);
-                if (!m.isEmpty()) j = m;
-            }
-            setBlockInk(r, j);
-        }
     };
     auto finish = [&]() {
         bumpLayout();
@@ -7980,7 +7810,6 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
         const int gap = splitRowEnd(splitRowOf(row)) + 1;
         beginTxn(gap, gap - 1);
         const auto caret = spliceSpecsAt(gap, specs, /*allowReuseAnchorAbove=*/false, -1);
-        layInk(gap, 0, specs.size(), false);
         lastPasteRelocated_ = true;
         finish();
         endTxn();
@@ -7998,7 +7827,6 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
                 || rows_[row].type == Quote || rows_[row].type == ListItem);
         if (emptySimple) beginTxn(row, row); else beginTxn(row + 1, row);
         const auto caret = spliceSpecsAt(row + 1, specs, /*allowReuseAnchorAbove=*/emptySimple, spliceLane);
-        layInk(emptySimple ? row : row + 1, 0, specs.size(), false);
         finish();
         endTxn();
         return caret;
@@ -8072,9 +7900,7 @@ std::pair<int,int> BlockModel::pasteSpecsAt(int row, int col, std::vector<BlockS
         spliceSpecsAt(row + 1, rest, /*allowReuseAnchorAbove=*/false, spliceLane);
         caretRow = row + 1 + static_cast<int>(lastIdx);
         Q_UNUSED(tailSpec);
-        layInk(row + 1, 1, specs.size(), false);
     }
-    layInk(row, 0, 1, /*firstMerged=*/true);   // only spec[0]'s ink, onto the merged row
     finish();
     endTxn();
     return { caretRow, caretCol };
@@ -8093,17 +7919,13 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
     const CopyBand band = copyBand(loRow, 0, hiRow, 0);   // copy grain: one lane, or whole split rows
     loRow = band.lo; hiRow = band.hi;
     std::vector<BlockSpec> specs;
-    std::vector<QString> ink;
     for (int r = loRow; r <= hiRow; ++r) {
         specs.push_back(specForRow(r));
         if (!band.keepLanes) { specs.back().cell = -1; specs.back().ratios.clear(); specs.back().header = 0; specs.back().table.clear(); }
-        ink.push_back(inkForRow(r));
     }
     const int gap = spliceGapFor(hiRow + 1, specs);
     beginTxn(gap, gap - 1);                      // empty before; after = the copies
     spliceSpecsAt(gap, specs, /*allowReuseAnchorAbove=*/false);
-    for (size_t k = 0; k < ink.size(); ++k)
-        if (!ink[k].isEmpty()) setBlockInk(gap + static_cast<int>(k), ink[k]);
     bumpLayout();
     contentSpike();
     endTxn();

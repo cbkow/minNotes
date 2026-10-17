@@ -76,11 +76,10 @@ public:
     void updateRank(const QString& id, const QString& rank);   // reorder
     void deleteBlock(const QString& id);
 
-    // --- Block-pinned margin ink (v2). One row per anchored block; the blob
-    // is the block-local stroke envelope (app/notes/doc_ink.h). Deleting a
-    // block cascades its ink (FK).
-    QHash<QString, QString> allInk() const;                    // one SELECT at load
-    void upsertInk(const QString& blockId, const QString& ink);
+    // --- The 1.0 block_ink table (block-pinned margin ink, REMOVED in 2.0 stage 1). Read once at
+    // load to move a media block's frame ink into its descriptor and left otherwise for the 2.0
+    // converter; never written. The table is still created so older files keep their FK cascade.
+    QHash<QString, QString> allInk() const;
     void deleteInk(const QString& blockId);
 
     // --- Comments (v2). Threads are anchored by SpanComment spans (payload =

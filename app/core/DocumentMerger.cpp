@@ -32,19 +32,12 @@ DocumentMerger::MergeJob DocumentMerger::planMerge(BlockModel* src, BlockModel* 
         return job;
     }
     const int n = src->rowCountQml();
-    job.srcWidth = src->pageWidth();
-    job.destWidth = dest->pageWidth();
-
-    // Snapshot: specs + parallel ink, straight off the source model.
+    // Snapshot: the specs, straight off the source model.
     job.specs.reserve(size_t(n));
-    job.ink.reserve(size_t(n));
-    for (int r = 0; r < n; ++r) {
-        job.specs.push_back(src->specForRow(r));
-        job.ink.push_back(src->inkForRow(r));
-    }
+    for (int r = 0; r < n; ++r) job.specs.push_back(src->specForRow(r));
 
     // Pristine-empty source (the fresh scratch tab): success, nothing to do.
-    if (n == 1 && job.ink[0].isEmpty()) {
+    if (n == 1) {
         const BlockModel::BlockSpec& sp = job.specs[0];
         if (sp.type == BlockModel::Paragraph && sp.text.isEmpty() && sp.mediaJson.isEmpty()) {
             job.noop = true;
@@ -157,17 +150,6 @@ bool DocumentMerger::applyMerge(BlockModel* dest, MergeJob& job,
     dest->spliceSpecsAt(gap, job.specs, /*allowReuseAnchorAbove=*/true, /*lane=*/-1);
     const int firstRow = willFold ? anchor : gap;
     const int lastRow = firstRow + static_cast<int>(job.specs.size()) - 1;
-    const bool migrate = !qFuzzyCompare(job.srcWidth, job.destWidth);
-    for (size_t k = 0; k < job.ink.size(); ++k) {
-        if (job.ink[k].isEmpty()) continue;
-        QString inkJson = job.ink[k];
-        if (migrate) {
-            const QString m = BlockModel::migrateInkForWidth(inkJson, job.srcWidth,
-                                                             job.destWidth);
-            if (!m.isEmpty()) inkJson = m;
-        }
-        dest->setBlockInk(firstRow + static_cast<int>(k), inkJson);
-    }
     dest->endGroup();
     dest->localizeRemoteMedia(firstRow, lastRow);
 

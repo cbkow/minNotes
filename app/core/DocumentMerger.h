@@ -2,8 +2,6 @@
 // one open document into another at a chosen gap, with full fidelity. The
 // source is never modified; the destination gets the blocks as ONE undo
 // entry. Fidelity holes the plain spec path would leave are closed here:
-//   - margin ink travels per block (width-migrated when the page measures
-//     differ, via BlockModel::migrateInkForWidth — never forked math);
 //   - comment threads are re-minted in the destination with their history
 //     (created/resolved/message timestamps) intact, span hrefs rewritten;
 //   - assets keep their DISPOSITION: collected (rel `.minnotes/`) sources —
@@ -69,12 +67,10 @@ private:
     // plans with the same rules).
     struct MergeJob {
         std::vector<BlockModel::BlockSpec> specs;
-        std::vector<QString> ink;                        // parallel to specs
         std::vector<BlockModel::ThreadImport> threads;   // NEW ids already minted
         AssetTransfer::Plan assets;
         QString anchorId;          // dest block id above the gap ("" = top)
         int gap = 0;
-        qreal srcWidth = 760, destWidth = 760;
         bool noop = false;         // pristine-empty source → success, no rows
         QString refuse;            // non-empty = refused at plan time
     };
@@ -86,7 +82,7 @@ private:
                            const std::function<void(qint64, qint64, QString)>& progress,
                            QString* error);
     // GUI-thread apply: rewrite srcs in the specs, mint threads, splice as
-    // ONE undo entry, lay the ink per row (width-migrated).
+    // ONE undo entry.
     static bool applyMerge(BlockModel* dest, MergeJob& job,
                            int* destFirst, int* destLast);
     // Cleanup for an apply that never ran (dest closed mid-copy).

@@ -161,7 +161,6 @@ FocusScope {
     // is far past useful and made the slider's right half a cliff).
     readonly property real zoomFloor: activeCanvas ? 0.05 : activePdfRow >= 0 ? 0.25 * pdfTrueK : activeSketchRow >= 0 ? 0.10 : zoomSteps[0]
     readonly property real zoomCeil:  activeCanvas ? 4 : activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : activeSketchRow >= 0 ? 8 : zoomSteps[zoomSteps.length - 1]
-    readonly property bool zoomHasFitInk: activeSketchRow >= 0 && sketchEditCanvas.hasOverflow
     function zoomTo(v) {   // true scale, on the active surface, about its centre
         v = Math.max(zoomFloor, Math.min(zoomCeil, v))
         if (activeCanvas) canvasView.zoomTo(v)
@@ -169,7 +168,6 @@ FocusScope {
         else if (activeSketchRow >= 0) sketchStage.zoomAt(sketchStage.width / 2, sketchStage.height / 2, v)
         else docZoomTo(v)
     }
-    function zoomFitInk() { if (activeSketchRow >= 0) sketchStage.fitInkCamera() }
     // Each half is LOGARITHMIC (a doubling takes the same travel everywhere): the document's
     // 50 … 100 … 200 is symmetric, a PDF's ÷4 … 100 … ×4 too, and nothing near 100 % is touchy.
     readonly property real zoomSliderPos: {
@@ -204,7 +202,7 @@ FocusScope {
     // toggle moved the sheet mid-drag.
     readonly property bool gestureActive: mouse.pressed || widthDragging || blockDragging
                                           || dragging || pulling || dividerDragging || imageResizing
-                                          || tableGripPressed || inkCanvas.gesturing
+                                          || tableGripPressed
     property real gestureEdge: -1
     onGestureActiveChanged: gestureEdge = gestureActive ? centredEdge : -1
     readonly property real leftEdge: gestureEdge >= 0 ? gestureEdge : centredEdge
@@ -285,36 +283,6 @@ FocusScope {
     // The right Inspector panel (set from Main.qml) — the studio's drawing
     // tool/color/width live there (its Draw target).
     property var inspector: null
-
-    // --- Annotation (ink) mode: draw block-pinned margin ink over the whole
-    // document. DERIVED, never stored (2026-08-19 redesign): the armed tool IS
-    // the mode. Any non-Type tool in the Document view engages the ink surface;
-    // Type — the resting tool — is regular editing. Page locks to 760 +
-    // horizontal pan (see pageWidth/contentSpan above); the Inspector FLOATS
-    // instead of pushing the column (Main.qml); the ink canvas takes the mouse.
-    // Full-frame tabs are their own worlds: sketch/video interpret the tools
-    // locally, table/PDF disarm to Type (setActiveTab).
-    readonly property bool inkMode: activeFrameId === "" && !!inspector
-                                    && inspector.drawTool !== "type"
-    // Show/hide the ink layer (data untouched — a reading-mode switch,
-    // mirroring the video studio's annotations toggle). Persisted app-wide;
-    // entering annotation mode forces it visible (drawing on a hidden layer
-    // would be baffling).
-    property alias inkLayerVisible: inkPrefs.layerVisible
-    Settings { id: inkPrefs; category: "annotations"; property bool layerVisible: true }
-    readonly property int inkStrokeCount: inkCanvas.strokeCount   // rail toggle enablement
-    // Mode-edge side effects (the old setInkMode body, minus the tool writes —
-    // the tool now drives, so writing it from here would loop).
-    onInkModeChanged: {
-        if (!inkMode) docSpaceHeld = false                // never leave the hand stuck outside annotation mode
-        inkTextSession.commit()   // an open chip session never straddles the mode edge
-        if (inkMode) {
-            inkLayerVisible = true
-        } else {
-            inkCanvas.clearSelection()
-            flick.contentX = 0    // the pan gutter is an ink-mode affordance
-        }
-    }
 
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
     // tab shows the board; a table with no grouping column stays in the document.
@@ -451,21 +419,9 @@ FocusScope {
         for (let i = 0; i < a.length; ++i) if (a[i] === "--canvas") return "fit"; else if (a[i].indexOf("--canvas=") === 0) return a[i].substring(9)
         return ""
     }
-    readonly property bool inkOnLoad: Qt.application.arguments.indexOf("--canvas-ink") >= 0   // dev-only: inject sample ink (page or canvas)
     Timer {
-        interval: 300; running: root.canvasOnLoad !== "" || root.inkOnLoad
+        interval: 300; running: root.canvasOnLoad !== ""
         onTriggered: {
-            if (root.inkOnLoad && blockModel.count > 1) {   // dev: ink on the first two rows (page-centre px)
-                const env = (shapes) => JSON.stringify({ version: "2.0", coordinate_system: "block-local", space: "px", shapes: shapes })
-                const shape = (type, pts, extra) => Object.assign({ id: "probe-" + type, type: type, color: [0.93, 0.26, 0.21, 1], stroke_width: 4, filled: false, is_modeled: false, points: pts }, extra || {})
-                blockModel.setBlockInk(0, env([shape("freehand", [[-360, 8], [-330, 40], [-300, 6], [-270, 42], [-240, 10]]),
-                                               shape("arrow", [[60, 46], [200, 10]], { stroke_width: 6 })]))
-                blockModel.setBlockInk(1, env([shape("rect", [[-380, -4], [-60, -4], [-60, 26], [-380, 26]], { stroke_width: 2 }),
-                                               shape("oval", [[160, 12], [70, 16]], { color: [0.2, 0.6, 1, 1] }),
-                                               shape("line", [[240, 0], [370, 30]], { filled: false }),
-                                               shape("rect", [[300, -10], [340, -10], [340, 6], [300, 6]], { filled: true, color: [0.3, 0.8, 0.4, 1] })]))
-            }
-            if (root.canvasOnLoad === "") return
             root.setActiveTab("canvas")
             const z = parseFloat(root.canvasOnLoad)
             if (z > 0) { canvasView.fit(); const o = canvasView.cam.worldToScreen(0, 0); canvasView.cam.zoomAboutPoint(z, o.x, o.y) }
@@ -597,12 +553,6 @@ FocusScope {
                      sketchEditCanvas.textElementAt(sketchEditCanvas.selectedTextIndex))
             return t.size !== undefined ? t.size : -1
         }
-        if (inkMode && inkCanvas.selectedTextIndex >= 0) {
-            var r = inkCanvas.selectedTextRow
-            var u = (blockModel.inkRevision,
-                     inkCanvas.inkTextAt(r, inkCanvas.selectedTextIndex))
-            return u.size !== undefined ? u.size * inkCanvas.inkTextSizeScale(r) : -1
-        }
         if (activePdfRow >= 0 && pdfActiveInk && pdfActiveInk.selectedTextIndex >= 0) {
             var p = (blockModel.contentRevision,
                      pdfActiveInk.textElementAt(pdfActiveInk.selectedTextIndex))
@@ -617,13 +567,6 @@ FocusScope {
             var t = sketchEditCanvas.textElementAt(i)
             if (t.size !== undefined && Math.abs(t.size - v) > 0.01)
                 blockModel.sketchSetTextBox(activeSketchRow, i, t.x, t.y, t.w, v)
-        } else if (inkMode && inkCanvas.selectedTextIndex >= 0) {
-            var r = inkCanvas.selectedTextRow, j = inkCanvas.selectedTextIndex
-            var u = inkCanvas.inkTextAt(r, j)
-            var sc = inkCanvas.inkTextSizeScale(r)
-            var lv = sc > 0 ? v / sc : v
-            if (u.size !== undefined && Math.abs(u.size - lv) > 0.01)
-                inkCanvas.inkSetTextBox(r, j, u.x, u.y, u.w, lv)
         } else if (activePdfRow >= 0 && pdfActiveInk && pdfActiveInk.selectedTextIndex >= 0) {
             var pi = pdfActiveInk.selectedTextIndex
             var pt = pdfActiveInk.textElementAt(pi)
@@ -1957,9 +1900,9 @@ FocusScope {
         return null
     }
     // 1 = the hot band inside the block's left column edge, 0 = its right edge, -1 = neither.
-    // Hidden while a draw tool is armed or a frame tab is open; tables and records don't pull.
+    // Hidden while a frame tab is open; tables and records don't pull.
     function pullSideAt(row, cx) {
-        if (row < 0 || root.inkMode || root.activeFrameId !== "") return -1
+        if (row < 0 || root.activeFrameId !== "") return -1
         const t = blockModel.typeForRow(row)
         if (t === 10) return -1
         const x0 = columnX(row), w = laneOf(row).w
@@ -2034,19 +1977,17 @@ FocusScope {
         }
         const g = laneOf(pullRow)
         const leftShare = (pullPreviewX - g.x) / g.w
-        const hadInk = blockModel.inkForRow(pullRow).length > 0
         // The pulled block keeps the side away from the edge it was pulled from.
         const fresh = blockModel.wrapRun(pullLo, pullHi, pullSide, pullSide === 0 ? leftShare : 1 - leftShare)
         if (fresh < 0) return
         cursor.setCaret(fresh, 0)
         root.ensureVisible(fresh)
-        if (hadInk) Toasts.show(qsTr("This row's ink stays where it was drawn"))
     }
     function cancelPull() { pulling = false }
     // --- Table grips and add strips (SR-4 S7b) ---
     // The grip band under content point (cx, cy): {head, kind, index}, or null.
     function tableGripAt(cx, cy) {
-        if (root.inkMode || root.activeFrameId !== "") return null
+        if (root.activeFrameId !== "") return null
         const rec = blockModel.rowForY(Math.max(0, cy))
         if (rec < 0 || blockModel.typeForRow(rec) !== 10) return null
         const head = blockModel.tableHeadOf(rec)
@@ -2806,7 +2747,7 @@ FocusScope {
     // default tri-state set, picker opens immediately at the new chip
     // (the applyLink insert-mode shape).
     function insertChoiceChip() {
-        if (!blockModel.documentOpen || root.inkMode) return
+        if (!blockModel.documentOpen) return
         // Frame tabs refuse — except a table's grid frame, whose cells are blocks and
         // take chips like the document view.
         if (root.activeFrameId !== "" && root.frameLo < 0) return
@@ -3121,11 +3062,6 @@ FocusScope {
             if (k === Qt.Key_Escape) sketchTextSession.commit()
             event.accepted = true
         }
-        // Same island rule for the ink text overlay.
-        else if (root.inkMode && inkTextSession.active) {
-            if (k === Qt.Key_Escape) inkTextSession.commit()
-            event.accepted = true
-        }
         // And for the PDF page-chip overlay (must sit above the pdf branch).
         else if (root.activePdfRow >= 0 && pdfTextSession.active) {
             if (k === Qt.Key_Escape) pdfTextSession.commit()
@@ -3136,11 +3072,7 @@ FocusScope {
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
             // Studio first: drop an in-flight stroke, then disarm the tool.
-            // Ink mode: drop an in-flight stroke, else ONE press back to Type —
-            // the exit clears the selection itself (onInkModeChanged).
-            if (root.inkMode && inkCanvas.drawing) { inkCanvas.cancelStroke() }
-            else if (root.inkMode) { root.inspector.drawTool = "type" }
-            else if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
+            if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
             else if (root.activeSketchRow >= 0 && sketchEditCanvas.drawing) { sketchEditCanvas.cancelStroke() }
             else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.drawing) { root.pdfActiveInk.cancelStroke() }
             else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0 || root.activePdfRow >= 0)
@@ -3219,10 +3151,8 @@ FocusScope {
             else if (cmd && k === Qt.Key_1) root.pdfZoomFit()
             event.accepted = true
         }
-        // Copy as Markdown — document view only (full-frame tabs and ink
-        // mode have their own clipboard rules below).
-        else if (cmd && shift && k === Qt.Key_C && root.activeFrameId === ""
-                 && !root.inkMode) {
+        // Copy as Markdown — document view only (full-frame tabs have their own clipboard rules below).
+        else if (cmd && shift && k === Qt.Key_C && root.activeFrameId === "") {
             root.copyAsMarkdown()
             event.accepted = true
         }
@@ -3232,20 +3162,17 @@ FocusScope {
         // ("ç") on many layouts — so match both.
         else if (cmd && (event.modifiers & Qt.AltModifier)
                  && (k === Qt.Key_C || k === Qt.Key_Ccedilla)
-                 && (root.activeFrameId === "" || root.frameLo >= 0)
-                 && !root.inkMode) {
+                 && (root.activeFrameId === "" || root.frameLo >= 0)) {
             root.insertChoiceChip()   // doc view OR a table's grid frame
             event.accepted = true
         }
-        // Video/sketch tabs + ink mode: clipboard ops target the (hidden or
-        // annotation-covered) document — gate ⌘V/⌘X (silent document edits);
+        // Video/sketch tabs: clipboard ops target the hidden document — gate ⌘V/⌘X (silent document edits);
         // ⌘C copies an invisible selection, swallow it too. EXCEPT ⌘V in a
         // SKETCH tab (regression fix 2026-08-21): the canvas is a real paste
         // target — doPaste's sketch branch drops images onto it and never
         // touches the document.
         else if (cmd && (k === Qt.Key_C || k === Qt.Key_V || k === Qt.Key_X)
-                 && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0
-                     || root.inkMode)) {
+                 && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0)) {
             if (k === Qt.Key_V && root.activeSketchRow >= 0) root.doPaste()
             event.accepted = true
         }
@@ -3268,7 +3195,7 @@ FocusScope {
         // option-layer character, unlike the ⌥⌘C trap above.)
         else if (cmd && (event.modifiers & Qt.AltModifier) !== 0
                  && (k === Qt.Key_Up || k === Qt.Key_Down)
-                 && root.activeFrameId === "" && !root.inkMode && !root.boardMode) {
+                 && root.activeFrameId === "" && !root.boardMode) {
             var mlo = cursor.hasSel ? cursor.loRow : cursor.focusRow
             var mhi = cursor.hasSel ? cursor.hiRow : cursor.focusRow
             // Within its container (SR-0 §4.12): a lane block stays in its lane; a top-level
@@ -3311,22 +3238,11 @@ FocusScope {
                 sketchStage.fitCamera()
             event.accepted = true
         }
-        // Ink mode: the canvas is mouse-driven; swallow everything so typing
-        // can't edit the document mid-annotation. (⌘Z above stays DOC undo —
-        // ink is document content, the sketch precedent.) Delete/Backspace
-        // removes the selected stroke.
         // View zoom (PLAN-zoom Z3): the same chords as the PDF and sketch tabs.
         else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) { root.docZoomStep(1); event.accepted = true }
         else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore)) { root.docZoomStep(-1); event.accepted = true }
         else if (cmd && k === Qt.Key_0) { root.docZoom100(); event.accepted = true }
         else if (cmd && k === Qt.Key_1) { root.docZoomFit(); event.accepted = true }
-        else if (root.inkMode) {
-            if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && inkCanvas.hasSelection)
-                inkCanvas.deleteSelection()
-            else if (k === Qt.Key_Space && !event.isAutoRepeat)
-                root.docSpaceHeld = true              // hold the hand
-            event.accepted = true
-        }
         // The canvas (B3, read-only): Space holds the hand; everything else is swallowed so typing
         // can't edit the document invisibly (the global chords above still work).
         else if (root.activeCanvas) {
@@ -4055,7 +3971,6 @@ FocusScope {
         property int fails: 0
         property int checks: 0
         property int waitTicks: 0
-        property var inkRows: []
         property var heightsBefore: ({})
         property int liveCard: 1
         property real seed: 12345
@@ -4078,15 +3993,8 @@ FocusScope {
         }
         onTriggered: {
             const cam = canvasView.cam
-            if (phase === 0) {   // P0: ink on card 1's first three rows, the tab, fit
+            if (phase === 0) {   // P0: the tab, fit
                 if (step === 0) {
-                    const h = blockModel.cardHeadAt(liveCard)
-                    const env = (shapes) => JSON.stringify({ version: "2.0", coordinate_system: "block-local", space: "px", shapes: shapes })
-                    const shape = (type, pts, extra) => Object.assign({ id: "probe-" + type, type: type, color: [0.9, 0.3, 0.2, 1], stroke_width: 4, filled: false, is_modeled: false, points: pts }, extra || {})
-                    blockModel.setBlockInk(h, env([shape("freehand", [[-360, 8], [-330, 30], [-300, 6]])]))
-                    blockModel.setBlockInk(h + 1, env([shape("arrow", [[-400, 40], [-310, 12]]), shape("oval", [[120, 20], [60, 14]])]))
-                    blockModel.setBlockInk(h + 2, env([shape("rect", [[-380, -4], [-100, -4], [-100, 24], [-380, 24]], { stroke_width: 2 })]))
-                    inkRows = [h, h + 1, h + 2]
                     root.setActiveTab("canvas")
                 } else if (step === 3) { canvasView.fit() }
                 else if (step === 8) {
@@ -4204,24 +4112,7 @@ FocusScope {
                 let ok = true
                 for (const row in heightsBefore) if (Math.abs(blockModel.heightForRow(parseInt(row)) - heightsBefore[row]) > 0.5) ok = false
                 check(ok && root.activeCanvas, "…and back on the canvas they still hold (no alternation)")
-                nextPhase("round-trip"); return
-            }
-            if (phase === 6) {   // P6: ink
-                const card = activeCards().find(c => c.cardIndex === liveCard)
-                if (step < 10 && (!card || card.inkItem.anchorCount < inkRows.length)) { ++step; return }
-                check(!!card && card.inkItem.anchorCount === inkRows.length && card.inkItem.vertexCount > 0,
-                      "the card's ink item holds " + (card ? card.inkItem.anchorCount : -1) + " anchors, " + (card ? card.inkItem.vertexCount : 0) + " vertices")
-                if (card) {
-                    const firsts = { 0: [-360, 8], 1: [-400, 40], 2: [-380, -4] }
-                    let ok = true
-                    for (let k = 0; k < inkRows.length; ++k) {
-                        const row = inkRows[k], p = card.inkItem.firstPointOf(row)
-                        const ex = inset + root.pageWidth / 2 + firsts[k][0], ey = blockModel.yForRow(row) - card.originY + firsts[k][1]
-                        if (Math.abs(p.x - ex) > 0.5 || Math.abs(p.y - ey) > 0.5) { ok = false; fail("ink row " + row + " first point " + p.x + "," + p.y + " vs " + ex + "," + ey) }
-                    }
-                    check(ok, "each anchor's first point lands where the page's placement puts it")
-                }
-                nextPhase("ink")
+                nextPhase("round-trip")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "cards", blockModel.cardCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))
             }
@@ -6279,158 +6170,6 @@ FocusScope {
         }
     }
 
-    // --- Margin-ink layer (tier 2 annotations). ONE viewport-sized canvas
-    // over the whole document: renders every visible anchor's strokes always;
-    // accepts mouse only in ink mode (disarmed it refuses events, so the
-    // central mouse layer sees everything — the VideoAnnotator pattern).
-    // z:45 = above document content, below the drag/media/popup overlays.
-    DocInkCanvas {
-        id: inkCanvas
-        anchors.fill: flick
-        // The scrollbar is a CHILD of the Flickable, so this sibling canvas
-        // would otherwise cover it — visually and (armed) for clicks. Leave
-        // its strip out of the canvas entirely: the bar stays on top and
-        // stays draggable, even mid-annotation.
-        anchors.rightMargin: Theme.dim.scrollBarWidth
-        z: 45
-        visible: flick.visible          // hidden in full-frame tabs, like the doc
-        enabled: !root.docSpaceHeld     // the hand: presses fall through to the Flickable's drag
-        model: blockModel
-        contentX: flick.contentX
-        contentY: flick.contentY
-        zoom: root.viewZoom   // live: ink tracks the layer during a zoom drag
-        leftEdgeContent: root.leftEdge
-        inkGutter: root.tableMinLeft    // the table-shift floor (the canvas mirrors tableShiftFor)
-        pageWidth: root.pageWidth
-        inkMode: root.inkMode
-        // The Inspector Draw trio — the exact studio/sketch binding shape.
-        tool: root.inkMode && root.inspector ? root.inspector.drawTool : ""
-        color: root.inspector ? root.inspector.drawColor : "#FF0000"
-        strokeWidth: root.inspector ? root.inspector.drawWidth : 6
-        textSize: root.inspector ? root.inspector.drawTextSize : 16
-        textFamily: Theme.font.body   // chips = Aspekta, the document face (ruling 2026-08-18)
-        onTextCreateRequested: (r, lx, ly, lw, lsize) => inkTextSession.beginCreate(r, lx, ly, lw, lsize)
-        onTextEditRequested: (r, i) => inkTextSession.beginEdit(r, i)
-        // Faded only when the user hides annotations (the eye toggle). The
-        // old "squeezed page" fade is gone: the page is ALWAYS the full 760
-        // measure now (narrow windows scroll horizontally instead of
-        // squeezing), so ink geometry always matches its frame.
-        opacity: root.inkLayerVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 160 } }
-    }
-
-    // --- Ink text-chip editing session: the sketchTextSession contract on
-    // the margin-ink surface. The canvas paints COMMITTED chips; while a
-    // session is open the overlay TextEdit is the only visual. Deferred
-    // create = one setBlockInk per session; Escape COMMITS; blank deletes.
-    // Coordinates are ANCHOR-LOCAL (scroll-invariant) — the geometry binding
-    // re-maps to item px through the canvas placement on every scroll/layout
-    // change (rule 1e deps below). ---
-    QtObject {
-        id: inkTextSession
-        property string mode: ""        // "" | "create" | "edit"
-        property int row: -1            // captured at begin
-        property int index: -1
-        property real ex: 0; property real ey: 0; property real ew: 0
-        property real esize: 16         // anchor-local units (space-converted)
-        property color ecolor: "#E4E3E2"
-        property string origText: ""
-        readonly property bool active: mode !== ""
-        // Load-bearing reactivity deps (rule 1e): scroll + layout re-map.
-        readonly property var geom: (inkCanvas.contentX, inkCanvas.contentY,
-            blockModel.layoutRevision, blockModel.contentRevision,
-            active ? inkCanvas.inkTextOverlayGeom(row, ex, ey, ew, esize) : null)
-
-        function beginCreate(r, lx, ly, lw, lsize) {
-            commit()                    // a canvas press can race focus-out
-            row = r; index = -1
-            ex = lx; ey = ly; ew = lw; esize = lsize
-            ecolor = root.inspector ? root.inspector.drawColor : "#E4E3E2"
-            origText = ""
-            mode = "create"
-        }
-        function beginEdit(r, i) {
-            commit()
-            var t = inkCanvas.inkTextAt(r, i)
-            if (t.text === undefined) return
-            row = r; index = i
-            ex = t.x; ey = t.y; ew = t.w
-            esize = t.size; ecolor = t.color
-            origText = t.text
-            mode = "edit"
-        }
-        function commit() {
-            if (mode === "") return
-            // Close BEFORE the model call: the inkChanged round-trip must not
-            // re-enter the session (staleness Connections below).
-            var m = mode, r = row, i = index, orig = origText
-            var txt = inkTextEditor.text
-            mode = ""
-            if (m === "create" && txt.trim() !== "")
-                inkCanvas.inkAddText(r, ex, ey, ew, txt, esize, "" + ecolor)
-            else if (m === "edit" && txt !== orig)
-                inkCanvas.inkSetText(r, i, txt)   // blank ⇒ the model deletes
-            root.forceActiveFocus()
-        }
-        function cancel() {
-            if (mode === "") return
-            mode = ""
-            root.forceActiveFocus()
-        }
-    }
-    Connections {
-        // External ink change mid-EDIT (undo elsewhere, another surface) →
-        // the element under the overlay is stale: cancel. Our own commit
-        // closes the session before the model call, so it never lands here.
-        target: blockModel
-        function onInkChanged() {
-            if (inkTextSession.mode === "edit") inkTextSession.cancel()
-        }
-    }
-    Connections {
-        // Any tool change commits (Inspector buttons never steal focus).
-        target: root.inspector
-        function onDrawToolChanged() { inkTextSession.commit() }
-    }
-    Item {
-        anchors.fill: inkCanvas
-        z: 46   // above the canvas (45), below the comment pins (56)
-        visible: inkCanvas.visible && inkTextSession.active
-                 && !!inkTextSession.geom && inkTextSession.geom.valid === true
-        readonly property var g: inkTextSession.geom
-        Rectangle {   // the live CHIP: fill = element color, accent border = session
-            visible: parent.visible
-            x: parent.g ? parent.g.x : 0
-            y: parent.g ? parent.g.y : 0
-            width: parent.g ? parent.g.w : 0
-            height: inkTextEditor.height + 2 * (parent.g ? parent.g.padPx : 0)
-            color: inkTextSession.ecolor
-            border.width: 1; border.color: Theme.colors.accent
-        }
-        TextEdit {
-            id: inkTextEditor
-            visible: parent.visible
-            x: (parent.g ? parent.g.x + parent.g.padPx : 0)
-            y: (parent.g ? parent.g.y + parent.g.padPx : 0)
-            width: Math.max(4, (parent.g ? parent.g.w - 2 * parent.g.padPx : 4))
-            wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-            textMargin: 0
-            font.family: Theme.font.body   // == the canvas's textFamily
-            font.pixelSize: Math.max(1, parent.g ? parent.g.sizePx : 16)
-            color: inkCanvas.textInkFor(inkTextSession.ecolor)
-            selectByMouse: true
-            selectionColor: Theme.colors.divider
-            onVisibleChanged: if (visible) {
-                text = inkTextSession.mode === "edit" ? inkTextSession.origText : ""
-                cursorPosition = text.length
-                forceActiveFocus()
-            }
-            onActiveFocusChanged: if (!activeFocus && visible) inkTextSession.commit()
-            // Escape COMMITS (the island rule shipped with sketch chips).
-            Keys.onEscapePressed: inkTextSession.commit()
-        }
-    }
-
     // --- Comment margin pins: one per row carrying comment spans, in the
     // right margin. Root-level + model-driven (never per-delegate), gated to
     // the visible window like the video toolbars — contentRevision dep, NOT
@@ -6448,10 +6187,6 @@ FocusScope {
             required property var modelData
             readonly property int prow: modelData
             visible: flick.visible && root.rowInView(prow)
-            // Pins stay VISIBLE in ink mode (they mark content) but go
-            // pass-through — they sit in the right margin, which is exactly
-            // where margin ink lands, and must not steal the pen.
-            enabled: !root.inkMode
             z: 56
             width: 24; height: 24
             x: root.vx(root.leftEdge + root.pageWidth) + 12
@@ -6515,9 +6250,7 @@ FocusScope {
                 return null
             }
             readonly property int arow: info ? info.row : -1
-            // Hidden in ink mode: a card left open would swallow pen strokes
-            // over a 300px patch of the margin (pins are pass-through there).
-            visible: info !== null && arow >= 0 && !root.inkMode
+            visible: info !== null && arow >= 0
             // Beside the bubble; clamped into the viewport when the window is
             // narrower than the margin (the card may float over the page edge).
             x: Math.min(root.vx(root.leftEdge + root.pageWidth) + 12,
@@ -6988,11 +6721,7 @@ FocusScope {
                 ? (row >= cursor.loRow && row <= cursor.hiRow)
                 : (row === cursor.focusRow))
                 || (blockMenu.visible && row === root.menuRow)
-            // Ink mode: the bar stays VISIBLE (it sits under the canvas, so
-            // the pen can't hit it — z handles the routing) but is disabled
-            // and dimmed: no playback/scrub state changes mid-annotation.
-            opacity: root.inkMode ? 0.5 : ((blockSelected && !live) ? 0.35 : 1.0)
-            enabled: !root.inkMode
+            opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
                      && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
@@ -7035,11 +6764,7 @@ FocusScope {
                 ? (row >= cursor.loRow && row <= cursor.hiRow)
                 : (row === cursor.focusRow))
                 || (blockMenu.visible && row === root.menuRow)
-            // Ink mode: visible-but-disabled like the video bars (z routes the
-            // pen to the canvas above) — Prev/Next must not flip the page
-            // UNDER a block-pinned annotation mid-draw; the dim says "paused".
-            opacity: root.inkMode ? 0.5 : (blockSelected ? 0.35 : 1.0)
-            enabled: !root.inkMode
+            opacity: blockSelected ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
             // Document view only: a grid frame (a table's tab) clamps the same Flickable to the
             // table, and a PDF just above it was still "in view" — its bar showed in the tab
@@ -7094,9 +6819,7 @@ FocusScope {
         readonly property int row: root.imageResizing ? root.imageResizeRow
             : (root.imgSelectedRow >= 0 && cursor.focusRow === root.imgSelectedRow
                && root._isResizableMediaRow(root.imgSelectedRow) ? root.imgSelectedRow : -1)
-        // Also hidden in ink mode: a still-selected image's handles would sit
-        // above the canvas and let the pen RESIZE the layout under the ink.
-        visible: row >= 0 && !root.inkMode
+        visible: row >= 0
                  && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
         // A cell's media sits inside the cell inset (BlockView's colLeft: 8 px); the fit width is the
         // lane minus both insets.
@@ -7248,7 +6971,7 @@ FocusScope {
     Item {
         id: tableAdd
         readonly property int head: (blockModel.structureRevision,
-            flick.visible && root.activeFrameId === "" && !root.inkMode ? blockModel.tableHeadOf(cursor.focusRow) : -1)
+            flick.visible && root.activeFrameId === "" ? blockModel.tableHeadOf(cursor.focusRow) : -1)
         readonly property var recs: head >= 0 ? (blockModel.structureRevision, blockModel.tableRecords(head)) : []
         readonly property int lastRec: recs.length ? recs[recs.length - 1] : -1
         readonly property real topC: (blockModel.layoutRevision, lastRec >= 0 ? blockModel.yForRow(head) + blockModel.tablePadTop(head) : 0)

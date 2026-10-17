@@ -14,11 +14,9 @@ import QtCore
 Rectangle {
     id: panel
     property var editor: null
-    // Annotation mode FLOATS the panel (an overlay — the editor column keeps
-    // its full width, so opening the palette can't push the locked 760 page).
-    // Outside the mode it participates in the push layout via Main.qml's
-    // width subtraction.
-    readonly property bool floating: !!editor && editor.inkMode === true
+    // The panel participates in the push layout via Main.qml's width subtraction. (It floated in
+    // the page's annotation mode until 2.0 stage 1 removed that mode.)
+    readonly property bool floating: false
     property bool open: true   // open/closed is persisted (see panelStore) and
                                // restored on launch; this is just the pre-restore default
     property bool _ready: false   // gates the slide animation off during restore
@@ -626,6 +624,10 @@ Rectangle {
                             if (!panel.editor || modelData.tool === "type") return ""
                             if (panel.editor.activeGridHead >= 0)
                                 return qsTr("tables have no ink surface")
+                            // 2.0 stage 1: the page's margin ink is gone; drawings live on the canvas
+                            // (stage 2). Until then the Document and Canvas views have no ink surface.
+                            if (panel.editor.activeFrameId === "" || panel.editor.activeCanvas)
+                                return qsTr("drawing lives on the canvas")
                             if (modelData.tool !== "text") return ""
                             if (panel.editor.activeVideoRow >= 0)
                                 return qsTr("text boxes aren't part of video notes")

@@ -80,19 +80,6 @@ Rectangle {
         }
     }
 
-    // --- ink (B5): the run's margin ink as GPU geometry, over the blocks (the page's z-order) ---
-    readonly property Item inkItem: inkNode   // probe (B10)
-    InkNodeItem {
-        id: inkNode
-        model: blockModel
-        rowLo: card.head; rowHi: card.last
-        originY: card.originY; leftEdge: card.inset
-        pxScale: card.cam.zoom
-        opacity: card.active && card.tier >= 1 ? 1 : 0
-        width: card.width; height: card.height
-        z: 2
-    }
-
     // --- greek: one bar per block (also under a live ramp's not-yet-created rows) ---
     Repeater {
         model: card.active && card.tier === 1 ? Math.min(card.kGreekMaxRows, card.runLength) : 0

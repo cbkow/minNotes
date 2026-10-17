@@ -18,7 +18,6 @@
 #include "../notes/annotation_serializer.h"
 #include "../notes/annotation_thumbnail.h"
 #include "../notes/sketch_text.h"
-#include "../notes/doc_ink.h"
 
 #include <QBuffer>
 #include <QDateTime>
@@ -342,20 +341,24 @@ QString sanitizedBase(const QString& path) {
     return qcv::annotation_io::sanitizeMediaName(QFileInfo(path).fileName());
 }
 
-// Margin ink on a MEDIA block is frame-normalized (it scales with the
-// media). Ink may OVERSHOOT the frame (values outside [0,1] = margin
-// overshoot, per doc_ink.h), so the raster covers frame ∪ ink bbox and
-// `boxNorm` says where it sits in FRAME units — the HTML layer positions it
-// with percent offsets (scales with the responsive image); a unit rect means
-// exactly-the-frame (the legacy inset:0 case). (Text-block ink is
-// px-anchored to the app's layout and rides inside its block instead.)
+// An IMAGE's page-0 media ink (2.0 stage 1: the media block's own "ink" envelope — a QCView note's
+// strokes, or what used to be frame-space margin ink) is frame-normalized (it scales with the
+// media). Ink may OVERSHOOT the frame (values outside [0,1]), so the raster covers frame ∪ ink
+// bbox and `boxNorm` says where it sits in FRAME units — the HTML layer positions it with
+// percent offsets (scales with the responsive image); a unit rect means exactly-the-frame.
 struct MediaInk { QImage img; QRectF boxNorm; };
+struct InkEnvelope { std::vector<qcv::ActiveStroke> strokes; std::vector<mn::SketchTextSpec> texts; };
+InkEnvelope parseInkEnvelope(const QString& json) {
+    InkEnvelope e;
+    if (json.isEmpty()) return e;
+    e.strokes = qcv::AnnotationSerializer::jsonStringToStrokes(json);
+    e.texts = mn::parseSketchTexts(QJsonDocument::fromJson(json.toUtf8()).object());
+    return e;
+}
 MediaInk renderMediaInk(const BlockModel* m, int row, const QSize& target) {
     MediaInk out;
-    mn::DocInkAnchor a;
-    if (!mn::docInkFromJson(m->inkForRow(row), a)
-        || (a.strokes.empty() && a.texts.empty())
-        || a.space != mn::DocInkAnchor::Frame || target.isEmpty())
+    InkEnvelope a = parseInkEnvelope(m->mediaPageInk(row, 0));
+    if ((a.strokes.empty() && a.texts.empty()) || target.isEmpty())
         return out;
     const double mw = std::max(1, m->mediaW(row));
     const double mh = std::max(1, m->mediaH(row));
@@ -405,53 +408,6 @@ QString mediaInkStyle(const QRectF& b) {
                           "right:auto;bottom:auto;max-width:none\"")
         .arg(b.left() * 100).arg(b.top() * 100)
         .arg(b.width() * 100).arg(b.height() * 100);
-}
-
-// Page ink on a TEXT-ish block (px space: X from page center, Y from block
-// top). Rendered at 2x into a bbox-cropped transparent PNG and absolutely
-// positioned inside the block element: X is EXACT (the export column is the
-// same fixed 760 the ink was drawn against); Y is exact to the block top,
-// approximate within multi-line blocks when the browser wraps differently.
-// pointer-events:none — never interactive. The size guard drops corrupt
-// blobs (pre-oval-fix radii) instead of exploding the canvas.
-struct TextInk { QImage img; QRectF box; };
-TextInk renderTextInk(const BlockModel* m, int row) {
-    TextInk out;
-    mn::DocInkAnchor a;
-    if (!mn::docInkFromJson(m->inkForRow(row), a)
-        || (a.strokes.empty() && a.texts.empty())
-        || a.space != mn::DocInkAnchor::Px)
-        return out;
-    for (mn::SketchTextSpec& t : a.texts) t.family = mn::sketchTextFamily();
-    QRectF box;
-    for (const qcv::ActiveStroke& st : a.strokes) {
-        QRectF b = qcv::strokeBoundsNorm(st);
-        const double pad = std::max<double>(2.0, st.strokeWidth);
-        b.adjust(-pad, -pad, pad, pad);
-        box = box.isNull() ? b : box.united(b);
-    }
-    for (const mn::SketchTextSpec& t : a.texts) {
-        // px space: local units ARE page px (x from page center — negative ok).
-        const QRectF b = mn::sketchTextRectSrc(t, 1.0, 1.0).adjusted(-2, -2, 2, 2);
-        box = box.isNull() ? b : box.united(b);
-    }
-    const int W = int(std::ceil(box.width() * 2.0));
-    const int H = int(std::ceil(box.height() * 2.0));
-    if (W <= 0 || H <= 0 || W > 8192 || H > 8192) return out;
-    QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
-    img.fill(Qt::transparent);
-    QPainter p(&img);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.scale(2.0, 2.0);
-    p.translate(-box.left(), -box.top());
-    for (const mn::SketchTextSpec& t : a.texts)   // chips under the ink
-        mn::paintSketchText(p, t, 1.0, 1.0, 1.0);  // painter carries the 2×
-    for (const qcv::ActiveStroke& st : a.strokes)
-        qcv::paintStroke(p, st, 1.0, 1.0, 1.0);
-    p.end();
-    out.img = img;
-    out.box = box;
-    return out;
 }
 
 // Rasterize a sketch block (strokes + placed images) to a 2x transparent PNG.
@@ -886,11 +842,6 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
         }
         }
 
-        // Margin ink isn't exported in markdown v1 — leave an honest,
-        // renderer-invisible note where it was.
-        if (!m->inkForRow(row).isEmpty())
-            block += QStringLiteral("\n<!-- margin ink on this block was not exported -->");
-
         if (block.isEmpty() && type == BlockModel::Paragraph
             && m->contentForRow(row).isEmpty())
             block = QString();   // keep empty paragraphs as blank separation
@@ -991,8 +942,6 @@ QVariantMap Exporter::scan() const {
     out.insert(QStringLiteral("videos"), videos);
     out.insert(QStringLiteral("videosWithNotes"), videosWithNotes);
     out.insert(QStringLiteral("videoNotes"), videoNotes);
-    out.insert(QStringLiteral("inkBlocks"),
-               model_ ? model_->inkBlockIds().size() : 0);
     out.insert(QStringLiteral("sketches"), sketches);
     out.insert(QStringLiteral("pdfInkPages"), pdfInkPages);   // annotated PDF pages
     out.insert(QStringLiteral("refPaths"), refPaths);   // rows that print a file path
@@ -1346,7 +1295,7 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
             .arg(htmlEscape(src), htmlEscape(name), wstyle);
     }
 
-    QString poster, posterInk, posterInkStyle, pageInk0, meta;
+    QString poster, pageInk0, meta;
     QSize posterSize;
     if (kind == QLatin1String("video")) {
         const QImage p = MediaStore::extractFrame(path, 0, 1280);
@@ -1375,27 +1324,14 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
         const QFileInfo fi(path);
         meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
     }
-    if (!poster.isEmpty()) {
-        const MediaInk ink = renderMediaInk(m, row, posterSize);
-        if (!ink.img.isNull()) {
-            posterInk = sink.addImage(ink.img, sanitizedBase(path) + QStringLiteral("_ink"));
-            posterInkStyle = mediaInkStyle(ink.boxNorm);
-        }
-    }
+    Q_UNUSED(posterSize);
 
     QString out = QStringLiteral("<figure class=\"ref\">");
-    if (!poster.isEmpty() && (!posterInk.isEmpty() || !pageInk0.isEmpty())) {
+    if (!poster.isEmpty() && !pageInk0.isEmpty()) {   // page-1 PDF ink: a toggleable overlay over the poster
         out += QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\">")
                    .arg(poster, htmlEscape(name));
-        if (!pageInk0.isEmpty()) {   // page ink UNDER margin ink (content vs annotation)
-            ++inkLayers;
-            out += QStringLiteral("<img class=\"ink\" src=\"%1\" alt=\"\">").arg(pageInk0);
-        }
-        if (!posterInk.isEmpty()) {
-            ++inkLayers;
-            out += QStringLiteral("<img class=\"ink\" src=\"%1\" alt=\"\"%2>")
-                       .arg(posterInk, posterInkStyle);
-        }
+        ++inkLayers;
+        out += QStringLiteral("<img class=\"ink\" src=\"%1\" alt=\"\">").arg(pageInk0);
         out += QStringLiteral("</div>");
     } else if (!poster.isEmpty()) {
         out += QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(poster, htmlEscape(name));
@@ -1779,58 +1715,13 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // pre/hr can't host children so they get a .blkw wrapper. List items get
     // an inline offset compensating their nesting indent so all numbers
     // align on one ledger line.
-    // A clipboard FRAGMENT (S8c) carries no numbers, ink or page chrome.
+    // A clipboard FRAGMENT (S8c) carries no numbers or page chrome.
     // The block-number ledger is GONE (2026-09-15 walk): with table cells as blocks the numbers
     // counted every cell, and the app's rail shows dots now. The hooks stay so every block
     // element keeps its shape (and a future badge has its slot); they emit nothing.
     auto bnum = [](int) { return QString(); };
     auto bnumLi = [](int, int) { return QString(); };
     Q_UNUSED(pw);
-    // Page ink rides INSIDE its block element (the positioned ancestor):
-    // injected before the block's final closing tag. X anchors to the page
-    // center (pw/2 — 380 in the classic 760 frame), minus the element's
-    // own indent.
-    // The ink layer for one block (empty when it has none): the app anchors a stroke to the block
-    // under its topmost point — a paragraph, or a TABLE ROW / SPLIT ROW record (2026-09-16: those
-    // now export too — into the row's first cell / the lanes div, whose left edge is the table's
-    // or the page's, which is the frame the stored x is in).
-    auto inkTag = [&](int row, double indent) -> QString {
-        if (fragment) return QString();
-        const TextInk ti = renderTextInk(m, row);
-        if (ti.img.isNull()) return QString();
-        if (m->laneForRow(row) >= 0) indent += m->xForRow(row);   // a lane's element starts at its lane
-        // Ink y is measured from the ROW's top in the app, and every text element now carries the
-        // app's row inset as its own padding (the CSS mirrors BlockView), so the element's box IS
-        // the row: no lift. The one exception is a table row, whose record starts a pocket
-        // (kTablePocket) above the grid its cell starts at.
-        const double lift = m->tableHeadOf(row) >= 0 ? m->tablePadTop(row) : 0.0;
-        const QString src = sink.addImage(ti.img, QStringLiteral("pageink"));
-        if (src.isEmpty()) return QString();
-        ++inkLayers;
-        // max-width:none: the global img{max-width:100%} would clamp a
-        // margin-spanning layer to the 760 block and squeeze its right side.
-        return QStringLiteral(
-            "<img class=\"ink\" style=\"position:absolute;left:%1px;top:%2px;"
-            "width:%3px;height:%4px;max-width:none;z-index:2\" src=\"%5\" alt=\"\">")
-            .arg(pw / 2.0 + ti.box.left() - indent)
-            .arg(ti.box.top() - lift)
-            .arg(ti.box.width())
-            .arg(ti.box.height())
-            .arg(src);
-    };
-    auto injectInk = [&](QString blk, int row, double indent) -> QString {
-        const QString tag = inkTag(row, indent);
-        if (tag.isEmpty()) return blk;
-        const int at = blk.lastIndexOf(QStringLiteral("</"));
-        if (at < 0) return blk;
-        blk.insert(at, tag);
-        return blk;
-    };
-    // A table row's ink waits for the row's first cell (whichever is emitted first — a padded
-    // empty or the real one): a <td> is the positioned box whose left edge is the table's.
-    QString pendingRowInk;
-    auto takeRowInk = [&]() { const QString t = pendingRowInk; pendingRowInk.clear(); return t; };
-
     // Split rows (SR-3 S8, R-I5 5c): a flex row of lanes at the row's ratios,
     // each lane its real blocks. The record carries the row's number; lane
     // blocks hide theirs (the app's rail numbers top entries only).
@@ -1851,7 +1742,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         if (nextLane < 0) {
             if (tableHead >= 0) {
                 for (; cellsInRow < tableCols; ++cellsInRow)          // a ragged row's missing cells
-                    body += QStringLiteral("<%1>%2</%1>").arg(cellTag(), takeRowInk());
+                    body += QStringLiteral("<%1>%2</%1>").arg(cellTag(), QString());
                 body += QStringLiteral("</tr>\n");
                 if (nextRow >= m->rowCountQml() || m->tableHeadOf(nextRow) != tableHead) {
                     body += inTbody ? QStringLiteral("</tbody></table></div>\n") : QStringLiteral("</thead></table></div>\n");
@@ -1904,9 +1795,8 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 if (!rowIsHeader && !inTbody) { body += QStringLiteral("</thead><tbody>\n"); inTbody = true; }
                 cellsInRow = 0;
                 body += QStringLiteral("<tr>\n");
-                pendingRowInk = inkTag(row, 0);                       // lands in the row's first cell
             } else {
-                body += QStringLiteral("<div class=\"lanes\">%1%2\n").arg(bnum(row), inkTag(row, 0));
+                body += QStringLiteral("<div class=\"lanes\">%1\n").arg(bnum(row));
             }
             inLanes = true;
             continue;
@@ -1915,7 +1805,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             if (tableHead >= 0) {
                 if (lane >= tableCols) continue;                     // a trimmed trailing column holds nothing
                 for (; cellsInRow < lane; ++cellsInRow)
-                    body += QStringLiteral("<%1>%2</%1>").arg(cellTag(), takeRowInk());
+                    body += QStringLiteral("<%1>%2</%1>").arg(cellTag(), QString());
                 const int r = m->tableRowOf(row);
                 QString st;
                 const QString bg = m->tableCellBg(tableHead, r, lane), fg = m->tableCellFg(tableHead, r, lane);
@@ -1926,7 +1816,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 case 2: st += QStringLiteral("text-align:right;"); break;
                 default: break;
                 }
-                body += QStringLiteral("<%1%2>%3\n").arg(cellTag(), st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st), takeRowInk());
+                body += QStringLiteral("<%1%2>%3\n").arg(cellTag(), st.isEmpty() ? QString() : QStringLiteral(" style=\"%1\"").arg(st), QString());
                 ++cellsInRow;
             } else {
                 const QVariantList ratios = m->splitRatios(m->splitRowOf(row));
@@ -1941,19 +1831,19 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         switch (type) {
         case BlockModel::Heading: {
             const int lvl = std::clamp(m->levelForRow(row), 1, 6);
-            body += injectInk(QStringLiteral("<h%1>%2%3</h%1>\n")
-                        .arg(lvl).arg(bnum(row), emitInlineHtml(m, row, fn)), row, 0);
+            body += QStringLiteral("<h%1>%2%3</h%1>\n")
+                        .arg(lvl).arg(bnum(row), emitInlineHtml(m, row, fn));
             break;
         }
         case BlockModel::Quote:
-            body += injectInk(QStringLiteral("<blockquote>%1<p>%2</p></blockquote>\n")
-                        .arg(bnum(row), emitInlineHtml(m, row, fn)), row, 0);
+            body += QStringLiteral("<blockquote>%1<p>%2</p></blockquote>\n")
+                        .arg(bnum(row), emitInlineHtml(m, row, fn));
             break;
         case BlockModel::Code: {
             const QString lang = m->languageForRow(row);
-            body += injectInk(QStringLiteral("<div class=\"blkw\">%1<pre><code class=\"language-%2\">%3</code></pre></div>\n")
+            body += QStringLiteral("<div class=\"blkw\">%1<pre><code class=\"language-%2\">%3</code></pre></div>\n")
                         .arg(bnum(row), htmlEscape(lang),
-                             codeEmitter.colorize(lang, m->contentForRow(row))), row, 0);
+                             codeEmitter.colorize(lang, m->contentForRow(row)));
             break;
         }
         case BlockModel::ListItem:
@@ -1981,16 +1871,14 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             // The li box starts at the app's text inset (bullets 22 + 24·depth, numbered 34 + 24·depth;
             // a task li pulls back to 24·depth and pads its own 22) — the ink's x is page-relative,
             // so subtract it.
-            const double liLeft = task ? 24.0 * depth
-                                : type == BlockModel::OrderedListItem ? 34.0 + 24.0 * depth : 22.0 + 24.0 * depth;
             const QString liClass = !task ? QString()
                                   : m->taskStateForRow(row) == BlockModel::TaskDone ? QStringLiteral(" class=\"task done\"")
                                                                                      : QStringLiteral(" class=\"task\"");
-            body += injectInk(QStringLiteral("<li%3>%1%2</li>\n").arg(bnumLi(row, depth), li, liClass), row, liLeft);
+            body += QStringLiteral("<li%3>%1%2</li>\n").arg(bnumLi(row, depth), li, liClass);
             break;
         }
         case BlockModel::Divider:
-            body += injectInk(QStringLiteral("<div class=\"blkw\">%1<hr></div>\n").arg(bnum(row)), row, 0);
+            body += QStringLiteral("<div class=\"blkw\">%1<hr></div>\n").arg(bnum(row));
             break;
         case BlockModel::Media: {
             QString media = emitMediaHtml(m, row, opt, sink, inkLayers);
@@ -2009,8 +1897,8 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 break;
             }
             const QString inl = emitInlineHtml(m, row, fn);
-            body += injectInk(QStringLiteral("<p>%1%2</p>\n")
-                        .arg(bnum(row), inl.isEmpty() ? QStringLiteral("&nbsp;") : inl), row, 0);
+            body += QStringLiteral("<p>%1%2</p>\n")
+                        .arg(bnum(row), inl.isEmpty() ? QStringLiteral("&nbsp;") : inl);
             break;
         }
         }
@@ -2712,7 +2600,7 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
     if (kind == QLatin1String("image")) {
         QImage img(path);
         if (!img.isNull()) {
-            const bool hasInk = mn::docInkHasContent(m->inkForRow(row));   // strokes OR chips
+            const bool hasInk = !m->mediaPageInk(row, 0).isEmpty();   // strokes OR chips
             if (hasInk) {
                 img = bakeInk(img);
                 docxImagePara(c, w, docxAddImage(c, img), img.width(), img.height());
@@ -2736,7 +2624,7 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
         return;
     }
 
-    // video / pdf / file → poster (ink baked) + reference paragraphs.
+    // video / pdf / file → poster + reference paragraphs.
     QImage poster;
     QString meta;
     if (kind == QLatin1String("video")) {
@@ -2747,8 +2635,7 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
                    .arg(humanDuration(m->mediaDurationMs(row)))
                    .arg(m->mediaFrames(row));
     } else if (kind == QLatin1String("pdf")) {
-        // Page 1's PAGE ink/chips bake into the poster (content, like sketch
-        // strokes); margin ink bakes after, via the generic path below.
+        // Page 1's PAGE ink/chips bake into the poster (content, like sketch strokes).
         poster = renderPdfPageAnnotated(m, row, 0, path, 1280);
         meta = QStringLiteral("%1 pages").arg(m->mediaPdfPages(row));
     } else {
@@ -2756,7 +2643,6 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
         meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
     }
     if (!poster.isNull()) {
-        poster = bakeInk(poster);
         docxImagePara(c, w, docxAddImage(c, poster), poster.width(), poster.height());
     }
     DocxRunProps bold; bold.b = true;
@@ -3682,7 +3568,7 @@ void pdfMedia(PdfCtx& c, int row) {
     if (kind == QLatin1String("image")) {
         QImage img(path);
         if (!img.isNull()) {
-            if (mn::docInkHasContent(m->inkForRow(row))) img = bakeInk(img);
+            if (!m->mediaPageInk(row, 0).isEmpty()) img = bakeInk(img);
             pdfInsertImage(c, img, img.width() / (img.devicePixelRatio() > 0
                                                       ? img.devicePixelRatio() : 1.0));
         }
@@ -3706,7 +3592,6 @@ void pdfMedia(PdfCtx& c, int row) {
         meta = fi.exists() ? humanSize(fi.size()) : QStringLiteral("(unavailable)");
     }
     if (!poster.isNull()) {
-        poster = bakeInk(poster);
         pdfInsertImage(c, poster, 480);
     }
     pdfRefLines(c, name, path, kind + QStringLiteral(" · ") + meta);

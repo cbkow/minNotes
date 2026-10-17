@@ -1,7 +1,6 @@
 // ZoomBadge — a full-frame tab's one piece of zoom chrome: a quiet corner
 // percent readout that is also a button. Click → a small popup (the in-editor
-// context-menu recipe): Fit ⌘1, 100% ⌘0, and Fit ink when overflow ink
-// exists. Gestures and keys do the real zooming; this is the readout plus the
+// context-menu recipe): Fit ⌘1, 100% ⌘0. Gestures and keys do the real zooming; this is the readout plus the
 // teaching surface for the shortcuts. Props/signals only, no sketch
 // dependencies — the PDF tab could mount it verbatim.
 
@@ -11,11 +10,9 @@ import QtQuick.Controls.Basic
 Item {
     id: badge
     property real zoomValue: 1.0
-    property bool showFitInk: false
     property string fitLabel: qsTr("Fit")     // the document view says "Fit width" (PLAN-zoom Z3)
     signal fitRequested()
     signal hundredRequested()
-    signal fitInkRequested()
 
     implicitWidth: label.implicitWidth + 16
     implicitHeight: 24
@@ -82,11 +79,6 @@ Item {
         contentItem: Column {
             ZoomRow { text: badge.fitLabel; shortcut: "⌘ 1"; onActivated: badge.fitRequested() }
             ZoomRow { text: qsTr("100%"); shortcut: "⌘ 0"; onActivated: badge.hundredRequested() }
-            ZoomRow {
-                visible: badge.showFitInk
-                text: qsTr("Fit ink")
-                onActivated: badge.fitInkRequested()
-            }
         }
     }
 }

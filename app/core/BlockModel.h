@@ -71,18 +71,12 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
     Q_PROPERTY(bool untitled READ untitled NOTIFY documentChanged)
     Q_PROPERTY(bool documentOpen READ documentOpen NOTIFY documentChanged)
-    // Per-document page measure (v3; 760 for every pre-v3 doc). Changing it
-    // migrates px-space margin ink by edge affinity and is ONE undo step —
-    // see setPageWidth below.
+    // Per-document page measure (v3; 760 for every pre-v3 doc). ONE undo step — see setPageWidth.
     Q_PROPERTY(qreal pageWidth READ pageWidth NOTIFY pageWidthChanged)
     // Unsaved-edits flag (drives the tab dot + close/quit guards) and the explicit
     // save lifecycle (drives the title-bar status + conflict/failure UI).
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
     Q_PROPERTY(int saveState READ saveState NOTIFY saveStateChanged)
-    // Block-pinned margin ink: bumped on any ink change (add/erase/undo/load)
-    // so the DocInkCanvas overlay rebuilds its cache. Ink itself is an opaque
-    // per-block JSON blob (app/notes/doc_ink.h owns the format).
-    Q_PROPERTY(int inkRevision READ inkRevision NOTIFY inkChanged)
     // Comments: bumped on any thread/message/resolve change (span-side changes
     // ride contentRevision as usual).
     Q_PROPERTY(int commentsRevision READ commentsRevision NOTIFY commentsChanged)
@@ -416,17 +410,6 @@ public:
     Q_INVOKABLE int taskStateForRow(int row) const;   // task items: 0 todo / 1 doing / 2 done
     Q_INVOKABLE void toggleTask(int row);             // cycle todo→doing→done→todo
     Q_INVOKABLE int depthForRow(int row) const;       // list nesting level, else 0
-    // --- Block-pinned margin ink (tier 2 annotations). The model treats ink
-    // as an OPAQUE serialized blob per anchor block id (the sketch-content
-    // pattern); parsing/painting live in app/notes/. setBlockInk is the ONE
-    // mutator: a full-blob replace wrapped in beginTxn/endTxn — one undo step
-    // per stroke; gesture callers (eraser, re-anchor moves) group several
-    // calls via beginGroup/endGroup.
-    int inkRevision() const { return inkRevision_; }
-    Q_INVOKABLE QString inkForBlock(const QString& blockId) const;
-    Q_INVOKABLE QString inkForRow(int row) const;
-    Q_INVOKABLE QStringList inkBlockIds() const;
-    Q_INVOKABLE void setBlockInk(int row, const QString& inkJson);
     // Tab/Shift+Tab: shift every list item in [loRow,hiRow] by delta (±1),
     // clamped to [0, kMaxListDepth]. Non-list rows in the range are skipped;
     // a range with no list rows is a no-op. One undo step.
@@ -463,8 +446,6 @@ public:
     Q_INVOKABLE qint64 probeNowUs() const;
     Q_INVOKABLE void probeMark(const QString& key, qint64 us);
     Q_INVOKABLE QVariantMap probeStats(bool reset);
-    // Any margin ink / text chips in this document (DocInkCanvas skips content-spike repaints without).
-    bool hasInk() const { return !inkByBlock_.isEmpty(); }
     // Width sibling of the height report (tables only — soft measure-once
     // cache; see maxContentWidth).
     Q_INVOKABLE void setMeasuredWidth(int row, qreal w);
@@ -653,7 +634,7 @@ public:
     // char columns at its ends; opaque rows (media/table/divider) are always
     // whole. specsForRange slices the end rows (spans clipped + rebased,
     // partially-clipped chips dropped); clipboardPayloadForRange wraps that
-    // as the x-mnd-blocks JSON (ink for whole rows only, comment thread
+    // as the x-mnd-blocks JSON (comment thread
     // bodies, asset snapshot); plainTextForRange is the plain flavour every
     // copy also writes (text rows sliced, tables as TSV, dividers as "---",
     // media omitted — never descriptor JSON).
@@ -663,13 +644,10 @@ public:
     // Paste core (ONE txn): an opaque target takes the specs after it; a text
     // target is split at `col`, a text-ish first spec merges into the caret
     // block (adopting its type only at a clean start), the rest splice after,
-    // and the caret block's tail rides the last text-ish spec. `ink` is
-    // parallel to `specs` (width-migrated from srcPageWidth; never overwrites
-    // ink the target row already has). Returns {caretRow, caretCol}.
+    // and the caret block's tail rides the last text-ish spec. Returns {caretRow, caretCol}.
     // Split rows and tables pasted with the caret in a lane land below its
     // split row (lastPasteRelocated → the editor's Toast).
-    std::pair<int,int> pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs,
-                                    const std::vector<QString>& ink, qreal srcPageWidth);
+    std::pair<int,int> pasteSpecsAt(int row, int col, std::vector<BlockSpec> specs);
     Q_INVOKABLE bool lastPasteRelocated() const { return lastPasteRelocated_; }
     // Browser "Copy Image" shape: the HTML is nothing but one remote <img>.
     // The raster on the same clipboard is then the better source (Importer).
@@ -927,22 +905,10 @@ public:
     // which every media-url binding depends on). No model/layout reset.
     Q_INVOKABLE void    refreshMedia();
 
-    // --- Per-document page width (v3). setPageWidth = the ONE width mutator:
-    // clamps, migrates px-space ink by DERIVED edge affinity (an element
-    // fully in a margin keeps its distance from its page edge, so its
-    // center-relative X shifts by ∓Δw/2; in-column marks stay
-    // center-relative; Frame anchors are width-immune), persists to doc_meta,
-    // and lands as ONE undo step (ink blobs + the width flip, atomic).
+    // --- Per-document page width (v3). setPageWidth = the ONE width mutator: clamps, persists
+    // to doc_meta, and lands as ONE undo step. (Goes with the responsive width, 2.0 stage 1C.)
     qreal pageWidth() const { return pageWidth_; }
     Q_INVOKABLE void setPageWidth(qreal w);
-    // Edge-affinity ink migration for a width change: px-space strokes/texts
-    // fully inside a margin keep their content-relative position. Returns the
-    // migrated JSON, or an empty string when nothing moved. THE one home of
-    // the affinity math — setPageWidth and DocumentMerger both call it.
-    // tablePinned (2026-09-16): ink anchored to a TABLE record rides the table, whose columns
-    // are px from the page's left edge and never recentre — every element shifts by -Δw/2 so
-    // its table x is constant, instead of edge affinity.
-    static QString migrateInkForWidth(const QString& inkJson, qreal oldW, qreal newW, bool tablePinned = false);
 
     // --- Undo / redo (region-snapshot transactions; see the cpp). Linear today,
     // tree-ready (each entry stores its parent; redo = newest child).
@@ -990,7 +956,6 @@ signals:
     void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset
     void heightSettled(int row, qreal delta);
     void undoStackChanged();
-    void inkChanged();     // any margin-ink change (add/erase/undo/load)
     void commentsChanged();   // thread/message/resolve change
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
     // The open document changed (new/open/save-as). QML resets per-doc UI state
@@ -1053,10 +1018,6 @@ private:
     // Full, restorable state of one block — the unit an undo transaction snaps.
     struct BlockSnap {
         QString id, rank, content, lang;
-        // The block's margin-ink blob at snapshot time ("" = none). Captured
-        // from inkByBlock_ (O(1) implicitly-shared copy) so undoing a block
-        // deletion restores its ink alongside the block.
-        QString ink;
         uint8_t type = 0, level = 0, taskState = 0, depth = 0;
         std::vector<Span> spans;
         int8_t cell = -1;           // split-row structure travels with the snap, so
@@ -1085,9 +1046,7 @@ private:
         int cRowA = 0, cColA = 0, aRowA = 0, aColA = 0;   // caret after
         int parent = -1;
         QString coalesce;   // non-empty + equal + contiguous ⇒ merge into prev
-        // A page-width change rode this entry (0 = none): undo/redo restore
-        // the width atomically with the migrated ink blobs. The one
-        // undo-architecture extension of the page-width program.
+        // A page-width change rode this entry (0 = none): undo/redo restore the width with it.
         qreal widthBefore = 0, widthAfter = 0;
         qint64 ts = 0;      // wall-clock at push (coalesce keeps the first)
     };
@@ -1249,11 +1208,6 @@ private:
     bool untitled_ = true;   // scratch doc with no chosen path yet
     bool dirty_ = false;     // unsaved edits since open / last save
     int  saveState_ = SaveClean;
-    // Margin ink, keyed by anchor block id (opaque blobs; loaded whole at
-    // open — ink is light next to media, and one SELECT beats per-block
-    // lazy fetches). Kept strictly in sync with the block_ink table.
-    QHash<QString, QString> inkByBlock_;
-    int inkRevision_ = 0;
     int commentsRevision_ = 0;
     qint64 origMtime_ = -1;  // original file mtime/size recorded at load + each save (conflict baseline)
     qint64 origSize_  = -1;
@@ -1264,9 +1218,6 @@ private:
     bool externalChangeDetected() const;
     bool writeBackToOriginal();        // checkpoint → VACUUM INTO temp → atomic replace over the original
     void markDirty();                  // set dirty_ + notify (idempotent)
-    // Erase a deleted block's in-memory ink (the DB row cascades via FK).
-    // Undo restores it through the BlockSnap.ink payload in applySnapshot.
-    void dropBlockInk(const QString& blockId);
     void setSaveState(int s);
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_

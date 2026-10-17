@@ -11,7 +11,6 @@
 #include "Importer.h"
 #include "TableGrid.h"
 #include <QTextDocument>
-#include "../app/notes/doc_ink.h"
 #include "../app/notes/sketch_text.h"
 #include "PackageFormat.h"
 #include "PackageExporter.h"
@@ -366,206 +365,8 @@ static void testListsAndDepth() {
     QFile::remove(path);
 }
 
-// --- Test 8: margin-ink storage + undo integration ---------------------------
-// Tier-2 annotations: ink is an opaque blob per anchor block (block_ink
-// table), snapshotted into undo entries so deleting a block and undoing
-// restores its ink. setBlockInk is the single mutator (one undo step each).
-static void testInkUndoPersist() {
-    qInfo("[8] margin ink: set/undo/redo, delete-block restore, persistence");
-    const QString kInk = QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"block-local\",\"space\":\"px\","
-        "\"shapes\":[{\"id\":\"s1\",\"type\":\"freehand\",\"color\":[1,0,0,1],"
-        "\"stroke_width\":4,\"filled\":false,\"is_modeled\":true,"
-        "\"points\":[[-390.5,2.0],[10.0,44.5]]}]}");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_ink.mnd");
-    QFile::remove(path);
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
-    m.insertBlock(1); m.setContent(1, QStringLiteral("beta"));
-    m.noteCaret(0, 0, 0, 0);
-    QObject::connect(&m, &BlockModel::caretRestoreRequested, &m,
-                     [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
-
-    // Set → undo → redo.
-    m.setBlockInk(0, kInk);
-    CHECK(m.inkForRow(0) == kInk, "setBlockInk stored the blob");
-    CHECK(m.dirty(), "ink edit marks the document dirty");
-    m.undo();
-    CHECK(m.inkForRow(0).isEmpty(), "undo removes the stroke");
-    m.redo();
-    CHECK(m.inkForRow(0) == kInk, "redo restores the stroke");
-
-    // Identical blob → sameSnaps no-op (no extra undo entry).
-    m.setBlockInk(0, kInk);
-    m.undo();
-    CHECK(m.inkForRow(0).isEmpty(), "identical re-set was a no-op (one undo clears)");
-    m.redo();
-
-    // Delete the inked block → ink gone; undo → block AND ink restored.
-    m.removeBlock(0);
-    CHECK(m.inkBlockIds().isEmpty(), "removeBlock drops the ink");
-    m.undo();
-    CHECK(m.contentForRow(0) == QStringLiteral("alpha") && m.inkForRow(0) == kInk,
-          "undo of removeBlock restores block AND ink");
-
-    // deleteRange across the inked block → same round trip.
-    m.noteCaret(0, 0, 0, 0);
-    m.deleteRange(0, 0, 1, 2);   // merges rows 0-1, deletes block 1... region includes row 0
-    m.undo();
-    CHECK(m.inkForRow(0) == kInk, "undo of deleteRange keeps the ink");
-
-    // Typing coalesce in an inked block leaves ink intact through undo/redo.
-    m.noteCaret(0, 5, 0, 5);
-    m.insertText(0, 5, QStringLiteral("x"), 0, {}, {}); m.noteCaret(0, 6, 0, 6);
-    m.insertText(0, 6, QStringLiteral("y"), 0, {}, {}); m.noteCaret(0, 7, 0, 7);
-    m.undo();
-    CHECK(m.inkForRow(0) == kInk, "ink survives a coalesced typing undo");
-
-    // Persistence round-trip.
-    CHECK(m.saveAs(path), "saveAs() succeeded");
-    m.closeDocument();
-    BlockModel m2;
-    CHECK(m2.openDocument(path), "reopen succeeded");
-    int inked = -1;
-    for (int i = 0; i < m2.rowCountQml(); ++i)
-        if (!m2.inkForRow(i).isEmpty()) { inked = i; break; }
-    CHECK(inked >= 0 && m2.inkForRow(inked) == kInk, "ink round-trips through save/reopen");
-    {
-        Document d;
-        CHECK(d.open(path), "raw open");
-        CHECK(d.schemaVersion() == Document::kSchemaVersion,
-              "stamped v%d", Document::kSchemaVersion);
-        d.close();
-    }
-    QFile::remove(path);
-}
-
-// --- Test 9: comments — span anchor, shift, orphan/undo, persistence ---------
-// Tier-3 annotations: a SpanComment span (payload = thread id) rides the span
-// machinery for free; thread bodies live in comment_* tables, are NOT undoable,
-// and survive orphaning (span deleted) until deleteThread.
-static void testPageWidth() {
-    qInfo("[8b] page width: edge-affinity migration, undo atomicity, persistence");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_pw.mnd");
-    QFile::remove(path);
-
-    // One px anchor with: a LEFT-margin stroke (bbox fully left of the 760
-    // column), an in-COLUMN stroke, and a RIGHT-margin chip.
-    mn::DocInkAnchor a;
-    a.space = mn::DocInkAnchor::Px;
-    qcv::ActiveStroke left;
-    left.tool = qcv::DrawingTool::Freehand;
-    left.points = { QPointF(-460.0, 2.0), QPointF(-420.0, 40.0) };
-    left.strokeWidth = 4;
-    qcv::ActiveStroke center;
-    center.tool = qcv::DrawingTool::Freehand;
-    center.points = { QPointF(-10.0, 2.0), QPointF(10.0, 40.0) };
-    center.strokeWidth = 4;
-    a.strokes.push_back(left);
-    a.strokes.push_back(center);
-    mn::SketchTextSpec chip;
-    chip.text = QStringLiteral("margin note");
-    chip.x = 420.0; chip.y = 10.0; chip.w = 90.0; chip.size = 16.0;
-    chip.color = QColor(QStringLiteral("#FF5768"));
-    a.texts.push_back(chip);
-    const QString kInk = mn::docInkToJson(a);
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
-    m.noteCaret(0, 0, 0, 0);
-    m.setBlockInk(0, kInk);
-    CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "fresh doc reads the classic 760");
-
-    // 760 → 1000: Δw/2 = 120. Left marginalia shifts -120 (keeps its distance
-    // from the page's left edge), right marginalia +120, the in-column stroke
-    // stays center-relative.
-    m.setPageWidth(1000);
-    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "setPageWidth applied");
-    mn::DocInkAnchor mig;
-    CHECK(mn::docInkFromJson(m.inkForRow(0), mig)
-              && mig.strokes.size() == 2 && mig.texts.size() == 1,
-          "migrated blob keeps every element");
-    CHECK(qFuzzyCompare(mig.strokes[0].points[0].x(), -580.0)
-              && qFuzzyCompare(mig.strokes[0].points[1].x(), -540.0),
-          "left-margin stroke shifted by -dW/2 (content position kept)");
-    CHECK(qFuzzyCompare(mig.strokes[1].points[0].x(), -10.0),
-          "in-column stroke stays center-relative");
-    CHECK(qFuzzyCompare(mig.texts[0].x, 540.0),
-          "right-margin chip shifted by +dW/2");
-
-    // ONE undo restores blobs AND width atomically; redo re-applies both.
-    m.undo();
-    CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "undo restores the width");
-    mn::DocInkAnchor back;
-    CHECK(mn::docInkFromJson(m.inkForRow(0), back)
-              && qFuzzyCompare(back.strokes[0].points[0].x(), -460.0)
-              && qFuzzyCompare(back.texts[0].x, 420.0),
-          "the SAME undo restores the pre-migration ink (atomic)");
-    m.redo();
-    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "redo re-applies the width");
-    mn::DocInkAnchor fwd;
-    CHECK(mn::docInkFromJson(m.inkForRow(0), fwd)
-              && qFuzzyCompare(fwd.strokes[0].points[0].x(), -580.0),
-          "redo re-applies the migrated ink");
-
-    // Ink anchored to a TABLE record is table-pinned (2026-09-16): the table's columns are px
-    // from the page's left edge and never recentre, so every element shifts by -dW/2 (its
-    // table x is constant) — marginalia or in-column alike, chips too.
-    {
-        const int head = m.insertTableRows(0, 2, 2) - 1;
-        CHECK(m.tableHeadOf(head) == head, "a table follows row 0");
-        m.setBlockInk(head, kInk);
-        m.setPageWidth(1200);   // 1000 → 1200: dW/2 = 100
-        mn::DocInkAnchor tp;
-        CHECK(mn::docInkFromJson(m.inkForRow(head), tp) && tp.strokes.size() == 2 && tp.texts.size() == 1,
-              "table-pinned blob keeps every element");
-        CHECK(qFuzzyCompare(tp.strokes[0].points[0].x(), -560.0) && qFuzzyCompare(tp.strokes[1].points[0].x(), -110.0)
-                  && qFuzzyCompare(tp.texts[0].x, 320.0),
-              "table-pinned ink shifts by -dW/2 whole (left, in-column and right alike)");
-        m.undo();
-        mn::DocInkAnchor tb;
-        CHECK(qFuzzyCompare(m.pageWidth(), 1000.0) && mn::docInkFromJson(m.inkForRow(head), tb)
-                  && qFuzzyCompare(tb.strokes[1].points[0].x(), -10.0),
-              "undo restores the table-pinned ink with the width");
-        m.setBlockInk(head, QString());
-        for (int i = 0; i < 3; ++i) m.undo();   // the table + its ink, back to the plain doc
-        while (m.rowCountQml() > 1) m.removeBlock(m.rowCountQml() - 1);
-    }
-
-    // Pure width change (no ink): still one undoable step.
-    m.setBlockInk(0, QString());
-    m.setPageWidth(1200);
-    CHECK(qFuzzyCompare(m.pageWidth(), 1200.0), "pure width change applied");
-    m.undo();
-    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0), "pure width change undoes");
-    m.undo();   // restores the ink blob cleared above
-
-    // Persistence: the width travels through save/reopen (doc_meta v3).
-    CHECK(m.saveAs(path), "saveAs() succeeded");
-    m.closeDocument();
-    CHECK(qFuzzyCompare(m.pageWidth(), 760.0), "close resets to 760");
-    BlockModel m2;
-    CHECK(m2.openDocument(path), "reopen succeeded");
-    CHECK(qFuzzyCompare(m2.pageWidth(), 1000.0), "page width persisted through doc_meta");
-    m2.closeDocument();
-    QFile::remove(path);
-}
-
 static void testUndoHistory() {
     qInfo("[8c] undo history: active path, labels, jump time-travel");
-    mn::DocInkAnchor a;
-    a.space = mn::DocInkAnchor::Px;
-    qcv::ActiveStroke st;
-    st.tool = qcv::DrawingTool::Freehand;
-    st.points = { QPointF(-450.0, 2.0), QPointF(-420.0, 30.0) };
-    st.strokeWidth = 4;
-    a.strokes.push_back(st);
-    const QString kInk = mn::docInkToJson(a);
 
     BlockModel m;
     m.newDocument();
@@ -576,26 +377,23 @@ static void testUndoHistory() {
                      [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
 
     const int rev0 = m.undoRevision();
-    m.setBlockInk(0, kInk);      // → "Ink"
-    m.setPageWidth(1000);        // → "Page width 1000" (grouped w/ migration)
+    m.setPageWidth(1000);        // → "Page width 1000"
     m.insertBlock(1);            // → "Insert block"
     CHECK(m.undoRevision() > rev0, "undoRevision advances with the stack");
 
     const QVariantList h = m.undoHistory();
-    CHECK(h.size() >= 4, "history has baseline + the three entries");
+    CHECK(h.size() >= 3, "history has baseline + the two entries");
     CHECK(h.first().toMap().value("label").toString() == QStringLiteral("Opened"),
           "baseline row leads");
     QStringList labels;
     for (const QVariant& v : h) labels << v.toMap().value("label").toString();
-    CHECK(labels.contains(QStringLiteral("Ink")), "ink entry labeled");
     CHECK(labels.contains(QStringLiteral("Page width 1000")), "width entry labeled");
     CHECK(labels.contains(QStringLiteral("Insert block")), "insert entry labeled");
     CHECK(h.last().toMap().value("current").toBool(), "current = the newest state");
 
-    // Time-travel to the baseline: one call unwinds ink + width + insert.
+    // Time-travel to the baseline: one call unwinds width + insert.
     m.undoJumpTo(-1);
-    CHECK(qFuzzyCompare(m.pageWidth(), 760.0) && m.inkForRow(0).isEmpty()
-              && m.rowCountQml() == 1,
+    CHECK(qFuzzyCompare(m.pageWidth(), 760.0) && m.rowCountQml() == 1,
           "jump to baseline undoes everything");
     const QVariantList h2 = m.undoHistory();
     CHECK(h2.first().toMap().value("current").toBool(), "baseline is now current");
@@ -604,8 +402,7 @@ static void testUndoHistory() {
     // And forward again to the leaf in one jump.
     const int leaf = h2.last().toMap().value("idx").toInt();
     m.undoJumpTo(leaf);
-    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0) && m.rowCountQml() == 2
-              && !m.inkForRow(0).isEmpty(),
+    CHECK(qFuzzyCompare(m.pageWidth(), 1000.0) && m.rowCountQml() == 2,
           "jump forward replays to the leaf");
     // A stale/off-path target is a safe no-op.
     m.undoJumpTo(9999);
@@ -792,14 +589,10 @@ static void testExportMarkdown() {
             if (m.typeForRow(i) == BlockModel::Media
                 && m.mediaKind(i) == QLatin1String("image")) { imgRow = i; break; }
         CHECK(imgRow >= 0, "image row found");
-        mn::DocInkAnchor a;
-        a.space = mn::DocInkAnchor::Frame;
-        qcv::ActiveStroke st;
-        st.tool = qcv::DrawingTool::Freehand;
-        st.points = { QPointF(0.1, 0.1), QPointF(0.9, 0.9) };
-        st.strokeWidth = 4;
-        a.strokes.push_back(st);
-        m.setBlockInk(imgRow, mn::docInkToJson(a));
+        m.setMediaPageInk(imgRow, 0, QStringLiteral(
+            "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
+            "{\"id\":\"s1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
+            "\"filled\":false,\"is_modeled\":false,\"points\":[[0.1,0.1],[0.9,0.9]]}]}"));
         RecordingSink isink;
         const QString ihtml = ex.toHtml(Exporter::Options{}, isink);
         CHECK(ihtml.contains(QStringLiteral("class=\"inkwrap\""))
@@ -807,22 +600,8 @@ static void testExportMarkdown() {
               "media ink exports as a z-layer stack");
         CHECK(ihtml.contains(QStringLiteral("id=\"mn-ink\"")),
               "ink layer arms the Annotations toggle");
-        // Page ink on a TEXT block exports too (Px space → positioned layer).
-        mn::DocInkAnchor pa;
-        pa.space = mn::DocInkAnchor::Px;
-        qcv::ActiveStroke pst;
-        pst.tool = qcv::DrawingTool::Freehand;
-        pst.points = { QPointF(-40, 4), QPointF(60, 18) };   // page px around center
-        pst.strokeWidth = 3;
-        pa.strokes.push_back(pst);
-        m.setBlockInk(1, mn::docInkToJson(pa));              // the spans paragraph
-        RecordingSink psink;
-        const QString phtml = ex.toHtml(Exporter::Options{}, psink);
-        CHECK(phtml.contains(QStringLiteral("position:absolute;left:"))
-                  && phtml.count(QStringLiteral("class=\"ink\"")) >= 2,
-              "text-block page ink exports as a positioned layer");
-        CHECK(phtml.contains(QStringLiteral("class=\"cmtcard\""))
-                  && phtml.contains(QStringLiteral("note body")),
+        CHECK(ihtml.contains(QStringLiteral("class=\"cmtcard\""))
+                  && ihtml.contains(QStringLiteral("note body")),
               "comment hover card rides inside the tinted range");
 
         // --- DOCX: real Word parts, native comments, embedded image. ---
@@ -1253,166 +1032,9 @@ static void testSketchEmbedWidth() {
 }
 
 // --- Test 16: doc-ink text chips — envelope round-trip + export presence ----
-// texts[] is a TYPED DocInkAnchor member: the writer rebuilds the envelope
 // from the struct, so this locks the critical mechanic — a stroke commit
 // (parse → append stroke → serialize) must never destroy texts, and a
 // text-only anchor must not serialize to "" (the delete-the-row signal).
-static void testDocInkTexts() {
-    qInfo("[16] doc-ink texts: envelope round-trip, stroke-commit survival");
-
-    mn::SketchTextSpec t;
-    t.text = QStringLiteral("margin note");
-    t.x = -120.0; t.y = 40.0; t.w = 240.0;   // px space: x is Δ from page CENTER
-    t.size = 16.0;
-    t.color = QColor(QStringLiteral("#FF5768"));
-
-    // Mixed anchor: one stroke + one text → full field fidelity.
-    mn::DocInkAnchor a;
-    a.space = mn::DocInkAnchor::Px;
-    qcv::ActiveStroke st;
-    st.tool = qcv::DrawingTool::Freehand;
-    st.points = { QPointF(-50.0, 10.0), QPointF(80.0, 90.0) };
-    st.strokeWidth = 4;
-    a.strokes.push_back(st);
-    a.texts.push_back(t);
-
-    const QString blob = mn::docInkToJson(a);
-    mn::DocInkAnchor b;
-    CHECK(mn::docInkFromJson(blob, b) && b.strokes.size() == 1 && b.texts.size() == 1,
-          "mixed anchor round-trips");
-    CHECK(b.texts[0].text == t.text && qFuzzyCompare(b.texts[0].x, t.x)
-              && qFuzzyCompare(b.texts[0].w, t.w) && qFuzzyCompare(b.texts[0].size, t.size)
-              && b.texts[0].color.name() == QStringLiteral("#ff5768"),
-          "text fields survive with fidelity (incl. negative x)");
-
-    // THE mechanic: a stroke commit is parse → append → serialize.
-    mn::DocInkAnchor c = b;
-    qcv::ActiveStroke st2 = st;
-    st2.points = { QPointF(0.0, 0.0), QPointF(10.0, 10.0) };
-    c.strokes.push_back(st2);
-    mn::DocInkAnchor d;
-    CHECK(mn::docInkFromJson(mn::docInkToJson(c), d)
-              && d.strokes.size() == 2 && d.texts.size() == 1
-              && d.texts[0].text == t.text,
-          "stroke commit (parse->append->serialize) preserves texts");
-
-    // Text-only anchor: must NOT serialize to "" (the delete signal).
-    mn::DocInkAnchor onlyText;
-    onlyText.space = mn::DocInkAnchor::Frame;
-    mn::SketchTextSpec ft = t;
-    ft.x = 0.1; ft.y = 0.1; ft.w = 0.4; ft.size = 24;   // frame space: normalized
-    onlyText.texts.push_back(ft);
-    const QString tBlob = mn::docInkToJson(onlyText);
-    CHECK(!tBlob.isEmpty(), "text-only anchor serializes non-empty");
-    mn::DocInkAnchor e;
-    CHECK(mn::docInkFromJson(tBlob, e) && e.strokes.empty() && e.texts.size() == 1
-              && e.space == mn::DocInkAnchor::Frame,
-          "text-only anchor survives round-trip with its space");
-
-    // Legacy stroke-only blob (no texts key) parses clean; empty anchor = "".
-    mn::DocInkAnchor legacyIn;
-    legacyIn.space = mn::DocInkAnchor::Px;
-    legacyIn.strokes.push_back(st);
-    const QString legacy = mn::docInkToJson(legacyIn);
-    CHECK(!legacy.contains(QStringLiteral("\"texts\"")),
-          "texts key omitted when empty (old blobs stay byte-stable)");
-    mn::DocInkAnchor f;
-    CHECK(mn::docInkFromJson(legacy, f) && f.texts.empty(), "legacy blob -> empty texts");
-    CHECK(mn::docInkToJson(mn::DocInkAnchor{}).isEmpty(),
-          "truly empty anchor still serializes to the delete signal");
-
-    // Truth table.
-    CHECK(mn::docInkHasStrokes(blob) && mn::docInkHasContent(blob),
-          "mixed: hasStrokes && hasContent");
-    CHECK(!mn::docInkHasStrokes(tBlob) && mn::docInkHasContent(tBlob),
-          "text-only: !hasStrokes && hasContent");
-    CHECK(!mn::docInkHasContent(QString()), "empty: no content");
-
-    // --- Export presence: text-only anchors reach BOTH renderers ---
-    class InkSink : public Exporter::AssetSink {
-    public:
-        QList<QImage> images;
-        QString addFile(const QString&, const QString& b) override {
-            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
-        QString addImage(const QImage& img, const QString& b) override {
-            images << img;
-            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
-    };
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("annotated paragraph"));
-    const QString probePng = QDir::temp().filePath(QStringLiteral("mn_ink_text_probe.png"));
-    { QImage probe(64, 48, QImage::Format_RGB32); probe.fill(Qt::darkGray);
-      probe.save(probePng, "PNG"); }
-    CHECK(m.insertImageFromUrl(0, QUrl::fromLocalFile(probePng).toString()) >= 0,
-          "image block inserted for the frame anchor");
-    int imgRow = -1;
-    for (int i = 0; i < m.rowCountQml(); ++i)
-        if (m.mediaKind(i) == QLatin1String("image")) { imgRow = i; break; }
-    mn::DocInkAnchor pxA;
-    pxA.space = mn::DocInkAnchor::Px;
-    pxA.texts.push_back(t);
-    // Margin-spanning chips: LEFT gutter (x from page CENTER, page = ±380,
-    // gutter to ±500) and RIGHT gutter — the layer bbox must exceed the 760
-    // block, which the global img{max-width:100%} used to squeeze.
-    mn::SketchTextSpec lm = t; lm.x = -500.0; lm.w = 110.0;
-    mn::SketchTextSpec rm = t; rm.x = 390.0;  rm.w = 110.0;
-    pxA.texts.push_back(lm);
-    pxA.texts.push_back(rm);
-    m.setBlockInk(0, mn::docInkToJson(pxA));           // px text-only anchor
-    // Frame anchor gains an OVERSHOOTING chip (x < 0 = margin overshoot):
-    // the layer raster must widen past the frame and carry percent offsets.
-    mn::DocInkAnchor frameA = onlyText;
-    mn::SketchTextSpec ov = onlyText.texts[0];
-    ov.x = -0.5; ov.y = 0.2; ov.w = 0.4; ov.size = 8;
-    frameA.texts.push_back(ov);
-    m.setBlockInk(imgRow, mn::docInkToJson(frameA));   // frame anchor w/ overshoot
-
-    Exporter ex;
-    ex.setModel(&m);
-    InkSink sink;
-    const QString html = ex.toHtml(Exporter::Options{}, sink);
-    CHECK(html.contains(QStringLiteral("id=\"mn-ink\"")),
-          "text-only ink arms the Annotations toggle");
-    CHECK(html.contains(QStringLiteral("class=\"ink\"")), "ink layer(s) emitted");
-    bool anyLit = false;
-    for (const QImage& im : sink.images)
-        for (int yy = 0; yy < im.height() && !anyLit; yy += 2)
-            for (int xx = 0; xx < im.width() && !anyLit; xx += 2)
-                if (qAlpha(im.pixel(xx, yy)) != 0) anyLit = true;
-    CHECK(sink.images.size() >= 2 && anyLit,
-          "chips baked into the ink rasters (%d ink images)", int(sink.images.size()));
-    // Margin-spanning layer: wider than the 760 block (2x raster), and the
-    // tag opts out of the global img{max-width:100%} clamp that squeezed it.
-    int widest = 0;
-    for (const QImage& im : sink.images) widest = std::max(widest, im.width());
-    CHECK(widest > 1520, "margin-spanning ink raster exceeds the block width (%d)", widest);
-    {   // Inspection artifact: the emitted page for eyeballing ink geometry.
-        QFile hf(QDir::tempPath() + QStringLiteral("/mn_ink_export_probe.html"));
-        if (hf.open(QIODevice::WriteOnly | QIODevice::Truncate))
-            hf.write(html.toUtf8());
-    }
-    CHECK(html.contains(QStringLiteral("class=\"ink\" style=\"position:absolute"))
-              && html.contains(QStringLiteral("max-width:none;z-index:2")),
-          "page-ink layer escapes the max-width clamp");
-    CHECK(html.contains(QStringLiteral("left:-50%"))
-              && html.contains(QStringLiteral("right:auto;bottom:auto;max-width:none")),
-          "overshooting media ink carries percent offsets (not frame-clipped)");
-    CHECK(html.contains(QStringLiteral("id=\"mn-lb\""))
-              && html.contains(QStringLiteral("ArrowRight"))
-              && html.contains(QStringLiteral("cursor:zoom-in")),
-          "lightbox chrome + script + zoom cursor emitted");
-
-    // Undo semantics ride setBlockInk (one step per call — the test-8 rule).
-    m.setBlockInk(0, QString());
-    CHECK(!mn::docInkHasContent(m.inkForRow(0)), "text anchor cleared");
-    m.undo();
-    CHECK(mn::docInkHasContent(m.inkForRow(0)) && !mn::docInkHasStrokes(m.inkForRow(0)),
-          "one undo restores the text-only anchor");
-    QFile::remove(probePng);
-}
-
 // --- Test 17: empty-anchor consumption — inserts replace an empty block ----
 // Inserting a new block AFTER an empty paragraph consumes it: the new block
 // takes its row (one undo step restores the paragraph). Non-empty, non-
@@ -1475,15 +1097,6 @@ static void testConsumeEmptyAnchor() {
           "empty heading anchor: not consumed");
     m.undo();
     m.setHeading(1, 0);
-    m.setBlockInk(1, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"block-local\",\"space\":\"px\","
-        "\"shapes\":[{\"id\":\"s1\",\"type\":\"line\",\"color\":[1,0,0,1],"
-        "\"stroke_width\":4,\"filled\":false,\"is_modeled\":false,"
-        "\"points\":[[0,0],[10,10]]}]}"));
-    CHECK(m.insertDivider(1) == 2 && m.rowCountQml() == 4,
-          "ink-bearing empty anchor: not consumed (ink pins its block)");
-    m.undo();
-    m.setBlockInk(1, QString());
 
     // Failed insert: anchor intact, no undo entry burned.
     const int fr = m.insertMediaFromUrl(1, QStringLiteral("file:///nope/missing.zzz"));
@@ -2762,92 +2375,8 @@ static void testCollectMedia() {
 
 // --- Test 32: DocInk multi-anchor group-move undo -------------------------
 // The canvas commits a cross-anchor gesture (departures/arrivals resolved
-// internally) as beginGroup + one setBlockInk per touched blob + endGroup —
 // drive the model in exactly that shape and prove ONE entry restores ALL
 // touched blobs.
-static void testDocInkGroupMove() {
-    qInfo("[32] doc-ink group move: multi-anchor commit = ONE undo entry");
-    auto env = [](const QString& shapes) {
-        return QStringLiteral(
-            "{\"version\":\"2.0\",\"coordinate_system\":\"block-local\","
-            "\"space\":\"px\",\"shapes\":[%1]}").arg(shapes);
-    };
-    const QString sh1 = QStringLiteral(
-        "{\"id\":\"s1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[-390.0,2.0],[10.0,44.0]]}");
-    const QString sh2 = QStringLiteral(
-        "{\"id\":\"s2\",\"type\":\"freehand\",\"color\":[0,1,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.0,0.0],[20.0,20.0]]}");
-    const QString sh3 = QStringLiteral(
-        "{\"id\":\"s3\",\"type\":\"freehand\",\"color\":[0,0,1,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[5.0,5.0],[30.0,10.0]]}");
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("alpha"));
-    m.insertBlock(1); m.setContent(1, QStringLiteral("beta"));
-
-    // Blob A carries s1+s2, blob B carries s3.
-    const QString a0 = env(sh1 + QStringLiteral(",") + sh2);
-    const QString b0 = env(sh3);
-    m.setBlockInk(0, a0);
-    m.setBlockInk(1, b0);
-
-    // Group move: s2 departs A and arrives in B (both blobs change).
-    const QString a1 = env(sh1);
-    const QString b1 = env(sh3 + QStringLiteral(",") + sh2);
-    const int entries = m.undoHistory().size();
-    m.beginGroup(0, 1);
-    m.setBlockInk(0, a1);
-    m.setBlockInk(1, b1);
-    m.endGroup();
-    CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1, "group move landed");
-    CHECK(m.undoHistory().size() == entries + 1,
-          "cross-anchor move is ONE undo entry");
-    m.undo();
-    CHECK(m.inkForRow(0) == a0 && m.inkForRow(1) == b0,
-          "one undo restores BOTH blobs");
-    m.redo();
-    CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1,
-          "one redo re-applies BOTH blobs");
-
-    // Cross-anchor DELETE commits the same shape (empty blob = clear).
-    m.beginGroup(0, 1);
-    m.setBlockInk(0, QString());
-    m.setBlockInk(1, QString());
-    m.endGroup();
-    CHECK(m.inkBlockIds().isEmpty(), "group delete cleared both blobs");
-    m.undo();
-    CHECK(m.inkForRow(0) == a1 && m.inkForRow(1) == b1,
-          "one undo restores both deleted blobs");
-
-    // SCATTERED anchors (sparse-entry path, 2026-08-20): blobs on the band's
-    // ends with untouched blocks between — the entry stores patches for the
-    // two touched rows only; undo/redo must restore them and leave the
-    // middle rows alone.
-    m.insertBlock(2); m.setContent(2, QStringLiteral("gamma"));
-    m.insertBlock(3); m.setContent(3, QStringLiteral("delta"));
-    m.insertBlock(4); m.setContent(4, QStringLiteral("epsilon"));
-    m.setBlockInk(4, b0);
-    const int entries2 = m.undoHistory().size();
-    m.beginGroup(0, 4);
-    m.setBlockInk(0, a0);
-    m.setBlockInk(4, b1);
-    m.endGroup();
-    CHECK(m.undoHistory().size() == entries2 + 1,
-          "scattered-anchor group is ONE undo entry");
-    m.undo();
-    CHECK(m.inkForRow(0) == a1 && m.inkForRow(4) == b0
-              && m.contentForRow(2) == QStringLiteral("gamma")
-              && m.contentForRow(3) == QStringLiteral("delta"),
-          "sparse undo restores the ends, middle rows untouched");
-    m.redo();
-    CHECK(m.inkForRow(0) == a0 && m.inkForRow(4) == b1,
-          "sparse redo re-applies both ends");
-    m.closeDocument();
-}
-
 // --- Test 33: mixed-kind sketch group DELETE undo -------------------------
 // The canvas's group delete emits ONE edited() for strokes plus per-index
 // image/text removals in DESCENDING order, bracketed — drive the mutators in
@@ -3636,14 +3165,6 @@ static void testNewImportFormats() {
 // intact, as exactly one destination undo entry. Source untouched.
 static void testMergeEngine() {
     qInfo("[40] merge engine: full fidelity, ONE undo entry, thread re-mint");
-    mn::DocInkAnchor a;
-    a.space = mn::DocInkAnchor::Px;
-    qcv::ActiveStroke st;
-    st.tool = qcv::DrawingTool::Freehand;
-    st.points = { QPointF(-450.0, 2.0), QPointF(-420.0, 30.0) };
-    st.strokeWidth = 4;
-    a.strokes.push_back(st);
-    const QString kInk = mn::docInkToJson(a);
     const QString kChoice = QStringLiteral(
         "{\"o\":[{\"id\":\"a\",\"l\":\"To do\"},{\"id\":\"b\",\"l\":\"Doing\"}],\"v\":\"b\"}");
 
@@ -3673,7 +3194,6 @@ static void testMergeEngine() {
     src.addCommentMessage(tid, QStringLiteral("first"));
     src.addCommentMessage(tid, QStringLiteral("second"));
     src.insertBlock(11); src.setContent(11, QStringLiteral("inked"));
-    src.setBlockInk(11, kInk);
     const int srcN = src.rowCountQml();
     CHECK(srcN == 12 && tHead == 3 && tEnd == 8 && !tid.isEmpty(), "source fixture: 12 rows + a thread (%d)", srcN);
 
@@ -3728,8 +3248,7 @@ static void testMergeEngine() {
                   && dm[0].toMap().value("created") == sm[0].toMap().value("created"),
               "thread history preserved (bodies + timestamps)");
     }
-    CHECK(dest.inkForRow(7 + grow) == kInk && dest.contentForRow(7 + grow) == QStringLiteral("inked"),
-          "margin ink rode along (same width: byte-equal)");
+    CHECK(dest.contentForRow(7 + grow) == QStringLiteral("inked"), "the last source row rode along");
 
     // Exactly ONE undo entry; undo restores the destination wholesale.
     CHECK(dest.undoHistory().size() == entriesBefore + 1, "merge = ONE undo entry");
@@ -3738,9 +3257,8 @@ static void testMergeEngine() {
               && dest.contentForRow(1) == QStringLiteral("bottom"),
           "one undo removes the whole merge");
     dest.redo();
-    CHECK(dest.rowCountQml() == 2 + srcN && dest.inkForRow(7 + grow) == kInk
-              && dest.commentAt(6 + grow, 1) == newTid,
-          "redo brings it back with ink + comment anchor");
+    CHECK(dest.rowCountQml() == 2 + srcN && dest.commentAt(6 + grow, 1) == newTid,
+          "redo brings it back with the comment anchor");
 
     // The source was never touched; refusals + the pristine no-op.
     CHECK(src.rowCountQml() == srcN && src.commentAt(5 + grow, 1) == tid,
@@ -3894,42 +3412,16 @@ static void testMergeAssetsAndEdges() {
     }
     src.closeDocument();
 
-    // Width migration: right-margin ink on a 1600 page lands edge-anchored
-    // on a 760 page — the exact migrateInkForWidth ground truth.
+    // A second source doc for the gap-0 and blank-anchor-fold cases.
     {
-        mn::DocInkAnchor a;
-        a.space = mn::DocInkAnchor::Px;
-        qcv::ActiveStroke st;
-        st.tool = qcv::DrawingTool::Freehand;
-        st.points = { QPointF(900.0, 10.0), QPointF(950.0, 40.0) };
-        st.strokeWidth = 4;
-        a.strokes.push_back(st);
-        const QString wideInk = mn::docInkToJson(a);
-
         BlockModel wsrc;
         wsrc.newDocument();
         while (wsrc.rowCountQml() > 0) wsrc.removeBlock(0);
         wsrc.insertBlock(0); wsrc.setContent(0, QStringLiteral("wide"));
-        wsrc.setPageWidth(1600);
-        wsrc.setBlockInk(0, wideInk);
         BlockModel wdest;
         wdest.newDocument();
         while (wdest.rowCountQml() > 0) wdest.removeBlock(0);
         wdest.insertBlock(0); wdest.setContent(0, QStringLiteral("n"));
-
-        CHECK(DocumentMerger::mergeDocuments(&wsrc, &wdest, 1, &f, &l, &err),
-              "width merge succeeded (%s)", qPrintable(err));
-        // Stroke ids regenerate on every serialization — compare the geometry
-        // (the migration's actual output), not the JSON bytes.
-        const QString expect = BlockModel::migrateInkForWidth(wideInk, 1600, 760);
-        mn::DocInkAnchor got, exp;
-        CHECK(!expect.isEmpty()
-                  && mn::docInkFromJson(wdest.inkForRow(1), got)
-                  && mn::docInkFromJson(expect, exp)
-                  && got.strokes.size() == 1 && exp.strokes.size() == 1
-                  && got.strokes[0].points == exp.strokes[0].points
-                  && got.strokes[0].points[0] == QPointF(480.0, 10.0),
-              "ink width-migrated 1600 -> 760 (edge affinity ground truth)");
 
         // Gap 0: the merge lands at the very top.
         CHECK(DocumentMerger::mergeDocuments(&wsrc, &wdest, 0, &f, &l, &err)
@@ -4174,14 +3666,13 @@ static void testPasteAssets() {
     src.insertBlock(2); src.setContent(2, QStringLiteral("tail note"));
     const QString tid = src.addComment(2, 0, 4);
     src.addCommentMessage(tid, QStringLiteral("first!"));
-    src.setBlockInk(2, QStringLiteral("{\"strokes\":[{\"pts\":[0,0,1,1]}]}"));
 
     const QString payload = src.clipboardPayloadForRange(0, 0, 2, 9);
     CHECK(!payload.isEmpty(), "payload built");
     BlockClipboard::Payload dec; QString derr;
     CHECK(BlockClipboard::decode(payload.toUtf8(), &dec, &derr) && dec.assets.size() == 1
-              && dec.threads.size() == 1 && dec.threads[0].messages.size() == 1
-              && !dec.ink[2].isEmpty(), "payload carries asset snapshot, thread bodies, ink");
+              && dec.threads.size() == 1 && dec.threads[0].messages.size() == 1,
+          "payload carries asset snapshot and thread bodies");
 
     // [52] same document: paste at the end.
     const int before = src.rowCountQml();
@@ -4198,7 +3689,6 @@ static void testPasteAssets() {
     const QString tid2 = src.commentAt(before + 1, 1);
     CHECK(!tid2.isEmpty() && tid2 != tid && src.commentMessages(tid2).size() == 1,
           "same-doc copy duplicates the thread with its messages");
-    CHECK(!src.inkForRow(before + 1).isEmpty(), "ink laid on the pasted row");
     // Cut + paste back re-anchors the ORIGINAL thread.
     src.removeBlocks(2, 2);
     CHECK(src.threadAnchorRow(tid) < 0, "thread orphaned by the cut");
@@ -4232,7 +3722,6 @@ static void testPasteAssets() {
     const QString dtid = dest.commentAt(2, 1);
     CHECK(!dtid.isEmpty() && dtid != tid && dest.commentMessages(dtid).size() == 1,
           "thread re-minted in the destination with its message");
-    CHECK(!dest.inkForRow(2).isEmpty(), "ink laid in the destination");
     CHECK(dest.undoHistory().size() == dEntries + 1, "cross-doc paste = ONE undo entry");
     dest.undo();
     CHECK(dest.rowCountQml() == 1 && dest.contentForRow(0) == QStringLiteral("dest"), "undo removes the paste whole");
@@ -4381,12 +3870,12 @@ static void testMoveBlocks() {
     {
         BlockModel d; d.newDocument(); while (d.rowCountQml() > 0) d.removeBlock(0);
         for (int i = 0; i < 3; ++i) { d.insertBlock(i); d.setContent(i, QString(QChar('a' + i))); }
-        d.setHeading(1, 2); d.setBlockInk(2, QStringLiteral("{\"strokes\":[{\"pts\":[1,1]}]}"));
+        d.setHeading(1, 2);
         const int e3 = d.undoHistory().size();
         d.duplicateBlocks(1, 2);
         QString o3; for (int i = 0; i < d.rowCountQml(); ++i) o3 += d.contentForRow(i);
-        CHECK(o3 == QStringLiteral("abcbc") && d.typeForRow(3) == BlockModel::Heading && !d.inkForRow(4).isEmpty(),
-              "duplicateBlocks copies the run with types + ink ('%s')", qPrintable(o3));
+        CHECK(o3 == QStringLiteral("abcbc") && d.typeForRow(3) == BlockModel::Heading,
+              "duplicateBlocks copies the run with types ('%s')", qPrintable(o3));
         CHECK(d.undoHistory().size() == e3 + 1, "duplicateBlocks: one entry");
         d.undo();
         CHECK(d.rowCountQml() == 3, "duplicateBlocks undo");
@@ -6378,18 +5867,16 @@ static void testMediaInkMove() {
     const QString path = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
     BlockModel m;
     CHECK(m.openDocument(path), "the v1 fixture opens");
-    int img = -1, pdfInked = -1, pdfPlain = -1, textInk = -1;
+    int img = -1, pdfInked = -1, pdfPlain = -1;
     for (int r = 0; r < m.rowCountQml(); ++r) {
         if (m.typeForRow(r) == BlockModel::Media && m.mediaKind(r) == QLatin1String("image")) img = r;
         if (m.typeForRow(r) == BlockModel::Media && m.mediaKind(r) == QLatin1String("pdf")) { if (pdfInked < 0) pdfInked = r; else pdfPlain = r; }
-        if (textInk < 0 && m.typeForRow(r) == BlockModel::Paragraph && !m.inkForRow(r).isEmpty()) textInk = r;
     }
     auto shapeCount = [](const QString& env) { return QJsonDocument::fromJson(env.toUtf8()).object().value(QStringLiteral("shapes")).toArray().size(); };
-    CHECK(img >= 0 && shapeCount(m.mediaPageInk(img, 0)) == 1 && m.inkForRow(img).isEmpty(),
-          "the image's frame-space margin ink became its page-0 media ink and left the ink table (row %d)", img);
+    CHECK(img >= 0 && shapeCount(m.mediaPageInk(img, 0)) == 1,
+          "the image's frame-space margin ink became its page-0 media ink (row %d)", img);
     CHECK(pdfInked >= 0 && shapeCount(m.mediaPageInk(pdfInked, 0)) == 1 && pdfPlain >= 0 && m.mediaPageInk(pdfPlain, 0).isEmpty(),
           "PDF page ink reads through the media API; the plain PDF has none");
-    CHECK(textInk >= 0, "text-anchored margin ink is untouched by the move (row %d)", textInk);
     // Page ink on an IMAGE is undoable content like a PDF page's.
     m.setMediaPageInk(img, 0, QStringLiteral("{\"shapes\":[]}"));
     CHECK(m.mediaPageInk(img, 0).isEmpty(), "clearing an image's page ink drops the key");
@@ -7456,25 +6943,11 @@ static void testGridTableExports() {
               && html.contains(QStringLiteral("main .blkw{margin:0;padding:6px 0}")) && html.contains(QStringLiteral("ul{margin:0;padding-left:22px}ol{margin:0;padding-left:34px}")),
           "HTML: the app's sizes, pinned line heights, block inset and list insets");
     for (int c = 0; c < 3; ++c) m.setTableColumnWidth(head, c, 400);   // 1200 wide: 440 past the page
-    {
-        mn::DocInkAnchor a; a.space = mn::DocInkAnchor::Px;
-        qcv::ActiveStroke s; s.tool = qcv::DrawingTool::Freehand; s.strokeWidth = 4;
-        s.points = { QPointF(300.0, 4.0), QPointF(340.0, 30.0) };   // over the table's third column
-        a.strokes.push_back(s);
-        m.setBlockInk(head, mn::docInkToJson(a));
-    }
     RecordingSink ws;
     const QString wide = ex.toHtml(Exporter::Options{}, ws);
     CHECK(wide.contains(QStringLiteral("<div class=\"tablewrap\" style=\"margin-left:max(calc((100% - 1200px) / 2),min(-96px,calc((100% + 48px - 100vw) / 2)))\">")),
           "HTML: a wide table centres under the page, never past the gutter (%s)", qPrintable(wide.mid(std::max<qsizetype>(0, wide.indexOf(QStringLiteral("tablewrap")) - 10), 160)));
-    const int tr0 = wide.indexOf(QStringLiteral("<tr>")), ink = wide.indexOf(QStringLiteral("<img class=\"ink\"")), tdClose = wide.indexOf(QStringLiteral("</th>"), tr0);
-    CHECK(tr0 >= 0 && ink > tr0 && ink < tdClose && wide.contains(QStringLiteral("--sheetw:1440px")),
-          "HTML: the head row's ink rides inside its first cell; the sheet band spans the table + gutters (ink at %d, tr %d, cell close %d)", ink, tr0, tdClose);
-    // The head row's record starts 32 px above the grid (the pocket): a stroke 4 px below the record's top
-    // sits 28 px ABOVE the cell it lands in.
-    const QString inkTag = wide.mid(ink, 120);
-    CHECK(inkTag.contains(QStringLiteral("top:-")) && inkTag.contains(QStringLiteral("px;width:")),
-          "HTML: the head row's ink is lifted by the pocket (%s)", qPrintable(inkTag));
+    CHECK(wide.contains(QStringLiteral("--sheetw:1440px")), "HTML: the sheet band spans the table + gutters");
 }
 
 static void testGridTableDocxPdf() {
@@ -8629,8 +8102,6 @@ int main(int argc, char** argv) {
     testRowsTouchedAndSlots();
     testCanonicalizeAndStamp();
     testListsAndDepth();
-    testInkUndoPersist();
-    testPageWidth();
     testUndoHistory();
     testComments();
     testExportMarkdown();
@@ -8639,7 +8110,6 @@ int main(int argc, char** argv) {
     testSketchExportCaps();
     testSketchEmbedWidth();
     testSketchTextElements();
-    testDocInkTexts();
     testConsumeEmptyAnchor();
     testInsertSpecs();
     testImporterWalker();
@@ -8655,7 +8125,6 @@ int main(int argc, char** argv) {
     testRtfImport();
     testImportCopyPolicy();
     testCollectMedia();
-    testDocInkGroupMove();
     testSketchGroupDelete();
     testPdfPageInkUndo();
     testPdfPageInkExport();

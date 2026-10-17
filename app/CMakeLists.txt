@@ -98,10 +98,6 @@ qt_add_executable(minnotesapp
     notes/SketchCanvas.cpp
     notes/sketch_text.h
     notes/sketch_text.cpp
-    notes/doc_ink.h
-    notes/doc_ink.cpp
-    notes/DocInkCanvas.h
-    notes/DocInkCanvas.cpp
     notes/CanvasCamera.h
     notes/CanvasCamera.cpp
     notes/ink_tessellate.h

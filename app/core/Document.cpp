@@ -336,20 +336,6 @@ QHash<QString, QString> Document::allInk() const {
     return out;
 }
 
-void Document::upsertInk(const QString& blockId, const QString& ink) {
-    if (!open_) return;
-    QSqlQuery q(QSqlDatabase::database(conn_));
-    q.prepare("INSERT INTO block_ink (block_id, ink, modified) VALUES (?, ?, ?) "
-              "ON CONFLICT(block_id) DO UPDATE SET ink = excluded.ink, "
-              "modified = excluded.modified");
-    q.addBindValue(blockId);
-    q.addBindValue(ink);
-    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
-    ++mn::perf::counters().dbWrites;
-    if (!q.exec())
-        qWarning() << "Document upsertInk failed:" << q.lastError().text();
-}
-
 void Document::deleteInk(const QString& blockId) {
     if (!open_) return;
     QSqlQuery q(QSqlDatabase::database(conn_));

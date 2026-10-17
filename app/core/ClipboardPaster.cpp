@@ -204,7 +204,7 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
         }
     }
     if (!routed)
-        caret = dest->pasteSpecsAt(row, col, job.payload.specs, job.payload.ink, job.payload.pageWidth);
+        caret = dest->pasteSpecsAt(row, col, job.payload.specs);
     dest->endGroup();
     dest->localizeRemoteMedia(row, std::max(caret.first, row + static_cast<int>(job.payload.specs.size())));
 

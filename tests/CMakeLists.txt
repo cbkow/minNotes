@@ -49,7 +49,6 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_io.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_serializer.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/annotation_thumbnail.cpp
-    ${CMAKE_SOURCE_DIR}/app/notes/doc_ink.cpp
     # sketch_text = the shared text-element layout/paint core (QTextDocument),
     # consumed by BlockModel (fit-to-ink) and Exporter (raster bake).
     ${CMAKE_SOURCE_DIR}/app/notes/sketch_text.cpp

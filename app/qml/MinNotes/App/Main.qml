@@ -296,10 +296,7 @@ ApplicationWindow {
             return
         }
         _exportScan = exporter.scan()
-        // Ink only affects markdown (HTML doesn't carry it either yet, but
-        // the note is markdown-worded); notes matter to both.
-        if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.inkBlocks || 0) > 0
-            || (_exportScan.refPaths || 0) > 0)
+        if ((_exportScan.videoNotes || 0) > 0 || (_exportScan.refPaths || 0) > 0)
             exportOptionsDialog.open()
         else
             _openExportSave()
@@ -509,19 +506,6 @@ ApplicationWindow {
                          && exportPrefs.ufbLinks
                 width: 400; wrapMode: Text.Wrap
                 text: qsTr("ufb:/// links open in the ufb browser and resolve across machines through its path mappings.")
-                color: Theme.colors.textMuted
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-            }
-            Text {
-                visible: win._exportFormat !== "mnpkg" && (win._exportScan.inkBlocks || 0) > 0
-                width: 400; wrapMode: Text.Wrap
-                text: win._exportFormat === "html"
-                      ? qsTr("Page ink exports as toggleable overlays (ink over text is position-approximate).")
-                      : win._exportFormat === "docx"
-                      ? qsTr("Ink on media is baked into the images; ink over text isn't included.")
-                      : win._exportFormat === "pdf"
-                      ? qsTr("Ink on media and PDF pages is baked into the images; ink over text isn't included.")
-                      : qsTr("Page ink isn't included in Markdown export.")
                 color: Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             }
@@ -1599,34 +1583,11 @@ ApplicationWindow {
                             cursorShape: Qt.PointingHandCursor; onClicked: docs.newTab() }
             }
 
-            // Document chrome at the strip's right edge (right of "+"): the
-            // ink-layer eye (only when the document has ink) and the Inspector
-            // toggle. The pen-nib mode button is GONE (2026-08-19 redesign,
-            // overturning the 2026-07-05 accent ruling with it): annotation
-            // mode is now driven by the armed tool in the Inspector's Tools
-            // grid — there is no separate mode toggle.
+            // Document chrome at the strip's right edge (right of "+"): the Inspector toggle.
             Row {
                 id: annotCluster
                 anchors.right: parent.right; anchors.top: parent.top
                 readonly property var ed: contentRow.editor
-                Rectangle {
-                    visible: !!annotCluster.ed && annotCluster.ed.inkStrokeCount > 0
-                    width: 36; height: docTabBar.height
-                    readonly property bool hidden: !!annotCluster.ed && !annotCluster.ed.inkLayerVisible
-                    color: hidden ? Theme.colors.accent
-                                  : (eyeMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-                    Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                                color: Theme.colors.border }
-                    Icon { anchors.centerIn: parent
-                           name: parent.hidden ? "eye-slash" : "eye"; size: 15
-                           opacity: eyeMA.enabled ? 1 : 0.4   // read as OFF while a tool is armed
-                           color: parent.hidden || eyeMA.containsMouse ? Theme.colors.textBright
-                                                                       : Theme.colors.textMuted }
-                    MouseArea { id: eyeMA; anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: !!annotCluster.ed && !annotCluster.ed.inkMode
-                                onClicked: annotCluster.ed.inkLayerVisible = !annotCluster.ed.inkLayerVisible }
-                }
                 // Inspector (right sidebar) toggle — moved off the LeftRail.
                 // The arrow points where the panel will GO: left (slide out
                 // over the document) when closed, right (dismiss) when open.

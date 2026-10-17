@@ -25,9 +25,7 @@ Rectangle {
     readonly property int pad: 4
     height: visible ? Theme.dim.rulerHeight : 0
     color: Theme.colors.surface   // match the LeftRail (ruling 2026-08-20)
-    readonly property bool inked: !!editor && editor.inkMode
-    opacity: inked ? 0.4 : 1
-    enabled: !inked && blockModel.documentOpen
+    enabled: blockModel.documentOpen
 
     readonly property real cx: editor ? editor.viewContentX : 0
     readonly property real left0: editor ? editor.leftEdge : 0
@@ -48,11 +46,8 @@ Rectangle {
     }
     function commit(w) {
         if (!editor || w === Math.round(blockModel.pageWidth)) return
-        var hadInk = editor.inkStrokeCount > 0
-        blockModel.setPageWidth(w)   // one undo step (ink migration + width)
-        Toasts.show(hadInk
-            ? qsTr("Page width %1 — in-column ink may have shifted (⌘Z reverts)").arg(w)
-            : qsTr("Page width %1").arg(w), hadInk ? 1 : 0)
+        blockModel.setPageWidth(w)   // one undo step
+        Toasts.show(qsTr("Page width %1").arg(w), 0)
     }
 
     Rectangle {   // baseline hairline against the page

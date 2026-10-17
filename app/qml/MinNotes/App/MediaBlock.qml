@@ -213,6 +213,16 @@ Item {
         NumberAnimation { id: imgFade; target: img; property: "opacity"
                           from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
     }
+    // The image's page-0 media ink (2.0 stage 1): a QCView note's strokes, or what used to be
+    // frame-space margin ink — frame-normalized, drawn by the GPU ink item over the image.
+    InkNodeItem {
+        anchors.fill: img
+        envelope: (mb._rev, mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch
+                   ? blockModel.mediaPageInk(mb.logicalRow, 0) : "")
+        frameW: img.width; frameH: img.height
+        sourceW: Math.max(1, mb.iw); sourceH: Math.max(1, mb.ih)
+        opacity: img.visible ? 1 : 0
+    }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
         visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended && img.status !== Image.Ready
