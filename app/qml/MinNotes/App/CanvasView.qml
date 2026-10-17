@@ -46,6 +46,8 @@ Rectangle {
 
     // --- selection ---
     property string selectedId: ""
+    property int elementDrags: 0   // probe diagnostics: element drags / view pans that activated
+    property int pans: 0
     function select(id) { selectedId = id }
     function clearSelection() { selectedId = "" }
     readonly property string selectedKind: selectedId !== "" ? (canvas.elementsRevision, canvas.elementKind(selectedId)) : ""
@@ -134,8 +136,18 @@ Rectangle {
     Connections { target: cam; function onCameraChanged() { if (cam.userCam && cv.visible) camSave.restart() } }
     Timer { id: camSave; interval: 300; onTriggered: if (canvas.documentOpen && cam.userCam) canvas.setCamera(cam.panX, cam.panY, cam.zoom) }
 
-    // Clicking dead space reclaims focus and clears the selection (the key swallow lives on the editor root).
-    MouseArea { anchors.fill: parent; z: -1; onClicked: cv.editor.forceActiveFocus() }
+    // Which handler a press belongs to is decided AT THE PRESS (a passive point handler sees it
+    // before any drag can activate): over an element or the selection frame the element's / the
+    // handles' drag handlers own it, over empty canvas the view's pan does — two drag handlers
+    // racing for the same press let the pan win and the element stayed put (gesture probe, 2026-10-17).
+    property bool pressOnElement: false
+    property int taps: 0                 // probe diagnostics
+    property int doubleTaps: 0
+    function frameHit(p) { const f = selFrame; return f.shown && p.x >= f.x - 8 && p.x <= f.x + f.width + 8 && p.y >= f.y - 8 && p.y <= f.y + f.height + 8 }
+    PointHandler {
+        acceptedButtons: Qt.LeftButton
+        onActiveChanged: if (active) cv.pressOnElement = !cv.emptyAt(point.position.x, point.position.y) || cv.frameHit(point.position)
+    }
 
     Item {
         id: canvasLayer
@@ -196,11 +208,12 @@ Rectangle {
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
         onSingleTapped: (ev) => {
+            ++cv.taps
             if (!cv.emptyAt(ev.position.x, ev.position.y)) return
             if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
-            else { textEditor.commit(); cv.clearSelection() }
+            else { textEditor.commit(); cv.clearSelection(); cv.editor.forceActiveFocus() }
         }
-        onDoubleTapped: (ev) => { if (!cv.textTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
+        onDoubleTapped: (ev) => { ++cv.doubleTaps; if (!cv.textTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
     }
     // The selection frame (screen space), the text editor and the pen overlay sit above the world layer.
     CanvasSelectionFrame { id: selFrame; view: cv; z: 10 }
@@ -227,11 +240,11 @@ Rectangle {
 
     DragHandler {   // left-drag on EMPTY canvas pans (an element's own handler moves it); middle-drag always
         target: null
-        enabled: !cv.drawing
+        enabled: !cv.drawing && !cv.pressOnElement
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton
         property real sx: 0
         property real sy: 0
-        onActiveChanged: if (active) { sx = cam.panX; sy = cam.panY }
+        onActiveChanged: if (active) { sx = cam.panX; sy = cam.panY; ++cv.pans }
         onActiveTranslationChanged: if (active) cam.setPan(sx + activeTranslation.x, sy + activeTranslation.y)
     }
 }

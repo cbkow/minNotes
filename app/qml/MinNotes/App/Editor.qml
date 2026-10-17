@@ -52,15 +52,17 @@ FocusScope {
         id: viewPrefs
         category: "view"
         property int measureCap: Theme.dim.columnWidth   // 760: every calibrated number is 760-based
-        property bool fullWidth: true                     // "page width is window width" (ruling 2026-10-16); the cap is the opt-in
+        // "page width is window width" (ruling 2026-10-16): the cap is the OPT-IN. Stored as capMeasure so the
+        // earlier build's persisted `view.fullWidth = false` (written as its default) no longer wins.
+        property bool capMeasure: false
     }
     readonly property real pageMargin: 48      // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair)
     readonly property real minPageWidth: 320   // two lanes stay legal (2 · 120 + 24)
     // The width the page COULD take: the viewport at the SETTLED zoom (a slider drag never
     // touches layout) less the two margins; the target applies the cap unless Full width is on.
     readonly property real availPageWidth: Math.max(minPageWidth, Math.floor(centringWidth / zoom) - 2 * pageMargin)
-    readonly property real targetPageWidth: viewPrefs.fullWidth ? availPageWidth : Math.min(availPageWidth, viewPrefs.measureCap)
-    readonly property bool fullWidth: viewPrefs.fullWidth
+    readonly property real targetPageWidth: !viewPrefs.capMeasure ? availPageWidth : Math.min(availPageWidth, viewPrefs.measureCap)
+    readonly property bool fullWidth: !viewPrefs.capMeasure
     readonly property int measureCap: viewPrefs.measureCap
     property real pageWidth: Theme.dim.columnWidth   // committed by commitPageWidth ONLY
     // Resize coalescing: one width change costs setContentWidth O(n) + the layout spike fan-out +
@@ -96,7 +98,7 @@ FocusScope {
         reflowAnchorRow = a; reflowAnchorClear.restart()
         Qt.callLater(flick.returnToBounds)
     }
-    function toggleFullWidth() { viewPrefs.fullWidth = !viewPrefs.fullWidth; commitPageWidth(0) }
+    function toggleFullWidth() { viewPrefs.capMeasure = !viewPrefs.capMeasure; commitPageWidth(0) }
     function setMeasureCap(w) { viewPrefs.measureCap = Math.max(minPageWidth, Math.round(w)); commitPageWidth(0) }
     // Media is known-geometry: tell the model the width it derives media heights from (and, 1C,
     // the width its text estimates wrap at). The one layout-moving write.
@@ -3029,7 +3031,7 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        if (k === Qt.Key_Escape) {
+        if (k === Qt.Key_Escape && !root.activeCanvas) {   // (the canvas has its own Escape, below)
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
@@ -3561,7 +3563,7 @@ FocusScope {
                 if (phaseStep === 1) {   // the responsive page (1C): the rest formula, the latch, Full width, the cap
                     const centred = function(w) { return root.pageMargin + Math.max(0, Math.floor((root.centringWidth / root.zoom - 2 * root.pageMargin - w) / 2)) }
                     const capped = function() { return Math.round(Math.min(root.availPageWidth, viewPrefs.measureCap)) }
-                    const full0 = viewPrefs.fullWidth, cap0 = viewPrefs.measureCap
+                    const full0 = !viewPrefs.capMeasure, cap0 = viewPrefs.measureCap
                     if (full0) root.toggleFullWidth()
                     ++checks
                     if (root.gestureActive || root.pageWidth !== capped() || root.leftEdge !== centred(root.pageWidth))
@@ -3935,10 +3937,17 @@ FocusScope {
     Timer {
         id: canvasProbe
         readonly property bool armed: Qt.application.arguments.some(function(a) { return a.indexOf("--canvas-probe=") === 0 })
-        running: armed && blockModel.count > 100
+        // Latched once the fixture is in: blockModel re-points to a one-paragraph page after a drill-in.
+        property bool started: false
+        running: armed && (started || blockModel.count > 100)
         interval: 40; repeat: true
         property int phase: 0
         property int step: 0
+        // Watchdog: a step that never advances (a thrown check, a condition that never comes true)
+        // ends the run with a failure instead of idling forever.
+        property int lastPhase: -1
+        property int lastStep: -1
+        property int stalled: 0
         property int fails: 0
         property int checks: 0
         property var heightsBefore: ({})
@@ -3948,6 +3957,8 @@ FocusScope {
         property string shapeId: ""
         property string penId: ""
         property int penN0: 0
+        property string textId: ""
+        property bool probeFocusTrace: false
         property real seed: 12345
         property int prevTier: -1
         function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
@@ -3970,6 +3981,9 @@ FocusScope {
         function selFrameX() { return canvasView.selectionFrame.x }
         function selFrameW() { return canvasView.selectionFrame.width }
         onTriggered: {
+            started = true
+            if (phase === lastPhase && step === lastStep) { if (++stalled > 250) { fail("stalled at phase " + phase + " step " + step); console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "(stalled)"); Qt.exit(Math.min(Math.max(fails, 1), 100)) } }
+            else { lastPhase = phase; lastStep = step; stalled = 0 }
             const cam = canvasView.cam
             if (phase === 0) {   // P0: pages, the tab, fit
                 if (step === 0) {
@@ -4200,11 +4214,123 @@ FocusScope {
                 }
                 nextPhase("interaction"); return
             }
-            if (phase === 7) {   // P7: drill-in + the round-trip keeps the heights (both pools measure the same)
-                if (step === 0) { canvas.focusPage = livePage; ++step; return }
+            if (phase === 7) {   // P7: the same actions as REAL gestures (gestures posts mouse / key events into the window)
+                const g = gestures, cvw = canvasView
+                function centreOf(id) { const r = canvas.elementRect(id), s = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2); return s }
+                if (step === 0) {
+                    root.inspector.drawTool = "select"
+                    if (canvasView.selectedId !== "") canvasView.clearSelection()
+                    const r = canvas.elementRect(inkId)
+                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(cvw.width / 2 - (r.x + r.width / 2), cvw.height / 2 - (r.y + r.height / 2))
+                    ++step; return
+                }
+                if (step === 2) {   // click selects; a drag moves by the pointer's delta; one entry per drag
+                    const c = centreOf(inkId)
+                    g.click(cvw, c.x, c.y)
+                    check(cvw.selectedId === inkId, "a click on an element selects it (" + cvw.selectedId + ")")
+                    const r0 = canvas.elementRect(inkId), hist0 = canvas.undoHistory().length, pan0 = cam.panX, d0 = cvw.elementDrags, p0 = cvw.pans
+                    g.drag(cvw, c.x, c.y, c.x + 60, c.y + 30, 6)
+                    const r1 = canvas.elementRect(inkId)
+                    check(Math.abs(r1.x - r0.x - 60 / cam.zoom) < 0.01 && Math.abs(r1.y - r0.y - 30 / cam.zoom) < 0.01 && canvas.undoHistory().length === hist0 + 1,
+                          "a drag moves the element by the pointer's delta over the zoom, as one entry (" + (r1.x - r0.x) + "," + (r1.y - r0.y) + "; drags " + (cvw.elementDrags - d0) + " pans " + (cvw.pans - p0) + " panΔ " + (cam.panX - pan0) + ")")
+                    ++step; return
+                }
+                if (step === 3) {   // a corner handle resizes; a click on empty canvas clears
+                    const f = cvw.selectionFrame, r1 = canvas.elementRect(inkId)
+                    const hx = f.x + f.width, hy = f.y + f.height
+                    g.drag(cvw, hx, hy, hx + 40, hy + 20, 6)
+                    const r2 = canvas.elementRect(inkId)
+                    check(Math.abs(r2.width - r1.width - 40 / cam.zoom) < 0.01 && Math.abs(r2.height - r1.height - 20 / cam.zoom) < 0.01 && r2.x === r1.x,
+                          "the bottom-right handle resizes by the pointer's delta (" + (r2.width - r1.width) + "x" + (r2.height - r1.height) + ")")
+                    g.click(cvw, 8, 8)
+                    check(cvw.selectedId === "" && cvw.emptyAt(8, 8), "a click on empty canvas clears the selection")
+                    ++step; return
+                }
+                if (step === 4) {   // the text tool: tap, type, commit by clicking away, then MOVE the chip
+                    root.inspector.drawTool = "text"
+                    const n0 = canvas.elementCount()
+                    g.click(cvw, 300, 60)
+                    const tid = cvw.selectedId
+                    check(canvas.elementCount() === n0 + 1 && tid !== "" && canvas.elementKind(tid) === "shape" && cvw.textEditorItem.editingId === tid, "a text-tool tap makes a chip and opens its editor")
+                    g.type(cvw, "hi there")
+                    root.inspector.drawTool = "select"   // (with the text tool still armed a click away would start another chip)
+                    g.click(cvw, 8, 8)   // commit by clicking away
+                    const spec = JSON.parse(canvas.elementJson(tid) || "{}")
+                    check(cvw.textEditorItem.editingId === "" && spec.text === "hi there" && canvas.elementRect(tid).width > 60, "clicking away commits the typed text and sizes the chip (\"" + spec.text + "\", " + canvas.elementRect(tid).width + " wide)")
+                    const c = centreOf(tid), r0 = canvas.elementRect(tid)
+                    g.drag(cvw, c.x, c.y, c.x + 25, c.y - 15, 5)
+                    const r1 = canvas.elementRect(tid)
+                    check(Math.abs(r1.x - r0.x - 25 / cam.zoom) < 0.01 && Math.abs(r1.y - r0.y + 15 / cam.zoom) < 0.01 && spec.text === JSON.parse(canvas.elementJson(tid)).text,
+                          "…and the committed chip moves again, keeping its text")
+                    g.doubleClick(cvw, centreOf(tid).x, centreOf(tid).y)
+                    check(cvw.textEditorItem.editingId === tid, "a double-click on a chip edits it again")
+                    g.key(cvw, Qt.Key_Escape)
+                    check(cvw.textEditorItem.editingId === "" && JSON.parse(canvas.elementJson(tid)).text === "hi there", "Escape commits (unchanged text)")
+                    textId = tid
+                    ++step; return
+                }
+                if (step === 5) {   // the pen through real mouse events, then move the stroke with the pointer
+                    root.inspector.drawTool = "freehand"
+                    penN0 = canvas.elementCount()
+                    g.press(cvw, 500, 300); ++step; return
+                }
+                if (step === 6) { g.move(cvw, 540, 330); ++step; return }
+                if (step === 7) { g.move(cvw, 580, 300); ++step; return }
+                if (step === 8) {
+                    g.release(cvw, 620, 330)
+                    const id = cvw.selectedId
+                    check(canvas.elementCount() === penN0 + 1 && canvas.elementKind(id) === "ink", "a mouse stroke makes an ink element (" + canvas.elementCount() + ")")
+                    const focusBefore = root.activeFocus, fi = root.Window.activeFocusItem ? ("" + root.Window.activeFocusItem).substring(0, 40) : "none"
+                    g.key(cvw, Qt.Key_Escape)
+                    check(!cvw.drawing && root.inspector.drawTool === "select", "Escape disarms the pen to the select tool (editor focus " + focusBefore + ", focus item " + fi + ", tool " + root.inspector.drawTool + ")")
+                    const c = centreOf(id), r0 = canvas.elementRect(id)
+                    g.drag(cvw, c.x, c.y, c.x - 30, c.y + 40, 5)
+                    const r1 = canvas.elementRect(id)
+                    check(Math.abs(r1.x - r0.x + 30 / cam.zoom) < 0.01 && Math.abs(r1.y - r0.y - 40 / cam.zoom) < 0.01, "…and the fresh stroke moves with the pointer")
+                    ++step; return
+                }
+                if (step === 9) {   // double-click empty canvas makes a page and opens it; Escape returns; double-click a page card opens it
+                    const n0 = canvas.pageIds.length
+                    probeFocusTrace = true
+                    g.doubleClick(cvw, 900, 700)
+                    check(canvas.pageIds.length === n0 + 1 && !root.activeCanvas && blockModel.pageId() === canvas.focusPage && canvas.focusPage !== "", "double-click on empty canvas makes a page there and opens it (pages " + canvas.pageIds.length + " taps " + cvw.taps + " dbl " + cvw.doubleTaps + " focus '" + canvas.focusPage + "' activeCanvas " + root.activeCanvas + " model " + blockModel.pageId() + ")")
+                    ++step; return
+                }
+                if (step === 11) { root.setActiveTab("canvas"); ++step; return }
+                if (step === 13) {
+                    check(root.activeCanvas, "back on the canvas")
+                    const c = centreOf(livePage)
+                    cam.setPan(cvw.width / 2 - (canvas.elementRect(livePage).x + 100), cvw.height / 2 - (canvas.elementRect(livePage).y + 100))
+                    ++step; return
+                }
+                if (step === 15) {   // in the page's margin (no delegate under the pointer)
+                    probeFocusTrace = false
+                    const r = canvas.elementRect(livePage), s = cam.worldToScreen(r.x + 10, r.y + 10)
+                    const w = cam.screenToWorld(s.x, s.y)
+                    g.click(cvw, s.x, s.y)
+                    check(cvw.selectedId === livePage, "a click on a page card's margin selects it (selected '" + cvw.selectedId + "', empty " + cvw.emptyAt(s.x, s.y) + ", under " + canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01).length + ", item " + (cvw.childAt ? "" : "") + ")")
+                    const d0 = cvw.doubleTaps
+                    g.doubleClick(cvw, s.x, s.y)
+                    check(!root.activeCanvas && canvas.focusPage === livePage, "double-click on a page card's margin opens that page (focus '" + canvas.focusPage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
+                    root.setActiveTab("canvas")
+                    ++step; return
+                }
+                if (step === 17) {   // over the page's text (a block delegate under the pointer)
+                    const r = canvas.elementRect(livePage), s = cam.worldToScreen(r.x + 100, r.y + 100)
+                    const d0 = cvw.doubleTaps
+                    g.doubleClick(cvw, s.x, s.y)
+                    check(!root.activeCanvas && canvas.focusPage === livePage, "double-click over a page card's text opens that page (focus '" + canvas.focusPage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
+                    root.setActiveTab("canvas")
+                    nextPhase("gestures"); return
+                }
+                ++step; return
+            }
+            if (phase === 8) {   // P8: drill-in + the round-trip keeps the heights (both pools measure the same, at the 760 cap)
+                if (step === 0) { viewPrefs.capMeasure = true; canvas.focusPage = livePage; ++step; return }
                 if (step === 2) {
                     check(!root.activeCanvas && flick.visible && blockModel.pageId() === livePage && root.undoTarget === blockModel, "drill-in: the page view shows the focused page; ⌘Z targets its log")
-                    check(blockModel.contentWidth() === root.pageWidth, "the page view lays the page out at the VIEW's width (" + blockModel.contentWidth() + " vs " + root.pageWidth + ")")
+                    root.commitPageWidth(0)
+                    check(blockModel.contentWidth() === root.pageWidth && root.pageWidth === 760, "the page view lays the page out at the VIEW's width — capped to 760 here, the cards' measure (" + blockModel.contentWidth() + " vs " + root.pageWidth + ")")
                     root.ensureVisible(0); ++step; return
                 }
                 if (step < 25) { ++step; return }
@@ -4223,6 +4349,11 @@ FocusScope {
                 Qt.exit(Math.min(fails, 100))
             }
         }
+    }
+    Connections {   // canvas probe diagnostics: who clears the focus page during the double-click step
+        target: canvas
+        enabled: canvasProbe.armed
+        function onFocusChanged() { if (canvasProbe.probeFocusTrace) { console.log("CANVAS-PROBE focus →", "'" + canvas.focusPage + "'"); console.trace() } }
     }
     FrameAnimation {   // frame times while the type probe runs (µs), into the same stats
         running: typeProbe.running

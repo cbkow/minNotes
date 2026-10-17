@@ -24,6 +24,7 @@
 #include "core/BlockModel.h"
 #include "core/DocumentManager.h"
 #include "core/CanvasDocument.h"
+#include "CanvasGestures.h"
 #include "core/Exporter.h"
 #include "core/Importer.h"
 #include "core/PackageExporter.h"
@@ -195,6 +196,8 @@ int main(int argc, char *argv[])
     engine.addImageProvider("pdfpage", new PdfPageProvider);          // inline PDF pages
     engine.rootContext()->setContextProperty("docs", &docs);
     engine.rootContext()->setContextProperty("canvasSlots", &canvasSlots);
+    CanvasGestures gestures;   // dev-only: the canvas probe's real pointer / key events
+    engine.rootContext()->setContextProperty("gestures", &gestures);
     // Keep `blockModel` pointed at the active tab's model so the existing ~530
     // QML bindings keep working unchanged; re-point it whenever the active tab
     // changes (activeModel() is never null — it falls back to the empty model).

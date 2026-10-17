@@ -33,6 +33,7 @@ Item {
         if (editingId === "") return
         const id = editingId
         editingId = ""
+        te.focus = false   // the Editor is a focus scope: without this its sub-focus stays on this TextEdit and keys never reach the canvas
         const text = te.text
         if (text.trim() === "") { canvas.removeElement(id); if (view.selectedId === id) view.clearSelection(); view.editor.forceActiveFocus(); return }
         const s = JSON.parse(canvas.elementJson(id) || "{}")
@@ -44,7 +45,7 @@ Item {
         if (Math.abs(w - r.width) > 1 || Math.abs(h - r.height) > 1) canvas.setElementRect(id, Qt.rect(r.x, r.y, w, h), "text:" + id)
         view.editor.forceActiveFocus()
     }
-    function cancel() { editingId = "" ; view.editor.forceActiveFocus() }
+    function cancel() { editingId = ""; te.focus = false; view.editor.forceActiveFocus() }
 
     Rectangle { anchors.fill: parent; color: ed.fill; border.width: 1; border.color: Theme.colors.accent; radius: 0 }
     TextEdit {

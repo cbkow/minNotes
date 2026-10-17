@@ -257,6 +257,10 @@ Item {
     // (The guards live in reportHeight: `active` / `isMedia` are bindings, and inside a change
     // handler they can still read their PRE-change values — see onLogicalRowChanged.)
     onHeightChanged: measureTimer.restart()
+    // 2.0: a width change (a reflow, the canvas card's measure) re-seeds the model with a width-aware
+    // ESTIMATE for every text row; a live delegate whose height did not change would never report
+    // again and the estimate would stand — so a new measure re-reports the (settled) height too.
+    onMeasureChanged: if (active) measureTimer.restart()
     // Re-measure on RECYCLE too, not just on height change: blocks of a
     // type now render at an identical height (the line-height fix), so a
     // delegate recycling between two same-height blocks fires no

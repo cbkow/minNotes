@@ -5,6 +5,8 @@ qt_add_executable(minnotesapp
     main.cpp
     KeyLatencyProbe.h
     KeyLatencyProbe.cpp
+    CanvasGestures.h
+    CanvasGestures.cpp
     MinNotesApplication.h
     MinNotesApplication.cpp
     AppUpdater.h                 # Q_OBJECT — Sparkle "Check for Updates" bridge

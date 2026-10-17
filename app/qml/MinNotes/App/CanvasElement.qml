@@ -40,8 +40,9 @@ Item {
         enabled: el.active && el.view && !el.view.drawing
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
-        onSingleTapped: { el.view.select(el.elementId); el.editor.forceActiveFocus() }
+        onSingleTapped: { ++el.view.taps; el.view.select(el.elementId); el.editor.forceActiveFocus() }
         onDoubleTapped: {
+            ++el.view.doubleTaps
             if (el.kind === "page") canvas.focusPage = el.elementId
             else if (el.kind === "shape") el.view.editText(el.elementId)
         }
@@ -51,7 +52,7 @@ Item {
         acceptedButtons: Qt.LeftButton
         target: null
         property rect start
-        onActiveChanged: if (active) { start = canvas.elementRect(el.elementId); el.view.select(el.elementId) }
+        onActiveChanged: if (active) { start = canvas.elementRect(el.elementId); el.view.select(el.elementId); ++el.view.elementDrags }
         onCentroidChanged: {
             if (!active) return
             const z = el.view.cam.zoom
