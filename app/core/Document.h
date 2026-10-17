@@ -58,15 +58,15 @@ public:
     bool isScoped() const { return !pageScope_.isEmpty(); }
 
     // --- Format versioning (doc_meta, id=1) ---
-    // The .mnd format this build writes — the 1.0 clean break
-    // (PLAN-split-rows-interchange R-I1): doc_meta.format == kFormat marks a
-    // file as this format, and a file without it is REFUSED, never migrated.
-    // v1 = clean-text+spans content (markdown markers are consumed on load),
-    // string span kinds in attrs, portable media descriptors, block_ink +
-    // comment_threads/comment_messages, doc_meta.page_width. Bump on any
-    // incompatible change; a NEWER version still opens with a warning.
-    static constexpr int kSchemaVersion = 1;
-    static constexpr const char* kFormat = "mnd";
+    // The .mnd format this build writes. 2.0 (the canvas root): doc_meta.format == "mnd2" at
+    // schema 2 = the canvas schema (elements / canvas_meta / blocks.page_id) over the 1.0 block
+    // store; the format STRING changed so every shipped 1.0 build refuses a 2.0 file outright
+    // (its gate is `format != "mnd"`). A 1.0 file ("mnd" v1) is adopted read-only by
+    // CanvasDocument and becomes 2.0 on Save As; anything else is refused, never migrated.
+    // Bump kSchemaVersion on any incompatible change; CanvasDocument refuses a NEWER one.
+    static constexpr int kSchemaVersion = 2;
+    static constexpr const char* kFormat = "mnd2";
+    static constexpr const char* kFormatV1 = "mnd";   // the 1.0 marker
     // Upsert the doc_meta row: `created` is written once, then every stamp
     // updates schema_version + app_version + modified. Called on the save
     // paths so a saved file always records what wrote it.

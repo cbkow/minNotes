@@ -18,6 +18,7 @@
 #include "MediaStore.h"
 
 class QNetworkAccessManager;
+class CanvasDocument;
 namespace BlockClipboard { struct Payload; }
 
 // The document model: a QAbstractListModel over the SQLite-canonical store
@@ -83,12 +84,12 @@ public:
     enum SaveState { SaveClean = 0, SaveSaving = 1, SaveFailed = 2, SaveConflict = 3 };
     Q_ENUM(SaveState)
 
-    QString documentPath() const { return docPath_; }
+    QString documentPath() const;
     QString documentName() const;
-    bool untitled() const { return untitled_; }
+    bool untitled() const;
     bool documentOpen() const { return doc_.isOpen(); }
-    bool dirty() const { return dirty_; }
-    int  saveState() const { return saveState_; }
+    bool dirty() const;
+    int  saveState() const;
     // App-local working-copy directory for THIS session. main() points it at a
     // per-session subdir (lockfile-guarded) so concurrent app instances — macOS
     // has no single-instance gate — never delete each other's live working copies.
@@ -108,6 +109,18 @@ public:
     // Clean stamped snapshot of the CURRENT document state to `path` (the
     // packaging source) — the live working copy and identity are untouched.
     bool snapshotTo(const QString& path);
+    // 2.0 stage 2: this model is ONE PAGE of a CanvasDocument (the file). attachPage() points the
+    // store handle at the page's scope on the canvas's shared connection and loads it; the
+    // identity / save API above forwards to the canvas. A model that newDocument()/openDocument()
+    // itself OWNS a canvas and is its first page, so every 1.0 call site keeps working unchanged.
+    void attachPage(CanvasDocument* canvas, const QString& pageId);
+    void detachPage();
+    CanvasDocument* canvas() const { return canvas_; }
+    QString pageId() const { return pageId_; }
+    ~BlockModel() override;
+    // Lexicographic fractional rank strictly between a and b (DESIGN §4).
+    // Empty a = "before all", empty b = "after all". O(shared-prefix length).
+    static QString rankBetween(const QString& a, const QString& b);
     enum Roles {
         TypeRole = Qt::UserRole + 1,
         ContentRole,
@@ -656,7 +669,7 @@ public:
     void localizeRemoteMedia(int loRow, int hiRow) { fetchRemoteMediaIn(loRow, hiRow); }
     // The document's media sidecar (null before a document is loaded) — the
     // importer walker routes embedded/local images through it.
-    MediaStore* mediaStore() const { return mediaStore_.get(); }
+    MediaStore* mediaStore() const;
 
     // --- Semantic format spans (DESIGN §5 endgame): bold/italic/code as a span
     // [s,e) over the block's text, NOT `**` markers in the content. This is how
@@ -1108,7 +1121,6 @@ private:
     QVariantList clearLanes(int record, int laneLo, int laneHi);   // §4.10 cell range: each lane → one empty paragraph
     QVariantList deleteRowRange(int loRow, int loCol, int hiRow, int hiCol);   // §4.10 row range across containers
     QString lastOpenError_;          // why the last open was refused (lastOpenError())
-    bool acceptOpenedFormat();       // the 1.0 format gate on a just-opened working copy
     double contentWidth_ = 760.0;                  // page width the doc is laid out at (view-set)
     QString genBase(int row, const Row& r) const;   // synthesize a row's text (no edit overlay)
     QString textAt(int row) const;                  // edit override else loaded content
@@ -1117,10 +1129,6 @@ private:
     // --- SQLite store (Phase 1a/1b) ---
     void loadFromStore();             // skinny-scan → rows_/ids_/ranks_/content_/fenwick
     void seedSyntheticStore(int n);   // write N synthetic blocks if the DB is empty
-    // Switch the model to `path`: open it, re-home the MediaStore, (seed if empty),
-    // reload, clear undo, and emit documentChanged. `untitled` flags a scratch doc.
-    bool loadDocument(const QString& path, bool untitled);
-    void seedEmptyDoc();              // one empty paragraph (a fresh document)
     void persistContent(int row);     // write content_[row] back to the DB
     // The consume rule's guts: a consumable anchor is an EMPTY Paragraph with
     // no ink (ink pins its block); insertReplacingEmpty runs an infallible
@@ -1130,33 +1138,14 @@ private:
     int insertReplacingEmpty(int afterRow, const std::function<int(int)>& ins);
     static BlockType typeFromString(const QString& s);
     static const char* typeToString(uint8_t t);
-    // Lexicographic fractional rank strictly between a and b (DESIGN §4).
-    // Empty a = "before all", empty b = "after all". O(shared-prefix length).
-    static QString rankBetween(const QString& a, const QString& b);
 
-    Document doc_;
-    QString docPath_;        // canonical original (or the untitled identity path); media anchor + Save-As source
-    QString scratchPath_;    // local working-copy DB the SQLite connection actually runs against
-    // Open .mnpkg: the per-document extraction dir (scratch subdir holding
-    // document.mnd + .minnotes/). Empty for plain .mnd docs. Tracked for
-    // cleanup + the media anchor; the SAVE fork keys off isPackagePath(docPath_)
-    // instead (Save As can re-home a package doc to .mnd while its working
-    // copy stays here).
-    QString pkgDir_;
-    bool untitled_ = true;   // scratch doc with no chosen path yet
-    bool dirty_ = false;     // unsaved edits since open / last save
-    int  saveState_ = SaveClean;
+    Document doc_;           // the PAGE-scoped handle on the canvas's connection (closed when detached)
+    CanvasDocument* canvas_ = nullptr;            // the file this page belongs to (never owning)
+    std::unique_ptr<CanvasDocument> ownCanvas_;   // set when THIS model opened the file (the forwarder path)
+    QString pageId_;
+    std::vector<QMetaObject::Connection> canvasConns_;   // canvas → page signal forwarding
     int commentsRevision_ = 0;
-    qint64 origMtime_ = -1;  // original file mtime/size recorded at load + each save (conflict baseline)
-    qint64 origSize_  = -1;
-
-    static QString newScratchPath();   // a fresh working-copy path under scratchDir()
-    void cleanupScratch();             // close-time delete of this doc's working-copy files
-    void recordOriginalStat();         // snapshot the original's mtime/size as the conflict baseline
-    bool externalChangeDetected() const;
-    bool writeBackToOriginal();        // checkpoint → VACUUM INTO temp → atomic replace over the original
-    void markDirty();                  // set dirty_ + notify (idempotent)
-    void setSaveState(int s);
+    void markDirty();                  // → the canvas (idempotent)
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
     std::vector<QString> ranks_;     // fractional rank per row, parallel to rows_
@@ -1315,7 +1304,6 @@ private:
     int layoutRevision_ = 0;
     int contentRevision_ = 0;
 
-    std::unique_ptr<MediaStore> mediaStore_;
     // Remote <img> from pasted HTML: download in the background (block displays
     // the remote URL meanwhile) and swap the descriptor to the sidecar copy.
     QNetworkAccessManager* net_ = nullptr;

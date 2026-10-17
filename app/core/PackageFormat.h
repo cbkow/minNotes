@@ -30,7 +30,7 @@ namespace mnpkg {
 // 2 = the 1.0 generation (document.mnd). The package-open gate accepts exactly
 // this version: an earlier package, or one without a manifest, is refused
 // (the clean break, PLAN-split-rows-interchange R-I6 6b).
-inline constexpr int kFormatVersion = 2;
+inline constexpr int kFormatVersion = 3;
 
 // Package entry names (layout contract, format v2).
 inline constexpr const char* kDbEntry       = "document.mnd";

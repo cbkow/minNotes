@@ -33,6 +33,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/spell/SpellDictionaryFiles.cpp
     ${CMAKE_SOURCE_DIR}/app/spell/SpellService.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Document.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/CanvasDocument.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
     # PathMap.cpp defines mn::toRef / mn::resolveRef, referenced by BlockModel

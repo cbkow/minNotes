@@ -1,4 +1,5 @@
 #include "BlockModel.h"
+#include "CanvasDocument.h"
 #include "CanvasLayout.h"
 #include "Importer.h"
 #include "AssetTransfer.h"
@@ -47,7 +48,7 @@
 #include <QFontMetricsF>
 #include <cmath>
 #include <cstdio>
-#include "PackageFormat.h"   // mnpkg::atomicReplace — the save write-back primitive
+#include "PackageFormat.h"   // mnpkg:: package paths + manifest
 
 namespace {
 // Deterministic per-row hash (no RNG: must be stable across rebuilds and frames).
@@ -90,7 +91,6 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
     // No document at launch — the app opens to the welcome / no-doc state; the
     // File menu (or a recent) opens or creates one. (The model stays empty and
     // every mutation is doc-guarded until a document is loaded.)
-    untitled_ = false;
 
     // The QML `count` property reads rowCountQml; its NOTIFY is countChanged.
     // Wire countChanged to every structural change so bindings like poolSize
@@ -109,222 +109,97 @@ BlockModel::BlockModel(QObject* parent) : QAbstractListModel(parent) {
 }
 
 // --- Document lifecycle ----------------------------------------------------
+// 2.0 stage 2: the FILE is a CanvasDocument; this model is one PAGE of it. The file half that
+// lived here (working copy, package extraction, save paths, MediaStore) moved to CanvasDocument;
+// what remains forwards, so QML, tests and importers call the same names.
 
-QString BlockModel::documentName() const {
-    if (!documentOpen()) return QString();
-    // Package views are untitled (snapshot semantics) but keep the package's
-    // name — the tab should say what you're looking at.
-    if (untitled_ && pkgDir_.isEmpty()) return QStringLiteral("Untitled");
-    return QFileInfo(docPath_).completeBaseName();   // basename without .mnd/.mnpkg
+BlockModel::~BlockModel() {
+    for (QMetaObject::Connection& c : canvasConns_) disconnect(c);
+    canvasConns_.clear();
+    if (canvas_) canvas_->forgetPageModel(this);
+    canvas_ = nullptr;
+    doc_.close();
+    ownCanvas_.reset();          // closes the file if this model opened it
 }
 
-void BlockModel::closeDocument() {
+QString BlockModel::documentPath() const { return canvas_ ? canvas_->documentPath() : QString(); }
+QString BlockModel::documentName() const { return canvas_ ? canvas_->documentName() : QString(); }
+bool BlockModel::untitled() const { return canvas_ ? canvas_->untitled() : false; }
+bool BlockModel::dirty() const { return canvas_ ? canvas_->dirty() : false; }
+int BlockModel::saveState() const { return canvas_ ? canvas_->saveState() : SaveClean; }
+MediaStore* BlockModel::mediaStore() const { return canvas_ ? canvas_->mediaStore() : nullptr; }
+QString BlockModel::mediaAnchorDir() const { return canvas_ ? canvas_->mediaAnchorDir() : QString(); }
+QString BlockModel::scratchDir() { return CanvasDocument::scratchDir(); }
+void BlockModel::setScratchRoot(const QString& dir) { CanvasDocument::setScratchRoot(dir); }
+void BlockModel::markDirty() { if (canvas_) canvas_->markDirty(); }
+
+void BlockModel::attachPage(CanvasDocument* canvas, const QString& pageId) {
+    detachPage();
+    if (!canvas || pageId.isEmpty()) return;
+    canvas_ = canvas;
+    pageId_ = pageId;
+    doc_ = canvas->db().scoped(pageId);
+    canvas->adoptPageModel(this, pageId);
+    canvasConns_.push_back(connect(canvas, &CanvasDocument::documentChanged, this, &BlockModel::documentChanged));
+    canvasConns_.push_back(connect(canvas, &CanvasDocument::dirtyChanged, this, &BlockModel::dirtyChanged));
+    canvasConns_.push_back(connect(canvas, &CanvasDocument::saveStateChanged, this, &BlockModel::saveStateChanged));
+    loadFromStore();
+    emit documentChanged();
+    emit dirtyChanged();
+}
+
+void BlockModel::detachPage() {
+    for (QMetaObject::Connection& c : canvasConns_) disconnect(c);
+    canvasConns_.clear();
+    if (canvas_) canvas_->forgetPageModel(this);
+    canvas_ = nullptr;
+    pageId_.clear();
+    const bool had = doc_.isOpen() || !rows_.empty();
     doc_.close();
-    cleanupScratch();            // working copy is ephemeral — discard it on close
-    mediaStore_.reset();
-    docPath_.clear();
-    untitled_ = false;
-    dirty_ = false;
-    setSaveState(SaveClean);
+    if (!had) return;
     beginResetModel();
     rows_.clear(); ids_.clear(); ranks_.clear(); content_.clear();
     reindex(std::vector<double>{});
     endResetModel();
     clearUndo();
+}
+
+void BlockModel::closeDocument() {
+    detachPage();
+    if (ownCanvas_) {
+        ownCanvas_->closeCanvas();   // working copy is ephemeral — discarded on close
+        ownCanvas_.reset();
+    }
     emit documentChanged();
     emit dirtyChanged();
 }
 
-// Recursively copy <src>/.minnotes → <dst>/.minnotes (pasted media). Referenced
-// files live at absolute paths and need no copy. No-op if src == dst.
-static void copyDirRecursive(const QString& src, const QString& dst) {
-    QDir sd(src);
-    if (!sd.exists()) return;
-    QDir().mkpath(dst);
-    for (const QFileInfo& fi : sd.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot)) {
-        const QString d = dst + QLatin1Char('/') + fi.fileName();
-        if (fi.isDir()) copyDirRecursive(fi.absoluteFilePath(), d);
-        else { QFile::remove(d); QFile::copy(fi.absoluteFilePath(), d); }
-    }
-}
-static void copyMediaSidecar(const QString& srcDocDir, const QString& dstDocDir) {
-    if (srcDocDir == dstDocDir) return;
-    copyDirRecursive(srcDocDir + QStringLiteral("/.minnotes"),
-                     dstDocDir + QStringLiteral("/.minnotes"));
-}
-
-// Replace `dst` with `src` atomically (same directory → same filesystem), so an
-// interrupted save never leaves a half-written original. Definition lives in
-// PackageFormat (shared with package repack).
-static bool atomicReplace(const QString& src, const QString& dst) {
-    return mnpkg::atomicReplace(src, dst);
-}
-
-static QString g_scratchRoot;   // set once by main() to this session's subdir
-
-void BlockModel::setScratchRoot(const QString& dir) { g_scratchRoot = dir; }
-
-QString BlockModel::scratchDir() {
-    if (!g_scratchRoot.isEmpty()) return g_scratchRoot;
-    // Fallback (e.g. unit tests that construct BlockModel without main()).
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-         + QStringLiteral("/scratch");
-}
-
-QString BlockModel::newScratchPath() {
-    const QString dir = scratchDir();
-    QDir().mkpath(dir);
-    return dir + QStringLiteral("/work-") + makeUlid() + QStringLiteral(".mnd");
-}
-
-void BlockModel::cleanupScratch() {
-    if (!pkgDir_.isEmpty()) {          // package extraction dir (db + media)
-        QDir(pkgDir_).removeRecursively();
-        pkgDir_.clear();
-    }
-    if (scratchPath_.isEmpty()) return;
-    QFile::remove(scratchPath_);
-    QFile::remove(scratchPath_ + QStringLiteral("-wal"));
-    QFile::remove(scratchPath_ + QStringLiteral("-shm"));
-    scratchPath_.clear();
-}
-
-QString BlockModel::mediaAnchorDir() const {
-    return pkgDir_.isEmpty() ? QFileInfo(docPath_).absolutePath() : pkgDir_;
-}
-
-void BlockModel::recordOriginalStat() {
-    QFileInfo fi(docPath_);
-    if (!untitled_ && fi.exists()) {
-        origMtime_ = fi.lastModified().toMSecsSinceEpoch();
-        origSize_  = fi.size();
-    } else { origMtime_ = -1; origSize_ = -1; }
-}
-
-bool BlockModel::externalChangeDetected() const {
-    if (untitled_ || origMtime_ < 0) return false;   // no baseline → nothing to conflict with
-    QFileInfo fi(docPath_);
-    if (!fi.exists()) return false;                  // original gone → recreate, nothing to clobber
-    return fi.lastModified().toMSecsSinceEpoch() != origMtime_ || fi.size() != origSize_;
-}
-
-void BlockModel::markDirty() {
-    if (dirty_) return;
-    dirty_ = true;
-    emit dirtyChanged();
-}
-
-void BlockModel::setSaveState(int s) {
-    if (saveState_ == s) return;
-    saveState_ = s;
-    emit saveStateChanged();
-}
-
-bool BlockModel::loadDocument(const QString& path, bool untitled) {
-    // We never run SQLite on the document's real location (network filesystems
-    // can't back WAL/-shm or honour locking — see the plan). Stage a LOCAL working
-    // copy and open THAT; the original is only ever read (byte copy) and written
-    // (atomic replace on save). `path` stays the identity + media anchor.
-    doc_.close();
-    cleanupScratch();
+void BlockModel::newDocument() {
+    closeDocument();
     lastOpenError_.clear();
+    auto c = std::make_unique<CanvasDocument>();
+    if (!c->newCanvas()) return;
+    ownCanvas_ = std::move(c);
+    attachPage(ownCanvas_.get(), ownCanvas_->firstPageId());
+}
 
-    // .mnpkg fork: packages are SEALED SNAPSHOTS (user ruling 2026-08-18 —
-    // .mnd is the ONE editable format; a package is produced by Export and
-    // received for viewing). Opening one is a LAZY read: only document.mnd
-    // extracts up front (instant regardless of package size); media stays in
-    // the archive until something touches it (MediaStore::resolvePath pulls
-    // `media/<x>` → `.minnotes/<x>` on first access; videos bring their
-    // .qcview sidecar). The doc opens with UNTITLED semantics — you can read,
-    // play, even type, but nothing persists until Save As materializes a
-    // real .mnd; the package file itself is NEVER written. docPath_ stays
-    // the .mnpkg for tab dedupe, recents, and documentName.
-    if (!untitled && mnpkg::isPackagePath(path)) {
-        if (!QFileInfo::exists(path)) return false;
-        // The 1.0 clean break (R-I6 6b): a package from an earlier minNotes —
-        // or one with no manifest — is refused, not converted.
-        const QJsonObject manifest = mnpkg::readManifest(path);
-        if (manifest.value(QStringLiteral("format")).toString() != QLatin1String("mnpkg")
-            || manifest.value(QStringLiteral("formatVersion")).toInt() != mnpkg::kFormatVersion) {
-            lastOpenError_ = tr("This package was made with an earlier minNotes and can't be opened.");
-            return false;
-        }
-        pkgDir_ = scratchDir() + QStringLiteral("/pkg-") + makeUlid();
-        scratchPath_ = pkgDir_ + QStringLiteral("/document.mnd");
-        if (!mnpkg::extractEntry(path, QLatin1String(mnpkg::kDbEntry), scratchPath_)) {
-            qWarning() << "BlockModel: package has no readable document.mnd" << path;
-            cleanupScratch();
-            return false;
-        }
-        QFile::setPermissions(scratchPath_, QFile::ReadOwner | QFile::WriteOwner
-                                          | QFile::ReadUser  | QFile::WriteUser);
-        if (!doc_.open(scratchPath_)) {
-            qWarning() << "BlockModel: cannot open package working copy" << scratchPath_;
-            cleanupScratch();
-            return false;
-        }
-        if (!acceptOpenedFormat()) return false;
-        docPath_ = path;
-        untitled_ = true;   // snapshot: save() routes to Save As, no conflict baseline
-        mediaStore_ = std::make_unique<MediaStore>(scratchPath_);  // anchored to the extraction
-        mediaStore_->setPackageSource(path);                       // lazy media source
-        // QCView sidecars extract EAGERLY (notes.json + thumbs — small):
-        // note models and file watchers anchor to real files immediately,
-        // while the videos themselves STREAM from the archive and never
-        // extract for playback.
-        mnpkg::extractMatching(path, QStringLiteral("media/.qcview/"),
-                               QStringLiteral("media/"),
-                               pkgDir_ + QStringLiteral("/.minnotes"));
-        // A background extraction landing bumps contentRevision (queued to
-        // the GUI thread) so display bindings re-resolve and reveal.
-        {
-            QPointer<BlockModel> self(this);
-            mediaStore_->setLazyNotify([self] {
-                if (self)
-                    QMetaObject::invokeMethod(self, [self] {
-                        if (self) self->refreshMedia();
-                    }, Qt::QueuedConnection);
-            });
-        }
-        recordOriginalStat();
-        dirty_ = false;
-        setSaveState(SaveClean);
-        clearUndo();
-        return true;
-    }
-
-    scratchPath_ = newScratchPath();
-    if (!untitled && QFileInfo::exists(path)) {
-        QFile::remove(scratchPath_);
-        if (!QFile::copy(path, scratchPath_)) {
-            qWarning() << "BlockModel: cannot stage working copy of" << path;
-            scratchPath_.clear();
-            return false;
-        }
-        // The source may be read-only (read-only share); the working copy must be
-        // writable for WAL.
-        QFile::setPermissions(scratchPath_, QFile::ReadOwner | QFile::WriteOwner
-                                          | QFile::ReadUser  | QFile::WriteUser);
-        // Carry a sibling -wal so uncommitted data from an unclean prior writer is
-        // recovered into the working copy (normally absent — saves are checkpointed).
-        if (QFileInfo::exists(path + QStringLiteral("-wal")))
-            QFile::copy(path + QStringLiteral("-wal"), scratchPath_ + QStringLiteral("-wal"));
-    }
-    if (!doc_.open(scratchPath_)) {
-        qWarning() << "BlockModel: cannot open working copy" << scratchPath_;
-        cleanupScratch();
+bool BlockModel::openDocument(const QString& pathOrUrl) {
+    closeDocument();
+    lastOpenError_.clear();
+    auto c = std::make_unique<CanvasDocument>();
+    if (!c->open(pathOrUrl)) {
+        lastOpenError_ = c->lastOpenError();
         return false;
     }
-    if (!untitled && QFileInfo::exists(path) && !acceptOpenedFormat()) return false;
-    docPath_ = path;
-    untitled_ = untitled;
-    mediaStore_ = std::make_unique<MediaStore>(path);   // media anchored to the ORIGINAL folder
-    recordOriginalStat();
-    dirty_ = false;
-    setSaveState(SaveClean);
-    clearUndo();
+    ownCanvas_ = std::move(c);
+    attachPage(ownCanvas_.get(), ownCanvas_->focusedPageId());
     return true;
 }
+
+bool BlockModel::save()          { return canvas_ && canvas_->save(); }
+bool BlockModel::overwriteSave() { return canvas_ && canvas_->overwriteSave(); }
+bool BlockModel::saveAs(const QString& pathOrUrl) { return canvas_ && canvas_->saveAs(pathOrUrl); }
+bool BlockModel::snapshotTo(const QString& path)  { return canvas_ && canvas_->snapshotTo(path); }
 
 // === The layout index (SR-3) ================================================
 
@@ -2560,160 +2435,6 @@ int BlockModel::splitIntoColumns(int row, int side, qreal ratio) {
     return freshRow;
 }
 
-// The 1.0 clean break (PLAN-split-rows-interchange R-I1): only files stamped
-// with this build's format open. Anything else is refused with a reason —
-// never migrated. The working copy is discarded; the original is untouched.
-bool BlockModel::acceptOpenedFormat() {
-    if (doc_.format() == QLatin1String(Document::kFormat)) return true;
-    lastOpenError_ = doc_.schemaVersion() > 0
-        ? tr("This document was made with an earlier minNotes and can't be opened.")
-        : tr("This file isn't a minNotes document.");
-    doc_.close();
-    cleanupScratch();
-    return false;
-}
-
-void BlockModel::seedEmptyDoc() {
-    doc_.begin();
-    // content is NOT NULL — bind a non-null empty string (a null QString would
-    // violate the constraint and silently drop the block, leaving an empty doc).
-    doc_.appendBlock(makeUlid(), rankBetween(QString(), QString()), 0,
-                     QStringLiteral("paragraph"), QString(), QStringLiteral(""));
-    doc_.commit();
-}
-
-void BlockModel::newDocument() {
-    // Identity path for the untitled doc — the media anchor + Save-As source dir.
-    // The bytes live in the working copy (scratchPath_), not at this path.
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(dir);
-    const QString path = dir + QStringLiteral("/untitled-") + makeUlid() + QStringLiteral(".mnd");
-    if (!loadDocument(path, /*untitled*/true)) return;
-    seedEmptyDoc();
-    loadFromStore();
-    dirty_ = false;                  // a pristine empty doc isn't dirty (still untitled)
-    setSaveState(SaveClean);
-    emit documentChanged();
-    emit dirtyChanged();
-}
-
-bool BlockModel::openDocument(const QString& pathOrUrl) {
-    const QString path = pathOrUrl.startsWith(QLatin1String("file:"))
-                       ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
-    if (path.isEmpty() || !loadDocument(path, /*untitled*/false)) return false;
-    loadFromStore();
-    emit documentChanged();
-    return true;
-}
-
-// Write the working copy back to the original. checkpoint → VACUUM INTO a sibling
-// temp (a clean, compacted, rollback-stamped image — also normalises away any WAL
-// stamp) → atomic replace over the original. The working copy keeps the live data
-// if any step fails, so nothing is lost.
-bool BlockModel::writeBackToOriginal() {
-    setSaveState(SaveSaving);
-    doc_.stampMeta();     // saved files record schema_version/app_version/modified
-    doc_.checkpoint();
-    const QString dir = QFileInfo(docPath_).absolutePath();
-    QDir().mkpath(dir);
-    const QString tmp = dir + QStringLiteral("/.mn-save-") + makeUlid() + QStringLiteral(".tmp");
-    QFile::remove(tmp);
-    if (!doc_.vacuumInto(tmp)) {
-        qWarning() << "BlockModel: save VACUUM INTO failed" << tmp;
-        QFile::remove(tmp);
-        setSaveState(SaveFailed);
-        return false;
-    }
-    // A legacy WAL-stamped original could have an orphaned -wal/-shm that would
-    // shadow our fresh rollback file on the next open — drop them.
-    QFile::remove(docPath_ + QStringLiteral("-wal"));
-    QFile::remove(docPath_ + QStringLiteral("-shm"));
-    if (!atomicReplace(tmp, docPath_)) {
-        qWarning() << "BlockModel: save atomic replace failed" << docPath_;
-        QFile::remove(tmp);
-        setSaveState(SaveFailed);
-        return false;
-    }
-    recordOriginalStat();
-    dirty_ = false;
-    emit dirtyChanged();
-    setSaveState(SaveClean);
-    return true;
-}
-
-bool BlockModel::save() {
-    if (untitled_) return false;                       // no chosen path → caller invokes Save As
-    if (externalChangeDetected()) {                    // changed on disk since we opened it
-        setSaveState(SaveConflict);
-        return false;                                  // caller resolves (Overwrite / Save As copy)
-    }
-    return writeBackToOriginal();
-}
-
-bool BlockModel::overwriteSave() {
-    if (untitled_) return false;
-    return writeBackToOriginal();                      // bypass the conflict check ("Overwrite")
-}
-
-bool BlockModel::saveAs(const QString& pathOrUrl) {
-    QString path = pathOrUrl.startsWith(QLatin1String("file:"))
-                 ? QUrl(pathOrUrl).toLocalFile() : pathOrUrl;
-    if (path.isEmpty()) return false;
-    if (!path.endsWith(QLatin1String(".mnd"), Qt::CaseInsensitive)) path += QStringLiteral(".mnd");
-    const QString srcMediaDir = mediaAnchorDir();   // package docs: the extraction dir
-    const QString dstDir = QFileInfo(path).absolutePath();
-    QDir().mkpath(dstDir);
-    setSaveState(SaveSaving);
-    // Flush the WAL, then write a clean copy to the chosen location (temp + atomic
-    // replace, matching the in-place save path).
-    doc_.stampMeta();     // saved files record schema_version/app_version/modified
-    doc_.checkpoint();
-    const QString tmp = dstDir + QStringLiteral("/.mn-save-") + makeUlid() + QStringLiteral(".tmp");
-    QFile::remove(tmp);
-    if (!doc_.vacuumInto(tmp)) {
-        qWarning() << "BlockModel: Save As VACUUM INTO failed" << tmp;
-        QFile::remove(tmp);
-        setSaveState(SaveFailed);
-        return false;
-    }
-    QFile::remove(path + QStringLiteral("-wal"));
-    QFile::remove(path + QStringLiteral("-shm"));
-    if (!atomicReplace(tmp, path)) {
-        QFile::remove(tmp);
-        setSaveState(SaveFailed);
-        return false;
-    }
-    // Critical: bring the pasted-media sidecar along to the new location.
-    // A lazily-opened package first materializes everything still in the
-    // archive (skip-if-exists: files already extracted — possibly edited
-    // sidecar notes — win), or the folder copy would silently drop media
-    // nothing had touched yet.
-    if (mnpkg::isPackagePath(docPath_) && QFileInfo::exists(docPath_))
-        mnpkg::extractMatching(docPath_, QStringLiteral("media/"),
-                               QStringLiteral("media/"),
-                               pkgDir_ + QStringLiteral("/.minnotes"));
-    copyMediaSidecar(srcMediaDir, dstDir);
-    // Re-home identity + media anchor to the new file; keep editing the SAME
-    // working copy (no reload — it already holds the content).
-    docPath_ = path;
-    untitled_ = false;
-    mediaStore_ = std::make_unique<MediaStore>(path);
-    recordOriginalStat();
-    dirty_ = false;
-    setSaveState(SaveClean);
-    emit documentChanged();
-    emit dirtyChanged();
-    return true;
-}
-
-bool BlockModel::snapshotTo(const QString& path) {
-    if (!doc_.isOpen()) return false;
-    doc_.stampMeta();
-    doc_.checkpoint();
-    QFile::remove(path);
-    return doc_.vacuumInto(path);
-}
-
 BlockModel::BlockType BlockModel::typeFromString(const QString& s) {
     if (s == QLatin1String("heading"))   return Heading;
     if (s == QLatin1String("code"))      return Code;
@@ -4748,29 +4469,29 @@ static uint16_t aspectParam(const MediaStore::ImageRef& ref) {
 }
 
 int BlockModel::insertImageFromUrl(int afterRow, const QString& fileUrl, bool forceCopy) {
-    if (!mediaStore_) return -1;
-    const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, forceCopy);
+    if (!mediaStore()) return -1;
+    const MediaStore::ImageRef ref = mediaStore()->importFile(fileUrl, forceCopy);
     if (!ref.ok()) return -1;
     return insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
 }
 
 int BlockModel::insertImageFromClipboard(int afterRow) {
-    if (!mediaStore_) return -1;
-    const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
+    if (!mediaStore()) return -1;
+    const MediaStore::ImageRef ref = mediaStore()->importClipboardImage();
     if (!ref.ok()) return -1;
     return insertMedia(afterRow, mediaJson(ref), aspectParam(ref));
 }
 
 int BlockModel::insertVideoFromUrl(int afterRow, const QString& fileUrl) {
-    if (!mediaStore_) return -1;
-    const MediaStore::VideoRef ref = mediaStore_->importVideoFile(fileUrl);
+    if (!mediaStore()) return -1;
+    const MediaStore::VideoRef ref = mediaStore()->importVideoFile(fileUrl);
     if (!ref.ok()) return -1;
     return insertMedia(afterRow, videoMediaJson(ref), aspectParam(ref.w, ref.h));
 }
 
 int BlockModel::insertPdfFromUrl(int afterRow, const QString& fileUrl) {
-    if (!mediaStore_) return -1;
-    const MediaStore::PdfRef ref = mediaStore_->importPdfFile(fileUrl);
+    if (!mediaStore()) return -1;
+    const MediaStore::PdfRef ref = mediaStore()->importPdfFile(fileUrl);
     if (!ref.ok()) return -1;
     return insertMedia(afterRow, pdfMediaJson(ref), aspectParam(ref.w, ref.h));
 }
@@ -4807,13 +4528,13 @@ int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl, bool fo
 }
 
 int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
-    if (rows_.empty() || !mediaStore_ || absToRel.isEmpty()) return 0;
+    if (rows_.empty() || !mediaStore() || absToRel.isEmpty()) return 0;
     // Match by RESOLVED local path so absolute strings and {vol,rel} refs
     // both hit; relative .minnotes srcs resolve inside the doc and miss the
     // map. (Blocking resolveUrl is fine: collect refuses package views, so
     // nothing here can trigger an extraction.)
     auto relFor = [&](const QJsonValue& src) -> QString {
-        const QString url = mediaStore_->resolveUrl(src);
+        const QString url = mediaStore()->resolveUrl(src);
         if (url.isEmpty() || !url.startsWith(QLatin1String("file:"))) return {};
         const auto it = absToRel.constFind(QDir::cleanPath(QUrl(url).toLocalFile()));
         return it == absToRel.constEnd() ? QString() : it.value();
@@ -4869,11 +4590,11 @@ int BlockModel::rewriteMediaSrcs(const QHash<QString, QString>& absToRel) {
 // while a background pull runs; completion bumps contentRevision so bound
 // delegates re-resolve (their loading windows cover the wait).
 QString BlockModel::mediaUrl(int row) const {
-    if (rows_.empty() || !mediaStore_) return {};   // no doc / empty model → no media
+    if (rows_.empty() || !mediaStore()) return {};   // no doc / empty model → no media
     row = clampRow(row);
     if (rows_[row].type != Media) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    return mediaStore_->resolveUrlAsync(o.value(QStringLiteral("src")));
+    return mediaStore()->resolveUrlAsync(o.value(QStringLiteral("src")));
 }
 // Display local path (poster/PDF image providers) — same non-blocking rules.
 QString BlockModel::mediaViewPath(int row) const {
@@ -4883,34 +4604,34 @@ QString BlockModel::mediaViewPath(int row) const {
 // True while row's packaged media is mid-extraction ("loading…", not
 // "unavailable"). Bound with a contentRevision dep so it re-polls.
 bool BlockModel::mediaExtracting(int row) const {
-    if (rows_.empty() || !mediaStore_) return false;
+    if (rows_.empty() || !mediaStore()) return false;
     row = clampRow(row);
     if (rows_[row].type != Media) return false;
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    return mediaStore_->extractionPending(o.value(QStringLiteral("src")).toString());
+    return mediaStore()->extractionPending(o.value(QStringLiteral("src")).toString());
 }
 QString BlockModel::mediaPlaybackSource(int row) const {
-    if (rows_.empty() || !mediaStore_) return {};
+    if (rows_.empty() || !mediaStore()) return {};
     row = clampRow(row);
     if (rows_[row].type != Media) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    return mediaStore_->playbackSourceFor(o.value(QStringLiteral("src")));
+    return mediaStore()->playbackSourceFor(o.value(QStringLiteral("src")));
 }
 QString BlockModel::mediaAnchorPath(int row) const {
-    if (rows_.empty() || !mediaStore_) return {};
+    if (rows_.empty() || !mediaStore()) return {};
     row = clampRow(row);
     if (rows_[row].type != Media) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    return mediaStore_->anchorPathFor(o.value(QStringLiteral("src")));
+    return mediaStore()->anchorPathFor(o.value(QStringLiteral("src")));
 }
 // File-op local path — BLOCKING: reveal/export get a real file (packaged
 // media extracts inline; the explicit-action cost).
 QString BlockModel::mediaLocalPath(int row) const {
-    if (rows_.empty() || !mediaStore_) return {};
+    if (rows_.empty() || !mediaStore()) return {};
     row = clampRow(row);
     if (rows_[row].type != Media) return {};
     const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
-    const QString url = mediaStore_->resolveUrl(o.value(QStringLiteral("src")));
+    const QString url = mediaStore()->resolveUrl(o.value(QStringLiteral("src")));
     return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
 }
 void BlockModel::refreshMedia() {
@@ -4931,21 +4652,21 @@ void BlockModel::revealMedia(int row) const {
 #endif
 }
 void BlockModel::revealMediaFolder() const {
-    if (!mediaStore_) return;
+    if (!mediaStore()) return;
     // Package views: the store anchors to the extraction scratch — show the
     // .mnpkg itself instead. No .minnotes yet (nothing pasted/collected) →
     // select the document, so the user still lands in the right folder.
-    QString dir = QDir::cleanPath(mediaStore_->docDir()) + QStringLiteral("/.minnotes");
-    const bool pkg = !mediaStore_->packageSource().isEmpty();
+    QString dir = QDir::cleanPath(mediaStore()->docDir()) + QStringLiteral("/.minnotes");
+    const bool pkg = !mediaStore()->packageSource().isEmpty();
     if (pkg || !QFileInfo::exists(dir)) {
-        if (!QFileInfo::exists(docPath_)) return;
+        if (!QFileInfo::exists(documentPath())) return;
 #if defined(Q_OS_MACOS)
-        QProcess::startDetached(QStringLiteral("open"), { QStringLiteral("-R"), docPath_ });
+        QProcess::startDetached(QStringLiteral("open"), { QStringLiteral("-R"), documentPath() });
 #elif defined(Q_OS_WIN)
         QProcess::startDetached(QStringLiteral("explorer"),
-                                { QStringLiteral("/select,") + QDir::toNativeSeparators(docPath_) });
+                                { QStringLiteral("/select,") + QDir::toNativeSeparators(documentPath()) });
 #else
-        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(docPath_).absolutePath()));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(documentPath()).absolutePath()));
 #endif
         return;
     }
@@ -6469,7 +6190,7 @@ QVariantList BlockModel::pasteHtml(int row, int col, const QString& htmlIn) {
     // The frame-tree walker lives in Importer (shared with the file importers);
     // paste has no source directory, so relative image srcs don't resolve here.
     std::vector<BlockSpec> specs =
-        Importer::specsFromTextDocument(doc, mediaStore_.get(), QString(), Importer::htmlHeaderRowsPerTable(html));
+        Importer::specsFromTextDocument(doc, mediaStore(), QString(), Importer::htmlHeaderRowsPerTable(html));
     // A table-only clipboard (Excel, a copied web table) into a table cell (S8d, R-I3): no header
     // detected (Excel writes none) → fill by position from the caret's cell; a <thead> or <th>
     // rows → append by label. The walker leaves the detected count on the first record.
@@ -6739,7 +6460,7 @@ std::pair<int,int> BlockModel::spliceSpecsAt(int gap, const std::vector<BlockSpe
 // (keyed by block id, so it survives reorders). The block displays the remote
 // URL until then. Best-effort: a failed fetch just leaves the remote src.
 void BlockModel::fetchRemoteMediaIn(int loRow, int hiRow) {
-    if (!mediaStore_) return;
+    if (!mediaStore()) return;
     loRow = std::max(0, loRow);
     hiRow = std::min(hiRow, static_cast<int>(rows_.size()) - 1);
     for (int r = loRow; r <= hiRow; ++r) {
@@ -6759,7 +6480,7 @@ void BlockModel::fetchRemoteMediaIn(int loRow, int hiRow) {
             if (reply->error() != QNetworkReply::NoError) return;   // leave remote src
             QImage img;
             if (!img.loadFromData(reply->readAll()) || img.isNull()) return;
-            const MediaStore::ImageRef ref = mediaStore_->importImage(img);
+            const MediaStore::ImageRef ref = mediaStore()->importImage(img);
             if (ref.ok()) updateMediaDescriptor(id, QString::fromUtf8(
                 QJsonDocument(QJsonObject{{QStringLiteral("src"), ref.src},
                                           {QStringLiteral("w"), ref.w},
@@ -7167,9 +6888,9 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
     loRow = band.lo; loCol = band.loCol; hiRow = band.hi; hiCol = band.hiCol;
 
     BlockClipboard::Payload p;
-    p.docPath = docPath_;
+    p.docPath = documentPath();
     p.docDir = mediaAnchorDir();
-    p.package = mediaStore_ ? mediaStore_->packageSource() : QString();
+    p.package = mediaStore() ? mediaStore()->packageSource() : QString();
     p.specs = specsForRange(loRow, loCol, hiRow, hiCol);
     if (p.specs.empty()) return {};
 
@@ -7274,9 +6995,9 @@ QString BlockModel::tableCopyPayload(int head, const QVariantList& rowsIn, const
     const TableInfo* info = tableInfo(head);
     if (!info || rowsIn.isEmpty() || colsIn.isEmpty()) return {};
     BlockClipboard::Payload p;
-    p.docPath = docPath_;
+    p.docPath = documentPath();
     p.docDir = mediaAnchorDir();
-    p.package = mediaStore_ ? mediaStore_->packageSource() : QString();
+    p.package = mediaStore() ? mediaStore()->packageSource() : QString();
     const int hc = headerCount(head);
     const QJsonArray spec = tableColsOf(rows_[size_t(head)].table);
     QJsonArray cols;

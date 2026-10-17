@@ -7,6 +7,7 @@
 // Built only when configured with -DMINNOTES_BUILD_TESTS=ON. Exit code = number
 // of failed checks (0 = all pass).
 #include "BlockModel.h"
+#include "CanvasDocument.h"
 #include "Exporter.h"
 #include "Importer.h"
 #include "TableGrid.h"
@@ -4355,8 +4356,8 @@ static void testFormatGate() {
     }
     {
         Document d;
-        CHECK(d.open(good) && d.format() == QLatin1String(Document::kFormat) && d.schemaVersion() == 1,
-              "a saved file carries the mnd marker at schema v1");
+        CHECK(d.open(good) && d.format() == QLatin1String(Document::kFormat) && d.schemaVersion() == Document::kSchemaVersion,
+              "a saved file carries the %s marker at schema v%d", Document::kFormat, Document::kSchemaVersion);
         d.close();
     }
     {
@@ -4388,6 +4389,41 @@ static void testFormatGate() {
         BlockModel m;
         CHECK(!m.openDocument(foreign) && m.lastOpenError().contains(QStringLiteral("isn't a minNotes document")),
               "a database minNotes didn't write is refused as not a minNotes document");
+    }
+
+    // A 1.0 file ("mnd" v1): adopted on the WORKING COPY as a one-page canvas and opened READ-ONLY
+    // (untitled semantics: Save routes to Save As, which writes a 2.0 file); the original is
+    // never touched. (2.0 stage 2 step 3; the full converter — ink, sketches — is step 4.)
+    {
+        const QString v1 = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
+        const QByteArray v1Bytes = [&] { QFile f(v1); f.open(QIODevice::ReadOnly); return f.readAll(); }();
+        BlockModel m;
+        CHECK(m.openDocument(v1) && m.documentOpen() && m.rowCountQml() > 0 && m.lastOpenError().isEmpty(), "a 1.0 file opens (%d rows)", m.rowCountQml());
+        CHECK(m.canvas() && m.canvas()->readOnly() && m.untitled() && m.documentName() == QLatin1String("v1-sample"),
+              "…read-only: untitled semantics, the file's own name (%s)", qPrintable(m.documentName()));
+        CHECK(!m.save(), "Save is refused (the caller offers Save As)");
+        CHECK(m.canvas()->pageIds().size() == 1 && m.canvas()->db().count() == m.rowCountQml()
+                  && m.canvas()->db().scoped(m.pageId()).count() == m.rowCountQml(),
+              "one page element holds every block (%d)", m.canvas()->db().count());
+        const QString out = dir + QStringLiteral("/converted.mnd");
+        CHECK(m.saveAs(out) && !m.untitled() && !m.canvas()->readOnly() && m.documentName() == QLatin1String("converted"),
+              "Save As writes the 2.0 file and lifts read-only");
+        {
+            Document d;
+            CHECK(d.open(out) && d.format() == QLatin1String(Document::kFormat) && d.schemaVersion() == Document::kSchemaVersion
+                      && d.hasCanvasSchema() && d.elementCount() == 1,
+                  "the saved file is stamped %s v%d with the canvas schema and one page element", Document::kFormat, Document::kSchemaVersion);
+        }
+        QFile f(v1); f.open(QIODevice::ReadOnly);
+        CHECK(f.readAll() == v1Bytes, "the 1.0 original is byte-for-byte untouched");
+    }
+    {   // A file from a NEWER 2.0 is refused with a reason.
+        const QString newer = dir + QStringLiteral("/newer.mnd");
+        QFile::copy(good, newer);
+        execOnFile(newer, QStringLiteral("UPDATE doc_meta SET schema_version = %1").arg(Document::kSchemaVersion + 1));
+        BlockModel m;
+        CHECK(!m.openDocument(newer) && m.lastOpenError().contains(QStringLiteral("newer minNotes")),
+              "a newer 2.0 file is refused (%s)", qPrintable(m.lastOpenError()));
     }
 
     // Packages: exactly this format version opens; earlier or manifest-less ones are refused.
@@ -5502,6 +5538,90 @@ static void testMediaInkMove() {
 
 // [117] The canvas schema (2.0 stage 2): elements + canvas_meta + blocks.page_id, created ONLY by
 // ensureCanvasSchema() — a plain open still writes a 1.0 file (versions not flipped yet).
+// [119] CanvasDocument (2.0 stage 2 step 3): the FILE owns pages; BlockModel is a page model.
+static void testCanvasDocument() {
+    qInfo("[119] CanvasDocument (2.0 stage 2): one file, many pages — page models on one connection, dirty across pages, save/reopen partition, focus, removePage, package round-trip");
+    QTemporaryDir dir;
+    const QString path = dir.path() + QStringLiteral("/canvas.mnd");
+    QString p1, p2;
+    {
+        CanvasDocument c;
+        CHECK(c.newCanvas() && c.documentOpen() && c.untitled() && !c.dirty() && !c.readOnly(), "a new canvas: untitled, clean");
+        CHECK(c.pageIds().size() == 1 && c.focusPage() == c.firstPageId() && !c.focusPage().isEmpty(), "…with ONE page, focused");
+        p1 = c.firstPageId();
+        BlockModel* m1 = c.focusedModel();
+        CHECK(m1 && m1->canvas() == &c && m1->pageId() == p1 && m1->documentOpen() && m1->rowCountQml() == 1 && m1->contentForRow(0).isEmpty(),
+              "the focused model is the page's model: one empty paragraph");
+        CHECK(c.pageModel(p1) == m1 && c.pageModelIfLoaded(p1) == m1, "pageModel() is stable");
+        CHECK(c.documentName() == QLatin1String("Untitled") && m1->documentName() == QLatin1String("Untitled") && m1->untitled() && !m1->dirty(),
+              "identity forwards through the page model");
+        m1->setContent(0, QStringLiteral("page one"));
+        CHECK(c.dirty() && m1->dirty(), "an edit on a page marks the canvas dirty (and the page reads it)");
+        p2 = c.addPage();
+        CHECK(!p2.isEmpty() && c.pageIds() == (QStringList{ p1, p2 }), "addPage appends a second page element");
+        const auto els = c.elements();
+        CHECK(els.size() == 2 && els[1].x >= els[0].x + els[0].w && els[1].w == CanvasDocument::kDefaultMeasure + 2 * CanvasDocument::kPageInset,
+              "the new page sits right of the first at the default measure");
+        BlockModel* m2 = c.pageModel(p2);
+        CHECK(m2 && m2 != m1 && m2->rowCountQml() == 1 && m2->contentForRow(0).isEmpty() && m2->parent() == &c,
+              "the second page has its own model (owned by the canvas) with one empty paragraph");
+        m2->setContent(0, QStringLiteral("page two"));
+        m2->insertBlock(1);
+        m2->setContent(1, QStringLiteral("second block"));
+        CHECK(m1->rowCountQml() == 1 && m1->contentForRow(0) == QLatin1String("page one"), "pages are partitioned: page one did not see page two's rows");
+        CHECK(c.pageTitle(p1) == QLatin1String("page one") && c.pageTitle(p2) == QLatin1String("page two"), "pageTitle is the first text line");
+        CHECK(c.db().count() == 3 && c.db().scoped(p2).count() == 2, "one file holds every page's rows (%d)", c.db().count());
+        c.setFocusPage(p2);
+        CHECK(c.focusPage() == p2 && c.focusedModel() == m2, "focus follows setFocusPage");
+        c.setFocusPage(QStringLiteral("nope"));
+        CHECK(c.focusPage() == p2, "an unknown focus id is ignored");
+        CHECK(c.saveAs(path) && !c.untitled() && !c.dirty() && !m1->dirty() && c.documentName() == QLatin1String("canvas") && m2->documentName() == QLatin1String("canvas"),
+              "Save As names the file; clean everywhere");
+        m2->setContent(1, QStringLiteral("second block edited"));
+        CHECK(c.dirty() && m1->dirty(), "dirty again (from page two, read on page one)");
+        CHECK(c.save() && !c.dirty(), "Save writes back");
+    }
+    {   // Reopen: the partition and the focus page persisted.
+        CanvasDocument c;
+        CHECK(c.open(path) && c.pageIds() == (QStringList{ p1, p2 }) && c.focusPage() == p2 && !c.readOnly(),
+              "reopened: both pages, same ids, the focus page persisted");
+        BlockModel* m1 = c.pageModel(p1);
+        BlockModel* m2 = c.pageModel(p2);
+        CHECK(m1 && m2 && m1->rowCountQml() == 1 && m1->contentForRow(0) == QLatin1String("page one")
+                  && m2->rowCountQml() == 2 && m2->contentForRow(1) == QLatin1String("second block edited"),
+              "each page reloads only its rows");
+        CHECK(!c.pageModel(QStringLiteral("nope")), "pageModel of a non-page id is null");
+        // The forwarder path: a BlockModel opening the file lands on its focus page.
+        {
+            BlockModel solo;
+            CHECK(solo.openDocument(path) && solo.pageId() == p2 && solo.contentForRow(0) == QLatin1String("page two") && solo.canvas() != &c,
+                  "BlockModel::openDocument owns a canvas and attaches to the focus page");
+            solo.closeDocument();
+            CHECK(!solo.documentOpen() && !solo.canvas() && solo.rowCountQml() == 0, "closeDocument detaches and closes the owned canvas");
+        }
+        CHECK(!c.removePage(QStringLiteral("nope")), "removing an unknown page is refused");
+        CHECK(c.removePage(p2) && c.pageIds() == (QStringList{ p1 }) && c.focusPage() == p1 && c.dirty(),
+              "removePage drops the page; focus falls back to the first page; dirty");
+        CHECK(!m2->documentOpen() && m2->rowCountQml() == 0 && !m2->canvas(), "the removed page's model detached");
+        CHECK(c.db().count() == 1 && c.db().elementCount() == 1, "its rows cascaded (%d left)", c.db().count());
+        CHECK(!c.removePage(p1), "the last page cannot be removed");
+        c.closeCanvas();
+        CHECK(!c.documentOpen() && !m1->documentOpen() && c.pageIds().isEmpty(), "closeCanvas detaches every page");
+    }
+    {   // Package round-trip carries EVERY page (the snapshot is the whole file).
+        CanvasDocument c;
+        CHECK(c.open(path) && c.pageIds().size() == 2, "the unsaved removal did not touch the file");
+        BlockModel* m1 = c.pageModel(p1);
+        const QString pkg = dir.path() + QStringLiteral("/canvas.mnpkg");
+        QString err;
+        CHECK(PackageExporter::packDocument(m1, pkg, false, &err), "packDocument from a page model packs the file (%s)", qPrintable(err));
+        BlockModel v;
+        CHECK(v.openDocument(pkg) && v.canvas() && v.canvas()->pageIds() == (QStringList{ p1, p2 }) && v.untitled()
+                  && v.documentName() == QLatin1String("canvas") && v.pageId() == p2 && v.contentForRow(1) == QLatin1String("second block edited"),
+              "the package reopens with both pages, untitled, named, on the focus page");
+    }
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8012,6 +8132,7 @@ int main(int argc, char** argv) {
     testReflowEstimate();
     testElements();
     testPageScoping();
+    testCanvasDocument();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
