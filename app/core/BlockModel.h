@@ -72,6 +72,8 @@ class BlockModel : public QAbstractListModel {
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
     Q_PROPERTY(bool untitled READ untitled NOTIFY documentChanged)
     Q_PROPERTY(bool documentOpen READ documentOpen NOTIFY documentChanged)
+    // A converted 1.0 file (2.0 stage 2): untitled semantics, Save routes to Save As.
+    Q_PROPERTY(bool readOnly READ readOnly NOTIFY documentChanged)
     // Unsaved-edits flag (drives the tab dot + close/quit guards) and the explicit
     // save lifecycle (drives the title-bar status + conflict/failure UI).
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
@@ -88,6 +90,8 @@ public:
     QString documentName() const;
     bool untitled() const;
     bool documentOpen() const { return doc_.isOpen(); }
+    bool readOnly() const;
+    Q_INVOKABLE QString conversionSummary() const;   // "" unless this open converted a 1.0 file
     bool dirty() const;
     int  saveState() const;
     // App-local working-copy directory for THIS session. main() points it at a

@@ -159,6 +159,11 @@ void CanvasDocument::ensurePages() {
     db_.commit();
 }
 
+void CanvasDocument::finishOpen() {
+    ensurePages();
+    if (readOnly_) mn::convertV1(*this, firstPageId(), report_);
+}
+
 bool CanvasDocument::loadFile(const QString& path, bool untitled) {
     // We never run SQLite on the document's real location (network filesystems
     // can't back WAL/-shm or honour locking — see the plan). Stage a LOCAL working
@@ -225,7 +230,7 @@ bool CanvasDocument::loadFile(const QString& path, bool untitled) {
                     }, Qt::QueuedConnection);
             });
         }
-        ensurePages();
+        finishOpen();
         recordOriginalStat();
         dirty_ = false;
         setSaveState(SaveClean);
@@ -258,7 +263,7 @@ bool CanvasDocument::loadFile(const QString& path, bool untitled) {
     docPath_ = path;
     untitled_ = untitled || readOnly_;   // a converted 1.0 file saves only through Save As
     mediaStore_ = std::make_unique<MediaStore>(path);   // media anchored to the ORIGINAL folder
-    ensurePages();
+    finishOpen();
     recordOriginalStat();
     dirty_ = false;
     setSaveState(SaveClean);
@@ -321,6 +326,7 @@ void CanvasDocument::closeCanvas() {
     docPath_.clear();
     untitled_ = false;
     readOnly_ = false;
+    report_ = mn::ConversionReport{};
     focusPage_.clear();
     dirty_ = false;
     setSaveState(SaveClean);

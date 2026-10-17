@@ -854,6 +854,8 @@ ApplicationWindow {
             // goes through Save As (untitled semantics under the hood).
             if (/\.mnpkg$/i.test(path))
                 Toasts.show(qsTr("Viewing a package — saving creates a new document"))
+            else if (blockModel.readOnly)   // a 1.0 file, converted on open: the original is untouched
+                Toasts.show(blockModel.conversionSummary() + qsTr(" — Save As to keep it"))
             return
         }
         openFailedPath = path

@@ -129,16 +129,8 @@ bool Document::open(const QString& path) {
               page_width INTEGER, format TEXT
           ))");
 
-    // v2: document annotations. block_ink = ONE row per anchored block, the
-    // whole serialized stroke blob (block-local coordinate envelope, see
-    // app/notes/doc_ink.h). The FK cascade means deleting a block row drops
-    // its ink even in older builds editing this doc (foreign_keys=ON above is
-    // set by every version). Comments: threads + messages, cascade likewise.
-    exec(R"(CREATE TABLE IF NOT EXISTS block_ink (
-              block_id TEXT PRIMARY KEY REFERENCES blocks(id) ON DELETE CASCADE,
-              ink      TEXT NOT NULL,
-              modified INTEGER
-          ))");
+    // Comments: threads + messages (cascade). The 1.0 `block_ink` table is NOT created any more:
+    // the converter drops it after moving its rows into elements / media descriptors.
     exec(R"(CREATE TABLE IF NOT EXISTS comment_threads (
               id       TEXT PRIMARY KEY,
               created  INTEGER,
@@ -396,7 +388,7 @@ void Document::deleteBlock(const QString& id) {
 
 QHash<QString, QString> Document::allInk() const {
     QHash<QString, QString> out;
-    if (!isOpen()) return out;
+    if (!isOpen() || !hasTable(QStringLiteral("block_ink"))) return out;
     QSqlQuery q(db());
     if (!q.exec("SELECT block_id, ink FROM block_ink")) return out;
     while (q.next())
@@ -414,6 +406,19 @@ void Document::deleteInk(const QString& blockId) {
         qWarning() << "Document deleteInk failed:" << q.lastError().text();
 }
 
+void Document::dropBlockInkTable() {
+    if (!isOpen()) return;
+    exec("DROP TABLE IF EXISTS block_ink");
+}
+
+bool Document::hasTable(const QString& name) const {
+    if (!isOpen()) return false;
+    QSqlQuery q(db());
+    q.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
+    q.addBindValue(name);
+    return q.exec() && q.next();
+}
+
 // ---------------------------------------------------------------------------
 // Canvas schema (2.0 stage 2)
 
@@ -429,10 +434,7 @@ bool Document::hasColumn(const QString& table, const QString& column) const {
 
 bool Document::hasCanvasSchema() const {
     if (!isOpen()) return false;
-    QSqlQuery q(db());
-    if (!q.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'elements'") || !q.next())
-        return false;
-    return hasColumn(QStringLiteral("blocks"), QStringLiteral("page_id"));
+    return hasTable(QStringLiteral("elements")) && hasColumn(QStringLiteral("blocks"), QStringLiteral("page_id"));
 }
 
 void Document::ensureCanvasSchema() {

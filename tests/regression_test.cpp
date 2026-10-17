@@ -4410,8 +4410,10 @@ static void testFormatGate() {
               "Save As writes the 2.0 file and lifts read-only");
         {
             Document d;
-            CHECK(d.open(out) && d.format() == QLatin1String(Document::kFormat) && d.schemaVersion() == Document::kSchemaVersion
-                      && d.hasCanvasSchema() && d.elementCount() == 1,
+            int pages = 0;
+            if (d.open(out)) for (const auto& e : d.allElements()) if (e.kind == QLatin1String("page")) ++pages;
+            CHECK(d.isOpen() && d.format() == QLatin1String(Document::kFormat) && d.schemaVersion() == Document::kSchemaVersion
+                      && d.hasCanvasSchema() && pages == 1,
                   "the saved file is stamped %s v%d with the canvas schema and one page element", Document::kFormat, Document::kSchemaVersion);
         }
         QFile f(v1); f.open(QIODevice::ReadOnly);
@@ -5619,6 +5621,97 @@ static void testCanvasDocument() {
         CHECK(v.openDocument(pkg) && v.canvas() && v.canvas()->pageIds() == (QStringList{ p1, p2 }) && v.untitled()
                   && v.documentName() == QLatin1String("canvas") && v.pageId() == p2 && v.contentForRow(1) == QLatin1String("second block edited"),
               "the package reopens with both pages, untitled, named, on the focus page");
+    }
+}
+
+// [120] The 1.0 → 2.0 converter (2.0 stage 2 step 4), on the v1 fixture.
+static void testConverter() {
+    qInfo("[120] converter (2.0 stage 2): text ink → ink elements beside the text, a sketch → elements beside the page, media ink in the descriptor, block_ink dropped, read-only until Save As");
+    const QString path = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
+    QTemporaryDir dir;
+    BlockModel m;
+    CHECK(m.openDocument(path), "the fixture opens");
+    CanvasDocument* c = m.canvas();
+    if (!c) return;
+    const mn::ConversionReport& rep = c->conversionReport();
+    CHECK(rep.converted && rep.textInkElements == 1 && rep.sketches == 1 && rep.textShapes == 1 && rep.mediaInkMoved == 1
+              && rep.orphanInk == 0 && rep.pdfInkInline == 1 && rep.sketchImages == 0,
+          "the report: %s (ink %d sketches %d labels %d mediaInk %d orphans %d pdfInline %d)", qPrintable(rep.summary()),
+          rep.textInkElements, rep.sketches, rep.textShapes, rep.mediaInkMoved, rep.orphanInk, rep.pdfInkInline);
+    CHECK(rep.summary().startsWith(QStringLiteral("Converted from a 1.0 document")) && m.conversionSummary() == rep.summary(),
+          "the summary reads through the page model");
+    const auto els = c->elements();
+    int pages = 0, inks = 0, shapes = 0, medias = 0;
+    Document::Element page, textInk, sketchInk, label;
+    for (const auto& e : els) {
+        if (e.kind == QLatin1String("page")) { ++pages; page = e; }
+        else if (e.kind == QLatin1String("ink")) { ++inks; if (e.x < 900) textInk = e; else sketchInk = e; }
+        else if (e.kind == QLatin1String("shape")) { ++shapes; label = e; }
+        else if (e.kind == QLatin1String("media")) ++medias;
+    }
+    CHECK(els.size() == 4 && pages == 1 && inks == 2 && shapes == 1 && medias == 0, "elements: 1 page, 2 ink, 1 label (%d)", int(els.size()));
+    CHECK(page.x == 0 && page.y == 0 && page.w == 880 + 2 * CanvasDocument::kPageInset && page.h > 2 * CanvasDocument::kPageInset,
+          "the page element is sized from the 1.0 measure (880) with a cached height (%g)", page.h);
+    // The margin ink sits beside its paragraph (row 1), inside the page, at the estimated y.
+    const double top = CanvasDocument::kPageInset;
+    CHECK(!textInk.id.isEmpty() && textInk.z >= 1 && textInk.x >= top - 4 && textInk.x + textInk.w <= page.w
+              && textInk.y >= top + m.yForRow(1) - 4 && textInk.y + textInk.h <= top + m.yForRow(2) + 40,
+          "the text ink element lies beside row 1 (x %g..%g, y %g..%g; row 1 at %g..%g)",
+          textInk.x, textInk.x + textInk.w, textInk.y, textInk.y + textInk.h, top + m.yForRow(1), top + m.yForRow(2));
+    {
+        const QJsonObject o = QJsonDocument::fromJson(textInk.json.toUtf8()).object();
+        const QJsonArray sh = o.value(QStringLiteral("shapes")).toArray();
+        bool local = sh.size() == 2 && o.value(QStringLiteral("coordinate_system")).toString() == QLatin1String("element-local");
+        for (const QJsonValue& sv : sh)
+            for (const QJsonValue& pv : sv.toObject().value(QStringLiteral("points")).toArray()) {
+                const QJsonArray p = pv.toArray();
+                if (p.at(0).toDouble() < -0.01 || p.at(1).toDouble() < -0.01 || p.at(0).toDouble() > textInk.w + 0.01 || p.at(1).toDouble() > textInk.h + 0.01) local = false;
+            }
+        CHECK(local, "its two shapes are element-local (every point inside the element rect)");
+        const QJsonArray first = sh.at(0).toObject().value(QStringLiteral("points")).toArray();
+        // first point was (-360, 4) from the page centre (24 + 440 = 464) → world x 104, i.e. element-local 2 (the half stroke width)
+        CHECK(first.size() == 4 && std::abs(textInk.x + first.at(0).toArray().at(0).toDouble() - 104.0) < 0.01, "the first point maps to page-centre − 360 (world x 104)");
+    }
+    // The sketch: a 760×480 ink element right of the page, its label a text shape inside it; the block row is gone.
+    CHECK(!sketchInk.id.isEmpty() && sketchInk.x == page.w + CanvasDocument::kPageGap && sketchInk.y == 0 && sketchInk.w == 760 && sketchInk.h == 480,
+          "the sketch became an ink element beside the page (x %g, %gx%g)", sketchInk.x, sketchInk.w, sketchInk.h);
+    {
+        const QJsonArray sh = QJsonDocument::fromJson(sketchInk.json.toUtf8()).object().value(QStringLiteral("shapes")).toArray();
+        const QJsonArray p0 = sh.size() == 2 ? sh.at(0).toObject().value(QStringLiteral("points")).toArray().at(0).toArray() : QJsonArray();
+        CHECK(sh.size() == 2 && p0.size() == 2 && p0.at(0).toDouble() == 76 && p0.at(1).toDouble() == 96
+                  && sh.at(1).toObject().value(QStringLiteral("type")).toString() == QLatin1String("oval"),
+              "its strokes are frame px (0.1,0.2 → 76,96); shape types verbatim");
+    }
+    {
+        const QJsonObject o = QJsonDocument::fromJson(label.json.toUtf8()).object();
+        CHECK(!label.id.isEmpty() && o.value(QStringLiteral("shape")).toString() == QLatin1String("text") && o.value(QStringLiteral("text")).toString() == QLatin1String("sketch label")
+                  && o.value(QStringLiteral("fontSize")).toDouble() == 24 && label.x == sketchInk.x + 76 && label.y == 384 && label.w == 380 && label.h >= 24,
+              "the sketch's text became a text shape at its place (x %g y %g w %g h %g)", label.x, label.y, label.w, label.h);
+    }
+    bool sketchRowLeft = false; int img = -1;
+    for (int r = 0; r < m.rowCountQml(); ++r) {
+        if (m.typeForRow(r) != BlockModel::Media) continue;
+        const QString kind = QJsonDocument::fromJson(m.contentForRow(r).toUtf8()).object().value(QStringLiteral("kind")).toString();
+        if (kind == QLatin1String("sketch")) sketchRowLeft = true;
+        if (kind == QLatin1String("image")) img = r;
+    }
+    CHECK(!sketchRowLeft && img >= 0, "the sketch block row is gone; the image stays inline");
+    CHECK(img >= 0 && QJsonDocument::fromJson(m.mediaPageInk(img, 0).toUtf8()).object().value(QStringLiteral("shapes")).toArray().size() == 1,
+          "the image's frame ink lives in its descriptor");
+    CHECK(!c->db().hasTable(QStringLiteral("block_ink")), "block_ink is dropped");
+    CHECK(m.commentThreads().size() == 2, "both comment threads survive, the orphan included (%d)", int(m.commentThreads().size()));
+    CHECK(c->readOnly() && m.readOnly() && m.untitled() && !m.save(), "read-only until Save As");
+    CHECK(c->db().canvasMeta(QStringLiteral("convertedFrom")) == QLatin1String("mnd1") && c->db().canvasMeta(QStringLiteral("pageWidthDefault")) == QLatin1String("880"),
+          "canvas_meta records the conversion and the 1.0 measure");
+    const QString out = dir.path() + QStringLiteral("/converted.mnd");
+    CHECK(m.saveAs(out) && !m.readOnly(), "Save As writes the 2.0 file");
+    {
+        CanvasDocument c2;
+        CHECK(c2.open(out) && !c2.readOnly() && !c2.conversionReport().converted && c2.elements().size() == 4 && !c2.db().hasTable(QStringLiteral("block_ink"))
+                  && c2.db().format() == QLatin1String(Document::kFormat) && c2.db().schemaVersion() == Document::kSchemaVersion,
+              "reopened: a plain 2.0 file (no conversion), the elements persisted");
+        BlockModel* p = c2.focusedModel();
+        CHECK(p && p->rowCountQml() == m.rowCountQml() && p->contentForRow(0) == QLatin1String("Converter fixture"), "the page reloads its rows (%d)", p ? p->rowCountQml() : -1);
     }
 }
 
@@ -8133,6 +8226,7 @@ int main(int argc, char** argv) {
     testElements();
     testPageScoping();
     testCanvasDocument();
+    testConverter();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

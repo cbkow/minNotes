@@ -125,6 +125,8 @@ BlockModel::~BlockModel() {
 QString BlockModel::documentPath() const { return canvas_ ? canvas_->documentPath() : QString(); }
 QString BlockModel::documentName() const { return canvas_ ? canvas_->documentName() : QString(); }
 bool BlockModel::untitled() const { return canvas_ ? canvas_->untitled() : false; }
+bool BlockModel::readOnly() const { return canvas_ && canvas_->readOnly(); }
+QString BlockModel::conversionSummary() const { return canvas_ ? canvas_->conversionReport().summary() : QString(); }
 bool BlockModel::dirty() const { return canvas_ ? canvas_->dirty() : false; }
 int BlockModel::saveState() const { return canvas_ ? canvas_->saveState() : SaveClean; }
 MediaStore* BlockModel::mediaStore() const { return canvas_ ? canvas_->mediaStore() : nullptr; }

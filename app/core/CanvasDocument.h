@@ -4,6 +4,7 @@
 #include <QStringList>
 #include <memory>
 #include <vector>
+#include "Converter.h"
 #include "Document.h"
 
 class BlockModel;
@@ -63,6 +64,8 @@ public:
     bool untitled() const { return untitled_; }
     bool documentOpen() const { return db_.isOpen(); }
     bool readOnly() const { return readOnly_; }     // a converted 1.0 file: Save routes to Save As
+    // What the 1.0 → 2.0 converter did on this open (converted == false for a 2.0 file).
+    const mn::ConversionReport& conversionReport() const { return report_; }
     bool dirty() const { return dirty_; }
     int saveState() const { return saveState_; }
     void markDirty();                               // idempotent; pages call it on every edit
@@ -107,6 +110,7 @@ private:
     bool loadFile(const QString& path, bool untitled);
     bool acceptOpenedFormat();   // the 2.0 gate: mnd2 ≤ v2 opens, mnd v1 adopts read-only, else refused
     void ensurePages();          // canvas schema present, ≥ 1 page element, no page-less rows
+    void finishOpen();           // ensurePages + the 1.0 conversion when the file was adopted
     QString insertPageElement(); // a page element right of the others (no blocks yet)
     void seedPage(const QString& pageId);
     bool writeBackToOriginal();
@@ -124,6 +128,7 @@ private:
     QString lastOpenError_;
     bool untitled_ = true;
     bool readOnly_ = false;
+    mn::ConversionReport report_;
     bool dirty_ = false;
     int saveState_ = SaveClean;
     qint64 origMtime_ = -1;    // original file mtime/size at load + each save (conflict baseline)

@@ -102,11 +102,13 @@ public:
     void updateRank(const QString& id, const QString& rank);   // reorder
     void deleteBlock(const QString& id);
 
-    // --- The 1.0 block_ink table (block-pinned margin ink, REMOVED in 2.0 stage 1). Read once at
-    // load to move a media block's frame ink into its descriptor and left otherwise for the 2.0
-    // converter; never written. The table is still created so older files keep their FK cascade.
+    // --- The 1.0 block_ink table (block-pinned margin ink, REMOVED in 2.0). Never created by 2.0;
+    // read by the converter and the page load path (a 1.0 file's media frame ink moves into the
+    // media descriptor), then dropped. allInk() is empty when the table is absent.
     QHash<QString, QString> allInk() const;
     void deleteInk(const QString& blockId);
+    void dropBlockInkTable();
+    bool hasTable(const QString& name) const;
 
     // --- Canvas schema (2.0 stage 2). Additive over blocks/comments: `elements` (pages, media,
     // ink, shapes, connectors), `canvas_meta` (camera, focus page, defaults) and `blocks.page_id`
