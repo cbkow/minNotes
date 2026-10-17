@@ -106,6 +106,8 @@ qt_add_executable(minnotesapp
     notes/InkNodeItem.cpp
     notes/PageContextLoader.h
     notes/PageContextLoader.cpp
+    notes/CanvasInkCapture.h
+    notes/CanvasInkCapture.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must
@@ -201,6 +203,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasInkItem.qml
         qml/MinNotes/App/CanvasMediaItem.qml
         qml/MinNotes/App/CanvasShapeItem.qml
+        qml/MinNotes/App/CanvasSelectionFrame.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
@@ -597,3 +600,6 @@ elseif(WIN32)
         "$ENV{VULKAN_SDK}/Lib/shaderc_combined.lib"
         d3d11 dxgi dxguid avrt)
 endif()
+# The canvas pen smooths freehand strokes through ink-stroke-modeler (the tests build the capture
+# item without it and check the raw-point path).
+target_compile_definitions(minnotesapp PRIVATE MN_CANVAS_STROKE_MODELER=1)

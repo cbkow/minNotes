@@ -440,7 +440,12 @@ FocusScope {
     readonly property bool activeCanvas: canvas.documentOpen && canvas.focusPage === ""
     // The canvas gave way to the page view (the same model may stay focused — the first page is the
     // canvas's fallback): the page lays out at the VIEW's width again, not its card's.
-    onActiveCanvasChanged: if (!activeCanvas && canvas.documentOpen) blockModel.setContentWidth(pageWidth)
+    onActiveCanvasChanged: {
+        if (activeCanvas || !canvas.documentOpen) return
+        blockModel.setContentWidth(pageWidth)
+        // The page view has no ink surface: a draw tool armed on the canvas drops to Type.
+        if (inspector && inspector.drawTool !== "type" && inspector.drawTool !== "select") inspector.drawTool = "type"
+    }
     // ⌘Z / ⌘⇧Z / the History panel / the rail buttons route by focus: the canvas log on the canvas, the
     // page log on a page (two logs, one ⌘Z — ruling 8).
     readonly property var undoTarget: activeCanvas ? canvas : blockModel
@@ -498,8 +503,7 @@ FocusScope {
         // chips since 2026-08-20). The text-chip tool alone drops to Select
         // in video tabs (text boxes are not part of the QCView flow).
         var t = inspector ? inspector.drawTool : "type"
-        if (id === "canvas") {   // the file's canvas: no page focused (no ink surface here yet → Type)
-            if (inspector && t !== "type") inspector.drawTool = "type"
+        if (id === "canvas") {   // the file's canvas: no page focused; the draw tools are live here
             activeGridId = ""; activePdfId = ""; activeVideoId = ""
             if (canvas.documentOpen) canvas.focusPage = ""
             return
@@ -3175,6 +3179,13 @@ FocusScope {
         // can't edit the document invisibly (the global chords above still work).
         else if (root.activeCanvas) {
             if (k === Qt.Key_Space && !event.isAutoRepeat) canvasView.spaceHeld = true
+            else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasView.deleteSelected()
+            else if (k === Qt.Key_Escape) {
+                if (canvasView.inkCapture.drawing) canvasView.inkCapture.cancelStroke()
+                else if (root.inspector && canvasView.drawing) root.inspector.drawTool = "select"   // disarm the pen first
+                else canvasView.clearSelection()
+            }
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasView.drillSelected()
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -3935,6 +3946,8 @@ FocusScope {
         property string inkId: ""
         property string mediaId: ""
         property string shapeId: ""
+        property string penId: ""
+        property int penN0: 0
         property real seed: 12345
         property int prevTier: -1
         function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
@@ -3953,6 +3966,8 @@ FocusScope {
             return out
         }
         function pageItem(id) { return activeItems().find(c => c.elementId === id) || null }
+        function selFrameX() { return canvasView.selectionFrame.x }
+        function selFrameW() { return canvasView.selectionFrame.width }
         onTriggered: {
             const cam = canvasView.cam
             if (phase === 0) {   // P0: pages, the tab, fit
@@ -4085,11 +4100,80 @@ FocusScope {
                       "the ink element draws its two element-local strokes (" + (ink && ink.inkItem ? ink.inkItem.strokeCount + " strokes, " + ink.inkItem.vertexCount + " vertices" : "no item") + ")")
                 check(!!media && media.kind === "media" && media.width === 200 && media.height === 150, "the media element shows at its rect (" + (media ? media.width + "x" + media.height : "no item") + ")")
                 check(!!shape && shape.kind === "shape" && shape.width === 160, "the text shape shows at its rect")
-                canvas.undo(); canvas.undo(); canvas.undo()
-                check(canvas.elementCount() === 3 && !canvas.element || true, "three undos take the three elements back (" + canvas.elementCount() + ")")
+                check(canvas.canUndo && canvas.undoHistory().length >= 4, "the three additions are on the canvas log (" + canvas.undoHistory().length + " rows)")
                 nextPhase("elements"); return
             }
-            if (phase === 6) {   // P6: drill-in + the round-trip keeps the heights (both pools measure the same)
+            if (phase === 6) {   // P6: the pointer and the pen through the same functions the handlers call
+                if (step === 0) {
+                    canvasView.select(inkId)
+                    check(canvasView.selectedId === inkId, "select")
+                    const r0 = canvas.elementRect(inkId), hist0 = canvas.undoHistory().length
+                    canvasView.moveSelectedBy(10, 0); canvasView.moveSelectedBy(10, 0); canvasView.moveSelectedBy(5, 7)
+                    const r1 = canvas.elementRect(inkId)
+                    check(r1.x === r0.x + 25 && r1.y === r0.y + 7 && canvas.undoHistory().length === hist0 + 1, "three coalesced moves = one undo entry (" + (canvas.undoHistory().length - hist0) + ")")
+                    canvasView.resizeSelected(canvasView.edgeResize(r1, 1, 1, 30, 20))
+                    const r2 = canvas.elementRect(inkId)
+                    check(r2.width === r1.width + 30 && r2.height === r1.height + 20 && r2.x === r1.x, "a corner resize grows the rect")
+                    canvasView.resizeSelected(canvasView.edgeResize(r2, -1, 0, 1000, 0))
+                    check(canvas.elementRect(inkId).width === 8, "a left-edge drag past the right edge floors at 8 px")
+                    canvas.undo(); canvas.undo(); canvas.undo()
+                    check(canvas.elementRect(inkId).x === r0.x && canvas.elementRect(inkId).width === r0.width, "three undos restore the rect")
+                    ++step; return
+                }
+                if (step === 1) {   // the selection frame follows the camera
+                    const r = canvas.elementRect(inkId), tl = cam.worldToScreen(r.x, r.y)
+                    check(Math.abs(selFrameX() - tl.x) < 0.5 && Math.abs(selFrameW() - r.width * cam.zoom) < 0.5, "the selection frame sits over the element in screen space")
+                    ++step; return
+                }
+                // The pen: a freehand stroke through the capture item's own path, one point per tick — the
+                // stroke modeler is time-based (a burst of points at dt = 0 collapses to its ends).
+                if (step === 2) {
+                    root.inspector.drawTool = "freehand"
+                    check(canvasView.drawing && canvasView.inkCapture.active, "a stroke tool arms the pen overlay")
+                    penN0 = canvas.elementCount()
+                    canvasView.inkCapture.beginStroke(100, 100); ++step; return
+                }
+                if (step === 3) { canvasView.inkCapture.movePoint(140, 130); ++step; return }
+                if (step === 4) { canvasView.inkCapture.movePoint(180, 100); ++step; return }
+                if (step === 5) { canvasView.inkCapture.movePoint(220, 130); ++step; return }
+                if (step === 6) {
+                    const n0 = penN0
+                    const cap = canvasView.inkCapture
+                    cap.endStroke(260, 100)
+                    const n1 = canvas.elementCount()
+                    const id = canvasView.selectedId
+                    const w0 = cap.toWorld(100, 100), w1 = cap.toWorld(260, 130)
+                    const r = canvas.elementRect(id)
+                    const env = JSON.parse(canvas.elementJson(id))
+                    let local = env.coordinate_system === "element-local" && env.shapes.length === 1 && env.shapes[0].type === "freehand"
+                    for (const p of (env.shapes[0].points || [])) if (p[0] < -0.01 || p[1] < -0.01 || p[0] > r.width + 0.01 || p[1] > r.height + 0.01) local = false
+                    check(n1 === n0 + 1 && id !== "" && canvas.elementKind(id) === "ink" && local
+                              && r.x <= w0.x + 12 && r.y <= w0.y + 12 && r.width >= (w1.x - w0.x) * 0.8 && r.height >= (w1.y - w0.y) * 0.4,   // the modeler shifts the ends by a few px
+                          "the stroke became an ink element: rect = its world bbox, points element-local (" + env.shapes[0].points.length + " points; n " + n0 + "→" + n1 + " kind " + canvas.elementKind(id) + " local " + local + " r " + r.x + "," + r.y + " " + r.width + "x" + r.height + " w0 " + w0.x + "," + w0.y + " w1 " + w1.x + "," + w1.y + ")")
+                    penId = id
+                    ++step; return
+                }
+                if (step === 7) {   // a frame later: the new element's item has tessellated its stroke
+                    const item = activeItems().find(c => c.elementId === penId)
+                    check(!!item && !!item.inkItem && item.inkItem.strokeCount === 1 && item.inkItem.vertexCount > 0, "…and it renders (" + (item && item.inkItem ? item.inkItem.strokeCount + " strokes" : "no item") + ")")
+                    const cap = canvasView.inkCapture, n0 = canvas.elementCount() - 1, id = penId
+                    root.inspector.drawTool = "rect"
+                    cap.beginStroke(300, 300); cap.movePoint(350, 340); cap.endStroke(400, 380)
+                    const rid = canvasView.selectedId, renv = JSON.parse(canvas.elementJson(rid))
+                    check(canvas.elementCount() === n0 + 2 && renv.shapes[0].type === "rect" && renv.shapes[0].points.length === 4, "a rect tool drag = one rect shape with four corners")
+                    root.inspector.drawTool = "eraser"
+                    const rr = canvas.elementRect(rid), c = cap.toWorld(0, 0)   // the eraser reports a world point: aim at the rect's centre
+                    cap.beginStroke((rr.x + rr.width / 2) * cam.zoom + cam.panX, (rr.y + rr.height / 2) * cam.zoom + cam.panY)
+                    check(canvas.elementCount() === n0 + 1 && canvas.elementKind(rid) === "", "the eraser removes the ink element under the point")
+                    root.inspector.drawTool = "select"
+                    check(!canvasView.drawing, "select disarms the pen")
+                    canvas.undo(); canvas.undo(); canvas.undo()
+                    check(canvas.elementCount() === n0 - 0 && !canvas.elementKind(id), "undo takes the erase, the rect and the stroke back (" + canvas.elementCount() + ")")
+                    ++step; return
+                }
+                nextPhase("interaction"); return
+            }
+            if (phase === 7) {   // P7: drill-in + the round-trip keeps the heights (both pools measure the same)
                 if (step === 0) { canvas.focusPage = livePage; ++step; return }
                 if (step === 2) {
                     check(!root.activeCanvas && flick.visible && blockModel.pageId() === livePage && root.undoTarget === blockModel, "drill-in: the page view shows the focused page; ⌘Z targets its log")

@@ -36,6 +36,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/CanvasDocument.cpp
     ${CMAKE_SOURCE_DIR}/app/core/DocumentManager.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/VideoNotesModel.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/CanvasInkCapture.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Converter.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
@@ -79,7 +80,7 @@ target_compile_definitions(mn_regression_test PRIVATE
     MN_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     MN_SPELL_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")
 target_link_libraries(mn_regression_test PRIVATE
-    Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network Qt6::Qml
+    Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network Qt6::Qml Qt6::Quick
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
     KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks
     minnotes::ffmpeg               # MediaStore.cpp probes media via FFmpeg

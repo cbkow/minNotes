@@ -32,6 +32,31 @@ Item {
     readonly property real originY: page ? page.originY : 0
     function delegateAt(i) { return page ? page.delegateAt(i) : null }
 
+    // Pointer (type / select tools): tap selects, double-tap drills into a page, drag moves. The
+    // drag reads the SCENE delta (zoom-free) and rebases the world rect; a run coalesces into one
+    // undo entry ("move:<id>"). Space held = hand: the view's pan handler takes over.
+    readonly property var view: parent && parent.parent ? parent.parent : null   // canvasLayer → CanvasView
+    TapHandler {
+        enabled: el.active && el.view && !el.view.drawing
+        acceptedButtons: Qt.LeftButton
+        gesturePolicy: TapHandler.DragThreshold
+        onSingleTapped: { el.view.select(el.elementId); el.editor.forceActiveFocus() }
+        onDoubleTapped: if (el.kind === "page") canvas.focusPage = el.elementId
+    }
+    DragHandler {
+        enabled: el.active && el.view && !el.view.drawing && !el.view.spaceHeld
+        acceptedButtons: Qt.LeftButton
+        target: null
+        property rect start
+        onActiveChanged: if (active) { start = canvas.elementRect(el.elementId); el.view.select(el.elementId) }
+        onCentroidChanged: {
+            if (!active) return
+            const z = el.view.cam.zoom
+            const dx = (centroid.scenePosition.x - centroid.scenePressPosition.x) / z
+            const dy = (centroid.scenePosition.y - centroid.scenePressPosition.y) / z
+            canvas.setElementRect(el.elementId, Qt.rect(start.x + dx, start.y + dy, start.width, start.height), "move:" + el.elementId)
+        }
+    }
     Loader {
         id: content
         anchors.fill: parent

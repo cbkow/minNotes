@@ -9,6 +9,7 @@
 #include "BlockModel.h"
 #include "CanvasDocument.h"
 #include "DocumentManager.h"
+#include "../app/notes/CanvasInkCapture.h"
 #include "Exporter.h"
 #include "Importer.h"
 #include "TableGrid.h"
@@ -5828,6 +5829,71 @@ static void testMediaElementResolve() {
           "element-local frame ink stores under json.ink[0] (MediaBlock's own ink item reads it)");
 }
 
+// [125] The canvas pen (headless: no modeler — the raw-point path): screen → world through the
+// camera, rect = bbox + half the pen, points element-local, the qcv shape schema per tool.
+static void testInkCapture() {
+    qInfo("[125] canvas pen capture (2.0 stage 2): camera mapping, bbox rect, element-local points, shape schema per tool, eraser");
+    CanvasInkCapture cap;
+    cap.setWidth(800); cap.setHeight(600);
+    cap.setZoom(2.0); cap.setPanX(100); cap.setPanY(50);
+    cap.setStrokeWidth(4);
+    cap.setColor(QColor(10, 20, 30));
+    QString json; QRectF rect; int commits = 0; QPointF erased; int erases = 0;
+    QObject::connect(&cap, &CanvasInkCapture::strokeCommitted, [&](const QString& j, const QRectF& r) { json = j; rect = r; ++commits; });
+    QObject::connect(&cap, &CanvasInkCapture::eraseAt, [&](qreal x, qreal y) { erased = QPointF(x, y); ++erases; });
+    cap.setTool(QStringLiteral("freehand"));
+    cap.beginStroke(300, 250);   // world (100, 100)
+    CHECK(cap.drawing() && !cap.liveEnvelope().isEmpty() && cap.liveEnvelope().contains(QStringLiteral("normalized")), "a press starts the stroke and publishes a normalized preview");
+    cap.movePoint(500, 450);     // world (200, 200)
+    cap.endStroke(700, 250);     // world (300, 100)
+    CHECK(commits == 1 && !cap.drawing() && cap.liveEnvelope().isEmpty(), "the release commits once and clears the preview");
+    CHECK(rect == QRectF(97, 97, 206, 106), "rect = the world bbox plus half the pen + 1 (%g %g %g %g)", rect.x(), rect.y(), rect.width(), rect.height());
+    {
+        const QJsonObject env = QJsonDocument::fromJson(json.toUtf8()).object();
+        const QJsonArray shapes = env.value(QStringLiteral("shapes")).toArray();
+        const QJsonObject s0 = shapes.at(0).toObject();
+        const QJsonArray pts = s0.value(QStringLiteral("points")).toArray();
+        CHECK(env.value(QStringLiteral("coordinate_system")).toString() == QLatin1String("element-local") && shapes.size() == 1
+                  && s0.value(QStringLiteral("type")).toString() == QLatin1String("freehand") && s0.value(QStringLiteral("stroke_width")).toDouble() == 4
+                  && s0.value(QStringLiteral("is_modeled")).toBool() == false && pts.size() == 3
+                  && pts.at(0).toArray().at(0).toDouble() == 3 && pts.at(0).toArray().at(1).toDouble() == 3
+                  && pts.at(1).toArray().at(0).toDouble() == 103 && pts.at(2).toArray().at(1).toDouble() == 3,
+              "one freehand shape, element-local points (3,3) (103,103) (203,3), width 4, raw (no modeler here)");
+        const QJsonArray col = s0.value(QStringLiteral("color")).toArray();
+        CHECK(col.size() == 4 && std::abs(col.at(0).toDouble() - 10.0 / 255.0) < 1e-6, "the colour travels as the schema's rgba");
+    }
+    cap.setTool(QStringLiteral("rect"));
+    cap.beginStroke(300, 250); cap.movePoint(400, 300); cap.endStroke(500, 350);   // world (100,100) → (200,150)
+    {
+        const QJsonObject s0 = QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("shapes")).toArray().at(0).toObject();
+        CHECK(commits == 2 && s0.value(QStringLiteral("type")).toString() == QLatin1String("rect") && s0.value(QStringLiteral("points")).toArray().size() == 4
+                  && rect == QRectF(97, 97, 106, 56),
+              "rect: four corners, bbox (%g %g %g %g)", rect.x(), rect.y(), rect.width(), rect.height());
+    }
+    cap.setTool(QStringLiteral("oval"));
+    cap.beginStroke(300, 250); cap.endStroke(500, 350);
+    {
+        const QJsonArray pts = QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("shapes")).toArray().at(0).toObject().value(QStringLiteral("points")).toArray();
+        CHECK(commits == 3 && pts.size() == 2 && pts.at(0).toArray().at(0).toDouble() == 53 && pts.at(0).toArray().at(1).toDouble() == 28
+                  && pts.at(1).toArray().at(0).toDouble() == 50 && pts.at(1).toArray().at(1).toDouble() == 25 && rect == QRectF(97, 97, 106, 56),
+              "oval: centre (local) + radii (a size), the bbox from the radii");
+    }
+    cap.setTool(QStringLiteral("arrow"));
+    cap.beginStroke(300, 250); cap.endStroke(500, 350);
+    CHECK(commits == 4 && json.contains(QStringLiteral("\"arrow\"")) && QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("shapes")).toArray().at(0).toObject().value(QStringLiteral("points")).toArray().size() == 2,
+          "arrow: start + end");
+    cap.setTool(QStringLiteral("eraser"));
+    cap.beginStroke(300, 250);
+    CHECK(erases == 1 && erased == QPointF(100, 100) && commits == 4 && !cap.drawing(), "the eraser reports the world point and draws nothing");
+    cap.setTool(QStringLiteral("type"));
+    cap.beginStroke(300, 250); cap.endStroke(400, 300);
+    CHECK(commits == 4 && !cap.drawing(), "the type tool is inert");
+    cap.setTool(QStringLiteral("line"));
+    cap.beginStroke(300, 250); cap.movePoint(320, 260);
+    cap.setTool(QStringLiteral("freehand"));
+    CHECK(!cap.drawing() && commits == 4, "switching tools cancels an in-flight stroke");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8343,6 +8409,7 @@ int main(int argc, char** argv) {
     testDocumentManager();
     testCanvasViewState();
     testMediaElementResolve();
+    testInkCapture();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

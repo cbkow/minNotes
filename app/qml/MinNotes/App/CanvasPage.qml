@@ -3,7 +3,7 @@
 // page's model, its `spell` a stub), driven by a CanvasEditorFacade instead of the editor. The
 // page lays out at the ELEMENT's measure (its rect less the insets) while it shows here; the page
 // view re-tells its own width when it takes the page (two widths, one layout index — plan §2.3).
-// Double-click drills in (canvas.focusPage = this page); Esc on the page comes back.
+// Double-click (CanvasElement's handler) drills in (canvas.focusPage = this page); Esc on the page comes back.
 //
 // LOD (B4), three tiers held with hysteresis in `tier` (set from the camera, never a pure binding):
 //   0 ghost  (zoom < 0.10):  the frame and the title.
@@ -151,10 +151,5 @@ Rectangle {
         elide: Text.ElideRight; maximumLineCount: 1
         color: Theme.colors.text
         font.family: Theme.font.body; font.pixelSize: page.tier === 1 ? 28 : 20; font.bold: true
-    }
-    TapHandler {   // drill in: the page view takes this page (Esc on the page root comes back)
-        acceptedButtons: Qt.LeftButton
-        gesturePolicy: TapHandler.ReleaseWithinBounds
-        onDoubleTapped: if (page.active) canvas.focusPage = page.elementId
     }
 }

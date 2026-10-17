@@ -12,8 +12,44 @@ Rectangle {
     required property var editor
     color: Theme.colors.bgAlt      // the full-frame tabs' field tone
     clip: true                     // the world layer is unbounded: without this, elements paint over the rail and the tab strips
-    property bool spaceHeld: false // the editor's key handler: Space held = hand (left-drag pans anyway)
+    property bool spaceHeld: false // the editor's key handler: Space held = hand
     readonly property CanvasCamera cam: CanvasCamera { id: cam }
+
+    // --- tools (the Inspector's draw tool): a stroke tool or the eraser arms the pen overlay; type
+    // and select are the pointer (tap selects, drag moves, handles resize, empty-space drag pans) ---
+    readonly property string tool: editor.inspector ? editor.inspector.drawTool : "type"
+    readonly property bool drawing: !spaceHeld && (tool === "freehand" || tool === "rect" || tool === "oval" || tool === "arrow" || tool === "line" || tool === "eraser")
+
+    // --- selection ---
+    property string selectedId: ""
+    function select(id) { selectedId = id }
+    function clearSelection() { selectedId = "" }
+    readonly property string selectedKind: selectedId !== "" ? (canvas.elementsRevision, canvas.elementKind(selectedId)) : ""
+    onSelectedKindChanged: if (selectedId !== "" && selectedKind === "") selectedId = ""   // the element went away
+    Connections { target: canvas; function onDocumentChanged() { cv.clearSelection() } }
+    // World-space moves and resizes of the selection (the handlers and the probe share these).
+    function moveSelectedBy(dx, dy) {
+        if (selectedId === "") return
+        const r = canvas.elementRect(selectedId)
+        canvas.setElementRect(selectedId, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + selectedId)
+    }
+    function resizeSelected(rect) { if (selectedId !== "") canvas.setElementRect(selectedId, rect, "resize:" + selectedId) }
+    function edgeResize(start, dx, dy, ddx, ddy) {   // a handle's drag → the new world rect (min 8 px)
+        let x = start.x, y = start.y, w = start.width, h = start.height
+        if (dx < 0) { x = Math.min(start.x + ddx, start.x + start.width - 8); w = start.x + start.width - x }
+        else if (dx > 0) w = Math.max(8, start.width + ddx)
+        if (dy < 0) { y = Math.min(start.y + ddy, start.y + start.height - 8); h = start.y + start.height - y }
+        else if (dy > 0) h = Math.max(8, start.height + ddy)
+        return Qt.rect(x, y, w, h)
+    }
+    function deleteSelected() { if (selectedId !== "" && canvas.removeElement(selectedId)) selectedId = "" }
+    function drillSelected() { if (selectedId !== "" && canvas.elementKind(selectedId) === "page") canvas.focusPage = selectedId }
+    // The topmost ink element under a world point (the eraser).
+    function inkAt(wx, wy) {
+        const ids = canvas.visibleElements(wx, wy, wx + 0.01, wy + 0.01)
+        for (let i = ids.length - 1; i >= 0; --i) if (canvas.elementKind(ids[i]) === "ink") return ids[i]
+        return ""
+    }
 
     // --- culling → pool ---------------------------------------------------------------------
     // Gated on `visible`: a hidden canvas holds NO elements (page cards carry live delegates).
@@ -64,7 +100,7 @@ Rectangle {
     }
     onWidthChanged: if (visible && !cam.userCam) fit()
     onHeightChanged: if (visible && !cam.userCam) fit()
-    onVisibleChanged: if (visible && !cam.userCam) fit()
+    onVisibleChanged: { if (!visible) clearSelection(); else if (!cam.userCam) fit() }
     Connections {   // elements come, go or grow under a camera the user hasn't taken yet
         target: canvas
         function onGeometryChanged() { if (cv.visible && !cam.userCam) cv.fit() }
@@ -74,8 +110,8 @@ Rectangle {
     Connections { target: cam; function onCameraChanged() { if (cam.userCam && cv.visible) camSave.restart() } }
     Timer { id: camSave; interval: 300; onTriggered: if (canvas.documentOpen && cam.userCam) canvas.setCamera(cam.panX, cam.panY, cam.zoom) }
 
-    // Clicking dead space reclaims focus (the key swallow lives on the editor root).
-    MouseArea { anchors.fill: parent; z: -1; onClicked: cv.editor.forceActiveFocus() }
+    // Clicking dead space reclaims focus and clears the selection (the key swallow lives on the editor root).
+    MouseArea { anchors.fill: parent; z: -1; onClicked: { cv.clearSelection(); cv.editor.forceActiveFocus() } }
 
     Item {
         id: canvasLayer
@@ -112,8 +148,31 @@ Rectangle {
         onActiveChanged: if (active) startZoom = cam.zoom
         onActiveScaleChanged: if (active) cam.zoomAboutPoint(startZoom * activeScale, centroid.position.x, centroid.position.y)
     }
-    DragHandler {   // left-drag on the canvas pans (selection and moves come with the next sub-step); middle-drag always
+    // The selection frame (screen space) and the pen overlay sit above the world layer.
+    CanvasSelectionFrame { id: selFrame; view: cv; z: 10 }
+    CanvasInkCapture {
+        id: capture
+        anchors.fill: parent; z: 20
+        active: cv.visible && cv.drawing
+        tool: cv.tool
+        color: cv.editor.inspector ? cv.editor.inspector.drawColor : "#ff0000"
+        strokeWidth: cv.editor.inspector ? cv.editor.inspector.drawWidth : 6
+        zoom: cam.zoom; panX: cam.panX; panY: cam.panY
+        onStrokeCommitted: (json, rect) => { const id = canvas.addInkElement(json, rect); if (id !== "") cv.select(id) }
+        onEraseAt: (wx, wy) => { const id = cv.inkAt(wx, wy); if (id !== "") { if (cv.selectedId === id) cv.clearSelection(); canvas.removeElement(id) } }
+        InkNodeItem {   // the in-progress stroke, at this zoom
+            anchors.fill: parent
+            envelope: capture.liveEnvelope
+            frameW: width; frameH: height; sourceW: width; sourceH: height
+            pxScale: 1
+        }
+    }
+    readonly property var inkCapture: capture   // probe
+    readonly property var selectionFrame: selFrame
+
+    DragHandler {   // left-drag on EMPTY canvas pans (an element's own handler moves it); middle-drag always
         target: null
+        enabled: !cv.drawing
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton
         property real sx: 0
         property real sy: 0
