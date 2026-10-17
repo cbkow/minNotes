@@ -33,8 +33,6 @@ bool ClipboardPaster::looksTabular(const QString& text) {
 QString ClipboardPaster::route(const PasteInput& in, const PasteTarget& at) {
     const bool hasText = !in.text.isEmpty();
     const bool tableText = in.text.contains(QLatin1Char('\t')) || in.text.contains(QLatin1Char('\n'));
-    // A sketch tab takes images (files or raster) onto its canvas; nothing else has a target.
-    if (at.sketchTab) return in.urls > 0 ? QStringLiteral("sketchUrls") : in.hasImage ? QStringLiteral("sketchRaster") : QStringLiteral("nothing");
     // Our own blocks: a faithful run — not into a code block (verbatim text wins).
     if (in.hasBlocks && !at.codeBlock) return QStringLiteral("blocks");
     // A code block: text verbatim (no HTML, no markdown prefixes, no table detection).
@@ -59,7 +57,6 @@ QString ClipboardPaster::routePaste(const QVariantMap& input, const QVariantMap&
     in.urls = input.value(QStringLiteral("urls")).toInt();
     in.text = input.value(QStringLiteral("text")).toString();
     PasteTarget at;
-    at.sketchTab = target.value(QStringLiteral("sketchTab")).toBool();
     at.codeBlock = target.value(QStringLiteral("codeBlock")).toBool();
     at.inTable = target.value(QStringLiteral("inTable")).toBool();
     return route(in, at);

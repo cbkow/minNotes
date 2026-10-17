@@ -682,355 +682,21 @@ static void testExportMarkdown() {
 // point and image rect so the ink keeps its position (ovals: center shifts,
 // radii only rescale). Must also re-derive media meta + Fenwick height (the
 // setMediaWidth sequence), and round-trip through undo/persistence.
-static void testSketchResizeRenorm() {
-    qInfo("[11] sketch resize: renormalize strokes/images, heights, undo, persist");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_sketch.mnd");
-    QFile::remove(path);
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("para"));
-    const int row = m.insertSketch(0);
-    CHECK(row == 1 && m.mediaW(row) == 760 && m.mediaH(row) == 480,
-          "insertSketch seeds a page-width x 480 canvas (2026-08-21 ruling)");
-    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 0);   // classic 480x480 fixture
-
-    // Freehand (positions) + oval (center = position, radii = scale-only).
-    m.sketchSetShapes(row, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
-        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.5,0.5],[0.25,0.75]]},"
-        "{\"id\":\"o1\",\"type\":\"oval\",\"color\":[0,1,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":false,\"points\":[[0.5,0.5],[0.2,0.1]]}]}"));
-    const QString probePng = QDir::temp().filePath(QStringLiteral("mn_sketch_probe.png"));
-    { QImage probe(64, 48, QImage::Format_RGB32); probe.fill(Qt::darkGray);
-      probe.save(probePng, "PNG"); }
-    CHECK(m.sketchAddImageFromUrl(row, QUrl::fromLocalFile(probePng).toString()),
-          "probe image placed into the sketch");
-    CHECK(m.sketchAddText(row, 0.5, 0.5, 0.3, QStringLiteral("note"), 20,
-                          QStringLiteral("#FF8800")) == 0,
-          "text element added at index 0");
-    const QString preResize = m.contentForRow(row);
-    const double img0x = QJsonDocument::fromJson(preResize.toUtf8()).object()
-        .value(QStringLiteral("images")).toArray().at(0).toObject()
-        .value(QStringLiteral("x")).toDouble();
-    const qreal hBefore = m.heightForRow(row);
-
-    m.sketchResizeCanvas(row, 100, 50, 0, 0);   // grow left+top = origin shift
-    const QJsonObject o = QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object();
-    CHECK(o.value(QStringLiteral("w")).toInt() == 580
-              && o.value(QStringLiteral("h")).toInt() == 530
-              && m.mediaW(row) == 580 && m.mediaH(row) == 530,
-          "frame 480x480 + (dl=100,dt=50) = 580x530, media meta re-derived");
-    const QJsonArray shapes = o.value(QStringLiteral("shapes")).toArray();
-    const QJsonArray fp = shapes.at(0).toObject()
-        .value(QStringLiteral("points")).toArray().at(0).toArray();
-    CHECK(qFuzzyCompare(fp.at(0).toDouble(), (0.5 * 480 + 100) / 580.0)
-              && qFuzzyCompare(fp.at(1).toDouble(), (0.5 * 480 + 50) / 530.0),
-          "freehand point renormalized exactly ((x*oldW+dl)/newW)");
-    const QJsonArray oc = shapes.at(1).toObject()
-        .value(QStringLiteral("points")).toArray().at(0).toArray();
-    const QJsonArray orr = shapes.at(1).toObject()
-        .value(QStringLiteral("points")).toArray().at(1).toArray();
-    CHECK(qFuzzyCompare(oc.at(0).toDouble(), (0.5 * 480 + 100) / 580.0)
-              && qFuzzyCompare(orr.at(0).toDouble(), 0.2 * 480 / 580.0)
-              && qFuzzyCompare(orr.at(1).toDouble(), 0.1 * 480 / 530.0),
-          "oval center shifted, radii rescaled WITHOUT origin shift");
-    const QJsonObject img = o.value(QStringLiteral("images")).toArray().at(0).toObject();
-    CHECK(qFuzzyCompare(img.value(QStringLiteral("x")).toDouble(),
-                        (img0x * 480 + 100) / 580.0)
-              && qFuzzyCompare(img.value(QStringLiteral("w")).toDouble(),
-                               (64.0 / 480.0) * 480 / 580.0),
-          "image rect: position shifted, size rescaled");
-    const QJsonObject txt = o.value(QStringLiteral("texts")).toArray().at(0).toObject();
-    CHECK(qFuzzyCompare(txt.value(QStringLiteral("x")).toDouble(), (0.5 * 480 + 100) / 580.0)
-              && qFuzzyCompare(txt.value(QStringLiteral("y")).toDouble(), (0.5 * 480 + 50) / 530.0)
-              && qFuzzyCompare(txt.value(QStringLiteral("w")).toDouble(), 0.3 * 480 / 580.0)
-              && txt.value(QStringLiteral("size")).toDouble() == 20.0
-              && txt.value(QStringLiteral("text")).toString() == QStringLiteral("note")
-              && txt.value(QStringLiteral("color")).toString() == QStringLiteral("#FF8800"),
-          "text element: position shifted, width rescaled, size/text/color untouched");
-    CHECK(!qFuzzyCompare(hBefore, m.heightForRow(row)),
-          "Fenwick height re-derived from the new aspect (%.1f -> %.1f)",
-          hBefore, m.heightForRow(row));
-
-    m.undo();
-    CHECK(m.contentForRow(row) == preResize && m.mediaW(row) == 480,
-          "undo restores byte-identical content + media meta");
-    m.redo();
-    CHECK(m.mediaW(row) == 580, "redo re-applies the resize");
-
-    // Cap clamps (source px): grow far past max, shrink far past min.
-    m.sketchResizeCanvas(row, 0, 0, 20000, 0);
-    CHECK(m.mediaW(row) == 8192, "width clamps to 8192");
-    m.sketchResizeCanvas(row, 0, 0, -20000, -20000);
-    CHECK(m.mediaW(row) == 64 && m.mediaH(row) == 64, "frame clamps to 64 minimum");
-
-    CHECK(m.saveAs(path), "saveAs() succeeded");
-    m.closeDocument();
-    BlockModel m2;
-    CHECK(m2.openDocument(path), "reopen succeeded");
-    int srow = -1;
-    for (int i = 0; i < m2.rowCountQml(); ++i)
-        if (m2.mediaKind(i) == QLatin1String("sketch")) { srow = i; break; }
-    CHECK(srow >= 0 && m2.mediaW(srow) == 64, "resized frame round-trips save/reopen");
-    QFile::remove(path);
-    QFile::remove(probePng);
-}
-
 // --- Test 13: sketch export — raster cap + HTML natural width ---------------
 // renderSketch rasterizes at 2× until the output long edge would hit 8192,
 // then 1×..2× proportional (a max canvas exports at 1×, never a GiB image);
 // HTML shows the sketch at its SOURCE size (or dw), not the raster size.
-static void testSketchExportCaps() {
-    qInfo("[13] sketch export: raster cap at 8192, HTML width in source px");
-    class SizeSink : public Exporter::AssetSink {
-    public:
-        QList<QSize> sizes;
-        QImage last;
-        QString addFile(const QString&, const QString& b) override {
-            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
-        QString addImage(const QImage& img, const QString& b) override {
-            sizes << img.size();
-            last = img;
-            return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
-    };
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    const int row = m.insertSketch(-1);
-    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 480 - m.mediaH(row));   // classic 480x480 fixture
-    m.sketchSetShapes(row, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
-        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.9,0.9]]}]}"));
-
-    Exporter ex;
-    ex.setModel(&m);
-
-    SizeSink s1;
-    QString html = ex.toHtml(Exporter::Options{}, s1);
-    CHECK(s1.sizes.size() == 1 && s1.sizes[0] == QSize(960, 960),
-          "480x480 canvas rasters at 2x (960x960)");
-    CHECK(html.contains(QStringLiteral("class=\"sketch\""))
-              && html.contains(QStringLiteral("width:480px")),
-          "HTML sketch width is the SOURCE 480px, not the raster 960");
-
-    m.sketchResizeCanvas(row, 0, 0, 6000 - 480, 3000 - 480);   // → 6000x3000
-    SizeSink s2;
-    html = ex.toHtml(Exporter::Options{}, s2);
-    CHECK(s2.sizes.size() == 1 && s2.sizes[0] == QSize(8192, 4096),
-          "6000x3000 canvas caps at output long edge 8192 (got %dx%d)",
-          s2.sizes.isEmpty() ? 0 : s2.sizes[0].width(),
-          s2.sizes.isEmpty() ? 0 : s2.sizes[0].height());
-    CHECK(html.contains(QStringLiteral("width:6000px")),
-          "HTML width follows the resized source frame");
-
-    m.setMediaWidth(row, 700);                                  // dw override
-    SizeSink s3;
-    html = ex.toHtml(Exporter::Options{}, s3);
-    CHECK(html.contains(QStringLiteral("width:700px;max-width:none")),
-          "dw override rides the export like the image branch");
-
-    // Text-only sketch: baked into the raster (dimensions unchanged, glyph
-    // pixels present under any resolved font).
-    {
-        BlockModel tm;
-        tm.newDocument();
-        while (tm.rowCountQml() > 0) tm.removeBlock(0);
-        const int trow = tm.insertSketch(-1);
-        tm.sketchResizeCanvas(trow, 0, 0, 480 - tm.mediaW(trow), 480 - tm.mediaH(trow));
-        tm.sketchAddText(trow, 0.1, 0.1, 0.5, QStringLiteral("baked label"), 32,
-                         QStringLiteral("#FFFFFF"));
-        Exporter tex;
-        tex.setModel(&tm);
-        SizeSink ts;
-        tex.toHtml(Exporter::Options{}, ts);
-        CHECK(ts.sizes.size() == 1 && ts.sizes[0] == QSize(960, 960),
-              "text-only sketch rasters at 2x, dimensions unchanged");
-        bool lit = false;
-        for (int yy = 0; yy < ts.last.height() && !lit; yy += 2)
-            for (int xx = 0; xx < ts.last.width() && !lit; xx += 2)
-                if (qAlpha(ts.last.pixel(xx, yy)) != 0) lit = true;
-        CHECK(lit, "text glyphs baked into the raster");
-    }
-}
-
 // --- Test 12: sketch fit-to-ink — signed overflow coords, bbox resize -------
 // Overflow ink stores as coords < 0 / > 1 (signed normalized, no clamping
 // anywhere in the pipeline); sketchFitToInk grows/shrinks the frame to the
 // signed bbox + 8px margin, pulling everything back into [0,1].
-static void testSketchFitToInk() {
-    qInfo("[12] sketch fit-to-ink: signed coords survive, bbox resize");
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    const int row = m.insertSketch(-1);
-    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 480 - m.mediaH(row));   // classic 480x480 fixture
-
-    CHECK(!m.sketchFitToInk(row), "empty sketch: fit is a no-op (false)");
-
-    m.sketchSetShapes(row, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
-        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,"
-        "\"points\":[[-0.1,0.2],[0.5,0.5],[1.2,0.9]]}]}"));
-    CHECK(m.contentForRow(row).contains(QStringLiteral("-0.1")),
-          "signed overflow coords round-trip the model untouched");
-
-    CHECK(m.sketchFitToInk(row), "fit-to-ink resizes");
-    // bbox src: x [-48,576] pad 2 -> [-50,578] margin 8 -> [-58,586] => w 644
-    //           y [96,432]  pad 2 -> [94,434]  margin 8 -> [86,442]  => h 356
-    CHECK(m.mediaW(row) == 644 && m.mediaH(row) == 356,
-          "frame = signed bbox + stroke pad + 8px margin (got %dx%d)",
-          m.mediaW(row), m.mediaH(row));
-    const QJsonArray pts = QJsonDocument::fromJson(m.contentForRow(row).toUtf8())
-        .object().value(QStringLiteral("shapes")).toArray().at(0).toObject()
-        .value(QStringLiteral("points")).toArray();
-    bool allIn = true;
-    for (const QJsonValue& v : pts) {
-        const QJsonArray p = v.toArray();
-        allIn = allIn && p.at(0).toDouble() >= 0.0 && p.at(0).toDouble() <= 1.0
-                      && p.at(1).toDouble() >= 0.0 && p.at(1).toDouble() <= 1.0;
-    }
-    CHECK(allIn, "all points pulled inside [0,1] after fit");
-    CHECK(!m.sketchFitToInk(row), "second fit is a no-op (frame already fits)");
-}
-
 // --- Test 15: sketch text elements — invokables, undo, fit-to-ink ------------
 // texts[] = {x,y,w,text,size,color}: height is DERIVED (never stored), blank
 // setText deletes (the overlay's empty-commit contract), fit-to-ink uses the
 // same layout helper the model does so the check is font-agnostic.
-static void testSketchTextElements() {
-    qInfo("[15] sketch text: add/set/box/remove, blank-deletes, fit-to-ink");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_text.mnd");
-    QFile::remove(path);
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    const int row = m.insertSketch(-1);
-    m.sketchResizeCanvas(row, 0, 0, 480 - m.mediaW(row), 480 - m.mediaH(row));   // classic 480x480 fixture
-    auto texts = [&m, row] {
-        return QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
-            .value(QStringLiteral("texts")).toArray();
-    };
-
-    CHECK(m.sketchAddText(row, 0.1, 0.2, 0.4, QStringLiteral("   "), 24,
-                          QStringLiteral("#FF5768")) == -1,
-          "blank text rejected (no element, no undo step)");
-    const int idx = m.sketchAddText(row, 0.1, 0.2, 0.001,
-        QStringLiteral("hello wrap world, a label long enough to wrap"),
-        24, QStringLiteral("#FF5768"));
-    CHECK(idx == 0, "text added at index 0");
-    CHECK(qFuzzyCompare(texts().at(0).toObject().value(QStringLiteral("w")).toDouble(),
-                        2.0 * 24 / 480.0),
-          "width clamped to the 2em floor");
-    m.undo();
-    CHECK(texts().isEmpty(), "one undo removes the add");
-    m.redo();
-    CHECK(texts().size() == 1, "redo restores it");
-
-    m.sketchSetText(row, 0, QStringLiteral("edited"));
-    CHECK(texts().at(0).toObject().value(QStringLiteral("text")).toString()
-              == QStringLiteral("edited"), "setText replaces content (one txn)");
-    m.sketchSetText(row, 0, QStringLiteral("edited"));   // unchanged → no txn
-    m.undo();
-    CHECK(texts().at(0).toObject().value(QStringLiteral("text")).toString()
-              .startsWith(QStringLiteral("hello")),
-          "unchanged setText added no undo step (one undo crosses the edit)");
-    m.redo();
-
-    m.sketchSetText(row, 0, QStringLiteral("  "));
-    CHECK(texts().isEmpty(), "blank setText DELETES the element");
-    m.undo();
-    CHECK(texts().size() == 1
-              && texts().at(0).toObject().value(QStringLiteral("text")).toString()
-                     == QStringLiteral("edited"),
-          "undo resurrects the deleted element");
-
-    m.sketchSetTextBox(row, 0, 0.3, 0.4, 0.5, 24);
-    const QJsonObject tb = texts().at(0).toObject();
-    CHECK(qFuzzyCompare(tb.value(QStringLiteral("x")).toDouble(), 0.3)
-              && qFuzzyCompare(tb.value(QStringLiteral("w")).toDouble(), 0.5),
-          "setTextBox moves/resizes");
-
-    // Fit-to-ink expectation computed through the SAME helper + margin math
-    // the model uses — holds under any resolved font.
-    mn::SketchTextSpec spec;
-    spec.text = tb.value(QStringLiteral("text")).toString();
-    spec.x = 0.3; spec.y = 0.4; spec.w = 0.5; spec.size = 24;
-    spec.family = mn::sketchTextFamily();
-    const QRectF r = mn::sketchTextRectSrc(spec, 480, 480);
-    const double eps = 1e-6, margin = 8.0;
-    const int dl = -int(std::floor(r.left() - margin + eps));
-    const int dt = -int(std::floor(r.top() - margin + eps));
-    const int dr = int(std::ceil(r.right() + margin - eps)) - 480;
-    const int db = int(std::ceil(r.bottom() + margin - eps)) - 480;
-    const int expW = std::clamp(480 + dl + dr, 64, 8192);
-    const int expH = std::clamp(480 + dt + db, 64, 8192);
-    CHECK(m.sketchFitToInk(row), "fit-to-ink on a text-only sketch resizes");
-    CHECK(m.mediaW(row) == expW && m.mediaH(row) == expH,
-          "frame = derived text rect + margin (got %dx%d want %dx%d)",
-          m.mediaW(row), m.mediaH(row), expW, expH);
-
-    // R7: a stroke edit merges through sketchSetShapes — texts[] must survive
-    // the merge byte-identically (unknown-key preservation, the old-build
-    // compatibility guarantee).
-    const QString preShapes = QString::fromUtf8(QJsonDocument(
-        QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
-            .value(QStringLiteral("texts")).toArray().at(0).toObject()
-        ).toJson(QJsonDocument::Compact));
-    m.sketchSetShapes(row, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
-        "{\"id\":\"s9\",\"type\":\"line\",\"color\":[0,0,1,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":false,\"points\":[[0.1,0.1],[0.9,0.9]]}]}"));
-    const QString postShapes = QString::fromUtf8(QJsonDocument(
-        QJsonDocument::fromJson(m.contentForRow(row).toUtf8()).object()
-            .value(QStringLiteral("texts")).toArray().at(0).toObject()
-        ).toJson(QJsonDocument::Compact));
-    CHECK(postShapes == preShapes, "texts[] survives a stroke-edit merge byte-identically");
-
-    m.sketchRemoveText(row, 0);
-    CHECK(texts().isEmpty(), "removeText deletes");
-    m.undo();
-    CHECK(m.saveAs(path), "saveAs() succeeded");
-    m.closeDocument();
-    BlockModel m2;
-    CHECK(m2.openDocument(path), "reopen succeeded");
-    int srow = -1;
-    for (int i = 0; i < m2.rowCountQml(); ++i)
-        if (m2.mediaKind(i) == QLatin1String("sketch")) { srow = i; break; }
-    CHECK(srow >= 0 && m2.contentForRow(srow).contains(QStringLiteral("\"texts\"")),
-          "texts[] round-trips save/reopen");
-    QFile::remove(path);
-}
-
 // --- Test 14: sketch embed width — natural size, dw honoured -----------------
 // Sketches left the "always page-wide" special case (only PDFs keep it):
 // natural canvas width up to the page, dw drag-resize like any image.
-static void testSketchEmbedWidth() {
-    qInfo("[14] sketch embed width: natural up to page, dw override");
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    const int row = m.insertSketch(-1);
-    m.setContentWidth(760.0);
-    CHECK(m.mediaDispWidth(row) == 760,
-          "sketches fill the page (2026-08-21 ruling; got %d)",
-          m.mediaDispWidth(row));
-    m.setContentWidth(1200.0);
-    CHECK(m.mediaDispWidth(row) == 1200,
-          "and TRACK page-width changes (got %d)", m.mediaDispWidth(row));
-    m.setContentWidth(760.0);
-    m.setMediaWidth(row, 900);
-    CHECK(m.mediaDispWidth(row) == 900,
-          "dw override honoured past the page (got %d)", m.mediaDispWidth(row));
-    m.setMediaWidth(row, 0);
-    CHECK(m.mediaDispWidth(row) == 760, "dw reset returns to page-fill");
-}
-
 // --- Test 16: doc-ink text chips — envelope round-trip + export presence ----
 // from the struct, so this locks the critical mechanic — a stroke commit
 // (parse → append stroke → serialize) must never destroy texts, and a
@@ -1063,10 +729,7 @@ static void testConsumeEmptyAnchor() {
     CHECK(m.headerCount(2) > 0, "redo re-inserts it");
     m.undo();
 
-    // Sketch + divider consume too (returned row = the anchor's row).
-    CHECK(m.insertSketch(1) == 1 && m.mediaKind(1) == QLatin1String("sketch"),
-          "sketch consumes the empty anchor");
-    m.undo();
+    // A divider consumes too (returned row = the anchor's row).
     CHECK(m.insertDivider(1) == 1 && m.typeForRow(1) == BlockModel::Divider,
           "divider consumes the empty anchor");
     m.undo();
@@ -2381,57 +2044,6 @@ static void testCollectMedia() {
 // The canvas's group delete emits ONE edited() for strokes plus per-index
 // image/text removals in DESCENDING order, bracketed — drive the mutators in
 // that exact shape (brackets are QML-wired, so this is the model driver).
-static void testSketchGroupDelete() {
-    qInfo("[33] sketch group delete: strokes+image+text bracketed = ONE undo entry");
-    const QString probePng = QDir::temp().filePath(QStringLiteral("mn_group_del.png"));
-    { QImage probe(32, 24, QImage::Format_RGB32); probe.fill(Qt::darkCyan);
-      probe.save(probePng, "PNG"); }
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
-    const int row = m.insertSketch(0);
-    CHECK(row == 1 && m.mediaKind(row) == QLatin1String("sketch"), "sketch inserted");
-    m.sketchSetShapes(row, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":["
-        "{\"id\":\"f1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.2,0.2],[0.4,0.4]]},"
-        "{\"id\":\"f2\",\"type\":\"freehand\",\"color\":[0,1,0,1],\"stroke_width\":4,"
-        "\"filled\":false,\"is_modeled\":true,\"points\":[[0.6,0.6],[0.8,0.8]]}]}"));
-    CHECK(m.sketchAddImageFromUrl(row, QUrl::fromLocalFile(probePng).toString()),
-          "image element placed");
-    CHECK(m.sketchAddText(row, 0.5, 0.5, 0.3, QStringLiteral("label"), 20,
-                          QStringLiteral("#FF8800")) == 0, "text element placed");
-    const QString pre = m.contentForRow(row);
-
-    // Group delete of everything: strokes fold to one empty edited(), then
-    // image/text removals (descending — single elements here).
-    const int entries = m.undoHistory().size();
-    m.beginGroup(row, row);
-    m.sketchSetShapes(row, QStringLiteral(
-        "{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[]}"));
-    m.sketchRemoveImage(row, 0);
-    m.sketchRemoveText(row, 0);
-    m.endGroup();
-    {
-        const QJsonObject o = QJsonDocument::fromJson(
-            m.contentForRow(row).toUtf8()).object();
-        CHECK(o.value(QStringLiteral("images")).toArray().isEmpty()
-                  && o.value(QStringLiteral("texts")).toArray().isEmpty(),
-              "all three kinds deleted");
-    }
-    CHECK(m.undoHistory().size() == entries + 1,
-          "bracketed mixed delete is ONE undo entry");
-    const QString post = m.contentForRow(row);
-    m.undo();
-    CHECK(m.contentForRow(row) == pre,
-          "one undo restores strokes + image + text verbatim");
-    m.redo();
-    CHECK(m.contentForRow(row) == post, "redo re-applies the group delete");
-    m.closeDocument();
-}
-
 // --- Test 34: PDF page-ink undo cycle --------------------------------------
 // Per-page ink rides the block's content JSON (BlockSnap.content), so txn
 // undo, erase-to-empty key drops, and block-delete restore all come from the
@@ -7332,9 +6944,6 @@ static void testPasteRouter() {
     CHECK(r(files, At{}) == QLatin1String("urls"), "copied files beat a raster");
     In raster; raster.hasImage = true;
     CHECK(r(raster, At{}) == QLatin1String("raster"), "a raster alone lands as media");
-    At sketch; sketch.sketchTab = true;
-    CHECK(r(files, sketch) == QLatin1String("sketchUrls") && r(raster, sketch) == QLatin1String("sketchRaster") && r(tsv, sketch) == QLatin1String("nothing"),
-          "a sketch tab takes images only");
     CHECK(ClipboardPaster::looksTabular(QStringLiteral("a\tb\nc\td\n")) && !ClipboardPaster::looksTabular(QStringLiteral("a\tb\nc"))
               && !ClipboardPaster::looksTabular(QStringLiteral("a\tb\n\nc\td")) && !ClipboardPaster::looksTabular(QStringLiteral("a\tb"))
               && !ClipboardPaster::looksTabular(QStringLiteral("a\tb\tc\nd\te")),
@@ -8105,11 +7714,6 @@ int main(int argc, char** argv) {
     testUndoHistory();
     testComments();
     testExportMarkdown();
-    testSketchResizeRenorm();
-    testSketchFitToInk();
-    testSketchExportCaps();
-    testSketchEmbedWidth();
-    testSketchTextElements();
     testConsumeEmptyAnchor();
     testInsertSpecs();
     testImporterWalker();
@@ -8125,7 +7729,6 @@ int main(int argc, char** argv) {
     testRtfImport();
     testImportCopyPolicy();
     testCollectMedia();
-    testSketchGroupDelete();
     testPdfPageInkUndo();
     testPdfPageInkExport();
     testExportPdf();

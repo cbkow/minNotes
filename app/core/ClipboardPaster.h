@@ -49,7 +49,7 @@ public:
     // The paste ROUTER (SR-4 S8d2, R-I9 8a): the order doPaste tries the clipboard's flavours in,
     // as a pure decision over what the clipboard holds and where the caret is — testable headless.
     // Returns one action name; the editor performs it and, when a flavour yields nothing, masks it
-    // in the input and asks again. Actions: nothing · sketchUrls · sketchRaster · blocks ·
+    // in the input and asks again. Actions: nothing · blocks ·
     // codeVerbatim · html · urls · raster · tableTsv · tableFromTsv · text.
     struct PasteInput {
         bool hasBlocks = false;        // a non-empty x-mnd-blocks payload
@@ -61,7 +61,6 @@ public:
         QString text;
     };
     struct PasteTarget {
-        bool sketchTab = false;        // a sketch tab is open
         bool codeBlock = false;        // the caret is in a code block (no multi-block selection)
         bool inTable = false;          // the caret is in a table's cell
     };

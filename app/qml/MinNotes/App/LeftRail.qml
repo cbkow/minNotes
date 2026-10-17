@@ -276,7 +276,7 @@ Rectangle {
 
         // ── Blocks. Inline by default; collapse → a blocks icon whose hover
         // reveals the options as a flyout. Quote/list/task/code toggle the caret
-        // block; table/sketch/divider insert. ──
+        // block; table/divider insert. ──
         RailSection {
             repIcon: "squares-four"; repTooltip: "Blocks"
             collapsed: railState.blocksCollapsed
@@ -292,7 +292,6 @@ Rectangle {
                 { icon: "caret-circle-down", tip: "Choice chip  (⌥⌘C)", noRefocus: true, act: function(){ rail.editor.insertChoiceChip() } },
                 { icon: "code-block",    tip: "Code block", isChecked: function(t){ return t === 2 }, act: function(){ rail.editor.toggleCodeBlock() } },
                 { icon: "table",         tip: "Table",      act: function(){ rail.editor.insertTableAtCaret() } },
-                { icon: "scribble",      tip: "Sketch",     act: function(){ rail.editor.insertSketchAtCaret() } },
                 { icon: "minus",         tip: "Divider",    act: function(){ rail.editor.addDivider() } }
             ]
         }

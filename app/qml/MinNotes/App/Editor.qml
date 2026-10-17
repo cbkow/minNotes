@@ -147,25 +147,24 @@ FocusScope {
     function docZoom100() { docZoomTo(1) }
     function docZoomFit() { docZoomTo(flick.width / (pageWidth + 2 * inkGutter)) }   // the sheet fills the viewport
     // ONE zoom interface (ruling 2026-09-16): the badge and the keys act on the ACTIVE surface —
-    // the PDF stage, the sketch stage, or the document. 100 % is true scale on each.
+    // the PDF stage, the canvas, or the document. 100 % is true scale on each.
     readonly property real zoomValue: activeCanvas ? canvasView.cam.zoom
         : activePdfRow >= 0
         ? (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0 ? pdfZoom * pdfFitPageW / blockModel.mediaW(activePdfRow) : 1)
-        : activeSketchRow >= 0 ? sketchEditCanvas.zoom : viewZoom
-    function zoomStep(dir) { if (activeCanvas) canvasView.zoomStep(dir); else if (activePdfRow >= 0) pdfZoomStep(dir); else if (activeSketchRow >= 0) sketchStage.zoomStep(dir); else docZoomStep(dir) }
+        : viewZoom
+    function zoomStep(dir) { if (activeCanvas) canvasView.zoomStep(dir); else if (activePdfRow >= 0) pdfZoomStep(dir); else docZoomStep(dir) }
     // The rail's slider (BottomRail): the active surface's range in TRUE-scale units, mapped
     // the Word way — 100 % dead centre, a linear half either side.
     readonly property real pdfTrueK: pdfFitPageW > 0 && activePdfRow >= 0 && blockModel.mediaW(activePdfRow) > 0
                                      ? pdfFitPageW / blockModel.mediaW(activePdfRow) : 1
     // A PDF: a quarter of fit width up to 400 % true scale (its own clamp allows 4 × fit, which
     // is far past useful and made the slider's right half a cliff).
-    readonly property real zoomFloor: activeCanvas ? 0.05 : activePdfRow >= 0 ? 0.25 * pdfTrueK : activeSketchRow >= 0 ? 0.10 : zoomSteps[0]
-    readonly property real zoomCeil:  activeCanvas ? 4 : activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : activeSketchRow >= 0 ? 8 : zoomSteps[zoomSteps.length - 1]
+    readonly property real zoomFloor: activeCanvas ? 0.05 : activePdfRow >= 0 ? 0.25 * pdfTrueK : zoomSteps[0]
+    readonly property real zoomCeil:  activeCanvas ? 4 : activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : zoomSteps[zoomSteps.length - 1]
     function zoomTo(v) {   // true scale, on the active surface, about its centre
         v = Math.max(zoomFloor, Math.min(zoomCeil, v))
         if (activeCanvas) canvasView.zoomTo(v)
         else if (activePdfRow >= 0) pdfZoomTo(v / pdfTrueK)
-        else if (activeSketchRow >= 0) sketchStage.zoomAt(sketchStage.width / 2, sketchStage.height / 2, v)
         else docZoomTo(v)
     }
     // Each half is LOGARITHMIC (a doubling takes the same travel everywhere): the document's
@@ -185,8 +184,8 @@ FocusScope {
     // in writing mode space types) and a left-drag pans the Flickable natively; the document
     // mouse layer and the ink canvas step aside while it's held. Middle-drag pans any time.
     property bool docSpaceHeld: false                     // (cleared in onInkModeChanged below)
-    function zoomFit()     { if (activeCanvas) canvasView.fit();      else if (activePdfRow >= 0) pdfZoomFit();     else if (activeSketchRow >= 0) sketchStage.fitCamera(); else docZoomFit() }
-    function zoom100()     { if (activeCanvas) canvasView.zoomTo(1);  else if (activePdfRow >= 0) pdfZoom100();     else if (activeSketchRow >= 0) sketchStage.zoomTo100(); else docZoom100() }
+    function zoomFit()     { if (activeCanvas) canvasView.fit();      else if (activePdfRow >= 0) pdfZoomFit();     else docZoomFit() }
+    function zoom100()     { if (activeCanvas) canvasView.zoomTo(1);  else if (activePdfRow >= 0) pdfZoom100();     else docZoom100() }
     // The width the sheet centres in: the viewport LESS a floating Inspector. In annotation mode
     // the panel floats over the editor instead of pushing it, so the raw viewport is wider by
     // the panel — centring on it would shift the page by half the panel every time annotation
@@ -374,14 +373,6 @@ FocusScope {
     // canvas keeps the grab (SketchCanvas::mousePressEvent) so the list can
     // never steal a stroke; wheel scrolling works throughout.
     property bool pdfSpaceHeld: false
-    // The PDF tab's page canvas that currently owns Esc/Delete (one SketchCanvas
-    // per page delegate — the last one to draw or select wins; switching pages
-    // clears the previous page's selection so two pages never both show one).
-    property var pdfActiveInk: null
-    function _setPdfActiveInk(c) {
-        if (pdfActiveInk && pdfActiveInk !== c) pdfActiveInk.clearSelection()
-        pdfActiveInk = c
-    }
     // Active video tab (the studio: surface + transport + notes panel); "" = not
     // in a video tab. Opening it activates the video PAUSED at its remembered
     // playhead so the studio comes up showing a frame, not a void.
@@ -401,14 +392,8 @@ FocusScope {
         var r = blockModel.rowForId(activeVideoId)
         if (r >= 0) _activateVideo(r)
     }
-    // Active sketch tab (full-frame canvas editing); "" = not in a sketch tab.
-    property string activeSketchId: ""
-    readonly property int activeSketchRow: (blockModel.layoutRevision, blockModel.structureRevision,
-        activeSketchId === "" ? -1 : blockModel.rowForId(activeSketchId))
-    onActiveSketchRowChanged: if (activeSketchId !== "" && activeSketchRow < 0) activeSketchId = ""
-    onActiveSketchIdChanged: forceActiveFocus()
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
-    // active state across table, PDF, video and sketch tabs.
+    // active state across table, PDF, video and canvas tabs.
     // The canvas (B3) is a per-document view mode, not a block: its tab id is the literal "canvas"
     // (rowForId("canvas") is -1, so every `activeFrameId !== ""` guard treats it as a frame tab).
     property bool activeCanvas: false
@@ -430,7 +415,7 @@ FocusScope {
     readonly property string activeFrameId: activeCanvas ? "canvas"
                                           : activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
-                                          : activeVideoId !== "" ? activeVideoId : activeSketchId
+                                          : activeVideoId
     // The document view's zoom is remembered per bottom tab too (2026-09-16): the Document tab
     // and each table's grid tab share the Flickable, so each keeps its own value in docZooms
     // (keyed by frame id, "" = Document) and gets it back on the switch.
@@ -452,34 +437,33 @@ FocusScope {
         // landing on the Document view always lands TYPING (a leftover armed
         // tool would silently re-engage ink mode); table tabs have no ink
         // surface AND select there is the cell cursor's job, so EVERY
-        // non-Type tool drops to Type; sketch/video/PDF tabs keep the tool
+        // non-Type tool drops to Type; video/PDF tabs keep the tool
         // and interpret it locally (PDF pages take per-page ink AND text
         // chips since 2026-08-20). The text-chip tool alone drops to Select
         // in video tabs (text boxes are not part of the QCView flow).
         var t = inspector ? inspector.drawTool : "type"
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
-            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; return
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""; return
         }
         if (id === "canvas") {   // B3: read-only in phase 1 — no ink surface, no cell cursor → Type
             if (inspector && t !== "type") inspector.drawTool = "type"
-            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeCanvas = true; return
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeCanvas = true; return
         }
         var r = blockModel.rowForId(id)
         if (blockModel.headerCount(r) > 0 && blockModel.tableHeadOf(r) === r) {   // a table (S9)
             // Any non-Type tool drops here (2026-08-20): tables have no ink surface.
             if (t !== "type") inspector.drawTool = "type"
-            activePdfId = ""; activeVideoId = ""; activeSketchId = ""; activeGridId = id
+            activePdfId = ""; activeVideoId = ""; activeGridId = id
             var gc = boardPref(id)               // this table's remembered view: the board, else the grid frame
             if (gc >= 0 && blockModel.tableColumnKind(r, gc) !== 1 && blockModel.tableColumnKind(r, gc) !== 2) gc = -1
             if (gc >= 0) { boardCol = gc; boardMode = true }
         }
         else if (blockModel.mediaKind(r) === "video") {
             if (t === "text") inspector.drawTool = "select"
-            activeGridId = ""; activePdfId = ""; activeSketchId = ""; activeVideoId = id
+            activeGridId = ""; activePdfId = ""; activeVideoId = id
         }
-        else if (blockModel.mediaKind(r) === "sketch") { activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeSketchId = id }
-        else { activeGridId = ""; activeVideoId = ""; activeSketchId = ""; activePdfId = id }
+        else { activeGridId = ""; activeVideoId = ""; activePdfId = id }
     }
     // Switching documents (new/open/save-as) resets the model; drop all per-doc
     // UI state so nothing points at the old doc's blocks (closes frame tabs /
@@ -526,7 +510,7 @@ FocusScope {
         cursor.clearMarks()
         docZooms = m.docZooms || ({}); pdfZooms = m.pdfZooms || ({})
         _prevFlickFrameId = ""; _prevPdfId = ""
-        root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/sketch/canvas)
+        root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/canvas)
         canvasView.restoreCam(m.canvasCam)
         if (_isFlickFrame(m.activeFrameId)) {
             const z = m.zoom !== undefined ? m.zoom : 1
@@ -540,50 +524,6 @@ FocusScope {
         flick.contentY = m.scrollY
     }
 
-    // Inspector hook: after a model-side Fit-to-ink, frame the new canvas.
-    function sketchRefitCamera() { if (activeSketchRow >= 0) sketchStage.fitCamera() }
-
-    // --- Inspector Size-slider chip targeting: when a text chip is SELECTED
-    // on either surface, the slider edits that chip (value in page/source px;
-    // ink frame chips convert via the placement scale). -1 = no target, the
-    // slider falls back to the new-chip default. ---
-    readonly property real selChipSize: {
-        if (activeSketchRow >= 0 && sketchEditCanvas.selectedTextIndex >= 0) {
-            var t = (blockModel.contentRevision,
-                     sketchEditCanvas.textElementAt(sketchEditCanvas.selectedTextIndex))
-            return t.size !== undefined ? t.size : -1
-        }
-        if (activePdfRow >= 0 && pdfActiveInk && pdfActiveInk.selectedTextIndex >= 0) {
-            var p = (blockModel.contentRevision,
-                     pdfActiveInk.textElementAt(pdfActiveInk.selectedTextIndex))
-            return p.size !== undefined ? p.size : -1
-        }
-        return -1
-    }
-    function applyChipSize(v) {
-        if (v <= 0) return
-        if (activeSketchRow >= 0 && sketchEditCanvas.selectedTextIndex >= 0) {
-            var i = sketchEditCanvas.selectedTextIndex
-            var t = sketchEditCanvas.textElementAt(i)
-            if (t.size !== undefined && Math.abs(t.size - v) > 0.01)
-                blockModel.sketchSetTextBox(activeSketchRow, i, t.x, t.y, t.w, v)
-        } else if (activePdfRow >= 0 && pdfActiveInk && pdfActiveInk.selectedTextIndex >= 0) {
-            var pi = pdfActiveInk.selectedTextIndex
-            var pt = pdfActiveInk.textElementAt(pi)
-            if (pt.size !== undefined && Math.abs(pt.size - v) > 0.01)
-                blockModel.pdfSetPageTextBox(activePdfRow, pdfActiveInk.pdfPage,
-                                             pi, pt.x, pt.y, pt.w, v)
-        }
-    }
-
-    function insertSketchAt(row) {
-        blockModel.commitMarkdown(cursor.focusRow)   // leaving the edited block → consume its inline md
-        var r = blockModel.insertSketch(row)
-        // Open the new sketch's tab immediately — an empty inline canvas
-        // invites nothing; the tab is where drawing lives.
-        if (r >= 0) { cursor.setCaret(r, 0); setActiveTab(blockModel.idForRow(r)) }
-    }
-    function insertSketchAtCaret() { insertSketchAt(cursor.focusRow) }
     // Per-table board-view memory (app-level Settings, keyed by block id —
     // VIEW state, so it stays out of the document and out of undo).
     Settings {
@@ -758,12 +698,10 @@ FocusScope {
     function _isImageRow(r) {
         return r >= 0 && blockModel.typeForRow(r) === 3 && blockModel.mediaKind(r) === "image"
     }
-    // Rows that take the inline resize affordance: images and sketches (both carry
-    // a display-width override; sketch strokes are normalized so they scale crisp).
+    // Rows that take the inline resize affordance: images (they carry a display-width override).
     function _isResizableMediaRow(r) {
         if (r < 0 || blockModel.typeForRow(r) !== 3) return false
-        var k = blockModel.mediaKind(r)
-        return k === "image" || k === "sketch"
+        return blockModel.mediaKind(r) === "image"
     }
     // Insertion gap (0..count) for a content-y: before/after the row by its midpoint.
     function gapForY(cy) {
@@ -1329,17 +1267,8 @@ FocusScope {
             root.imageDropActive = false
             if (!drop.hasUrls) { root.clearDropState(); return }
             // Full-frame tabs cover the document (regression fix 2026-08-21:
-            // drops used to fall THROUGH to the hidden document). A sketch
-            // tab takes the image(s) onto its canvas; the other frame tabs
-            // ignore the drop (the table tab's cells have their own
-            // dedicated DropArea).
-            if (root.activeSketchRow >= 0) {
-                for (var si = 0; si < drop.urls.length; ++si)
-                    blockModel.sketchAddImageFromUrl(root.activeSketchRow, drop.urls[si].toString(), false)
-                root.clearDropState()
-                drop.accept()
-                return
-            }
+            // drops used to fall THROUGH to the hidden document); the frame tabs
+            // ignore the drop (the table tab's cells have their own dedicated DropArea).
             if (root.activeFrameId !== "") { root.clearDropState(); return }
             // A drop lands the caret on the new media → leaving the edited text block, so
             // consume its inline md first (commit doesn't move rows, so the drop-target
@@ -2796,24 +2725,12 @@ FocusScope {
         const input = { hasBlocks: payload.length > 0, hasHtml: html.length > 0, hasImage: clipboard.hasImage(),
                         bareRemoteImage: html.length > 0 && blockModel.htmlIsBareRemoteImage(html),
                         noTable: false, urls: urls.length, text: txt }
-        const target = { sketchTab: root.activeSketchRow >= 0,
-                         codeBlock: blockModel.typeForRow(cursor.focusRow) === 2 && (!cursor.hasSel || cursor.loRow === cursor.hiRow),
+        const target = { codeBlock: blockModel.typeForRow(cursor.focusRow) === 2 && (!cursor.hasSel || cursor.loRow === cursor.hiRow),
                          inTable: blockModel.tableHeadOf(cursor.focusRow) >= 0 }
         for (let guard = 0; guard < 8; ++guard) {
             const action = paster.routePaste(input, target)
             switch (action) {
             case "nothing":
-                return
-            case "sketchUrls": {   // images (copied from our app or outside) drop onto the canvas
-                let any = false
-                for (let i = 0; i < urls.length; ++i)
-                    if (blockModel.sketchAddImageFromUrl(root.activeSketchRow, urls[i], ephemeralUrls)) any = true
-                if (any) return
-                input.urls = 0
-                continue
-            }
-            case "sketchRaster":
-                blockModel.sketchAddImageFromClipboard(root.activeSketchRow)
                 return
             case "blocks":   // our own flavour: the paster deletes the selection itself, ONE undo entry, reports via onPasteFinished
                 if (cursor.hasSel) {
@@ -3028,16 +2945,9 @@ FocusScope {
         cursor.sync()
     }
 
-    // Space-up releases the sketch tab's hand-pan (press side lives in the
-    // sketch branch of Keys.onPressed below). Gated off while the text
-    // overlay edits — a stuck panMode would hide the frame handles.
+    // Space-up releases the PDF tab's hand-pan (press side lives in Keys.onPressed below).
     Keys.onReleased: (event) => {
-        if (root.activeSketchRow >= 0 && !sketchTextSession.active
-                && event.key === Qt.Key_Space && !event.isAutoRepeat) {
-            sketchEditCanvas.panMode = false
-            event.accepted = true
-        }
-        else if (root.activePdfRow >= 0
+        if (root.activePdfRow >= 0
                  && event.key === Qt.Key_Space && !event.isAutoRepeat) {
             root.pdfSpaceHeld = false
             event.accepted = true
@@ -3056,31 +2966,16 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        // Sketch text overlay owns the keyboard while editing (belt-and-braces:
-        // the TextEdit consumes nearly everything before it can bubble here).
-        if (root.activeSketchRow >= 0 && sketchTextSession.active) {
-            if (k === Qt.Key_Escape) sketchTextSession.commit()
-            event.accepted = true
-        }
-        // And for the PDF page-chip overlay (must sit above the pdf branch).
-        else if (root.activePdfRow >= 0 && pdfTextSession.active) {
-            if (k === Qt.Key_Escape) pdfTextSession.commit()
-            event.accepted = true
-        }
-        else if (k === Qt.Key_Escape) {
+        if (k === Qt.Key_Escape) {
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
             // Studio first: drop an in-flight stroke, then disarm the tool.
             if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
-            else if (root.activeSketchRow >= 0 && sketchEditCanvas.drawing) { sketchEditCanvas.cancelStroke() }
-            else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.drawing) { root.pdfActiveInk.cancelStroke() }
-            else if ((root.activeVideoRow >= 0 || root.activeSketchRow >= 0 || root.activePdfRow >= 0)
+            else if ((root.activeVideoRow >= 0 || root.activePdfRow >= 0)
                      && root.inspector && root.inspector.drawTool !== "type"
                      && root.inspector.drawTool !== "select") { root.inspector.drawTool = "select" }
-            else if (root.activeSketchRow >= 0 && sketchEditCanvas.hasSelection) { sketchEditCanvas.clearSelection() }
             else if (root.activeVideoRow >= 0 && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
-            else if (root.activePdfRow >= 0 && root.pdfActiveInk && root.pdfActiveInk.hasSelection) { root.pdfActiveInk.clearSelection() }
             else if (root.dividerDragging) { root.cancelDividerDrag() }
             else if (root.pulling) { root.cancelPull() }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
@@ -3138,9 +3033,6 @@ FocusScope {
             if (cmd && k === Qt.Key_Z && shift) blockModel.redo()
             else if (cmd && k === Qt.Key_Z) blockModel.undo()
             else if (cmd && k === Qt.Key_Y) blockModel.redo()
-            else if ((k === Qt.Key_Delete || k === Qt.Key_Backspace)
-                     && root.pdfActiveInk && root.pdfActiveInk.hasSelection)
-                root.pdfActiveInk.deleteSelection()
             else if (k === Qt.Key_Space && !event.isAutoRepeat)
                 root.pdfSpaceHeld = true            // hold the hand (list pan)
             // Zoom keys (2026-08-20) — the ZoomBadge menu's advertised pair
@@ -3166,14 +3058,10 @@ FocusScope {
             root.insertChoiceChip()   // doc view OR a table's grid frame
             event.accepted = true
         }
-        // Video/sketch tabs: clipboard ops target the hidden document — gate ⌘V/⌘X (silent document edits);
-        // ⌘C copies an invisible selection, swallow it too. EXCEPT ⌘V in a
-        // SKETCH tab (regression fix 2026-08-21): the canvas is a real paste
-        // target — doPaste's sketch branch drops images onto it and never
-        // touches the document.
+        // Video tab: clipboard ops target the hidden document — gate ⌘V/⌘X (silent document edits);
+        // ⌘C copies an invisible selection, swallow it too.
         else if (cmd && (k === Qt.Key_C || k === Qt.Key_V || k === Qt.Key_X)
-                 && (root.activeVideoRow >= 0 || root.activeSketchRow >= 0)) {
-            if (k === Qt.Key_V && root.activeSketchRow >= 0) root.doPaste()
+                 && root.activeVideoRow >= 0) {
             event.accepted = true
         }
         else if (cmd && k === Qt.Key_Z && shift) { blockModel.redo(); event.accepted = true }
@@ -3218,27 +3106,7 @@ FocusScope {
                                            if (shift) root.setVideoSpeed(1.0); else root.cycleVideoSpeed() }
             event.accepted = true
         }
-        // Sketch tab: the canvas is mouse-driven; swallow everything so typing
-        // can't invisibly edit the hidden document. (cmd+Z above = doc undo —
-        // sketch strokes are document content, unlike video notes.) Delete/
-        // Backspace removes the selected stroke/image when in select mode;
-        // space holds the hand (camera pan); ⌘+/− zoom, ⌘0 = 100%, ⌘1 = Fit.
-        else if (root.activeSketchRow >= 0) {
-            if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && sketchEditCanvas.hasSelection)
-                sketchEditCanvas.deleteSelection()
-            else if (k === Qt.Key_Space && !event.isAutoRepeat)
-                sketchEditCanvas.panMode = true
-            else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal))
-                sketchStage.zoomStep(1)
-            else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore))
-                sketchStage.zoomStep(-1)
-            else if (cmd && k === Qt.Key_0)
-                sketchStage.zoomTo100()
-            else if (cmd && k === Qt.Key_1)
-                sketchStage.fitCamera()
-            event.accepted = true
-        }
-        // View zoom (PLAN-zoom Z3): the same chords as the PDF and sketch tabs.
+        // View zoom (PLAN-zoom Z3): the same chords as the PDF tab.
         else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) { root.docZoomStep(1); event.accepted = true }
         else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore)) { root.docZoomStep(-1); event.accepted = true }
         else if (cmd && k === Qt.Key_0) { root.docZoom100(); event.accepted = true }
@@ -4344,7 +4212,7 @@ FocusScope {
 
     Flickable {
         id: flick
-        visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0   // hidden in a full-frame tab
+        visible: root.activePdfRow < 0 && root.activeVideoRow < 0   // hidden in a full-frame tab
                  && !root.activeCanvas                                             // the canvas is a full-frame tab too (B3)
                  && !(root.activeGridId !== "" && root.boardMode)                 // a table's board covers it
         anchors.fill: parent
@@ -5251,56 +5119,15 @@ FocusScope {
                                 Connections { target: pageImg.parent; function onWidthChanged() { settle.restart() } }
                                 sourceSize.width: Math.round(settledW * Screen.devicePixelRatio)
                             }
-                            // Per-PAGE ink overlay (2026-08-19): the sketch canvas in
-                            // its inline-embed shape (frame = the page rect), storing
-                            // normalized page coords + source-unit widths via the
-                            // block's content JSON (pdfSetPageInk → document undo).
-                            // Text chips (2026-08-20): the canvas paints/selects/
-                            // erases them natively; create/edit route to the
-                            // ROOT-level pdfTextSession (this delegate recycles).
-                            SketchCanvas {
-                                id: pageInk
-                                readonly property int pdfPage: index
+                            // Per-PAGE ink (2.0 stage 1): the page's media ink, view-only through the GPU
+                            // ink item. Drawing on PDF pages returns with the canvas tools (stage 2).
+                            InkNodeItem {
                                 anchors.fill: parent
-                                // Space-hand: the canvas yields the mouse so drags
-                                // fall through to the list and scroll it.
-                                enabled: !root.pdfSpaceHeld
-                                data: (blockModel.contentRevision,
-                                       root.activePdfRow >= 0
-                                       ? blockModel.pdfPageInk(root.activePdfRow, index) : "")
-                                sourceWidth: Math.max(1, blockModel.mediaW(root.activePdfRow))
-                                sourceHeight: Math.max(1, blockModel.mediaH(root.activePdfRow))
-                                fontFamily: Theme.font.body
-                                tool: (root.activePdfRow >= 0 && root.inspector
-                                       && root.inspector.drawTool !== "type")
-                                          ? root.inspector.drawTool : ""
-                                color: root.inspector ? root.inspector.drawColor : "#FF0000"
-                                strokeWidth: root.inspector ? root.inspector.drawWidth : 6
-                                selectable: true
-                                // Group gestures: PDF pages carry only strokes
-                                // (one edited() = one txn), so the brackets are
-                                // future-proofing at zero cost.
-                                onGroupCommitBegan: blockModel.beginGroup(root.activePdfRow, root.activePdfRow)
-                                onGroupCommitEnded: blockModel.endGroup()
-                                onEdited: (json) => blockModel.pdfSetPageInk(root.activePdfRow, index, json)
-                                // Text-chip session routing (the sketch contract).
-                                editingTextIndex: pdfTextSession.mode === "edit"
-                                                  && pdfTextSession.canvas === pageInk
-                                                      ? pdfTextSession.index : -1
-                                onTextCreateRequested: (nx, ny) => pdfTextSession.beginCreate(pageInk, index, nx, ny)
-                                onTextEditRequested: (i) => pdfTextSession.beginEdit(pageInk, index, i)
-                                onTextBoxChanged: (i, x, y, w, s) => blockModel.pdfSetPageTextBox(root.activePdfRow, index, i, x, y, w, s)
-                                onTextRemoved: (i) => blockModel.pdfRemovePageText(root.activePdfRow, index, i)
-                                // One page's canvas at a time owns Esc/Delete.
-                                onDrawingChanged: if (drawing) root._setPdfActiveInk(pageInk)
-                                onSelectionChanged: if (hasSelection) root._setPdfActiveInk(pageInk)
-                                Component.onDestruction: {
-                                    // A recycled delegate mid-session commits: the
-                                    // session's buffer is self-contained, so the
-                                    // model write survives this canvas dying.
-                                    if (pdfTextSession.canvas === pageInk) pdfTextSession.commit()
-                                    if (root.pdfActiveInk === pageInk) root.pdfActiveInk = null
-                                }
+                                envelope: (blockModel.contentRevision,
+                                           root.activePdfRow >= 0 ? blockModel.mediaPageInk(root.activePdfRow, index) : "")
+                                frameW: width; frameH: height
+                                sourceW: Math.max(1, blockModel.mediaW(root.activePdfRow))
+                                sourceH: Math.max(1, blockModel.mediaH(root.activePdfRow))
                             }
                         }
                     }
@@ -5310,141 +5137,7 @@ FocusScope {
                 // maps from the session's canvas; the contentY/width reads
                 // are LOAD-BEARING deps (reactivity rule 1e — mapToItem is
                 // not reactive by itself).
-                Item {
-                    id: pdfChipOverlay
-                    anchors.fill: parent
-                    visible: pdfTextSession.active && !!pdfTextSession.canvas
-                    readonly property real pxPerSrc:
-                        pdfTextSession.canvas
-                            ? pdfTextSession.canvas.width
-                              / Math.max(1, blockModel.mediaW(root.activePdfRow))
-                            : 1
-                    readonly property real sizePx: pdfTextSession.esize * pxPerSrc
-                    readonly property real padPx: 0.4 * sizePx   // the 0.4em chip pad rule
-                    readonly property point origin: {
-                        pdfList.contentY; pdfList.width      // re-map on scroll/resize
-                        if (!pdfTextSession.canvas) return Qt.point(0, 0)
-                        return pdfTextSession.canvas.mapToItem(
-                            pdfChipOverlay,
-                            pdfTextSession.ex * pdfTextSession.canvas.width,
-                            pdfTextSession.ey * pdfTextSession.canvas.height)
-                    }
-                    readonly property real chipW: pdfTextSession.canvas
-                        ? pdfTextSession.ew * pdfTextSession.canvas.width : 0
-                    Rectangle {   // the live CHIP: fill = element color, accent border = session
-                        visible: pdfTextEditor.visible
-                        x: pdfChipOverlay.origin.x; y: pdfChipOverlay.origin.y
-                        width: pdfChipOverlay.chipW
-                        height: pdfTextEditor.height + 2 * pdfChipOverlay.padPx
-                        color: pdfTextSession.ecolor
-                        border.width: 1; border.color: Theme.colors.accent
-                    }
-                    TextEdit {
-                        id: pdfTextEditor
-                        visible: pdfTextSession.active
-                        x: pdfChipOverlay.origin.x + pdfChipOverlay.padPx
-                        y: pdfChipOverlay.origin.y + pdfChipOverlay.padPx
-                        width: Math.max(4, pdfChipOverlay.chipW - 2 * pdfChipOverlay.padPx)
-                        // Height implicit: the chip grows downward while typing.
-                        wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-                        textMargin: 0
-                        font.family: Theme.font.body   // == the canvas's fontFamily
-                        font.pixelSize: Math.max(1, pdfChipOverlay.sizePx)
-                        color: pdfTextSession.canvas
-                                   ? pdfTextSession.canvas.textInkFor(pdfTextSession.ecolor)
-                                   : Theme.colors.text
-                        selectByMouse: true
-                        selectionColor: Theme.colors.divider
-                        // Session-owned buffer: the commit must survive this
-                        // editor dying with the Loader/delegate.
-                        onTextChanged: pdfTextSession.buf = text
-                        onVisibleChanged: if (visible) {
-                            text = pdfTextSession.mode === "edit" ? pdfTextSession.origText : ""
-                            cursorPosition = text.length
-                            forceActiveFocus()
-                        }
-                        onActiveFocusChanged: if (!activeFocus && visible) pdfTextSession.commit()
-                        // Escape COMMITS (the sketch-session precedent; blanking deletes).
-                        Keys.onEscapePressed: pdfTextSession.commit()
-                    }
-                }
             }
-        }
-    }
-
-    // --- PDF text-chip session (2026-08-20): the sketchTextSession contract
-    // with a SELF-CONTAINED text buffer — the overlay and the hosting canvas
-    // can both die mid-session (delegate recycling, tab exit) and the commit
-    // still lands, because row/page/coords/buf are all captured here. ---
-    QtObject {
-        id: pdfTextSession
-        property string mode: ""        // "" | "create" | "edit"
-        property int row: -1            // captured at begin — commit may land later
-        property int page: -1
-        property var canvas: null       // the hosting pageInk (may die first)
-        property int index: -1          // edit mode: element index
-        property real ex: 0; property real ey: 0; property real ew: 0
-        property real esize: 16
-        property color ecolor: "#E4E3E2"
-        property string origText: ""
-        property string buf: ""         // mirrored from the overlay TextEdit
-        readonly property bool active: mode !== ""
-        function beginCreate(c, pg, nx, ny) {
-            commit()                    // a canvas press can race focus-out
-            row = root.activePdfRow; page = pg; canvas = c
-            esize = root.inspector ? root.inspector.drawTextSize : 16
-            ecolor = root.inspector ? root.inspector.drawColor : "#E4E3E2"
-            ex = nx; ey = ny
-            ew = Math.min(0.5, Math.max(240, 2 * esize)
-                          / Math.max(1, blockModel.mediaW(root.activePdfRow)))
-            index = -1; origText = ""; buf = ""
-            mode = "create"
-        }
-        function beginEdit(c, pg, i) {
-            commit()
-            row = root.activePdfRow; page = pg; canvas = c
-            var t = c.textElementAt(i)
-            if (t.text === undefined) return
-            index = i
-            ex = t.x; ey = t.y; ew = t.w
-            esize = t.size; ecolor = t.color
-            origText = t.text; buf = t.text
-            mode = "edit"
-        }
-        function commit() {
-            if (mode === "") return
-            // Close the session BEFORE the model call so the data round-trip
-            // can't re-enter it (Connections below).
-            var m = mode, r = row, p = page, i = index, orig = origText, txt = buf
-            mode = ""; canvas = null
-            if (m === "create" && txt.trim() !== "")
-                blockModel.pdfAddPageText(r, p, ex, ey, ew, txt, esize, "" + ecolor)
-            else if (m === "edit" && txt !== orig)
-                blockModel.pdfSetPageText(r, p, i, txt)   // blank ⇒ model deletes
-            root.forceActiveFocus()
-        }
-        function cancel() {
-            if (mode === "") return
-            mode = ""; canvas = null
-            root.forceActiveFocus()
-        }
-    }
-    Connections {
-        // External data change mid-EDIT (undo, another surface) → the element
-        // under the overlay is stale: cancel. Create sessions just continue.
-        target: pdfTextSession.canvas
-        function onDataChanged() {
-            if (pdfTextSession.mode === "edit") pdfTextSession.cancel()
-        }
-    }
-    Connections {   // any tool change commits (the sketch-session rationale)
-        target: root.inspector
-        function onDrawToolChanged() { pdfTextSession.commit() }
-    }
-    Connections {   // leaving the PDF tab commits (captured row survives)
-        target: root
-        function onActivePdfRowChanged() {
-            if (root.activePdfRow < 0) pdfTextSession.commit()
         }
     }
 
@@ -5806,368 +5499,6 @@ FocusScope {
         visible: root.activeCanvas
         anchors.fill: parent
         editor: root
-    }
-
-    // --- Full-frame sketch tab: the canvas centered at fit size, editable
-    // with the Inspector's Draw tools (direct mouse — full-frame-tab
-    // pattern). Edits commit through sketchSetShapes → beginTxn, so ⌘Z here
-    // is plain DOCUMENT undo; the data binding feeds the result back. ---
-    Rectangle {
-        id: sketchFrame
-        visible: root.activeSketchRow >= 0
-        anchors.fill: parent
-        color: Theme.colors.bgAlt   // full-frame tabs share the page field tone
-        readonly property int r: root.activeSketchRow
-
-        // Clicking dead space reclaims focus (restores the key swallow).
-        MouseArea { anchors.fill: parent; z: -1; onClicked: root.forceActiveFocus() }
-
-        Item {
-            id: sketchStage
-            anchors { fill: parent; margins: 24 }
-            readonly property int vw: sketchFrame.r >= 0
-                ? (blockModel.contentRevision, blockModel.mediaW(sketchFrame.r)) : 0
-            readonly property int vh: sketchFrame.r >= 0 ? blockModel.mediaH(sketchFrame.r) : 0
-            // Session-only camera. Fit is an ACTION, not a sticky mode: the tab
-            // opens at Fit and stage/canvas resizes re-fit only until the user
-            // takes the camera (pan/zoom input flips userCam).
-            property bool userCam: false
-
-            function fitCamera() {
-                if (vw <= 0 || vh <= 0 || width <= 0 || height <= 0) return
-                sketchEditCanvas.zoom = Math.min(width / vw, height / vh)
-                sketchEditCanvas.panX = (width - vw * sketchEditCanvas.zoom) / 2
-                sketchEditCanvas.panY = (height - vh * sketchEditCanvas.zoom) / 2
-                userCam = false
-            }
-            // Zoom keeping the stage point (cx,cy) fixed; UX range 10%–800%
-            // (the canvas clamps harder underneath).
-            function zoomAt(cx, cy, nz) {
-                nz = Math.max(0.10, Math.min(8.0, nz))
-                var z = sketchEditCanvas.zoom
-                if (z <= 0) return
-                sketchEditCanvas.panX = cx - (cx - sketchEditCanvas.panX) * nz / z
-                sketchEditCanvas.panY = cy - (cy - sketchEditCanvas.panY) * nz / z
-                sketchEditCanvas.zoom = nz
-                userCam = true
-            }
-            function zoomStep(dir) {   // ⌘+/⌘−: ×√2 about the viewport center
-                zoomAt(width / 2, height / 2,
-                       sketchEditCanvas.zoom * Math.pow(Math.SQRT2, dir))
-            }
-            function zoomTo100() { zoomAt(width / 2, height / 2, 1.0) }
-            // Frame the signed ink bbox (frame + overflow) — a CAMERA move;
-            // the model-side resize lives on the Inspector's Fit-to-ink.
-            function fitInkCamera() {
-                var b = sketchEditCanvas.contentBoundsNorm
-                if (b.width <= 0 || b.height <= 0 || vw <= 0 || vh <= 0) return
-                var bw = b.width * vw, bh = b.height * vh          // source px
-                var nz = Math.max(0.10, Math.min(8.0,
-                    Math.min(width / (bw + 16), height / (bh + 16))))
-                sketchEditCanvas.zoom = nz
-                sketchEditCanvas.panX = width / 2 - (b.x + b.width / 2) * vw * nz
-                sketchEditCanvas.panY = height / 2 - (b.y + b.height / 2) * vh * nz
-                userCam = true
-            }
-            onWidthChanged:  if (!userCam) fitCamera()
-            onHeightChanged: if (!userCam) fitCamera()
-            onVwChanged:     if (!userCam) fitCamera()
-            onVhChanged:     if (!userCam) fitCamera()
-
-            SketchCanvas {
-                id: sketchEditCanvas
-                anchors.fill: parent
-                cameraEnabled: true   // frame floats at pan/zoom; overflow captures
-                frameBorderColor: Theme.colors.divider
-                fontFamily: Theme.font.body   // chips = Aspekta, the document face (ruling 2026-08-18)
-                // Load-bearing revision dep (reactivity rule 1e). Resolved JSON
-                // so embedded image srcs are loadable URLs.
-                data: sketchFrame.r >= 0 && blockModel.contentRevision >= 0
-                    ? blockModel.sketchResolvedJson(sketchFrame.r) : ""
-                sourceWidth: sketchStage.vw
-                sourceHeight: sketchStage.vh
-                tool: (root.activeSketchRow >= 0 && root.inspector
-                       && root.inspector.drawTool !== "type") ? root.inspector.drawTool : ""
-                color: root.inspector ? root.inspector.drawColor : "#FF0000"
-                strokeWidth: root.inspector ? root.inspector.drawWidth : 6
-                selectable: true   // no tool armed → click-select / drag-move / Delete
-                // Multi-select group gestures span several model calls — the
-                // brackets fold them into ONE undo step.
-                onGroupCommitBegan: blockModel.beginGroup(sketchFrame.r, sketchFrame.r)
-                onGroupCommitEnded: blockModel.endGroup()
-                onEdited: (json) => blockModel.sketchSetShapes(sketchFrame.r, json)
-                onImageRectChanged: (i, x, y, w, h) => blockModel.sketchSetImageRect(sketchFrame.r, i, x, y, w, h)
-                onImageRemoved: (i) => blockModel.sketchRemoveImage(sketchFrame.r, i)
-                onTextBoxChanged: (i, x, y, w, s) => blockModel.sketchSetTextBox(sketchFrame.r, i, x, y, w, s)
-                onTextRemoved: (i) => blockModel.sketchRemoveText(sketchFrame.r, i)
-                editingTextIndex: sketchTextSession.mode === "edit" ? sketchTextSession.index : -1
-                onTextCreateRequested: (nx, ny) => sketchTextSession.beginCreate(nx, ny)
-                onTextEditRequested: (i) => sketchTextSession.beginEdit(i)
-                onUserCameraInput: sketchStage.userCam = true
-            }
-            Text {   // arm hint on a fresh canvas
-                visible: sketchEditCanvas.empty && !sketchEditCanvas.armed
-                anchors.centerIn: parent
-                text: "Pick a tool in the Draw panel to start"
-                color: Theme.colors.textSubtle
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
-            }
-            Rectangle {   // overflow tick: ghost ink exists beyond the frame
-                visible: sketchEditCanvas.hasOverflow
-                width: 6; height: 6
-                x: sketchEditCanvas.panX + sketchStage.vw * sketchEditCanvas.zoom + 5
-                y: sketchEditCanvas.panY - 11
-                color: Theme.colors.textSubtle
-            }
-
-            // --- Text-box editing session. The canvas paints COMMITTED text;
-            // while a session is open the overlay TextEdit is the only visual
-            // (create: no model element exists yet; edit: the element is
-            // hidden from paint). Commit on click-away = ONE model txn (one
-            // ⌘Z per session); Escape cancels; blank commits delete (model
-            // contract); create-then-nothing touches nothing at all. ---
-            QtObject {
-                id: sketchTextSession
-                property string mode: ""        // "" | "create" | "edit"
-                property int row: -1            // captured at begin — commit may
-                                                // land after a tab switch
-                property int index: -1          // edit mode: element index
-                property real ex: 0; property real ey: 0; property real ew: 0
-                property real esize: 16
-                property color ecolor: "#E4E3E2"
-                property string origText: ""
-                readonly property bool active: mode !== ""
-                // Chip padding (derived from size, the helper's 0.4em rule).
-                readonly property real padPx: esize * 0.4 * sketchEditCanvas.zoom
-
-                function beginCreate(nx, ny) {
-                    commit()                    // a canvas press can race focus-out
-                    row = sketchFrame.r
-                    esize = root.inspector ? root.inspector.drawTextSize : 16
-                    ecolor = root.inspector ? root.inspector.drawColor : "#E4E3E2"
-                    ex = nx; ey = ny
-                    ew = Math.min(0.5, Math.max(240, 2 * esize) / Math.max(1, sketchStage.vw))
-                    index = -1; origText = ""
-                    mode = "create"
-                }
-                function beginEdit(i) {
-                    commit()
-                    row = sketchFrame.r
-                    var t = sketchEditCanvas.textElementAt(i)
-                    if (t.text === undefined) return
-                    index = i
-                    ex = t.x; ey = t.y; ew = t.w
-                    esize = t.size; ecolor = t.color
-                    origText = t.text
-                    mode = "edit"
-                }
-                function commit() {
-                    if (mode === "") return
-                    // Close the session BEFORE the model call so the data
-                    // round-trip can't re-enter it (Connections below).
-                    var m = mode, r = row, i = index, orig = origText
-                    var txt = sketchTextEditor.text
-                    mode = ""
-                    if (m === "create" && txt.trim() !== "")
-                        blockModel.sketchAddText(r, ex, ey, ew, txt, esize, "" + ecolor)
-                    else if (m === "edit" && txt !== orig)
-                        blockModel.sketchSetText(r, i, txt)   // blank ⇒ model deletes
-                    root.forceActiveFocus()
-                }
-                function cancel() {
-                    if (mode === "") return
-                    mode = ""
-                    root.forceActiveFocus()
-                }
-            }
-            Connections {
-                // External data change mid-EDIT (another surface, programmatic
-                // undo) → the element under the overlay is stale: cancel.
-                // Create sessions have no element and just continue.
-                target: sketchEditCanvas
-                function onDataChanged() {
-                    if (sketchTextSession.mode === "edit") sketchTextSession.cancel()
-                }
-            }
-            Connections {
-                // ANY tool change commits the session — Inspector buttons are
-                // plain MouseAreas that never steal keyboard focus, so without
-                // this a mid-edit tool switch leaves the overlay live and
-                // typing keeps landing in it.
-                target: root.inspector
-                function onDrawToolChanged() { sketchTextSession.commit() }
-            }
-            Rectangle {   // the live CHIP: fill = element color, accent border = session
-                visible: sketchTextEditor.visible
-                x: sketchEditCanvas.panX + sketchTextSession.ex * sketchStage.vw * sketchEditCanvas.zoom
-                y: sketchEditCanvas.panY + sketchTextSession.ey * sketchStage.vh * sketchEditCanvas.zoom
-                width: sketchTextSession.ew * sketchStage.vw * sketchEditCanvas.zoom
-                height: sketchTextEditor.height + 2 * sketchTextSession.padPx
-                color: sketchTextSession.ecolor
-                border.width: 1; border.color: Theme.colors.accent
-            }
-            TextEdit {
-                id: sketchTextEditor
-                visible: sketchTextSession.active
-                x: sketchEditCanvas.panX + sketchTextSession.ex * sketchStage.vw * sketchEditCanvas.zoom
-                   + sketchTextSession.padPx
-                y: sketchEditCanvas.panY + sketchTextSession.ey * sketchStage.vh * sketchEditCanvas.zoom
-                   + sketchTextSession.padPx
-                width: Math.max(4, sketchTextSession.ew * sketchStage.vw * sketchEditCanvas.zoom
-                                   - 2 * sketchTextSession.padPx)
-                // Height implicit: the chip grows downward while typing, same
-                // as the committed paint's derived height.
-                wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-                textMargin: 0
-                font.family: Theme.font.body   // == the canvas's fontFamily
-                font.pixelSize: Math.max(1, sketchTextSession.esize * sketchEditCanvas.zoom)
-                color: sketchEditCanvas.textInkFor(sketchTextSession.ecolor)
-                selectByMouse: true
-                selectionColor: Theme.colors.divider
-                onVisibleChanged: if (visible) {
-                    text = sketchTextSession.mode === "edit" ? sketchTextSession.origText : ""
-                    cursorPosition = text.length
-                    forceActiveFocus()
-                }
-                onActiveFocusChanged: if (!activeFocus && visible) sketchTextSession.commit()
-                // Escape COMMITS (the note-card island precedent — losing typed
-                // text to a reflexive Esc is worse; blanking the box deletes).
-                Keys.onEscapePressed: sketchTextSession.commit()
-            }
-
-            // --- Frame resize handles: 8 edge/corner grips on the canvas
-            // border, live in SCREEN space at any zoom. The imgResize pattern:
-            // preview outline + one-txn commit on release (the document — and
-            // the ink — never move mid-drag; only the frame line does).
-            // Growing left/top is the origin shift; the camera compensates on
-            // commit so ink stays visually fixed.
-            Item {
-                id: frameResize
-                anchors.fill: parent
-                visible: !sketchEditCanvas.armed && !sketchEditCanvas.panMode
-                readonly property real fx: sketchEditCanvas.panX
-                readonly property real fy: sketchEditCanvas.panY
-                readonly property real fw: sketchStage.vw * sketchEditCanvas.zoom
-                readonly property real fh: sketchStage.vh * sketchEditCanvas.zoom
-                property bool dragging: false
-                property int dl: 0; property int dt: 0
-                property int dr: 0; property int db: 0
-                property int grabEdges: 0     // bitmask 1=L 2=T 4=R 8=B
-                property real startX: 0; property real startY: 0
-                readonly property int previewW: sketchStage.vw + dl + dr
-                readonly property int previewH: sketchStage.vh + dt + db
-
-                function snap(v) { return Math.round(v / 10) * 10 }
-                function begin(edges, p) {
-                    sketchTextSession.commit()   // a handle grab is a mode change
-                    grabEdges = edges; startX = p.x; startY = p.y
-                    dl = dt = dr = db = 0
-                    dragging = true
-                }
-                function dragTo(p) {
-                    var z = sketchEditCanvas.zoom
-                    if (z <= 0) return
-                    var dxs = (p.x - startX) / z, dys = (p.y - startY) / z
-                    dl = (grabEdges & 1) ? snap(-dxs) : 0
-                    dr = (grabEdges & 4) ? snap(dxs)  : 0
-                    dt = (grabEdges & 2) ? snap(-dys) : 0
-                    db = (grabEdges & 8) ? snap(dys)  : 0
-                    // Hard stop at the [64, 8192] frame bounds (source px).
-                    var w = sketchStage.vw + dl + dr
-                    if (w < 64 || w > 8192) {
-                        var cw = Math.max(64, Math.min(8192, w)) - sketchStage.vw
-                        if (grabEdges & 1) dl = cw - dr; else dr = cw - dl
-                    }
-                    var h = sketchStage.vh + dt + db
-                    if (h < 64 || h > 8192) {
-                        var ch = Math.max(64, Math.min(8192, h)) - sketchStage.vh
-                        if (grabEdges & 2) dt = ch - db; else db = ch - dt
-                    }
-                }
-                function commit() {
-                    if (!dragging) return
-                    dragging = false
-                    var _dl = dl, _dt = dt, _dr = dr, _db = db
-                    dl = dt = dr = db = 0
-                    if (_dl === 0 && _dt === 0 && _dr === 0 && _db === 0) return
-                    var z = sketchEditCanvas.zoom
-                    // userCam FIRST: the resize bumps vw/vh, whose handlers
-                    // would otherwise re-fit the camera mid-commit.
-                    sketchStage.userCam = true
-                    blockModel.sketchResizeCanvas(sketchFrame.r, _dl, _dt, _dr, _db)
-                    sketchEditCanvas.panX -= _dl * z
-                    sketchEditCanvas.panY -= _dt * z
-                }
-                function cancel() { dragging = false; dl = dt = dr = db = 0 }
-
-                component FrameHandle: MouseArea {
-                    property int edges: 0
-                    hoverEnabled: true
-                    preventStealing: true
-                    cursorShape: edges === 3 || edges === 12 ? Qt.SizeFDiagCursor   // TL / BR
-                                 : edges === 6 || edges === 9 ? Qt.SizeBDiagCursor  // TR / BL
-                                 : (edges & 5) ? Qt.SizeHorCursor : Qt.SizeVerCursor
-                    onPressed: (m) => frameResize.begin(edges, mapToItem(frameResize, m.x, m.y))
-                    onPositionChanged: (m) => { if (frameResize.dragging)
-                        frameResize.dragTo(mapToItem(frameResize, m.x, m.y)) }
-                    onReleased: frameResize.commit()
-                    onCanceled: frameResize.cancel()
-                }
-                // Edges (thin strips straddling the border, corners excluded).
-                FrameHandle { edges: 1; x: frameResize.fx - 6; y: frameResize.fy + 8
-                              width: 12; height: Math.max(0, frameResize.fh - 16) }
-                FrameHandle { edges: 4; x: frameResize.fx + frameResize.fw - 6; y: frameResize.fy + 8
-                              width: 12; height: Math.max(0, frameResize.fh - 16) }
-                FrameHandle { edges: 2; x: frameResize.fx + 8; y: frameResize.fy - 6
-                              width: Math.max(0, frameResize.fw - 16); height: 12 }
-                FrameHandle { edges: 8; x: frameResize.fx + 8; y: frameResize.fy + frameResize.fh - 6
-                              width: Math.max(0, frameResize.fw - 16); height: 12 }
-                // Corners (TL=3, TR=6, BL=9, BR=12).
-                FrameHandle { edges: 3;  x: frameResize.fx - 7; y: frameResize.fy - 7; width: 14; height: 14 }
-                FrameHandle { edges: 6;  x: frameResize.fx + frameResize.fw - 7; y: frameResize.fy - 7; width: 14; height: 14 }
-                FrameHandle { edges: 9;  x: frameResize.fx - 7; y: frameResize.fy + frameResize.fh - 7; width: 14; height: 14 }
-                FrameHandle { edges: 12; x: frameResize.fx + frameResize.fw - 7; y: frameResize.fy + frameResize.fh - 7; width: 14; height: 14 }
-
-                // Visible nubs: corners + edge midpoints, divider tone.
-                Repeater {
-                    model: [[0,0],[1,0],[2,0],[0,1],[2,1],[0,2],[1,2],[2,2]]   // [col,row]
-                    delegate: Rectangle {
-                        required property var modelData
-                        width: 6; height: 6
-                        color: Theme.colors.divider
-                        border.width: 1; border.color: Theme.colors.border
-                        x: frameResize.fx + modelData[0] * frameResize.fw / 2 - 3
-                        y: frameResize.fy + modelData[1] * frameResize.fh / 2 - 3
-                    }
-                }
-
-                // Drag preview: target-frame outline + transient W×H readout.
-                Rectangle {
-                    visible: frameResize.dragging
-                    color: "transparent"
-                    border.width: 1; border.color: Theme.colors.textSubtle
-                    x: frameResize.fx - frameResize.dl * sketchEditCanvas.zoom
-                    y: frameResize.fy - frameResize.dt * sketchEditCanvas.zoom
-                    width: frameResize.previewW * sketchEditCanvas.zoom
-                    height: frameResize.previewH * sketchEditCanvas.zoom
-                }
-                Text {
-                    visible: frameResize.dragging
-                    x: frameResize.fx - frameResize.dl * sketchEditCanvas.zoom + 8
-                    y: frameResize.fy - frameResize.dt * sketchEditCanvas.zoom
-                       + frameResize.previewH * sketchEditCanvas.zoom + 6
-                    text: frameResize.previewW + " × " + frameResize.previewH
-                    color: Theme.colors.textSubtle
-                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-                }
-            }
-        }
-        // Every entry into a sketch tab (or switch between two) starts at Fit.
-        // A live text session commits first (its row was captured at begin).
-        onRChanged: {
-            sketchTextSession.commit()
-            if (r >= 0) sketchStage.fitCamera()
-        }
     }
 
     // --- Comment margin pins: one per row carrying comment spans, in the
@@ -6723,7 +6054,7 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+            visible: root.activePdfRow < 0 && root.activeVideoRow < 0
                      && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
                      && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
@@ -6820,7 +6151,7 @@ FocusScope {
             : (root.imgSelectedRow >= 0 && cursor.focusRow === root.imgSelectedRow
                && root._isResizableMediaRow(root.imgSelectedRow) ? root.imgSelectedRow : -1)
         visible: row >= 0
-                 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+                 && root.activePdfRow < 0 && root.activeVideoRow < 0
         // A cell's media sits inside the cell inset (BlockView's colLeft: 8 px); the fit width is the
         // lane minus both insets.
         readonly property real inset: (blockModel.structureRevision, row >= 0 && blockModel.tableColumnOf(row) >= 0) ? 8 : 0
@@ -6936,7 +6267,7 @@ FocusScope {
     // Full FIELD like the focus fill and the multi-block selection band (one
     // row treatment); covers the whole selected run when the menu row is in it.
     Rectangle {
-        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activePdfRow < 0 && root.activeVideoRow < 0 && root.activeSketchRow < 0
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
         x: -flick.contentX
         y: root.vy((blockModel.layoutRevision, blockModel.yForRow(blockMenu.runLo)))
         width: Math.max(flick.width, root.contentSpan * root.viewZoom)
@@ -7197,13 +6528,11 @@ FocusScope {
             && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "pdf"
         readonly property bool isVideo: isMedia
             && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "video"
-        readonly property bool isSketch: isMedia
-            && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "sketch"
         readonly property bool isImage: isMedia
             && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "image"
-        // In a full-frame tab (PDF/video/sketch) the menu is a view INTO one block, so
+        // In a full-frame tab (PDF/video) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
-        readonly property bool inFrameTab: root.activePdfRow >= 0 || root.activeVideoRow >= 0 || root.activeSketchRow >= 0
+        readonly property bool inFrameTab: root.activePdfRow >= 0 || root.activeVideoRow >= 0
         // The menu row lies inside a multi-block selection → the menu is a RUN
         // menu: block ops (add above/below, duplicate, copy, paste, move,
         // insert below, delete) act on the whole run and the target highlight
@@ -7356,7 +6685,6 @@ FocusScope {
                 Rectangle { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isSketch && root.activeSketchRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.menuInSel
                           text: "Insert choice chip"
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
@@ -7414,13 +6742,12 @@ FocusScope {
                           onActivated: blockModel.setMediaWidth(root.menuRow, root.fitWidthForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: "Original size"
                           onActivated: blockModel.setMediaWidth(root.menuRow, 0) }
-                MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch   // sketch has no backing file
+                MenuRow { visible: blockMenu.isMedia
                           text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
                           onActivated: blockModel.revealMedia(root.menuRow) }
-                MenuRow { visible: blockMenu.isMedia && !blockMenu.isSketch; text: "Open in ufb"
+                MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
                 MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Insert sketch below"; onActivated: root.insertSketchAt(blockMenu.runHi) }
                 // comment on the current (single-row) text selection
                 MenuRow {
                     visible: !blockMenu.inFrameTab && cursor.hasSel && cursor.loRow === cursor.hiRow

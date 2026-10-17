@@ -94,8 +94,6 @@ qt_add_executable(minnotesapp
     notes/viewport_annotator.cpp
     notes/VideoAnnotator.h
     notes/VideoAnnotator.cpp
-    notes/SketchCanvas.h
-    notes/SketchCanvas.cpp
     notes/sketch_text.h
     notes/sketch_text.cpp
     notes/CanvasCamera.h

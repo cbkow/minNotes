@@ -67,17 +67,14 @@ Rectangle {
     // the next stroke uses, so the picker should already be aimed at it.
     onDrawToolChanged: if (drawTool !== "type" && drawTool !== "select") target = "draw"
     property real drawWidth: 6                         // source-pixel stroke width (1..64)
-    property real drawTextSize: 16                     // sketch text-box font px (source px)
     Settings {
         id: drawStore
         category: "drawing"
         property string colorHex: ""
         property real width: 0
-        property real textSize: 0
     }
     onDrawColorChanged: drawStore.colorHex = "" + drawColor
     onDrawWidthChanged: drawStore.width = drawWidth
-    onDrawTextSizeChanged: drawStore.textSize = drawTextSize
 
     readonly property int panelW: 248
     readonly property int contentW: panelW - 24   // inside the x:12 margins
@@ -141,7 +138,6 @@ Rectangle {
                                    userSlots = n } } catch (e) {}
         if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
         if (drawStore.width > 0) drawWidth = drawStore.width
-        if (drawStore.textSize > 0) drawTextSize = drawStore.textSize
         setPickerValue(targetColor())   // re-seed: the picker completed before the restore above
         open = panelStore.open      // restore last open/closed state (no slide)
         if (panelStore.view === "comments" || panelStore.view === "history")
@@ -628,6 +624,8 @@ Rectangle {
                             // (stage 2). Until then the Document and Canvas views have no ink surface.
                             if (panel.editor.activeFrameId === "" || panel.editor.activeCanvas)
                                 return qsTr("drawing lives on the canvas")
+                            if (panel.editor.activePdfRow >= 0)
+                                return qsTr("drawing on PDF pages returns with the canvas tools")
                             if (modelData.tool !== "text") return ""
                             if (panel.editor.activeVideoRow >= 0)
                                 return qsTr("text boxes aren't part of video notes")
@@ -673,129 +671,11 @@ Rectangle {
                     font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
                 }
             }
-            Row {
-                // Text-box font size. Two targets: the text tool armed → the
-                // default for NEW chips (live, persisted); a chip SELECTED on
-                // either ink surface → THAT chip, committed as one undo step
-                // on slider release.
-                id: textSizeRow
-                readonly property bool chipTarget: !!panel.editor && panel.editor.selChipSize > 0
-                visible: panel.drawTool === "text" || chipTarget
-                spacing: 8
-                Text {
-                    text: "Size"
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Theme.colors.textMuted
-                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                }
-                FlatSlider {
-                    id: textSizeSlider
-                    width: panel.contentW - 80
-                    anchors.verticalCenter: parent.verticalCenter
-                    from: 8; to: 96
-                    fillColor: Theme.colors.textMuted
-                    // Imperative sync (a dragged QQC2 Slider breaks a value
-                    // binding, so we re-seed whenever the target changes).
-                    readonly property real target: textSizeRow.chipTarget
-                        ? panel.editor.selChipSize : panel.drawTextSize
-                    onTargetChanged: if (!pressed) value = target
-                    Component.onCompleted: value = target
-                    onMoved: if (!textSizeRow.chipTarget) panel.drawTextSize = value
-                    onPressedChanged: if (!pressed && textSizeRow.chipTarget)
-                        panel.editor.applyChipSize(value)
-                }
-                Text {
-                    text: Math.round(textSizeSlider.value)
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Theme.colors.textSubtle
-                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-                }
-            }
 
             // === Canvas === (sketch tab only): exact frame size + fit-to-ink.
             // Sizes are SOURCE px, clamped to the frame bounds [64, 8192];
             // typing commits through sketchResizeCanvas (top-left anchored —
             // the drag handles do per-side growth).
-            Column {
-                visible: !!panel.editor && panel.editor.activeSketchRow >= 0
-                spacing: 8
-
-                Item { width: panel.contentW; height: 9
-                       Rectangle { width: parent.width; height: 1; anchors.bottom: parent.bottom
-                                   color: Theme.colors.divider } }
-                Text { text: "Canvas"
-                       color: Theme.colors.textBright
-                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
-
-                component CanvasDimField: Rectangle {
-                    id: dimField
-                    property string label: "W"
-                    property bool horizontal: true
-                    readonly property int row: panel.editor ? panel.editor.activeSketchRow : -1
-                    readonly property int cur: (blockModel.structureRevision,
-                        row >= 0 ? (horizontal ? blockModel.mediaW(row) : blockModel.mediaH(row)) : 0)
-                    width: 82; height: 26
-                    color: Theme.colors.codeBg
-                    border.width: 1; border.color: Theme.colors.border
-                    Text {
-                        text: dimField.label
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.left: parent.left; anchors.leftMargin: 6
-                        color: Theme.colors.textSubtle
-                        font.family: Theme.font.mono; font.pixelSize: 12
-                    }
-                    TextInput {
-                        id: dimInput
-                        anchors.fill: parent
-                        anchors.leftMargin: 20; anchors.rightMargin: 6
-                        verticalAlignment: TextInput.AlignVCenter
-                        color: Theme.colors.text
-                        font.family: Theme.font.mono; font.pixelSize: 12
-                        maximumLength: 4
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        text: String(dimField.cur)
-                        // Re-sync from the model unless the user is mid-edit.
-                        Connections {
-                            target: dimField
-                            function onCurChanged() {
-                                if (!dimInput.activeFocus) dimInput.text = String(dimField.cur)
-                            }
-                        }
-                        onAccepted: {
-                            var v = Math.max(64, Math.min(8192, parseInt(text) || dimField.cur))
-                            if (dimField.row >= 0 && v !== dimField.cur) {
-                                if (dimField.horizontal)
-                                    blockModel.sketchResizeCanvas(dimField.row, 0, 0, v - dimField.cur, 0)
-                                else
-                                    blockModel.sketchResizeCanvas(dimField.row, 0, 0, 0, v - dimField.cur)
-                            }
-                            text = String(v)
-                            if (panel.editor) panel.editor.forceActiveFocus()
-                        }
-                        Keys.onEscapePressed: {
-                            text = String(dimField.cur)
-                            if (panel.editor) panel.editor.forceActiveFocus()
-                        }
-                    }
-                }
-                Row {
-                    spacing: 8
-                    CanvasDimField { label: "W"; horizontal: true }
-                    CanvasDimField { label: "H"; horizontal: false }
-                }
-                FlatButton {
-                    width: panel.contentW; height: 26
-                    text: qsTr("Fit canvas to ink")
-                    labelSize: Theme.font.sizeSmall
-                    tooltip: qsTr("Resize the frame to the ink bbox (+8px)"); tooltipSide: "top"
-                    onClicked: {
-                        if (!panel.editor || panel.editor.activeSketchRow < 0) return
-                        if (blockModel.sketchFitToInk(panel.editor.activeSketchRow))
-                            panel.editor.sketchRefitCamera()
-                        panel.editor.forceActiveFocus()
-                    }
-                }
-            }
 
             // === Colors === (section divider with extra padding above the line)
             Item { width: panel.contentW; height: 9

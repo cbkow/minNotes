@@ -410,46 +410,6 @@ QString mediaInkStyle(const QRectF& b) {
         .arg(b.width() * 100).arg(b.height() * 100);
 }
 
-// Rasterize a sketch block (strokes + placed images) to a 2x transparent PNG.
-QImage renderSketch(const BlockModel* m, int row) {
-    const QString json = m->sketchResolvedJson(row);
-    const QJsonObject obj = QJsonDocument::fromJson(json.toUtf8()).object();
-    const int w = obj.value(QStringLiteral("w")).toInt(480);
-    const int h = obj.value(QStringLiteral("h")).toInt(480);
-    if (w <= 0 || h <= 0) return {};
-    // 2× until the output long edge would hit 8192, then scale down — a
-    // max-size canvas exports at 1× (the unconditional 2× would allocate a
-    // 1 GiB image at the 8192 frame cap), and a pasted 4K screenshot keeps
-    // native resolution.
-    const double s = std::min(2.0, 8192.0 / double(std::max(w, h)));
-    const int W = int(std::lround(w * s)), H = int(std::lround(h * s));
-    QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
-    img.fill(Qt::transparent);
-    QPainter p(&img);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    for (const QJsonValue& v : obj.value(QStringLiteral("images")).toArray()) {
-        const QJsonObject im = v.toObject();
-        const QImage src(localPathOf(im.value(QStringLiteral("src")).toString()));
-        if (src.isNull()) continue;
-        p.drawImage(QRectF(im.value(QStringLiteral("x")).toDouble() * W,
-                           im.value(QStringLiteral("y")).toDouble() * H,
-                           im.value(QStringLiteral("w")).toDouble() * W,
-                           im.value(QStringLiteral("h")).toDouble() * H),
-                    src);
-    }
-    // Text elements between images and ink (z-order: ink can circle labels).
-    for (mn::SketchTextSpec t : mn::parseSketchTexts(obj)) {
-        t.family = mn::sketchTextFamily();
-        mn::paintSketchText(p, t, w, h, double(W) / double(w));
-    }
-    // strokeWidth is stored in SOURCE px (the w-wide canvas) — scale to 2x.
-    for (const qcv::ActiveStroke& s : qcv::AnnotationSerializer::jsonStringToStrokes(json))
-        qcv::paintStroke(p, s, W, H, double(W) / double(w));
-    p.end();
-    return img;
-}
-
 // --- Per-page PDF ink (strokes + text chips), 2026-08-20. The page envelope
 // is the sketch schema (coordinate_system "normalized"; strokeWidth/size in
 // SOURCE px = the descriptor's page-point width). The overlay variant is
@@ -540,13 +500,6 @@ QString emitMedia(const BlockModel* m, int row, const Exporter::Options& opt,
     const QString path = m->mediaLocalPath(row);
     const QString name = QFileInfo(path).fileName();
 
-    if (kind == QLatin1String("sketch")) {
-        const QImage img = renderSketch(m, row);
-        if (img.isNull()) return QStringLiteral("<!-- sketch could not be rendered -->");
-        const QString rel = sink.addImage(img, QStringLiteral("sketch"));
-        return rel.isEmpty() ? QStringLiteral("<!-- sketch could not be exported -->")
-                             : QStringLiteral("![Sketch](%1)").arg(mdDest(rel));
-    }
     if (kind == QLatin1String("image")) {
         // Collect EVERY image (pasted AND referenced) into the assets folder:
         // sandboxed markdown viewers (VS Code, GitHub) won't render absolute
@@ -912,7 +865,7 @@ QString Exporter::copyMarkdown(int loRow, int hiRow) const {
 
 QVariantMap Exporter::scan() const {
     QVariantMap out;
-    int videos = 0, videosWithNotes = 0, videoNotes = 0, sketches = 0;
+    int videos = 0, videosWithNotes = 0, videoNotes = 0;
     int refPaths = 0;   // video/pdf/file rows — they print a path in exports
     int pdfInkPages = 0;
     if (model_) {
@@ -920,7 +873,6 @@ QVariantMap Exporter::scan() const {
         for (int row = 0; row < count; ++row) {
             if (model_->typeForRow(row) != BlockModel::Media) continue;
             const QString kind = model_->mediaKind(row);
-            if (kind == QLatin1String("sketch")) { ++sketches; continue; }
             if (kind == QLatin1String("pdf")) {
                 ++refPaths;
                 const int pages = model_->mediaPdfPages(row);
@@ -942,7 +894,6 @@ QVariantMap Exporter::scan() const {
     out.insert(QStringLiteral("videos"), videos);
     out.insert(QStringLiteral("videosWithNotes"), videosWithNotes);
     out.insert(QStringLiteral("videoNotes"), videoNotes);
-    out.insert(QStringLiteral("sketches"), sketches);
     out.insert(QStringLiteral("pdfInkPages"), pdfInkPages);   // annotated PDF pages
     out.insert(QStringLiteral("refPaths"), refPaths);   // rows that print a file path
     return out;
@@ -1248,21 +1199,6 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
     const QString path = m->mediaLocalPath(row);
     const QString name = QFileInfo(path).fileName();
 
-    if (kind == QLatin1String("sketch")) {
-        const QImage img = renderSketch(m, row);
-        if (img.isNull()) return {};
-        const QString src = sink.addImage(img, QStringLiteral("sketch"));
-        if (src.isEmpty()) return {};
-        // Display at the canvas's SOURCE size (the raster may be 2×), or the
-        // user's dw — the image branch's rules.
-        const int dw = QJsonDocument::fromJson(m->contentForRow(row).toUtf8())
-                           .object().value(QStringLiteral("dw")).toInt(0);
-        const QString wstyle = dw > 0
-            ? QStringLiteral(" style=\"width:%1px;max-width:none\"").arg(dw)
-            : QStringLiteral(" style=\"width:%1px\"").arg(m->mediaW(row));
-        return QStringLiteral("<figure><img class=\"sketch\" src=\"%1\" alt=\"Sketch\"%2></figure>")
-            .arg(src, wstyle);
-    }
     if (kind == QLatin1String("image")) {
         QString src = sink.addFile(path, QFileInfo(path).completeBaseName());
         if (src.isEmpty()) src = QStringLiteral("file://") + path;   // unreachable source
@@ -1679,7 +1615,6 @@ color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:
 .notecard p{margin:6px 0 0;font-size:14px}
 .notecard.addressed{opacity:.55}
 .notecard .ok{color:var(--muted);font-size:12px;margin-left:8px}
-.sketch{background:transparent}
 .comments{margin-top:48px;border-top:1px solid var(--divider);padding-top:12px}
 .comments h2{font-size:18px}
 .comments li{margin-bottom:12px;font-size:14px}
@@ -2585,18 +2520,6 @@ void docxMedia(DocxCtx& c, QXmlStreamWriter& w, int row) {
         return img;
     };
 
-    if (kind == QLatin1String("sketch")) {
-        const QImage img = renderSketch(m, row);
-        if (!img.isNull()) {
-            // Size by the SOURCE canvas px, not the (possibly 2×) raster —
-            // docxImagePara treats px as 96-dpi, like every other image here.
-            const int srcW = m->mediaW(row), srcH = m->mediaH(row);
-            docxImagePara(c, w, docxAddImage(c, img),
-                          srcW > 0 ? srcW : img.width(),
-                          srcH > 0 ? srcH : img.height());
-        }
-        return;
-    }
     if (kind == QLatin1String("image")) {
         QImage img(path);
         if (!img.isNull()) {
@@ -3557,14 +3480,6 @@ void pdfMedia(PdfCtx& c, int row) {
         return img;
     };
 
-    if (kind == QLatin1String("sketch")) {
-        const QImage img = renderSketch(m, row);
-        if (!img.isNull()) {
-            const int srcW = m->mediaW(row);   // size by SOURCE px, not the 2× raster
-            pdfInsertImage(c, img, srcW > 0 ? srcW : img.width());
-        }
-        return;
-    }
     if (kind == QLatin1String("image")) {
         QImage img(path);
         if (!img.isNull()) {

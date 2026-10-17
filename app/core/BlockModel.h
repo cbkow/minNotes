@@ -773,57 +773,6 @@ public:
     Q_INVOKABLE QStringList pdfBlockIds() const;
     // Ordered block ids of every video (for the video-studio tab strip).
     Q_INVOKABLE QStringList videoBlockIds() const;
-    // --- Sketch: an in-document drawing canvas — a Media KIND (content =
-    // {kind:"sketch", w, h, [dw]} merged with the QCView stroke schema
-    // {version, coordinate_system, shapes}; PLAN-document-annotations.md
-    // tier 1). The media machinery (meta fill on every reconstruction,
-    // known-geometry height, dw resize, opaque atomicity) comes free;
-    // strokes mutate through the txn chokepoint → DOCUMENT undo (unlike
-    // video notes, which live in the QCView sidecar with their own stack).
-    Q_INVOKABLE int insertSketch(int afterRow);   // returns the new row
-    // Replace the stroke fields from the engine's JSON; the canvas meta
-    // (kind/w/h/dw) is preserved. One undo step per call — no coalescing
-    // (a stroke = an undo step, the video-note feel; ruling 2026-06-11).
-    Q_INVOKABLE void sketchSetShapes(int row, const QString& strokesJson);
-    // Paste a raster image into a sketch: imported through the MediaStore and
-    // appended to the descriptor's `images` array (normalized rect, centered).
-    // One undo step; the canvas meta + strokes are preserved. Accepts clipboard
-    // bytes or a file URL (image only).
-    Q_INVOKABLE bool sketchAddImageFromClipboard(int row);
-    Q_INVOKABLE bool sketchAddImageFromUrl(int row, const QString& fileUrl,
-                                           bool forceCopy = false);
-    // Move/resize a sketch image element by index (normalized rect); one undo step.
-    Q_INVOKABLE void sketchSetImageRect(int row, int index,
-                                        qreal x, qreal y, qreal w, qreal h);
-    // Remove a sketch image element by index; one undo step.
-    Q_INVOKABLE void sketchRemoveImage(int row, int index);
-    // The descriptor with each image's `src` resolved to a loadable URL (the
-    // canvas binds THIS, not raw content — the stored src stays doc-relative).
-    Q_INVOKABLE QString sketchResolvedJson(int row) const;
-    Q_INVOKABLE QStringList sketchBlockIds() const;
-    // Resize the canvas frame by per-side source-px deltas (grow left/top =
-    // origin shift), renormalizing every stroke point and image rect so the
-    // ink keeps its position; w/h clamp to [64, 8192]. One undo step per call.
-    Q_INVOKABLE void sketchResizeCanvas(int row, int dl, int dt, int dr, int db);
-    // Resize the frame to the signed ink bbox (+8px margin) — pulls overflow
-    // ink back inside [0,1]. False when the sketch is empty or already fits.
-    Q_INVOKABLE bool sketchFitToInk(int row);
-    // --- Sketch text elements: descriptor `texts[]` = {x,y,w,text,size,color}
-    // (x/y/w normalized, size = font px in SOURCE px, height always DERIVED
-    // from wrapping — never stored). One undo step per call, images[] rules. ---
-    // Add a wrapping text box; returns the new index, or -1 (blank text /
-    // bad size rejected). Width clamps to a 2em floor.
-    Q_INVOKABLE int sketchAddText(int row, qreal x, qreal y, qreal w,
-                                  const QString& text, qreal size,
-                                  const QString& colorHex);
-    // Replace a text element's content. BLANK (or whitespace) text DELETES
-    // the element in the same txn — the overlay's empty-commit contract.
-    // Unchanged text is a no-op (no txn, no undo step).
-    Q_INVOKABLE void sketchSetText(int row, int index, const QString& text);
-    // Move/resize the box (x/y/w normalized, size source px); 2em width floor.
-    Q_INVOKABLE void sketchSetTextBox(int row, int index, qreal x, qreal y,
-                                      qreal w, qreal size);
-    Q_INVOKABLE void sketchRemoveText(int row, int index);
     // Current row of a block id, or -1 if it no longer exists.
     Q_INVOKABLE int rowForId(const QString& id) const;
     // Block id at `row` (empty if out of range).
@@ -1000,7 +949,6 @@ private:
         bool isVideo = false;   // media only: true → reserve the transport-toolbar height
         bool isFile = false;    // media only: kind=="file" → an unsupported-file chip
         bool isPdf = false;     // media only: kind=="pdf" → inline page view + nav
-        bool isSketch = false;  // media only: kind=="sketch" → in-doc drawing canvas
         uint16_t dispW = 0;     // media only: per-block display width override (0 = default/fit)
         uint16_t measuredW = 0; // natural width px feeding maxContentWidth (0 = unmeasured):
                                 // tables/code report from QML; media = dispW via fillMediaMeta
@@ -1181,9 +1129,6 @@ private:
     bool loadDocument(const QString& path, bool untitled);
     void seedEmptyDoc();              // one empty paragraph (a fresh document)
     void persistContent(int row);     // write content_[row] back to the DB
-    // Append an image element to a sketch's descriptor (normalized centered rect)
-    // and commit as one undo step. (src/iw/ih come from a MediaStore import.)
-    bool sketchAppendImage(int row, const QString& src, int iw, int ih);
     // The consume rule's guts: a consumable anchor is an EMPTY Paragraph with
     // no ink (ink pins its block); insertReplacingEmpty runs an infallible
     // single-block insert and, when the anchor is consumable, folds its

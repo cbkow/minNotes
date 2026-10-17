@@ -2,7 +2,7 @@
 // path on the left, the zoom group and undo/redo flush right (moved off the left rail to free
 // room). The zoom group is THE zoom interface (ruling 2026-09-16): −, a Word-style slider
 // (100 % dead centre), +, and the percent readout that opens Fit / 100 % — all on
-// the ACTIVE surface: the document, a PDF tab or a sketch tab.
+// the ACTIVE surface: the document, a PDF tab or the canvas.
 
 import QtQuick
 import QtQuick.Controls
@@ -102,7 +102,7 @@ Rectangle {
         ZoomBadge {   // the readout + Fit / 100 % menu (opens upward)
             anchors.verticalCenter: parent.verticalCenter
             zoomValue: bar.editor ? bar.editor.zoomValue : 1
-            fitLabel: bar.editor && (bar.editor.activePdfRow >= 0 || bar.editor.activeSketchRow >= 0) ? qsTr("Fit") : qsTr("Fit width")
+            fitLabel: bar.editor && bar.editor.activePdfRow >= 0 ? qsTr("Fit") : qsTr("Fit width")
             onFitRequested: bar.act(function() { bar.editor.zoomFit() })
             onHundredRequested: bar.act(function() { bar.editor.zoom100() })
         }

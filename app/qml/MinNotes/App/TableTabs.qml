@@ -8,7 +8,7 @@ import QtQuick.Controls
 // derived live from current order.
 //
 // The strip is a SINGLE row that clips when it overflows; a menu button pinned at
-// the right opens a scrollable, sectioned popup (Tables / Videos / PDFs / Sketches)
+// the right opens a scrollable, sectioned popup (Tables / Videos / PDFs)
 // listing every tab by its FULL filename — so large docs stay navigable without
 // wrapping the strip into many rows.
 Rectangle {
@@ -21,8 +21,6 @@ Rectangle {
                                    blockModel.pdfBlockIds())
     readonly property var videoIds: (blockModel.structureRevision,
                                      blockModel.videoBlockIds())
-    readonly property var sketchIds: (blockModel.structureRevision,
-                                      blockModel.sketchBlockIds())
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
     visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
     readonly property int rowH: 34
@@ -52,7 +50,7 @@ Rectangle {
 
     // One tab. `active` highlights it; clicking selects it. `tooltip` shows the
     // full name on hover (media labels are truncated in the strip; defaults to
-    // the label for the numbered Table/Sketch/Document tabs).
+    // the label for the numbered Table/Document tabs).
     component TabBtn: Rectangle {
         id: btn
         property string label: ""
@@ -142,16 +140,6 @@ Rectangle {
                     required property string modelData
                     label: tabs._mediaLabel(modelData, "Video")
                     tooltip: tabs._fullName(modelData, "Video")
-                    active: tabs.activeId === modelData
-                    onClicked: tabs._select(modelData)
-                }
-            }
-            Repeater {
-                model: tabs.sketchIds
-                delegate: TabBtn {
-                    required property int index
-                    required property string modelData
-                    label: "Sketch " + (index + 1)
                     active: tabs.activeId === modelData
                     onClicked: tabs._select(modelData)
                 }
@@ -257,15 +245,6 @@ Rectangle {
                     delegate: MenuItem {
                         required property string modelData
                         label: tabs._fullName(modelData, "PDF"); tabId: modelData
-                    }
-                }
-                SectionHeader { visible: tabs.sketchIds.length > 0; title: "Sketches" }
-                Repeater {
-                    model: tabs.sketchIds
-                    delegate: MenuItem {
-                        required property int index
-                        required property string modelData
-                        label: "Sketch " + (index + 1); tabId: modelData
                     }
                 }
             }

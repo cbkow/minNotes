@@ -31,9 +31,6 @@ Item {
     readonly property bool   isVideo: kind === "video"
     readonly property bool   isFile: kind === "file"
     readonly property bool   isPdf: kind === "pdf"
-    readonly property bool   isSketch: kind === "sketch"
-    readonly property string sketchJson: (active && isSketch)
-        ? (mb._rev, blockModel.sketchResolvedJson(logicalRow)) : ""
     property int  pdfPage: 0          // current page (driven by the editor's nav)
     // Display paths use the NON-BLOCKING resolvers: packaged media not yet
     // extracted reads "" (loading window shows), a background pull lands, the
@@ -157,50 +154,25 @@ Item {
             sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
             smooth: true
         }
-        // The shown page's ink overlay (read-only — drawing lives in the PDF
-        // tab, the inline-sketch pattern). Same source units as the tab's
-        // canvases (mediaW/H), so stroke weights match across surfaces.
-        SketchCanvas {
+        // The shown page's media ink (view-only; drawing returns with the canvas tools).
+        InkNodeItem {
             anchors.fill: parent
-            data: (mb._rev, (mb.isPdf && mb.logicalRow >= 0)
-                   ? blockModel.pdfPageInk(mb.logicalRow, mb.pdfPage) : "")
-            sourceWidth: Math.max(1, mb.iw)
-            sourceHeight: Math.max(1, mb.ih)
-            fontFamily: Theme.font.body
+            envelope: (mb._rev, (mb.isPdf && mb.logicalRow >= 0) ? blockModel.mediaPageInk(mb.logicalRow, mb.pdfPage) : "")
+            frameW: width; frameH: height
+            sourceW: Math.max(1, mb.iw); sourceH: Math.max(1, mb.ih)
         }
     }
 
     // --- Sketch branch: transparent canvas (ruling 2026-06-11), divider
     // border marking the extent; strokes render passively (disarmed canvas).
     // Editing lives in the full-frame sketch tab. ---
-    Rectangle {
-        visible: mb.isSketch && !mb.suspended
-        anchors.fill: parent
-        color: "transparent"
-        border.width: 1; border.color: Theme.colors.divider
-        SketchCanvas {
-            id: inlineSketch
-            anchors.fill: parent
-            data: mb.sketchJson
-            sourceHeight: mb.ih
-            fontFamily: Theme.font.body
-            sourceWidth: mb.iw
-        }
-        Text {   // empty-canvas hint
-            visible: inlineSketch.empty
-            anchors.centerIn: parent
-            text: "Sketch — open in tab to draw"
-            color: Theme.colors.textSubtle
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-        }
-    }
 
     // --- Image branch ---
     Image {
         id: img
         anchors.fill: parent
-        visible: !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended
-        source: (mb.isVideo || mb.isFile || mb.isPdf || mb.isSketch) ? "" : mb.url
+        visible: !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.suspended
+        source: (mb.isVideo || mb.isFile || mb.isPdf) ? "" : mb.url
         // cache:true (2026-09-14): media sources are content-addressed, so a URL never changes
         // its bytes; without it every delegate recycle re-decoded the image on the reader thread.
         asynchronous: true; cache: true
@@ -217,7 +189,7 @@ Item {
     // frame-space margin ink — frame-normalized, drawn by the GPU ink item over the image.
     InkNodeItem {
         anchors.fill: img
-        envelope: (mb._rev, mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch
+        envelope: (mb._rev, mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf
                    ? blockModel.mediaPageInk(mb.logicalRow, 0) : "")
         frameW: img.width; frameH: img.height
         sourceW: Math.max(1, mb.iw); sourceH: Math.max(1, mb.ih)
@@ -225,7 +197,7 @@ Item {
     }
     Rectangle {   // image loading / missing placeholder (shown until the image is Ready)
         anchors.fill: parent
-        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.isSketch && !mb.suspended && img.status !== Image.Ready
+        visible: mb.active && !mb.isVideo && !mb.isFile && !mb.isPdf && !mb.suspended && img.status !== Image.Ready
         color: Theme.colors.surfaceRecess; radius: Theme.dim.radius   // image bed = inset well
         border.width: 1; border.color: Theme.colors.border
         Text {
