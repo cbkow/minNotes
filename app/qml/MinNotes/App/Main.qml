@@ -1696,7 +1696,7 @@ ApplicationWindow {
                     // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
                     Editor { id: editorInner; width: parent.width
                              height: parent.height - innerTabs.height - innerBottom.height
-                             inspector: inspectorPanel }
+                             inspector: inspectorPanel; tabsItem: innerTabs }
                     TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
                     BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
                 }

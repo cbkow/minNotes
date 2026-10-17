@@ -322,6 +322,7 @@ FocusScope {
     // The right Inspector panel (set from Main.qml) — the studio's drawing
     // tool/color/width live there (its Draw target).
     property var inspector: null
+    property var tabsItem: null   // the bottom strip (set from Main.qml; the canvas probe counts its tabs)
 
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
     // tab shows the board; a table with no grouping column stays in the document.
@@ -4338,7 +4339,23 @@ FocusScope {
                     root.setActiveTab("canvas")
                     ++step; return
                 }
-                if (step === 23) {   // …and with the page SELECTED first (the user's report)
+                if (step === 22) {   // the bottom strip: one level per mode (canvas: pages + "+"; page: this page + its frames)
+                    const t = root.tabsItem
+                    check(!!t && t.canvasMode && t.pageTabCount === canvas.pageIds.length && t.frameTabCount === 0, "canvas mode: a tab per page, no frame tabs (" + (t ? t.pageTabCount + " pages, " + t.frameTabCount + " frames" : "no strip") + ")")
+                    canvas.focusPage = livePage
+                    ++step; return   // (the strip's Row lays its new tabs out on the next frame — a click before that lands on a tab still at x = 0)
+                }
+                if (step === 24) {
+                    const t = root.tabsItem
+                    check(!!t && !t.canvasMode && t.pageTabCount === 1 && t.frameTabCount === blockModel.tableBlockIds().length + blockModel.pdfBlockIds().length + blockModel.videoBlockIds().length && t.frameTabCount > 0,
+                          "page mode: this page and its frames only (" + (t ? t.frameTabCount : -1) + " frames)")
+                    const ct = t ? t.canvasTabItem : null
+                    if (ct) { const p = ct.mapToItem(t, ct.width / 2, ct.height / 2); g.click(t, p.x, p.y) }
+                    check(root.activeCanvas && t.canvasMode, "a click on the Canvas tab returns to the canvas")
+                    if (!root.activeCanvas) root.setActiveTab("canvas")
+                    ++step; return
+                }
+                if (step === 25) {   // …and with the page SELECTED first (the user's report)
                     const r = canvas.elementRect(livePage), m = cam.worldToScreen(r.x + r.width - 300, r.y + r.height - 10)   // inside the card, on screen (the bottom-right is centred)
                     g.click(cvw, m.x, m.y)
                     const item = pageItem(livePage)

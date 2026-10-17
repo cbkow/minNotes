@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 
-// Bottom tab strip (2.0): the FILE's views. "Canvas" first (the canvas itself: no page focused),
-// then one tab per PAGE (its title; the focused page's Document view), a "+" that adds a page, then
-// the focused page's frame tabs — each table gets a "Table N" tab and each PDF/video a tab labelled
-// by its file name. Frame tabs are keyed by block id (so the active tab follows its block across
-// reorders) while the label/position is derived live from current order.
+// Bottom tab strip (2.0): ONE LEVEL PER MODE (ruling 2026-10-17). Canvas mode shows canvas things:
+// "Canvas" · one tab per PAGE (its title) · "+". Page mode shows page things: "Canvas" (the way back)
+// · this page's tab (its Document view) · its frame tabs — each table a "Table N" tab, each PDF /
+// video a tab labelled by its file name. The navigator menu (≡) lists everything in both modes.
+// Frame tabs are keyed by block id (so the active tab follows its block across reorders) while the
+// label/position is derived live from current order.
 //
 // The strip is a SINGLE row that clips when it overflows; a menu button pinned at
 // the right opens a scrollable, sectioned popup (Tables / Videos / PDFs)
@@ -22,6 +23,11 @@ Rectangle {
     readonly property var videoIds: (blockModel.structureRevision,
                                      blockModel.videoBlockIds())
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
+    readonly property bool canvasMode: !!editor && editor.activeCanvas
+    // Probe hooks: the tab counts per level and the Canvas tab item.
+    readonly property int pageTabCount: canvasMode ? pageRep.count : (canvas.documentOpen ? 1 : 0)
+    readonly property int frameTabCount: canvasMode ? 0 : tableRep.count + pdfRep.count + videoRep.count
+    readonly property var canvasTabItem: canvasTab
     visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
     readonly property int rowH: 34
     height: visible ? rowH : 0
@@ -112,30 +118,42 @@ Rectangle {
         Row {
             id: row
             anchors.left: parent.left; anchors.top: parent.top; height: parent.height
-            TabBtn {   // the file's canvas: pages (and, later, media / ink) as elements on an infinite surface
+            TabBtn {   // the file's canvas: the way back from a page, the view itself on the canvas
+                id: canvasTab
                 label: "Canvas"
                 active: tabs.activeId === "canvas"
                 onClicked: tabs._select("canvas")
             }
-            Repeater {   // one tab per page: the focused page's Document view
-                model: (canvas.pagesRevision, canvas.pageIds)
+            // --- canvas mode: the pages, "+" ---
+            Repeater {
+                id: pageRep
+                model: tabs.canvasMode ? (canvas.pagesRevision, canvas.pageIds) : []
                 delegate: TabBtn {
                     required property int index
                     required property string modelData
-                    label: (canvas.pagesRevision, blockModel.contentRevision, tabs._pageLabel(modelData, index))
-                    tooltip: (canvas.pagesRevision, blockModel.contentRevision, canvas.pageTitle(modelData))
-                    active: tabs.activeId === "" && canvas.focusPage === modelData
+                    label: (canvas.pagesRevision, tabs._pageLabel(modelData, index))
+                    tooltip: (canvas.pagesRevision, canvas.pageTitle(modelData))
+                    active: false
                     onClicked: tabs._selectPage(modelData)
                 }
             }
             TabBtn {   // add a page (lands focused, ready to type)
                 label: "+"
                 tooltip: "Add a page"
-                visible: canvas.documentOpen
+                visible: tabs.canvasMode && canvas.documentOpen
                 onClicked: tabs._addPage()
             }
+            // --- page mode: this page, then its frames ---
+            TabBtn {
+                visible: !tabs.canvasMode && canvas.documentOpen
+                label: (canvas.pagesRevision, blockModel.contentRevision, tabs._pageLabel(canvas.focusPage, Math.max(0, canvas.pageIds.indexOf(canvas.focusPage))))
+                tooltip: (canvas.pagesRevision, blockModel.contentRevision, canvas.pageTitle(canvas.focusPage))
+                active: tabs.activeId === ""
+                onClicked: tabs._select("")
+            }
             Repeater {
-                model: tabs.ids
+                id: tableRep
+                model: tabs.canvasMode ? [] : tabs.ids
                 delegate: TabBtn {
                     required property int index
                     required property string modelData
@@ -145,7 +163,8 @@ Rectangle {
                 }
             }
             Repeater {
-                model: tabs.pdfIds
+                id: pdfRep
+                model: tabs.canvasMode ? [] : tabs.pdfIds
                 delegate: TabBtn {
                     required property string modelData
                     label: tabs._mediaLabel(modelData, "PDF")
@@ -155,7 +174,8 @@ Rectangle {
                 }
             }
             Repeater {
-                model: tabs.videoIds
+                id: videoRep
+                model: tabs.canvasMode ? [] : tabs.videoIds
                 delegate: TabBtn {
                     required property string modelData
                     label: tabs._mediaLabel(modelData, "Video")
@@ -252,26 +272,26 @@ Rectangle {
                         label: (canvas.pagesRevision, blockModel.contentRevision, tabs._pageLabel(modelData, index)); pageId: modelData
                     }
                 }
-                SectionHeader { visible: tabs.ids.length > 0; title: "Tables" }
+                SectionHeader { visible: !tabs.canvasMode && tabs.ids.length > 0; title: "Tables" }
                 Repeater {
-                    model: tabs.ids
+                    model: tabs.canvasMode ? [] : tabs.ids
                     delegate: MenuItem {
                         required property int index
                         required property string modelData
                         label: "Table " + (index + 1); tabId: modelData
                     }
                 }
-                SectionHeader { visible: tabs.videoIds.length > 0; title: "Videos" }
+                SectionHeader { visible: !tabs.canvasMode && tabs.videoIds.length > 0; title: "Videos" }
                 Repeater {
-                    model: tabs.videoIds
+                    model: tabs.canvasMode ? [] : tabs.videoIds
                     delegate: MenuItem {
                         required property string modelData
                         label: tabs._fullName(modelData, "Video"); tabId: modelData
                     }
                 }
-                SectionHeader { visible: tabs.pdfIds.length > 0; title: "PDFs" }
+                SectionHeader { visible: !tabs.canvasMode && tabs.pdfIds.length > 0; title: "PDFs" }
                 Repeater {
-                    model: tabs.pdfIds
+                    model: tabs.canvasMode ? [] : tabs.pdfIds
                     delegate: MenuItem {
                         required property string modelData
                         label: tabs._fullName(modelData, "PDF"); tabId: modelData

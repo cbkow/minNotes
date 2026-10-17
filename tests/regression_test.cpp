@@ -5578,6 +5578,8 @@ static void testConverter() {
           "the image's frame ink lives in its descriptor");
     CHECK(!c->db().hasTable(QStringLiteral("block_ink")), "block_ink is dropped");
     CHECK(m.commentThreads().size() == 2, "both comment threads survive, the orphan included (%d)", int(m.commentThreads().size()));
+    CHECK(c->orphanThreads().size() == 1 && c->orphanThreads()[0].toMap().value(QStringLiteral("row")).toInt() == -1,
+          "the file's unanchored threads: the orphan alone (%d)", int(c->orphanThreads().size()));
     CHECK(c->readOnly() && m.readOnly() && m.untitled() && !m.save(), "read-only until Save As");
     CHECK(c->db().canvasMeta(QStringLiteral("convertedFrom")) == QLatin1String("mnd1") && c->db().canvasMeta(QStringLiteral("pageWidthDefault")) == QLatin1String("880"),
           "canvas_meta records the conversion and the 1.0 measure");

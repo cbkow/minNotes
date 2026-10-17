@@ -14,6 +14,9 @@ Rectangle {
     id: rail
     required property var editor      // the Editor instance to act on
     property var inspector: null      // the right inspector panel this rail toggles
+    // Block and format actions act on the focused PAGE; on the canvas no page is in view, so they
+    // grey (the Inspector's draw tools use the same language the other way round).
+    readonly property bool pageActions: !!editor && !editor.activeCanvas
 
     width: 46
     color: Theme.colors.surface
@@ -88,7 +91,7 @@ Rectangle {
             signal picked()
             iconName: item.icon || ""
             tooltip: item.tip || ""
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: {
                 if (!rail.editor || !item.isChecked) return false
                 var t = rail.editor.caretType, lv = rail.editor.caretLevel   // reactive deps
@@ -134,7 +137,7 @@ Rectangle {
                 visible: section.collapsed
                 iconName: section.repIcon
                 tooltip: ""                       // the flyout is the affordance
-                enabled_: !!rail.editor
+                enabled_: rail.pageActions
                 checked: section.repChecked
                 onClicked: section.toggleCollapsed()
                 Icon {
@@ -184,7 +187,7 @@ Rectangle {
         // in the Inspector's Comments view.
         RailBtn {
             iconName: "chat-circle-text"; tooltip: "Add comment"
-            enabled_: !!rail.editor && rail.editor.hasSelection
+            enabled_: rail.pageActions && rail.editor.hasSelection
             onClicked: rail.editor.addCommentOnSelection()
         }
 
@@ -195,7 +198,7 @@ Rectangle {
         // already a paragraph (the "nothing else" state). First, as the base style.
         RailBtn {
             iconName: "paragraph"; tooltip: "Paragraph"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.caretType === 0
             onClicked: rail.act(function() { rail.editor.setParagraph() })
         }
@@ -203,13 +206,13 @@ Rectangle {
         // they're a Word-style toggle (lit = armed for the next typing).
         RailBtn {
             text: "B"; boldLabel: true; tooltip: "Bold  (⌘B)"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.boldArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("bold") })
         }
         RailBtn {
             iconName: "text-italic"; tooltip: "Italic  (⌘I)"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.italicArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("italic") })
         }
@@ -217,32 +220,32 @@ Rectangle {
         // selection (or arms it for typing); the underbar shows the colour.
         ColorTool {
             iconName: "highlighter"; tooltip: "Background"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.highlightArmed
             underColor: rail.inspector ? rail.inspector.bgColor : "#FFEC59"
             onClicked: if (rail.editor && rail.inspector) rail.act(function() { rail.editor.toggleHighlight(rail.inspector.bgColor) })
         }
         RailBtn {
             iconName: "code"; tooltip: "Code"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.codeArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("code") })
         }
         RailBtn {
             iconName: "text-strikethrough"; tooltip: "Strikethrough  (⌘⇧X)"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.strikeArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("strike") })
         }
         RailBtn {
             iconName: "text-underline"; tooltip: "Underline  (⌘U)"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.underlineArmed
             onClicked: rail.act(function() { rail.editor.applyFormat("underline") })
         }
         RailBtn {
             iconName: "link"; tooltip: "Link  (⌘K)"
-            enabled_: !!rail.editor
+            enabled_: rail.pageActions
             checked: !!rail.editor && rail.editor.linkActive
             // Direct (not rail.act): act() refocuses the editor, which would steal
             // focus from the URL popup's input field the moment it opens.
@@ -250,7 +253,7 @@ Rectangle {
         }
         RailBtn {
             iconName: "text-t-slash"; tooltip: "Clear formatting  (⌘\\)"
-            enabled_: !!rail.editor       // acts on the caret block; no selection needed
+            enabled_: rail.pageActions    // acts on the caret block; no selection needed
             onClicked: rail.act(function() { rail.editor.clearFormatting() })
         }
 

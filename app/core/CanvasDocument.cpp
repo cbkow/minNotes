@@ -591,6 +591,22 @@ QString CanvasDocument::pageTitle(const QString& id) const {
     return title;
 }
 
+QVariantList CanvasDocument::orphanThreads() const {
+    QVariantList out;
+    if (!db_.isOpen()) return out;
+    for (const Document::CommentThread& t : db_.commentThreads()) {
+        if (!db_.pagesMentioning(t.id).isEmpty()) continue;
+        QVariantMap m;
+        m.insert(QStringLiteral("id"), t.id);
+        m.insert(QStringLiteral("resolved"), t.resolved);
+        m.insert(QStringLiteral("created"), t.created);
+        m.insert(QStringLiteral("row"), -1);
+        m.insert(QStringLiteral("excerpt"), QString());
+        out.append(m);
+    }
+    return out;
+}
+
 BlockModel* CanvasDocument::pageModel(const QString& id) {
     if (!db_.isOpen() || id.isEmpty()) return nullptr;
     if (BlockModel* m = pages_.value(id, nullptr)) return m;

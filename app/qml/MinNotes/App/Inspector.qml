@@ -248,14 +248,18 @@ Rectangle {
                 width: parent.width; spacing: 8
                 Text {
                     visible: threadRep.count === 0
-                    text: "No comments yet.\nSelect text and use\n“Add comment”."
+                    text: panel.editor && panel.editor.activeCanvas
+                          ? "No unanchored comments.\nComments live on pages —\nopen one to see its threads."
+                          : "No comments yet.\nSelect text and use\n“Add comment”."
                     color: Theme.colors.textMuted
                     font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
                 }
                 Repeater {
                     id: threadRep
-                    model: (blockModel.commentsRevision, blockModel.structureRevision,
-                            blockModel.commentThreads())
+                    // On the canvas: the FILE's unanchored threads (no page is in view); on a page: its threads.
+                    model: panel.editor && panel.editor.activeCanvas
+                           ? (blockModel.commentsRevision, canvas.elementsRevision, canvas.orphanThreads())
+                           : (blockModel.commentsRevision, blockModel.structureRevision, blockModel.commentThreads())
                     delegate: Rectangle {
                         id: card
                         required property var modelData
