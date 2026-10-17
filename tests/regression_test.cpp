@@ -5500,6 +5500,36 @@ static void testMediaInkMove() {
     CHECK(again.openDocument(path) && shapeCount(again.mediaPageInk(img, 0)) == 1, "reopening the untouched original moves it again");
 }
 
+static void testReflowEstimate() {
+    qInfo("[116] responsive width (2.0 stage 1C): setContentWidth re-seeds wrapping text with a width-aware estimate; cells, code and media keep their rules");
+    BlockModel m;
+    m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    const QString longText = QString(QStringLiteral("lorem ipsum ")).repeated(34).trimmed();   // ≈ 400 chars
+    m.insertBlock(0); m.setContent(0, longText);                                      // a wrapping paragraph
+    m.insertBlock(1); m.setContent(1, QStringLiteral("line one\nline two\nline three")); m.setBlockType(1, BlockModel::Paragraph);
+    m.insertBlock(2); m.setContent(2, longText); m.setHeading(2, 1);                   // a wrapping H1
+    m.insertBlock(3); m.setContent(3, QStringLiteral("def f():\n    return 1\n")); m.makeCodeBlock(3, QStringLiteral("python"));
+    const int firstCell = m.insertTableRows(3, 2, 2);
+    m.setContent(firstCell, longText);                                                // a wrapping CELL (column width, not page)
+    m.setContentWidth(1000); m.setContentWidth(760);   // the model starts at 760: force one real reflow to seed estimates
+    const double p760 = m.heightForRow(0), h760 = m.heightForRow(2), code760 = m.heightForRow(3), multi760 = m.heightForRow(1);
+    m.setMeasuredHeight(firstCell, 123);
+    m.setContentWidth(380);
+    const double p380 = m.heightForRow(0), h380 = m.heightForRow(2);
+    CHECK(p380 > p760 * 1.6 && p380 < p760 * 2.6, "halving the width about doubles a long paragraph's estimate (%g → %g)", p760, p380);
+    CHECK(h380 > h760, "a long heading wraps too (%g → %g)", h760, h380);
+    CHECK(m.heightForRow(3) == code760, "code never wraps: unchanged");
+    CHECK(m.heightForRow(firstCell) == 123, "a measured table cell keeps its height (cells wrap at their column)");
+    CHECK(!m.rowMeasured(0), "re-seeded rows read as unmeasured again");
+    double sum = 0; for (int r = 0; r < m.rowCountQml(); ++r) if (m.laneForRow(r) < 0) sum += m.heightForRow(r);
+    CHECK(qAbs(sum - m.totalHeight()) < 0.5, "totalHeight is the sum of the top-level rows (%g vs %g)", sum, m.totalHeight());
+    m.setContentWidth(384);
+    CHECK(m.heightForRow(0) == p380, "a sub-wrap change (< 8 px) leaves text alone");
+    m.setContentWidth(760);
+    CHECK(m.heightForRow(0) == p760 && m.heightForRow(1) == multi760, "back at 760 the estimates return (hard lines count once each)");
+}
+
 static void testTableModel() {
     qInfo("[85] derived tables: the header role, grouping, ragged rows, breaks rejoin, persistence (SR-4 step 1)");
     auto fresh = [](BlockModel& m) {
@@ -7778,6 +7808,7 @@ int main(int argc, char** argv) {
     testCanvasCamera();
     testInkTessellate();
     testMediaInkMove();
+    testReflowEstimate();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

@@ -435,6 +435,7 @@ public:
     // Delegate reports its laid-out height. Emits heightSettled(row, delta) so
     // the Flickable arm can compensate contentY when an off-screen block settles.
     Q_INVOKABLE void setMeasuredHeight(int row, qreal h);
+    qreal contentWidth() const { return contentWidth_; }   // the width the document is laid out at (view-set)
     Q_INVOKABLE void flushLayoutSpike();   // emit a coalesced measure-back spike now (the probe verifies synchronously)
 
     // --- Dev-only type probe (A0 of the speed programme, 2026-10-16) ---
@@ -1174,6 +1175,10 @@ private:
     // a rows_ erase and its index erase reads the previous, still-coherent index).
     mutable mn::LayoutIndex layout_;
     mutable std::vector<double> pendingHeights_;
+    // 2.0 stage 1C: a WIDTH-AWARE text height estimate (chars per line at the row's indent and
+    // font → wrapped lines × line height + pad). setContentWidth re-seeds every wrapping text row
+    // with it so a reflow lands with plausible heights before the delegates measure the truth.
+    double textHeightEstimate(std::size_t i, double w) const;
     mutable bool indexDirty_ = false;
     const mn::LayoutIndex& layout() const;   // (not index(): that's QAbstractListModel's)
     void reindex(std::vector<double> heights);

@@ -5994,21 +5994,62 @@ void BlockModel::setMediaWidth(int row, int w) {
     endTxn(QStringLiteral("imgw:") + ids_[row]);
 }
 
+// A wrapping text row's height at width `w` — the estimate a reflow seeds before the delegates
+// measure. Body text ≈ 7.2 px a glyph at Aspekta 14; headings scale with their size; lists and
+// quotes wrap inside their indent (the BlockView insets the export CSS mirrors). Hard lines wrap
+// independently. Cheap: one size() and one '\n' scan per block (≈ 0.2 ms per 1000 blocks).
+double BlockModel::textHeightEstimate(std::size_t i, double w) const {
+    const Row& r = rows_[i];
+    double avgChar = 7.2, lineH = kLine, indent = 0.0;
+    if (r.type == Heading) {
+        static const double sz[6] = { 30, 26, 22, 19, 17, 16 }, lh[6] = { 41, 35, 30, 26, 23, 22 };
+        const int l = std::clamp(int(r.level), 1, 6) - 1;
+        avgChar = 0.52 * sz[l]; lineH = lh[l];
+    } else if (r.type == ListItem || r.type == TaskListItem) indent = 22.0 + 24.0 * r.depth;
+    else if (r.type == OrderedListItem) indent = 34.0 + 24.0 * r.depth;
+    else if (r.type == Quote) indent = 22.0;
+    const double cpl = std::max(8.0, (w - indent) / avgChar);
+    const QString& t = content_[i];
+    int lines = 0, start = 0;
+    for (;;) {
+        const int nl = t.indexOf(QLatin1Char('\n'), start);
+        const int len = (nl < 0 ? t.size() : nl) - start;
+        lines += std::max(1, int(std::ceil(len / cpl)));
+        if (nl < 0) break;
+        start = nl + 1;
+    }
+    return lines * lineH + kPadV;
+}
+
 void BlockModel::setContentWidth(qreal w) {
     if (w <= 0.0 || std::abs(w - contentWidth_) < 0.5) return;
+    const double old = contentWidth_;
     contentWidth_ = w;
-    // Media heights are derived from this width — re-derive them in the Fenwick.
-    // (Media never measures back, so the estimate is the authoritative height.)
-    bool any = false;
+    QElapsedTimer ct; if (mn::perf::enabled()) ct.start();
+    // Media heights derive from this width (media never measures back, so the estimate IS the
+    // height). Text rows that WRAP at the page (or their lane) are re-seeded with the width-aware
+    // estimate and marked unmeasured — a responsive width (2.0 stage 1C) changes them every time
+    // the window settles; the live delegates then measure the truth. Table cells wrap at their
+    // COLUMN's px width (width-independent → their measured heights stay); code never wraps;
+    // records derive from their lanes. A sub-wrap change (< 8 px) re-derives media only.
+    const bool reflowText = std::abs(w - old) >= 8.0;
     const std::vector<double> lw = laneWidths();
-    for (size_t i = 0; i < rows_.size(); ++i)
-        if (rows_[i].type == Media) {
-            // Compare the block's own height: media in a short lane moves its lane
-            // siblings without changing the split row's height.
-            const double h = estimatedHeight(rows_[i], lw[i]);
-            if (h != layout().height(i)) { setIndexHeight(i, h); any = true; }
-        }
-    if (any) bumpLayout();
+    std::vector<double> heights = layout().heights();
+    bool any = false;
+    for (size_t i = 0; i < rows_.size() && i < heights.size(); ++i) {
+        const Row& r = rows_[i];
+        double h;
+        if (r.type == Media) h = estimatedHeight(r, lw[i]);
+        else if (reflowText && (r.type == Paragraph || r.type == Heading || r.type == Quote
+                                || r.type == ListItem || r.type == TaskListItem || r.type == OrderedListItem)
+                 && tableHeadOf(static_cast<int>(i)) < 0) {
+            h = textHeightEstimate(i, lw[i]);
+            rows_[i].measured = false;
+        } else continue;
+        if (h != heights[i]) { heights[i] = h; any = true; }
+    }
+    if (any) { reindex(std::move(heights)); bumpLayout(); }
+    if (mn::perf::enabled()) probeMarks_[QStringLiteral("reflow")].push_back(ct.nsecsElapsed());
 }
 
 void BlockModel::setContent(int row, const QString& text) {
