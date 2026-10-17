@@ -4419,7 +4419,12 @@ FocusScope {
                     const rc0 = cvw.rightClicks
                     g.rightClick(cvw, c.x, c.y)
                     check(cvw.contextMenu.visible && cvw.selectedId === id, "a right-click on an element selects it and opens the context menu (taps +" + (cvw.rightClicks - rc0) + ", menu visible " + cvw.contextMenu.visible + " opened " + cvw.contextMenu.opened + ", selected '" + cvw.selectedId + "')")
+                    check(cvw.contextMenu.visibleRows === 4, "an ink element's menu shows only Duplicate / Bring to front / Send to back / Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
+                    g.rightClick(cvw, 8, cvw.height - 8)
+                    check(cvw.contextMenu.visible && cvw.selectionCount === 0 && cvw.contextMenu.visibleRows === 1, "empty canvas: New page here alone (" + cvw.contextMenu.visibleRows + " rows)")
+                    cvw.contextMenu.close()
+                    cvw.select(id)
                     const n0 = canvas.elementCount()
                     cvw.duplicateSelected()
                     check(canvas.elementCount() === n0 + 1 && cvw.selectedId !== "" && cvw.selectedId !== id && Math.abs(canvas.elementRect(cvw.selectedId).x - r.x - 24) < 0.01, "Duplicate makes a copy beside it, selected")

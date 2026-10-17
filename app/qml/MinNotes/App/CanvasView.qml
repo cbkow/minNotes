@@ -6,7 +6,6 @@
 // (canvas_meta on save); a canvas without one fits every element and keeps re-fitting on resize
 // until the user takes the camera (wheel, drag, pinch, zoom keys).
 import QtQuick
-import QtQuick.Controls
 
 Rectangle {
     id: cv
@@ -281,24 +280,10 @@ Rectangle {
             if (hit !== "" && !cv.isSelected(hit)) cv.select(hit)
             else if (hit === "") cv.clearSelection()
             ctxMenu.worldX = w.x; ctxMenu.worldY = w.y
-            ctxMenu.popup(ev.position.x, ev.position.y)
+            ctxMenu.popupAt(ev.position.x, ev.position.y)
         }
     }
-    ThemedMenu {
-        id: ctxMenu
-        property real worldX: 0
-        property real worldY: 0
-        readonly property bool onePage: cv.selectedId !== "" && canvas.elementKind(cv.selectedId) === "page"
-        readonly property bool oneText: cv.selectedId !== "" && canvas.elementKind(cv.selectedId) === "shape"
-        readonly property bool any: cv.selectionCount > 0
-        Action { text: qsTr("Open page");      enabled: ctxMenu.onePage; onTriggered: cv.drillSelected() }
-        Action { text: qsTr("Edit text");      enabled: ctxMenu.oneText; onTriggered: cv.editText(cv.selectedId) }
-        Action { text: qsTr("Duplicate");      enabled: ctxMenu.any && cv.selectedIds.some(id => canvas.elementKind(id) !== "page"); onTriggered: cv.duplicateSelected() }
-        Action { text: qsTr("Bring to front"); enabled: ctxMenu.any; onTriggered: cv.frontSelected() }
-        Action { text: qsTr("Send to back");   enabled: ctxMenu.any; onTriggered: cv.backSelected() }
-        Action { text: qsTr("Delete");         enabled: ctxMenu.any; onTriggered: cv.deleteSelected() }
-        Action { text: qsTr("New page here");  enabled: !ctxMenu.any; onTriggered: { const id = canvas.addPageAt(ctxMenu.worldX, ctxMenu.worldY); if (id !== "") cv.select(id) } }
-    }
+    CanvasContextMenu { id: ctxMenu; view: cv }
     readonly property var contextMenu: ctxMenu   // probe
     // The marquee (pointer tool, empty canvas): a screen-space box; the elements it crosses get selected.
     property rect marqueeRect: Qt.rect(0, 0, 0, 0)
