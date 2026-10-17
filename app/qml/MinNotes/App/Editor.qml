@@ -4322,6 +4322,20 @@ FocusScope {
                     g.doubleClick(cvw, s.x, s.y)
                     check(!root.activeCanvas && canvas.focusPage === livePage, "double-click over a page card's text opens that page (focus '" + canvas.focusPage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
                     root.setActiveTab("canvas")
+                    ++step; return
+                }
+                if (step === 19) {   // the footer's "open the page" link: pan the card's bottom edge into view
+                    const r = canvas.elementRect(livePage)
+                    cam.setPan(cvw.width / 2 - (r.x + r.width - 120), cvw.height / 2 - (r.y + r.height - 20))
+                    ++step; return
+                }
+                if (step === 21) {
+                    const item = pageItem(livePage)
+                    const link = item && item.page ? item.page.openLinkItem : null
+                    const p = link ? link.mapToItem(cvw, link.width / 2, link.height / 2) : null
+                    if (p) g.click(cvw, p.x, p.y)
+                    check(!!link && link.text.indexOf("more blocks") > 0 && !root.activeCanvas && canvas.focusPage === livePage, "a click on the footer's link opens the page (" + (link ? link.text : "no link") + ")")
+                    root.setActiveTab("canvas")
                     nextPhase("gestures"); return
                 }
                 ++step; return

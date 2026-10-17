@@ -158,13 +158,18 @@ Rectangle {
             GradientStop { position: 0.6; color: Theme.colors.surface }
             GradientStop { position: 1.0; color: Theme.colors.surface }
         }
-        Text {
+        Text {   // the link: a tap opens the page (the page view takes it)
+            id: openLink
             anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: page.inset
             text: page.rowsBelow + (page.rowsBelow === 1 ? " more block — open the page" : " more blocks — open the page")
-            color: Theme.colors.textSubtle
+            color: linkHover.hovered ? Theme.colors.textBright : Theme.colors.textSubtle
             font.family: Theme.font.body; font.pixelSize: page.tier === 1 ? 20 : Theme.font.sizeChrome
+            font.underline: linkHover.hovered
+            HoverHandler { id: linkHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: if (page.active) canvas.focusPage = page.elementId }
         }
     }
+    readonly property var openLinkItem: openLink   // probe
     Text {   // ghost and greek: the page's title
         x: page.inset; y: page.inset; width: page.width - 2 * page.inset
         opacity: page.active && page.tier < 2 ? 1 : 0

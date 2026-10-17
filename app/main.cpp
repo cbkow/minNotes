@@ -98,6 +98,17 @@ int main(int argc, char *argv[])
     MinNotesApplication app(argc, argv);
     app.setApplicationName("minNotes");
     app.setOrganizationName("minNotes");
+    // Dev-only runs (probes, shots, headless imports) keep their OWN settings domain: the pool probe
+    // toggles the page-width cap and restores it, but a run that exits in the same event-loop turn as
+    // the restore left the user's `view.capMeasure` flipped (2026-10-17). Never touch the real prefs.
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray a(argv[i]);
+        if (a.startsWith("--pool-probe") || a.startsWith("--type-probe") || a.startsWith("--canvas-probe")
+            || a.startsWith("--shot=") || a.startsWith("--import=") || a.startsWith("--key-probe") || a.startsWith("--export-")) {
+            app.setApplicationName("minNotes-dev");
+            break;
+        }
+    }
 
     // ── Per-session working-copy dir (ephemeral SQLite scratch) ───────────
     // Documents are edited via a LOCAL working copy (BlockModel) so SQLite never
