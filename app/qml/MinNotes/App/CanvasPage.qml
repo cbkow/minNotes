@@ -166,10 +166,11 @@ Rectangle {
             font.family: Theme.font.body; font.pixelSize: page.tier === 1 ? 20 : Theme.font.sizeChrome
             font.underline: linkHover.hovered
             HoverHandler { id: linkHover; cursorShape: Qt.PointingHandCursor }
-            TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: if (page.active) canvas.focusPage = page.elementId }
+            TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { ++page.linkTaps; if (page.active) canvas.focusPage = page.elementId } }
         }
     }
     readonly property var openLinkItem: openLink   // probe
+    property int linkTaps: 0
     Text {   // ghost and greek: the page's title
         x: page.inset; y: page.inset; width: page.width - 2 * page.inset
         opacity: page.active && page.tier < 2 ? 1 : 0

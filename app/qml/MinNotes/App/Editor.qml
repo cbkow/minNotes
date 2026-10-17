@@ -4336,6 +4336,19 @@ FocusScope {
                     if (p) g.click(cvw, p.x, p.y)
                     check(!!link && link.text.indexOf("more blocks") > 0 && !root.activeCanvas && canvas.focusPage === livePage, "a click on the footer's link opens the page (" + (link ? link.text : "no link") + ")")
                     root.setActiveTab("canvas")
+                    ++step; return
+                }
+                if (step === 23) {   // …and with the page SELECTED first (the user's report)
+                    const r = canvas.elementRect(livePage), m = cam.worldToScreen(r.x + r.width - 300, r.y + r.height - 10)   // inside the card, on screen (the bottom-right is centred)
+                    g.click(cvw, m.x, m.y)
+                    const item = pageItem(livePage)
+                    const link = item && item.page ? item.page.openLinkItem : null
+                    const p = link ? link.mapToItem(cvw, link.width / 2, link.height / 2) : null
+                    const taps0 = item && item.page ? item.page.linkTaps : -1
+                    check(cvw.selectedId === livePage, "the page is selected first (" + cvw.selectedId + ")")
+                    if (p) g.click(cvw, p.x, p.y)
+                    check(!!link && !root.activeCanvas && canvas.focusPage === livePage, "a click on the link of a SELECTED page opens it (link taps +" + ((item && item.page ? item.page.linkTaps : -1) - taps0) + ", focus '" + canvas.focusPage + "', frameHit " + (p ? cvw.frameHit(p) : "-") + ")")
+                    root.setActiveTab("canvas")
                     nextPhase("gestures"); return
                 }
                 ++step; return
