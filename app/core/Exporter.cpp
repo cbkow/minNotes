@@ -1426,8 +1426,15 @@ static QString embeddedFontCss() {
     return out;
 }
 
+// The HTML export's measure (2.0 stage 1C): the app's page is as wide as its window now, so an
+// export needs A measure to wrap at — the readable-measure cap, 760, as PDF/DOCX use a paper width.
+// Narrower windows REFLOW below it (the 2026-08-20 min-width ruling is reversed: there is no ink
+// geometry left to keep aligned). Every 760-era constant in the CSS derives from it.
+constexpr int kExportMeasure = 760;
+constexpr int kExportMargin  = 48;    // the app's pageMargin: main's side padding, the sheet's gutters
+
 const char* kHtmlCss = R"CSS(
-:root{--bg:#181817;--desk:#121211;--sheetw:1000px;
+:root{--bg:#181817;--desk:#121211;--sheetw:856px;
 --text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
 --border:#2a2a2a;--divider:#333333;--accent:#0189f1;--recess:#0e0e0e;
 --chipbg:#1d2733;--chiptext:#4aa8ff;--codetext:#d4d4e8;--violet:#b48ef0;--sel:#2a568c;--quote:#3a5e86}
@@ -1458,16 +1465,12 @@ background-repeat:no-repeat}
 body{background:transparent;color:var(--text);margin:0;
 font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main li,main figure,main .blkw{margin:0;padding:6px 0}
-/* Centred page (2026-09-16; was left-anchored): the sheet centres when the
-   window is wider than it and hugs the left edge when not — `auto` margins
-   go to 0 under min-width, so narrow windows scroll instead of reflowing.
-   A wide table centres under the page (.tablewrap's inline margin). */
-main{max-width:1000px;min-width:1000px;margin:0 auto;padding:48px 120px 96px}
-/* content = the app's true 760 measure, flanked by the app's 120px ink
-   gutters so margin annotations render instead of cropping at the
-   viewport's left origin. min-width == max-width (user ruling 2026-08-20):
-   the page NEVER shrinks under the document width — narrow windows scroll
-   instead of reflowing, so ink/annotation geometry always aligns. */
+/* Responsive page (2.0 stage 1C; was a fixed 1000px column): the sheet centres when the
+   window is wider than it and REFLOWS when not — the app's page is its window's width, and
+   the export mirrors that under a 760 measure cap (= kExportMeasure) with the app's 48px
+   margins. No min-width: the 2026-08-20 "never shrink" ruling kept margin ink aligned, and
+   margin ink is gone. A wide table centres under the page (.tablewrap's inline margin). */
+main{max-width:856px;margin:0 auto;padding:48px 48px 96px}
 /* Document header: the export leads with the document's name — a quiet
    mono label, not a shouting heading (ruling 2026-08-21). */
 header.doctitle{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
@@ -1627,10 +1630,9 @@ color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:
 QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiRow, bool fragment) const {
     if (!model_) return {};
     const BlockModel* m = model_;
-    // The document's page measure (v3; 760 for pre-v3 docs) — every 760-era
-    // geometry constant below derives from it so exports match the app's
-    // live layout at any width.
-    const int pw = int(std::lround(m->pageWidth()));
+    // The export's measure (2.0 stage 1C): the app's page follows its window, so the export wraps
+    // at the readable cap and reflows below it — the model's page width is no longer consulted.
+    const int pw = kExportMeasure;
     FootnoteCtx fn;
     QString body;
     int inkLayers = 0;                // stacked ink layers emitted (gates the toggle)
@@ -1703,11 +1705,11 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         const QString open = QStringLiteral("<table style=\"table-layout:fixed;width:%1px;min-width:0\">").arg(qRound(total));
         // A table wider than the page CENTRES under it (the app, 2026-09-16): half the overhang to
         // the left — but never past 24 px from the window's edge (the app's tableMinLeft: a table
-        // that overflows the window may use the gutter, a narrower one centres). 100% here = the
+        // that overflows the window may use the margin, a narrower one centres). 100% here = the
         // page measure (main's content box); the second term is −(the room before that floor) =
-        // −(leftEdge − 24) with leftEdge = max(120, (W − page)/2), i.e. min(−96px, (page + 48 − W)/2).
+        // −(leftEdge − 24) with leftEdge = max(48, (W − page)/2), i.e. min(−24px, (page + 48 − W)/2).
         const QString wrapStyle = total > pw
-            ? QStringLiteral(" style=\"margin-left:max(calc((100% - %1px) / 2),min(-96px,calc((100% + 48px - 100vw) / 2)))\"").arg(qRound(total))
+            ? QStringLiteral(" style=\"margin-left:max(calc((100% - %1px) / 2),min(-24px,calc((100% + 48px - 100vw) / 2)))\"").arg(qRound(total))
             : QString();
         return QStringLiteral("<div class=\"tablewrap\"%4>%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags, wrapStyle);
     };
@@ -1895,20 +1897,6 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         css.replace(QLatin1String("pre{background:var(--recess)"),
                     QStringLiteral("pre{background:%1").arg(codeBg.name()));
 
-    // Per-document page width: patch the 760-era geometry — the column
-    // (w+240 incl. the two 120px gutters) and the block-number ledger
-    // (left = w+12; viewport reserve = w+172) — the codeBg pattern.
-    if (pw != 760) {
-        css.replace(QLatin1String("max-width:1000px"),
-                    QStringLiteral("max-width:%1px").arg(pw + 240));
-        css.replace(QLatin1String("min-width:1000px"),
-                    QStringLiteral("min-width:%1px").arg(pw + 240));
-        css.replace(QLatin1String("left:772px"),
-                    QStringLiteral("left:%1px").arg(pw + 12));
-        css.replace(QLatin1String("100vw - 932px"),
-                    QStringLiteral("100vw - %1px").arg(pw + 172));
-    }
-
     // The sheet band follows the widest table (the Editor's sheetSpan rule):
     // its right edge = the widest table's RENDERED width (same min/max
     // expression the table itself carries) + the trailing gutter.
@@ -1922,11 +1910,8 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             widest = std::max(widest, t);
         }
         if (widest > pw)   // the band runs as wide as the widest table (no viewport cap: the page scrolls)
-            css.replace(QLatin1String("--sheetw:1000px"),
-                        QStringLiteral("--sheetw:%1px").arg(int(widest) + 240));
-        else if (pw != 760)
-            css.replace(QLatin1String("--sheetw:1000px"),
-                        QStringLiteral("--sheetw:%1px").arg(pw + 240));
+            css.replace(QLatin1String("--sheetw:856px"),
+                        QStringLiteral("--sheetw:%1px").arg(int(widest) + 2 * kExportMargin));
     }
 
     // Lightbox: the page's one script (everything else is CSS-only). Vanilla,
