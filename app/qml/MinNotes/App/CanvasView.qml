@@ -19,6 +19,30 @@ Rectangle {
     // and select are the pointer (tap selects, drag moves, handles resize, empty-space drag pans) ---
     readonly property string tool: editor.inspector ? editor.inspector.drawTool : "type"
     readonly property bool drawing: !spaceHeld && (tool === "freehand" || tool === "rect" || tool === "oval" || tool === "arrow" || tool === "line" || tool === "eraser")
+    readonly property bool textTool: !spaceHeld && tool === "text"
+
+    // --- creating things on the canvas ---
+    // Double-click on empty canvas (pointer tools): a new page there, opened for typing (ruling 6).
+    function newPageAt(sx, sy) {
+        const w = cam.screenToWorld(sx, sy)
+        const id = canvas.addPageAt(w.x, w.y)
+        if (id !== "") canvas.focusPage = id
+        return id
+    }
+    // The text tool: a tap makes a text chip there and edits it; a double-tap on a chip edits it.
+    function newTextAt(sx, sy) {
+        const w = cam.screenToWorld(sx, sy)
+        const size = editor.inspector && editor.inspector.drawTextSize ? editor.inspector.drawTextSize : 24
+        const fill = editor.inspector ? editor.inspector.drawColor : "#ffffff"
+        const id = canvas.addShapeElement(JSON.stringify({ shape: "text", text: "", fontSize: size, fill: "" + fill }), Qt.rect(w.x, w.y, Math.max(120, size * 6), size * 1.4 + Math.round(size * 0.6)))
+        if (id === "") return ""
+        select(id)
+        textEditor.begin(id)
+        return id
+    }
+    function editText(id) { if (canvas.elementKind(id) === "shape") { select(id); textEditor.begin(id) } }
+    readonly property var textEditorItem: textEditor   // probe
+    function emptyAt(sx, sy) { const w = cam.screenToWorld(sx, sy); return canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01).length === 0 }
 
     // --- selection ---
     property string selectedId: ""
@@ -111,7 +135,7 @@ Rectangle {
     Timer { id: camSave; interval: 300; onTriggered: if (canvas.documentOpen && cam.userCam) canvas.setCamera(cam.panX, cam.panY, cam.zoom) }
 
     // Clicking dead space reclaims focus and clears the selection (the key swallow lives on the editor root).
-    MouseArea { anchors.fill: parent; z: -1; onClicked: { cv.clearSelection(); cv.editor.forceActiveFocus() } }
+    MouseArea { anchors.fill: parent; z: -1; onClicked: cv.editor.forceActiveFocus() }
 
     Item {
         id: canvasLayer
@@ -148,8 +172,39 @@ Rectangle {
         onActiveChanged: if (active) startZoom = cam.zoom
         onActiveScaleChanged: if (active) cam.zoomAboutPoint(startZoom * activeScale, centroid.position.x, centroid.position.y)
     }
-    // The selection frame (screen space) and the pen overlay sit above the world layer.
+    // Files dropped from outside the app land as elements at the drop point (a document imports
+    // into a new page there — Main.qml answers canvas.importFileRequested). Several files stagger.
+    DropArea {
+        anchors.fill: parent; z: 5
+        keys: ["text/uri-list"]
+        onDropped: (drop) => {
+            if (!drop.hasUrls || !canvas.documentOpen) return
+            let last = ""
+            for (let i = 0; i < drop.urls.length; ++i) {
+                const w = cam.screenToWorld(drop.x, drop.y)
+                const id = canvas.addMediaElementFromUrl(drop.urls[i].toString(), w.x + i * 32, w.y + i * 32)
+                if (id !== "") last = id
+            }
+            if (last !== "") cv.select(last)
+            drop.accept()
+            cv.editor.forceActiveFocus()
+        }
+    }
+    // Empty-canvas gestures: tap clears / makes a text chip (text tool); double-tap makes a page.
+    TapHandler {
+        enabled: !cv.drawing
+        acceptedButtons: Qt.LeftButton
+        gesturePolicy: TapHandler.DragThreshold
+        onSingleTapped: (ev) => {
+            if (!cv.emptyAt(ev.position.x, ev.position.y)) return
+            if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
+            else { textEditor.commit(); cv.clearSelection() }
+        }
+        onDoubleTapped: (ev) => { if (!cv.textTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
+    }
+    // The selection frame (screen space), the text editor and the pen overlay sit above the world layer.
     CanvasSelectionFrame { id: selFrame; view: cv; z: 10 }
+    CanvasTextEditor { id: textEditor; view: cv }
     CanvasInkCapture {
         id: capture
         anchors.fill: parent; z: 20

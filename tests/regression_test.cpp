@@ -5894,6 +5894,50 @@ static void testInkCapture() {
     CHECK(!cap.drawing() && commits == 4, "switching tools cancels an in-flight stroke");
 }
 
+// [126] Creating from the canvas: a page at a point (the floor height), the height cache floor,
+// a dropped file → a media element / a file chip / an import request.
+static void testCanvasCreate() {
+    qInfo("[126] canvas creation (2.0 stage 2): addPageAt, the page height floor, addMediaElementFromUrl routing");
+    QTemporaryDir dir;
+    const QString img = dir.path() + QStringLiteral("/pic.png");
+    { QImage im(1200, 600, QImage::Format_ARGB32); im.fill(Qt::blue); im.save(img); }
+    const QString small = dir.path() + QStringLiteral("/small.png");
+    { QImage im(40, 20, QImage::Format_ARGB32); im.fill(Qt::green); im.save(small); }
+    const QString txt = dir.path() + QStringLiteral("/note.md");
+    { QFile f(txt); f.open(QIODevice::WriteOnly); f.write("# hi\n"); }
+    const QString odd = dir.path() + QStringLiteral("/data.xyz");
+    { QFile f(odd); f.open(QIODevice::WriteOnly); f.write("x"); }
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString p1 = c.firstPageId();
+    CHECK(c.elementRect(p1).height() == CanvasDocument::kMinPageHeight, "a new page starts at the floor height (%g)", c.elementRect(p1).height());
+    c.cachePageHeight(p1, 100);
+    CHECK(c.elementRect(p1).height() == CanvasDocument::kMinPageHeight, "the height cache floors at the minimum");
+    c.cachePageHeight(p1, 900);
+    CHECK(c.elementRect(p1).height() == 900, "…and grows past it");
+    const int hist = c.undoHistory().size();
+    const QString p2 = c.addPageAt(1000, 2000);
+    const QRectF r2 = c.elementRect(p2);
+    CHECK(!p2.isEmpty() && r2 == QRectF(1000, 2000, 760 + 2 * CanvasDocument::kPageInset, CanvasDocument::kMinPageHeight)
+              && c.pageIds().size() == 2 && c.pageModel(p2)->rowCountQml() == 1 && c.undoHistory().size() == hist + 1,
+          "addPageAt: a page at the point, the default measure, the floor height, one paragraph, one entry");
+    QString req; qreal rx = 0, ry = 0; int reqs = 0;
+    QObject::connect(&c, &CanvasDocument::importFileRequested, [&](const QString& u, qreal x, qreal y) { req = u; rx = x; ry = y; ++reqs; });
+    const QString m1 = c.addMediaElementFromUrl(img, 10, 20);
+    const QString k1 = QJsonDocument::fromJson(c.elementJson(m1).toUtf8()).object().value(QStringLiteral("media")).toObject().value(QStringLiteral("kind")).toString();
+    CHECK(!m1.isEmpty() && c.elementKind(m1) == QLatin1String("media") && c.elementRect(m1) == QRectF(10, 20, 480, 240)
+              && (k1.isEmpty() || k1 == QLatin1String("image")),   // a plain image descriptor may omit its kind
+          "a big image lands 480 wide at its aspect (%g x %g)", c.elementRect(m1).width(), c.elementRect(m1).height());
+    const QString m2 = c.addMediaElementFromUrl(QUrl::fromLocalFile(small).toString(), 0, 0);
+    CHECK(!m2.isEmpty() && c.elementRect(m2) == QRectF(0, 0, 40, 20), "a small image stays its size (a file url too)");
+    const QString m3 = c.addMediaElementFromUrl(odd, 5, 5);
+    CHECK(!m3.isEmpty() && c.elementJson(m3).contains(QStringLiteral("\"kind\":\"file\"")) && c.elementJson(m3).contains(QStringLiteral("data.xyz")),
+          "an unknown file becomes a file chip element");
+    const QString m4 = c.addMediaElementFromUrl(txt, 7, 8);
+    CHECK(m4.isEmpty() && reqs == 1 && req == txt && rx == 7 && ry == 8, "an importable document raises importFileRequested at the point");
+    CHECK(c.addMediaElementFromUrl(QString(), 0, 0).isEmpty() && reqs == 1, "an empty url does nothing");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8410,6 +8454,7 @@ int main(int argc, char** argv) {
     testCanvasViewState();
     testMediaElementResolve();
     testInkCapture();
+    testCanvasCreate();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

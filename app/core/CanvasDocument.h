@@ -54,6 +54,10 @@ public:
     static constexpr double kPageInset = 24.0;
     static constexpr double kPageGap = 64.0;       // new pages land this far right of the others
     static constexpr int kDefaultMeasure = 760;    // a new page's canvas measure
+    // A page card is never shorter than this (world px): an empty page still reads as a page; a
+    // page with more content grows past it (the cached height is floored here).
+    static constexpr double kMinPageHeight = 400.0;
+    static constexpr double kDropMediaWidth = 480.0;   // a dropped image / video / PDF lands this wide
 
     explicit CanvasDocument(QObject* parent = nullptr);
     ~CanvasDocument() override;
@@ -93,6 +97,7 @@ public:
     int pagesRevision() const { return pagesRevision_; }
     Q_INVOKABLE QString firstPageId() const;
     Q_INVOKABLE QString addPage();                  // one empty paragraph, right of the others; "" if closed
+    Q_INVOKABLE QString addPageAt(qreal wx, qreal wy);   // …at a world point (the canvas gesture)
     Q_INVOKABLE bool removePage(const QString& id); // refuses the last page; the page's blocks cascade
     // The page's title: first heading, else first text line, else "Untitled page". A LOADED page
     // answers from memory (the strip re-reads it per keystroke); an unloaded page's title comes
@@ -148,6 +153,10 @@ public:
     Q_INVOKABLE QString addInkElement(const QString& inkJson, const QRectF& rect);                // element-local strokes
     Q_INVOKABLE QString addShapeElement(const QString& shapeJson, const QRectF& rect);
     Q_INVOKABLE QString addConnector(const QString& connectorJson);                               // endpoints resolve at render
+    // A dropped file at a world point: video / PDF / image (through the file's MediaStore, like a
+    // page's drop) or a generic file chip → a media element sized from the media; an importable
+    // document raises importFileRequested instead (the host imports it into a new page there).
+    Q_INVOKABLE QString addMediaElementFromUrl(const QString& fileUrl, qreal wx, qreal wy);
     Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementJson(const QString& id, const QString& json, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementZ(const QString& id, int z);
@@ -184,6 +193,7 @@ signals:
     void pagesChanged();
     void undoStackChanged();
     void cameraChanged();
+    void importFileRequested(const QString& fileUrl, qreal wx, qreal wy);
     void elementsChanged();
     void geometryChanged();
     void inkChanged();
@@ -194,6 +204,8 @@ private:
     void ensurePages();          // canvas schema present, ≥ 1 page element, no page-less rows
     void finishOpen();           // ensurePages + the 1.0 conversion when the file was adopted
     QString insertPageElement(); // a page element right of the others (no blocks yet)
+    QString insertPageElementAt(const QRectF& r);
+    QString addPageWithRect(const QRectF& r);
     void seedPage(const QString& pageId);
     void reloadElements();       // refresh the mirror from the table
     // One undo entry = one element's state before and after. A page's snapshot on add / remove

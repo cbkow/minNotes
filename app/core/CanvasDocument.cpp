@@ -1,5 +1,6 @@
 #include "CanvasDocument.h"
 #include "BlockModel.h"
+#include "Importer.h"
 #include "MediaStore.h"
 #include "PackageFormat.h"
 
@@ -155,6 +156,7 @@ void CanvasDocument::ensurePages() {
         p.id = makeUlid();
         p.kind = QStringLiteral("page");
         p.w = db_.pageWidth() + 2.0 * kPageInset;   // the 1.0 measure (760 when absent) sizes the page
+        p.h = kMinPageHeight;                        // an empty page still reads as a page
         db_.insertElement(p);
         if (db_.canvasMeta(QStringLiteral("focusPage")).isEmpty())
             db_.setCanvasMeta(QStringLiteral("focusPage"), p.id);
@@ -503,13 +505,17 @@ QString CanvasDocument::insertPageElement() {
         right = any ? std::max(right, e.x + e.w) : e.x + e.w;
         any = true;
     }
+    return insertPageElementAt(QRectF(any ? right + kPageGap : 0.0, 0.0, kDefaultMeasure + 2.0 * kPageInset, kMinPageHeight));
+}
+
+QString CanvasDocument::insertPageElementAt(const QRectF& r) {
     Document::Element p;
     p.id = makeUlid();
     p.kind = QStringLiteral("page");
-    p.x = any ? right + kPageGap : 0.0;
-    p.y = 0.0;
-    p.w = kDefaultMeasure + 2.0 * kPageInset;
-    p.h = 0.0;
+    p.x = r.x();
+    p.y = r.y();
+    p.w = std::clamp(r.width(), kMinPageMeasure + 2.0 * kPageInset, kMaxPageMeasure + 2.0 * kPageInset);
+    p.h = std::max(r.height(), kMinPageHeight);
     p.z = nextZ();
     db_.insertElement(p);
     return p.id;
@@ -522,10 +528,17 @@ void CanvasDocument::seedPage(const QString& pageId) {
                                    QStringLiteral("paragraph"), QString(), QStringLiteral(""));
 }
 
-QString CanvasDocument::addPage() {
+QString CanvasDocument::addPage() { return addPageWithRect(QRectF()); }
+
+QString CanvasDocument::addPageAt(qreal wx, qreal wy) {
+    return addPageWithRect(QRectF(wx, wy, kDefaultMeasure + 2.0 * kPageInset, kMinPageHeight));
+}
+
+// A null rect = right of the other pages (the "+" tab); a rect = the canvas gesture's point.
+QString CanvasDocument::addPageWithRect(const QRectF& r) {
     if (!db_.isOpen()) return QString();
     db_.begin();
-    const QString id = insertPageElement();
+    const QString id = r.isNull() ? insertPageElement() : insertPageElementAt(r);
     seedPage(id);
     db_.commit();
     reloadElements();
@@ -691,6 +704,7 @@ void CanvasDocument::cachePageHeight(const QString& id, qreal h) {
     const int i = indexById_.value(id, -1);
     if (i < 0 || !db_.isOpen()) return;
     Document::Element& e = elements_[size_t(i)];
+    h = std::max(h, kMinPageHeight);   // an empty page still reads as a page
     if (e.kind != QLatin1String("page") || std::abs(e.h - h) < 1.0) return;
     e.h = h;
     db_.updateElementRect(id, e.x, e.y, e.w, h);
@@ -814,6 +828,37 @@ QString CanvasDocument::addInkElement(const QString& inkJson, const QRectF& rect
 QString CanvasDocument::addShapeElement(const QString& shapeJson, const QRectF& rect) {
     return addElement(QStringLiteral("shape"), rect, shapeJson, tr("Add shape"));
 }
+QString CanvasDocument::addMediaElementFromUrl(const QString& fileUrl, qreal wx, qreal wy) {
+    if (!db_.isOpen() || !mediaStore_) return QString();
+    auto sized = [&](int w, int h) {   // the drop width, the media's aspect
+        const double dw = kDropMediaWidth;
+        const double dh = (w > 0 && h > 0) ? dw * h / w : dw * 0.75;
+        return QRectF(wx, wy, dw, dh);
+    };
+    if (MediaStore::isVideoPath(fileUrl)) {
+        const MediaStore::VideoRef ref = mediaStore_->importVideoFile(fileUrl);
+        if (ref.ok()) return addMediaElement(MediaStore::videoDescriptorJson(ref), sized(ref.w, ref.h));
+    }
+    if (MediaStore::isPdfPath(fileUrl)) {
+        const MediaStore::PdfRef ref = mediaStore_->importPdfFile(fileUrl);
+        if (ref.ok()) return addMediaElement(MediaStore::pdfDescriptorJson(ref), sized(ref.w, ref.h));
+    }
+    {
+        const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, /*forceCopy*/false);
+        if (ref.ok()) {
+            const double dw = std::min<double>(kDropMediaWidth, ref.w);   // a small image stays its size
+            return addMediaElement(MediaStore::imageDescriptorJson(ref), QRectF(wx, wy, dw, dw * ref.h / ref.w));
+        }
+    }
+    if (!Importer::formatForPath(fileUrl).isEmpty() || mnpkg::isPackagePath(fileUrl)) {
+        emit importFileRequested(fileUrl, wx, wy);
+        return QString();
+    }
+    const QString path = fileUrl.startsWith(QLatin1String("file:")) ? QUrl(fileUrl).toLocalFile() : fileUrl;
+    if (path.isEmpty()) return QString();
+    return addMediaElement(MediaStore::fileDescriptorJson(path), QRectF(wx, wy, 260, 44));
+}
+
 QString CanvasDocument::addConnector(const QString& connectorJson) {
     return addElement(QStringLiteral("connector"), QRectF(), connectorJson, tr("Connect"));
 }

@@ -52,7 +52,7 @@ FocusScope {
         id: viewPrefs
         category: "view"
         property int measureCap: Theme.dim.columnWidth   // 760: every calibrated number is 760-based
-        property bool fullWidth: false
+        property bool fullWidth: true                     // "page width is window width" (ruling 2026-10-16); the cap is the opt-in
     }
     readonly property real pageMargin: 48      // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair)
     readonly property real minPageWidth: 320   // two lanes stay legal (2 · 120 + 24)
@@ -3966,6 +3966,7 @@ FocusScope {
             return out
         }
         function pageItem(id) { return activeItems().find(c => c.elementId === id) || null }
+        function cv_textTool() { return canvasView.textTool }
         function selFrameX() { return canvasView.selectionFrame.x }
         function selFrameW() { return canvasView.selectionFrame.width }
         onTriggered: {
@@ -4169,6 +4170,32 @@ FocusScope {
                     check(!canvasView.drawing, "select disarms the pen")
                     canvas.undo(); canvas.undo(); canvas.undo()
                     check(canvas.elementCount() === n0 - 0 && !canvas.elementKind(id), "undo takes the erase, the rect and the stroke back (" + canvas.elementCount() + ")")
+                    ++step; return
+                }
+                if (step === 8) {   // creating from the canvas: a page at a point, a text chip, a dropped file
+                    const n0 = canvas.elementCount()
+                    const pid = canvas.addPageAt(5000, 5000)
+                    const pr = canvas.elementRect(pid)
+                    check(pid !== "" && pr.x === 5000 && pr.y === 5000 && pr.height === 400 && canvas.pageModel(pid).count === 1 && canvas.elementCount() === n0 + 1,
+                          "addPageAt: a page at the point, the floor height, one paragraph (" + pr.height + ")")
+                    root.inspector.drawTool = "text"
+                    check(cv_textTool(), "the text tool arms")
+                    const tid = canvasView.newTextAt(200, 200)
+                    check(tid !== "" && canvas.elementKind(tid) === "shape" && canvasView.textEditorItem.editingId === tid && canvasView.selectedId === tid, "a text tap makes a chip and edits it")
+                    canvasView.textEditorItem.editingId = tid
+                    canvasView.textEditorItem.commit()   // empty → removed
+                    check(canvas.elementKind(tid) === "" && canvasView.selectedId === "", "committing an empty chip removes it")
+                    const tid2 = canvasView.newTextAt(200, 200)
+                    const te = canvasView.textEditorItem
+                    te.editingId = tid2
+                    check(te.shown, "editing the second chip")
+                    root.inspector.drawTool = "select"
+                    ++step; return
+                }
+                if (step === 9) {
+                    // (commit through the editor's text: set it, then commit)
+                    const tid2 = canvasView.textEditorItem.editingId
+                    canvasView.textEditorItem.editingId = tid2
                     ++step; return
                 }
                 nextPhase("interaction"); return

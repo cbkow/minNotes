@@ -107,6 +107,11 @@ public:
     // {vol,rel} refs apply uniformly). Shared by BlockModel and Importer so the
     // descriptor shape has ONE definition.
     static QString imageDescriptorJson(const ImageRef& ref);
+    // The other descriptors (video / PDF / a generic file chip), shared by the page model and the
+    // canvas's media elements.
+    static QString videoDescriptorJson(const VideoRef& ref);
+    static QString pdfDescriptorJson(const PdfRef& ref);
+    static QString fileDescriptorJson(const QString& absPath);
     // Descriptor for a not-yet-downloaded http(s) image: placeholder dims until
     // the async localize pass lands the real file.
     static QString remoteImageDescriptorJson(const QString& url);

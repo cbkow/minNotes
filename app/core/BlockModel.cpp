@@ -4372,38 +4372,12 @@ int BlockModel::insertMedia(int afterRow, const QString& json, uint16_t aspectPa
 static QString mediaJson(const MediaStore::ImageRef& ref) {
     return MediaStore::imageDescriptorJson(ref);   // shared with Importer
 }
-static QString videoMediaJson(const MediaStore::VideoRef& ref) {
-    QJsonObject o;
-    o.insert(QStringLiteral("src"), mn::toRef(ref.src));
-    o.insert(QStringLiteral("w"), ref.w);
-    o.insert(QStringLiteral("h"), ref.h);
-    o.insert(QStringLiteral("kind"), QStringLiteral("video"));
-    o.insert(QStringLiteral("durMs"), ref.durationMs);
-    o.insert(QStringLiteral("frames"), ref.frames);
-    o.insert(QStringLiteral("fps"), ref.fps);
-    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
-}
+static QString videoMediaJson(const MediaStore::VideoRef& ref) { return MediaStore::videoDescriptorJson(ref); }
 static QString remoteImageJson(const QString& url) {
     return MediaStore::remoteImageDescriptorJson(url);   // shared with Importer
 }
-static QString pdfMediaJson(const MediaStore::PdfRef& ref) {
-    QJsonObject o;
-    o.insert(QStringLiteral("src"),   mn::toRef(ref.src));
-    o.insert(QStringLiteral("w"),     ref.w);
-    o.insert(QStringLiteral("h"),     ref.h);
-    o.insert(QStringLiteral("kind"),  QStringLiteral("pdf"));
-    o.insert(QStringLiteral("pages"), ref.pages);
-    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
-}
-static QString fileMediaJson(const QString& path) {
-    const QFileInfo fi(path);
-    QJsonObject o;
-    o.insert(QStringLiteral("src"),  mn::toRef(fi.absoluteFilePath()));
-    o.insert(QStringLiteral("kind"), QStringLiteral("file"));
-    o.insert(QStringLiteral("name"), fi.fileName());
-    o.insert(QStringLiteral("ext"),  fi.suffix().toLower());
-    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
-}
+static QString pdfMediaJson(const MediaStore::PdfRef& ref) { return MediaStore::pdfDescriptorJson(ref); }
+static QString fileMediaJson(const QString& path) { return MediaStore::fileDescriptorJson(path); }
 static uint16_t aspectParam(int w, int h) {
     if (w <= 0 || h <= 0) return 56;     // 16:9 fallback (no jump until real dims)
     return static_cast<uint16_t>(std::clamp(int(100.0 * h / w + 0.5), 1, 1000));

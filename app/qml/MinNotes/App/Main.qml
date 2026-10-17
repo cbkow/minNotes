@@ -916,6 +916,21 @@ ApplicationWindow {
         if (ed && docs.activeIndex >= 0)
             ed.restoreViewState(docs.viewState(docs.tabIdAt(docs.activeIndex)))
     }
+    // A document dropped on the CANVAS: a new page at the drop point takes the import (the importer
+    // follows the focused page; the focus returns to the canvas in the same turn, so no page view shows).
+    Connections {
+        target: canvas
+        function onImportFileRequested(fileUrl, wx, wy) {
+            Qt.callLater(function () {
+                if (/\.mnpkg$/i.test("" + fileUrl)) { win.openDoc(fileUrl); return }
+                const id = canvas.addPageAt(wx, wy)
+                if (id === "") return
+                canvas.focusPage = id
+                importer.importFile(fileUrl)
+                canvas.focusPage = ""
+            })
+        }
+    }
     // A focus change INSIDE the active canvas (page ↔ canvas, page → page) re-points blockModel
     // (main.cpp, synchronously, before this fires) without a tab switch: a fresh page view.
     Connections {

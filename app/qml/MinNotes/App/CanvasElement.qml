@@ -41,7 +41,10 @@ Item {
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
         onSingleTapped: { el.view.select(el.elementId); el.editor.forceActiveFocus() }
-        onDoubleTapped: if (el.kind === "page") canvas.focusPage = el.elementId
+        onDoubleTapped: {
+            if (el.kind === "page") canvas.focusPage = el.elementId
+            else if (el.kind === "shape") el.view.editText(el.elementId)
+        }
     }
     DragHandler {
         enabled: el.active && el.view && !el.view.drawing && !el.view.spaceHeld

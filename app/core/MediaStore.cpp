@@ -34,6 +34,35 @@ extern "C" {
 
 MediaStore::MediaStore(const QString& docPath) : docDir_(QFileInfo(docPath).absolutePath()) {}
 
+QString MediaStore::videoDescriptorJson(const VideoRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), mn::toRef(ref.src));
+    o.insert(QStringLiteral("w"), ref.w);
+    o.insert(QStringLiteral("h"), ref.h);
+    o.insert(QStringLiteral("kind"), QStringLiteral("video"));
+    o.insert(QStringLiteral("durMs"), ref.durationMs);
+    o.insert(QStringLiteral("frames"), ref.frames);
+    o.insert(QStringLiteral("fps"), ref.fps);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+QString MediaStore::pdfDescriptorJson(const PdfRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"),   mn::toRef(ref.src));
+    o.insert(QStringLiteral("w"),     ref.w);
+    o.insert(QStringLiteral("h"),     ref.h);
+    o.insert(QStringLiteral("kind"),  QStringLiteral("pdf"));
+    o.insert(QStringLiteral("pages"), ref.pages);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+QString MediaStore::fileDescriptorJson(const QString& absPath) {
+    const QFileInfo fi(absPath);
+    QJsonObject o;
+    o.insert(QStringLiteral("src"),  mn::toRef(fi.absoluteFilePath()));
+    o.insert(QStringLiteral("kind"), QStringLiteral("file"));
+    o.insert(QStringLiteral("name"), fi.fileName());
+    o.insert(QStringLiteral("ext"),  fi.suffix().toLower());
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
 QString MediaStore::imageDescriptorJson(const ImageRef& ref) {
     QJsonObject o;
     o.insert(QStringLiteral("src"), mn::toRef(ref.src));

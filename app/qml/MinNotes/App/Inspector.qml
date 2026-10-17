@@ -623,8 +623,7 @@ Rectangle {
                                 return qsTr("tables have no ink surface")
                             // 2.0: the page's margin ink is gone; drawings live on the CANVAS, where every
                             // stroke tool and the eraser are live (text boxes return with the shape tools).
-                            if (panel.editor.activeCanvas)
-                                return modelData.tool === "text" ? qsTr("text boxes return with the shape tools") : ""
+                            if (panel.editor.activeCanvas) return ""
                             if (panel.editor.activeFrameId === "")
                                 return qsTr("drawing lives on the canvas")
                             if (panel.editor.activePdfRow >= 0)

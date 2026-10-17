@@ -38,6 +38,9 @@ Rectangle {
         if (!active || !pageModel || !canvas.documentOpen) return
         const w = canvas.elementRect(elementId).width - 2 * inset
         if (w >= 320) pageModel.setContentWidth(w)
+        // The model's estimate sizes the card at once (any tier — a ghost page is still a page);
+        // the live delegates refine it through heightSync.
+        canvas.cachePageHeight(elementId, pageModel.totalHeight + 2 * inset)
     }
     function tellWidthLater() { Qt.callLater(tellWidth) }
     onMeasureChanged: tellWidthLater()

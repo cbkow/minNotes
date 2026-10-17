@@ -174,7 +174,7 @@ bool convertV1(CanvasDocument& canvas, const QString& pageId, ConversionReport& 
         page.attachPage(&canvas, pageId);
         page.setContentWidth(pw);
         const QPointF content = pageOrigin + QPointF(kInset, kInset);   // the page's content origin on the canvas
-        db.updateElementRect(pageId, pageEl->x, pageEl->y, pageEl->w, page.totalHeight() + 2.0 * kInset);
+        db.updateElementRect(pageId, pageEl->x, pageEl->y, pageEl->w, std::max(CanvasDocument::kMinPageHeight, page.totalHeight() + 2.0 * kInset));
 
         // (3) px-space margin ink → ink elements beside the text (+ its chips → text shapes).
         const QHash<QString, QString> remaining = db.allInk();
