@@ -45,6 +45,8 @@ class CanvasDocument : public QObject {
     Q_PROPERTY(int elementsRevision READ elementsRevision NOTIFY elementsChanged)
     Q_PROPERTY(int geometryRevision READ geometryRevision NOTIFY geometryChanged)
     Q_PROPERTY(int inkRevision READ inkRevision NOTIFY inkChanged)
+    // The file's camera (canvas_meta.camera on save): false until the user takes it.
+    Q_PROPERTY(bool hasCamera READ hasCamera NOTIFY cameraChanged)
 public:
     enum SaveState { SaveClean = 0, SaveSaving = 1, SaveFailed = 2, SaveConflict = 3 };
     Q_ENUM(SaveState)
@@ -97,7 +99,7 @@ public:
     // from the store once and is cached (it cannot change until the page loads).
     Q_INVOKABLE QString pageTitle(const QString& id) const;
     // The page's model, created on first use (owned by the canvas). nullptr for a non-page id.
-    BlockModel* pageModel(const QString& id);
+    Q_INVOKABLE BlockModel* pageModel(const QString& id);
     BlockModel* pageModelIfLoaded(const QString& id) const { return pages_.value(id, nullptr); }
     // Registration used by BlockModel::attachPage / detachPage (a model attaching itself).
     void adoptPageModel(BlockModel* m, const QString& id);
@@ -124,6 +126,14 @@ public:
     Q_INVOKABLE QString elementJson(const QString& id) const;
     Q_INVOKABLE int elementZ(const QString& id) const;
     Q_INVOKABLE QStringList visibleElements(qreal x0, qreal y0, qreal x1, qreal y1) const;   // z order
+    Q_INVOKABLE QList<int> visibleElementIndices(qreal x0, qreal y0, qreal x1, qreal y1) const;   // mirror indices (the slot pool)
+    // A page card's laid-out height, written back to the element as a CACHE (culling, exporters):
+    // no undo entry, no dirty flag; the next save carries it.
+    Q_INVOKABLE void cachePageHeight(const QString& id, qreal h);
+    // The camera: {x, y, z} pan/zoom; hasCamera false until set. Persisted with the file.
+    bool hasCamera() const { return camValid_; }
+    Q_INVOKABLE QVariantMap camera() const;
+    Q_INVOKABLE void setCamera(qreal x, qreal y, qreal z);
     Q_INVOKABLE QRectF canvasBounds() const;                                                // union of rects
     Q_INVOKABLE QString mediaElementInk(const QString& id, int page) const;                 // "" = none
 
@@ -168,6 +178,7 @@ signals:
     void focusChanged();
     void pagesChanged();
     void undoStackChanged();
+    void cameraChanged();
     void elementsChanged();
     void geometryChanged();
     void inkChanged();
@@ -204,12 +215,16 @@ private:
     void detachPageModel(const QString& id);
     int nextZ() const;
     bool writeBackToOriginal();
+    void persistViewMeta();      // focusPage + camera → canvas_meta (the save paths)
     static QString newScratchPath();
     void cleanupScratch();
     void recordOriginalStat();
     bool externalChangeDetected() const;
     void setSaveState(int s);
     void detachAllPages();
+    // An element's rect for culling / bounds: a page whose height is not cached yet (0) still
+    // occupies its insets, and a zero-size rect would never intersect anything.
+    static QRectF cullRect(const Document::Element& e);
 
     Document db_;              // the ROOT handle; pages hold scoped copies on the same connection
     QString docPath_;          // canonical original (or the untitled identity path); media anchor + Save-As source
@@ -234,4 +249,6 @@ private:
     int undoCur_ = -1;
     int undoRev_ = 0;
     int elementsRevision_ = 0, geometryRevision_ = 0, inkRevision_ = 0;
+    bool camValid_ = false;
+    qreal camX_ = 0, camY_ = 0, camZ_ = 1;
 };

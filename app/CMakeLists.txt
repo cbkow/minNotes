@@ -104,6 +104,8 @@ qt_add_executable(minnotesapp
     notes/ink_tessellate.cpp
     notes/InkNodeItem.h
     notes/InkNodeItem.cpp
+    notes/PageContextLoader.h
+    notes/PageContextLoader.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must
@@ -194,7 +196,8 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Toasts.qml
         qml/MinNotes/App/ZoomBadge.qml
         qml/MinNotes/App/CanvasView.qml
-        qml/MinNotes/App/CanvasCard.qml
+        qml/MinNotes/App/CanvasElement.qml
+        qml/MinNotes/App/CanvasPage.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js

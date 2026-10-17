@@ -5291,104 +5291,8 @@ static void testSplitRowExports() {
     QDir(dir).removeRecursively();
 }
 
-static void testCardModel() {
-    qInfo("[111] derived cards (canvas B1): headings start, top-level dividers close, lanes never break, undo and reopen");
-    auto fresh = [](BlockModel& m, const QStringList& lines) {   // one paragraph per line; "# x" = heading, "---" = divider
-        m.newDocument();
-        while (m.rowCountQml() > 0) m.removeBlock(0);
-        for (int i = 0; i < lines.size(); ++i) {
-            m.insertBlock(i);
-            const QString& l = lines[i];
-            if (l.startsWith(QLatin1Char('#'))) {
-                int lvl = 0; while (lvl < l.size() && l[lvl] == QLatin1Char('#')) ++lvl;
-                m.setContent(i, l.mid(lvl).trimmed()); m.setHeading(i, lvl);
-            } else if (l == QStringLiteral("---")) {
-                m.removeBlock(i); m.insertDivider(i - 1);
-            } else m.setContent(i, l);
-        }
-    };
-    auto heads = [](const BlockModel& m) { QList<int> v; for (int i = 0; i < m.cardCount(); ++i) v << m.cardHeadAt(i); return v; };
-    auto consistent = [](const BlockModel& m) {   // the cache vs a re-derivation off the public API, plus the invariants
-        int cur = -1, idx = -1;
-        for (int r = 0; r < m.rowCountQml(); ++r) {
-            bool starts = r == 0;
-            if (m.laneForRow(r) < 0) {
-                if (m.typeForRow(r) == BlockModel::Heading) starts = true;
-                else if (r > 0 && m.laneForRow(r - 1) < 0 && m.typeForRow(r - 1) == BlockModel::Divider) starts = true;
-            }
-            if (starts) { cur = r; ++idx; if (m.cardHeadAt(idx) != r || m.cardIndexOf(r) != idx) return false; }
-            else if (m.cardIndexOf(r) != -1) return false;
-            if (m.cardHeadOf(r) != cur) return false;
-            if (m.laneForRow(r) >= 0 && m.cardHeadOf(r) != m.cardHeadOf(m.splitRowOf(r))) return false;   // no run straddles a split row
-            if (r > m.cardLastAt(idx)) return false;
-        }
-        if (m.cardCount() != idx + 1) return false;
-        if (m.rowCountQml() > 0 && m.cardLastAt(m.cardCount() - 1) != m.rowCountQml() - 1) return false;
-        return m.cardBlockIds().size() == m.cardCount();
-    };
-    {
-        BlockModel m;
-        fresh(m, { "# One", "a", "b", "## Two", "c", "### Three" });
-        CHECK(heads(m) == (QList<int>{ 0, 3, 5 }) && m.cardLastAt(0) == 2 && m.cardLastAt(1) == 4 && m.cardLastAt(2) == 5 && consistent(m),
-              "every heading level starts a card (%d cards)", m.cardCount());
-        fresh(m, { "# One", "a", "---", "b", "c" });
-        CHECK(heads(m) == (QList<int>{ 0, 3 }) && m.cardLastAt(0) == 2 && m.typeForRow(2) == BlockModel::Divider && consistent(m),
-              "a top-level divider closes the card and is its last row");
-        fresh(m, { "a", "---", "# One", "b" });
-        CHECK(heads(m) == (QList<int>{ 0, 2 }) && consistent(m), "a divider right before a heading makes no empty card");
-        fresh(m, { "---", "a", "b" });
-        CHECK(heads(m) == (QList<int>{ 0, 1 }) && m.cardLastAt(0) == 0 && consistent(m), "a divider at row 0 is a one-row card");
-        fresh(m, { "a", "b", "c" });
-        CHECK(heads(m) == (QList<int>{ 0 }) && m.cardHeadOf(2) == 0 && consistent(m), "a heading-less document is one card");
-        CHECK(m.cardHeadOf(-1) == -1 && m.cardHeadOf(99) == -1 && m.cardHeadAt(5) == -1 && m.cardLastAt(-1) == -1 && m.cardIndexOf(1) == -1,
-              "out-of-range and non-head queries answer -1");
-    }
-    {   // lanes and tables stay whole
-        BlockModel m;
-        fresh(m, { "# One", "a", "b", "c" });
-        const int first = m.insertTableRows(1, 2, 2);   // 0 H · 1 a · 2 head · 3 · 4 · 5 body · 6 · 7 · 8 b · 9 c
-        CHECK(first == 3 && m.structureValid() && heads(m) == (QList<int>{ 0 }) && consistent(m), "a table inside a card keeps it whole (%d)", first);
-        m.setHeading(first, 2);                          // a heading INSIDE a table cell
-        CHECK(m.typeForRow(first) == BlockModel::Heading && m.laneForRow(first) >= 0 && heads(m) == (QList<int>{ 0 }) && consistent(m),
-              "a heading inside a lane does not start a card");
-        m.insertDivider(first);                          // a divider inside the lane, after the heading
-        CHECK(m.typeForRow(first + 1) == BlockModel::Divider && m.laneForRow(first + 1) >= 0 && heads(m) == (QList<int>{ 0 }) && consistent(m),
-              "a divider inside a lane does not close a card");
-        m.undo(); m.undo();
-        CHECK(heads(m) == (QList<int>{ 0 }) && m.structureValid() && consistent(m), "two undos: still one card");
-        const int tail = m.rowCountQml() - 1;
-        m.setHeading(tail, 1);
-        CHECK(heads(m) == (QList<int>{ 0, tail }) && consistent(m), "a heading after the table starts the next card");
-    }
-    {   // type changes in place, undo rejoins, reopen re-derives
-        BlockModel m;
-        fresh(m, { "# One", "a", "b", "c" });
-        m.setHeading(2, 2);
-        CHECK(heads(m) == (QList<int>{ 0, 2 }) && m.cardLastAt(0) == 1 && consistent(m), "promoting a paragraph splits the card");
-        m.undo();
-        CHECK(heads(m) == (QList<int>{ 0 }) && consistent(m), "undo rejoins it");
-        m.redo();
-        m.setContent(3, QStringLiteral("# Four")); m.applyMarkdownTrigger(3);
-        CHECK(m.typeForRow(3) == BlockModel::Heading && heads(m) == (QList<int>{ 0, 2, 3 }) && consistent(m), "the markdown trigger starts a card");
-        m.setHeading(2, 0);
-        CHECK(heads(m) == (QList<int>{ 0, 3 }) && consistent(m), "demoting the heading merges its card into the one above");
-        const QStringList ids = m.cardBlockIds();
-        CHECK(ids.size() == 2 && ids[0] == m.idForRow(0) && ids[1] == m.idForRow(3), "cardBlockIds are the heads' ids");
-        QTemporaryDir dir;
-        const QString path = dir.path() + QStringLiteral("/cards.mnd");
-        CHECK(m.saveAs(path), "saveAs() succeeded");
-        BlockModel m2;
-        CHECK(m2.openDocument(path) && heads(m2) == (QList<int>{ 0, 3 }) && m2.cardBlockIds() == ids && consistent(m2),
-              "reopened: the same cards with the same ids");
-        m2.removeBlock(3);
-        CHECK(heads(m2) == (QList<int>{ 0 }) && consistent(m2), "removing a head merges its rows upward");
-        m2.undo();
-        CHECK(heads(m2) == (QList<int>{ 0, 3 }) && consistent(m2), "…and undo restores the card");
-    }
-}
-
 static void testCanvasLayout() {
-    qInfo("[112] canvas card geometry (B2): the default grid is deterministic, overlap-free and in reading order; the model's rects carry the runs' heights");
+    qInfo("[112] canvas default layout (B2): the default grid is deterministic, overlap-free and in reading order");
     {
         const std::vector<double> hs{ 100, 200, 150, 120, 80 };
         const auto a = mn::defaultCardLayout(hs, 808, 64), b = mn::defaultCardLayout(hs, 808, 64);
@@ -5409,35 +5313,6 @@ static void testCanvasLayout() {
               "N = 0 → nothing; N = 1 → one rect at the origin");
         const auto wide = mn::defaultCardLayout(std::vector<double>(40, 30.0), 100, 10);
         CHECK(wide[3].x() == 330 && wide[4].x() == 0 && wide[4].y() == 40, "forty cards: four columns, then the next row");
-    }
-    {
-        BlockModel m;
-        m.newDocument();
-        while (m.rowCountQml() > 0) m.removeBlock(0);
-        for (int i = 0; i < 6; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("row %1").arg(i)); }
-        m.setHeading(0, 1); m.setHeading(2, 2); m.setHeading(5, 2);   // cards [0,1] [2,4] [5]
-        m.setMeasuredHeight(1, 100); m.setMeasuredHeight(3, 70); m.setMeasuredHeight(4, 30);
-        const double W = m.contentWidth() + 2 * BlockModel::kCardInset;
-        CHECK(m.cardCount() == 3 && m.cardRect(0).width() == W && m.cardRect(1).width() == W, "three cards at the page width plus the insets");
-        auto runH = [&m](int first, int last) { return m.yForRow(last) + m.heightForRow(last) - m.yForRow(first); };
-        CHECK(qFuzzyCompare(m.cardRect(0).height(), runH(0, 1) + 2 * BlockModel::kCardInset)
-                  && qFuzzyCompare(m.cardRect(1).height(), runH(2, 4) + 2 * BlockModel::kCardInset)
-                  && qFuzzyCompare(m.cardRect(2).height(), runH(5, 5) + 2 * BlockModel::kCardInset),
-              "a card is as tall as its run plus the inset top and bottom");
-        const QRectF b = m.canvasBounds();
-        CHECK(b.contains(m.cardRect(0)) && b.contains(m.cardRect(1)) && b.contains(m.cardRect(2)) && b.topLeft() == QPointF(0, 0),
-              "canvasBounds unites the rects from the origin");
-        CHECK(m.visibleCards(b.left(), b.top(), b.right(), b.bottom()) == (QList<int>{ 0, 1, 2 })
-                  && m.visibleCards(b.right() + 10, b.top(), b.right() + 20, b.bottom()).isEmpty()
-                  && m.visibleCards(m.cardRect(2).center().x(), m.cardRect(2).center().y(), m.cardRect(2).center().x() + 1, m.cardRect(2).center().y() + 1) == (QList<int>{ 2 }),
-              "visibleCards: all, none, one (and a flipped rect is normalised)");
-        CHECK(m.cardRect(3).isEmpty() && m.cardRect(-1).isEmpty(), "out of range → an empty rect");
-        const double h1 = m.cardRect(1).height();
-        m.setMeasuredHeight(3, 170);
-        CHECK(qFuzzyCompare(m.cardRect(1).height(), h1 + 100), "a settled height grows its card (layout revision keys the cache)");
-        m.setHeading(2, 0);
-        CHECK(m.cardCount() == 2 && qFuzzyCompare(m.cardRect(0).height(), runH(0, 4) + 2 * BlockModel::kCardInset),
-              "merging cards re-derives the rects (the card set keys the cache)");
     }
 }
 
@@ -5893,6 +5768,44 @@ static void testDocumentManager() {
     const QString foreign = dir.path() + QStringLiteral("/foreign.mnd");
     execOnFile(foreign, QStringLiteral("CREATE TABLE notes (x TEXT)"));
     CHECK(!docs.openTab(foreign) && docs.count() == 0 && !docs.lastOpenError().isEmpty(), "a refused open adds no tab and keeps the reason (%s)", qPrintable(docs.lastOpenError()));
+}
+
+// [123] Canvas view state (2.0 stage 2 step 7a): the camera persists with the file; a page card's
+// laid-out height is cached on its element without an undo entry; index culling for the slot pool.
+static void testCanvasViewState() {
+    qInfo("[123] canvas view state (2.0 stage 2): the file's camera, the page height cache, index culling");
+    QTemporaryDir dir;
+    const QString path = dir.path() + QStringLiteral("/view.mnd");
+    QString p1;
+    {
+        CanvasDocument c;
+        CHECK(c.newCanvas() && !c.hasCamera() && !c.camera().value(QStringLiteral("valid")).toBool(), "a new canvas has no camera");
+        p1 = c.firstPageId();
+        c.setCamera(10, 20, 0.5);
+        CHECK(c.hasCamera() && c.camera().value(QStringLiteral("z")).toDouble() == 0.5 && c.camera().value(QStringLiteral("x")).toDouble() == 10, "setCamera takes");
+        c.setCamera(1, 2, 0);
+        CHECK(c.camera().value(QStringLiteral("z")).toDouble() == 0.5, "a zero zoom is ignored");
+        const int geo = c.geometryRevision();
+        c.cachePageHeight(p1, 500);
+        CHECK(c.elementRect(p1).height() == 500 && c.elementRect(p1).width() == 760 + 2 * CanvasDocument::kPageInset && !c.canUndo() && !c.dirty() && c.geometryRevision() == geo + 1,
+              "cachePageHeight updates the element's h only: no undo entry, not dirty, geometry revision bumped");
+        c.cachePageHeight(p1, 500.4);
+        CHECK(c.geometryRevision() == geo + 1, "a sub-pixel change is ignored");
+        c.cachePageHeight(QStringLiteral("nope"), 9);
+        CHECK(c.visibleElementIndices(-10, -10, 10, 10) == (QList<int>{ 0 }) && c.visibleElementIndices(5000, 5000, 6000, 6000).isEmpty()
+                  && c.visibleElementIndices(10, 10, -10, -10) == (QList<int>{ 0 }),
+              "visibleElementIndices: the page's index over its corner, none far away, a flipped rect is normalised");
+        c.markDirty();
+        CHECK(c.saveAs(path), "saved");
+    }
+    {
+        CanvasDocument c;
+        CHECK(c.open(path) && c.hasCamera() && c.camera().value(QStringLiteral("z")).toDouble() == 0.5 && c.camera().value(QStringLiteral("y")).toDouble() == 20
+                  && c.elementRect(p1).height() == 500,
+              "reopened: the camera and the cached height persisted");
+        c.closeCanvas();
+        CHECK(!c.hasCamera(), "closing forgets the camera");
+    }
 }
 
 static void testElements() {
@@ -8397,7 +8310,6 @@ int main(int argc, char** argv) {
     testSplitRowInterchange();
     testSplitRowExports();
     testTableModel();
-    testCardModel();
     testCanvasLayout();
     testCanvasCamera();
     testInkTessellate();
@@ -8409,6 +8321,7 @@ int main(int argc, char** argv) {
     testConverter();
     testCanvasUndo();
     testDocumentManager();
+    testCanvasViewState();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

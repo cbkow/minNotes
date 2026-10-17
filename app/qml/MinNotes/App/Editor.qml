@@ -438,6 +438,9 @@ FocusScope {
     // view is the focused page's. setActiveTab("canvas") / setActiveTab("") WRITE the focus (the manager
     // re-points blockModel); this reads it.
     readonly property bool activeCanvas: canvas.documentOpen && canvas.focusPage === ""
+    // The canvas gave way to the page view (the same model may stay focused — the first page is the
+    // canvas's fallback): the page lays out at the VIEW's width again, not its card's.
+    onActiveCanvasChanged: if (!activeCanvas && canvas.documentOpen) blockModel.setContentWidth(pageWidth)
     // ⌘Z / ⌘⇧Z / the History panel / the rail buttons route by focus: the canvas log on the canvas, the
     // page log on a page (two logs, one ⌘Z — ruling 8).
     readonly property var undoTarget: activeCanvas ? canvas : blockModel
@@ -3910,13 +3913,14 @@ FocusScope {
             if (keys >= limit) endPhase(); else ++phaseStep
         }
     }
-    // --- Dev-only canvas probe (B10): `--canvas-probe=<md>` (Main.qml imports the fixture). Offscreen.
-    // P0 setup (sample ink, the Canvas tab, fit) · P1 model invariants · P2 pan sweep (one card per
-    // visible card, at its rect, tier per zoom, inside the overscan) · P3 zoom sweep (the anchored point
-    // stays put; no tier flip inside the dead band) · P4 live content (delegate y/x against the model,
-    // text, heights identical to the page pool across a tab round-trip) · P5 ink (anchors, vertices,
-    // the first point where the page's placement puts it). Prints CANVAS-PROBE PHASE/FAIL/DONE, exits
-    // with the fail count. The shell runner greps the log for TypeError/ReferenceError (facade gaps).
+    // --- Dev-only canvas probe: `--canvas-probe=<md>` (Main.qml imports the fixture into a fresh tab —
+    // one page). Offscreen. P0 setup (two more pages, the Canvas tab, fit) · P1 the element model · P2 pan
+    // sweep (one item per visible element, at its rect, live, inside the overscan) · P3 zoom sweep (the
+    // anchored point stays put; no tier flip inside the dead band) · P4 live content on the fixture's page
+    // (delegate y/x against ITS model through the page's context, text, wiring) · P5 drill-in + round-trip
+    // (heights identical to the page pool; the page view lays the page out at the view's width). Prints
+    // CANVAS-PROBE PHASE/FAIL/DONE, exits with the fail count. The shell runner greps the log for
+    // TypeError/ReferenceError (facade / context gaps).
     Timer {
         id: canvasProbe
         readonly property bool armed: Qt.application.arguments.some(function(a) { return a.indexOf("--canvas-probe=") === 0 })
@@ -3926,95 +3930,93 @@ FocusScope {
         property int step: 0
         property int fails: 0
         property int checks: 0
-        property int waitTicks: 0
         property var heightsBefore: ({})
-        property int liveCard: 1
+        property string livePage: ""           // the fixture's page (the big one)
         property real seed: 12345
         property int prevTier: -1
-        property real prevZoom: -1
         function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
         function fail(msg) { if (++fails <= 40) console.log("CANVAS-PROBE FAIL phase", phase, "step", step, msg) }
         function check(ok, msg) { ++checks; if (!ok) fail(msg) }
-        function nextPhase(name) { console.log("CANVAS-PROBE PHASE", name, "checks", checks, "fails", fails); ++phase; step = 0; waitTicks = 0 }
+        function nextPhase(name) { console.log("CANVAS-PROBE PHASE", name, "checks", checks, "fails", fails); ++phase; step = 0 }
         readonly property real inset: 24
         function expectedTier(z, prev) {
             if (z >= 0.40) return 2
             if (z >= 0.10) return (prev === 2 && z > 0.32) ? 2 : 1
             return (prev >= 1 && z > 0.08) ? 1 : 0
         }
-        function activeCards() {   // slot → card index, for every live card item
+        function activeItems() {   // every live element item
             const out = []
-            for (let i = 0; i < canvasView.poolCount; ++i) { const c = canvasView.cardItemAt(i); if (c && c.cardIndex >= 0) out.push(c) }
+            for (let i = 0; i < canvasView.poolCount; ++i) { const c = canvasView.elementItemAt(i); if (c && c.active) out.push(c) }
             return out
         }
+        function pageItem(id) { return activeItems().find(c => c.elementId === id) || null }
         onTriggered: {
             const cam = canvasView.cam
-            if (phase === 0) {   // P0: the tab, fit
+            if (phase === 0) {   // P0: pages, the tab, fit
                 if (step === 0) {
+                    livePage = blockModel.pageId()
+                    check(livePage !== "" && canvas.pageIds.length === 1 && canvas.focusPage === livePage, "the fixture is one focused page")
+                    canvas.addPage(); canvas.addPage()
+                    check(canvas.pageIds.length === 3 && canvas.elementCount() === 3 && canvas.canUndo, "two pages added (undoable on the canvas log)")
                     root.setActiveTab("canvas")
                 } else if (step === 3) { canvasView.fit() }
                 else if (step === 8) {
                     check(root.activeCanvas && canvasView.visible && !flick.visible, "the Canvas tab shows the canvas and hides the page")
                     check(canvas.focusPage === "" && root.undoTarget === canvas && blockModel.pageId() === canvas.firstPageId(), "the Canvas tab = no focused page; ⌘Z targets the canvas log; blockModel falls back to the first page")
-                    check(!cam.userCam && cam.zoom < 1, "a fresh canvas fits the document (zoom " + cam.zoom + ")")
+                    check(!cam.userCam && cam.zoom < 1, "a fresh canvas fits the elements (zoom " + cam.zoom + ")")
                     nextPhase("setup")
                 }
                 ++step; return
             }
-            if (phase === 1) {   // P1: the model's cards and rects
-                const n = blockModel.count, cards = blockModel.cardCount()
-                let idx = -1, ok = true, sumRun = 0
-                for (let r = 0; r < n; ++r) {
-                    const h = blockModel.cardHeadOf(r)
-                    if (h === r) { ++idx; if (blockModel.cardHeadAt(idx) !== r || blockModel.cardIndexOf(r) !== idx) ok = false }
-                    else if (blockModel.cardIndexOf(r) !== -1 || h !== blockModel.cardHeadAt(idx)) ok = false
-                    if (r > blockModel.cardLastAt(idx)) ok = false
-                    if (blockModel.laneForRow(r) >= 0 && blockModel.cardHeadOf(blockModel.splitRowOf(r)) !== h) ok = false
-                }
-                check(ok && idx === cards - 1 && cards > 10, "every row sits in exactly one card, heads monotone, lanes never straddle (" + cards + " cards)")
-                let overlap = false, order = true, sumRect = 0
-                for (let i = 0; i < cards; ++i) {
-                    const a = blockModel.cardRect(i)
-                    const first = blockModel.cardHeadAt(i), last = blockModel.cardLastAt(i)
-                    sumRun += blockModel.yForRow(last) + blockModel.heightForRow(last) - blockModel.yForRow(first)
-                    sumRect += a.height - 2 * inset
-                    if (i > 0) { const p = blockModel.cardRect(i - 1); if (!(a.y > p.y || (a.y === p.y && a.x > p.x))) order = false }
-                    for (let j = i + 1; j < cards; ++j) {
-                        const b = blockModel.cardRect(j)
+            if (phase === 1) {   // P1: the element model (after the live stagger + the 200 ms height-cache debounce)
+                if (step < 14) { ++step; return }
+                const n = canvas.elementCount()
+                let ok = n === 3, overlap = false
+                const ids = {}
+                for (let i = 0; i < n; ++i) {
+                    const id = canvas.elementIdAt(i)
+                    if (ids[id] || canvas.elementKind(id) !== "page") ok = false
+                    ids[id] = true
+                    const a = canvas.elementRect(id)
+                    if (a.width !== 760 + 2 * inset) { ok = false; fail("page " + id + " width " + a.width) }
+                    for (let j = i + 1; j < n; ++j) {
+                        const b = canvas.elementRect(canvas.elementIdAt(j))
                         if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) overlap = true
                     }
                 }
-                check(!overlap && order, "card rects never overlap and read left to right, top to bottom")
-                check(Math.abs(sumRect - sumRun) < 0.5, "the cards' heights sum to the runs' (" + sumRect + " vs " + sumRun + ")")
-                const b = blockModel.canvasBounds()
-                check(blockModel.visibleCards(b.x, b.y, b.x + b.width, b.y + b.height).length === cards, "visibleCards over the bounds is every card")
+                check(ok && !overlap, "three page elements, unique ids, at the default measure, never overlapping")
+                const b = canvas.canvasBounds()
+                check(canvas.visibleElementIndices(b.x, b.y, b.x + b.width, b.y + b.height).length === n && canvas.visibleElementIndices(b.x + b.width + 10, b.y, b.x + b.width + 20, b.y + b.height).length === 0,
+                      "visibleElementIndices over the bounds is every element; beside them none")
+                const live = canvas.elementRect(livePage)
+                check(live.height > 2 * inset + 100, "the fixture's page element carries a laid-out height (" + live.height + ")")
                 nextPhase("model"); return
             }
             if (phase === 2) {   // P2: pan sweep at zoom 0.5
                 if (step === 0) { cam.zoomAboutPoint(0.5, canvasView.width / 2, canvasView.height / 2); ++step; return }
                 if (step % 2 === 1) {   // move
-                    const b = blockModel.canvasBounds()
+                    const b = canvas.canvasBounds()
                     const wx = b.x + rnd() * b.width, wy = b.y + rnd() * b.height
                     cam.setPan(canvasView.width / 2 - wx * cam.zoom, canvasView.height / 2 - wy * cam.zoom)
                     ++step; return
                 }
-                const vis = canvasView.visibleCards, items = activeCards()
+                const vis = canvasView.visibleElements, items = activeItems()
                 const seen = {}
                 let ok = items.length === vis.length
                 for (const c of items) {
-                    if (seen[c.cardIndex] || vis.indexOf(c.cardIndex) < 0) ok = false
-                    seen[c.cardIndex] = true
-                    const r = blockModel.cardRect(c.cardIndex)
-                    if (Math.abs(c.x - r.x) > 0.5 || Math.abs(c.y - r.y) > 0.5 || Math.abs(c.width - r.width) > 0.5 || Math.abs(c.height - r.height) > 0.5) { ok = false; fail("card " + c.cardIndex + " at " + c.x + "," + c.y + " vs rect " + r.x + "," + r.y) }
-                    if (c.tier !== 2) { ok = false; fail("card " + c.cardIndex + " tier " + c.tier + " at zoom " + cam.zoom) }
+                    if (seen[c.elementIndex] || vis.indexOf(c.elementIndex) < 0) ok = false
+                    seen[c.elementIndex] = true
+                    const r = canvas.elementRect(c.elementId)
+                    if (Math.abs(c.x - r.x) > 0.5 || Math.abs(c.y - r.y) > 0.5 || Math.abs(c.width - r.width) > 0.5 || Math.abs(c.height - r.height) > 0.5) { ok = false; fail("element " + c.elementId + " at " + c.x + "," + c.y + " vs rect " + r.x + "," + r.y) }
+                    if (c.tier !== 2) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + cam.zoom) }
                     const tl = cam.screenToWorld(-canvasView.width * 0.5, -canvasView.height * 0.5), br = cam.screenToWorld(canvasView.width * 1.5, canvasView.height * 1.5)
-                    if (r.x + r.width < tl.x || r.x > br.x || r.y + r.height < tl.y || r.y > br.y) { ok = false; fail("card " + c.cardIndex + " outside the overscan") }
+                    if (r.x + r.width < tl.x || r.x > br.x || r.y + r.height < tl.y || r.y > br.y) { ok = false; fail("element " + c.elementId + " outside the overscan") }
                 }
-                check(ok, "pan step " + step + ": one card item per visible card (" + items.length + " of " + vis.length + "), at its rect, live, inside the overscan")
+                check(ok, "pan step " + step + ": one item per visible element (" + items.length + " of " + vis.length + "), at its rect, live, inside the overscan")
                 if (++step >= 24) nextPhase("pan"); return
             }
             if (phase === 3) {   // P3: zoom sweep about random anchors
-                if (step === 0) { canvasView.fit(); prevTier = -1; prevZoom = -1; ++step; return }
+                if (step === 0) { canvasView.fit(); prevTier = -1; ++step; return }
                 const zs = [0.05, 0.07, 0.09, 0.11, 0.2, 0.3, 0.34, 0.37, 0.4, 0.6, 1, 1.5, 2, 3, 4, 0.36, 0.33, 0.31, 0.12, 0.08]
                 const i = step - 1
                 if (i >= zs.length) { nextPhase("zoom"); return }
@@ -4023,46 +4025,53 @@ FocusScope {
                 cam.zoomAboutPoint(zs[i], ax, ay)
                 const s = cam.worldToScreen(w.x, w.y)
                 check(Math.abs(s.x - ax) < 0.5 && Math.abs(s.y - ay) < 0.5 && Math.abs(cam.zoom - zs[i]) < 1e-9, "zoom " + zs[i] + ": the anchored point stays put (" + (s.x - ax) + "," + (s.y - ay) + ")")
-                const items = activeCards()
-                let ok = items.length === canvasView.visibleCards.length   // a deep zoom about a random anchor may show no card at all
-                for (const c of items) if (c.tier !== expectedTier(zs[i], prevTier)) { ok = false; fail("card " + c.cardIndex + " tier " + c.tier + " at zoom " + zs[i] + " (prev tier " + prevTier + ")") }
-                check(ok, "zoom " + zs[i] + ": every live card is in the tier the hysteresis predicts (" + items.length + " cards)")
+                const items = activeItems()
+                let ok = items.length === canvasView.visibleElements.length
+                for (const c of items) if (c.tier !== expectedTier(zs[i], prevTier)) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + zs[i] + " (prev tier " + prevTier + ")") }
+                check(ok, "zoom " + zs[i] + ": every page is in the tier the hysteresis predicts (" + items.length + " elements)")
                 prevTier = items.length ? items[0].tier : expectedTier(zs[i], prevTier)
                 ++step; return
             }
-            if (phase === 4) {   // P4: live content on card `liveCard` at zoom 1
+            if (phase === 4) {   // P4: live content on the fixture's page at zoom 1
                 if (step === 0) {
-                    const r = blockModel.cardRect(liveCard)
+                    const r = canvas.elementRect(livePage)
                     cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasView.width / 2 - (r.x + r.width / 2), 80 - r.y)
                     ++step; return
                 }
-                const card = activeCards().find(c => c.cardIndex === liveCard)
-                if (step < 80 && (!card || card.liveRows < card.wantRows)) { ++step; return }   // the stagger
-                check(!!card && card.tier === 2 && card.liveRows === card.wantRows && card.liveRows > 0, "card " + liveCard + " is live with all its rows (" + (card ? card.liveRows + "/" + card.wantRows : "no card") + ")")
-                if (card) {
-                    let ok = true
+                const c = pageItem(livePage)
+                if (step < 80 && (!c || c.liveRows < c.wantRows)) { ++step; return }   // the stagger
+                check(!!c && c.tier === 2 && c.liveRows === c.wantRows && c.liveRows > 0, "the fixture's page is live with all its rows (" + (c ? c.liveRows + "/" + c.wantRows : "no item") + ")")
+                if (c) {
+                    const pm = c.pageModel
+                    let ok = pm === blockModel && !!c.facade && c.facade.pageWidth === 760
+                    if (!ok) fail("the page's model / facade measure (" + (c.facade ? c.facade.pageWidth : "no facade") + ")")
                     heightsBefore = {}
-                    for (let i = 0; i < card.liveRows; ++i) {
-                        const d = card.delegateAt(i), row = card.head + i
+                    for (let i = 0; i < c.liveRows; ++i) {
+                        const d = c.delegateAt(i), row = i
                         if (!d) { ok = false; fail("no delegate " + i); continue }
-                        const lane = root.laneOf(row)
-                        if (Math.abs(d.y + card.originY - blockModel.yForRow(row)) > 0.5) { ok = false; fail("row " + row + " y " + (d.y + card.originY) + " vs " + blockModel.yForRow(row)) }
+                        const lane = c.facade.laneOf(row)
+                        if (Math.abs(d.y + c.originY - pm.yForRow(row)) > 0.5) { ok = false; fail("row " + row + " y " + (d.y + c.originY) + " vs " + pm.yForRow(row)) }
                         if (d.colLeft < inset + lane.x - 0.5 || d.colLeft > inset + lane.x + 8.5) { ok = false; fail("row " + row + " colLeft " + d.colLeft + " vs lane " + (inset + lane.x)) }
-                        if (!d.isMedia && d.teItem && d.teItem.text !== blockModel.contentForRow(row)) { ok = false; fail("row " + row + " text differs") }
-                        if (d.editor !== card.facade || d.logicalRow !== row) { ok = false; fail("row " + row + " delegate wiring") }
-                        heightsBefore[row] = blockModel.heightForRow(row)
+                        if (!d.isMedia && d.teItem && d.teItem.text !== pm.contentForRow(row)) { ok = false; fail("row " + row + " text differs") }
+                        if (d.editor !== c.facade || d.logicalRow !== row) { ok = false; fail("row " + row + " delegate wiring") }
+                        heightsBefore[row] = pm.heightForRow(row)
                     }
-                    check(ok, "every live delegate sits at its model y, in its lane, with its text, on the facade (" + card.liveRows + " rows)")
+                    check(ok, "every live delegate sits at its model y, in its lane, with its text, on the page's facade (" + c.liveRows + " rows)")
                 }
                 nextPhase("live"); return
             }
-            if (phase === 5) {   // P5: the tab round-trip keeps the heights (both pools measure the same)
-                if (step === 0) { root.setActiveTab(""); root.ensureVisible(blockModel.cardHeadAt(liveCard)); ++step; return }
+            if (phase === 5) {   // P5: drill-in + the round-trip keeps the heights (both pools measure the same)
+                if (step === 0) { canvas.focusPage = livePage; ++step; return }
+                if (step === 2) {
+                    check(!root.activeCanvas && flick.visible && blockModel.pageId() === livePage && root.undoTarget === blockModel, "drill-in: the page view shows the focused page; ⌘Z targets its log")
+                    check(blockModel.contentWidth() === root.pageWidth, "the page view lays the page out at the VIEW's width (" + blockModel.contentWidth() + " vs " + root.pageWidth + ")")
+                    root.ensureVisible(0); ++step; return
+                }
                 if (step < 25) { ++step; return }
                 if (step === 25) {
                     let ok = true
                     for (const row in heightsBefore) if (Math.abs(blockModel.heightForRow(parseInt(row)) - heightsBefore[row]) > 0.5) { ok = false; fail("row " + row + " height " + blockModel.heightForRow(parseInt(row)) + " on the page vs " + heightsBefore[row] + " on the canvas") }
-                    check(ok && flick.visible, "back on the page, the rows keep the heights the canvas measured")
+                    check(ok, "back on the page, the rows keep the heights the canvas measured")
                     root.setActiveTab("canvas"); ++step; return
                 }
                 if (step < 45) { ++step; return }
@@ -4070,7 +4079,7 @@ FocusScope {
                 for (const row in heightsBefore) if (Math.abs(blockModel.heightForRow(parseInt(row)) - heightsBefore[row]) > 0.5) ok = false
                 check(ok && root.activeCanvas, "…and back on the canvas they still hold (no alternation)")
                 nextPhase("round-trip")
-                console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "cards", blockModel.cardCount(), "blocks", blockModel.count)
+                console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))
             }
         }

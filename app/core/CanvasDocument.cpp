@@ -307,6 +307,12 @@ bool CanvasDocument::open(const QString& pathOrUrl) {
     // The persisted focus page (if it still exists); otherwise the canvas is in view.
     const QString f = db_.canvasMeta(QStringLiteral("focusPage"));
     focusPage_ = pageIds().contains(f) ? f : QString();
+    {
+        const QJsonObject c = QJsonDocument::fromJson(db_.canvasMeta(QStringLiteral("camera")).toUtf8()).object();
+        camValid_ = c.contains(QStringLiteral("z")) && c.value(QStringLiteral("z")).toDouble() > 0;
+        if (camValid_) { camX_ = c.value(QStringLiteral("x")).toDouble(); camY_ = c.value(QStringLiteral("y")).toDouble(); camZ_ = c.value(QStringLiteral("z")).toDouble(); }
+        emit cameraChanged();
+    }
     ++pagesRevision_;
     emit pagesChanged();
     emit focusChanged();
@@ -339,6 +345,8 @@ void CanvasDocument::closeCanvas() {
     readOnly_ = false;
     report_ = mn::ConversionReport{};
     focusPage_.clear();
+    camValid_ = false;
+    emit cameraChanged();
     dirty_ = false;
     setSaveState(SaveClean);
     if (wasOpen) {
@@ -359,7 +367,7 @@ void CanvasDocument::closeCanvas() {
 // if any step fails, so nothing is lost.
 bool CanvasDocument::writeBackToOriginal() {
     setSaveState(SaveSaving);
-    db_.setCanvasMeta(QStringLiteral("focusPage"), focusPage_);
+    persistViewMeta();
     db_.stampMeta();     // saved files record schema_version/app_version/modified
     db_.checkpoint();
     const QString dir = QFileInfo(docPath_).absolutePath();
@@ -414,7 +422,7 @@ bool CanvasDocument::saveAs(const QString& pathOrUrl) {
     setSaveState(SaveSaving);
     // Flush the WAL, then write a clean copy to the chosen location (temp + atomic
     // replace, matching the in-place save path).
-    db_.setCanvasMeta(QStringLiteral("focusPage"), focusPage_);
+    persistViewMeta();
     db_.stampMeta();     // saved files record schema_version/app_version/modified (a 1.0 file becomes 2.0 here)
     db_.checkpoint();
     const QString tmp = dstDir + QStringLiteral("/.mn-save-") + makeUlid() + QStringLiteral(".tmp");
@@ -458,7 +466,7 @@ bool CanvasDocument::saveAs(const QString& pathOrUrl) {
 
 bool CanvasDocument::snapshotTo(const QString& path) {
     if (!db_.isOpen()) return false;
-    db_.setCanvasMeta(QStringLiteral("focusPage"), focusPage_);
+    persistViewMeta();
     db_.stampMeta();
     db_.checkpoint();
     QFile::remove(path);
@@ -657,18 +665,71 @@ QRectF CanvasDocument::elementRect(const QString& id) const { const auto e = ele
 QString CanvasDocument::elementJson(const QString& id) const { const auto e = element(id); return e ? e->json : QString(); }
 int CanvasDocument::elementZ(const QString& id) const { const auto e = element(id); return e ? e->z : 0; }
 
+QRectF CanvasDocument::cullRect(const Document::Element& e) {
+    const double minH = e.kind == QLatin1String("page") ? 2.0 * kPageInset + 1.0 : 1.0;
+    return QRectF(e.x, e.y, std::max(e.w, 1.0), std::max(e.h, minH));
+}
+
 QStringList CanvasDocument::visibleElements(qreal x0, qreal y0, qreal x1, qreal y1) const {
     const QRectF view(QPointF(std::min(x0, x1), std::min(y0, y1)), QPointF(std::max(x0, x1), std::max(y0, y1)));
     QStringList out;
     for (const Document::Element& e : elements_)
-        if (QRectF(e.x, e.y, e.w, e.h).intersects(view)) out << e.id;
+        if (cullRect(e).intersects(view)) out << e.id;
     return out;
+}
+
+QList<int> CanvasDocument::visibleElementIndices(qreal x0, qreal y0, qreal x1, qreal y1) const {
+    const QRectF view(QPointF(std::min(x0, x1), std::min(y0, y1)), QPointF(std::max(x0, x1), std::max(y0, y1)));
+    QList<int> out;
+    for (int i = 0; i < static_cast<int>(elements_.size()); ++i) {
+        if (cullRect(elements_[size_t(i)]).intersects(view)) out << i;
+    }
+    return out;
+}
+
+void CanvasDocument::cachePageHeight(const QString& id, qreal h) {
+    const int i = indexById_.value(id, -1);
+    if (i < 0 || !db_.isOpen()) return;
+    Document::Element& e = elements_[size_t(i)];
+    if (e.kind != QLatin1String("page") || std::abs(e.h - h) < 1.0) return;
+    e.h = h;
+    db_.updateElementRect(id, e.x, e.y, e.w, h);
+    ++geometryRevision_;
+    emit geometryChanged();
+}
+
+QVariantMap CanvasDocument::camera() const {
+    QVariantMap m;
+    m.insert(QStringLiteral("x"), camX_);
+    m.insert(QStringLiteral("y"), camY_);
+    m.insert(QStringLiteral("z"), camZ_);
+    m.insert(QStringLiteral("valid"), camValid_);
+    return m;
+}
+
+void CanvasDocument::setCamera(qreal x, qreal y, qreal z) {
+    if (z <= 0) return;
+    const bool was = camValid_;
+    camValid_ = true;
+    camX_ = x; camY_ = y; camZ_ = z;
+    if (!was) emit cameraChanged();
+}
+
+void CanvasDocument::persistViewMeta() {
+    db_.setCanvasMeta(QStringLiteral("focusPage"), focusPage_);
+    if (camValid_) {
+        QJsonObject c;
+        c.insert(QStringLiteral("x"), camX_);
+        c.insert(QStringLiteral("y"), camY_);
+        c.insert(QStringLiteral("z"), camZ_);
+        db_.setCanvasMeta(QStringLiteral("camera"), QString::fromUtf8(QJsonDocument(c).toJson(QJsonDocument::Compact)));
+    }
 }
 
 QRectF CanvasDocument::canvasBounds() const {
     QRectF b;
     for (const Document::Element& e : elements_) {
-        const QRectF r(e.x, e.y, e.w, e.h);
+        const QRectF r = cullRect(e);
         b = b.isNull() ? r : b.united(r);
     }
     return b;
