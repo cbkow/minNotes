@@ -908,6 +908,7 @@ ApplicationWindow {
     // outgoing tab's QML view state (scroll/caret/active sub-tab) and restores
     // the incoming one's; the blob is held per-tab by the DocumentManager. ---
     function _editor() { return docContent.item ? docContent.item.editorItem : null }
+    readonly property var activeEditor: docContent.item ? docContent.item.editorItem : null   // the reactive form (menu checks)
     function _restoreActiveView() {
         var ed = win._editor()
         if (ed && docs.activeIndex >= 0)
@@ -1168,6 +1169,27 @@ ApplicationWindow {
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Path Mappings…"); role: Platform.MenuItem.NoRole; onTriggered: pathMappingsDialog.open2() }
             }
+            // View (2.0 stage 1C): the page is as wide as the window under a readable measure;
+            // these are the two VIEW preferences behind it. ⌘1 lives in the editor (the zoom badge
+            // teaches it), so the items carry no shortcut of their own.
+            Platform.Menu {
+                title: qsTr("View")
+                Platform.MenuItem { text: qsTr("Full Width"); role: Platform.MenuItem.NoRole; checkable: true
+                                    enabled: blockModel.documentOpen
+                                    checked: win.activeEditor ? win.activeEditor.fullWidth : false
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.toggleFullWidth() } }
+                Platform.MenuSeparator {}
+                Platform.MenuItemGroup { id: measureGroup }
+                Platform.MenuItem { text: qsTr("Measure 640"); role: Platform.MenuItem.NoRole; checkable: true; group: measureGroup
+                                    enabled: blockModel.documentOpen; checked: !!win.activeEditor && win.activeEditor.measureCap === 640
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(640) } }
+                Platform.MenuItem { text: qsTr("Measure 760"); role: Platform.MenuItem.NoRole; checkable: true; group: measureGroup
+                                    enabled: blockModel.documentOpen; checked: !!win.activeEditor && win.activeEditor.measureCap === 760
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(760) } }
+                Platform.MenuItem { text: qsTr("Measure 880"); role: Platform.MenuItem.NoRole; checkable: true; group: measureGroup
+                                    enabled: blockModel.documentOpen; checked: !!win.activeEditor && win.activeEditor.measureCap === 880
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(880) } }
+            }
             Platform.Menu {
                 title: qsTr("Help")
                 // NB: the default TextHeuristicRole — and ApplicationSpecificRole —
@@ -1272,6 +1294,23 @@ ApplicationWindow {
                 Action { text: qsTr("&Reveal Media Folder"); enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("Path &Mappings…"); onTriggered: pathMappingsDialog.open2() }
+            }
+            ThemedMenu {
+                title: qsTr("&View")
+                Action { text: qsTr("&Full Width"); checkable: true; enabled: blockModel.documentOpen
+                         checked: win.activeEditor ? win.activeEditor.fullWidth : false
+                         onToggled: { var ed = win._editor(); if (ed && ed.fullWidth !== checked) ed.toggleFullWidth() } }
+                ThemedMenuSeparator {}
+                ActionGroup { id: measureActions; exclusive: true }
+                Action { text: qsTr("Measure 640"); checkable: true; ActionGroup.group: measureActions; enabled: blockModel.documentOpen
+                         checked: !!win.activeEditor && win.activeEditor.measureCap === 640
+                         onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(640) } }
+                Action { text: qsTr("Measure 760"); checkable: true; ActionGroup.group: measureActions; enabled: blockModel.documentOpen
+                         checked: !!win.activeEditor && win.activeEditor.measureCap === 760
+                         onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(760) } }
+                Action { text: qsTr("Measure 880"); checkable: true; ActionGroup.group: measureActions; enabled: blockModel.documentOpen
+                         checked: !!win.activeEditor && win.activeEditor.measureCap === 880
+                         onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(880) } }
             }
             ThemedMenu {
                 title: qsTr("&Help")

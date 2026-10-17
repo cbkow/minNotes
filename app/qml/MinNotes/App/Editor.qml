@@ -61,6 +61,7 @@ FocusScope {
     readonly property real availPageWidth: Math.max(minPageWidth, Math.floor(centringWidth / zoom) - 2 * pageMargin)
     readonly property real targetPageWidth: viewPrefs.fullWidth ? availPageWidth : Math.min(availPageWidth, viewPrefs.measureCap)
     readonly property bool fullWidth: viewPrefs.fullWidth
+    readonly property int measureCap: viewPrefs.measureCap
     property real pageWidth: Theme.dim.columnWidth   // committed by commitPageWidth ONLY
     // Resize coalescing: one width change costs setContentWidth O(n) + the layout spike fan-out +
     // every pooled slot's lane binding + a real text re-layout of the live rows + the contentSpan
