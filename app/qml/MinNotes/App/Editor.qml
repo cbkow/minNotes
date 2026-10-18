@@ -4187,8 +4187,8 @@ FocusScope {
                 check(root.canvasShown && cvw.selectedId === elId && root.canvasVideoHost.valid && cvw.selectionFrame.videoBar.visible, "back on the canvas the element is selected and shows its transport (host " + root.canvasVideoHost.valid + ", bar " + cvw.selectionFrame.videoBar.visible + ")")
                 check(root.videoKeyContext === "canvas" && Math.abs(root.videoSpeed - 1) < 0.01, "…the selected element is the key context; Shift+R reset the speed")
                 const sf = cvw.selectionFrame
-                check(Math.abs(sf.height - (sf.pictureH + sf.videoBar.height)) < 0.5 && Math.abs(sf.videoBar.y - sf.pictureH) < 0.5 && sf.videoBar.height === 22,
-                      "the selection box encloses the picture AND its 22-px bar (box " + sf.height.toFixed(0) + " = picture " + sf.pictureH.toFixed(0) + " + bar " + sf.videoBar.height + ")")
+                check(Math.abs(sf.height - (sf.pictureH + sf.videoBar.height + 1)) < 0.5 && Math.abs(sf.videoBar.y - sf.pictureH) < 0.5 && sf.videoBar.height === 22 && sf.videoBar.x === 1 && sf.videoBar.width <= sf.width - 2,
+                      "the selection box encloses the picture AND its 22-px bar with the accent showing on all four sides (box " + sf.height.toFixed(0) + " = picture " + sf.pictureH.toFixed(0) + " + bar " + sf.videoBar.height + " + 1)")
                 const bar = cvw.selectionFrame.videoBar, btn = bar.playButton, pb = btn.mapToItem(cvw, btn.width / 2, btn.height / 2)
                 gestures.click(cvw, pb.x, pb.y)   // the bar's play button (it lies OUTSIDE the element's rect)
                 check(cvw.selectedId === elId && videoDec.isPlaying && root.activeFocus, "the bar's play button plays and the element STAYS selected with the editor focused (selected '" + cvw.selectedId + "', playing " + videoDec.isPlaying + ", focus " + root.activeFocus + ")")
