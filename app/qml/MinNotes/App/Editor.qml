@@ -3184,7 +3184,7 @@ FocusScope {
         }
     }
 
-    readonly property bool keyTrace: Qt.application.arguments.indexOf("--key-trace") >= 0 || gestures.envSet("MN_KEY_TRACE")
+    readonly property bool keyTrace: Qt.application.arguments.indexOf("--key-trace") >= 0 || (typeof gestures !== "undefined" && gestures !== null && gestures.envSet("MN_KEY_TRACE"))   // (the context property lands after the first evaluation)
     Keys.onPressed: (event) => {
         if (root.keyTrace) console.log("KEY", event.key, "mods", event.modifiers, "repeat", event.isAutoRepeat, "ctx '" + root.videoKeyContext + "'", "canvasShown", root.canvasShown, "hostValid", canvasHost.valid, "selected", root.canvasItem ? root.canvasItem.selectedId : "-", "rootFocus", root.activeFocus, "focusItem", gestures.focusItemName())
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
@@ -4121,12 +4121,24 @@ FocusScope {
                 check(root.videoKeyContext === "page" && root.focusedVideoRow === row, "the focused video block is the key context (" + root.videoKeyContext + ")")
                 gestures.key(root, Qt.Key_Space); ++step; return
             }
-            if (step === 6) { check(videoDec.isPlaying && root.videoPlayingRow === root.focusedVideoRow, "Space on the focused block plays inline (frame " + videoDec.currentFrame + ")"); gestures.key(root, Qt.Key_K); ++step; return }
-            if (step === 7) { const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
-            if (step === 9) { check(root._vidIntendedFrame() === probeFrame + 1, "→ → ← steps one frame net (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
-            if (step === 10) { check(root._vidFastSeekDir === -1 && videoAudio.shuttleActive() === videoAudio.hasAudio, "J held = rewind shuttle"); gestures.keyRelease(root, Qt.Key_J); ++step; return }
-            if (step === 11) { check(root._vidFastSeekDir === 0, "…released = shuttle ends"); gestures.key(root, Qt.Key_Home); ++step; return }
-            if (step === 12) { check(root._vidIntendedFrame() === 0, "Home seeks to the start"); const id = blockModel.videoBlockIds()[0]; root.setActiveTab(id); ++step; return }
+            if (step === 6) {
+                check(videoDec.isPlaying && root.videoPlayingRow === root.focusedVideoRow, "Space on the focused block plays inline (frame " + videoDec.currentFrame + ")")
+                // The inline chrome is page-layer CONTENT (walk 7c): the bar sits under its row in content units, the surface over the picture.
+                const row = root.focusedVideoRow, bar = videoBars.itemAt(0)
+                check(videoBars.count === 1 && !!bar && bar.parent === pageLayer && bar.visible && Math.abs(bar.y - ((blockModel.yForRow(row) + 6 + bar.dispH))) < 1 && Math.abs(bar.width - bar.dispW) < 1,
+                      "the inline bar is page-layer content under its row (parent " + (bar ? bar.parent : "?") + ", y " + (bar ? bar.y.toFixed(0) : "?") + " vs " + (blockModel.yForRow(row) + 6 + (bar ? bar.dispH : 0)).toFixed(0) + ")")
+                check(videoSurfaceOverlay.parent === pageLayer && videoSurfaceOverlay.visible && Math.abs(videoSurfaceOverlay.y - (blockModel.yForRow(row) + 6)) < 1, "…and so is the live surface, over the picture")
+                const ct = bar ? bar.children[0] : null, btn = ct ? ct.playButton : null
+                if (btn) { const pb = btn.mapToItem(root, btn.width / 2, btn.height / 2); gestures.click(root, pb.x, pb.y) }
+                ++step; return
+            }
+            if (step === 7) { check(!videoDec.isPlaying, "a real click on the bar's play button pauses (the strip takes its clicks above the document mouse layer)"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 8) { check(videoDec.isPlaying, "K plays"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 9) { const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
+            if (step === 11) { check(root._vidIntendedFrame() === probeFrame + 1, "→ → ← steps one frame net (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
+            if (step === 12) { check(root._vidFastSeekDir === -1 && videoAudio.shuttleActive() === videoAudio.hasAudio, "J held = rewind shuttle"); gestures.keyRelease(root, Qt.Key_J); ++step; return }
+            if (step === 13) { check(root._vidFastSeekDir === 0, "…released = shuttle ends"); gestures.key(root, Qt.Key_Home); ++step; return }
+            if (step === 14) { check(root._vidIntendedFrame() === 0, "Home seeks to the start"); const id = blockModel.videoBlockIds()[0]; root.setActiveTab(id); ++step; return }
             if (step === 20) { state("block studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row >= 0, "the block's studio is open on the host"); check(videoDec.readAheadActive, "read-ahead is attached to a local clip (PC-B)"); root.playHost(); ++step; return }
             if (step === 45) { state("block studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the block plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows"); root.playHost(); ++step; return }
             if (step === 50) { check(!videoDec.isPlaying, "play again = pause"); gestures.key(root, Qt.Key_Space); ++step; return }
@@ -4313,7 +4325,7 @@ FocusScope {
                 check(canvas.visibleElementIndices(b.x, b.y, b.x + b.width, b.y + b.height).length === n && canvas.visibleElementIndices(b.x + b.width + 10, b.y, b.x + b.width + 20, b.y + b.height).length === 0,
                       "visibleElementIndices over the bounds is every element; beside them none")
                 const live = canvas.elementRect(livePage)
-                check(live.height === Math.round(760 * Math.SQRT2), "the fixture's page (1915 blocks) is capped at a page length, measure × √2 (" + live.height + ")")
+                check(live.height === 760, "the fixture's page (1915 blocks) is capped at a SQUARE, 1:1 with its measure (" + live.height + ")")
                 nextPhase("model"); return
             }
             if (phase === 2) {   // P2: pan sweep at zoom 0.5
@@ -5626,6 +5638,210 @@ FocusScope {
         // Central mouse handling — click to place the caret, drag to select
         // ACROSS blocks (preventStealing keeps Flickable from hijacking the drag
         // for a flick; wheel/trackpad scroll still works since we don't take it).
+            // --- Inline media chrome (walk 7c, 2026-10-18): ONE rendering surface over the ACTIVE player, a
+            // compact transport under EVERY video, a page-nav strip under every PDF. They live HERE, in the
+            // page layer in CONTENT units — scaled with the page, clipped by the flick, scrolling with
+            // their rows — above the document mouse layer (so they take clicks) and below every root
+            // overlay (popups, pins, thread cards, menus). They used to be root overlays positioned by
+            // row→screen math and painted over everything; every video / PDF block reserves the strip's
+            // height in layout space (kVideoBar / kPdfNav) so the chrome sits in real space. ---
+            Item {
+            id: videoSurfaceOverlay
+            visible: root.videoVisible && root._videoSurfaceReady
+            z: 1
+            readonly property int r: root.videoPlayingRow
+            readonly property real measure: r >= 0 ? root.measureForRow(r) : root.pageWidth
+            readonly property int vw: r >= 0 ? blockModel.mediaW(r) : 0
+            readonly property int vh: r >= 0 ? blockModel.mediaH(r) : 0
+            readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
+            readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
+                                                             : Math.round(dispW * 0.5)
+            x: r >= 0 ? root.columnX(r) : root.leftEdge   // the block's lane column (content units)
+            y: (blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) + 6
+            width: dispW; height: dispH
+
+            VideoSurfaceItem {
+                id: videoSurface
+                anchors.fill: parent
+                videoDecoder: videoDec
+                fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g,
+                                   Theme.colors.bgAlt.b, 1.0)   // letterbox = the page field tone
+            }
+            // No click-to-play on the frame — the toolbar is the sole transport.
+
+            // ---- QCView note presentation (read-only; editing lives in the studio) ----
+            readonly property int curFrame: videoDec.currentFrame
+            // The caption's note, or null. Notes pin to ONE frame by design, so
+            // during playback/shuttle/scrub the TEXT lingers ~2.5 s after crossing
+            // the frame (a one-frame flash is unreadable) — while a paused
+            // frame-step tracks exactly. Strokes stay strictly per-frame.
+            property var capNote: null
+            function _noteAt(f) {
+                var a = root.videoNoteArr
+                for (var i = 0; i < a.length; ++i) if (a[i].frame === f) return a[i]
+                return null
+            }
+            function _updateCaption() {
+                var n = _noteAt(curFrame)
+                if (n) { capNote = n; capLinger.restart() }
+                else if (!(videoDec.isPlaying || root._scrubAudioActive
+                           || root._vidFastSeekDir !== 0)) {
+                    capNote = null; capLinger.stop()
+                }
+            }
+            onCurFrameChanged: _updateCaption()
+            onRChanged: { capNote = null; capLinger.stop() }
+            readonly property var _noteDep: root.videoNoteArr   // note edits/deletes refresh the caption
+            on_NoteDepChanged: _updateCaption()
+            Timer {
+                id: capLinger; interval: 2500
+                onTriggered: if (!videoSurfaceOverlay._noteAt(videoSurfaceOverlay.curFrame))
+                                 videoSurfaceOverlay.capNote = null
+            }
+
+            // The stroke layer: the studio's exact overlay (same normalized
+            // space, same painter) but DISABLED — it never takes mouse.
+            VideoAnnotator {
+                anchors.fill: parent
+                visible: !root.annotationsHidden
+                enabled: false
+                notes: vnotes
+                sourceWidth: videoSurfaceOverlay.vw
+                frame: videoSurfaceOverlay.curFrame
+                tool: ""
+            }
+
+            // Note caption: subtitle-style strip on the frame's bottom edge —
+            // timecode + text, single line (the studio filmstrip holds the long
+            // form). Addressed notes get the muted check.
+            Rectangle {
+                visible: !root.annotationsHidden && videoSurfaceOverlay.capNote !== null
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: 26
+                color: Qt.rgba(0, 0, 0, 0.62)
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                    spacing: 8
+                    Icon {
+                        visible: videoSurfaceOverlay.capNote !== null
+                                 && videoSurfaceOverlay.capNote.addressed === true
+                        name: "check"; size: 12; color: Theme.colors.textMuted
+                    }
+                    Text {
+                        text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.timecode : ""
+                        color: Theme.colors.textMuted
+                        font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.text : ""
+                        color: Theme.colors.textBright
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+        }
+
+        // Persistent transport toolbar for EVERY video (all built on load — see
+        // allVideoRows). `live` = this row is the active player (controls bound to
+        // the decoder); otherwise the bar shows the static state and any control
+        // activates the video first. Only viewport-near toolbars are shown; the rest
+        // stay instantiated (no scroll churn) but hidden.
+        Repeater {
+            id: videoBars   // probe
+            model: root.allVideoRows
+            delegate: Item {
+                id: vbar
+                required property int modelData
+                readonly property int row: modelData
+                readonly property bool live: row === root.videoPlayingRow
+                // Fade the toolbar back while this block is selected (focused, in a
+                // range, or the open context menu's target) so the selection/menu
+                // highlight reads clearly and the bright bar doesn't dominate above it
+                // — but stay full while it's the live player (you're using the controls).
+                readonly property bool blockSelected: (cursor.hasSel
+                    ? (row >= cursor.loRow && row <= cursor.hiRow)
+                    : (row === cursor.focusRow))
+                    || (blockMenu.visible && row === root.menuRow)
+                opacity: (blockSelected && !live) ? 0.35 : 1.0
+                Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
+                visible: !root.pdfTabOpen && !root.videoTabOpen
+                         && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
+                         && root.rowInView(row)
+                readonly property real measure: root.measureForRow(row)
+                readonly property int vw: (blockModel.structureRevision, blockModel.mediaW(row))
+                readonly property int vh: blockModel.mediaH(row)
+                readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
+                readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
+                                                                 : Math.round(dispW * 0.5)
+
+                z: 1   // above the document mouse layer: the strip takes its own clicks and drags
+                x: root.columnX(row)
+                y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH
+                width: dispW
+                height: root.videoTransportH
+
+                CompactTransport {   // the 22-px strip (QCView's compact mode); the full transport lives in the studio
+                    anchors.fill: parent
+                    editor: root; dec: videoDec; audio: videoAudio
+                    row: vbar.row; live: vbar.live
+                }
+            }
+        }
+
+        // Page-nav strip for every inline PDF (built on load like the video bars,
+        // positioned in the reserved kPdfNav space just below the page). Prev/Next
+        // change this block's current page; the page indicator sits on the right.
+        Repeater {
+            model: root.allPdfRows
+            delegate: Rectangle {
+                id: pbar
+                required property int modelData
+                readonly property int row: modelData
+                readonly property bool blockSelected: (cursor.hasSel
+                    ? (row >= cursor.loRow && row <= cursor.hiRow)
+                    : (row === cursor.focusRow))
+                    || (blockMenu.visible && row === root.menuRow)
+                opacity: blockSelected ? 0.35 : 1.0
+                Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
+                // Document view only: a grid frame (a table's tab) clamps the same Flickable to the
+                // table, and a PDF just above it was still "in view" — its bar showed in the tab
+                // (2026-09-16).
+                visible: root.activeFrameId === "" && root.rowInView(row)
+                readonly property real measure: root.measureForRow(row)
+                readonly property int vw: (blockModel.structureRevision, blockModel.mediaW(row))
+                readonly property int vh: blockModel.mediaH(row)
+                readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(measure * vh / vw)
+                                                                 : Math.round(measure * 1.3)
+                readonly property int pages: (blockModel.structureRevision, blockModel.mediaPdfPages(row))
+                readonly property int page: (root.pdfPageRev, root.pdfPageFor(row))
+
+                z: 1
+                x: root.columnX(row)
+                y: (blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH
+                width: measure
+                height: root.pdfNavH
+                color: Theme.colors.surfaceRaised      // raised bar — tone separates from the page above (border diet)
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 6; anchors.rightMargin: 10
+                    spacing: 0
+                    FlatButton { iconName: "caret-left"; tooltip: qsTr("Previous page"); tooltipSide: "top"
+                        enabled_: pbar.page > 0; onClicked: root.pdfStep(pbar.row, -1) }
+                    FlatButton { iconName: "caret-right"; tooltip: qsTr("Next page"); tooltipSide: "top"
+                        enabled_: pbar.page < pbar.pages - 1; onClicked: root.pdfStep(pbar.row, 1) }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: "Page " + (pbar.page + 1) + " of " + pbar.pages
+                        color: Theme.colors.textMuted
+                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                    }
+                }
+            }
+        }
         MouseArea {
             id: mouse
             enabled: !root.docSpaceHeld                    // the hand: the Flickable's own drag pans
@@ -7054,215 +7270,6 @@ FocusScope {
             SequentialAnimation on opacity {
                 running: root.dropIndicatorActive; loops: Animation.Infinite
                 NumberAnimation { from: 0.8; to: 0.0; duration: 900; easing.type: Easing.OutQuad }
-            }
-        }
-    }
-
-    // --- Inline video: ONE rendering surface over the ACTIVE player, plus a
-    // persistent transport toolbar under EVERY visible video (a player-card
-    // look — the toolbar is always up, even before first play). Both are root
-    // overlays above the central mouse layer (z:56) so the controls take
-    // clicks; every video block reserves videoTransportH so the toolbar sits in
-    // real layout space, not over following content. ---
-    Item {
-        id: videoSurfaceOverlay
-        visible: root.videoVisible && root._videoSurfaceReady
-        z: 56
-        readonly property int r: root.videoPlayingRow
-        readonly property real measure: r >= 0 ? root.measureForRow(r) : root.pageWidth
-        readonly property int vw: r >= 0 ? blockModel.mediaW(r) : 0
-        readonly property int vh: r >= 0 ? blockModel.mediaH(r) : 0
-        readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
-        readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
-                                                         : Math.round(dispW * 0.5)
-        x: root.vx(r >= 0 ? root.columnX(r) : root.leftEdge)   // the block's lane column
-        y: root.vy((blockModel.layoutRevision, r >= 0 ? blockModel.yForRow(r) : 0) + 6)
-        width: dispW * root.viewZoom; height: dispH * root.viewZoom
-
-        VideoSurfaceItem {
-            id: videoSurface
-            anchors.fill: parent
-            videoDecoder: videoDec
-            fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g,
-                               Theme.colors.bgAlt.b, 1.0)   // letterbox = the page field tone
-        }
-        // No click-to-play on the frame — the toolbar is the sole transport.
-
-        // ---- QCView note presentation (read-only; editing lives in the studio) ----
-        readonly property int curFrame: videoDec.currentFrame
-        // The caption's note, or null. Notes pin to ONE frame by design, so
-        // during playback/shuttle/scrub the TEXT lingers ~2.5 s after crossing
-        // the frame (a one-frame flash is unreadable) — while a paused
-        // frame-step tracks exactly. Strokes stay strictly per-frame.
-        property var capNote: null
-        function _noteAt(f) {
-            var a = root.videoNoteArr
-            for (var i = 0; i < a.length; ++i) if (a[i].frame === f) return a[i]
-            return null
-        }
-        function _updateCaption() {
-            var n = _noteAt(curFrame)
-            if (n) { capNote = n; capLinger.restart() }
-            else if (!(videoDec.isPlaying || root._scrubAudioActive
-                       || root._vidFastSeekDir !== 0)) {
-                capNote = null; capLinger.stop()
-            }
-        }
-        onCurFrameChanged: _updateCaption()
-        onRChanged: { capNote = null; capLinger.stop() }
-        readonly property var _noteDep: root.videoNoteArr   // note edits/deletes refresh the caption
-        on_NoteDepChanged: _updateCaption()
-        Timer {
-            id: capLinger; interval: 2500
-            onTriggered: if (!videoSurfaceOverlay._noteAt(videoSurfaceOverlay.curFrame))
-                             videoSurfaceOverlay.capNote = null
-        }
-
-        // The stroke layer: the studio's exact overlay (same normalized
-        // space, same painter) but DISABLED — it never takes mouse.
-        VideoAnnotator {
-            anchors.fill: parent
-            visible: !root.annotationsHidden
-            enabled: false
-            notes: vnotes
-            sourceWidth: videoSurfaceOverlay.vw
-            frame: videoSurfaceOverlay.curFrame
-            tool: ""
-        }
-
-        // Note caption: subtitle-style strip on the frame's bottom edge —
-        // timecode + text, single line (the studio filmstrip holds the long
-        // form). Addressed notes get the muted check.
-        Rectangle {
-            visible: !root.annotationsHidden && videoSurfaceOverlay.capNote !== null
-            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-            height: 26
-            color: Qt.rgba(0, 0, 0, 0.62)
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 8; anchors.rightMargin: 8
-                spacing: 8
-                Icon {
-                    visible: videoSurfaceOverlay.capNote !== null
-                             && videoSurfaceOverlay.capNote.addressed === true
-                    name: "check"; size: 12; color: Theme.colors.textMuted
-                }
-                Text {
-                    text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.timecode : ""
-                    color: Theme.colors.textMuted
-                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: videoSurfaceOverlay.capNote ? videoSurfaceOverlay.capNote.text : ""
-                    color: Theme.colors.textBright
-                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
-                    elide: Text.ElideRight
-                }
-            }
-        }
-    }
-
-    // Persistent transport toolbar for EVERY video (all built on load — see
-    // allVideoRows). `live` = this row is the active player (controls bound to
-    // the decoder); otherwise the bar shows the static state and any control
-    // activates the video first. Only viewport-near toolbars are shown; the rest
-    // stay instantiated (no scroll churn) but hidden.
-    Repeater {
-        model: root.allVideoRows
-        delegate: Item {
-            id: vbar
-            required property int modelData
-            readonly property int row: modelData
-            readonly property bool live: row === root.videoPlayingRow
-            // Fade the toolbar back while this block is selected (focused, in a
-            // range, or the open context menu's target) so the selection/menu
-            // highlight reads clearly and the bright bar doesn't dominate above it
-            // — but stay full while it's the live player (you're using the controls).
-            readonly property bool blockSelected: (cursor.hasSel
-                ? (row >= cursor.loRow && row <= cursor.hiRow)
-                : (row === cursor.focusRow))
-                || (blockMenu.visible && row === root.menuRow)
-            opacity: (blockSelected && !live) ? 0.35 : 1.0
-            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: !root.pdfTabOpen && !root.videoTabOpen
-                     && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
-                     && root.rowInView(row)
-            readonly property real measure: root.measureForRow(row)
-            readonly property int vw: (blockModel.structureRevision, blockModel.mediaW(row))
-            readonly property int vh: blockModel.mediaH(row)
-            readonly property real dispW: vw > 0 ? Math.min(measure, vw) : measure
-            readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(dispW * vh / vw)
-                                                             : Math.round(dispW * 0.5)
-
-            // BELOW the ink canvas (45): committed strokes render over the bar
-            // in regular mode too, so ink never shifts or vanishes between
-            // modes (and matches the HTML export, which has no bars). Clicks
-            // still reach the bar — the disarmed canvas refuses mouse.
-            z: 44
-            x: root.vx(root.columnX(row))
-            y: root.vy((blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH)
-            width: dispW * root.viewZoom
-            height: root.videoTransportH
-
-            CompactTransport {   // the 22-px strip (QCView's compact mode); the full transport lives in the studio
-                anchors.fill: parent
-                editor: root; dec: videoDec; audio: videoAudio
-                row: vbar.row; live: vbar.live
-            }
-        }
-    }
-
-    // Page-nav strip for every inline PDF (built on load like the video bars,
-    // positioned in the reserved kPdfNav space just below the page). Prev/Next
-    // change this block's current page; the page indicator sits on the right.
-    Repeater {
-        model: root.allPdfRows
-        delegate: Rectangle {
-            id: pbar
-            required property int modelData
-            readonly property int row: modelData
-            readonly property bool blockSelected: (cursor.hasSel
-                ? (row >= cursor.loRow && row <= cursor.hiRow)
-                : (row === cursor.focusRow))
-                || (blockMenu.visible && row === root.menuRow)
-            opacity: blockSelected ? 0.35 : 1.0
-            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            // Document view only: a grid frame (a table's tab) clamps the same Flickable to the
-            // table, and a PDF just above it was still "in view" — its bar showed in the tab
-            // (2026-09-16).
-            visible: root.activeFrameId === "" && root.rowInView(row)
-            readonly property real measure: root.measureForRow(row)
-            readonly property int vw: (blockModel.structureRevision, blockModel.mediaW(row))
-            readonly property int vh: blockModel.mediaH(row)
-            readonly property real dispH: (vw > 0 && vh > 0) ? Math.round(measure * vh / vw)
-                                                             : Math.round(measure * 1.3)
-            readonly property int pages: (blockModel.structureRevision, blockModel.mediaPdfPages(row))
-            readonly property int page: (root.pdfPageRev, root.pdfPageFor(row))
-
-            // z:44 like the video bars — ink paints over the strip in regular
-            // mode (never occluded, matches export); the bar stays clickable.
-            z: 44
-            x: root.vx(root.columnX(row))
-            y: root.vy((blockModel.layoutRevision, blockModel.yForRow(row)) + 6 + dispH)
-            width: measure * root.viewZoom
-            height: root.pdfNavH
-            color: Theme.colors.surfaceRaised      // raised bar — tone separates from the page above (border diet)
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 6; anchors.rightMargin: 10
-                spacing: 0
-                FlatButton { iconName: "caret-left"; tooltip: qsTr("Previous page"); tooltipSide: "top"
-                    enabled_: pbar.page > 0; onClicked: root.pdfStep(pbar.row, -1) }
-                FlatButton { iconName: "caret-right"; tooltip: qsTr("Next page"); tooltipSide: "top"
-                    enabled_: pbar.page < pbar.pages - 1; onClicked: root.pdfStep(pbar.row, 1) }
-                Item { Layout.fillWidth: true }
-                Text {
-                    text: "Page " + (pbar.page + 1) + " of " + pbar.pages
-                    color: Theme.colors.textMuted
-                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                }
             }
         }
     }

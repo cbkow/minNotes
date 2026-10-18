@@ -161,6 +161,13 @@ public:
     // The page's remembered scroll offset (phase C5) in `json.view.scrollY` — a VIEW fact like the camera: written
     // straight to the store and the mirror, no undo row, no revision bump, not dirty (the next save carries it).
     // A live card scrolls into it; drilling in opens the page view there.
+    // Fixed-height pages (walk 7c): a drag on a page's top/bottom handle (setElementRect with a new height) pins
+    // `json.fixedH`; the content height cache then leaves the card alone (content shorter = blank card below,
+    // longer = the fade + footer, and a live card scrolls). fitPageHeight clears it (one history row).
+    Q_INVOKABLE bool pageHeightFixed(const QString& id) const;
+    Q_INVOKABLE bool fitPageHeight(const QString& id);
+    static constexpr double kMinFixedPageHeight = 240.0;
+    static constexpr double kMaxFixedPageHeight = 8192.0;
     Q_INVOKABLE void cachePageView(const QString& id, qreal scrollY);
     Q_INVOKABLE qreal pageScrollY(const QString& id) const;
     // The camera: {x, y, z} pan/zoom; hasCamera false until set. Persisted with the file.

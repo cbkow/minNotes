@@ -102,11 +102,17 @@ Item {
     component Handle: Rectangle {
         required property int dx     // -1 left edge, 1 right edge, 0 neither
         required property int dy
-        visible: frame.single && (!frame.isPage || dy === 0)   // handles resize ONE element; a set only moves
+        visible: frame.single   // handles resize ONE element; a set only moves (a page's height too — walk 7c: fixed-height pages)
         width: 8; height: 8; radius: 0
         color: Theme.colors.accent
+        z: 3   // above the bar (the bottom handles sit on the picture/bar seam, never on the bar's buttons)
         x: (dx < 0 ? 0 : dx > 0 ? frame.width : frame.width / 2) - 4
-        y: (dy < 0 ? 0 : dy > 0 ? frame.height : frame.height / 2) - 4
+        y: (dy < 0 ? 0 : dy > 0 ? frame.pictureH : frame.pictureH / 2) - 4
+        TapHandler {   // a double-click on a top/bottom handle of a page = Fit height to content (back to auto)
+            enabled: frame.isPage && parent.dy !== 0
+            acceptedButtons: Qt.LeftButton
+            onDoubleTapped: canvas.fitPageHeight(frame.id_)
+        }
         DragHandler {
             target: null
             property rect start

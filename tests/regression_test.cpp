@@ -5920,8 +5920,8 @@ static void testCanvasCreate() {
     CHECK(c.elementRect(p1).height() == CanvasDocument::kMinPageHeight, "a new page starts at the floor height (%g)", c.elementRect(p1).height());
     c.cachePageHeight(p1, 100);
     CHECK(c.elementRect(p1).height() == CanvasDocument::kMinPageHeight, "the height cache floors at the minimum");
-    c.cachePageHeight(p1, 900);
-    CHECK(c.elementRect(p1).height() == 900, "…and grows past it");
+    c.cachePageHeight(p1, 700);
+    CHECK(c.elementRect(p1).height() == 700, "…and grows past it (inside the square cap)");
     const int hist = c.undoHistory().size();
     const QString p2 = c.addPageAt(1000, 2000);
     const QRectF r2 = c.elementRect(p2);
@@ -5945,24 +5945,24 @@ static void testCanvasCreate() {
     CHECK(c.addMediaElementFromUrl(QString(), 0, 0).isEmpty() && reqs == 1, "an empty url does nothing");
 }
 
-// [127] A page card stops at a page length (measure × √2) and never below the floor; the cap
-// follows the measure; the converter stores the capped height.
+// [127] An AUTO-height page card stops at a square (1:1 — walk 7c; was measure × √2) and never below the
+// floor; the cap follows the measure; the converter stores the capped height.
 static void testPageHeightCap() {
-    qInfo("[127] page height cap (2.0 stage 2): measure × √2, floor 400, re-clamped on resize, the converter's page too");
-    CHECK(CanvasDocument::pageHeightCap(760 + 2 * CanvasDocument::kPageInset) == 1075 && CanvasDocument::pageHeightCap(400 + 48) == 566
-              && CanvasDocument::pageHeightCap(10) == 566,
-          "the cap is round(measure × √2), the measure never below 400 (%g)", CanvasDocument::pageHeightCap(808));
-    CHECK(CanvasDocument::clampPageHeight(808, 50) == 400 && CanvasDocument::clampPageHeight(808, 900) == 900 && CanvasDocument::clampPageHeight(808, 195200) == 1075,
+    qInfo("[127] page height cap (2.0 stage 2): auto height = the measure (1:1), floor 400, the converter's page too");
+    CHECK(CanvasDocument::pageHeightCap(760 + 2 * CanvasDocument::kPageInset) == 760 && CanvasDocument::pageHeightCap(400 + 48) == 400
+              && CanvasDocument::pageHeightCap(10) == 400,
+          "the cap is the measure (1:1), the measure never below 400 (%g)", CanvasDocument::pageHeightCap(808));
+    CHECK(CanvasDocument::clampPageHeight(808, 50) == 400 && CanvasDocument::clampPageHeight(808, 700) == 700 && CanvasDocument::clampPageHeight(808, 195200) == 760,
           "clamp: floor, pass-through, cap");
     CanvasDocument c;
     CHECK(c.newCanvas(), "new canvas");
     const QString p = c.firstPageId();
     c.cachePageHeight(p, 195200);
-    CHECK(c.elementRect(p).height() == 1075, "a 195,200 px document caches a 1075 px card");
-    c.setElementRect(p, QRectF(0, 0, 1000 + 48, 5000));
-    CHECK(c.elementRect(p).width() == 1048 && c.elementRect(p).height() == 1414, "a wider page lifts the cap with its measure (%g)", c.elementRect(p).height());
-    c.setElementRect(p, QRectF(0, 0, 400 + 48, 5000));
-    CHECK(c.elementRect(p).height() == 566, "…and a narrow one lowers it");
+    CHECK(c.elementRect(p).height() == 760, "a 195,200 px document caches a 760 px (square) card");
+    c.setElementRect(p, QRectF(0, 0, 1000 + 48, 760));   // a WIDTH-only resize stays auto (the height is re-clamped to the new measure)
+    CHECK(c.elementRect(p).width() == 1048 && c.elementRect(p).height() == 760 && !c.pageHeightFixed(p), "a width-only resize stays auto (%g, fixed %d)", c.elementRect(p).height(), c.pageHeightFixed(p));
+    c.cachePageHeight(p, 195200);
+    CHECK(c.elementRect(p).height() == 1000, "…and the content re-caches to the new (wider) square cap (%g)", c.elementRect(p).height());
     const QString v1 = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
     BlockModel m;
     CHECK(m.openDocument(v1), "the v1 fixture opens");
@@ -6521,6 +6521,38 @@ static void testPageViewCache() {
     CanvasDocument d; CHECK(d.open(file), "reopened");
     CHECK(d.pageScrollY(d.firstPageId()) == 777, "…the scroll survived the round trip (%g)", d.pageScrollY(d.firstPageId()));
     CHECK(!d.canUndo(), "…with nothing to undo for it");
+}
+
+// [141] Fixed-height pages (walk 7c): a top/bottom handle pins the page's height; the content cache leaves it
+// alone; the range is [240, 8192]; Fit height to content returns it to auto in one history row.
+static void testPageFixedHeight() {
+    qInfo("[141] fixed-height pages (walk 7c): a new height pins fixedH, the content cache then leaves the card alone, [240, 8192], fitPageHeight clears it (one undo row each)");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString p = c.firstPageId();
+    const QRectF r0 = c.elementRect(p);
+    const int h0 = c.undoHistory().size();
+    CHECK(!c.pageHeightFixed(p) && r0.height() == CanvasDocument::kMinPageHeight, "a new page is auto height at the floor");
+    CHECK(c.setElementRect(p, QRectF(r0.x(), r0.y(), r0.width(), 300), QStringLiteral("resize:x")) && c.pageHeightFixed(p) && c.elementRect(p).height() == 300,
+          "a new height below the auto floor pins a fixed 300 px page (%g, fixed %d)", c.elementRect(p).height(), c.pageHeightFixed(p));
+    CHECK(c.undoHistory().size() == h0 + 1, "…in ONE history row (%d → %d)", h0, c.undoHistory().size());
+    c.cachePageHeight(p, 195200);
+    CHECK(c.elementRect(p).height() == 300, "the content height cache leaves a fixed page alone (%g)", c.elementRect(p).height());
+    c.setElementRect(p, QRectF(r0.x(), r0.y() - 100, r0.width(), 100), QStringLiteral("resize:y"));
+    CHECK(c.elementRect(p).height() == CanvasDocument::kMinFixedPageHeight && c.elementRect(p).y() == r0.y() - 100, "a fixed height floors at 240 and the top edge moves (%g at y %g)", c.elementRect(p).height(), c.elementRect(p).y());
+    c.setElementRect(p, QRectF(r0.x(), r0.y(), r0.width(), 20000), QStringLiteral("resize:z"));
+    CHECK(c.elementRect(p).height() == CanvasDocument::kMaxFixedPageHeight, "…and caps at 8192 (%g)", c.elementRect(p).height());
+    c.setElementRect(p, QRectF(r0.x() + 50, r0.y() + 50, r0.width(), 8192), QStringLiteral("move:p"));
+    CHECK(c.pageHeightFixed(p) && c.elementRect(p).height() == 8192 && c.elementRect(p).x() == r0.x() + 50, "a move keeps a fixed page fixed");
+    const int h1 = c.undoHistory().size();
+    CHECK(c.fitPageHeight(p) && !c.pageHeightFixed(p) && c.elementRect(p).height() == CanvasDocument::kMinPageHeight && c.undoHistory().size() == h1 + 1,
+          "Fit height to content clears the pin and sizes the card to its content in one row (%g, fixed %d)", c.elementRect(p).height(), c.pageHeightFixed(p));
+    c.undo();
+    CHECK(c.pageHeightFixed(p) && c.elementRect(p).height() == 8192, "undo restores the fixed height AND the pin together");
+    c.redo();
+    c.cachePageHeight(p, 195200);
+    CHECK(!c.pageHeightFixed(p) && c.elementRect(p).height() == CanvasDocument::pageHeightCap(r0.width()), "back in auto, the content cache applies again (%g)", c.elementRect(p).height());
+    CHECK(!c.fitPageHeight(QStringLiteral("nope")), "a missing id is refused");
 }
 
 // [140] The canvas exporter (2.0 step 8): the world as positioned HTML (pages as the page export, media figures/cards with paths, ink as SVG, text) + the poster.
@@ -9140,6 +9172,7 @@ int main(int argc, char** argv) {
     testLivePage();
     testPageViewCache();
     testCanvasHtml();
+    testPageFixedHeight();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

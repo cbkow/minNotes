@@ -719,9 +719,38 @@ QRectF CanvasDocument::elementRect(const QString& id) const { const auto e = ele
 QString CanvasDocument::elementJson(const QString& id) const { const auto e = element(id); return e ? e->json : QString(); }
 int CanvasDocument::elementZ(const QString& id) const { const auto e = element(id); return e ? e->z : 0; }
 
-double CanvasDocument::pageHeightCap(double elementWidth) {
+double CanvasDocument::pageHeightCap(double elementWidth) {   // AUTO height stops at a SQUARE card (1:1, walk 7c; was √2 — a page length)
     const double measure = std::max(kMinPageMeasure, elementWidth - 2.0 * kPageInset);
-    return std::round(measure * 1.41421356237);
+    return std::round(measure);
+}
+
+static bool jsonFixedH(const QString& json) {
+    return QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("fixedH")).toBool(false);
+}
+bool CanvasDocument::pageHeightFixed(const QString& id) const {
+    const auto e = element(id);
+    return e && e->kind == QLatin1String("page") && jsonFixedH(e->json);
+}
+bool CanvasDocument::fitPageHeight(const QString& id) {
+    const auto cur = element(id);
+    if (!cur || cur->kind != QLatin1String("page") || !db_.isOpen()) return false;
+    QJsonObject root = QJsonDocument::fromJson(cur->json.toUtf8()).object();
+    root.remove(QStringLiteral("fixedH"));
+    BlockModel* m = pageModel(id);
+    const double h = clampPageHeight(cur->w, (m ? m->totalHeight() : 0.0) + 2.0 * kPageInset);
+    UndoEntry u;
+    u.id = id;
+    u.before = snapshot(id, false);
+    u.label = tr("Fit page height");
+    db_.begin();
+    db_.updateElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+    db_.updateElementRect(id, cur->x, cur->y, cur->w, h);
+    db_.commit();
+    reloadElements();
+    u.after = snapshot(id, false);
+    pushEntry(std::move(u), QString());
+    noteChanged(QStringLiteral("page"), true, true, false);
+    return true;
 }
 
 double CanvasDocument::clampPageHeight(double elementWidth, double h) {
@@ -754,8 +783,9 @@ void CanvasDocument::cachePageHeight(const QString& id, qreal h) {
     const int i = indexById_.value(id, -1);
     if (i < 0 || !db_.isOpen()) return;
     Document::Element& e = elements_[size_t(i)];
-    h = clampPageHeight(e.w, h);       // an empty page still reads as a page; a long one stops at a page length
+    h = clampPageHeight(e.w, h);       // an empty page still reads as a page; a long one stops at the square cap
     if (e.kind != QLatin1String("page") || std::abs(e.h - h) < 1.0) return;
+    if (jsonFixedH(e.json)) return;    // a hand-sized page keeps its height (fitPageHeight returns it to auto)
     e.h = h;
     db_.updateElementRect(id, e.x, e.y, e.w, h);
     ++geometryRevision_;
@@ -1295,16 +1325,26 @@ bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, con
     const auto cur = element(id);
     if (!cur) return false;
     QRectF rect = rectIn;
-    if (cur->kind == QLatin1String("page")) {   // a page's measure stays readable: [400, 4000] + the insets; its height is the content's, within the cap
+    bool pinHeight = false;
+    if (cur->kind == QLatin1String("page")) {   // a page's measure stays readable: [400, 4000] + the insets
         rect.setWidth(std::clamp(rect.width(), kMinPageMeasure + 2.0 * kPageInset, kMaxPageMeasure + 2.0 * kPageInset));
-        rect.setHeight(clampPageHeight(rect.width(), rect.height()));
+        const bool fixed = jsonFixedH(cur->json);
+        if (std::abs(rect.height() - cur->h) > 0.5 || fixed) {   // a NEW height (a top/bottom handle) pins the page to a fixed height (walk 7c)
+            rect.setHeight(std::clamp(rect.height(), kMinFixedPageHeight, kMaxFixedPageHeight));
+            pinHeight = !fixed;
+        } else rect.setHeight(clampPageHeight(rect.width(), rect.height()));   // auto: the content's height within the square cap
     }
-    if (QRectF(cur->x, cur->y, cur->w, cur->h) == rect) return true;
+    if (QRectF(cur->x, cur->y, cur->w, cur->h) == rect && !pinHeight) return true;
     UndoEntry u;
     u.id = id;
     u.before = snapshot(id, false);
     const bool resize = std::abs(rect.width() - cur->w) > 0.01 || std::abs(rect.height() - cur->h) > 0.01;
     u.label = (resize ? tr("Resize %1") : tr("Move %1")).arg(kindLabel(cur->kind));
+    if (pinHeight) {
+        QJsonObject root = QJsonDocument::fromJson(cur->json.toUtf8()).object();
+        root.insert(QStringLiteral("fixedH"), true);
+        db_.updateElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+    }
     db_.updateElementRect(id, rect.x(), rect.y(), rect.width(), rect.height());
     reloadElements();
     u.after = snapshot(id, false);

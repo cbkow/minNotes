@@ -57,6 +57,8 @@ Popup {
               onTriggered: docs.openStreamFolder(canvas.elementLocalPath(menu.view.selectedId)) }   // a QCView stream folder → its notes document (step 9)
         Row { label: qsTr("Next page");      show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(1) }
         Row { label: qsTr("Previous page");  show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(-1) }
+        Row { label: qsTr("Fit height to content"); show: menu.n === 1 && menu.kind1 === "page" && canvas.pageHeightFixed(menu.view.selectedId)
+              onTriggered: canvas.fitPageHeight(menu.view.selectedId) }   // a hand-sized page back to auto height (walk 7c)
         Row { label: qsTr("Duplicate");      show: menu.anyNonPage;        onTriggered: menu.view.duplicateSelected() }
         Row { label: qsTr("Bring to front"); show: menu.n > 0;             onTriggered: menu.view.frontSelected() }
         Row { label: qsTr("Send to back");   show: menu.n > 0;             onTriggered: menu.view.backSelected() }
