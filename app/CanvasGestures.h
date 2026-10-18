@@ -28,6 +28,9 @@ public:
     Q_INVOKABLE void keyRelease(QQuickItem* item, int key, int modifiers = 0);   // its release
     Q_INVOKABLE void wheel(QQuickItem* item, qreal x, qreal y, int dx, int dy);   // a mouse wheel's angle delta (±120 per notch)
     Q_INVOKABLE qint64 residentBytes() const;   // this process's resident set (the probe's leak check); -1 when unknown
+    // The item chain under (x, y) in `item`'s coordinates, top-most leaf first, naming the ones that ACCEPT mouse
+    // buttons (the press stops at the first of those) — the probe's "who ate my click" diagnostic.
+    Q_INVOKABLE QString itemsUnder(QQuickItem* item, qreal x, qreal y) const;
 private:
     void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier);
     qint64 nextStamp(qint64 advance);

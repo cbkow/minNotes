@@ -1,5 +1,6 @@
 #include "CanvasGestures.h"
 #include <QCoreApplication>
+#include <algorithm>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -96,6 +97,29 @@ void CanvasGestures::keyRelease(QQuickItem* item, int key, int modifiers) {
     if (!item || !item->window()) return;
     QKeyEvent r(QEvent::KeyRelease, key, Qt::KeyboardModifiers(modifiers));
     QCoreApplication::sendEvent(item->window(), &r);
+}
+
+static void collectUnder(QQuickItem* item, const QPointF& p, int depth, QStringList& out) {
+    if (!item || depth > 60) return;
+    auto kids = item->childItems();                     // sibling order, then z: the paint order (bottom → top)
+    std::stable_sort(kids.begin(), kids.end(), [](QQuickItem* a, QQuickItem* b) { return a->z() < b->z(); });
+    for (auto it = kids.rbegin(); it != kids.rend(); ++it) {   // top-most first, EVERY branch (the delivery agent's walk)
+        QQuickItem* c = *it;
+        if (!c->isVisible() || !c->isEnabled()) continue;
+        const QPointF q = item->mapToItem(c, p);
+        const bool inside = c->contains(q);
+        if (!inside && c->clip()) continue;
+        if (inside && c->acceptedMouseButtons() != Qt::NoButton) {
+            const QString name = QString::fromLatin1(c->metaObject()->className()).section(QLatin1Char('_'), 0, 0);
+            out << QStringLiteral("%1%2[%3]").arg(name, c->objectName().isEmpty() ? QString() : QLatin1Char('#') + c->objectName()).arg(int(c->acceptedMouseButtons()));
+        }
+        collectUnder(c, q, depth + 1, out);
+    }
+}
+QString CanvasGestures::itemsUnder(QQuickItem* item, qreal x, qreal y) const {
+    QStringList out;
+    collectUnder(item, QPointF(x, y), 0, out);
+    return out.join(QStringLiteral(" > "));
 }
 
 qint64 CanvasGestures::residentBytes() const {

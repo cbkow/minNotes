@@ -458,6 +458,7 @@ FocusScope {
     // LIVE CARD (2.0 SPIKE S3): this one Editor sits inside a page card on the canvas (CanvasView.goLive
     // reparented it into the card's liveSlot). The page view's gates read this: keys, undo, width, chrome.
     readonly property bool cardHosted: homeSlot !== null && parent !== homeSlot
+    readonly property bool cardPreview: false                        // (the facade says true: its delegates take no mouse)
     readonly property bool ownsWidth: cardHosted || !activeCanvas   // who may write the model's content width
     signal liveExitRequested()                                       // Escape in a live card → the view ends liveness
     // A canvas MEDIA ELEMENT shown full-frame (its PDF tab / studio) over an unfocused canvas (2.0 phase A).
@@ -4997,6 +4998,19 @@ FocusScope {
                 if (step === 12) {   // at 100 % already: no animation, straight to live
                     const r = canvas.elementRect(livePage), c2 = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
                     check(!root.cardHosted && canvas.livePage === "" && c2.x > 0 && c2.x < cvw.width && c2.y > 0 && c2.y < cvw.height, "back at rest with the card in view (" + Math.round(c2.x) + "," + Math.round(c2.y) + ")")
+                    {   // walk 7 (user): single clicks over a LIVE-TIER card's text mostly fail to select — probe several spots over real delegates at 100 %
+                        const it = pageItem(livePage), pm = canvas.pageModel(livePage); let hits = 0, tries = 0, miss = ""
+                        for (let k = 0; k < 6; ++k) {
+                            const wx = r.x + 60 + k * 90, wy = r.y + 140 + k * 110, p = cvw.cam.worldToScreen(wx, wy)
+                            if (p.x < 0 || p.y < 0 || p.x > cvw.width || p.y > cvw.height) continue
+                            cvw.clearSelection(); ++tries
+                            g.click(cvw, p.x, p.y)
+                            if (cvw.selectedId === livePage) ++hits
+                            else miss += " [row " + pm.rowForY(wy - r.y - 24) + " under: " + g.itemsUnder(cvw, p.x, p.y) + "]"   // which item took the press
+                        }
+                        check(tries > 0 && hits === tries, "single clicks over the card's delegates select it every time (" + hits + "/" + tries + " at tier " + (it ? it.tier : -1) + "; misses:" + miss + ")")
+                        cvw.clearSelection()
+                    }
                     probeLives = cvw.lives
                     g.doubleClick(cvw, c2.x, c2.y)
                     check(!cvw.camAnimating && canvas.livePage === livePage, "at a readable zoom the double-click goes live at once (no animation)")

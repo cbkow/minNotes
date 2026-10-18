@@ -58,6 +58,7 @@ QtObject {
     readonly property int frameHi: -1
     readonly property var flickItem: null
 
+    readonly property bool cardPreview: true                     // the delegates are a picture: no mouse (BlockView's TextEdit reads this)
     // --- inert ---
     readonly property QtObject cursorObj: QtObject {
         readonly property int focusRow: -1

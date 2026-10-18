@@ -574,6 +574,9 @@ Item {
         readOnly: true
         activeFocusOnPress: false
         selectByMouse: false
+        // A card PREVIEW on the canvas (the facade) must not take the press: a read-only, non-selectable TextEdit still
+        // accepts a left button, which cancelled the card's tap over every text block (walk 7, 2026-10-18).
+        enabled: !editor.cardPreview
         renderType: cell.textRenderType
         // quote/list get a left indent; the decoration sits in it.
         // Ordered items reserve a 28px number slot + 6px gap —
