@@ -20,9 +20,9 @@ Rectangle {
     readonly property int totalFrames: live ? dec.frameCount
                                             : host ? host.frames
                                             : (blockModel.structureRevision, blockModel.mediaFrames(row))
-    function activate() { if (host) vt.editor.ensureHostActive(); else vt.editor.ensureVideoActive(vt.row) }
+    function activate() { if (host) vt.editor.activateHost(host); else vt.editor.ensureVideoActive(vt.row) }
     function playhead() { return host ? vt.editor.videoPlayheadForKey(host.key) : vt.editor.videoPlayheadFor(vt.row) }
-    function play()     { if (host) vt.editor.playHost(); else vt.editor.playVideo(vt.row) }
+    function play()     { if (host) vt.editor.playFromHost(host); else vt.editor.playVideo(vt.row) }
 
     height: editor ? editor.videoTransportH : 40
     color: Theme.colors.surfaceRaised   // the raised-chrome plane (tonal ladder)

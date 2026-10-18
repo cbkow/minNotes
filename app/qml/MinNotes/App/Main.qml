@@ -1421,6 +1421,12 @@ ApplicationWindow {
         return ""
     }
     // Dev-only (canvas B10): --canvas-probe=<md> imports the fixture and runs the canvas probe (Editor.qml).
+    readonly property string _videoProbeClip: {
+        var a = Qt.application.arguments
+        for (var i = 0; i < a.length; ++i)
+            if (a[i].indexOf("--video-probe=") === 0) return a[i].substring(14)
+        return ""
+    }
     readonly property string _canvasProbeFixture: {
         var a = Qt.application.arguments
         for (var i = 0; i < a.length; ++i)
@@ -1454,6 +1460,12 @@ ApplicationWindow {
             width = 1200; height = 900
             docs.newTab()
             if (!importer.importFile(_canvasProbeFixture)) { console.log("CANVAS-PROBE FAIL import"); Qt.exit(101) }
+            return
+        }
+        if (_videoProbeClip !== "") {   // --video-probe=<clip>: a fresh tab with the clip as a block (Editor.qml drives the studio + a canvas element)
+            width = 1200; height = 900
+            docs.newTab()
+            blockModel.insertVideoFromUrl(0, _videoProbeClip)
             return
         }
         if (_importFixture !== "") {

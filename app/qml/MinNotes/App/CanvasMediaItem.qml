@@ -63,6 +63,9 @@ Item {
     Component { id: bookmarkCard; CanvasBookmarkCard { media: standIn.media } }
     Component { id: folderCard; CanvasFolderCard { media: standIn.media; path: standIn.mediaViewPath(0) } }
     Component { id: fileCard;   CanvasFileCard   { media: standIn.media; path: standIn.mediaViewPath(0) } }
+    // While THIS video plays on the shared player (and no studio is up), its surface paints inside the element over
+    // the poster (walk 2026-10-18). The transport sits under the selection frame.
+    readonly property bool surfaceVisible: surface.visible
     PageContextLoader {
         anchors.fill: parent
         active: mi.elementId !== "" && !mi.ownCard
@@ -77,5 +80,14 @@ Item {
                 posterFrame: mi.posterFrame
             }
         }
+    }
+    VideoSurfaceItem {
+        id: surface
+        anchors.fill: parent
+        z: 2
+        videoDecoder: mi.editor ? mi.editor.videoDecoder : null
+        visible: mi.mediaKind === "video" && !!mi.editor && mi.editor.videoPlayingKey !== "" && mi.editor.videoPlayingKey === standIn.mediaAnchorPath(0)
+                 && mi.editor._videoSurfaceReady && !mi.editor.videoTabOpen
+        fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g, Theme.colors.bgAlt.b, 1.0)
     }
 }

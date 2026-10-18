@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i) {
         const QByteArray a(argv[i]);
         if (a.startsWith("--pool-probe") || a.startsWith("--type-probe") || a.startsWith("--canvas-probe")
-            || a.startsWith("--shot=") || a.startsWith("--import=") || a.startsWith("--key-probe") || a.startsWith("--export-")) {
+            || a.startsWith("--shot=") || a.startsWith("--import=") || a.startsWith("--key-probe") || a.startsWith("--video-probe=") || a.startsWith("--export-")) {
             app.setApplicationName("minNotes-dev");
             break;
         }

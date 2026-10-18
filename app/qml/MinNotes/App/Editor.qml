@@ -1167,8 +1167,17 @@ FocusScope {
     }
     function _activateVideo(row) { return _activateSource(blockModel.mediaPlaybackSource(row), blockModel.mediaAnchorPath(row), row) }
     function ensureVideoActive(row) { return _activateVideo(row) }
-    // The host's media (the open studio's block OR element).
-    function ensureHostActive() { return mediaHost.valid ? _activateSource(mediaHost.playbackSource, mediaHost.key, mediaHost.row) : false }
+    // A host's media (the open studio's block OR element; a selected canvas video element).
+    function activateHost(h) { return h && h.valid ? _activateSource(h.playbackSource, h.key, h.row) : false }
+    function ensureHostActive() { return activateHost(mediaHost) }
+    function playFromHost(h) {
+        if (!h || !h.valid) return
+        if (videoPlayingKey !== "" && videoPlayingKey === h.key) { toggleVideo(); return }
+        if (activateHost(h)) {
+            videoDec.play()
+            if (videoAudio.hasAudio) videoAudio.play()
+        }
+    }
     function playVideo(row) {
         if (videoPlayingRow === row && videoPlayingKey !== "") { toggleVideo(); return }
         if (_activateVideo(row)) {
@@ -1176,15 +1185,9 @@ FocusScope {
             if (videoAudio.hasAudio) videoAudio.play()
         }
     }
-    function playHost() {
-        if (hostIsPlaying) { toggleVideo(); return }
-        if (ensureHostActive()) {
-            videoDec.play()
-            if (videoAudio.hasAudio) videoAudio.play()
-        }
-    }
+    function playHost() { playFromHost(mediaHost) }
     function toggleVideo() {
-        if (videoPlayingRow < 0) return
+        if (videoPlayingRow < 0 && videoPlayingKey === "") return   // (a canvas element plays at row -1 with a key)
         if (videoDec.isPlaying) { videoDec.pause(); videoAudio.pause() }
         else {
             if (videoDec.state === VideoDecoder.EndOfStream) { videoDec.seekToFrame(0); videoAudio.seek(0); _vidScrubTarget = -1 }
@@ -1279,6 +1282,18 @@ FocusScope {
     // The media-source seam (2.0 phase A2): what the PDF tab and the studio bind to. A page's PDF /
     // video block by id, or a canvas media element by id — the element wins. Parked (no ids) it
     // listens to nothing, so typing never reaches it.
+    // The SELECTED canvas video element's host (walk report 2026-10-18: "no play bar in the canvas view"): the transport
+    // rides under the selection frame, the surface paints inside the element while it plays; deselecting stops it.
+    MediaHost {
+        id: canvasHost
+        canvas: root.canvasDoc
+        elementId: root.canvasItem && root.canvasShown && root.canvasItem.selectedId !== "" && canvas.mediaElementKind(root.canvasItem.selectedId) === "video" ? root.canvasItem.selectedId : ""
+        onIdentityChanged: if (root.videoPlayingRow < 0 && root.videoPlayingKey !== "" && !root.videoTabOpen && root.videoPlayingKey !== canvasHost.key) root.stopVideo()
+    }
+    readonly property var canvasVideoHost: canvasHost
+    readonly property bool canvasHostPlaying: canvasHost.valid && videoPlayingKey !== "" && videoPlayingKey === canvasHost.key
+    readonly property var videoDecoder: videoDec     // the shared player, for the canvas chrome
+    readonly property var audioPlayer: videoAudio
     MediaHost {
         id: mediaHost
         model: root.activeElementId === "" ? blockModel : null
@@ -4036,6 +4051,56 @@ FocusScope {
             if (keys >= limit) endPhase(); else ++phaseStep
         }
     }
+    // --- Dev-only video probe (2026-10-18): `--video-probe=<clip.mp4>` — the clip as a page block → its studio →
+    // play; then the same clip as a CANVAS ELEMENT → its tab → play. Prints VIDEO-PROBE lines; exits with the fail count.
+    Timer {
+        id: videoProbe
+        readonly property bool armed: Qt.application.arguments.some(function(a) { return a.indexOf("--video-probe=") === 0 })
+        readonly property string clip: { const a = Qt.application.arguments.find(function(x) { return x.indexOf("--video-probe=") === 0 }); return a ? a.substring(14) : "" }
+        running: armed && blockModel.documentOpen && (blockModel.structureRevision, blockModel.videoBlockIds().length > 0)
+        interval: 40; repeat: true
+        property int step: 0
+        property int fails: 0
+        property string elId: ""
+        function check(ok, msg) { console.log("VIDEO-PROBE", ok ? "ok  " : "FAIL", msg); if (!ok) ++fails }
+        function state(tag) {
+            console.log("VIDEO-PROBE state", tag, "tabOpen", root.videoTabOpen, "hostValid", mediaHost.valid, "hostKind", mediaHost.kind, "hostRow", mediaHost.row,
+                        "hostKey", mediaHost.key !== "", "src", mediaHost.playbackSource !== "", "playingRow", root.videoPlayingRow, "playingKey", root.videoPlayingKey !== "",
+                        "hostIsPlaying", root.hostIsPlaying, "decState", videoDec.state, "frames", videoDec.frameCount, "isPlaying", videoDec.isPlaying, "frame", videoDec.currentFrame,
+                        "surfaceReady", root._videoSurfaceReady, "studio", studioFrame.visible, "surface", studioSurface.visible, "hosted", root.cardHosted)
+        }
+        onTriggered: {
+            if (step === 0) { const id = blockModel.videoBlockIds()[0]; root.setActiveTab(id); ++step; return }
+            if (step === 10) { state("block studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row >= 0, "the block's studio is open on the host"); root.playHost(); ++step; return }
+            if (step === 35) { state("block studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the block plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows"); root.playHost(); ++step; return }
+            if (step === 40) { check(!videoDec.isPlaying, "play again = pause"); gestures.key(root, Qt.Key_Space); ++step; return }
+            if (step === 42) { check(videoDec.isPlaying, "Space in the studio plays"); gestures.key(root, Qt.Key_Space); ++step; return }
+            if (step === 43) { check(!videoDec.isPlaying, "…and pauses"); root.setActiveTab("canvas"); ++step; return }
+            if (step === 45) {
+                const b = canvas.canvasBounds()
+                elId = canvas.addMediaElementFromUrl(videoProbe.clip, b.x + b.width + 100, b.y)
+                check(elId !== "" && canvas.mediaElementKind(elId) === "video", "the clip as a canvas element")
+                root.setActiveTab(elId); ++step; return
+            }
+            if (step === 55) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
+            if (step === 80) { state("element studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the element plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows");
+                               gestures.key(root, Qt.Key_Space); ++step; return }
+            if (step === 85) { check(!videoDec.isPlaying, "Space in the element's studio pauses"); gestures.key(root, Qt.Key_Escape); ++step; return }
+            if (step === 90) {   // the CANVAS: the selected element's transport under the frame + its surface in the element
+                const cvw = root.canvasItem
+                check(root.canvasShown && cvw.selectedId === elId && root.canvasVideoHost.valid && cvw.selectionFrame.videoBar.visible, "back on the canvas the element is selected and shows its transport (host " + root.canvasVideoHost.valid + ", bar " + cvw.selectionFrame.videoBar.visible + ")")
+                root.playFromHost(root.canvasVideoHost); ++step; return
+            }
+            if (step === 115) {
+                const it = root.canvasItem.pageItemFor(elId)
+                state("canvas element playing?")
+                check(videoDec.isPlaying && root.canvasHostPlaying && !!it && !!it.mediaItem && it.mediaItem.surfaceVisible, "the element plays IN PLACE with its surface (frame " + videoDec.currentFrame + ", surface " + (it && it.mediaItem ? it.mediaItem.surfaceVisible : "?") + ")")
+                root.canvasItem.clearSelection(); ++step; return
+            }
+            if (step === 120) { check(!videoDec.isPlaying && root.videoPlayingKey === "", "deselecting the element stops playback"); console.log("VIDEO-PROBE DONE fails", fails); Qt.exit(Math.min(fails, 100)) }
+            ++step
+        }
+    }
     // --- Dev-only canvas probe: `--canvas-probe=<md>` (Main.qml imports the fixture into a fresh tab —
     // one page). Offscreen. P0 setup (two more pages, the Canvas tab, fit) · P1 the element model · P2 pan
     // sweep (one item per visible element, at its rect, live, inside the overscan) · P3 zoom sweep (the
@@ -4451,6 +4516,10 @@ FocusScope {
                 }
                 if (step === 17) {   // over the page's text (a block delegate under the pointer)
                     const r = canvas.elementRect(livePage), s = cam.worldToScreen(r.x + 100, r.y + 100)
+                    cvw.clearSelection()
+                    const t0 = cvw.taps
+                    g.click(cvw, s.x, s.y)
+                    check(cvw.selectedId === livePage, "a single click OVER a page card's text selects it (selected '" + cvw.selectedId + "', taps +" + (cvw.taps - t0) + ")")
                     const d0 = cvw.doubleTaps
                     g.doubleClick(cvw, s.x, s.y)
                     check(root.activeCanvas && (canvas.livePage === livePage || (cvw.camAnimating && cvw.selectedId === livePage)), "double-click over a page card's text makes it LIVE too (live '" + canvas.livePage + "', animating " + cvw.camAnimating + ", dbl +" + (cvw.doubleTaps - d0) + ")")
@@ -6687,7 +6756,7 @@ FocusScope {
         // mouse so the invisible drag handles can't eat clicks on text.
         // (Riding over the DESK and wide tables' paper stays by design.)
         readonly property bool clearOfPage:
-            x >= root.vx(root.leftEdge + root.pageWidth) + 8
+            x >= root.vx(root.leftEdge + root.pageWidth) - 1   // (at full width the rail starts exactly at the page's edge — the 48-px margin is rail 34 + scrollbar 14)
         opacity: clearOfPage ? 1 : 0
         enabled: clearOfPage
         Behavior on opacity { NumberAnimation { duration: 150 } }

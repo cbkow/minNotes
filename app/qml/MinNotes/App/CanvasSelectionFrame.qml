@@ -24,10 +24,26 @@ Item {
     // accent (the frame carries it) — the "full window" rung of the gesture ladder for a single element.
     readonly property bool canOpen: single && view.canOpen(id_)
     readonly property var openGlyph: glyph   // probe
-    function glyphHit(p) {   // p in the view's coordinates: over the open glyph or the PDF pager (the frame's chrome)
+    function glyphHit(p) {   // p in the view's coordinates: over the open glyph, the PDF pager or the video transport (the frame's chrome)
         const q = mapFromItem(view, p.x, p.y)
         const inside = (it) => it.visible && q.x >= it.x && q.x <= it.x + it.width && q.y >= it.y && q.y <= it.y + it.height
-        return inside(glyph) || inside(pager)
+        return inside(glyph) || inside(pager) || inside(transport)
+    }
+    // A selected VIDEO element's transport (walk 2026-10-18): the family bar under the frame, screen space, on the
+    // shared player through the editor's canvasVideoHost; the surface paints inside the element meanwhile.
+    readonly property bool isVideo: single && canvas.mediaElementKind(id_) === "video"
+    readonly property var videoBar: transport   // probe
+    VideoTransport {
+        id: transport
+        visible: frame.isVideo && !!frame.view.editor && !!frame.view.editor.canvasVideoHost
+        x: 0; y: frame.height + 6
+        width: Math.max(320, frame.width)
+        editor: frame.view.editor
+        dec: frame.view.editor ? frame.view.editor.videoDecoder : null
+        audio: frame.view.editor ? frame.view.editor.audioPlayer : null
+        host: frame.view.editor ? frame.view.editor.canvasVideoHost : null
+        row: -1
+        live: !!frame.view.editor && frame.view.editor.canvasHostPlaying
     }
     // The PDF pager (phase A5): ‹ n / N › under a selected PDF element — screen space, chrome tone.
     readonly property bool isPdf: single && canvas.mediaElementKind(id_) === "pdf"
