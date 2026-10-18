@@ -461,7 +461,8 @@ FocusScope {
     readonly property bool cardHosted: homeSlot !== null && parent !== homeSlot
     readonly property bool cardPreview: false                        // (the facade says true: its delegates take no mouse)
     readonly property bool ownsWidth: cardHosted || !activeCanvas   // who may write the model's content width
-    signal liveExitRequested()                                       // Escape in a live card → the view ends liveness
+    signal liveExitRequested()
+    signal mergeFileRequested(int gap)                               // the block menu's "Merge a file here…" → Main.qml's picker                                       // Escape in a live card → the view ends liveness
     // A canvas MEDIA ELEMENT shown full-frame (its PDF tab / studio) over an unfocused canvas (2.0 phase A).
     property string activeElementId: ""
     readonly property var canvasDoc: canvas       // the `canvas` context property, reachable from object scopes that shadow the name
@@ -4853,12 +4854,13 @@ FocusScope {
                     check(studioFrame.visible && !pdfFrame.visible && root.videoTabOpen && mediaHost.kind === "video" && mediaHost.frames === 48 && mediaHost.fps === 24,
                           "the video element's tab opens the studio on the element (frames " + mediaHost.frames + ")")
                     check(root.videoPlayingKey === "" && !root.hostIsPlaying, "a missing clip fails to open quietly (no player, no crash)")
-                    const it = t ? t.elementTabAt(0) : null   // z order: the PDF
-                    if (it) { const p = it.mapToItem(t, it.width / 2, it.height / 2); g.click(t, p.x, p.y) }
+                    if (t) t.elementTabAt(0)   // the element rows live in the path bar's menu: open it now, click next tick (its rows lay out on the next polish)
                     ++step; return
                 }
                 if (step === 10) {
-                    check(root.activeFrameId === pdfElId && pdfFrame.visible && !studioFrame.visible, "clicking the other element's tab switches views (frame '" + root.activeFrameId + "')")
+                    const it = t ? t.elementTabAt(0) : null   // z order: the PDF
+                    if (it) { const p = it.mapToItem(t, it.width / 2, it.height / 2); g.click(t, p.x, p.y) }
+                    check(root.activeFrameId === pdfElId && pdfFrame.visible && !studioFrame.visible, "clicking the other element's row in the path bar's menu switches views (frame '" + root.activeFrameId + "')")
                     g.key(root, Qt.Key_Escape)
                     ++step; return
                 }
@@ -7978,6 +7980,7 @@ FocusScope {
                 MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
                 MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && docs.count > 1; text: "Merge a file here…"; onActivated: root.mergeFileRequested(blockMenu.runHi + 1) }
                 // comment on the current (single-row) text selection
                 MenuRow {
                     visible: !blockMenu.inFrameTab && cursor.hasSel && cursor.loRow === cursor.hiRow

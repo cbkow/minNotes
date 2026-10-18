@@ -979,91 +979,29 @@ ApplicationWindow {
         if (wasActive) Qt.callLater(win._restoreActiveView)
     }
 
-    // --- Tab-merge drag (0.4.0): drag a tab onto another tab — the
-    // destination reveals after a beat (spring-load) — then down into the
-    // document to pick the exact gap; the whole source document COPIES in
-    // there as one undo entry (the source tab stays open). Release directly
-    // on a tab merges at the END. The drag holds the STABLE tab id, so it
-    // survives index shifts if a tab closes mid-drag. Hand-rolled MouseArea
-    // drag — the house style; no QML Drag anywhere in the app. ---
-    property int tabDragSourceId: -1
-    property int tabDragHoverIndex: -1
-    readonly property bool tabDragging: tabDragSourceId >= 0
+    // --- Merging a file into this page (2026-10-18: the tab-merge DRAG went with the tab strip; File ▸ Merge File
+    // Into This Page… and the block menu's "Merge a file here…" pick the source from the open files). ---
     property string _mergeSrcName: ""
     property real _mergeBytes: 0
-    function startTabDrag(index, label) {
-        tabDragSourceId = docs.tabIdAt(index)
-        tabDragGhost.label = label
-    }
-    function updateTabDrag(p) {   // p = point in win.contentItem coords
-        tabDragGhost.x = p.x + 12
-        tabDragGhost.y = p.y + 10
-        // Strip: hovering a DIFFERENT tab arms the spring-load reveal.
-        var hi = -1
-        var rp = tabRow.mapFromItem(win.contentItem, p.x, p.y)
-        if (rp.y >= 0 && rp.y <= tabRow.height && rp.x >= 0 && rp.x <= tabRow.width) {
-            var it = tabRow.childAt(rp.x, Math.min(rp.y, tabRow.height - 1))
-            if (it && it.index !== undefined) hi = it.index
-        }
-        tabDragHoverIndex = hi
-        if (hi >= 0 && docs.tabIdAt(hi) !== tabDragSourceId && hi !== docs.activeIndex) {
-            if (tabSpringTimer.targetIndex !== hi) {
-                tabSpringTimer.targetIndex = hi
-                tabSpringTimer.restart()
-            }
-        } else {
-            tabSpringTimer.stop(); tabSpringTimer.targetIndex = -1
-        }
-        // Document area: aim the drop gap (no-op over full-frame tabs).
+    property int _mergeGap: -1          // the gap the picker merges at; -1 = the end
+    function openMergePicker(gap) {
+        if (docs.count < 2) { Toasts.show(qsTr("Open another file to merge it in")); return }
         var ed = win._editor()
-        if (ed) {
-            var ep = ed.mapFromItem(win.contentItem, p.x, p.y)
-            ed.aimMergeDrop(ep.x, ep.y)
-        }
+        if (ed && ed.activeFrameId !== "") ed.setActiveTab("")   // the merge lands in the Document view
+        win._mergeGap = gap
+        mergePicker.open()
     }
-    function finishTabDrag() {
-        var srcId = tabDragSourceId
-        var hi = tabDragHoverIndex
-        var ed = win._editor()
-        var overEditor = ed && ed.mergeDragActive
-        var gap = ed ? ed.mergeDropGap : -1
-        cancelTabDrag()
-        var srcModel = docs.modelForTabId(srcId)
-        if (!srcModel) return
-        if (hi >= 0 && docs.tabIdAt(hi) !== srcId) {
-            var destModel = docs.modelAt(hi)   // that tab's focused PAGE model (merge is page → page)
-            if (!destModel || destModel === srcModel) return
-            win._startMerge(srcModel, destModel, destModel.count)   // on a tab = at the end
-        } else if (overEditor && gap >= 0) {
-            var dm = docs.activeModel
-            if (!dm || dm === srcModel) return
-            win._startMerge(srcModel, dm, gap)
-        }
-    }
-    function cancelTabDrag() {
-        tabDragSourceId = -1
-        tabDragHoverIndex = -1
-        tabSpringTimer.stop(); tabSpringTimer.targetIndex = -1
-        var ed = win._editor()
-        if (ed) ed.endMergeDrop()
+    function mergeFileAt(index) {
+        var src = docs.modelAt(index), dest = docs.activeModel
+        if (!src || !dest || src === dest) return
+        var gap = win._mergeGap >= 0 ? Math.min(win._mergeGap, dest.count) : dest.count
+        win._startMerge(src, dest, gap)
     }
     function _startMerge(srcModel, destModel, gap) {
         win._mergeSrcName = srcModel.documentName
         var s = merger.scan(srcModel, destModel)   // popup gate: worth a bar?
         win._mergeBytes = (s.fileBytes || 0) + (s.videoBytes || 0)
         merger.startMerge(srcModel, destModel, gap)
-    }
-    Timer {
-        id: tabSpringTimer
-        interval: 350
-        property int targetIndex: -1
-        onTriggered: {
-            if (!win.tabDragging || targetIndex < 0 || targetIndex === docs.activeIndex) return
-            win.switchToTab(targetIndex)
-            // v1 rule: the merge drop needs the Document view — a restored
-            // full-frame tab has no gap surface.
-            Qt.callLater(function() { var ed = win._editor(); if (ed) ed.setActiveTab("") })
-        }
     }
     Connections {
         target: merger
@@ -1131,22 +1069,33 @@ ApplicationWindow {
             }
         }
     }
-    Rectangle {   // the drag's ghost: a tab-shaped chip following the cursor
-        id: tabDragGhost
-        visible: win.tabDragging
-        z: 1000
-        property string label: ""
-        width: Math.min(220, tabGhostLabel.implicitWidth + 24); height: 24
-        color: Theme.colors.surfaceRaised
-        border.width: 1; border.color: Theme.colors.accent
-        opacity: 0.88
-        Text {
-            id: tabGhostLabel
-            anchors.centerIn: parent
-            text: tabDragGhost.label
-            elide: Text.ElideMiddle
-            color: Theme.colors.textBright
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+    Popup {   // the merge picker: which open file to copy into this page
+        id: mergePicker
+        anchors.centerIn: Overlay.overlay
+        width: 360; padding: 1
+        modal: true; dim: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            width: 358
+            Text { text: qsTr("Merge into this page"); leftPadding: 12; topPadding: 10; bottomPadding: 6
+                   color: Theme.colors.textBright; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome; font.bold: true }
+            Repeater {
+                model: docs.models
+                delegate: Rectangle {
+                    required property int index
+                    required property var modelData
+                    readonly property bool self: index === docs.activeIndex
+                    width: 358; height: self ? 0 : 28; visible: !self; radius: 0
+                    color: mpMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+                    Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 12; anchors.right: parent.right; anchors.rightMargin: 10
+                           text: modelData.documentName; elide: Text.ElideMiddle
+                           color: Theme.colors.text; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome }
+                    MouseArea { id: mpMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: { mergePicker.close(); win.mergeFileAt(parent.index) } }
+                }
+            }
+            Item { width: 1; height: 6 }
         }
     }
 
@@ -1182,6 +1131,7 @@ ApplicationWindow {
                 }
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Import…"); role: Platform.MenuItem.NoRole; onTriggered: importDialog.open() }
+                Platform.MenuItem { text: qsTr("Merge File Into This Page…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen && docs.count > 1; onTriggered: win.openMergePicker(-1) }
                 Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Platform.MenuItem { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
@@ -1314,6 +1264,7 @@ ApplicationWindow {
                 }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Import…"); onTriggered: importDialog.open() }
+                Action { text: qsTr("&Merge File Into This Page…"); enabled: blockModel.documentOpen && docs.count > 1; onTriggered: win.openMergePicker(-1) }
                 ThemedMenuSeparator {}
                 Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
                 Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
@@ -1509,193 +1460,6 @@ ApplicationWindow {
     Column {
         anchors.fill: parent
 
-        // --- Multi-document tab strip. Browser-style top tabs, one per open
-        // document; the active tab = divider fill + a white underline (style
-        // rules: squared, accent reserved for real highlights). A trailing "+"
-        // opens a new tab; each tab has a hover/active close affordance, and a
-        // middle-click also closes. Hidden in the welcome state (no docs). ---
-        Rectangle {
-            id: docTabBar
-            width: parent.width
-            visible: docs.count > 0
-            height: visible ? Theme.dim.tabRowH : 0   // 24 — the files row of the three top rows (2026-10-18)
-            // The tab rows sit a half-step darker than the page's field (bgStrip — user ruling 2026-10-18, third pass);
-            // the ACTIVE tab is the toolbar's raised tone; inactive tabs sit on the strip — no fill, no underline,
-            // the text brightens on hover.
-            color: Theme.colors.bgStrip
-            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }   // the seam between the two tab rows (user, 2026-10-18)
-            // (bottom hairline removed — the raised strip's tonal step against
-            // the page separates on its own; border diet, product pass 2)
-
-            Row {
-                id: tabRow
-                anchors.left: parent.left; anchors.top: parent.top
-                anchors.right: navBtn.left
-                height: parent.height
-                clip: true
-                Repeater {
-                    model: docs.models
-                    delegate: Rectangle {
-                        id: tab
-                        required property int index
-                        required property var modelData     // this tab's BlockModel
-                        readonly property bool active: index === docs.activeIndex
-                        width: Math.min(220, tabLabel.implicitWidth + 44)
-                        height: docTabBar.height
-                        color: active ? Theme.colors.divider : "transparent"   // the family's selection grey (user, 2026-10-18, final)
-                        Rectangle { anchors.right: parent.right; width: 1; height: parent.height
-                                    color: Theme.colors.bgAlt2; visible: !tab.active }
-                        Text {
-                            id: tabLabel
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.left: parent.left; anchors.leftMargin: 10
-                            anchors.right: tabClose.left; anchors.rightMargin: 4
-                            elide: Text.ElideMiddle
-                            // "•" marks an untitled (never-saved) OR a modified (unsaved-edits) doc.
-                            text: ((tab.modelData.untitled || tab.modelData.dirty) ? "• " : "")
-                                  + tab.modelData.documentName
-                            color: tab.active || tabMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
-                            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall   // the tab tier (12)
-                        }
-                        FlatToolTip {   // the file's path (the bottom rail used to print it; the tab is the name now)
-                            parent: tab
-                            x: 0; y: tab.height + 6
-                            visible: tabMA.containsMouse && !win.tabDragging && !!tab.modelData.documentPath && tab.modelData.documentPath.length > 0
-                            text: tab.modelData.documentPath || ""
-                        }
-                        Rectangle {   // merge-drop affordance (sanctioned drag-feedback accent)
-                            visible: win.tabDragging && win.tabDragHoverIndex === tab.index
-                                     && docs.tabIdAt(tab.index) !== win.tabDragSourceId
-                            anchors.bottom: parent.bottom; width: parent.width; height: 2
-                            color: Theme.colors.accent
-                        }
-                        MouseArea {
-                            id: tabMA
-                            anchors.fill: parent; hoverEnabled: true
-                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-                            cursorShape: Qt.PointingHandCursor
-                            // 4px threshold separates click from merge drag
-                            // (the ruler-handle precedent).
-                            property real pressX: 0
-                            property real pressY: 0
-                            property bool didDrag: false
-                            onPressed: (m) => { pressX = m.x; pressY = m.y; didDrag = false }
-                            onPositionChanged: (m) => {
-                                if (!pressed || !(m.buttons & Qt.LeftButton)) return
-                                if (!win.tabDragging) {
-                                    if (docs.count < 2) return   // nowhere to merge into
-                                    if (Math.abs(m.x - pressX) < 4 && Math.abs(m.y - pressY) < 4) return
-                                    didDrag = true
-                                    win.startTabDrag(tab.index, tab.modelData.documentName)
-                                }
-                                win.updateTabDrag(tabMA.mapToItem(win.contentItem, m.x, m.y))
-                            }
-                            onReleased: if (win.tabDragging) win.finishTabDrag()
-                            onCanceled: win.cancelTabDrag()
-                            onClicked: (m) => { if (didDrag) return
-                                                if (m.button === Qt.MiddleButton) win.requestCloseTab(tab.index)
-                                                else win.switchToTab(tab.index) }
-                        }
-                        Rectangle {   // close affordance (declared after tabMA so its MouseArea wins)
-                            id: tabClose
-                            anchors.right: parent.right; anchors.rightMargin: 6
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 14; height: 14
-                            visible: tabMA.containsMouse || closeMA.containsMouse || tab.active
-                            color: closeMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
-                            Icon { anchors.centerIn: parent; name: "x"; size: 10
-                                   color: closeMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-                            MouseArea { id: closeMA; anchors.fill: parent; hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: win.requestCloseTab(tab.index) }
-                        }
-                    }
-                }
-            }
-
-            // Navigator: a list of every open document by FULL name — so the
-            // strip stays usable when many docs are open (the tabs clip; this
-            // is always one click away). Mirrors TableTabs' overflow menu, but
-            // opens DOWNWARD (the strip is at the window's top edge).
-            Rectangle {
-                id: navBtn
-                anchors.right: parent.right; anchors.top: parent.top
-                width: Theme.dim.tabRowH; height: docTabBar.height   // square: one width for every strip button
-                color: navMenu.visible ? Theme.colors.divider : "transparent"
-                Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                            color: Theme.colors.bgAlt2 }
-                Icon { anchors.centerIn: parent; name: "list"; size: 14
-                       color: navMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
-                MouseArea { id: navMA; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: navMenu.visible ? navMenu.close() : navMenu.open() }
-
-                Popup {
-                    id: navMenu
-                    padding: 1
-                    width: 320
-                    height: Math.min(360, navCol.implicitHeight + 2)
-                    x: navBtn.width - width        // right-aligned to the button
-                    y: navBtn.height + 1            // drop down below the strip
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                    background: Rectangle { color: Theme.colors.surface; radius: 0
-                                            border.width: 1; border.color: Theme.colors.border }
-                    contentItem: Flickable {
-                        id: navFlick
-                        clip: true
-                        contentWidth: width
-                        contentHeight: navCol.implicitHeight
-                        boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: MnScrollBar {}
-                        Column {
-                            id: navCol
-                            width: navFlick.width
-                            Repeater {
-                                model: docs.models
-                                delegate: Rectangle {
-                                    required property int index
-                                    required property var modelData
-                                    readonly property bool active: index === docs.activeIndex
-                                    width: navCol.width; height: 28
-                                    color: navItemMA.containsMouse ? Theme.colors.surfaceHover
-                                         : (active ? Theme.colors.divider : "transparent")
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        anchors.left: parent.left; anchors.leftMargin: 12
-                                        anchors.right: parent.right; anchors.rightMargin: 10
-                                        // Same dirty-dot rule as the tab strip: unsaved OR edited.
-                                        text: ((parent.modelData.untitled || parent.modelData.dirty) ? "• " : "")
-                                              + parent.modelData.documentName
-                                        elide: Text.ElideMiddle   // keep the distinguishing tail
-                                        color: parent.active ? Theme.colors.textBright : Theme.colors.text
-                                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
-                                    }
-                                    MouseArea {
-                                        id: navItemMA
-                                        anchors.fill: parent; hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: { win.switchToTab(parent.index); navMenu.close() }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {   // new-tab button: right after the last tab (browser-style; user ruling 2026-10-18), clamped at the strip's end when the tabs overflow
-                id: newTabBtn
-                x: Math.min(tabRow.implicitWidth, tabRow.width - width); y: 0
-                width: Theme.dim.tabRowH; height: docTabBar.height
-                color: "transparent"
-                Icon { anchors.centerIn: parent; name: "plus"; size: 14
-                       color: newMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-                MouseArea { id: newMA; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor; onClicked: docs.newTab() }
-            }
-
-        }
-
         // Rows 2 + 3 of the top chrome (2026-10-18, §2.14): the COMPONENTS row (pages / elements / frames — the
         // former bottom strip) and, from S3, the TOOLBAR. A Loader like docContent: nothing here touches the
         // empty model while no document is open.
@@ -1707,9 +1471,9 @@ ApplicationWindow {
             // and the content slid up under them); unset, the Loader takes the item's height. Width only is fine —
             // the two dimensions are independent.
             sourceComponent: Column {
-                property alias tabs: componentsRow
+                property alias tabs: pathBar
                 property alias toolbar: chromeToolbar
-                TableTabs { id: componentsRow; width: parent.width; editor: win.activeEditor }
+                PathBar { id: pathBar; width: parent.width; editor: win.activeEditor }
                 ChromeToolbar { id: chromeToolbar; width: parent.width; editor: win.activeEditor; inspector: inspectorPanel }
             }
         }
@@ -1717,7 +1481,7 @@ ApplicationWindow {
         Row {
             id: contentRow
             width: parent.width
-            height: parent.height - docTabBar.height - chromeRows.height
+            height: parent.height - chromeRows.height
             // editor is null while no document is open — the rail/inspector guard it,
             // and the welcome overlay covers everything.
             readonly property var editor: docContent.item ? docContent.item.editorItem : null
@@ -1753,7 +1517,8 @@ ApplicationWindow {
                                      inspector: inspectorPanel
                                      tabsItem: chromeRows.item ? chromeRows.item.tabs : null
                                      toolbarItem: chromeRows.item ? chromeRows.item.toolbar.canvasTools : null
-                                     chromeItem: chromeRows.item ? chromeRows.item.toolbar : null }
+                                     chromeItem: chromeRows.item ? chromeRows.item.toolbar : null
+                                     onMergeFileRequested: (gap) => win.openMergePicker(gap) }
                         }
                         CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner }
                     }
@@ -1770,7 +1535,7 @@ ApplicationWindow {
         id: inspectorPanel
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: parent.height - docTabBar.height - chromeRows.height   // (docTabBar.height is 0 when hidden)
+        height: parent.height - chromeRows.height
         z: 5   // above the editor content; the welcome overlay (z:100) still covers
         editor: contentRow.editor
     }
@@ -1885,7 +1650,7 @@ ApplicationWindow {
         opacity: Toasts.active ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
         anchors { top: parent.top; right: parent.right
-                  topMargin: docTabBar.height + chromeRows.height + 8; rightMargin: 12 }
+                  topMargin: chromeRows.height + 8; rightMargin: 12 }
         width: toastRow.implicitWidth + 24
         height: 32
         radius: 0
