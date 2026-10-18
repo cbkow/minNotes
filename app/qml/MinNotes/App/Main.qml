@@ -835,7 +835,6 @@ ApplicationWindow {
         property bool checkGrammar: true
         property string ignoredRules: "[]"
         Component.onCompleted: {
-        Overlay.overlay.modal = modalDim; Overlay.overlay.modeless = null   // the modal backdrop (see modalDim above)
 spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ignoredRulesJson = ignoredRules }
     }
     Connections {
@@ -1403,6 +1402,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         return ""
     }
     Component.onCompleted: {
+        Overlay.overlay.modal = modalDim; Overlay.overlay.modeless = null   // the modal backdrop (see modalDim above)
         if (_poolProbeFixture !== "") {
             width = 1200; height = 900
             docs.newTab()
