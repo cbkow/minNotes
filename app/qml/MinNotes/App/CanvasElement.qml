@@ -46,10 +46,12 @@ Item {
             else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
             el.editor.forceActiveFocus()
         }
-        onDoubleTapped: {
+        onDoubleTapped: (ev) => {
             ++el.view.doubleTaps
+            if (ev.modifiers & Qt.ShiftModifier) { el.view.select(el.elementId); el.view.openSelected(); return }   // the "full window" rung
             if (el.kind === "page") canvas.focusPage = el.elementId
             else if (el.kind === "shape") el.view.editText(el.elementId)
+            else if (el.kind === "media") { el.view.select(el.elementId); el.view.openSelected() }   // phase A: the full-frame view / Open (phase C re-points this to live-in-place)
         }
     }
     DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row

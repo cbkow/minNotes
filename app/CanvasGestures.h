@@ -16,7 +16,7 @@ public:
     Q_INVOKABLE void move(QQuickItem* item, qreal x, qreal y);
     Q_INVOKABLE void release(QQuickItem* item, qreal x, qreal y);
     Q_INVOKABLE void click(QQuickItem* item, qreal x, qreal y);
-    Q_INVOKABLE void doubleClick(QQuickItem* item, qreal x, qreal y);
+    Q_INVOKABLE void doubleClick(QQuickItem* item, qreal x, qreal y, int modifiers = 0);   // Qt.ShiftModifier etc.
     // A drag in `steps` moves (each a real move event with advancing timestamps).
     Q_INVOKABLE void drag(QQuickItem* item, qreal x0, qreal y0, qreal x1, qreal y1, int steps = 8);
     Q_INVOKABLE void dragWith(QQuickItem* item, int button, qreal x0, qreal y0, qreal x1, qreal y1, int steps = 8);   // Qt.MiddleButton etc.
@@ -25,7 +25,7 @@ public:
     Q_INVOKABLE void type(QQuickItem* item, const QString& text);
     Q_INVOKABLE void key(QQuickItem* item, int key, int modifiers = 0);
 private:
-    void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons);
+    void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier);
     qint64 nextStamp(qint64 advance);
     qint64 stamp_ = 1000;
 };

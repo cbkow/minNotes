@@ -111,6 +111,31 @@ Rectangle {
         selectedIds = selectedIds.filter(id => canvas.elementKind(id) !== "")   // (a last page refuses)
     }
     function drillSelected() { if (selectedId !== "" && canvas.elementKind(selectedId) === "page") canvas.focusPage = selectedId }
+    // OPEN (2.0 phase A4) — one action behind the open glyph, the context menu's row, Shift-double-click and
+    // Return: a page pops out to the page view, a video / PDF to its full-frame tab, a text chip to its editor,
+    // a bookmark to the browser, any other file to the platform's default app. (Phase C adds "live in place".)
+    function canOpen(id) { const k = canvas.elementKind(id); return k === "page" || k === "shape" || k === "media" }
+    function openLabel(id) {
+        const k = canvas.elementKind(id)
+        if (k === "page") return qsTr("Open page")
+        if (k === "shape") return qsTr("Edit text")
+        const mk = canvas.mediaElementKind(id)
+        return mk === "video" ? qsTr("Open in studio") : mk === "pdf" ? qsTr("Open PDF") : mk === "bookmark" ? qsTr("Open link") : qsTr("Open")
+    }
+    property int opens: 0                // probe diagnostics
+    function openSelected() {
+        const id = selectedId
+        ++opens
+        if (id === "") return
+        const k = canvas.elementKind(id)
+        if (k === "page") { canvas.focusPage = id; return }
+        if (k === "shape") { editText(id); return }
+        if (k !== "media") return
+        const mk = canvas.mediaElementKind(id)
+        if (mk === "video" || mk === "pdf") { editor.setActiveTab(id); return }
+        if (mk === "bookmark") { try { Qt.openUrlExternally(JSON.parse(canvas.elementJson(id)).media.src) } catch (e) {} return }
+        canvas.openElement(id)
+    }
     function duplicateSelected() {
         const made = []
         canvas.beginBatch(qsTr("Duplicate"))
@@ -193,7 +218,7 @@ Rectangle {
     property bool pressOnElement: false
     property int taps: 0                 // probe diagnostics
     property int doubleTaps: 0
-    function frameHit(p) { const f = selFrame; return f.shown && p.x >= f.x - 8 && p.x <= f.x + f.width + 8 && p.y >= f.y - 8 && p.y <= f.y + f.height + 8 }
+    function frameHit(p) { const f = selFrame; return f.shown && ((p.x >= f.x - 8 && p.x <= f.x + f.width + 8 && p.y >= f.y - 8 && p.y <= f.y + f.height + 8) || f.glyphHit(p)) }
     PointHandler {
         acceptedButtons: Qt.LeftButton
         onActiveChanged: cv.pressOnElement = active ? (!cv.emptyAt(point.position.x, point.position.y) || cv.frameHit(point.position)) : false

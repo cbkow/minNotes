@@ -3127,7 +3127,11 @@ FocusScope {
                 const th = blockModel.tableHeadOf(rec)   // a table row picked this way is an object (Delete removes it)
                 root.selObject = th >= 0 ? { kind: "row", head: th, r: blockModel.tableRowOf(rec), lo: first, hi: last } : null
             }
-            else if (root.activeFrameId === "" && canvas.documentOpen) { root.setActiveTab("canvas") }   // nothing to cancel: the canvas is one Esc away (ruling 6)
+            else if (root.activeFrameId === "" && canvas.documentOpen) {   // nothing to cancel: the canvas is one Esc away (ruling 6), the page SELECTED there
+                const pid = canvas.focusPage
+                root.setActiveTab("canvas")
+                if (pid !== "") Qt.callLater(function() { canvasView.select(pid) })
+            }
             event.accepted = true
         }
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
@@ -3237,7 +3241,7 @@ FocusScope {
                 else if (root.inspector && canvasView.drawing) root.inspector.drawTool = "select"   // disarm the pen first
                 else canvasView.clearSelection()
             }
-            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasView.drillSelected()
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasView.openSelected()   // Return = Open (a page: the page view; media: its tab)
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4002,6 +4006,8 @@ FocusScope {
         property int checks: 0
         property var heightsBefore: ({})
         property string livePage: ""           // the fixture's page (the big one)
+        property int probeOpens: 0
+        property int probeTaps: 0
         property string pdfElId: ""            // P9: the element-tab fixtures
         property string vidElId: ""
         property string inkId: ""
@@ -4536,10 +4542,16 @@ FocusScope {
                     pdfElId = canvas.addMediaElement(JSON.stringify({ kind: "pdf", src: "missing/doc.pdf", w: 612, h: 792, pages: 3 }), Qt.rect(b.x + b.width + 200, b.y, 480, 622))
                     vidElId = canvas.addMediaElement(JSON.stringify({ kind: "video", src: "missing/clip.mp4", w: 1920, h: 1080, fps: 24, frames: 48, durMs: 2000 }), Qt.rect(b.x + b.width + 200, b.y + 700, 480, 270))
                     check(pdfElId !== "" && vidElId !== "", "a PDF and a video element added (missing files: the views open on their descriptors)")
+                    cvw.fit()   // the camera is the user's since P7: bring the new fixtures INTO VIEW or every gesture below lands outside the window
                     ++step; return
                 }
                 if (step === 2) {
                     check(!!t && t.canvasMode && t.elementTabCount === 2 && t.pageTabCount === canvas.pageIds.length, "canvas mode: one tab per full-frame media element beside the page tabs (" + (t ? t.elementTabCount : -1) + ")")
+                    const r = canvas.elementRect(vidElId), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2), q = cvw.mapToItem(root, c.x, c.y)
+                    const hit = root.childAt(q.x, q.y)
+                    probeTaps = cvw.taps
+                    g.click(cvw, c.x, c.y)
+                    check(cvw.taps > probeTaps && cvw.selectedId === vidElId, "after the P8 round trip a left click still selects an element (taps +" + (cvw.taps - probeTaps) + ", topmost item under the point: " + (hit ? hit.toString() : "none") + ")")
                     root.setActiveTab(pdfElId)
                     ++step; return
                 }
@@ -4579,8 +4591,77 @@ FocusScope {
                     canvas.undo()
                     ++step; return
                 }
-                if (step < 16) { ++step; return }
-                check(t.elementTabCount === 2, "…undo brings it back (" + t.elementTabCount + ")")
+                if (step === 16) {
+                    check(t.elementTabCount === 2, "…undo brings it back (" + t.elementTabCount + ")")
+                    cvw.select(pdfElId)
+                    ++step; return
+                }
+                if (step === 18) {   // the open glyph (phase A4)
+                    const gl = cvw.selectionFrame.openGlyph
+                    check(cvw.selectionFrame.single && gl.visible && cvw.selectionFrame.canOpen, "a selected PDF element shows the open glyph")
+                    const p = gl.mapToItem(cvw, gl.width / 2, gl.height / 2)
+                    check(cvw.frameHit(p), "…which counts as the frame for the press gate")
+                    probeOpens = cvw.opens; probeTaps = cvw.taps
+                    g.click(cvw, p.x, p.y)
+                    ++step; return
+                }
+                if (step === 20) {
+                    check(root.activeFrameId === pdfElId && pdfFrame.visible, "a click on the glyph opens the element's view (frame '" + root.activeFrameId + "', opens +" + (cvw.opens - probeOpens) + ", taps +" + (cvw.taps - probeTaps) + ", selected '" + cvw.selectedId + "', glyph visible " + cvw.selectionFrame.openGlyph.visible + ")")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step === 22) {
+                    check(cvw.visible && cvw.selectedId === pdfElId, "Escape: canvas, element selected")
+                    const r = canvas.elementRect(vidElId), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)
+                    probeOpens = cvw.opens; probeTaps = cvw.doubleTaps
+                    g.doubleClick(cvw, c.x, c.y)
+                    ++step; return
+                }
+                if (step === 24) {
+                    check(studioFrame.visible && root.activeFrameId === vidElId, "double-click on a video element = its studio (phase A's fallback; C makes it live in place) (frame '" + root.activeFrameId + "', opens +" + (cvw.opens - probeOpens) + ", doubleTaps +" + (cvw.doubleTaps - probeTaps) + ", selected '" + cvw.selectedId + "')")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step === 26) {
+                    const r = canvas.elementRect(livePage), c = cam.worldToScreen(r.x + 60, r.y + 60)
+                    check(cvw.visible && cvw.selectedId === vidElId, "…Escape back, the video selected")
+                    g.doubleClick(cvw, c.x, c.y, Qt.ShiftModifier)
+                    ++step; return
+                }
+                if (step === 28) {
+                    check(!root.activeCanvas && canvas.focusPage === livePage && flick.visible, "Shift-double-click on a page pops it out to the page view")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step === 30) {
+                    check(root.canvasShown && cvw.visible && cvw.selectedId === livePage, "Escape in the page view returns to the canvas with THAT page selected ('" + cvw.selectedId + "')")
+                    g.key(root, Qt.Key_Return)
+                    ++step; return
+                }
+                if (step === 32) {
+                    check(!root.activeCanvas && canvas.focusPage === livePage, "Return on a selected page opens it")
+                    root.setActiveTab("canvas")
+                    ++step; return
+                }
+                if (step === 34) {
+                    const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
+                    cvw.clearSelection()
+                    g.rightClick(cvw, c.x, c.y)
+                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 8,
+                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    cvw.contextMenu.close()
+                    ++step; return
+                }
+                if (step === 36) {
+                    cvw.select(livePage)
+                    const c = cam.worldToScreen(canvas.elementRect(livePage).x + 20, canvas.elementRect(livePage).y + 20)
+                    g.rightClick(cvw, c.x, c.y)
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 4, "a page's menu: Open page · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    cvw.contextMenu.close()
+                    ++step; return
+                }
+                if (step < 38) { ++step; return }
+                check(cvw.selectedId === livePage, "menus closed, the page stays selected")
                 nextPhase("element-tabs")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))

@@ -20,6 +20,28 @@ Item {
 
     Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Theme.colors.accent; radius: 0 }
 
+    // The OPEN glyph (2.0 phase A4): a 20-px square off the frame's top-right corner, screen space, no
+    // accent (the frame carries it) — the "full window" rung of the gesture ladder for a single element.
+    readonly property bool canOpen: single && view.canOpen(id_)
+    readonly property var openGlyph: glyph   // probe
+    function glyphHit(p) {   // p in the view's coordinates
+        if (!glyph.visible) return false
+        const q = mapFromItem(view, p.x, p.y)
+        return q.x >= glyph.x && q.x <= glyph.x + glyph.width && q.y >= glyph.y && q.y <= glyph.y + glyph.height
+    }
+    Rectangle {
+        id: glyph
+        visible: frame.canOpen
+        x: frame.width + 4; y: -24; width: 20; height: 20; radius: 0
+        color: glyphHover.hovered ? Theme.colors.surfaceHover : Theme.colors.surface
+        border.width: 1; border.color: Theme.colors.border
+        Icon { anchors.centerIn: parent; name: "arrow-square-out"; size: 14
+               color: glyphHover.hovered ? Theme.colors.textBright : Theme.colors.textMuted }
+        HoverHandler { id: glyphHover; cursorShape: Qt.PointingHandCursor }
+        TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: frame.view.openSelected() }
+        FlatToolTip { parent: glyph; x: -implicitWidth + glyph.width; y: glyph.height + 6; visible: glyphHover.hovered; text: frame.view.openLabel(frame.id_) }
+    }
+
     // Resize handles: dx/dy say which edges move. Drags read the handler's SCENE delta (zoom-free),
     // divide by the zoom and rebase the world rect.
     component Handle: Rectangle {

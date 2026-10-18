@@ -6,12 +6,12 @@
 
 qint64 CanvasGestures::nextStamp(qint64 advance) { stamp_ += advance; return stamp_; }
 
-void CanvasGestures::mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons) {
+void CanvasGestures::mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods) {
     if (!item || !item->window()) return;
     QQuickWindow* w = item->window();
     const QPointF scene = item->mapToScene(QPointF(x, y));
     const QPointF global = w->mapToGlobal(scene.toPoint());
-    QMouseEvent ev(static_cast<QEvent::Type>(type), scene, scene, global, button, buttons, Qt::NoModifier);
+    QMouseEvent ev(static_cast<QEvent::Type>(type), scene, scene, global, button, buttons, mods);
     ev.setTimestamp(static_cast<quint64>(nextStamp(type == QEvent::MouseMove ? 16 : 40)));
     QCoreApplication::sendEvent(w, &ev);
 }
@@ -26,10 +26,13 @@ void CanvasGestures::click(QQuickItem* item, qreal x, qreal y) {
     release(item, x, y);
 }
 
-void CanvasGestures::doubleClick(QQuickItem* item, qreal x, qreal y) {
+void CanvasGestures::doubleClick(QQuickItem* item, qreal x, qreal y, int modifiers) {
     nextStamp(1000);
-    press(item, x, y); release(item, x, y);   // two taps inside the double-click interval: TapHandler counts them
-    press(item, x, y); release(item, x, y);
+    const Qt::KeyboardModifiers m = Qt::KeyboardModifiers(modifiers);
+    for (int i = 0; i < 2; ++i) {   // two taps inside the double-click interval: TapHandler counts them
+        mouse(item, QEvent::MouseButtonPress, x, y, Qt::LeftButton, Qt::LeftButton, m);
+        mouse(item, QEvent::MouseButtonRelease, x, y, Qt::LeftButton, Qt::NoButton, m);
+    }
 }
 
 void CanvasGestures::drag(QQuickItem* item, qreal x0, qreal y0, qreal x1, qreal y1, int steps) {
