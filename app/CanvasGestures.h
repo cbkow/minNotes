@@ -31,6 +31,8 @@ public:
     // The item chain under (x, y) in `item`'s coordinates, top-most leaf first, naming the ones that ACCEPT mouse
     // buttons (the press stops at the first of those) — the probe's "who ate my click" diagnostic.
     Q_INVOKABLE QString itemsUnder(QQuickItem* item, qreal x, qreal y) const;
+    Q_INVOKABLE QString focusItemName() const;   // the window's active focus item (class + objectName), for key walks
+    Q_INVOKABLE bool envSet(const QString& name) const;
 private:
     void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier);
     qint64 nextStamp(qint64 advance);

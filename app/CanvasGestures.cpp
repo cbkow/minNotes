@@ -5,6 +5,8 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QQuickWindow>
+#include <QGuiApplication>
+#include <QQuickItem>
 #if defined(Q_OS_MACOS)
 #include <mach/mach.h>
 #endif
@@ -130,4 +132,17 @@ qint64 CanvasGestures::residentBytes() const {
         return static_cast<qint64>(info.resident_size);
 #endif
     return -1;
+}
+
+QString CanvasGestures::focusItemName() const {
+    QObject* o = QGuiApplication::focusObject();
+    if (!o) return QStringLiteral("(none)");
+    QString n = QString::fromLatin1(o->metaObject()->className());
+    if (!o->objectName().isEmpty()) n += QLatin1Char('#') + o->objectName();
+    if (auto* it = qobject_cast<QQuickItem*>(o)) n += it->isVisible() ? QStringLiteral(" visible") : QStringLiteral(" HIDDEN");
+    return n;
+}
+bool CanvasGestures::envSet(const QString& name) const {
+    const QByteArray v = qgetenv(name.toLatin1());
+    return !v.isEmpty() && v != "0";
 }

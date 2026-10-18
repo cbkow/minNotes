@@ -12,6 +12,7 @@ import QtQuick.Controls.Basic
 
 Slider {
     id: root
+    focusPolicy: Qt.NoFocus   // chrome never keeps the keyboard: a zoom-slider drag must not strand the transport / editor keys (walk 7c)
 
     // Fill (and handle) color when enabled. Default = the app accent.
     property color fillColor: Theme.colors.accent

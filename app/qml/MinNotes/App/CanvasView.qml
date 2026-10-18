@@ -474,6 +474,7 @@ Rectangle {
                     const a = cam.screenToWorld(r.x, r.y), b = cam.screenToWorld(r.x + r.width, r.y + r.height)
                     cv.selectMany(canvas.visibleElements(a.x, a.y, b.x, b.y))
                 }
+                cv.editor.forceActiveFocus()   // every selecting gesture hands the keys to the editor
             }
         }
         onCentroidChanged: {

@@ -66,6 +66,7 @@ Item {
         onActiveChanged: {
             if (active) {
                 if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
+                el.editor.forceActiveFocus()   // a jittery click past the drag threshold is a SELECTION too: the keys must land in the editor (walk 7c)
                 el.view.beginSelectionDrag()
                 ++el.view.elementDrags
             } else el.view.endSelectionDrag()

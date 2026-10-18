@@ -3184,7 +3184,9 @@ FocusScope {
         }
     }
 
+    readonly property bool keyTrace: Qt.application.arguments.indexOf("--key-trace") >= 0 || gestures.envSet("MN_KEY_TRACE")
     Keys.onPressed: (event) => {
+        if (root.keyTrace) console.log("KEY", event.key, "mods", event.modifiers, "repeat", event.isAutoRepeat, "ctx '" + root.videoKeyContext + "'", "canvasShown", root.canvasShown, "hostValid", canvasHost.valid, "selected", root.canvasItem ? root.canvasItem.selectedId : "-", "rootFocus", root.activeFocus, "focusItem", gestures.focusItemName())
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
@@ -4139,9 +4141,23 @@ FocusScope {
                 const b = canvas.canvasBounds()
                 elId = canvas.addMediaElementFromUrl(videoProbe.clip, b.x + b.width + 100, b.y)
                 check(elId !== "" && canvas.mediaElementKind(elId) === "video", "the clip as a canvas element")
-                root.setActiveTab(elId); ++step; return
+                root.canvasItem.fit(); ++step; return
             }
-            if (step === 65) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
+            if (step === 62) {   // the COLD path (walk 7c): click the element, keys at once — no studio, no bar click first
+                const cvw = root.canvasItem, it = cvw.pageItemFor(elId)
+                const c = it ? it.mapToItem(cvw, it.width / 2, it.height / 2) : null
+                cvw.forceActiveFocus()   // the keys parked on some chrome (a slider, a field) …
+                if (c) gestures.drag(cvw, c.x, c.y, c.x + 14, c.y + 14, 3)   // … and the click jitters past the drag threshold (remote desktop): the DragHandler selects
+                check(!!c && cvw.selectedId === elId && root.videoKeyContext === "canvas" && root.activeFocus,
+                      "a cold (jittery) click selects the element and the editor holds the keys (ctx '" + root.videoKeyContext + "', focus " + root.activeFocus + ", under: " + (c ? gestures.itemsUnder(cvw, c.x, c.y) : "?") + ")")
+                gestures.key(root, Qt.Key_Space); ++step; return
+            }
+            if (step === 63) { check(videoDec.isPlaying && root.canvasHostPlaying, "Space on the cold-selected element plays (playing " + videoDec.isPlaying + ", key " + (root.videoPlayingKey !== "") + ")"); probeFrame = root._vidIntendedFrame(); gestures.key(root, Qt.Key_Right); ++step; return }
+            if (step === 64) { check(!videoDec.isPlaying && root._vidIntendedFrame() === probeFrame + 1, "→ pauses and steps one frame (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
+            if (step === 65) { check(root._vidFastSeekDir === -1, "J held = reverse shuttle on the canvas"); gestures.keyRelease(root, Qt.Key_J); gestures.key(root, Qt.Key_Space); ++step; return }
+            if (step === 66) { check(root._vidFastSeekDir === 0 && videoDec.isPlaying, "…released; Space plays again"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 67) { check(!videoDec.isPlaying, "K pauses"); root.setActiveTab(elId); step = 70; return }
+            if (step === 70) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
             if (step === 90) { state("element studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the element plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows");
                                gestures.key(root, Qt.Key_Space); ++step; return }
             if (step === 95) { check(!videoDec.isPlaying, "Space in the element's studio pauses"); gestures.key(root, Qt.Key_Escape); ++step; return }
