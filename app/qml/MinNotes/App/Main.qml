@@ -1518,7 +1518,7 @@ ApplicationWindow {
             id: docTabBar
             width: parent.width
             visible: docs.count > 0
-            height: visible ? Theme.dim.tabRowH : 0   // 24 — the files row of the three top rows (2026-10-18)
+            height: visible ? Theme.dim.tabRowH + Theme.dim.tabRowTopPad : 0   // 24 + a little room above the tabs — the files row of the three top rows (2026-10-18)
             // The tab rows sit a half-step darker than the page's field (bgStrip — user ruling 2026-10-18, third pass);
             // the ACTIVE tab is the toolbar's raised tone; inactive tabs sit on the strip — no fill, no underline,
             // the text brightens on hover.
@@ -1529,9 +1529,9 @@ ApplicationWindow {
 
             Row {
                 id: tabRow
-                anchors.left: parent.left; anchors.top: parent.top
+                anchors.left: parent.left; anchors.top: parent.top; anchors.topMargin: Theme.dim.tabRowTopPad
                 anchors.right: navBtn.left
-                height: parent.height
+                height: Theme.dim.tabRowH
                 clip: true
                 Repeater {
                     model: docs.models
@@ -1541,7 +1541,7 @@ ApplicationWindow {
                         required property var modelData     // this tab's BlockModel
                         readonly property bool active: index === docs.activeIndex
                         width: Math.min(220, tabLabel.implicitWidth + 44)
-                        height: docTabBar.height
+                        height: Theme.dim.tabRowH
                         color: active ? Theme.colors.divider : "transparent"   // the family's selection grey (user, 2026-10-18, final)
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height
                                     color: Theme.colors.bgAlt2; visible: !tab.active }
@@ -1619,8 +1619,8 @@ ApplicationWindow {
             // opens DOWNWARD (the strip is at the window's top edge).
             Rectangle {
                 id: navBtn
-                anchors.right: parent.right; anchors.top: parent.top
-                width: Theme.dim.tabRowH; height: docTabBar.height   // square: one width for every strip button
+                anchors.right: parent.right; anchors.top: parent.top; anchors.topMargin: Theme.dim.tabRowTopPad
+                width: Theme.dim.tabRowH; height: Theme.dim.tabRowH   // square: one width for every strip button
                 color: navMenu.visible ? Theme.colors.divider : "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
                             color: Theme.colors.bgAlt2 }
@@ -1685,8 +1685,8 @@ ApplicationWindow {
 
             Rectangle {   // new-tab button: right after the last tab (browser-style; user ruling 2026-10-18), clamped at the strip's end when the tabs overflow
                 id: newTabBtn
-                x: Math.min(tabRow.implicitWidth, tabRow.width - width); y: 0
-                width: Theme.dim.tabRowH; height: docTabBar.height
+                x: Math.min(tabRow.implicitWidth, tabRow.width - width); y: Theme.dim.tabRowTopPad
+                width: Theme.dim.tabRowH; height: Theme.dim.tabRowH
                 color: "transparent"
                 Icon { anchors.centerIn: parent; name: "plus"; size: 14
                        color: newMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }

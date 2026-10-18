@@ -71,7 +71,8 @@ QtObject {
         // The three top rows (2.0 chrome re-organisation, user ruling 2026-10-18): files · components · toolbar.
         readonly property int tabRowH:        24     // the files row (== the components row; user: "the same size", 2026-10-18)
         readonly property int componentRowH:  24     // the components row (pages / elements / frames)
-        readonly property int toolbarH:       30     // the toolbar row
+        readonly property int toolbarH:       36     // the toolbar row (28-px buttons with 4 px above and below — user, 2026-10-18)
+        readonly property int tabRowTopPad:   4      // breathing room above the files row's tabs
         readonly property int chromeBtn:      28     // a toolbar button's edge (inside the 30-px row)
         readonly property int chromeIcon:     16     // a toolbar button's icon
     }
