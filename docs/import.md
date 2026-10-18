@@ -1,15 +1,16 @@
 ---
 title: Import
 permalink: /import/
-nav_order: 10
+nav_order: 11
 ---
 
 # Import
 
-**File ▸ Import…** — or drop a file on the welcome screen, or drag one
-into a note — brings existing material in. A single file becomes a fresh
-untitled note (nothing touches disk until you save); an archive of many
-becomes a folder of notes.
+**File ▸ Import…** — or drop a file on the welcome screen, on the canvas,
+or into a page — brings existing material in. From the menu or the
+welcome screen a file becomes a fresh untitled file (nothing touches disk
+until you save); dropped on the canvas it becomes a **new page** where
+you dropped it; dropped into a page it lands in that page.
 
 ![The import dialog](images/mn024.png)
 
@@ -24,13 +25,13 @@ becomes a folder of notes.
 | OpenDocument (`.ods` / `.odt`) | Calc sheets → tables; Writer docs with styles, lists, images |
 | Source code | 37 languages → one syntax-highlighted code block |
 | RTF | macOS only |
-| Evernote (`.enex`) | One note per entry; images and attachments come along |
-| Notion export (`.zip`) | Every page becomes a note; databases become tables |
+| Evernote (`.enex`) | One page per note, laid out in a grid on the canvas; images and attachments come along |
+| Notion export (`.zip`) | Every page becomes a page; databases become tables |
+| minNotes (`.mnd` / `.mnpkg`) | Dropped on the canvas: its pages copy in, arranged as they were |
 
 Spreadsheet padding (empty rows and columns out to the sheet edge) is
 trimmed on the way in, and images referenced by imported documents are
-copied into the note's media folder.
+copied into the file's media folder.
 
-> To bring an imported note **into an existing note**, import it to a tab
-> and then [drag the tab onto the destination](basics.md) — the whole
-> thing merges where you drop it.
+> To bring an imported file **into an existing page**, open both and use
+> **File ▸ Merge File Into This Page…** — see [Files & Pages](basics.md).

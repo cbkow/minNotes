@@ -1,8 +1,9 @@
 # minNotes
 
-A fast, block-based notes editor for macOS and Windows. Documents are SQLite
-databases (`.mnd`) with a flat list of blocks; the editor is a virtualized Qt
-Quick surface that owns the document model directly.
+A fast notes editor for macOS and Windows built around a canvas: a file is an
+infinite canvas whose elements are pages (block editors), media, ink and text.
+Files are SQLite databases (`.mnd`); a page is a flat list of blocks; the
+editor is a virtualized Qt Quick surface that owns the page model directly.
 
 ## What's in the box
 
@@ -11,13 +12,14 @@ Quick surface that owns the document model directly.
 | App shell, editor, dialogs, menus | Qt 6.11 / QML / Qt Quick Controls 2 |
 | Document store (`.mnd`), blocks, undo | SQLite (C++ `app/core/`) |
 | Block types | paragraphs, headings, code (syntax-highlighted), quotes, bullet/numbered/task/choice lists, dividers; blocks sit side by side in lanes, and a run of lanes with a header row is a table (typed columns, grips, row filter, kanban board) whose cells hold any blocks |
-| Media | inline images, video (decode + scrub/skim audio + annotate), inline PDF, file attachments |
-| Ink & comments | tool-driven drawing (the armed tool is the mode), page margin ink, per-page PDF annotation, sketch blocks, on-video annotations (QCView-interop), multi-select ink editing, text-anchored comment threads with in-margin cards |
-| Page | per-document page width (760–1600 detents, top ruler) with edge-anchored margin-ink migration |
+| Canvas | pages as drag-sized cards (edit in place at any zoom, or full-window), media elements (video with the full transport, PDF paging, images, audio, folders, files, bookmarks), ink and shapes with live restyling, marquee / multi-select / z order, a second undo log routed by focus, HTML export with pan/zoom + tabs and a PNG poster |
+| Media | inline images, video (decode + scrub/skim audio + annotate), inline PDF, file attachments — inline in pages and as canvas cards |
+| Ink & comments | canvas drawing tools on single keys, on-video annotations (QCView-interop), text-anchored comment threads with in-margin cards |
+| Page | responsive width (the window's, or a 640/760/880 measure), one path bar (`File › Canvas › Page › Frame`), a mode-switched toolbar, PT Serif body paragraphs |
 | Import | Markdown, txt, CSV/TSV, HTML, DOCX, Excel `.xlsx`, OpenDocument `.odt`/`.ods`, source-code files, RTF (macOS), Evernote `.enex`, Notion exports |
-| Export | Markdown (+`.assets/`), self-contained HTML (annotation layers + toggle, hover comment threads, lightbox), DOCX with native Word review comments, PDF (tables print in column bands like a spreadsheet, header rows repeated), `.mnpkg` sealed packages (media inside, video streams from the archive) |
-| Cross-OS | OS-neutral path mappings for referenced media, multi-document tabs, `.mnd`/`.mnpkg` file associations |
-| Tab merge | drag a tab onto another tab, drop between blocks — the whole document copies in as one undo entry (assets follow, comments keep their history) |
+| Export | Markdown (+`.assets/`), self-contained fluid HTML (readable-width toggle, checkable tasks, hover comment threads, lightbox), DOCX with native Word review comments, PDF (tables print in column bands like a spreadsheet, header rows repeated), the canvas as HTML (tab strip, video-note filmstrips) or a PNG poster, `.mnpkg` sealed packages (media inside, video streams from the archive) |
+| Cross-OS | OS-neutral path mappings for referenced media, multi-file switcher, `.mnd`/`.mnpkg` file associations |
+| Merge | File ▸ Merge File Into This Page, or drop a `.mnd`/`.mnpkg` on the canvas — pages copy in as one undo entry (assets follow, comments keep their history) |
 | Updates | Sparkle (macOS) / WinSparkle (Windows), EdDSA-signed appcasts |
 
 ## Requirements
@@ -58,9 +60,10 @@ cmake --preset=debug && cmake --build --preset=debug --parallel
 ## Repo layout
 
 ```
-app/core/    C++ document model: BlockModel, Document (SQLite), MediaStore,
-             DocumentManager, PathMap, Exporter (md/HTML/DOCX), providers
-app/notes/   ink stroke engine (sketch + video annotations)
+app/core/    C++ model: CanvasDocument (the file), BlockModel (a page), Document
+             (SQLite), MediaStore, DocumentManager, PathMap, Converter (1.x → 2.0),
+             Exporter (md/HTML/DOCX/PDF), CanvasExporter (HTML + poster), providers
+app/notes/   ink stroke engine (canvas ink, media ink, video annotations), MediaHost
 app/qml/     QML UI tree (Main, Editor, MediaBlock, tables, dialogs, …)
 external/    vendored deps (ffmpeg, kf6, Sparkle, aspekta font) + build-ksyntax.sh
 packaging/   macOS bundle (Info.plist, entitlements, icon) + Windows installer

@@ -1,7 +1,7 @@
 ---
 title: Licenses & Credits
 permalink: /licenses/
-nav_order: 15
+nav_order: 16
 ---
 
 # Licenses & Credits
@@ -24,7 +24,11 @@ the `Licenses` folder beside the executable on Windows).
 | SQLite | note storage | public domain |
 | Sparkle / WinSparkle | updates | MIT |
 | Phosphor Icons | icons | MIT |
-| Aspekta | typeface | SIL OFL 1.1 |
+| Aspekta | typeface (document sans) | SIL OFL 1.1 |
+| PT Serif | typeface (body paragraphs) | SIL OFL 1.1 |
+| Inter | typeface (window chrome) | SIL OFL 1.1 |
+| JetBrains Mono | typeface (code) | SIL OFL 1.1 |
+| Lora | typeface (bundled alternative serif) | SIL OFL 1.1 |
 | Hunspell 1.7.3 | spelling engine | LGPL-2.1 (of its MPL 1.1 / GPL 2.0 / LGPL 2.1 tri-license) |
 | SCOWL word lists (2026.02.25) | the US + UK dictionary | SCOWL notice (below) |
 | LanguageTool English rules (v6.8) | grammar rule data | LGPL-2.1+ |

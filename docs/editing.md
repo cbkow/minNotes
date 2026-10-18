@@ -1,15 +1,32 @@
 ---
 title: Editing
 permalink: /editing/
-nav_order: 4
+nav_order: 5
 ---
 
 # Editing
 
-A note is a list of **blocks**. Press `Enter` to start a new block,
-`Backspace` at the start of an empty block to merge it up. Grab the number to the far right of a block and drag to rearrange blocks.
+A page is a list of **blocks**. Press `Enter` to start a new block,
+`Backspace` at the start of an empty block to merge it up. Down the right
+side runs the **block rail**: a handle for every block. Click a handle to
+select its block, drag it to move the block (a table row's handle carries
+the row; the header row's carries the table); an accent line shows where
+it will land.
 
-![Blocks and the block ruler](images/mn007.png)
+![Blocks and the block rail](images/mn007.png)
+
+## The Toolbar
+
+The toolbar changes with where you are. In a page it holds the inline
+actions — comment, paragraph, bold, italic, highlight, code, strikethrough,
+underline, link, clear formatting — and two flyouts: **Heading** (the icon
+shows the caret's level) and **Insert block** (quote, bullet, numbered and
+task lists, a choice chip, a code block, a table, a divider).
+
+![The toolbar in a page, with the Insert block flyout open](images/mn008.png)
+
+Its right end is the same everywhere: the three colour clips, the pen
+width, undo and redo, the zoom badge, and the Inspector toggle.
 
 ## Markdown-Style Triggers
 
@@ -33,41 +50,27 @@ filter). The ```` ```lang ```` fence tag still works if you prefer typing it.
 
 ## The Page
 
-The page is a steady reading measure — it never squeezes. A narrow window
-scrolls sideways instead of rewrapping your text; a wide table extends past
-the page into the margin.
+A page is as wide as its window and reflows as the window changes. Body
+paragraphs are set in a serif; headings, lists, quotes, tables and chrome
+stay in the sans. For a reading measure instead, turn off **View ▸ Full
+Width** (`⌘1` toggles it) and the text caps at the measure you pick there
+— 640, 760 or 880 — centred in the window. These are view settings; they
+change nothing in the file.
 
-Each note has its **own page width**. The slim ruler above the page shows
-the stops (560 up to 1600; 760 is the default) — drag the handle or click a stop; the page
-reflows live and one Undo puts it back. Margin ink rides along as the page
-widens. Pick a wide page for image boards, the classic measure for prose.
-In a window wider than the page, the page sits centred with its margins;
-a table wider than the page centres under it.
+A table or a code block wider than the page runs past its right edge and
+the page scrolls sideways; text never squeezes.
 
-**Zoom** the view with `⌘+` / `⌘−`, `⌘0` for 100%, `⌘1` to fit the page and
-its margins to the window, `⌘`-wheel or a trackpad pinch to zoom about the
-pointer. The zoom group in the bottom strip, beside Undo and Redo, is the
-readout: − and + step, the slider sits at 100% in the middle, and the
-percent opens Fit width / 100%. Zoom is a view setting for the tab: it
-changes nothing in the note, is not saved with it, and a freshly opened
-tab starts at 100%. Every tab keeps its own zoom — each note in the tab bar,
-and each table or PDF tab along the bottom. The same keys and the same group zoom a PDF or a
-sketch opened full-frame. To **pan** a zoomed page, hold Space in
-annotation mode (or in a PDF or sketch tab) and drag with the hand, or
-drag with the middle mouse button at any time.
-
-![The page-width ruler](images/mn008.png)
-
-Down the right side runs the **block rail**: a dot for every block, the
-focused block's a little brighter. **Drag a dot to reorder its block**
-(a table row's dot carries the row; the header row's carries the table);
-an accent line shows where it will land.
+**Zoom** the view with `⌘+` / `⌘−`, `⌘0` for 100%, `⌘`-wheel or a
+trackpad pinch to zoom about the pointer, or the zoom badge's slider. The
+keys always act on what you are looking at: the page, a PDF, or the
+canvas. Zoom is a view setting for the page and is not saved with it. To
+**pan** a zoomed page, drag with the middle mouse button.
 
 ## Side by Side
 
 A **split row** sets blocks side by side in **lanes**. Each lane is a short
-stack of ordinary blocks — paragraphs, lists, images, sketches — and the
-row is as tall as its tallest lane.
+stack of ordinary blocks — paragraphs, lists, images — and the row is as
+tall as its tallest lane.
 
 - **Make one:** right-click a block and choose **Split into columns**, or
   `⌘`-drag from the left or right edge of a block (a plain drag at a
@@ -89,18 +92,22 @@ below the row.
 
 ## Inline Formatting
 
-Select text and use a shortcut or the Inspector — **bold**, *italic*,
+Select text and use a shortcut or the toolbar — **bold**, *italic*,
 `code`, underline, strikethrough, links (`⌘K`). Clear formatting on a
 selection with `⌘\`.
 
-### Colors
+### Colours
 
-The Inspector's palette has three tabs: **Draw** (annotations) **Text** (text color) and **Back** (background). Pick a swatch with text selected to color it; with nothing
-selected the color arms as a pen for what you type next. The same palette
-colors table selections — whole rows and columns included (see
-[Tables](tables.md)). **Revert** clears both back to default.
+The three clips at the right end of the toolbar are the **text**,
+**highlight** and **pen** colours. Click one to open the palette for that
+layer: pick a swatch with text selected to colour it; with nothing
+selected the colour arms for what you type next. **Apply** colours the
+current selection with the armed colour, **Revert** clears back to the
+default, and the bottom row holds your own saved swatches. The same
+palette colours table selections — whole rows and columns included (see
+[Tables](tables.md)).
 
-![The color palette](images/mn009.png)
+![The colour palette](images/mn009.png)
 
 ### Choice Chips
 
@@ -108,13 +115,14 @@ colors table selections — whole rows and columns included (see
 in text, including inside table cells. Click the chip to change its state;
 the chip travels with the text through exports.
 
-![The color palette](images/mn009b.png)
+![A choice chip](images/mn009b.png)
 
 ## Undo & History
 
-Every gesture is one undo step — a bulk table edit, a whole tab merge, a
-run of image-resize nudges all take a single `⌘Z`. The Inspector's
-**History** view shows the note's timeline: click any entry to time-travel
-the document to that state (and forward again).
+Every gesture is one undo step — a bulk table edit, a whole merge, a run
+of image-resize nudges all take a single `⌘Z`. Each page has its own
+history and so does the canvas; `⌘Z` works on whichever you are in. The
+Inspector's **History** section shows the timeline: click any entry to
+time-travel to that state (and forward again).
 
-![The History panel](images/mn010.png)
+![The History section](images/mn010.png)

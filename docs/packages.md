@@ -1,20 +1,21 @@
 ---
 title: Packages
 permalink: /packages/
-nav_order: 12
+nav_order: 13
 ---
 
 # Packages
 
-A **package** (`.mnpkg`) is a sealed snapshot of a note with every
-referenced file inside — one file to archive, or to hand to someone who
-doesn't have your network mounts.
+A **package** (`.mnpkg`) is a sealed snapshot of a file — every page,
+every canvas element, and every referenced media file inside — one file
+to archive, or to hand to someone who doesn't have your network mounts.
 
 ## Exporting
 
-**Export ▸ Export as Package…** embeds the note and all its media.
-Videos are included by default (the dialog shows what they weigh; leave
-them out and they stay as references to their original locations).
+**Export ▸ as Package…** embeds the file and all its media. Videos are
+included by default (the dialog shows what they weigh; leave them out and
+they stay as references to their original locations). Folder and bookmark
+cards travel as cards; a folder's contents are not packed.
 
 ![The package export dialog](images/mn027.png)
 
@@ -31,7 +32,8 @@ without extraction.
 Packages are snapshots: you can type in the view, but **Save is
 disabled** — use **Save As** to materialize an editable `.mnd` copy
 (with its media folder) wherever you want it. The package on disk is
-never modified.
+never modified. Dropping a package on another file's canvas copies its
+pages in.
 
 > The rule of thumb: `.mnd` is the source you work in; `.mnpkg` is the
 > artifact you send.

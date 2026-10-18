@@ -1,17 +1,17 @@
 ---
 title: Tables & Kanban
 permalink: /tables/
-nav_order: 6
+nav_order: 7
 ---
 
 # Tables & Kanban
 
 A table is rows of cells, and every cell holds blocks — text with
-formatting, images, video, lists. Insert one from the block menu
-(**Insert table below**) or the left rail, paste tab-separated text (a
-spreadsheet selection pastes straight in), or import a CSV, spreadsheet,
-or HTML table. A table wider than the page centres under it and extends
-past it rather than squeezing.
+formatting, images, video, lists. Insert one from the toolbar's **Insert
+block** flyout or the block menu (**Insert table below**), paste
+tab-separated text (a spreadsheet selection pastes straight in), or
+import a CSV, spreadsheet, or HTML table. A table wider than the page runs
+past its right edge and the page scrolls sideways rather than squeezing.
 
 ![A table with the grip handles showing](images/mn011.png)
 
@@ -31,7 +31,7 @@ Right-click any cell for the **Column** menu:
 | Column type | What it does |
 |---|---|
 | Text | The default — any blocks |
-| Choice | Single-select options with colors (edit the set via **Edit options…**) |
+| Choice | Single-select options with colours (edit the set via **Edit options…**) |
 | Checkmark | Tri-state task per cell: to-do / doing / done (`Space` cycles it) |
 | Timecode | Frame counts and timecodes snap to the column's frame rate when you leave the cell; sorts by frames |
 
@@ -55,8 +55,8 @@ and adds a row past the last one.
 - **Grip handles** appear when you hover just above a column or left of
   a row — click to select the whole column or row, `Shift+Click` for a
   span, `⌘Click` to add or remove one. Drag a column grip to reorder
-  columns; rows reorder by their rail number like any block.
-- `⌘A` climbs: the block, its cell, the table, the document.
+  columns; rows reorder by their rail handle like any block.
+- `⌘A` climbs: the block, its cell, the table, the page.
 - `Esc` steps back down: a selected row becomes the whole table, then
   the caret lands below it.
 
@@ -69,7 +69,7 @@ Right-click inside a grip selection for a focused menu:
 - **Clear contents** / **Delete** for the selected rows or columns (a
   selection that includes the header deletes the table)
 - **Align** and **column type** changes across every selected column
-- Palette colors apply to the whole selection
+- Palette colours apply to the whole selection
 - `Backspace` clears a grip selection's contents; `⌘C` copies it as
   cells, tab-separated text, and an HTML table
 
@@ -83,18 +83,19 @@ table it fills cells from the caret, growing the table as needed. Cells
 copied with their header row paste by matching column names; **Paste
 Special ▸ Paste into cells** fills by position instead.
 
-## Table Tabs
+## Tables full-window
 
-Every table gets a tab in the bottom strip. It opens the table on its
-own, with a **Table / Board** toggle and a **Filter rows…** field:
-rows with no cell matching the text fold away, and the count shows
-what's left. The filter is a view — copy, export, and undo see every
-row — and clears when you leave the tab.
+Every table can open on its own: pick it from the path bar's page menu,
+or **Open in tab** on the block menu. The frame has a **Table / Board**
+toggle and a **Filter rows…** field: rows with no cell matching the text
+fold away, and the count shows what's left. The filter is a view — copy,
+export, and undo see every row — and clears when you leave. The path
+bar's last segment switches between the page's tables, videos and PDFs.
 
 ## Board View
 
 Any choice or checkmark column can become a **kanban board**: right-click
-the column → **View as board**, or the toggle on the table's tab. Cards
+the column → **View as board**, or the toggle on the table's frame. Cards
 are the table's rows; drag a card between lanes to change its value (and
 reorder). Double-click a card to jump back to its cell.
 
