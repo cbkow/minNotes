@@ -51,6 +51,7 @@ qt_add_executable(minnotesapp
     core/Converter.cpp
     core/Exporter.h
     core/Exporter.cpp
+    core/CanvasExporter.cpp
     core/InlineMarkdownHighlighter.h
     core/InlineMarkdownHighlighter.cpp
     core/CodeHighlighter.h

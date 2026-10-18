@@ -26,6 +26,7 @@
 #include "core/CanvasDocument.h"
 #include "CanvasGestures.h"
 #include "core/Exporter.h"
+#include "core/CanvasExporter.h"
 #include "core/Importer.h"
 #include "core/PackageExporter.h"
 #include "core/DocumentMerger.h"
@@ -237,6 +238,13 @@ int main(int argc, char *argv[])
         exporter.setModel(docs.activeModel());
     });
     engine.rootContext()->setContextProperty("exporter", &exporter);
+    // The CANVAS export (File ▸ Export ▸ Canvas as HTML… / Canvas Poster…; 2.0 step 8). Follows the active tab's canvas.
+    CanvasExporter canvasExporter;
+    canvasExporter.setCanvas(docs.activeCanvas());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &canvasExporter, [&canvasExporter, &docs] {
+        canvasExporter.setCanvas(docs.activeCanvas());
+    });
+    engine.rootContext()->setContextProperty("canvasExporter", &canvasExporter);
     // Document import (File ▸ Import…, drop/paste intercepts, welcome screen).
     // Follows the active tab the same way the exporter does — a fresh tab is
     // opened first, so the import lands in the new active model.
@@ -300,11 +308,13 @@ int main(int argc, char *argv[])
     const QStringList pending = app.takePending();
     for (const QString &s : pending) resolveAndOpen(docs, s);
     const QStringList args = app.arguments();
-    QString exportPdfTo, exportHtmlTo, shotTo;
+    QString exportPdfTo, exportHtmlTo, exportCanvasHtmlTo, exportPosterTo, shotTo;
     int shotH = 900;
     for (int i = 1; i < args.size(); ++i) {
         if (args[i].startsWith(QLatin1String("--export-pdf="))) { exportPdfTo = args[i].mid(13); continue; }
         if (args[i].startsWith(QLatin1String("--export-html="))) { exportHtmlTo = args[i].mid(14); continue; }
+        if (args[i].startsWith(QLatin1String("--export-canvas-html="))) { exportCanvasHtmlTo = args[i].mid(21); continue; }
+        if (args[i].startsWith(QLatin1String("--export-poster="))) { exportPosterTo = args[i].mid(16); continue; }
         if (args[i].startsWith(QLatin1String("--shot="))) { shotTo = args[i].mid(7); continue; }
         if (args[i].startsWith(QLatin1String("--shot-height="))) { shotH = args[i].mid(14).toInt(); continue; }
         if (args[i].startsWith(QLatin1Char('-'))) continue;   // skip flags
@@ -361,6 +371,14 @@ int main(int argc, char *argv[])
     if (!exportHtmlTo.isEmpty())
         QTimer::singleShot(1500, &app, [&app, &exporter, exportHtmlTo] {   // (after an --import lands)
             app.exit(exporter.exportHtml(exportHtmlTo, true) ? 0 : 102);
+        });
+    // The canvas twins (2.0 step 8): `--export-canvas-html=<out.html>` / `--export-poster=<out.png>` on the file given.
+    if (!exportCanvasHtmlTo.isEmpty() || !exportPosterTo.isEmpty())
+        QTimer::singleShot(1500, &app, [&app, &canvasExporter, exportCanvasHtmlTo, exportPosterTo] {
+            bool ok = true;
+            if (!exportCanvasHtmlTo.isEmpty()) ok = canvasExporter.exportHtml(exportCanvasHtmlTo, true) && ok;
+            if (!exportPosterTo.isEmpty()) ok = canvasExporter.exportPoster(exportPosterTo, 1600) && ok;
+            app.exit(ok ? 0 : 103);
         });
     if (!exportPdfTo.isEmpty())
         QTimer::singleShot(0, &app, [&app, &exporter, exportPdfTo] {

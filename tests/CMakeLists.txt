@@ -49,6 +49,7 @@ qt_add_executable(mn_regression_test
     # stroke serializer/painter for sketch + note-thumb rendering). None of
     # these touch ink-stroke-modeler (only the wrapper does — not linked here).
     ${CMAKE_SOURCE_DIR}/app/core/Exporter.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/CanvasExporter.cpp
     # CodeSyntax = the shared fence-tag resolver + KSyntax repo; the exporter
     # colours code blocks with it (Quick-free by design for this target).
     ${CMAKE_SOURCE_DIR}/app/core/CodeSyntax.cpp

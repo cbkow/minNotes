@@ -277,7 +277,7 @@ ApplicationWindow {
     property bool _exportVideos: true     // mnpkg: videos default IN (copy, never
                                           // transcode — user ruling 2026-08-18;
                                           // the checkbox opts OUT for size)
-    property string _exportFormat: "md"   // "md" | "html" | "docx" | "pdf" | "mnpkg"
+    property string _exportFormat: "md"   // "md" | "html" | "docx" | "pdf" | "mnpkg" | "canvas" (HTML) | "poster" (PNG)
     function fmtBytes(b) {
         b = b || 0
         if (b >= 1e9) return (b / 1e9).toFixed(1) + " GB"
@@ -288,6 +288,7 @@ ApplicationWindow {
         _exportFormat = format || "md"
         _exportNotes = true
         _exportVideos = true
+        if (_exportFormat === "canvas" || _exportFormat === "poster") { _openExportSave(); return }   // the canvas: straight to the file (ufb links follow the preference)
         if (_exportFormat === "mnpkg") {
             // Package pre-scan: the only option is detection-driven videos.
             _exportScan = packageExporter.scan()
@@ -306,7 +307,7 @@ ApplicationWindow {
     // offered "test.pdf.md" (bug 2026-08-20). Name = the document, suffix =
     // the current format; the remembered FOLDER is kept.
     function _openExportSave() {
-        var name = (blockModel.documentName || "Untitled") + "." + _exportFormat
+        var name = (blockModel.documentName || "Untitled") + (_exportFormat === "canvas" ? "-canvas.html" : _exportFormat === "poster" ? "-poster.png" : "." + _exportFormat)
         exportSaveDialog.selectedFile = exportSaveDialog.currentFolder + "/" + name
         exportSaveDialog.open()
     }
@@ -316,16 +317,25 @@ ApplicationWindow {
              : win._exportFormat === "docx" ? "Export as Word document"
              : win._exportFormat === "pdf" ? "Export as PDF"
              : win._exportFormat === "mnpkg" ? "Export as Package"
+             : win._exportFormat === "canvas" ? "Export the canvas as HTML"
+             : win._exportFormat === "poster" ? "Export the canvas poster"
              : "Export as Markdown"
         fileMode: FileDialog.SaveFile
-        defaultSuffix: win._exportFormat
-        nameFilters: win._exportFormat === "html" ? ["HTML (*.html)"]
+        defaultSuffix: win._exportFormat === "canvas" ? "html" : win._exportFormat === "poster" ? "png" : win._exportFormat
+        nameFilters: win._exportFormat === "html" || win._exportFormat === "canvas" ? ["HTML (*.html)"]
                    : win._exportFormat === "docx" ? ["Word document (*.docx)"]
                    : win._exportFormat === "pdf" ? ["PDF (*.pdf)"]
                    : win._exportFormat === "mnpkg" ? ["minNotes package (*.mnpkg)"]
+                   : win._exportFormat === "poster" ? ["PNG image (*.png)"]
                    : ["Markdown (*.md)"]
         onAccepted: {
             var f = "" + selectedFile
+            if (win._exportFormat === "canvas" || win._exportFormat === "poster") {
+                var cok = win._exportFormat === "canvas" ? canvasExporter.exportHtml(f, true, exportPrefs.ufbLinks) : canvasExporter.exportPoster(f, 1600)
+                if (cok) Toasts.show(qsTr("Exported ") + win.baseName(f) + qsTr(" in ") + win._folderName(f))
+                else Toasts.show(qsTr("Export failed") + (canvasExporter.lastError ? " — " + canvasExporter.lastError : ""), 2)
+                return
+            }
             if (win._exportFormat === "mnpkg") {
                 // Async: the zip assembles on a worker; the progress dialog
                 // tracks it and the finished signal owns the toast.
@@ -1188,6 +1198,9 @@ ApplicationWindow {
                 Platform.MenuItem { text: qsTr("as Word Document…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
                 Platform.MenuItem { text: qsTr("as PDF…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("pdf") }
                 Platform.MenuItem { text: qsTr("as Package…"); role: Platform.MenuItem.NoRole; enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
+                Platform.MenuSeparator {}
+                Platform.MenuItem { text: qsTr("Canvas as HTML…"); role: Platform.MenuItem.NoRole; enabled: canvas.documentOpen; onTriggered: win.startExport("canvas") }
+                Platform.MenuItem { text: qsTr("Canvas Poster (PNG)…"); role: Platform.MenuItem.NoRole; enabled: canvas.documentOpen; onTriggered: win.startExport("poster") }
             }
             Platform.Menu {
                 title: qsTr("Document")
@@ -1315,6 +1328,9 @@ ApplicationWindow {
                 Action { text: qsTr("as &Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
                 Action { text: qsTr("as P&DF…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("pdf") }
                 Action { text: qsTr("as &Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
+                MenuSeparator {}
+                Action { text: qsTr("&Canvas as HTML…"); enabled: canvas.documentOpen; onTriggered: win.startExport("canvas") }
+                Action { text: qsTr("Canvas P&oster (PNG)…"); enabled: canvas.documentOpen; onTriggered: win.startExport("poster") }
             }
             ThemedMenu {
                 title: qsTr("&Document")

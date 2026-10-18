@@ -1305,31 +1305,7 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
 }
 
 // Self-contained sink: every asset becomes a data URI inline in the page.
-class DataUriSink : public Exporter::AssetSink {
-public:
-    QString addFile(const QString& srcPath, const QString&) override {
-        QFile f(srcPath);
-        if (!f.open(QIODevice::ReadOnly)) return {};
-        const QString ext = QFileInfo(srcPath).suffix().toLower();
-        QString mime = QStringLiteral("image/png");
-        if (ext == QLatin1String("jpg") || ext == QLatin1String("jpeg"))
-            mime = QStringLiteral("image/jpeg");
-        else if (ext == QLatin1String("gif"))  mime = QStringLiteral("image/gif");
-        else if (ext == QLatin1String("webp")) mime = QStringLiteral("image/webp");
-        else if (ext == QLatin1String("svg"))  mime = QStringLiteral("image/svg+xml");
-        return QStringLiteral("data:%1;base64,%2")
-            .arg(mime, QString::fromLatin1(f.readAll().toBase64()));
-    }
-    QString addImage(const QImage& img, const QString&) override {
-        if (img.isNull()) return {};
-        QByteArray png;
-        QBuffer buf(&png);
-        buf.open(QIODevice::WriteOnly);
-        img.save(&buf, "PNG");
-        return QStringLiteral("data:image/png;base64,%1")
-            .arg(QString::fromLatin1(png.toBase64()));
-    }
-};
+using DataUriSink = Exporter::DataUriSink;
 
 // The exported page's whole design system — the minNotes look in a file:
 // Syntax-coloured code for the HTML export: the SAME engine, theme, and
@@ -1611,6 +1587,31 @@ color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:
 .comments .stamp{color:var(--subtle);font-size:12px;margin-left:8px}
 .comments li.resolved{opacity:.55}
 )CSS";
+
+} // namespace
+
+QString Exporter::DataUriSink::addFile(const QString& srcPath, const QString&) {
+    QFile f(srcPath);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QString ext = QFileInfo(srcPath).suffix().toLower();
+    QString mime = QStringLiteral("image/png");
+    if (ext == QLatin1String("jpg") || ext == QLatin1String("jpeg")) mime = QStringLiteral("image/jpeg");
+    else if (ext == QLatin1String("gif"))  mime = QStringLiteral("image/gif");
+    else if (ext == QLatin1String("webp")) mime = QStringLiteral("image/webp");
+    else if (ext == QLatin1String("svg"))  mime = QStringLiteral("image/svg+xml");
+    return QStringLiteral("data:%1;base64,%2").arg(mime, QString::fromLatin1(f.readAll().toBase64()));
+}
+QString Exporter::DataUriSink::addImage(const QImage& img, const QString&) {
+    if (img.isNull()) return {};
+    QByteArray png;
+    QBuffer buf(&png);
+    buf.open(QIODevice::WriteOnly);
+    img.save(&buf, "PNG");
+    return QStringLiteral("data:image/png;base64,%1").arg(QString::fromLatin1(png.toBase64()));
+}
+QString Exporter::pageCss() { return embeddedFontCss() + QLatin1String(kHtmlCss); }
+
+namespace {
 
 } // namespace
 

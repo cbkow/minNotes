@@ -61,6 +61,17 @@ public:
         virtual QString addImage(const QImage& img, const QString& baseName) = 0;
     };
 
+    // A self-contained sink: images as data URIs (exportHtml's; the canvas exporter's too).
+    class DataUriSink : public AssetSink {
+    public:
+        QString addFile(const QString& srcPath, const QString& baseName) override;
+        QString addImage(const QImage& img, const QString& baseName) override;
+    };
+    // The page export's whole design system (embedded fonts + the page CSS) — the canvas exporter
+    // shares it so a page on the canvas is the page export, positioned (2.0 step 8).
+    static QString pageCss();
+    static constexpr int exportMeasure = 760;   // == kExportMeasure
+
     // Pure generation (testable): the whole document as markdown, assets
     // routed through `sink`.
     QString toMarkdown(const Options& opt, AssetSink& sink) const;

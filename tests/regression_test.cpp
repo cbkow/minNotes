@@ -14,6 +14,7 @@
 #include "DocumentManager.h"
 #include "../app/notes/CanvasInkCapture.h"
 #include "Exporter.h"
+#include "CanvasExporter.h"
 #include "Importer.h"
 #include "TableGrid.h"
 #include <QTextDocument>
@@ -6519,6 +6520,92 @@ static void testPageViewCache() {
     CHECK(!d.canUndo(), "…with nothing to undo for it");
 }
 
+// [140] The canvas exporter (2.0 step 8): the world as positioned HTML (pages as the page export, media figures/cards with paths, ink as SVG, text) + the poster.
+static void testCanvasHtml() {
+    qInfo("[140] canvas export (2.0 step 8): toHtml = a world with every element in z order at its rect; pages are the page export's fragments; cards ALWAYS print their path, ufb links only when asked; ink is SVG; the poster renders");
+    QTemporaryDir dir;
+    QImage img(40, 30, QImage::Format_ARGB32); img.fill(Qt::darkCyan);
+    const QString png = dir.filePath(QStringLiteral("pic.png")); CHECK(img.save(png), "image fixture");
+    const QString pdf = dir.filePath(QStringLiteral("spec.pdf"));
+    { QPdfWriter w(pdf); w.setResolution(96); QPainter p(&w); p.drawText(100, 100, QStringLiteral("one")); p.end(); }
+    const QString folder = dir.filePath(QStringLiteral("shots")); QDir().mkpath(folder); { QFile f(folder + QStringLiteral("/a.bin")); f.open(QIODevice::WriteOnly); f.write("x"); }
+    const QString odd = dir.filePath(QStringLiteral("notes.xyz")); { QFile f(odd); f.open(QIODevice::WriteOnly); f.write("?"); }
+    CanvasDocument c; CHECK(c.newCanvas(), "canvas");
+    const QString p1 = c.firstPageId();
+    c.pageModel(p1)->setContent(0, QStringLiteral("Hello canvas export"));
+    const QString p2 = c.addPage(); c.pageModel(p2)->setContent(0, QStringLiteral("Second page body"));
+    const QString imgEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(png).toString(), 2000, 0);
+    const QString pdfEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(pdf).toString(), 2000, 200);
+    const QString folderEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(folder).toString(), 2000, 1000);
+    const QString fileEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(odd).toString(), 2000, 1200);
+    const QString bmEl = c.addBookmarkElement(QStringLiteral("https://example.invalid/page"), 2000, 1300);
+    const QString audioEl = c.addMediaElement(QStringLiteral("{\"kind\":\"audio\",\"src\":\"%1\",\"name\":\"take.wav\",\"durMs\":61000}").arg(dir.filePath(QStringLiteral("take.wav"))), QRectF(2000, 1400, 360, 56));
+    const QString inkEl = c.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":["
+        "{\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":4,\"filled\":false,\"points\":[[0,0],[50,20],[100,0]]},"
+        "{\"type\":\"rectangle\",\"color\":[0,1,0,1],\"stroke_width\":3,\"filled\":false,\"points\":[[10,30],[90,30],[90,70],[10,70]]},"
+        "{\"type\":\"arrow\",\"color\":[0,0,1,1],\"stroke_width\":4,\"filled\":false,\"points\":[[0,90],[100,90]]},"
+        "{\"type\":\"oval\",\"color\":[1,1,0,0.5],\"stroke_width\":2,\"filled\":true,\"points\":[[50,50],[20,10]]}]}"), QRectF(2600, 0, 100, 100));
+    const QString textEl = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"a <chip> & more\",\"fontSize\":18,\"fill\":\"#ffffff\"}"), QRectF(2600, 200, 200, 40));
+    CHECK(!imgEl.isEmpty() && !pdfEl.isEmpty() && !folderEl.isEmpty() && !fileEl.isEmpty() && !bmEl.isEmpty() && !audioEl.isEmpty() && !inkEl.isEmpty() && !textEl.isEmpty(), "fixtures placed");
+
+    class NameSink : public Exporter::AssetSink {
+    public:
+        QStringList names; QList<QImage> images;
+        QString addFile(const QString&, const QString& b) override { names << b; return QStringLiteral("assets/") + b; }
+        QString addImage(const QImage& im, const QString& b) override { names << b; images << im; return QStringLiteral("assets/") + b + QStringLiteral(".png"); }
+    };
+    CanvasExporter ex; ex.setCanvas(&c);
+    const QVariantMap sc = ex.scan();
+    CHECK(sc.value(QStringLiteral("pages")).toInt() == 2 && sc.value(QStringLiteral("media")).toInt() == 6 && sc.value(QStringLiteral("pdfs")).toInt() == 1 && sc.value(QStringLiteral("ink")).toInt() == 1 && sc.value(QStringLiteral("shapes")).toInt() == 1 && sc.value(QStringLiteral("refPaths")).toInt() == 4,
+          "scan counts (%d pages, %d media, %d refPaths)", sc.value(QStringLiteral("pages")).toInt(), sc.value(QStringLiteral("media")).toInt(), sc.value(QStringLiteral("refPaths")).toInt());
+    NameSink sink;
+    CanvasExporter::Options opt;
+    const QString html = ex.toHtml(opt, sink);
+    CHECK(html.startsWith(QLatin1String("<!doctype html>")) && html.contains(QLatin1String("id=\"world\"")) && html.contains(QLatin1String("@font-face")) && html.contains(QLatin1String("#mn-canvas{")) && html.contains(QLatin1String("<script>")),
+          "a self-contained document: the world, the page CSS with embedded fonts, the canvas CSS, the pan/zoom script (%d chars)", int(html.size()));
+    CHECK(html.count(QLatin1String("class=\"el page\"")) == 2 && html.contains(QLatin1String("Hello canvas export")) && html.contains(QLatin1String("Second page body")) && html.contains(QLatin1String("<main><header class=\"doctitle\">")),
+          "both pages as positioned sections holding the page export's fragment under its title");
+    const QRectF pr = c.elementRect(p2), bnd = c.canvasBounds();
+    CHECK(html.contains(QStringLiteral("id=\"p-%1\" style=\"left:%2px;top:%3px;width:%4px;height:%5px\"").arg(p2).arg(pr.x() - bnd.x() + 24).arg(pr.y() - bnd.y() + 24).arg(pr.width()).arg(pr.height())),
+          "a page's section sits at its element rect, translated to the world's origin");
+    CHECK(html.contains(QLatin1String("<figure class=\"el media image\"")) && html.contains(QLatin1String("<img src=\"assets/")) && !sink.names.isEmpty() && sink.names.first().endsWith(QLatin1String(".png")),
+          "the image element is a figure through the sink (the store's content-addressed name: %s)", qPrintable(sink.names.value(0)));
+    CHECK(html.contains(QLatin1String("<figure class=\"el media pdf\"")) && html.contains(QLatin1String("1 page</span>")) && html.contains(QLatin1String("spec.pdf</span>")) && html.contains(QDir::toNativeSeparators(pdf)) && !sink.images.isEmpty(),
+          "the PDF element: a rendered first page, its name, its page count and its PATH");
+    CHECK(html.contains(QLatin1String("class=\"el card folder\"")) && html.contains(QStringLiteral("1 item · a.bin")) && html.contains(QDir::toNativeSeparators(folder).toHtmlEscaped()),
+          "the folder card: count, entries, PATH (expected '%s' in: %s)", qPrintable(QDir::toNativeSeparators(folder).toHtmlEscaped()), qPrintable(html.mid(html.indexOf(QLatin1String("<span class=\"path\">"), html.indexOf(QLatin1String("card folder"))), 200)));
+    CHECK(html.contains(QLatin1String("class=\"el card file\"")) && html.contains(QLatin1String("notes.xyz</span>")) && html.contains(QDir::toNativeSeparators(odd)), "the file card: name + PATH");
+    CHECK(html.contains(QLatin1String("class=\"el card bookmark\" href=\"https://example.invalid/page\"")) && html.contains(QLatin1String("example.invalid</span>")), "the bookmark: a link with its host");
+    CHECK(html.contains(QLatin1String("class=\"el card audio\"")) && html.contains(QLatin1String("1:01</span>")) && html.contains(QLatin1String("take.wav")), "the audio card: name + duration + path");
+    CHECK(!html.contains(QLatin1String("ufb:///")), "no ufb links unless asked");
+    CHECK(html.contains(QLatin1String("<svg class=\"el ink\"")) && html.contains(QLatin1String("viewBox=\"0 0 100 100\"")) && html.contains(QLatin1String("<path d=\"M0 0L50 20L100 0\" fill=\"none\" stroke=\"#ff0000\" stroke-width=\"4\""))
+          && html.contains(QLatin1String("<rect x=\"10\" y=\"30\" width=\"80\" height=\"40\" fill=\"none\" stroke=\"#00ff00\"")) && html.contains(QLatin1String("<polygon points=\"100 90 ")) && html.contains(QLatin1String("<ellipse cx=\"50\" cy=\"50\" rx=\"20\" ry=\"10\" fill=\"rgba(255,255,0,0.5)\"")),
+          "ink as SVG: a polyline path, a rect, an arrow with its head, a filled oval, in element-local px");
+    CHECK(html.contains(QLatin1String("class=\"el text\"")) && html.contains(QLatin1String("font-size:18px")) && html.contains(QLatin1String("a &lt;chip&gt; &amp; more")) && html.contains(QLatin1String("color:#ffffff")), "the text chip, escaped, at its size and colour");
+    // z order: the first page comes before the ink element in the document; a brought-to-front element lands last.
+    CHECK(html.indexOf(QStringLiteral("id=\"p-%1\"").arg(p1)) < html.indexOf(QLatin1String("<svg class=\"el ink\"")), "elements are written in z order");
+    c.bringToFront(p1);
+    const QString html2 = ex.toHtml(opt, sink);
+    CHECK(html2.indexOf(QStringLiteral("id=\"p-%1\"").arg(p1)) > html2.indexOf(QLatin1String("<svg class=\"el ink\"")), "…so bring-to-front moves the page after the ink");
+    opt.ufbLinks = true;
+    const QString html3 = ex.toHtml(opt, sink);
+    CHECK(html3.count(QLatin1String("ufb:///")) >= 4 && html3.contains(QStringLiteral("href=\"%1\"").arg(mn::ufbLinkFor(folder).toHtmlEscaped())), "with the option, every printed path carries its ufb link (%d)", int(html3.count(QLatin1String("ufb:///"))));
+    // The poster.
+    CanvasExporter::Options popt; popt.posterWidth = 800;
+    const QImage poster = ex.toPoster(popt);
+    CHECK(!poster.isNull() && poster.width() == 800 && std::abs(poster.height() - std::round(800 * (bnd.height() + 48) / (bnd.width() + 48))) <= 1, "the poster is %d×%d at the world's aspect", poster.width(), poster.height());
+    const QRectF p1r = c.elementRect(p1);
+    const double s = 800.0 / (bnd.width() + 48);
+    const QPoint inPage(int((p1r.x() - bnd.x() + 24 + 4) * s), int((p1r.y() - bnd.y() + 24 + p1r.height() / 2) * s));
+    const QPoint inDesk(int((bnd.width() + 48 - 2) * s), int(2 * s));
+    CHECK(poster.pixelColor(inPage) != poster.pixelColor(inDesk) && poster.pixelColor(inDesk) == QColor(0x12, 0x12, 0x11), "a page reads as a sheet against the desk");
+    // Files.
+    const QString outHtml = dir.filePath(QStringLiteral("canvas.html")), outPng = dir.filePath(QStringLiteral("poster.png"));
+    CHECK(ex.exportHtml(QUrl::fromLocalFile(outHtml).toString(), true, false) && QFileInfo(outHtml).size() > 10000, "exportHtml writes a self-contained file (%lld bytes)", (long long)QFileInfo(outHtml).size());
+    CHECK(ex.exportPoster(outPng, 400) && QImage(outPng).width() == 400, "exportPoster writes a PNG at the asked width");
+    CHECK(!ex.exportHtml(dir.filePath(QStringLiteral("nodir/x.html")), true) && !ex.lastError().isEmpty(), "an unwritable path fails with a reason");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -9049,6 +9136,7 @@ int main(int argc, char** argv) {
     testAudioElements();
     testLivePage();
     testPageViewCache();
+    testCanvasHtml();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
