@@ -211,7 +211,7 @@ Rectangle {
         width: tabs.rowH; height: tabs.rowH   // square
         color: tabMenu.visible ? Theme.colors.surfaceRaised : "transparent"
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.bgAlt2 }
-        Icon { anchors.centerIn: parent; name: "list"; size: 14
+        Icon { anchors.centerIn: parent; name: "stack"; size: 14   // pages stacked — not the files row's ≡ (user, 2026-10-18)
                color: tabMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
         // Overflow underline (white, the tab language): some tabs are hidden —
         // the full list lives in this menu.

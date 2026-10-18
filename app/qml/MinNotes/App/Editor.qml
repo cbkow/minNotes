@@ -5195,10 +5195,12 @@ FocusScope {
                 if (step === 10) {
                     check(blockModel.contentForRow(0) === "k" + probeText, "typing through an open flyout edits row 0 ('" + blockModel.contentForRow(0).substring(0, 12) + "')")
                     blockModel.undo()
-                    c.colorFlyout.close(); ++step; return
+                    g.click(root, root.width / 2, root.height - 60)   // a click OUTSIDE, on the page far below the caret: closes the flyout and goes no further
+                    ++step; return
                 }
                 if (step === 12) {
-                    check(!c.colorFlyout.visible && root.activeFocus, "closing the flyout hands the keys back (focus " + root.activeFocus + ")")
+                    check(!c.colorFlyout.visible && root.activeFocus, "a click outside closes the flyout and hands the keys back (focus " + root.activeFocus + ")")
+                    check(cursor.focusRow === 0 && !cursor.hasSel, "…and that click never reached the page beneath (caret still on row 0: " + cursor.focusRow + ")")
                     const h = c.headingFlyout, p = h.mapToItem(c, h.width / 2, h.height / 2)
                     g.click(c, p.x, p.y); ++step; return
                 }

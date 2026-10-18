@@ -105,6 +105,7 @@ Rectangle {
             x: 0; y: fb.height + 2
             padding: 4
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            modal: true; dim: false   // a press outside CLOSES the flyout and goes no further (never through to the page)
             background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
             contentItem: Grid {
                 columns: fb.labelled ? 1 : 99
@@ -220,15 +221,15 @@ Rectangle {
             enabled_: streamNotes.count > 0 && !!bar.editor
             onClicked: bar.act(function() { streamNotes.insertNotesAsBlocks(blockModel, blockModel.count - 1) })
         }
-        Item {   // the 3-STACK swatch: text · highlight · pen; the layer matching the target is bright-bordered
+        Item {   // the 3-CLIP swatch: text · highlight · pen as VERTICAL clips side by side (user, 2026-10-18); the target's clip is bright-bordered
             id: swatch
             anchors.verticalCenter: parent.verticalCenter
-            width: 24; height: Theme.dim.chromeBtn
+            width: 26; height: Theme.dim.chromeBtn
             readonly property var layers: [ { key: "fg", tip: qsTr("Text colour") }, { key: "bg", tip: qsTr("Highlight colour") }, { key: "draw", tip: qsTr("Pen colour") } ]
             function colorOf(key) { return !bar.inspector ? "transparent" : key === "fg" ? bar.inspector.fgColor : key === "bg" ? bar.inspector.bgColor : bar.inspector.drawColor }
             function layerAt(i) { return layerRep.itemAt(i) }
             ColorFlyout { id: colors; parent: swatch; inspector: bar.inspector }
-            Column {
+            Row {
                 anchors.centerIn: parent
                 spacing: 1
                 Repeater {
@@ -237,14 +238,14 @@ Rectangle {
                     delegate: Rectangle {
                         required property var modelData
                         required property int index
-                        width: 16; height: 8; radius: 0
+                        width: 7; height: 16; radius: 0
                         color: swatch.colorOf(modelData.key)
                         border.width: 1
                         border.color: bar.inspector && bar.inspector.target === modelData.key ? Theme.colors.textBright
                                     : (layerMA.containsMouse ? Theme.colors.textMuted : Theme.colors.border)
                         MouseArea { id: layerMA; anchors.fill: parent; anchors.margins: -1; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: bar.openColors(modelData.key) }
-                        FlatToolTip { parent: parent; x: -implicitWidth / 2 + 8; y: parent.height + 6; visible: layerMA.containsMouse; text: modelData.tip }
+                        FlatToolTip { parent: parent; x: -implicitWidth / 2 + 4; y: parent.height + 8; visible: layerMA.containsMouse; text: modelData.tip }
                     }
                 }
             }

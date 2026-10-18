@@ -22,7 +22,7 @@ Popup {
         return Math.min(parent ? parent.height + 4 : 0, Math.max(4, ov - top - height - 8))
     }
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    modal: false; dim: false
+    modal: true; dim: false   // a press outside CLOSES the flyout and goes NO further — never through to the page beneath (user, 2026-10-18)
     background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0; border.width: 1; border.color: Theme.colors.border }
     onClosed: if (editor) editor.forceActiveFocus()
     onAboutToShow: if (inspector) setPickerValue(inspector.targetColor())
