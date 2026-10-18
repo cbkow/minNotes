@@ -105,14 +105,13 @@ Rectangle {
         TextMetrics {   // the counter's widest possible string for this clip
             id: counterMetrics
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-            text: vt.counterText(Math.max(0, vt.totalFrames - 1)) + " / " + vt.counterText(Math.max(0, vt.totalFrames - 1))
+            text: vt.counterText(Math.max(0, vt.totalFrames - 1))   // the widest value: the last frame (no total — user, 2026-10-18)
         }
         Text {   // the counter: timecode (default) or frames — a CLICK flips every player (user, 2026-10-18). Width
                  // RESERVED at the clip max so growing digits don't reflow the row (the slider would shrink and the
                  // note markers would creep during playback)
             id: counterText
             text: vt.counterText(vt.live ? vt.dec.currentFrame : (vt.editor.videoPlayheadRev, vt.playhead()))
-                  + " / " + vt.counterText(Math.max(0, vt.totalFrames - 1))
             color: counterMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             Layout.preferredWidth: counterMetrics.width

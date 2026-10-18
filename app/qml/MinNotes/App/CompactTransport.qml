@@ -46,12 +46,12 @@ Rectangle {
         readonly property bool timecode: !!ct.editor && ct.editor.videoTimecode
         function counterText(f) { return timecode ? ct.editor.videoTimecodeFor(f, fpsVal) : "" + Math.max(0, f) }
         TextMetrics { id: counterMetrics; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall   // (a TextMetrics has no `parent`: name the row)
-                      text: strip.counterText(Math.max(0, ct.totalFrames - 1)) + " / " + strip.counterText(Math.max(0, ct.totalFrames - 1)) }
+                      text: strip.counterText(Math.max(0, ct.totalFrames - 1)) }   // the widest value: the last frame (no total — user, 2026-10-18)
         Text {   // the counter: timecode (default) or frames; a CLICK flips every player (user, 2026-10-18). Width reserved at the widest string (no reflow while playing)
             id: counterText
             anchors.verticalCenter: parent.verticalCenter
             width: counterMetrics.width
-            text: strip.counterText(ct.frame) + " / " + strip.counterText(Math.max(0, ct.totalFrames - 1))
+            text: strip.counterText(ct.frame)
             color: counterMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             MouseArea { id: counterMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
