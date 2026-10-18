@@ -1397,30 +1397,14 @@ constexpr int kExportMeasure = 760;
 constexpr int kExportMargin  = 48;    // the app's pageMargin: main's side padding, the sheet's gutters
 
 const char* kHtmlCss = R"CSS(
-:root{--bg:#181817;--desk:#121211;--sheetw:856px;
+:root{--bg:#181817;--desk:#121211;
 --text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
 --border:#2a2a2a;--divider:#333333;--accent:#0189f1;--recess:#0e0e0e;
 --chipbg:#1d2733;--chiptext:#4aa8ff;--codetext:#d4d4e8;--violet:#b48ef0;--sel:#2a568c;--quote:#3a5e86}
-/* The app's dual-tone ground (user ruling 2026-08-20): the SHEET — page +
-   equal gutters, stretched to the widest table (--sheetw = the Editor's
-   sheet extent) — keeps the field tone; beyond it the ground drops to the
-   window-shell desk tone, so the document reads as the same constrained
-   shape as in the app. Hard-stop gradient on html = the one paint.
-   CENTRED (2026-09-16, the app's centred sheet): the band sits centred
-   when the window is wider than it, and hugs the left edge (the page
-   scrolls) when not — exactly what `main{margin:0 auto}` does below. */
+/* ONE field tone (2.0, 2026-10-18): the app's page is its window's width and its desk tint is gone,
+   so the export paints one ground and lets main run fluid (see below). */
 *{box-sizing:border-box}
-/* Explicit size + no-repeat: the root's background image is sized to its
-   BOX (≈ viewport) and tiles across the scrollable canvas, so a table
-   scrolling past the first viewport-width would repaint the boundary in
-   the wrong place. One oversized image (the box + the sheet), desk colour
-   beyond it. --l = the left desk's width in that image: 50% of it is
-   (box + sheet)/2, so 50% − sheet = (box − sheet)/2 — the centred margin,
-   floored at 0 when the sheet is wider than the box. */
-html{--l:max(0px,calc(50% - var(--sheetw)));background-color:var(--desk);
-background-image:linear-gradient(90deg,var(--desk) var(--l),var(--bg) var(--l),var(--bg) calc(var(--l) + var(--sheetw)),var(--desk) calc(var(--l) + var(--sheetw)));
-background-size:calc(100% + var(--sheetw)) 100%;
-background-repeat:no-repeat}
+html{background:var(--bg)}
 /* THE APP'S TYPE (2026-09-16): the app's faces ride along as embedded @font-face data (the
    OFL permits it; ~650 KB beside the images) at the app's sizes and its pinned line height
    round(size × 1.35), and every block carries the app's 6 px top/bottom inset (code 12) —
@@ -1432,16 +1416,21 @@ main p,main h1,main h2,main h3,main h4,main h5,main h6,main li,main figure,main 
    round(15 × 1.35) line height); headings, lists, quotes, table cells, notes and cards keep the sans. */
 main p{font:15px/20px 'PT Serif',Georgia,'Times New Roman',serif}
 main :is(td,th,blockquote,figure,figcaption,header,.notes,.note,.vnotes,.vn,.card,.chip) p{font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
-/* Responsive page (2.0 stage 1C; was a fixed 1000px column): the sheet centres when the
-   window is wider than it and REFLOWS when not — the app's page is its window's width, and
-   the export mirrors that under a 760 measure cap (= kExportMeasure) with the app's 48px
-   margins. No min-width: the 2026-08-20 "never shrink" ruling kept margin ink aligned, and
-   margin ink is gone. A wide table centres under the page (.tablewrap's inline margin). */
-main{max-width:856px;margin:0 auto;padding:48px 48px 96px}
+/* FLUID page (2026-10-18): the app's page is its window's width, so the export's is too — the app's
+   48 px margins, no centred sheet. The readable-measure CAP (the app's 760 + margins) is the reader's
+   toggle in the header (html.cap; remembered per browser), mirroring View ▸ Full width in the app.
+   A wide table runs past the right edge and the page scrolls, as in the app. */
+main{max-width:none;margin:0;padding:48px 48px 96px}
+html.cap main{max-width:856px;margin:0 auto}
 /* Document header: the export leads with the document's name — a quiet
    mono label, not a shouting heading (ruling 2026-08-21). */
-header.doctitle{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
+header.doctitle{display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
 color:var(--muted);padding-bottom:10px;margin-bottom:24px;border-bottom:1px solid var(--divider)}
+header.doctitle .cap{font:inherit;color:var(--muted);background:transparent;border:1px solid var(--border);
+padding:3px 8px;cursor:pointer;border-radius:0;white-space:nowrap}
+header.doctitle .cap:hover{color:var(--bright);border-color:var(--divider)}
+html.cap header.doctitle .cap{background:var(--divider);color:var(--bright)}
 /* The BLOCK RULER: every block's number in the right margin (the app's
    rail). Elements host the span; all numbers align on one ledger line.
    No rule line: the app made its rules focus-reactive, so a static export
@@ -1700,9 +1689,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         // that overflows the window may use the margin, a narrower one centres). 100% here = the
         // page measure (main's content box); the second term is −(the room before that floor) =
         // −(leftEdge − 24) with leftEdge = max(48, (W − page)/2), i.e. min(−24px, (page + 48 − W)/2).
-        const QString wrapStyle = total > pw
-            ? QStringLiteral(" style=\"margin-left:max(calc((100% - %1px) / 2),min(-24px,calc((100% + 48px - 100vw) / 2)))\"").arg(qRound(total))
-            : QString();
+        const QString wrapStyle;   // (2026-10-18: no centring under a sheet — a wide table runs past the right edge, the page scrolls)
         return QStringLiteral("<div class=\"tablewrap\"%4>%1%2<colgroup>%3</colgroup><thead>\n").arg(bnum(head), open, colTags, wrapStyle);
     };
 
@@ -1901,9 +1888,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             for (int c = 0; c < gc; ++c) t += m->tableColumnWidth(r, c);
             widest = std::max(widest, t);
         }
-        if (widest > pw)   // the band runs as wide as the widest table (no viewport cap: the page scrolls)
-            css.replace(QLatin1String("--sheetw:856px"),
-                        QStringLiteral("--sheetw:%1px").arg(int(widest) + 2 * kExportMargin));
+        (void)widest;   // (the sheet band that once stretched to the widest table is gone — 2026-10-18)
     }
 
     // Lightbox: the page's one script (everything else is CSS-only). Vanilla,
@@ -1911,6 +1896,13 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // stage rebuilds base + (toggle-honouring) annotation overlay per show —
     // the overlay reuses the layer's own percent geometry, so overshoot ink
     // scales with the staged image exactly as it does in the page.
+    // The width toggle (2026-10-18): html.cap = the readable measure; remembered per browser.
+    static const char kCapScript[] = R"MNCAP(<script>
+(function(){var b=document.querySelector('header.doctitle .cap');if(!b)return;var k='mn.readableWidth';
+try{if(localStorage.getItem(k)==='1')document.documentElement.classList.add('cap');}catch(e){}
+b.addEventListener('click',function(){var on=document.documentElement.classList.toggle('cap');try{localStorage.setItem(k,on?'1':'0');}catch(e){}});})();
+</script>
+)MNCAP";
     static const char kLightbox[] = R"MNLB(<div id="mn-lb"><button class="nav prev" aria-label="Previous"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg></button><div class="stage"></div><button class="nav next" aria-label="Next"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button><button class="nav close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><span class="cnt"></span></div>
 <script>
 (function(){
@@ -1959,10 +1951,10 @@ e.preventDefault();});
                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
                "<meta name=\"generator\" content=\"minNotes\">\n"
                "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n"
-               "<header class=\"doctitle\">%1</header>\n%4</main>\n"
-               "%5</body>\n</html>\n")
+               "<header class=\"doctitle\"><span>%1</span><button class=\"cap\" type=\"button\" title=\"Readable width — the app's 760 measure\">Readable width</button></header>\n%4</main>\n"
+               "%5%6</body>\n</html>\n")
         .arg(htmlEscape(m->documentName()), css, toggle, body,
-             QLatin1String(kLightbox));
+             QLatin1String(kLightbox), QLatin1String(kCapScript));
 }
 
 QString Exporter::htmlFragment(int loRow, int hiRow) const {

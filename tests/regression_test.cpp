@@ -7929,9 +7929,10 @@ static void testGridTableExports() {
     // The responsive sheet (2.0 stage 1C; centred since 2026-09-16): main centres under a 760
     // measure cap with 48 px margins and no min-width (narrow windows reflow), the desk band
     // centres with it, a table wider than the page centres under it (capped at the margin).
-    CHECK(html.contains(QStringLiteral("main{max-width:856px;margin:0 auto;padding:48px 48px 96px}"))
-              && !html.contains(QStringLiteral("min-width:1000px")) && html.contains(QStringLiteral("--sheetw:856px"))
-              && html.contains(QStringLiteral("--l:max(0px,calc(50% - var(--sheetw)))")),
+    CHECK(html.contains(QStringLiteral("main{max-width:none;margin:0;padding:48px 48px 96px}"))
+              && html.contains(QStringLiteral("html.cap main{max-width:856px;margin:0 auto}"))
+              && !html.contains(QStringLiteral("min-width:1000px")) && !html.contains(QStringLiteral("--sheetw"))
+              && html.contains(QStringLiteral("class=\"cap\"")) && html.contains(QStringLiteral("mn.readableWidth")),
           "HTML: the page and the sheet band centre");
     CHECK(!html.contains(QStringLiteral("<div class=\"tablewrap\" style")), "HTML: a table within the page carries no centring margin");
     // The app's type rides along (2026-09-16): the faces as @font-face data, the sizes and the
@@ -7952,9 +7953,8 @@ static void testGridTableExports() {
     for (int c = 0; c < 3; ++c) m.setTableColumnWidth(head, c, 400);   // 1200 wide: 440 past the page
     RecordingSink ws;
     const QString wide = ex.toHtml(Exporter::Options{}, ws);
-    CHECK(wide.contains(QStringLiteral("<div class=\"tablewrap\" style=\"margin-left:max(calc((100% - 1200px) / 2),min(-24px,calc((100% + 48px - 100vw) / 2)))\">")),
-          "HTML: a wide table centres under the page, never past the margin (%s)", qPrintable(wide.mid(std::max<qsizetype>(0, wide.indexOf(QStringLiteral("tablewrap")) - 10), 160)));
-    CHECK(wide.contains(QStringLiteral("--sheetw:1296px")), "HTML: the sheet band spans the table + margins");
+    CHECK(!wide.contains(QStringLiteral("margin-left:max(calc(")), "HTML: a wide table starts at the page edge and runs past the right (fluid page, 2026-10-18)");
+    CHECK(!wide.contains(QStringLiteral("--sheetw")) && !wide.contains(QStringLiteral("margin-left:max(calc(")), "HTML: no sheet band and no centring under a sheet — a wide table runs past the right edge (fluid page, 2026-10-18)");
 }
 
 static void testGridTableDocxPdf() {
