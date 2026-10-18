@@ -279,7 +279,7 @@ D3D11VaDecodeBridge::consume(const FrameHandle &fh, int rangeOverride)
         case AVCOL_SPC_BT2020_NCL:
         case AVCOL_SPC_BT2020_CL: pc.colorSpace = 2; break;
         case AVCOL_SPC_BT709:     pc.colorSpace = 1; break;
-        default:                  pc.colorSpace = (w >= 1280 || h >= 720) ? 1 : 0; break;
+        default:                  pc.colorSpace = 1; break;   // untagged → BT.709
     }
     if (rangeOverride == 1)      pc.range = 1;
     else if (rangeOverride == 2) pc.range = 0;

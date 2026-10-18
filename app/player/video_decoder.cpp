@@ -1,4 +1,5 @@
 #include "video_decoder.h"
+#include "read_ahead.h"
 
 #include "decoder_cleanup_queue.h"
 #include "hw_routing.h"             // softwareOnlyCodec (all platforms)
@@ -318,6 +319,18 @@ bool VideoDecoder::open(const QString &path)
 
     emit metadataChanged();
 
+    // Warm the next frames' bytes ahead of the decoder (read_ahead.h; PC-B from QCView). A plain file on disk only —
+    // a packaged clip streams through a `subfile,` spec the warmer can't open, and it has no cache page to touch.
+    if (m_frameIndex.isValid() && QFileInfo(path).isFile()) {
+        m_readAheadId.store(ReadAhead::instance().attach(
+            path, ReadAhead::spansFromIndex(
+                      m_fmt, m_videoStreamIdx,
+                      [this](int64_t ts) { return m_frameIndex.frameForPts(ts); },
+                      m_frameIndex.totalFrames()),
+                  m_frameIndex.fps()),
+            std::memory_order_release);
+    }
+
     m_stopRequested.store(false, std::memory_order_release);
     // m_publishedSeq is NOT reset: consumer cursors are per-renderer and
     // survive open/close — a monotonic seq can never collide with a stale
@@ -356,6 +369,11 @@ void VideoDecoder::scrubToFrame(int frameNo)
         m_scrubDecoder->requestFrame(frameNo);
 }
 
+void VideoDecoder::setReadAheadRange(int first, int last)
+{
+    ReadAhead::instance().setRange(m_readAheadId.load(std::memory_order_acquire), first, last);
+}
+
 void VideoDecoder::seekToFrame(int frameNo)
 {
     if (!m_frameIndex.isValid()) return;
@@ -364,6 +382,8 @@ void VideoDecoder::seekToFrame(int frameNo)
     if (total > 0 && frameNo >= total) frameNo = total - 1;
 
     m_pendingSeekTarget.store(frameNo, std::memory_order_release);
+    // The decoder reads frameNo itself; warm from the frame after it.
+    ReadAhead::instance().setPosition(m_readAheadId.load(std::memory_order_acquire), frameNo + 1);
     {
         std::lock_guard<std::mutex> lk(m_seekCondMutex);
     }
@@ -413,6 +433,7 @@ void VideoDecoder::clearErrorState()
 
 void VideoDecoder::close()
 {
+    ReadAhead::instance().detach(m_readAheadId.exchange(0, std::memory_order_acq_rel));
     // Tear down the scrub decoder (its own context + worker thread) first.
     if (m_scrubDecoder)
         m_scrubDecoder->close();
@@ -1339,6 +1360,7 @@ void VideoDecoder::publishHandle(FrameHandle handle, int64_t pts, bool pace)
         if (frameNo != m_currentFrame.exchange(frameNo, std::memory_order_acq_rel)) {
             emit currentFrameChanged();
         }
+        ReadAhead::instance().setPosition(m_readAheadId.load(std::memory_order_acquire), frameNo + 1);
     }
 
     emit frameAvailable();

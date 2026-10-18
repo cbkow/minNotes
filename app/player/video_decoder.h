@@ -146,6 +146,10 @@ public:
     QString hwAccel() const { return m_hwAccelType; }
     int     currentFrame() const { return m_currentFrame.load(std::memory_order_acquire); }
     double  fps() const { return m_frameIndex.isValid() ? m_frameIndex.fps() : 0.0; }
+    // Read-ahead (PC-B, read_ahead.h): the warmer is attached on open; a loop range under review hydrates whole.
+    Q_PROPERTY(bool readAheadActive READ readAheadActive NOTIFY metadataChanged)
+    bool readAheadActive() const { return m_readAheadId.load(std::memory_order_acquire) != 0; }
+    void setReadAheadRange(int first, int last);
     bool    isPlaying() const { return m_isPlaying.load(std::memory_order_acquire); }
     int     decodeErrorCount() const { return m_decodeErrorCount.load(std::memory_order_acquire); }
     QString lastDecodeError() const;
@@ -352,6 +356,7 @@ private:
     // PTS↔frame conversion for both the published-frame number
     // (currentFrame) and seekToFrame's target PTS computation.
     FrameIndex             m_frameIndex;
+    std::atomic<std::uint64_t> m_readAheadId{0};   // ReadAhead client for this file (0 = none); set on open, cleared on close
     std::atomic<int>       m_currentFrame{-1};
 
     // Owned scrub decoder (created on open, closed on close). unique_ptr to

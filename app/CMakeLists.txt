@@ -137,6 +137,9 @@ qt_add_executable(minnotesapp
     player/seek_compat.h
     player/stream_extent.h
     player/sws_threaded.h
+    # QCView 2026-09-22 (PC-B): warm the next frames' bytes ahead of the decoder (network volumes).
+    player/read_ahead.h
+    player/read_ahead.cpp
     player/scrub_frame_cache.h
     player/scrub_frame_cache.cpp
     player/simple_lru.h

@@ -4128,7 +4128,7 @@ FocusScope {
             if (step === 10) { check(root._vidFastSeekDir === -1 && videoAudio.shuttleActive() === videoAudio.hasAudio, "J held = rewind shuttle"); gestures.keyRelease(root, Qt.Key_J); ++step; return }
             if (step === 11) { check(root._vidFastSeekDir === 0, "…released = shuttle ends"); gestures.key(root, Qt.Key_Home); ++step; return }
             if (step === 12) { check(root._vidIntendedFrame() === 0, "Home seeks to the start"); const id = blockModel.videoBlockIds()[0]; root.setActiveTab(id); ++step; return }
-            if (step === 20) { state("block studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row >= 0, "the block's studio is open on the host"); root.playHost(); ++step; return }
+            if (step === 20) { state("block studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row >= 0, "the block's studio is open on the host"); check(videoDec.readAheadActive, "read-ahead is attached to a local clip (PC-B)"); root.playHost(); ++step; return }
             if (step === 45) { state("block studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the block plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows"); root.playHost(); ++step; return }
             if (step === 50) { check(!videoDec.isPlaying, "play again = pause"); gestures.key(root, Qt.Key_Space); ++step; return }
             if (step === 52) { check(videoDec.isPlaying, "Space in the studio plays"); gestures.key(root, Qt.Key_Space); ++step; return }
