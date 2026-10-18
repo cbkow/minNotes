@@ -30,12 +30,12 @@ Rectangle {
     readonly property bool pageMode: mode === "page"
 
     function act(fn) { fn(); if (editor) editor.forceActiveFocus() }   // run an action, then the keys go back to the editor
-    function openColors(target) {   // the swatch stack → the colour flyout (S4); until then the Inspector's palette
+    function openColors(target) {   // the swatch stack → the colour flyout
         if (!inspector) return
         inspector.target = target
-        if (bar.colorFlyout) bar.colorFlyout.open(); else { inspector.open = true; if (inspector.view !== undefined) inspector.view = "palette" }
+        if (!colors.visible) colors.open()
     }
-    property var colorFlyout: null   // set in S4
+    readonly property var colorFlyout: colors
 
     component ToolBtn: FlatButton {
         anchors.verticalCenter: parent.verticalCenter
@@ -53,6 +53,7 @@ Rectangle {
     component OptionBtn: ToolBtn {
         property var item: ({})
         signal picked()
+        anchors.verticalCenter: undefined   // (lives in the flyout's Grid, not a Row)
         iconName: item.icon || ""
         tooltip: item.tip || ""
         checked: {
@@ -226,6 +227,7 @@ Rectangle {
             readonly property var layers: [ { key: "fg", tip: qsTr("Text colour") }, { key: "bg", tip: qsTr("Highlight colour") }, { key: "draw", tip: qsTr("Pen colour") } ]
             function colorOf(key) { return !bar.inspector ? "transparent" : key === "fg" ? bar.inspector.fgColor : key === "bg" ? bar.inspector.bgColor : bar.inspector.drawColor }
             function layerAt(i) { return layerRep.itemAt(i) }
+            ColorFlyout { id: colors; parent: swatch; inspector: bar.inspector }
             Column {
                 anchors.centerIn: parent
                 spacing: 1

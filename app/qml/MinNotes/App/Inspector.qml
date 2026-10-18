@@ -2,49 +2,40 @@ import QtQuick
 import QtQuick.Controls
 import QtCore
 
-// The right-side inspector — a collapsible panel that SLIDES in/out (default
-// hidden, so the resting view is just the thin left rail + document). The left
-// rail's palette button toggles `open`; the editor column reflows to make room.
-// It stays open while you select text and apply, never click-away-dismissed.
-//
-// Today it holds the colour tools (text colour + highlight, an HSV picker with a
-// Text/Highlight target toggle, revert). It's built as a real panel — not a
-// floating popout — so it has room to grow into a full interface (annotation
-// tools, etc.) without obscuring the document.
+// The right-side Inspector — a panel that SLIDES in/out (CLOSED by default since the 2026-10-18 chrome
+// re-organisation; the toolbar's toggle opens it; nothing in the panel closes it). ONE scroller with TWO
+// COLLAPSIBLE SECTIONS: Comments (the page's threads, or the file's unanchored ones on the canvas) and History (the
+// undo log of whatever ⌘Z would walk). No header strip, no view tabs any more. The COLOUR STATE still lives here
+// (fgColor / bgColor / drawColor / drawWidth / drawTool / target + their Settings — six files read
+// `editor.inspector.*`); its UI is ColorFlyout, behind the toolbar's swatch stack.
 Rectangle {
     id: panel
     property var editor: null
     // The panel participates in the push layout via Main.qml's width subtraction. (It floated in
     // the page's annotation mode until 2.0 stage 1 removed that mode.)
     readonly property bool floating: false
-    property bool open: true   // open/closed is persisted (see panelStore) and
-                               // restored on launch; this is just the pre-restore default
+    property bool open: false  // open/closed is persisted (see panelStore) and restored on launch; CLOSED by default (2026-10-18)
     property bool _ready: false   // gates the slide animation off during restore
 
     // Persist whether the panel is open, so it reopens in the user's last state.
     Settings {
         id: panelStore
         category: "inspector"
-        property bool open: true
-        property string view: "palette"
+        property bool open: false
+        property bool commentsCollapsed: false
+        property bool historyCollapsed: false
     }
-    onOpenChanged: if (_ready) {
-        panelStore.open = open
-        // Closing the panel drops back to Type (user ruling 2026-08-19):
-        // drawing implies the tools are on screen — with the panel gone there
-        // would be no visible indicator that typing is disabled.
-        if (!open && drawTool !== "type") drawTool = "type"
-    }
-
-    // Which interface the panel shows: the colour/drawing palette or the
-    // comment threads. Persisted like `open`.
-    property string view: "palette"
-    onViewChanged: if (_ready) panelStore.view = view
-    // The expanded thread in the comments view ("" = all collapsed).
+    onOpenChanged: if (_ready) panelStore.open = open   // (closing no longer disarms the pen: the tools live in the toolbar now)
+    // The two sections' collapse state, persisted.
+    property bool commentsCollapsed: false
+    property bool historyCollapsed: false
+    onCommentsCollapsedChanged: if (_ready) panelStore.commentsCollapsed = commentsCollapsed
+    onHistoryCollapsedChanged: if (_ready) panelStore.historyCollapsed = historyCollapsed
+    // The expanded thread in the comments section ("" = all collapsed).
     property string openThread: ""
     function showComments(threadId) {
         open = true
-        view = "comments"
+        commentsCollapsed = false
         openThread = threadId
     }
 
@@ -89,163 +80,64 @@ Rectangle {
     function targetColor() {
         return target === "fg" ? fgColor : target === "bg" ? bgColor : drawColor
     }
-    // Picking a colour auto-applies it to the document selection (live). But a
-    // PROGRAMMATIC picker.value set (tab switch, init, revert) must NOT — so route
-    // those through setPickerValue, which suppresses the apply during the assign.
-    property bool _suppressApply: false
-    function setPickerValue(v) { _suppressApply = true; picker.value = v; _suppressApply = false }
-
-    // Switching target retargets the picker — deselect first, or the reassign
-    // would write the OTHER target's colour into the selected swatch.
-    onTargetChanged: { selPreset = -1; selUser = -1
-                       setPickerValue(targetColor()) }
-    // Reset the picker to its default AND strip THIS TAB's colour from the current
-    // selection (table cells or text) — "revert to default" means uncoloured, for
-    // the text colour OR the highlight, whichever tab is showing (the other kind
-    // stays; Clear Formatting is the everything button). Draw only resets the pen.
-    function revertTarget() {
-        selPreset = -1; selUser = -1                    // (don't drag a swatch back to default)
-        if (target === "fg")      fgColor = Theme.colors.text   // default type colour (E4E3E2)
-        else if (target === "bg") bgColor = "#FFEC59"
-        else                      drawColor = "#FF0000"
-        setPickerValue(targetColor())
-        if (editor && target !== "draw") editor.revertColors(target === "fg")
-    }
-
-    // --- Swatches: a FIXED bright preset grid + a row of user slots. Clicking
-    // one selects it and loads its colour. Only user slots are editable: while
-    // a user slot is selected, picker edits write back into it (persisted via
-    // Settings); presets are immutable — editing while one is selected just
-    // deselects it (the swatch no longer matches the picker). Empty user slots
-    // capture the current colour on first click.
-    readonly property var presets: [
-        "#FF5768", "#FF6F68", "#FC6238", "#FFA23A", "#FFBF65", "#FFD872", "#FFEC59", "#CFF800", "#86E36B", "#43E8D8",
-        "#4DD091", "#00CDAC", "#8DD7BF", "#00B0BA", "#00A5E3", "#6C88C4", "#C05780", "#FF96C5", "#9D8DF1", "#FF60A8"]
-    property var userSlots: ["", "", "", "", "", "", "", "", "", ""]
-    property int selPreset: -1
-    property int selUser: -1
-    Settings {
-        id: swatchStore
-        category: "swatches"
-        property string user: ""
-    }
     Component.onCompleted: {
-        // Pad/truncate the saved slots to the current count so growing the row
-        // doesn't discard a user's existing swatches (they just gain empties).
-        try { var u = JSON.parse(swatchStore.user)
-              if (u && u.length) { var n = userSlots.slice()
-                                   for (var i = 0; i < n.length && i < u.length; i++) n[i] = u[i]
-                                   userSlots = n } } catch (e) {}
         if (drawStore.colorHex !== "") drawColor = drawStore.colorHex
         if (drawStore.width > 0) drawWidth = drawStore.width
-        setPickerValue(targetColor())   // re-seed: the picker completed before the restore above
         open = panelStore.open      // restore last open/closed state (no slide)
-        if (panelStore.view === "comments" || panelStore.view === "history")
-            view = panelStore.view
+        commentsCollapsed = panelStore.commentsCollapsed
+        historyCollapsed = panelStore.historyCollapsed
         _ready = true               // toggles from here on animate + persist
-    }
-    function saveSwatches() { swatchStore.user = JSON.stringify(userSlots) }
-    function noteEdit(c) {                              // picker moved
-        var hex = "" + c
-        if (selUser >= 0) { var u = userSlots.slice(); u[selUser] = hex; userSlots = u; saveSwatches() }
-        else if (selPreset >= 0 && hex.toLowerCase() !== presets[selPreset].toLowerCase())
-            selPreset = -1                              // presets are fixed; a tweak detaches
     }
 
     // Left hairline against the document (only meaningful while open).
     Rectangle { width: 1; height: parent.height; color: Theme.colors.border }
 
-    // Target toggle (Text / Highlight / Draw) — flat inline buttons (no box
-    // border) carrying a colour chip. Active uses the family selection language:
-    // divider-grey fill + bright text. Selecting one points the picker AND the
-    // Apply button at that colour.
-    component Tab: Rectangle {
-        property string label: ""
-        property string t: ""
-        readonly property bool sel: panel.target === t
-        width: tabRow.implicitWidth + 20; height: 28
-        color: sel ? Theme.colors.divider : (tma.containsMouse ? Theme.colors.surfaceHover : "transparent")
-        Row {
-            id: tabRow
-            anchors.centerIn: parent; spacing: 6
-            Rectangle { width: 12; height: 12; radius: 0; anchors.verticalCenter: parent.verticalCenter
-                        color: parent.parent.t === "fg" ? panel.fgColor
-                             : parent.parent.t === "bg" ? panel.bgColor : panel.drawColor
-                        border.width: 1; border.color: Theme.colors.border }
-            Text { text: parent.parent.label; anchors.verticalCenter: parent.verticalCenter
-                   color: parent.parent.sel ? Theme.colors.textBright : Theme.colors.textMuted
-                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
-        }
-        MouseArea { id: tma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.target = parent.t }
+    // A section header: a chevron, the title, a count; the whole band toggles. Grey + white, no accent.
+    component SectionHeader: Rectangle {
+        id: sh
+        property string title: ""
+        property int count: -1
+        property bool collapsed: false
+        signal toggled()
+        width: panel.panelW; height: 28; radius: 0
+        color: shMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border }
+        Icon { x: 10; anchors.verticalCenter: parent.verticalCenter; name: sh.collapsed ? "caret-right" : "caret-down"; size: 12; color: Theme.colors.textSubtle }
+        Text { x: 28; anchors.verticalCenter: parent.verticalCenter; text: sh.title
+               color: sh.collapsed ? Theme.colors.textMuted : Theme.colors.textBright
+               font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome; font.bold: true }
+        Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+               visible: sh.count >= 0; text: sh.count
+               color: Theme.colors.textSubtle; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
+        MouseArea { id: shMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: sh.toggled() }
     }
 
-    // Fixed-width content anchored to the right edge so it doesn't squish during the
-    // slide; the panel's animating width just reveals/hides it.
+    // Fixed-width content anchored to the right edge so it doesn't squish during the slide; the panel's animating
+    // width just reveals/hides it. ONE scroller: the sections stack at their content height.
     Item {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
-
-        // Top bar (ruling 2026-08-20; the PageRuler it mirrored went with the fixed measure in
-        // 2.0 stage 1C — the band stays as the panel's header strip): same tone, a baseline
-        // hairline, and the close X.
-        Rectangle {
-            id: topBar
-            width: parent.width; height: Theme.dim.rulerHeight
-            color: Theme.colors.surface
-            Rectangle {   // the baseline hairline
-                anchors.bottom: parent.bottom
-                width: parent.width; height: 1
-                color: Theme.colors.border
-            }
-            FlatButton {
-                anchors.right: parent.right; anchors.rightMargin: 8
-                anchors.verticalCenter: parent.verticalCenter
-                width: 18; height: 18; radius: 0; iconName: "x"; iconSize: 12
-                tooltip: "Close"; tooltipSide: "left"
-                onClicked: panel.open = false
-            }
-        }
-
-        // Header: view toggle (Palette | Comments | History).
-        Item {
-            id: header
-            x: 12; width: parent.width - 24; height: 30; y: topBar.height + 6
-            Row {
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 14
-                Text { text: "Palette"
-                       color: panel.view === "palette" ? Theme.colors.textBright : Theme.colors.textMuted
-                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
-                       font.bold: panel.view === "palette"
-                       MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                   onClicked: panel.view = "palette" } }
-                Text { text: "Comments"
-                       color: panel.view === "comments" ? Theme.colors.textBright : Theme.colors.textMuted
-                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
-                       font.bold: panel.view === "comments"
-                       MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                   onClicked: panel.view = "comments" } }
-                Text { text: "History"
-                       color: panel.view === "history" ? Theme.colors.textBright : Theme.colors.textMuted
-                       font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
-                       font.bold: panel.view === "history"
-                       MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                   onClicked: panel.view = "history" } }
-            }
-        }
-
-        // --- Comments view: thread cards (anchored first, then Unanchored) ---
         Flickable {
-            visible: panel.view === "comments"
-            anchors.top: header.bottom; anchors.topMargin: 6; anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            x: 12; width: panel.contentW
-            contentHeight: threadsCol.implicitHeight + 8
+            id: outer
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: col.implicitHeight + 8
             clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: MnScrollBar {}
+            Column {
+                id: col
+                width: outer.width
+                spacing: 0
+                SectionHeader { title: qsTr("Comments"); count: threadRep.count; collapsed: panel.commentsCollapsed
+                                onToggled: panel.commentsCollapsed = !panel.commentsCollapsed }
+                Item { width: 1; height: 8; visible: !panel.commentsCollapsed }
+
+        // --- Comments: thread cards (anchored first, then Unanchored) ---
             Column {
                 id: threadsCol
-                width: parent.width; spacing: 8
+                visible: !panel.commentsCollapsed
+                x: 12; width: panel.contentW; spacing: 8
                 Text {
                     visible: threadRep.count === 0
                     text: panel.editor && panel.editor.activeCanvas && !panel.editor.cardHosted
@@ -484,30 +376,32 @@ Rectangle {
                     }
                 }
             }
-        }
+                Item { width: 1; height: 10 }
+                SectionHeader { title: qsTr("History"); collapsed: panel.historyCollapsed
+                                onToggled: panel.historyCollapsed = !panel.historyCollapsed }
+                Item { width: 1; height: 6; visible: !panel.historyCollapsed }
 
-        // --- History view: the undo stack's ACTIVE PATH, oldest at the top
+        // --- History: the undo stack's ACTIVE PATH, oldest at the top
         // (the Photoshop reading). The current state carries the divider
         // fill; states ahead of now (redoable) dim. Click any row to time-
         // travel — the jump replays undo()/redo() steps, so carets, ink,
         // and page width all restore through the existing machinery. ---
         ListView {
             id: historyList
-            visible: panel.view === "history"
-            anchors.top: header.bottom; anchors.topMargin: 6
-            anchors.bottom: parent.bottom; anchors.bottomMargin: 8
+            visible: !panel.historyCollapsed
             x: 12; width: panel.contentW
-            clip: true
+            height: contentHeight            // the outer Flickable scrolls; this list never does
+            interactive: false
             spacing: 1
-            boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: MnScrollBar {}
             // The log that ⌘Z would walk: the canvas's on the Canvas tab, the page's otherwise.
             readonly property var log: panel.editor ? panel.editor.undoTarget : blockModel
             model: (log.undoRevision, log.undoHistory())
-            onModelChanged: Qt.callLater(function() {   // keep "now" in view
+            onModelChanged: Qt.callLater(function() {   // keep "now" in view (the OUTER scroller moves)
+                if (panel.historyCollapsed) return
                 for (var i = 0; i < historyList.count; ++i)
                     if (historyList.model[i].current) {
-                        historyList.positionViewAtIndex(i, ListView.Center)
+                        const y = historyList.mapToItem(col, 0, i * 27).y
+                        outer.contentY = Math.max(0, Math.min(outer.contentHeight - outer.height, y - outer.height / 2))
                         return
                     }
             })
@@ -549,316 +443,13 @@ Rectangle {
                     }
                 }
             }
-            Text {   // empty document, empty history
-                visible: historyList.count <= 1
-                anchors.centerIn: parent
-                text: "Edits will appear here."
-                color: Theme.colors.textMuted
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-            }
         }
-
-        Column {
-            visible: panel.view === "palette"
-            anchors.top: header.bottom; anchors.topMargin: 6
-            x: 12; spacing: 8
-
-            // === Tools (drawing) — moved to the top strip's toolbar (2.0); the grid stays as the state's
-            // home (drawTool / drawColor / drawWidth live on this panel) but is not shown. ===
-            Rectangle { width: panel.contentW; height: 1; color: Theme.colors.divider; visible: false }
-            Text { text: "Tools"; visible: false
-                   color: Theme.colors.textBright
-                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
-
-            // The tool grid — Photoshop-style uniform rows, one selection
-            // language for every tool. Type (regular editing) and Select/Move
-            // lead; the ink tools follow. Clicking the armed tool drops back
-            // to Type. Ink tools disable in table tabs (no ink surface — user
-            // ruling 2026-08-19: no view jumps as a tool side effect);
-            // sketch/video tabs interpret them locally, and PDF tabs take
-            // per-page ink. The text-chip tool alone also disables in PDF
-            // tabs (no PDF text session yet) and video tabs (text boxes are
-            // not part of the QCView flow).
-            Grid {
-                columns: 5; spacing: 4
-                visible: false   // the toolbar (CanvasToolbar) shows the tools now
-                Repeater {
-                    model: [
-                        { tool: "type",     icon: "cursor-text",   tip: qsTr("Type — regular editing") },
-                        { tool: "select",   icon: "cursor",        tip: qsTr("Select / Move") },
-                        { tool: "freehand", icon: "scribble",      tip: qsTr("Freehand") },
-                        { tool: "line",     icon: "line-segment",  tip: qsTr("Line") },
-                        { tool: "arrow",    icon: "arrow-up-right",tip: qsTr("Arrow") },
-                        { tool: "rect",     icon: "rectangle",     tip: qsTr("Rectangle") },
-                        { tool: "oval",     icon: "circle",        tip: qsTr("Oval") },
-                        { tool: "text",     icon: "textbox",       tip: qsTr("Text box") },
-                        { tool: "eraser",   icon: "eraser",        tip: qsTr("Eraser") }
-                    ]
-                    delegate: FlatButton {
-                        required property var modelData
-                        // The Type slot is the RESTING MODE, not a text tool
-                        // (drawTool "type" = nothing armed) — in tabs where
-                        // resting means browsing rather than typing, its icon
-                        // and tip say so (ruling 2026-08-20).
-                        readonly property bool typeSlot: modelData.tool === "type"
-                        readonly property string ctxIcon:
-                            typeSlot && panel.editor
-                                && (panel.editor.pdfTabOpen
-                                    || panel.editor.videoTabOpen)
-                                ? "hand-pointing" : modelData.icon
-                        readonly property string ctxTip: {
-                            if (!typeSlot || !panel.editor) return modelData.tip
-                            if (panel.editor.pdfTabOpen)
-                                return qsTr("Browse — scroll & pan pages")
-                            if (panel.editor.videoTabOpen)
-                                return qsTr("Browse — playback & note cards")
-                            if (panel.editor.activeGridHead >= 0)
-                                return qsTr("Type — edit cells")
-                            return modelData.tip
-                        }
-                        // Why this tool is off in the current tab ("" = live);
-                        // enabled_ derives from this, so the grey and its
-                        // tooltip can never drift apart. Table tabs keep only
-                        // Type (ruling 2026-08-20: Select is inert there —
-                        // cells have their own cursor); video tabs grey the
-                        // text-chip tool alone (PDF pages take chips since
-                        // the 2026-08-20 session landed).
-                        readonly property string offReason: {
-                            if (!panel.editor || modelData.tool === "type") return ""
-                            if (panel.editor.activeGridHead >= 0)
-                                return qsTr("tables have no ink surface")
-                            // 2.0: the page's margin ink is gone; drawings live on the CANVAS, where every
-                            // stroke tool and the eraser are live (text boxes return with the shape tools).
-                            if (panel.editor.activeCanvas && !panel.editor.cardHosted) return ""
-                            if (panel.editor.activeFrameId === "")
-                                return qsTr("drawing lives on the canvas")
-                            if (panel.editor.pdfTabOpen)
-                                return qsTr("drawing on PDF pages returns with the canvas tools")
-                            if (modelData.tool !== "text") return ""
-                            if (panel.editor.videoTabOpen)
-                                return qsTr("text boxes aren't part of video notes")
-                            return ""
-                        }
-                        width: (panel.contentW - 16) / 5; height: width
-                        iconName: ctxIcon
-                        iconSize: 18
-                        checked: panel.drawTool === modelData.tool
-                        checkedColor: Theme.colors.divider   // grey — family selection language
-                        iconColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
-                        tooltip: offReason.length > 0
-                                     ? ctxTip + qsTr(" — ") + offReason
-                                     : ctxTip
-                        tooltipSide: "top"
-                        enabled_: offReason.length === 0
-                        onClicked: panel.drawTool =
-                            (panel.drawTool === modelData.tool && modelData.tool !== "type")
-                                ? "type" : modelData.tool
-                    }
-                }
-            }
-            Row {
-                spacing: 8
-                Text {
-                    text: "Width"
-                    anchors.verticalCenter: parent.verticalCenter
+                Text {   // empty document, empty history
+                    visible: !panel.historyCollapsed && historyList.count <= 1
+                    x: 12; topPadding: 4
+                    text: qsTr("Edits will appear here.")
                     color: Theme.colors.textMuted
                     font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                }
-                FlatSlider {
-                    width: panel.contentW - 80
-                    anchors.verticalCenter: parent.verticalCenter
-                    from: 1; to: 64   // marker weights stay usable on big canvases
-                    value: panel.drawWidth
-                    fillColor: Theme.colors.textMuted
-                    onMoved: panel.drawWidth = value
-                }
-                Text {
-                    text: Math.round(panel.drawWidth)
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Theme.colors.textSubtle
-                    font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-                }
-            }
-
-            // === Canvas === (sketch tab only): exact frame size + fit-to-ink.
-            // Sizes are SOURCE px, clamped to the frame bounds [64, 8192];
-            // typing commits through sketchResizeCanvas (top-left anchored —
-            // the drag handles do per-side growth).
-
-            // === Colors === (section divider with extra padding above the line)
-            Item { width: panel.contentW; height: 9
-                   Rectangle { width: parent.width; height: 1; anchors.bottom: parent.bottom
-                               color: Theme.colors.divider } }
-            Text { text: "Colors"
-                   color: Theme.colors.textBright
-                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
-
-            // Draw leads (and is the default target) — see `target` up top.
-            Row {
-                spacing: 4
-                Tab { label: "Draw"; t: "draw" }
-                Tab { label: "Text"; t: "fg" }
-                Tab { label: "Back"; t: "bg" }
-            }
-
-            ColorPickerInline {
-                id: picker
-                onValueChanged: {
-                    if (panel.target === "fg")      panel.fgColor = value
-                    else if (panel.target === "bg") panel.bgColor = value
-                    else                            panel.drawColor = value
-                    panel.noteEdit(value)               // selected swatch tracks the edit
-                    // Live auto-apply to the document selection (text / highlight),
-                    // unless this is a programmatic value set (tab switch / revert).
-                    // Text colour also arms the typing "pen" (pickTextColor).
-                    if (!panel._suppressApply && panel.editor) {
-                        if (panel.target === "fg")      panel.editor.pickTextColor("" + value)
-                        else if (panel.target === "bg") panel.editor.pickHighlight("" + value)
-                    }
-                }
-                Component.onCompleted: panel.setPickerValue(panel.targetColor())   // init: no apply/arm
-            }
-
-            // Apply: push the picked colour onto the current selection
-            // explicitly (user ruling 2026-08-21). Swatch clicks already
-            // apply live — but a colour picked BEFORE the selection existed
-            // needs this; re-clicking an already-lit swatch reads wrong.
-            // Hidden on the Draw tab (that colour feeds the armed tool).
-            Rectangle {
-                visible: panel.target !== "draw"
-                width: panel.contentW; height: 28
-                readonly property bool canApply: !!panel.editor && (panel.editor.hasSelection || panel.editor.caretInCell)
-                opacity: canApply ? 1.0 : 0.4          // disabled chrome rule
-                color: applyMA.containsMouse && canApply ? Theme.colors.divider
-                                                         : Theme.colors.surfaceHover
-                Row {
-                    anchors.centerIn: parent; spacing: 6
-                    Rectangle {   // the colour about to land
-                        width: 12; height: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: panel.target === "fg" ? panel.fgColor : panel.bgColor
-                        border.width: 1; border.color: Theme.colors.border
-                    }
-                    Text { text: qsTr("Apply to selection"); color: Theme.colors.text
-                           font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                           anchors.verticalCenter: parent.verticalCenter }
-                }
-                MouseArea { id: applyMA; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: parent.canApply ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: {
-                                if (!parent.canApply) return
-                                if (panel.target === "fg") panel.editor.applyTextColor(panel.fgColor)
-                                else                       panel.editor.applyHighlight(panel.bgColor)
-                            } }
-            }
-
-            // Revert: soft grey (brighter than the page, not loud).
-            Rectangle {
-                width: panel.contentW; height: 28
-                color: revertMA.containsMouse ? Theme.colors.divider : Theme.colors.surfaceHover
-                Row {
-                    anchors.centerIn: parent; spacing: 6
-                    Icon { name: "arrow-counter-clockwise"; size: 14; color: Theme.colors.text
-                           anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: "Revert to default"; color: Theme.colors.text
-                           font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                           anchors.verticalCenter: parent.verticalCenter }
-                }
-                MouseArea { id: revertMA; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor; onClicked: panel.revertTarget() }
-            }
-
-            // --- Preset + user swatches (see the property block up top) ---
-            Text { text: "Presets"; color: Theme.colors.textMuted; topPadding: 6
-                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
-            Grid {
-                columns: 10; spacing: 4
-                Repeater {
-                    model: panel.presets.length
-                    delegate: Swatch { required property int index; idx: index }
-                }
-            }
-            Text { text: "Yours"; color: Theme.colors.textMuted; topPadding: 2
-                   font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
-            Row {
-                spacing: 4
-                Repeater {
-                    model: panel.userSlots.length
-                    delegate: Swatch { required property int index; idx: index; userSlot: true }
-                }
-            }
-        }
-    }
-
-    // One swatch. Selected = white border (the family selection language);
-    // empty user slots show a faint + and capture the current colour on click.
-    component Swatch: Rectangle {
-        property int idx: -1
-        property bool userSlot: false
-        readonly property string hex: userSlot ? panel.userSlots[idx] : panel.presets[idx]
-        readonly property bool selected: userSlot ? panel.selUser === idx : panel.selPreset === idx
-        width: 18; height: 18
-        color: hex !== "" ? hex : "transparent"
-        border.width: 1
-        border.color: selected ? Theme.colors.textBright : Theme.colors.border
-        Text {
-            visible: parent.hex === ""
-            anchors.centerIn: parent
-            text: "+"; color: Theme.colors.textSubtle
-            font.family: Theme.font.family; font.pixelSize: 11
-        }
-        MouseArea {
-            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-            acceptedButtons: parent.userSlot ? (Qt.LeftButton | Qt.RightButton) : Qt.LeftButton
-            onClicked: (m) => {
-                if (parent.userSlot && m.button === Qt.RightButton) {
-                    if (parent.hex === "") return       // nothing to clear
-                    var p = mapToItem(panel, m.x, m.y)
-                    slotMenu.idx = parent.idx
-                    slotMenu.x = Math.max(8, Math.min(p.x, panel.width - slotMenu.width - 8))
-                    slotMenu.y = p.y + 4
-                    slotMenu.open()
-                    return
-                }
-                if (parent.userSlot) {
-                    panel.selPreset = -1; panel.selUser = parent.idx
-                    if (parent.hex === "") {            // empty slot captures the current colour
-                        var cur = "" + panel.targetColor()
-                        var u = panel.userSlots.slice(); u[parent.idx] = cur
-                        panel.userSlots = u; panel.saveSwatches()
-                    } else picker.value = parent.hex
-                } else {
-                    panel.selUser = -1; panel.selPreset = parent.idx
-                    picker.value = parent.hex
-                }
-            }
-        }
-    }
-
-    // Right-click menu for a user slot: clear it back to empty (+).
-    Popup {
-        id: slotMenu
-        property int idx: -1
-        padding: 4
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Theme.colors.surface; radius: 0
-                                border.width: 1; border.color: Theme.colors.border }
-        contentItem: Rectangle {
-            implicitWidth: 104; implicitHeight: 26
-            color: clearMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
-            Text {
-                anchors.verticalCenter: parent.verticalCenter; x: 8
-                text: "Clear slot"; color: Theme.colors.text
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-            }
-            MouseArea {
-                id: clearMA
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    var u = panel.userSlots.slice(); u[slotMenu.idx] = ""
-                    panel.userSlots = u; panel.saveSwatches()
-                    if (panel.selUser === slotMenu.idx) panel.selUser = -1
-                    slotMenu.close()
                 }
             }
         }
