@@ -13,6 +13,7 @@ Item {
     property bool fitChecked: false            // the toggle's state (the document's Full width); Fit rows never check
     signal fitRequested()
     signal hundredRequested()
+    readonly property var menuItem: menu   // probe
 
     implicitWidth: label.implicitWidth + 16
     implicitHeight: 24

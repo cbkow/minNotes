@@ -5164,9 +5164,69 @@ FocusScope {
                 check(!root.cardHosted && canvas.livePage === "", "20 enter/exit cycles end at rest")
                 check(mx < 150, "no transition took ≥ 150 ms synchronously (max " + mx + " ms; K4)")
                 check(probeRss0 < 0 || drift < 1024 * 1024, "resident memory grows < 1 MB per cycle (" + Math.round(drift / 1024) + " KB; K5)")
-                nextPhase("live-cycles")
-                console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
-                Qt.exit(Math.min(fails, 100))
+                nextPhase("live-cycles"); return
+            }
+            if (phase === 13) {   // P13 (§2.14 chrome, 2026-10-18): the toolbar's mode switch, the components row, the colour flyout keeps the keys, the Heading flyout, downward popups
+                const c = root.chromeItem, t = root.tabsItem, g = gestures
+                if (step % 2 === 1) { ++step; return }   // the odd ticks let Rows / Popups lay out between gestures
+                if (step === 0) { root.setActiveTab("canvas"); ++step; return }
+                if (step === 2) {
+                    check(!!c && c.mode === "canvas" && c.canvasTools.visible && !c.pageTools.visible, "canvas mode: the canvas tools show, the page tools hide (mode '" + (c ? c.mode : "?") + "')")
+                    canvas.focusPage = livePage; ++step; return
+                }
+                if (step === 4) {
+                    check(c.mode === "page" && c.pageTools.visible && !c.canvasTools.visible, "page mode: the page tools show, the canvas tools hide (mode '" + c.mode + "')")
+                    check(t.pageTabCount === 1 && t.frameTabCount > 0, "the components row shows this page and its frames in page mode (" + t.pageTabCount + " / " + t.frameTabCount + ")")
+                    t.navMenuItem.open(); ++step; return
+                }
+                if (step === 6) {
+                    check(t.navMenuItem.visible && t.navMenuItem.y > 0, "the components navigator opens DOWNWARD (y " + t.navMenuItem.y + ", visible " + t.navMenuItem.visible + ", opened " + t.navMenuItem.opened + ", h " + t.navMenuItem.height + ")")
+                    t.navMenuItem.close()
+                    const sw = c.swatchStack, L = sw.layerAt(1), p = L.mapToItem(c, L.width / 2, L.height / 2)   // the middle layer = the highlight
+                    g.click(c, p.x, p.y); ++step; return
+                }
+                if (step === 8) {
+                    check(c.colorFlyout.visible && root.inspector.target === "bg", "a click on the swatch's middle layer opens the colour flyout aimed at the highlight (visible " + c.colorFlyout.visible + ", target '" + root.inspector.target + "')")
+                    check(c.colorFlyout.y > 0, "…and it opens downward (y " + c.colorFlyout.y.toFixed(0) + ")")
+                    check(root.activeFocus, "…leaving the keys with the editor")
+                    cursor.setCaret(0, 0); cursor.sync(); probeText = blockModel.contentForRow(0)
+                    g.type(root, "k"); ++step; return
+                }
+                if (step === 10) {
+                    check(blockModel.contentForRow(0) === "k" + probeText, "typing through an open flyout edits row 0 ('" + blockModel.contentForRow(0).substring(0, 12) + "')")
+                    blockModel.undo()
+                    c.colorFlyout.close(); ++step; return
+                }
+                if (step === 12) {
+                    check(!c.colorFlyout.visible && root.activeFocus, "closing the flyout hands the keys back (focus " + root.activeFocus + ")")
+                    const h = c.headingFlyout, p = h.mapToItem(c, h.width / 2, h.height / 2)
+                    g.click(c, p.x, p.y); ++step; return
+                }
+                if (step === 14) {
+                    check(c.headingFlyout.isOpen && c.headingFlyout.popupItem.y > 0, "the Heading flyout opens downward (open " + c.headingFlyout.isOpen + ")")
+                    // (the fixture's first row is already a heading: pick a DIFFERENT level — picking the current one toggles it off)
+                    const cur = root.caretType === 1 ? root.caretLevel : 0, want = cur === 3 ? 4 : 3
+                    const it = c.headingFlyout.itemAt(want - 1), p = it ? it.mapToItem(c, it.width / 2, it.height / 2) : null
+                    probeText = "" + want
+                    if (p) g.click(c, p.x, p.y)
+                    ++step; return
+                }
+                if (step === 16) {
+                    const want = parseInt(probeText), names = ["", "text-h-one", "text-h-two", "text-h-three", "text-h-four", "text-h-five"]
+                    check(root.caretType === 1 && root.caretLevel === want && !c.headingFlyout.isOpen && root.activeFocus, "picking H" + want + " in the flyout sets the heading, closes the flyout and keeps the keys (type " + root.caretType + " level " + root.caretLevel + ", open " + c.headingFlyout.isOpen + ", focus " + root.activeFocus + ")")
+                    check(c.headingFlyout.checked && c.headingFlyout.iconName === names[want], "…and the Heading button lights with the level's icon (" + c.headingFlyout.iconName + ")")
+                    blockModel.undo()
+                    c.zoomBadge.menuItem.open(); ++step; return
+                }
+                if (step === 18) {
+                    check(c.zoomBadge.menuItem.visible && c.zoomBadge.menuItem.y > 0, "the zoom badge's menu opens downward (y " + c.zoomBadge.menuItem.y + ")")
+                    c.zoomBadge.menuItem.close()
+                    check(!!c.inspectorToggle && c.inspectorToggle.checked === root.inspector.open, "the Inspector toggle mirrors the panel (" + root.inspector.open + ")")
+                    root.setActiveTab("canvas")
+                    nextPhase("chrome")
+                    console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
+                    Qt.exit(Math.min(fails, 100))
+                }
             }
         }
     }
