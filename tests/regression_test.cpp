@@ -6192,6 +6192,62 @@ static void testCanvasMediaAnchor() {
     mn::setActiveMappings(saved);
 }
 
+// [133] Folder elements, batch grid drops, Spread (2.0 phase A6).
+static void testFolderDrops() {
+    qInfo("[133] folder drops (2.0 phase A6): a dropped folder = a folder element (count, entries, path); a batch lands as a grid in ONE history row; spreadFolder; rescan is not an undo entry; folders are never packed");
+    QTemporaryDir dir;
+    const QString folder = dir.filePath(QStringLiteral("shots"));
+    QDir().mkpath(folder + QStringLiteral("/sub"));
+    QImage img(8, 8, QImage::Format_ARGB32); img.fill(Qt::blue);
+    for (int i = 0; i < 8; ++i) { QFile f(folder + QStringLiteral("/f%1.bin").arg(i)); if (f.open(QIODevice::WriteOnly)) f.write("x"); }
+    CHECK(img.save(folder + QStringLiteral("/pic.png")), "fixtures written");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const int n0 = c.elementCount(), rows0 = c.undoHistory().size();
+    const QString fid = c.addMediaElementFromUrl(QUrl::fromLocalFile(folder).toString(), 1000, 0);
+    const QJsonObject fd = QJsonDocument::fromJson(c.elementJson(fid).toUtf8()).object().value(QStringLiteral("media")).toObject();
+    CHECK(!fid.isEmpty() && c.mediaElementKind(fid) == QLatin1String("folder") && fd.value(QStringLiteral("name")).toString() == QLatin1String("shots")
+          && fd.value(QStringLiteral("count")).toInt() == 10 && fd.value(QStringLiteral("entries")).toArray().size() == 6
+          && fd.value(QStringLiteral("entries")).toArray().first().toString() == QLatin1String("sub"),
+          "a dropped folder is a folder element: name, count %d, six entries folders-first", fd.value(QStringLiteral("count")).toInt());
+    CHECK(QFileInfo(c.elementLocalPath(fid)).canonicalFilePath() == QFileInfo(folder).canonicalFilePath() && c.elementRect(fid).size() == QSizeF(CanvasDocument::kFolderCardW, CanvasDocument::kFolderCardH),
+          "…its path resolves back to the folder; the card size");
+    // A batch: an image, an odd file, a folder → three elements in a grid, one history row.
+    const QString odd = dir.filePath(QStringLiteral("notes.xyz")); { QFile f(odd); if (f.open(QIODevice::WriteOnly)) f.write("?"); }
+    const int rows1 = c.undoHistory().size();
+    const QStringList ids = c.addElementsFromUrls({QUrl::fromLocalFile(folder + QStringLiteral("/pic.png")).toString(), QUrl::fromLocalFile(odd).toString(), QUrl::fromLocalFile(folder).toString()}, 2000, 500);
+    CHECK(ids.size() == 3 && c.elementCount() == n0 + 4, "three elements from a three-url batch (%d)", ids.size());
+    CHECK(c.undoHistory().size() == rows1 + 1, "…in ONE history row (%d → %d)", rows1, c.undoHistory().size());
+    const QRectF r0 = c.elementRect(ids[0]), r1 = c.elementRect(ids[1]), r2 = c.elementRect(ids[2]);
+    const std::vector<QRectF> cells = mn::defaultCardLayout({r0.height(), r1.height(), r2.height()}, std::max({r0.width(), r1.width(), r2.width()}), CanvasDocument::kDropGridGap);
+    CHECK(r0.topLeft() == QPointF(2000 + cells[0].x(), 500 + cells[0].y()) && r1.topLeft() == QPointF(2000 + cells[1].x(), 500 + cells[1].y()) && r2.topLeft() == QPointF(2000 + cells[2].x(), 500 + cells[2].y()),
+          "…laid out as the default card grid from the drop point");
+    CHECK(c.mediaElementKind(ids[0]) == QLatin1String("image") && c.mediaElementKind(ids[1]) == QLatin1String("file") && c.mediaElementKind(ids[2]) == QLatin1String("folder") && r1.size() == QSizeF(CanvasDocument::kFileCardW, CanvasDocument::kFileCardH),
+          "…image, file chip (card size), folder");
+    c.undo();
+    CHECK(c.elementCount() == n0 + 1, "one undo removes the whole batch");
+    c.redo();
+    CHECK(c.elementCount() == n0 + 4, "…one redo brings it back");
+    // Spread: the folder's children below it, as one row.
+    const int rows2 = c.undoHistory().size();
+    const QStringList kids = c.spreadFolder(fid);
+    CHECK(kids.size() == 10 && c.undoHistory().size() == rows2 + 1, "spreadFolder: 10 children as elements in one row (%d)", kids.size());
+    const QRectF fr = c.elementRect(fid);
+    bool below = true; for (const QString& k : kids) if (c.elementRect(k).y() < fr.y() + fr.height()) below = false;
+    CHECK(below && c.mediaElementKind(kids.first()) == QLatin1String("folder") && c.mediaElementKind(kids.last()) == QLatin1String("image"), "…below the folder, the subfolder first and the image last");
+    // Rescan: not an undo entry, bumps elementsRevision.
+    { QFile f(folder + QStringLiteral("/new.bin")); if (f.open(QIODevice::WriteOnly)) f.write("y"); }
+    const int rows3 = c.undoHistory().size(), rev = c.elementsRevision();
+    c.rescanFolder(fid);
+    const QJsonObject fd2 = QJsonDocument::fromJson(c.elementJson(fid).toUtf8()).object().value(QStringLiteral("media")).toObject();
+    CHECK(fd2.value(QStringLiteral("count")).toInt() == 11 && c.undoHistory().size() == rows3 && c.elementsRevision() > rev, "rescan refreshes the count (%d) without a history row", fd2.value(QStringLiteral("count")).toInt());
+    // Packing never carries a folder.
+    const PackageExporter::PackPlan plan = PackageExporter::buildPackPlan(&c, true);
+    bool folderPlanned = false;
+    for (const auto& it : plan.items) if (it.srcPath.startsWith(folder) && QFileInfo(it.srcPath).isDir()) folderPlanned = true;
+    CHECK(!folderPlanned, "the pack plan skips folder elements (%d items)", plan.items.size());
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8715,6 +8771,7 @@ int main(int argc, char** argv) {
     testMediaHost();
     testElementTabs();
     testCanvasMediaAnchor();
+    testFolderDrops();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

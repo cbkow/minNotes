@@ -63,6 +63,10 @@ public:
     // bounds, fit, culling and the poster never see a 195,000 px card.
     static double pageHeightCap(double elementWidth);
     static double clampPageHeight(double elementWidth, double h);
+    static constexpr double kFolderCardW = 320, kFolderCardH = 112;   // a folder element's card
+    static constexpr double kFileCardW = 320, kFileCardH = 56;        // a file chip element's card (name + path)
+    static constexpr double kDropGridGap = 24;                       // a batch drop's grid gap
+    static constexpr int kSpreadCap = 48;                            // "Spread files here" takes this many children
     static constexpr double kDropMediaWidth = 480.0;   // a dropped image / video / PDF lands this wide
 
     explicit CanvasDocument(QObject* parent = nullptr);
@@ -180,6 +184,15 @@ public:
     // page's drop) or a generic file chip → a media element sized from the media; an importable
     // document raises importFileRequested instead (the host imports it into a new page there).
     Q_INVOKABLE QString addMediaElementFromUrl(const QString& fileUrl, qreal wx, qreal wy);
+    // A BATCH of drops (phase A6): every url becomes its element (importables raise importFileRequested with
+    // their grid cell), laid out as a reading-order grid from (wx, wy) — ONE history row. Returns the ids.
+    Q_INVOKABLE QStringList addElementsFromUrls(const QStringList& fileUrls, qreal wx, qreal wy);
+    // A folder element's direct children (files + subfolders, first 48) as elements in a grid below it.
+    Q_INVOKABLE QStringList spreadFolder(const QString& id);
+    Q_INVOKABLE void rescanFolder(const QString& id);              // refresh a folder element's cached snapshot
+    // Swap a media element's descriptor in place — NOT an undo entry (a view/cache fact: a folder rescan, a
+    // fetched bookmark title, a localized remote image). Bumps elementsRevision, marks dirty.
+    Q_INVOKABLE void patchMediaDescriptor(const QString& id, const QString& descriptorJson);
     Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementJson(const QString& id, const QString& json, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementZ(const QString& id, int z);

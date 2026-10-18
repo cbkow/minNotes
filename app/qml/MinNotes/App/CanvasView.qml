@@ -120,7 +120,7 @@ Rectangle {
         if (k === "page") return qsTr("Open page")
         if (k === "shape") return qsTr("Edit text")
         const mk = canvas.mediaElementKind(id)
-        return mk === "video" ? qsTr("Open in studio") : mk === "pdf" ? qsTr("Open PDF") : mk === "bookmark" ? qsTr("Open link") : qsTr("Open")
+        return mk === "video" ? qsTr("Open in studio") : mk === "pdf" ? qsTr("Open PDF") : mk === "bookmark" ? qsTr("Open link") : mk === "folder" ? qsTr("Open folder") : qsTr("Open")
     }
     // A selected PDF element pages (phase A5): the page lives in the editor's path-keyed map, so the
     // same PDF inline in a page and as an element show the same page.
@@ -130,6 +130,8 @@ Rectangle {
     readonly property bool selectedIsPdf: selectedId !== "" && canvas.mediaElementKind(selectedId) === "pdf"
     readonly property int pdfPageOfSelected: (editor.pdfPageRev, selectedIsPdf ? editor.pdfPageForKey(pdfKeyOf(selectedId)) : 0)
     function pdfStepSelected(d) { if (selectedIsPdf) editor.pdfStepKey(pdfKeyOf(selectedId), d, pdfPagesOf(selectedId)) }
+    readonly property bool selectedIsFolder: selectedId !== "" && canvas.mediaElementKind(selectedId) === "folder"
+    function spreadSelected() { if (selectedIsFolder) { const ids = canvas.spreadFolder(selectedId); if (ids.length) selectMany(ids) } }
     property int opens: 0                // probe diagnostics
     function openSelected() {
         const id = selectedId
@@ -274,13 +276,11 @@ Rectangle {
         keys: ["text/uri-list"]
         onDropped: (drop) => {
             if (!drop.hasUrls || !canvas.documentOpen) return
-            let last = ""
-            for (let i = 0; i < drop.urls.length; ++i) {
-                const w = cam.screenToWorld(drop.x, drop.y)
-                const id = canvas.addMediaElementFromUrl(drop.urls[i].toString(), w.x + i * 32, w.y + i * 32)
-                if (id !== "") last = id
-            }
-            if (last !== "") cv.select(last)
+            const w = cam.screenToWorld(drop.x, drop.y)
+            const urls = []
+            for (let i = 0; i < drop.urls.length; ++i) urls.push(drop.urls[i].toString())
+            const ids = canvas.addElementsFromUrls(urls, w.x, w.y)   // one → in place; many → a grid, ONE history row (phase A6)
+            if (ids.length) cv.selectMany(ids)
             drop.accept()
             cv.editor.forceActiveFocus()
         }

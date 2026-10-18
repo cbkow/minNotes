@@ -114,6 +114,10 @@ public:
     static QString fileDescriptorJson(const QString& absPath);
     // Descriptor for a not-yet-downloaded http(s) image: placeholder dims until
     // the async localize pass lands the real file.
+    // A FOLDER element's descriptor (2.0 phase A6): {src:toRef(dir), kind:"folder", name, count, entries[≤6],
+    // countCapped?, scanned}. A cached snapshot (no watcher; "Refresh" rescans). The count stops at 10 000 so a
+    // NAS folder never stalls a drop; `entries` = the first six names, folders first.
+    static QString folderDescriptorJson(const QString& absDir);
     static QString remoteImageDescriptorJson(const QString& url);
 
     // Stored src (absolute, or ".minnotes/…" relative) → a loadable file:// URL.

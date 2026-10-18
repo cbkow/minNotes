@@ -48,9 +48,22 @@ Item {
     readonly property string pdfKey: standIn.media.kind === "pdf" ? standIn.mediaViewPath(0) : ""
     readonly property int pdfPage: (mi.editor.pdfPageRev, pdfKey !== "" ? mi.editor.pdfPageForKey(pdfKey) : 0)
     readonly property int posterFrame: (mi.editor.videoPlayheadRev, standIn.media.kind === "video" ? mi.editor.videoPlayheadForKey(standIn.mediaAnchorPath(0)) : 0)
+    // Routing by descriptor kind (phase A6): folder and file chips have their own cards (name + full path);
+    // images / videos / PDFs are MediaBlock over the stand-in. (Bookmarks and audio get cards in A7 / A9.)
+    readonly property string mediaKind: standIn.media.kind || "image"
+    readonly property bool ownCard: mediaKind === "folder" || mediaKind === "file"
+    readonly property var card: cardLoader.item   // probe
+    Loader {
+        id: cardLoader
+        anchors.fill: parent
+        active: mi.elementId !== "" && mi.ownCard
+        sourceComponent: mi.mediaKind === "folder" ? folderCard : fileCard
+    }
+    Component { id: folderCard; CanvasFolderCard { media: standIn.media; path: standIn.mediaViewPath(0) } }
+    Component { id: fileCard;   CanvasFileCard   { media: standIn.media; path: standIn.mediaViewPath(0) } }
     PageContextLoader {
         anchors.fill: parent
-        active: mi.elementId !== ""
+        active: mi.elementId !== "" && !mi.ownCard
         pageModel: standIn
         sourceComponent: Component {
             MediaBlock {

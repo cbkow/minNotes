@@ -1,5 +1,6 @@
 #include "CanvasDocument.h"
 #include "BlockModel.h"
+#include "CanvasLayout.h"
 #include "Importer.h"
 #include "MediaStore.h"
 #include "FileLinks.h"
@@ -906,6 +907,9 @@ QString CanvasDocument::addShapeElement(const QString& shapeJson, const QRectF& 
 }
 QString CanvasDocument::addMediaElementFromUrl(const QString& fileUrl, qreal wx, qreal wy) {
     if (!db_.isOpen() || !mediaStore_) return QString();
+    const QString path = fileUrl.startsWith(QLatin1String("file:")) ? QUrl(fileUrl).toLocalFile() : fileUrl;
+    if (!path.isEmpty() && QFileInfo(path).isDir())   // a FOLDER element (phase A6): name, count, a few entries, its path
+        return addMediaElement(MediaStore::folderDescriptorJson(path), QRectF(wx, wy, kFolderCardW, kFolderCardH));
     auto sized = [&](int w, int h) {   // the drop width, the media's aspect
         const double dw = kDropMediaWidth;
         const double dh = (w > 0 && h > 0) ? dw * h / w : dw * 0.75;
@@ -930,9 +934,71 @@ QString CanvasDocument::addMediaElementFromUrl(const QString& fileUrl, qreal wx,
         emit importFileRequested(fileUrl, wx, wy);
         return QString();
     }
-    const QString path = fileUrl.startsWith(QLatin1String("file:")) ? QUrl(fileUrl).toLocalFile() : fileUrl;
     if (path.isEmpty()) return QString();
-    return addMediaElement(MediaStore::fileDescriptorJson(path), QRectF(wx, wy, 260, 44));
+    return addMediaElement(MediaStore::fileDescriptorJson(path), QRectF(wx, wy, kFileCardW, kFileCardH));
+}
+QStringList CanvasDocument::addElementsFromUrls(const QStringList& fileUrls, qreal wx, qreal wy) {
+    QStringList ids;
+    if (!db_.isOpen() || fileUrls.isEmpty()) return ids;
+    if (fileUrls.size() == 1) { const QString id = addMediaElementFromUrl(fileUrls.first(), wx, wy); if (!id.isEmpty()) ids << id; return ids; }
+    // Create first (at the drop point), then lay the batch out as a grid from each element's real size —
+    // importables get a provisional page cell and are REQUESTED at that cell (Main.qml makes the page later,
+    // its own history row). All inside one batch: the creations + the rect moves fold into one row.
+    struct Slot { QString id; QString importUrl; double w, h; };
+    std::vector<Slot> drops;
+    beginBatch(tr("Drop %n files", nullptr, fileUrls.size()));
+    for (const QString& url : fileUrls) {
+        const QString path = url.startsWith(QLatin1String("file:")) ? QUrl(url).toLocalFile() : url;
+        const bool importable = !path.isEmpty() && !QFileInfo(path).isDir()
+                                && !MediaStore::isVideoPath(path) && !MediaStore::isPdfPath(path)
+                                && (!Importer::formatForPath(path).isEmpty() || mnpkg::isPackagePath(path));
+        if (importable) { drops.push_back({QString(), url, kDefaultMeasure + 2 * kPageInset, kMinPageHeight}); continue; }
+        const QString id = addMediaElementFromUrl(url, wx, wy);
+        if (id.isEmpty()) continue;
+        const QRectF r = elementRect(id);
+        drops.push_back({id, QString(), r.width(), r.height()});
+        ids << id;
+    }
+    double cardW = 0;
+    std::vector<double> heights;
+    for (const Slot& s : drops) { cardW = std::max(cardW, s.w); heights.push_back(s.h); }
+    const std::vector<QRectF> cells = mn::defaultCardLayout(heights, cardW, kDropGridGap);
+    for (size_t i = 0; i < drops.size() && i < cells.size(); ++i) {
+        const QPointF at(wx + cells[i].x(), wy + cells[i].y());
+        if (!drops[i].id.isEmpty()) setElementRect(drops[i].id, QRectF(at, QSizeF(drops[i].w, drops[i].h)));
+    }
+    endBatch();
+    for (size_t i = 0; i < drops.size() && i < cells.size(); ++i)   // after the batch: the pages are their own rows
+        if (!drops[i].importUrl.isEmpty()) emit importFileRequested(drops[i].importUrl, wx + cells[i].x(), wy + cells[i].y());
+    return ids;
+}
+QStringList CanvasDocument::spreadFolder(const QString& id) {
+    const QString dir = elementLocalPath(id);
+    if (dir.isEmpty() || !QFileInfo(dir).isDir()) return {};
+    const QStringList names = QDir(dir).entryList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
+                                                  QDir::DirsFirst | QDir::Name | QDir::IgnoreCase);
+    QStringList urls;
+    for (int i = 0; i < names.size() && i < kSpreadCap; ++i) urls << QUrl::fromLocalFile(QDir(dir).filePath(names.at(i))).toString();
+    const QRectF r = elementRect(id);
+    return addElementsFromUrls(urls, r.x(), r.y() + r.height() + kDropGridGap);
+}
+void CanvasDocument::rescanFolder(const QString& id) {
+    const QString dir = elementLocalPath(id);
+    if (dir.isEmpty() || !QFileInfo(dir).isDir()) return;
+    patchMediaDescriptor(id, MediaStore::folderDescriptorJson(dir));
+}
+void CanvasDocument::patchMediaDescriptor(const QString& id, const QString& descriptorJson) {
+    if (!db_.isOpen()) return;
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return;
+    QJsonObject root = QJsonDocument::fromJson(e->json.toUtf8()).object();
+    root.insert(QStringLiteral("media"), QJsonDocument::fromJson(descriptorJson.toUtf8()).object());
+    db_.begin();
+    db_.updateElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+    db_.commit();
+    reloadElements();
+    markDirty();
+    noteChanged(QStringLiteral("media"), true, false, false);
 }
 
 QString CanvasDocument::addConnector(const QString& connectorJson) {

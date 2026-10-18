@@ -1,4 +1,6 @@
 #include "MediaStore.h"
+#include <QJsonArray>
+#include <QDateTime>
 #include "BlockModel.h"
 #include "PackageFormat.h"
 #include "PathMap.h"
@@ -68,6 +70,24 @@ QString MediaStore::imageDescriptorJson(const ImageRef& ref) {
     o.insert(QStringLiteral("src"), mn::toRef(ref.src));
     o.insert(QStringLiteral("w"), ref.w);
     o.insert(QStringLiteral("h"), ref.h);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+QString MediaStore::folderDescriptorJson(const QString& absDir) {
+    const QFileInfo fi(absDir);
+    QDir d(fi.absoluteFilePath());
+    const QStringList names = d.entryList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
+                                          QDir::DirsFirst | QDir::Name | QDir::IgnoreCase);
+    constexpr int kCountCap = 10000, kEntries = 6;
+    QJsonArray entries;
+    for (int i = 0; i < names.size() && i < kEntries; ++i) entries.append(names.at(i));
+    QJsonObject o;
+    o.insert(QStringLiteral("src"),     mn::toRef(fi.absoluteFilePath()));
+    o.insert(QStringLiteral("kind"),    QStringLiteral("folder"));
+    o.insert(QStringLiteral("name"),    fi.fileName().isEmpty() ? fi.absoluteFilePath() : fi.fileName());
+    o.insert(QStringLiteral("count"),   std::min<int>(names.size(), kCountCap));
+    if (names.size() > kCountCap) o.insert(QStringLiteral("countCapped"), true);
+    o.insert(QStringLiteral("entries"), entries);
+    o.insert(QStringLiteral("scanned"), QDateTime::currentMSecsSinceEpoch());
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 QString MediaStore::remoteImageDescriptorJson(const QString& url) {

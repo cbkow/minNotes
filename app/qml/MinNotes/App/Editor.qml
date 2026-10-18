@@ -4010,6 +4010,11 @@ FocusScope {
         property string livePage: ""           // the fixture's page (the big one)
         property int probeOpens: 0
         property int probeTaps: 0
+        property int probeN0: 0                // P10 baselines
+        property int probePages0: 0
+        property int probeRows0: 0
+        property string folderElId: ""
+        property string fileElId: ""
         property string pdfElId: ""            // P9: the element-tab fixtures
         property string vidElId: ""
         property string inkId: ""
@@ -4690,7 +4695,52 @@ FocusScope {
                 }
                 if (step < 44) { ++step; return }
                 check(cvw.pdfPageOfSelected === 0, "‹ pages back to 1 (" + cvw.pdfPageOfSelected + ")")
-                nextPhase("element-tabs")
+                nextPhase("element-tabs"); return
+            }
+            if (phase === 10) {   // P10 (phase A6): wide drops — a folder element, a file card, a batch grid, one history row
+                const g = gestures, cvw = canvasView
+                if (step === 0) {
+                    const arg = Qt.application.arguments.find(function(a) { return a.indexOf("--canvas-probe=") === 0 }) || ""
+                    const fix = arg.substring("--canvas-probe=".length), fixDir = fix.substring(0, fix.lastIndexOf("/"))
+                    const b = canvas.canvasBounds()
+                    probeN0 = canvas.elementCount(); probePages0 = canvas.pageIds.length; probeRows0 = canvas.undoHistory().length
+                    const ids = canvas.addElementsFromUrls(["file://" + fixDir + "/v1-sample.mnd", "file://" + fixDir, "file://" + fix], b.x, b.y + b.height + 200)
+                    check(ids.length === 2 && canvas.mediaElementKind(ids[0]) === "file" && canvas.mediaElementKind(ids[1]) === "folder",
+                          "a batch of [an unrecognised file, a folder, an importable] makes a file chip + a folder element and requests the import (" + ids.length + ")")
+                    folderElId = ids.length > 1 ? ids[1] : ""; fileElId = ids.length ? ids[0] : ""
+                    check(canvas.undoHistory().length - probeRows0 <= 2, "…the batch is ONE canvas history row (+ the import's page, its own row: +" + (canvas.undoHistory().length - probeRows0) + ")")
+                    cvw.fit()
+                    ++step; return
+                }
+                if (step < 6) { ++step; return }   // the import lands via Main.qml (a callLater) and the cards load
+                if (step === 6) {
+                    check(canvas.pageIds.length === probePages0 + 1, "the importable became a page at its grid cell (" + (canvas.pageIds.length - probePages0) + ")")
+                    const fi = pageItem(folderElId), fc = fi && fi.mediaItem ? fi.mediaItem.card : null
+                    check(!!fc && fc.kind === "folder" && fc.pathText.text.indexOf("fixtures") >= 0 && (fc.media.count || 0) >= 4,
+                          "the folder card shows its kind, its PATH and a count (" + (fc ? fc.media.count + " items, " + fc.pathText.text : "no card") + ")")
+                    const fl = pageItem(fileElId), flc = fl && fl.mediaItem ? fl.mediaItem.card : null
+                    check(!!flc && flc.kind === "file" && flc.pathText.text.indexOf("v1-sample.mnd") >= 0, "the file card shows its name and PATH (" + (flc ? flc.pathText.text : "no card") + ")")
+                    const rf = canvas.elementRect(fileElId), rd = canvas.elementRect(folderElId)
+                    check(Math.abs(rf.y - rd.y) < 0.5 && rd.x >= rf.x + rf.width, "…the two cards sit side by side in the grid")
+                    cvw.select(folderElId)
+                    g.rightClick(cvw, cam.worldToScreen(rd.x + 20, rd.y + 20).x, cam.worldToScreen(rd.x + 20, rd.y + 20).y)
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 10, "a folder's menu: Open folder · Reveal · Open in ufb · Copy path · Spread files here · Refresh · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    cvw.contextMenu.close()
+                    ++step; return
+                }
+                if (step === 8) {
+                    const rows = canvas.undoHistory().length, rev = canvas.elementsRevision
+                    canvas.rescanFolder(folderElId)
+                    check(canvas.undoHistory().length === rows && canvas.elementsRevision > rev, "Refresh rescans without a history row")
+                    canvas.undo()   // (the import page is its own row — undo it too so the batch undo is testable)
+                    canvas.undo()
+                    check(canvas.elementCount() === probeN0, "two undos (the page, then the batch) restore the element count (" + canvas.elementCount() + " vs " + probeN0 + ")")
+                    canvas.redo(); canvas.redo()
+                    ++step; return
+                }
+                if (step < 10) { ++step; return }
+                check(canvas.elementCount() === probeN0 + 3, "…two redos bring the page and the batch back (" + canvas.elementCount() + ")")
+                nextPhase("drops")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))
             }

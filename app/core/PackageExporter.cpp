@@ -152,7 +152,9 @@ PackageExporter::PackPlan PackageExporter::buildPackPlan(CanvasDocument* c,
                                      : mnpkg::entrySizes(plan.sourcePackage);
     QSet<QString> taken;
     auto planDescriptor = [&](const QJsonObject& root) {
-        if (root.value(QStringLiteral("kind")).toString() == QLatin1String("sketch")) {
+        const QString k = root.value(QStringLiteral("kind")).toString();
+        if (k == QLatin1String("folder") || k == QLatin1String("bookmark")) return;   // a reference, not an asset (phase A6)
+        if (k == QLatin1String("sketch")) {
             for (const QJsonValue& v : root.value(QStringLiteral("images")).toArray())
                 planItem(plan, taken,
                          resolveNoExtract(store, v.toObject().value(QStringLiteral("src")), pkgEntries),
