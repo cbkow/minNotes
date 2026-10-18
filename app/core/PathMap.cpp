@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QStringList>
 #include <QRegularExpression>
+#include <QDir>
 
 namespace mn {
 
@@ -123,10 +124,11 @@ QString resolveRef(const QJsonValue& src) {
             if (!m.enabled) return QString();           // volume turned off → unresolved
             const QString root = trimTrailingSeps(prefixFor(m, os));
             if (root.isEmpty()) return QString();        // no root for this OS
-            QString path = root;
-            const QChar sep = sepFor(os);
+            // Qt-style separators on every OS (2026-10-18, the Windows suite): a root typed or picked as "C:/…"
+            // joined with '\' made the same file two different KEYS (playheads, sidecars, the player's source).
+            QString path = QDir::fromNativeSeparators(root);
             for (const QJsonValue& seg : rel)
-                path += sep + seg.toString();
+                path += QLatin1Char('/') + seg.toString();
             return path;
         }
         return QString();                                // unknown volume → unresolved
@@ -145,9 +147,8 @@ QString resolveRef(const QJsonValue& src) {
             if (matchUnderRoot(s, prefixFor(m, srcOs), srcOs, &segs)) {
                 const QString root = trimTrailingSeps(prefixFor(m, os));
                 if (root.isEmpty()) continue;            // no target root — try other rules
-                QString path = root;
-                const QChar sep = sepFor(os);
-                for (const QString& seg : segs) path += sep + seg;
+                QString path = QDir::fromNativeSeparators(root);
+                for (const QString& seg : segs) path += QLatin1Char('/') + seg;
                 return path;
             }
         }

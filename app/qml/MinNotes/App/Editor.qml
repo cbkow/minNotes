@@ -3752,7 +3752,7 @@ FocusScope {
                     const before = { x: (flick.contentX + 300) / root.viewZoom - root.leftEdge, y: (flick.contentY + 200) / root.viewZoom }
                     root.docZoomTo(1.5, 300, 200); ++checks
                     const after = { x: (flick.contentX + 300) / root.viewZoom - root.leftEdge, y: (flick.contentY + 200) / root.viewZoom }
-                    if (Math.abs(before.x - after.x) > 1 || Math.abs(before.y - after.y) > 1)
+                    if ((Math.abs(before.x - after.x) > 1 && flick.contentX > 0) || Math.abs(before.y - after.y) > 1)   // (x may clamp at the left edge: contentX 0)
                         fail("zoom about (300,200) moved the content point " + JSON.stringify(before) + " → " + JSON.stringify(after))
                     const za = root.reflowAnchorFor(200), zTop = root.vy(blockModel.yForRow(za))
                     root.docZoomSettle(); ++checks
@@ -4228,7 +4228,7 @@ FocusScope {
                 check(!cvw.camAnimating && Math.abs(cvw.cam.zoom - z) < 0.01 && cvw.selectedId === elId, "double-click / goLive on a video FITS it (zoom " + cvw.cam.zoom.toFixed(3) + " vs fit " + z.toFixed(3) + ")")
                 check(sf.x >= 24 && sf.y >= 24 && sf.x + sf.width + 24 <= cvw.width && bar.y + bar.height <= cvw.height - 24 && sf.y + sf.height + 24 + 2 <= cvw.height,
                       "…nothing is pushed out of frame: the glyph above/right and the bar below stay inside the view (frame " + sf.x.toFixed(0) + "," + sf.y.toFixed(0) + " " + sf.width.toFixed(0) + "×" + sf.height.toFixed(0) + ", bar bottom " + (bar.y + bar.height).toFixed(0) + ", view " + cvw.width + "×" + cvw.height + ")")
-                check(Math.min(cvw.width - (sf.x + sf.width + 24), cvw.height - (bar.y + bar.height)) <= 40 || Math.min(sf.x, sf.y) <= 40, "…and it is tight: one axis is within 40 px of the padding")
+                check(Math.min(cvw.width - (sf.x + sf.width + 24), cvw.height - (sf.y + bar.y + bar.height)) <= 40 || Math.min(sf.x, sf.y - 24) <= 40, "…and it is tight: one axis is within 40 px of the padding (right " + (cvw.width - (sf.x + sf.width + 24)).toFixed(0) + ", bottom " + (cvw.height - (sf.y + bar.y + bar.height)).toFixed(0) + ")")
                 root.setActiveTab(elId); ++step; return
             }
             if (step === 81) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
@@ -5029,10 +5029,11 @@ FocusScope {
                 const g = gestures, cvw = canvasItem
                 if (step === 0) {
                     const arg = Qt.application.arguments.find(function(a) { return a.indexOf("--canvas-probe=") === 0 }) || ""
-                    const fix = arg.substring("--canvas-probe=".length), fixDir = fix.substring(0, fix.lastIndexOf("/"))
+                    const fix = arg.substring("--canvas-probe=".length).replace(/\\/g, "/"), fixDir = fix.substring(0, fix.lastIndexOf("/"))   // (Windows: backslashes → '/')
+                    const fileUrl = (p) => "file://" + (p.startsWith("/") ? "" : "/") + p                                                       // (a drive path needs file:///C:/…)
                     const b = canvas.canvasBounds()
                     probeN0 = canvas.elementCount(); probePages0 = canvas.pageIds.length; probeRows0 = canvas.undoHistory().length
-                    const ids = canvas.addElementsFromUrls(["file://" + fixDir + "/../../LICENSE", "file://" + fixDir, "file://" + fix], b.x, b.y + b.height + 200)
+                    const ids = canvas.addElementsFromUrls([fileUrl(fixDir + "/../../LICENSE"), fileUrl(fixDir), fileUrl(fix)], b.x, b.y + b.height + 200)
                     check(ids.length === 2 && canvas.mediaElementKind(ids[0]) === "file" && canvas.mediaElementKind(ids[1]) === "folder",
                           "a batch of [an unrecognised file, a folder, an importable] makes a file chip + a folder element and requests the import (" + ids.length + ")")
                     probeFixDir = fixDir
@@ -5091,7 +5092,7 @@ FocusScope {
                     const b = canvas.canvasBounds()
                     audioElId = canvas.addMediaElement(JSON.stringify({ kind: "audio", src: "missing/take.wav", name: "take.wav", durMs: 61000, sampleRate: 48000, channels: 2 }), Qt.rect(b.x + b.width + 100, b.y + 400, 360, 56))
                     probeN0 = canvas.elementCount(); probePages0 = canvas.pageIds.length; probeRows0 = canvas.undoHistory().length
-                    const ids = canvas.copyPagesFrom("file://" + probeFixDir + "/v1-sample.mnd", b.x, b.y + b.height + 200)
+                    const ids = canvas.copyPagesFrom("file://" + (probeFixDir.startsWith("/") ? "" : "/") + probeFixDir + "/v1-sample.mnd", b.x, b.y + b.height + 200)
                     check(ids.length >= 2 && canvas.pageIds.length === probePages0 + 1 && canvas.elementKind(ids[0]) === "page", "the v1 fixture copies in as a page + its converted elements (" + ids.length + ")")
                     check(canvas.undoHistory().length === probeRows0 + 1, "…ONE history row")
                     cvw.fit()
