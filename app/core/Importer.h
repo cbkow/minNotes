@@ -7,6 +7,7 @@
 
 class QTextDocument;
 class MediaStore;
+class CanvasDocument;
 
 // File-import engine (Exporter's mirror). Current scope: the shared
 // QTextDocument → BlockSpec walker — HTML paste and every rich-text importer
@@ -125,6 +126,22 @@ public:
     static int importNotionZipToFolder(const QString& path, const QString& destDir,
                                        QString* firstPath = nullptr,
                                        const FolderProgress& progress = {});
+    // --- The multi-document cores IN MEMORY (2.0 phase A8, user ruling: refactor, not temp folders) ---
+    // One ENEX resource; `md5` (hex) is the en-media linkage key.
+    struct EnexResource { QByteArray bytes; QString mime; QString fileName; QString md5; };
+    struct EnexNote { QString title; QString enml; QList<EnexResource> resources; };
+    // Stream an .enex: the callback gets each <note> as it closes; return false to stop. Returns notes seen.
+    static int forEachEnexNote(const QString& path, const std::function<bool(const EnexNote&)>& fn);
+    // Extract a Notion zip to the session scratch and visit every .md (then every .csv) page, sorted;
+    // the callback gets (filePath, isCsv); return false to stop. The staging dir is removed after.
+    static int forEachNotionEntry(const QString& path, const std::function<bool(const QString&, bool)>& fn);
+    // One ENEX note → specs (H1 title first; images inline; other resources become file chips written to
+    // `store`; en-todo → tri-state tasks). The folder writer and the canvas importer share it.
+    static std::vector<BlockModel::BlockSpec> enexNoteSpecs(const QString& title, const QString& enml,
+                                                            const QList<EnexResource>& resources, MediaStore* store);
+    // A multi-document file (ENEX / Notion) → one PAGE per note on `canvas`, a reading-order grid from
+    // (wx, wy), media into the canvas's store, ONE canvas history row. {ok, count, error}.
+    Q_INVOKABLE QVariantMap importMultiDocToCanvas(const QString& fileUrlOrPath, CanvasDocument* canvas, qreal wx, qreal wy);
     // HTML file → setHtml → walker (relative images resolve against the
     // file's directory; remote ones localize async post-insert).
     static bool importHtmlFile(const QString& path, BlockModel* m);

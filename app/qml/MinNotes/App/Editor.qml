@@ -4017,6 +4017,7 @@ FocusScope {
         property string folderElId: ""
         property string fileElId: ""
         property string bookmarkElId: ""
+        property string probeFixDir: ""
         property string textElId: ""
         property string remoteElId: ""
         property string pdfElId: ""            // P9: the element-tab fixtures
@@ -4708,9 +4709,10 @@ FocusScope {
                     const fix = arg.substring("--canvas-probe=".length), fixDir = fix.substring(0, fix.lastIndexOf("/"))
                     const b = canvas.canvasBounds()
                     probeN0 = canvas.elementCount(); probePages0 = canvas.pageIds.length; probeRows0 = canvas.undoHistory().length
-                    const ids = canvas.addElementsFromUrls(["file://" + fixDir + "/v1-sample.mnd", "file://" + fixDir, "file://" + fix], b.x, b.y + b.height + 200)
+                    const ids = canvas.addElementsFromUrls(["file://" + fixDir + "/../../LICENSE", "file://" + fixDir, "file://" + fix], b.x, b.y + b.height + 200)
                     check(ids.length === 2 && canvas.mediaElementKind(ids[0]) === "file" && canvas.mediaElementKind(ids[1]) === "folder",
                           "a batch of [an unrecognised file, a folder, an importable] makes a file chip + a folder element and requests the import (" + ids.length + ")")
+                    probeFixDir = fixDir
                     folderElId = ids.length > 1 ? ids[1] : ""; fileElId = ids.length ? ids[0] : ""
                     check(canvas.undoHistory().length - probeRows0 <= 2, "…the batch is ONE canvas history row (+ the import's page, its own row: +" + (canvas.undoHistory().length - probeRows0) + ")")
                     cvw.fit()
@@ -4723,7 +4725,7 @@ FocusScope {
                     check(!!fc && fc.kind === "folder" && fc.pathText.text.indexOf("fixtures") >= 0 && (fc.media.count || 0) >= 4,
                           "the folder card shows its kind, its PATH and a count (" + (fc ? fc.media.count + " items, " + fc.pathText.text : "no card") + ")")
                     const fl = pageItem(fileElId), flc = fl && fl.mediaItem ? fl.mediaItem.card : null
-                    check(!!flc && flc.kind === "file" && flc.pathText.text.indexOf("v1-sample.mnd") >= 0, "the file card shows its name and PATH (" + (flc ? flc.pathText.text : "no card") + ")")
+                    check(!!flc && flc.kind === "file" && flc.pathText.text.indexOf("LICENSE") >= 0, "the file card shows its name and PATH (" + (flc ? flc.pathText.text : "no card") + ")")
                     const rf = canvas.elementRect(fileElId), rd = canvas.elementRect(folderElId)
                     check(Math.abs(rf.y - rd.y) < 0.5 && rd.x >= rf.x + rf.width, "…the two cards sit side by side in the grid")
                     cvw.select(folderElId)
@@ -4759,9 +4761,23 @@ FocusScope {
                     cvw.fit()
                     ++step; return
                 }
-                if (step < 14) { ++step; return }
-                const bi = pageItem(bookmarkElId), bc = bi && bi.mediaItem ? bi.mediaItem.card : null
-                check(!!bc && bc.kind === "bookmark" && bc.hostText.text === "example.invalid", "the bookmark card shows the host (" + (bc ? bc.hostText.text : "no card") + "; the fetch fails fast offline)")
+                if (step === 14) {
+                    const bi = pageItem(bookmarkElId), bc = bi && bi.mediaItem ? bi.mediaItem.card : null
+                    check(!!bc && bc.kind === "bookmark" && bc.hostText.text === "example.invalid", "the bookmark card shows the host (" + (bc ? bc.hostText.text : "no card") + "; the fetch fails fast offline)")
+                    // A minNotes file dropped on the canvas COPIES its pages in (phase A8): the 1.0 fixture converts on its working copy.
+                    const b = canvas.canvasBounds()
+                    probeN0 = canvas.elementCount(); probePages0 = canvas.pageIds.length; probeRows0 = canvas.undoHistory().length
+                    const ids = canvas.copyPagesFrom("file://" + probeFixDir + "/v1-sample.mnd", b.x, b.y + b.height + 200)
+                    check(ids.length >= 2 && canvas.pageIds.length === probePages0 + 1 && canvas.elementKind(ids[0]) === "page", "the v1 fixture copies in as a page + its converted elements (" + ids.length + ")")
+                    check(canvas.undoHistory().length === probeRows0 + 1, "…ONE history row")
+                    cvw.fit()
+                    ++step; return
+                }
+                if (step < 30) { ++step; return }   // the copied page's card loads
+                const copied = canvas.pageIds[canvas.pageIds.length - 1], ci = pageItem(copied)
+                check(!!ci && ci.tier >= 0 && canvas.pageTitle(copied) !== "", "the copied page has a card and a title (tier " + (ci ? ci.tier : -1) + " at this zoom, '" + canvas.pageTitle(copied) + "')")
+                canvas.undo()
+                check(canvas.elementCount() === probeN0 && canvas.pageIds.length === probePages0, "undo takes the whole copy-in back")
                 nextPhase("drops")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))

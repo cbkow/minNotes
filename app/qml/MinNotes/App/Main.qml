@@ -922,7 +922,6 @@ ApplicationWindow {
         target: canvas
         function onImportFileRequested(fileUrl, wx, wy) {
             Qt.callLater(function () {
-                if (/\.mnpkg$/i.test("" + fileUrl)) { win.openDoc(fileUrl); return }
                 const id = canvas.addPageAt(wx, wy)
                 if (id === "") return
                 canvas.focusPage = id
@@ -930,6 +929,15 @@ ApplicationWindow {
                 canvas.focusPage = ""
             })
         }
+        // ENEX / Notion dropped on the canvas (phase A8): one page per note, a grid at the drop point.
+        function onImportMultiDocRequested(fileUrl, wx, wy) {
+            Qt.callLater(function () {
+                const r = importer.importMultiDocToCanvas(fileUrl, canvas, wx, wy)
+                if (r.ok) Toasts.show(r.count === 1 ? qsTr("Imported 1 note") : qsTr("Imported %1 notes").arg(r.count))
+                else Toasts.show(qsTr("Import failed") + (r.error ? " — " + r.error : ""), 2)
+            })
+        }
+        function onImportNotice(text) { Toasts.show(text) }
     }
     // A focus change INSIDE the active canvas (page ↔ canvas, page → page) re-points blockModel
     // (main.cpp, synchronously, before this fires) without a tab switch: a fresh page view.

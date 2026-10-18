@@ -6303,6 +6303,119 @@ static void testBookmarkAndRemote() {
     CHECK(c.addClipboardImageElement(0, 0).isEmpty(), "no clipboard image → nothing");
 }
 
+// [135] Copy another file's pages in (2.0 phase A8).
+static void testCopyPagesIn() {
+    qInfo("[135] copyPagesFrom (2.0 phase A8): a 2-page file with sidecar media + an ink element lands with its layout, srcs re-homed, ONE history row; the v1 fixture converts into pages + elements and stays byte-identical");
+    QTemporaryDir dir;
+    QImage img(10, 6, QImage::Format_ARGB32); img.fill(Qt::magenta);
+    const QString png = dir.filePath(QStringLiteral("pic.png")); CHECK(img.save(png), "fixture image");
+    // The source: two pages (the second with a sidecar image), an ink element right of them.
+    CanvasDocument a; CHECK(a.newCanvas(), "source canvas");
+    BlockModel* p1 = a.pageModel(a.firstPageId()); p1->setContent(0, QStringLiteral("# First page")); p1->insertParagraphBelow(0); p1->setContent(1, QStringLiteral("body one"));
+    const QString p2id = a.addPage(); BlockModel* p2 = a.pageModel(p2id); p2->setContent(0, QStringLiteral("# Second page"));
+    const int imgRow = p2->insertImageFromUrl(0, QUrl::fromLocalFile(png).toString(), true);
+    CHECK(imgRow > 0 && p2->mediaKind(imgRow) == QLatin1String("image"), "the source's second page holds a sidecar image (row %d)", imgRow);
+    const QRectF p2r = a.elementRect(p2id);
+    const QString inkId = a.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}"), QRectF(p2r.right() + 64, p2r.y(), 100, 40));
+    const QString srcFile = dir.filePath(QStringLiteral("src.mnd"));
+    CHECK(a.saveAs(srcFile) && QFileInfo::exists(srcFile), "source saved");
+    const QRectF ab = a.canvasBounds();
+    a.closeCanvas();
+    // The destination.
+    CanvasDocument c; CHECK(c.newCanvas(), "dest canvas");
+    const int n0 = c.elementCount(), pages0 = c.pageIds().size(), rows0 = c.undoHistory().size();
+    QStringList notices; QObject::connect(&c, &CanvasDocument::importNotice, [&](const QString& t) { notices << t; });
+    const QStringList made = c.copyPagesFrom(QUrl::fromLocalFile(srcFile).toString(), 3000, 100);
+    CHECK(made.size() == 3 && c.pageIds().size() == pages0 + 2 && c.elementCount() == n0 + 3, "two pages + the ink element copied in (%d ids)", made.size());
+    CHECK(c.undoHistory().size() == rows0 + 1, "…as ONE history row (%d → %d)", rows0, c.undoHistory().size());
+    CHECK(notices.size() == 1 && notices.first().contains(QStringLiteral("2")), "…with a notice (%s)", qPrintable(notices.value(0)));
+    // Layout: the source's relative arrangement, translated so its bounds' top-left sits at (3000, 100).
+    const QRectF nb = c.elementRect(made[0]);
+    CHECK(std::abs(nb.x() - 3000) < 0.01 && std::abs(nb.y() - 100) < 0.01, "the first page sits at the drop point (%g, %g)", nb.x(), nb.y());
+    const QString ink2 = made.last();
+    CHECK(c.elementKind(ink2) == QLatin1String("ink") && std::abs((c.elementRect(ink2).x() - nb.x()) - (ab.width() - 100)) < 1.0, "the ink keeps its place right of the pages");
+    // Content: titles, the image re-homed into OUR store.
+    CHECK(c.pageTitle(made[0]).contains(QLatin1String("First page")) && c.pageTitle(made[1]).contains(QLatin1String("Second page")), "page titles (%s / %s)", qPrintable(c.pageTitle(made[0])), qPrintable(c.pageTitle(made[1])));
+    BlockModel* d1 = c.pageModel(made[0]);
+    CHECK(d1->rowCountQml() == 2 && d1->contentForRow(1) == QLatin1String("body one"), "the seeded blank paragraph is gone; the blocks are the source's (%d rows)", d1->rowCountQml());
+    BlockModel* d2 = c.pageModel(made[1]);
+    int mediaRow = -1; for (int r = 0; r < d2->rowCountQml(); ++r) if (d2->typeForRow(r) == BlockModel::Media) mediaRow = r;
+    CHECK(mediaRow >= 0 && d2->mediaUrl(mediaRow).contains(QLatin1String("/.minnotes/")) && d2->mediaUrl(mediaRow).contains(QDir(c.mediaStore()->docDir()).dirName()) && QFileInfo::exists(d2->mediaLocalPath(mediaRow)),
+          "the image lives in the DESTINATION's sidecar (%s)", qPrintable(d2->mediaUrl(mediaRow)));
+    c.undo();
+    CHECK(c.elementCount() == n0 && c.pageIds().size() == pages0, "one undo takes everything back");
+    c.redo();
+    CHECK(c.elementCount() == n0 + 3, "…one redo returns it");
+    // The 1.0 fixture: converts on its working copy, lands as a page + its converted elements; the file is untouched.
+    const QString v1 = QStringLiteral(MN_FIXTURES_DIR "/v1-sample.mnd");
+    QFile vf(v1); vf.open(QIODevice::ReadOnly); const QByteArray before = vf.readAll(); vf.close();
+    const int n1 = c.elementCount();
+    const QStringList v1ids = c.copyPagesFrom(v1, 6000, 0);
+    CHECK(v1ids.size() >= 2 && c.elementCount() == n1 + v1ids.size() && c.elementKind(v1ids.first()) == QLatin1String("page"), "the v1 fixture copies in as a page + converted elements (%d)", v1ids.size());
+    QFile vf2(v1); vf2.open(QIODevice::ReadOnly); const QByteArray after = vf2.readAll(); vf2.close();
+    CHECK(before == after && !before.isEmpty(), "…and the fixture file is byte-identical");
+    CHECK(c.copyPagesFrom(dir.filePath(QStringLiteral("missing.mnd")), 0, 0).isEmpty() && notices.last().contains(QStringLiteral("Couldn't open")), "a missing file: nothing made, a notice");
+}
+
+// [136] ENEX / Notion straight onto a canvas, in memory (2.0 phase A8).
+static void testMultiDocToCanvas() {
+    qInfo("[136] importMultiDocToCanvas (2.0 phase A8): one page per ENEX note in a grid, media in the canvas's store, ONE history row; importEnexToFolder still writes the same docs through the shared core");
+    QTemporaryDir dir;
+    QByteArray png;
+    { QImage img(4, 4, QImage::Format_RGB32); img.fill(Qt::cyan); QBuffer b(&png); b.open(QIODevice::WriteOnly); img.save(&b, "PNG"); }
+    const QString pngMd5 = QString::fromLatin1(QCryptographicHash::hash(png, QCryptographicHash::Md5).toHex());
+    const QByteArray attach("PDFISH-BYTES-123");
+    const QString attachMd5 = QString::fromLatin1(QCryptographicHash::hash(attach, QCryptographicHash::Md5).toHex());
+    const QString enexPath = dir.filePath(QStringLiteral("export.enex"));
+    {
+        QFile f(enexPath); CHECK(f.open(QIODevice::WriteOnly), "enex fixture writable");
+        QString enex = QStringLiteral(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<en-export application=\"Evernote\">\n"
+            "<note><title>Trip Plan</title>\n<content><![CDATA[<?xml version=\"1.0\"?>"
+            "<!DOCTYPE en-note SYSTEM \"http://xml.evernote.com/pub/enml2.dtd\">"
+            "<en-note><div>Pack the <b>camera</b></div><div><en-todo checked=\"false\"/>buy tickets</div>"
+            "<en-media hash=\"%1\" type=\"image/png\"/><en-media hash=\"%2\" type=\"application/pdf\"/></en-note>]]></content>\n"
+            "<resource><data encoding=\"base64\">%3</data><mime>image/png</mime><resource-attributes><file-name>view.png</file-name></resource-attributes></resource>\n"
+            "<resource><data encoding=\"base64\">%4</data><mime>application/pdf</mime><resource-attributes><file-name>itinerary.pdf</file-name></resource-attributes></resource>\n"
+            "</note>\n<note><title>Second</title><content><![CDATA[<en-note><div>second note</div></en-note>]]></content></note>\n"
+            "<note><title>Third</title><content><![CDATA[<en-note><div>third</div></en-note>]]></content></note>\n</en-export>\n")
+            .arg(pngMd5, attachMd5, QString::fromLatin1(png.toBase64()), QString::fromLatin1(attach.toBase64()));
+        f.write(enex.toUtf8());
+    }
+    int seen = Importer::forEachEnexNote(enexPath, [&](const Importer::EnexNote& n) { return n.title != QLatin1String("Second"); });
+    CHECK(seen == 2, "forEachEnexNote streams notes and stops when told (%d)", seen);
+    CanvasDocument c; CHECK(c.newCanvas(), "canvas");
+    const int pages0 = c.pageIds().size(), rows0 = c.undoHistory().size();
+    Importer imp;
+    const QVariantMap r = imp.importMultiDocToCanvas(QUrl::fromLocalFile(enexPath).toString(), &c, 2000, 300);
+    CHECK(r.value(QStringLiteral("ok")).toBool() && r.value(QStringLiteral("count")).toInt() == 3 && c.pageIds().size() == pages0 + 3, "three notes → three pages (%d)", r.value(QStringLiteral("count")).toInt());
+    CHECK(c.undoHistory().size() == rows0 + 1, "…ONE canvas history row");
+    const QStringList ids = c.pageIds().mid(pages0);
+    CHECK(c.pageTitle(ids[0]) == QLatin1String("Trip Plan") && c.pageTitle(ids[1]) == QLatin1String("Second") && c.pageTitle(ids[2]) == QLatin1String("Third"), "page titles are the note titles (%s)", qPrintable(c.pageTitle(ids[0])));
+    const QRectF r0 = c.elementRect(ids[0]), r1 = c.elementRect(ids[1]);
+    const std::vector<QRectF> cells = mn::defaultCardLayout({double(CanvasDocument::kMinPageHeight), double(CanvasDocument::kMinPageHeight), double(CanvasDocument::kMinPageHeight)}, CanvasDocument::kDefaultMeasure + 2 * CanvasDocument::kPageInset, CanvasDocument::kPageGap);
+    CHECK(r0.topLeft() == QPointF(2000 + cells[0].x(), 300 + cells[0].y()) && r1.topLeft() == QPointF(2000 + cells[1].x(), 300 + cells[1].y()), "…in the default grid from the drop point");
+    BlockModel* m0 = c.pageModel(ids[0]);
+    int tasks = 0, imgs = 0, chips = 0;
+    for (int i = 0; i < m0->rowCountQml(); ++i) {
+        if (m0->typeForRow(i) == BlockModel::TaskListItem) ++tasks;
+        if (m0->typeForRow(i) == BlockModel::Media) { if (m0->mediaKind(i) == QLatin1String("image")) ++imgs; if (m0->mediaKind(i) == QLatin1String("file")) ++chips; }
+    }
+    CHECK(m0->typeForRow(0) == BlockModel::Heading && m0->contentForRow(0) == QLatin1String("Trip Plan") && tasks == 1 && imgs == 1 && chips == 1, "the first page: H1 title, a task, the image, the attachment chip (%d/%d/%d)", tasks, imgs, chips);
+    bool inStore = true;
+    for (int i = 0; i < m0->rowCountQml(); ++i) if (m0->typeForRow(i) == BlockModel::Media && !QFileInfo::exists(m0->mediaLocalPath(i))) inStore = false;
+    CHECK(inStore, "…its media live in the canvas's store");
+    c.undo();
+    CHECK(c.pageIds().size() == pages0, "one undo removes the three pages");
+    // The folder flow still works through the shared core.
+    const QString out = dir.filePath(QStringLiteral("out"));
+    QString first;
+    const int n = Importer::importEnexToFolder(enexPath, out, &first);
+    CHECK(n == 3 && QFileInfo::exists(first) && QFileInfo::exists(out + QStringLiteral("/Second.mnd")), "importEnexToFolder writes three docs (%d, first %s)", n, qPrintable(QFileInfo(first).fileName()));
+    const QVariantMap bad = imp.importMultiDocToCanvas(dir.filePath(QStringLiteral("x.md")), &c, 0, 0);
+    CHECK(!bad.value(QStringLiteral("ok")).toBool() && !bad.value(QStringLiteral("error")).toString().isEmpty(), "a single-document file is refused with a reason");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8828,6 +8941,8 @@ int main(int argc, char** argv) {
     testCanvasMediaAnchor();
     testFolderDrops();
     testBookmarkAndRemote();
+    testCopyPagesIn();
+    testMultiDocToCanvas();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

@@ -1,6 +1,7 @@
 #include "CanvasDocument.h"
 #include "BlockModel.h"
 #include "CanvasLayout.h"
+#include "DocumentMerger.h"
 #include "Importer.h"
 #include "MediaStore.h"
 #include "FileLinks.h"
@@ -938,7 +939,13 @@ QString CanvasDocument::addMediaElementFromUrl(const QString& fileUrl, qreal wx,
             return addMediaElement(MediaStore::imageDescriptorJson(ref), QRectF(wx, wy, dw, dw * ref.h / ref.w));
         }
     }
-    if (!Importer::formatForPath(fileUrl).isEmpty() || mnpkg::isPackagePath(fileUrl)) {
+    if (path.endsWith(QLatin1String(".mnd"), Qt::CaseInsensitive) || mnpkg::isPackagePath(path)) {   // another minNotes file: its pages come IN (no link)
+        const QStringList ids = copyPagesFrom(fileUrl, wx, wy);
+        return ids.isEmpty() ? QString() : ids.first();
+    }
+    const QString fmt = Importer::formatForPath(fileUrl);
+    if (fmt == QLatin1String("enex") || fmt == QLatin1String("notion")) { emit importMultiDocRequested(fileUrl, wx, wy); return QString(); }
+    if (!fmt.isEmpty()) {
         emit importFileRequested(fileUrl, wx, wy);
         return QString();
     }
@@ -957,10 +964,10 @@ QStringList CanvasDocument::addElementsFromUrls(const QStringList& fileUrls, qre
     beginBatch(tr("Drop %n files", nullptr, fileUrls.size()));
     for (const QString& url : fileUrls) {
         const QString path = url.startsWith(QLatin1String("file:")) ? QUrl(url).toLocalFile() : url;
-        const bool importable = !path.isEmpty() && !QFileInfo(path).isDir()
-                                && !MediaStore::isVideoPath(path) && !MediaStore::isPdfPath(path)
-                                && (!Importer::formatForPath(path).isEmpty() || mnpkg::isPackagePath(path));
-        if (importable) { drops.push_back({QString(), url, kDefaultMeasure + 2 * kPageInset, kMinPageHeight}); continue; }
+        const bool pagesIn = !path.isEmpty() && !QFileInfo(path).isDir()
+                             && (path.endsWith(QLatin1String(".mnd"), Qt::CaseInsensitive) || mnpkg::isPackagePath(path)
+                                 || (!MediaStore::isVideoPath(path) && !MediaStore::isPdfPath(path) && !Importer::formatForPath(path).isEmpty()));
+        if (pagesIn) { drops.push_back({QString(), url, kDefaultMeasure + 2 * kPageInset, kMinPageHeight}); continue; }   // a page-sized cell; made after the batch
         const QString id = addMediaElementFromUrl(url, wx, wy);
         if (id.isEmpty()) continue;
         const QRectF r = elementRect(id);
@@ -976,9 +983,81 @@ QStringList CanvasDocument::addElementsFromUrls(const QStringList& fileUrls, qre
         if (!drops[i].id.isEmpty()) setElementRect(drops[i].id, QRectF(at, QSizeF(drops[i].w, drops[i].h)));
     }
     endBatch();
-    for (size_t i = 0; i < drops.size() && i < cells.size(); ++i)   // after the batch: the pages are their own rows
-        if (!drops[i].importUrl.isEmpty()) emit importFileRequested(drops[i].importUrl, wx + cells[i].x(), wy + cells[i].y());
+    for (size_t i = 0; i < drops.size() && i < cells.size(); ++i) {   // after the batch: the pages are their own rows
+        if (drops[i].importUrl.isEmpty()) continue;
+        const QString u = drops[i].importUrl, p = u.startsWith(QLatin1String("file:")) ? QUrl(u).toLocalFile() : u;
+        const QString fmt = Importer::formatForPath(p);
+        if (p.endsWith(QLatin1String(".mnd"), Qt::CaseInsensitive) || mnpkg::isPackagePath(p)) ids << copyPagesFrom(u, wx + cells[i].x(), wy + cells[i].y());
+        else if (fmt == QLatin1String("enex") || fmt == QLatin1String("notion")) emit importMultiDocRequested(u, wx + cells[i].x(), wy + cells[i].y());
+        else emit importFileRequested(u, wx + cells[i].x(), wy + cells[i].y());
+    }
     return ids;
+}
+QStringList CanvasDocument::copyPagesFrom(const QString& fileUrl, qreal wx, qreal wy) {
+    QStringList made;
+    if (!db_.isOpen() || !mediaStore_) return made;
+    const QString path = fileUrl.startsWith(QLatin1String("file:")) ? QUrl(fileUrl).toLocalFile() : fileUrl;
+    CanvasDocument src;
+    if (!QFileInfo::exists(path) || !src.open(path)) {   // (open() would CREATE a missing .mnd — the 1.0 behaviour)
+        emit importNotice(tr("Couldn't open %1").arg(QFileInfo(path).fileName()));
+        return made;
+    }
+    const QRectF b = src.canvasBounds();
+    const QPointF off(wx - b.x(), wy - b.y());
+    // Sidecar media of the source's non-page elements is re-homed into THIS store (content-addressed);
+    // in-place references (absolute / {vol,rel}) copy as they are.
+    QHash<QString, QString> rehomed;
+    auto rehome = [&](const QJsonValue& v) -> QJsonValue {
+        if (!v.isString() || !v.toString().startsWith(QLatin1String(".minnotes/"))) return v;
+        const QString rel = v.toString();
+        if (rehomed.contains(rel)) return rehomed.value(rel);
+        QFile f(QUrl(src.mediaStore()->resolveUrl(rel)).toLocalFile());   // blocking: a packaged source extracts
+        if (!f.open(QIODevice::ReadOnly)) return v;
+        const QString out = mediaStore_->importBytes(f.readAll(), QFileInfo(rel).fileName());
+        if (out.isEmpty()) return v;
+        rehomed.insert(rel, out);
+        return out;
+    };
+    int pages = 0;
+    beginBatch(tr("Copy in %1").arg(src.documentName()));
+    for (const Document::Element& e : src.elements()) {   // z order
+        const QRectF r(e.x + off.x(), e.y + off.y(), e.w, e.h);
+        if (e.kind == QLatin1String("page")) {
+            const QString id = addPageWithRect(r);
+            if (id.isEmpty()) continue;
+            BlockModel* dm = pageModel(id);
+            BlockModel* sm = src.pageModel(e.id);
+            if (dm && sm && sm->rowCountQml() > 0) {
+                int first = -1, last = -1; QString err;
+                DocumentMerger::mergeDocuments(sm, dm, 0, &first, &last, &err);
+                // The seeded blank paragraph goes once the page has real content — it sits OUTSIDE the
+                // merged range (gap 0 inserts before it, so it is the last row).
+                if (dm->rowCountQml() > 1 && first >= 0)
+                    for (int r = dm->rowCountQml() - 1; r >= 0; --r)
+                        if ((r < first || r > last) && dm->typeForRow(r) == BlockModel::Paragraph && dm->contentForRow(r).isEmpty()) { dm->removeBlock(r); break; }
+            }
+            if (e.json != QLatin1String("{}") && !e.json.isEmpty()) setElementJson(id, e.json);   // title override / view
+            made << id; ++pages;
+        } else {
+            QString json = e.json;
+            if (e.kind == QLatin1String("media")) {
+                QJsonObject root = QJsonDocument::fromJson(json.toUtf8()).object();
+                QJsonObject md = root.value(QStringLiteral("media")).toObject();
+                md.insert(QStringLiteral("src"), rehome(md.value(QStringLiteral("src"))));
+                if (md.contains(QStringLiteral("icon"))) md.insert(QStringLiteral("icon"), rehome(md.value(QStringLiteral("icon"))));
+                root.insert(QStringLiteral("media"), md);
+                json = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+            }
+            const QString id = addElement(e.kind, r, json, tr("Copy in"));
+            if (!id.isEmpty()) made << id;
+        }
+    }
+    endBatch();
+    const QString name = src.documentName();
+    src.closeCanvas();
+    emit importNotice(tr("Copied %n page(s) from %1", nullptr, pages).arg(name));
+    if (!made.isEmpty()) emit elementsAdded(made);
+    return made;
 }
 QStringList CanvasDocument::spreadFolder(const QString& id) {
     const QString dir = elementLocalPath(id);

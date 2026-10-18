@@ -27,6 +27,8 @@
 #include <QUuid>
 #include <QXmlStreamReader>
 #include "PackageFormat.h"
+#include "CanvasDocument.h"
+#include "CanvasLayout.h"
 #include <functional>
 #include <algorithm>
 #include <map>
@@ -925,18 +927,14 @@ void freshDoc(BlockModel& m) {
 const QChar kEnexTodo(0xE0D1);
 const QChar kEnexFileRes(0xE0D2);
 
-struct EnexResource {
-    QByteArray bytes;
-    QString mime;
-    QString fileName;
-    QString md5;        // hex — the en-media linkage key
-};
+using EnexResource = Importer::EnexResource;
 
 // One <note>'s ENML + resources → a saved .mnd. Returns false on write
 // failure (malformed notes still produce whatever converted).
-bool writeEnexNote(const QString& title, const QString& enml,
-                   const QList<EnexResource>& resources,
-                   const QString& docPath) {
+} // namespace
+
+std::vector<BlockModel::BlockSpec> Importer::enexNoteSpecs(const QString& title, const QString& enml,
+                                                           const QList<EnexResource>& resources, MediaStore* store) {
     // ENML → HTML: drop the XML/DOCTYPE preamble, neutralize <en-note>,
     // inline image media via pre-registered resources, sentinel the rest.
     QString html = enml;
@@ -989,9 +987,6 @@ bool writeEnexNote(const QString& title, const QString& enml,
         html = outHtml;
     }
 
-    BlockModel m;
-    freshDoc(m);
-
     QTextDocument doc;
     QHash<QString, const EnexResource*> byHash;
     for (const EnexResource& r : resources) {
@@ -1005,7 +1000,7 @@ bool writeEnexNote(const QString& title, const QString& enml,
     }
     doc.setHtml(html);
     std::vector<BlockModel::BlockSpec> specs =
-        Importer::specsFromTextDocument(doc, m.mediaStore(), QString());
+        Importer::specsFromTextDocument(doc, store, QString());
 
     // Post-pass: sentinels → real structures.
     std::vector<BlockModel::BlockSpec> outSpecs;
@@ -1018,10 +1013,10 @@ bool writeEnexNote(const QString& title, const QString& enml,
         if (!sp.text.isEmpty() && sp.text.at(0) == kEnexFileRes) {
             const QString hash = sp.text.mid(1).trimmed().toLower();
             const EnexResource* r = byHash.value(hash, nullptr);
-            if (r && m.mediaStore()) {
+            if (r && store) {
                 const QString name = r->fileName.isEmpty()
                     ? QStringLiteral("attachment") : r->fileName;
-                const QString rel = m.mediaStore()->importBytes(r->bytes, name);
+                const QString rel = store->importBytes(r->bytes, name);
                 if (!rel.isEmpty()) {
                     QJsonObject o;
                     o.insert(QStringLiteral("src"), rel);
@@ -1051,7 +1046,18 @@ bool writeEnexNote(const QString& title, const QString& enml,
         }
         outSpecs.push_back(std::move(sp));
     }
-    m.insertSpecs(0, outSpecs, true);
+    return outSpecs;
+}
+
+namespace {
+
+// Fresh headless doc + the note's specs → destDir/<name>.mnd (the folder flow).
+bool writeEnexNote(const QString& title, const QString& enml,
+                   const QList<EnexResource>& resources,
+                   const QString& docPath) {
+    BlockModel m;
+    freshDoc(m);
+    m.insertSpecs(0, Importer::enexNoteSpecs(title, enml, resources, m.mediaStore()), true);
     const bool ok = m.saveAs(docPath);
     m.closeDocument();
     return ok;
@@ -1067,17 +1073,12 @@ QString stripNotionId(const QString& baseName) {
 
 } // namespace
 
-int Importer::importEnexToFolder(const QString& path, const QString& destDir,
-                                 QString* firstPath, const FolderProgress& progress) {
+int Importer::forEachEnexNote(const QString& path, const std::function<bool(const EnexNote&)>& fn) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return 0;
-    QDir().mkpath(destDir);
     QXmlStreamReader xml(&f);
     int count = 0;
-    QSet<QString> taken;
-
-    QString title, enml;
-    QList<EnexResource> resources;
+    EnexNote note;
     EnexResource res;
     bool inNote = false, inResource = false;
     while (!xml.atEnd()) {
@@ -1085,13 +1086,13 @@ int Importer::importEnexToFolder(const QString& path, const QString& destDir,
         if (t == QXmlStreamReader::StartElement) {
             const auto name = xml.name();
             if (name == QLatin1String("note")) {
-                inNote = true; title.clear(); enml.clear(); resources.clear();
+                inNote = true; note = EnexNote();
             } else if (!inNote) {
                 continue;
             } else if (name == QLatin1String("title") && !inResource) {
-                title = xml.readElementText();
+                note.title = xml.readElementText();
             } else if (name == QLatin1String("content")) {
-                enml = xml.readElementText();
+                note.enml = xml.readElementText();
             } else if (name == QLatin1String("resource")) {
                 inResource = true; res = EnexResource();
             } else if (inResource && name == QLatin1String("data")) {
@@ -1108,36 +1109,43 @@ int Importer::importEnexToFolder(const QString& path, const QString& destDir,
             if (name == QLatin1String("resource") && inResource) {
                 res.md5 = QString::fromLatin1(
                     QCryptographicHash::hash(res.bytes, QCryptographicHash::Md5).toHex());
-                resources.push_back(res);
+                note.resources.push_back(res);
                 inResource = false;
             } else if (name == QLatin1String("note") && inNote) {
                 inNote = false;
-                if (progress && !progress(count, sanitizeDocName(title)))
-                    return count;   // cancelled between notes
-                const QString docPath =
-                    uniqueDocPath(destDir, sanitizeDocName(title), taken);
-                if (writeEnexNote(sanitizeDocName(title), enml, resources, docPath)) {
-                    if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
-                    ++count;
-                }
+                ++count;
+                if (!fn(note)) return count;
             }
         }
     }
     return count;
 }
 
-int Importer::importNotionZipToFolder(const QString& path, const QString& destDir,
-                                      QString* firstPath, const FolderProgress& progress) {
+int Importer::importEnexToFolder(const QString& path, const QString& destDir,
+                                 QString* firstPath, const FolderProgress& progress) {
     QDir().mkpath(destDir);
+    int count = 0;
+    QSet<QString> taken;
+    forEachEnexNote(path, [&](const EnexNote& n) {
+        const QString title = sanitizeDocName(n.title);
+        if (progress && !progress(count, title)) return false;   // cancelled between notes
+        const QString docPath = uniqueDocPath(destDir, title, taken);
+        if (writeEnexNote(title, n.enml, n.resources, docPath)) {
+            if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
+            ++count;
+        }
+        return true;
+    });
+    return count;
+}
+
+int Importer::forEachNotionEntry(const QString& path, const std::function<bool(const QString&, bool)>& fn) {
     const QString stage = BlockModel::scratchDir() + QStringLiteral("/import-")
         + QUuid::createUuid().toString(QUuid::Id128);
     if (!mnpkg::extractArchive(path, stage)) return 0;
-    int count = 0;
-    QSet<QString> taken;
-
     // Every .md page becomes a doc (subpages included — flat, per the
     // no-vault direction). The staging dir is under the session scratch —
-    // a VOLATILE root, so referenced images copy into each doc's .minnotes
+    // a VOLATILE root, so referenced images copy into the target's .minnotes
     // via the standard importFile policy.
     QStringList mdFiles, csvFiles;
     QDirIterator it(stage, {QStringLiteral("*.md"), QStringLiteral("*.csv")},
@@ -1148,44 +1156,84 @@ int Importer::importNotionZipToFolder(const QString& path, const QString& destDi
     }
     mdFiles.sort();
     csvFiles.sort();
-    for (const QString& md : mdFiles) {
-        if (progress && !progress(count, QFileInfo(md).completeBaseName())) {
-            QDir(stage).removeRecursively();
-            return count;
-        }
-        BlockModel m;
-        freshDoc(m);
-        if (importMarkdownFile(md, &m)) {
-            const QString docPath = uniqueDocPath(
-                destDir, sanitizeDocName(stripNotionId(QFileInfo(md).completeBaseName())),
-                taken);
-            if (m.saveAs(docPath)) {
-                if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
-                ++count;
-            }
-        }
-        m.closeDocument();
-    }
-    for (const QString& csv : csvFiles) {
-        if (progress && !progress(count, QFileInfo(csv).completeBaseName())) {
-            QDir(stage).removeRecursively();
-            return count;
-        }
-        BlockModel m;
-        freshDoc(m);
-        if (importCsvFile(csv, &m, false)) {
-            const QString docPath = uniqueDocPath(
-                destDir, sanitizeDocName(stripNotionId(QFileInfo(csv).completeBaseName())),
-                taken);
-            if (m.saveAs(docPath)) {
-                if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
-                ++count;
-            }
-        }
-        m.closeDocument();
-    }
+    int count = 0;
+    bool go = true;
+    for (const QString& md : mdFiles) { if (!go) break; ++count; go = fn(md, false); }
+    for (const QString& csv : csvFiles) { if (!go) break; ++count; go = fn(csv, true); }
     QDir(stage).removeRecursively();
     return count;
+}
+
+int Importer::importNotionZipToFolder(const QString& path, const QString& destDir,
+                                      QString* firstPath, const FolderProgress& progress) {
+    QDir().mkpath(destDir);
+    int count = 0;
+    QSet<QString> taken;
+    forEachNotionEntry(path, [&](const QString& p, bool csv) {
+        const QString base = sanitizeDocName(stripNotionId(QFileInfo(p).completeBaseName()));
+        if (progress && !progress(count, QFileInfo(p).completeBaseName())) return false;
+        BlockModel m;
+        freshDoc(m);
+        const bool ok = csv ? importCsvFile(p, &m, false) : importMarkdownFile(p, &m);
+        if (ok) {
+            const QString docPath = uniqueDocPath(destDir, base, taken);
+            if (m.saveAs(docPath)) {
+                if (firstPath && firstPath->isEmpty()) *firstPath = docPath;
+                ++count;
+            }
+        }
+        m.closeDocument();
+        return true;
+    });
+    return count;
+}
+
+QVariantMap Importer::importMultiDocToCanvas(const QString& fileUrlOrPath, CanvasDocument* c, qreal wx, qreal wy) {
+    QVariantMap out;
+    out.insert(QStringLiteral("ok"), false);
+    out.insert(QStringLiteral("count"), 0);
+    const QUrl u(fileUrlOrPath);
+    const QString path = u.isLocalFile() ? u.toLocalFile() : fileUrlOrPath;
+    if (!c || !c->mediaStore()) { out.insert(QStringLiteral("error"), QStringLiteral("no canvas")); return out; }
+    const QString fmt = formatForPath(path);
+    std::vector<std::pair<QString, std::vector<BlockModel::BlockSpec>>> notes;
+    if (fmt == QLatin1String("enex")) {
+        forEachEnexNote(path, [&](const EnexNote& n) {
+            const QString title = sanitizeDocName(n.title);
+            notes.emplace_back(title, enexNoteSpecs(title, n.enml, n.resources, c->mediaStore()));
+            return true;
+        });
+    } else if (fmt == QLatin1String("notion")) {
+        forEachNotionEntry(path, [&](const QString& p, bool csv) {
+            FileSpecs fs = buildFileSpecs(p, csv ? QStringLiteral("csv") : QStringLiteral("md"), c->mediaStore());
+            if (fs.ok) notes.emplace_back(sanitizeDocName(stripNotionId(QFileInfo(p).completeBaseName())), std::move(fs.specs));
+            return true;
+        });
+    } else {
+        out.insert(QStringLiteral("error"), QStringLiteral("not a multi-document file"));
+        return out;
+    }
+    if (notes.empty()) { out.insert(QStringLiteral("error"), QStringLiteral("no notes found")); return out; }
+    // One page per note in a reading-order grid (a page's provisional height; the cards measure the real one).
+    const double cardW = CanvasDocument::kDefaultMeasure + 2.0 * CanvasDocument::kPageInset;
+    const std::vector<double> heights(notes.size(), double(CanvasDocument::kMinPageHeight));
+    const std::vector<QRectF> cells = mn::defaultCardLayout(heights, cardW, CanvasDocument::kPageGap);
+    c->beginBatch(tr("Import %n notes", nullptr, int(notes.size())));
+    int made = 0;
+    for (size_t i = 0; i < notes.size(); ++i) {
+        const QString id = c->addPageAt(wx + cells[i].x(), wy + cells[i].y());
+        if (id.isEmpty()) continue;
+        BlockModel* m = c->pageModel(id);
+        if (m && !notes[i].second.empty()) {
+            m->insertSpecs(0, notes[i].second, true);   // spec 0 folds into the seeded paragraph
+            m->localizeRemoteMedia(0, m->rowCountQml() - 1);
+        }
+        ++made;
+    }
+    c->endBatch();
+    out.insert(QStringLiteral("ok"), made > 0);
+    out.insert(QStringLiteral("count"), made);
+    return out;
 }
 
 bool Importer::htmlIsBareRemoteImage(const QString& html) {

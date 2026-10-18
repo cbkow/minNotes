@@ -212,6 +212,11 @@ public:
     Q_INVOKABLE QString addClipboardImageElement(qreal wx, qreal wy);
     // The one http(s) <img> src of an HTML fragment that is nothing but that image ("" otherwise).
     Q_INVOKABLE static QString bareRemoteImageSrc(const QString& html);
+    // --- Phase A8: another minNotes file dropped on the canvas COPIES its pages (and its other elements) in,
+    // keeping their relative layout, translated to (wx, wy); no link (standing ruling). Pages merge through
+    // DocumentMerger (ids re-minted, assets copied, threads replayed); sidecar media of other elements is
+    // re-homed into this file's store. ONE history row. Returns the new element ids (pages first in z order).
+    Q_INVOKABLE QStringList copyPagesFrom(const QString& fileUrl, qreal wx, qreal wy);
     Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementJson(const QString& id, const QString& json, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementZ(const QString& id, int z);
@@ -256,6 +261,9 @@ signals:
     void undoStackChanged();
     void cameraChanged();
     void importFileRequested(const QString& fileUrl, qreal wx, qreal wy);
+    void importMultiDocRequested(const QString& fileUrl, qreal wx, qreal wy);   // ENEX / Notion: Main.qml runs the importer onto this canvas
+    void elementsAdded(const QStringList& ids);                                 // a copy-in / import landed (the view selects them)
+    void importNotice(const QString& text);                                     // an outcome to toast
     void elementsChanged();
     void geometryChanged();
     void inkChanged();
