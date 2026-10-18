@@ -4,6 +4,9 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QQuickWindow>
+#if defined(Q_OS_MACOS)
+#include <mach/mach.h>
+#endif
 
 qint64 CanvasGestures::nextStamp(qint64 advance) { stamp_ += advance; return stamp_; }
 
@@ -82,4 +85,14 @@ void CanvasGestures::key(QQuickItem* item, int key, int modifiers) {
     QKeyEvent r(QEvent::KeyRelease, key, Qt::KeyboardModifiers(modifiers));
     QCoreApplication::sendEvent(item->window(), &p);
     QCoreApplication::sendEvent(item->window(), &r);
+}
+
+qint64 CanvasGestures::residentBytes() const {
+#if defined(Q_OS_MACOS)
+    mach_task_basic_info info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS)
+        return static_cast<qint64>(info.resident_size);
+#endif
+    return -1;
 }

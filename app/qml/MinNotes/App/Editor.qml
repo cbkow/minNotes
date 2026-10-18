@@ -3919,8 +3919,9 @@ FocusScope {
         property string expected: ""
         property int countBefore: 0
         interval: 16; repeat: true
-        running: armed && flick.visible && blockModel.count > 1000
-        onRunningChanged: if (running) console.log("TYPE-PROBE START blocks", blockModel.count)
+        readonly property bool liveCard: Qt.application.arguments.indexOf("--live-card") >= 0   // (S5: typing inside a LIVE card)
+        running: armed && flick.visible && blockModel.count > 1000 && (!liveCard || root.cardHosted)
+        onRunningChanged: if (running) console.log("TYPE-PROBE START blocks", blockModel.count, root.cardHosted ? "(live card)" : "(page view)")
         function fail(msg) { if (++fails <= 40) console.log("TYPE-PROBE FAIL phase", phases[phase], "step", phaseStep, msg) }
         // The first row from the document's middle that satisfies pred (wrapping).
         function findRow(pred) {
@@ -4049,6 +4050,8 @@ FocusScope {
         property string probeFixDir: ""
         property string audioElId: ""
         property int probeLives: 0             // P11
+        property double probeRss0: 0            // P12
+        property var probeCycleMs: []
         property real probeW: 0
         property real probeScroll: 0
         property string probeText: ""
@@ -4870,7 +4873,25 @@ FocusScope {
                 check(blockModel.contentForRow(0).indexOf("live card ") === 0, "…the typed text is in the page")
                 blockModel.undo()
                 check(blockModel.contentForRow(0) === probeText, "…and the page's own undo takes it back")
-                nextPhase("live")
+                nextPhase("live"); return
+            }
+            if (phase === 12) {   // P12 (SPIKE S5): 20 enter / exit cycles — synchronous cost per transition, resident memory drift
+                const cvw = canvasItem
+                if (step === 0) { probeRss0 = gestures.residentBytes(); probeCycleMs = []; ++step; return }
+                if (step <= 40) {
+                    const t0 = Date.now()
+                    if (step % 2 === 1) cvw.goLive(livePage); else cvw.endLive(false)
+                    probeCycleMs.push(Date.now() - t0)
+                    ++step; return
+                }
+                if (step < 44) { ++step; return }
+                const sorted = probeCycleMs.slice().sort((a, b) => a - b), p50 = sorted[Math.floor(sorted.length / 2)], p95 = sorted[Math.floor(sorted.length * 0.95)], mx = sorted[sorted.length - 1]
+                const rss1 = gestures.residentBytes(), drift = (rss1 - probeRss0) / 20
+                console.log("CANVAS-PROBE LIVE-CYCLES n", probeCycleMs.length, "ms p50", p50, "p95", p95, "max", mx, "rss/cycle KB", Math.round(drift / 1024), "rss MB", Math.round(rss1 / 1048576))
+                check(!root.cardHosted && canvas.livePage === "", "20 enter/exit cycles end at rest")
+                check(mx < 150, "no transition took ≥ 150 ms synchronously (max " + mx + " ms; K4)")
+                check(probeRss0 < 0 || drift < 1024 * 1024, "resident memory grows < 1 MB per cycle (" + Math.round(drift / 1024) + " KB; K5)")
+                nextPhase("live-cycles")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))
             }

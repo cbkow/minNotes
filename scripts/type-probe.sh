@@ -14,7 +14,8 @@ FIX="${1:-$ROOT/tests/fixtures/type-probe.md}"
 LABEL="${2:-$(date +%Y-%m-%d_%H%M)}"
 LOG="$(mktemp -t type-probe)"
 
-QT_QPA_PLATFORM=offscreen MN_TYPE_PROBE=1 "$BIN" --type-probe="$FIX" >"$LOG" 2>&1
+# Extra arguments pass through (e.g. --live-card: type inside a page made live in its canvas card).
+QT_QPA_PLATFORM=offscreen MN_TYPE_PROBE=1 "$BIN" --type-probe="$FIX" "${@:3}" >"$LOG" 2>&1
 CODE=$?
 
 python3 - "$LOG" "$LABEL" <<'EOF'

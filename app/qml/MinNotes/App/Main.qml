@@ -910,6 +910,15 @@ ApplicationWindow {
     // outgoing tab's QML view state (scroll/caret/active sub-tab) and restores
     // the incoming one's; the blob is held per-tab by the DocumentManager. ---
     function _editor() { return docContent.item ? docContent.item.editorItem : null }
+    // The probes' "live card" bootstrap (SPIKE S5): the canvas up, fitted, the first page live in its card.
+    function _goLiveForProbe() {
+        const ed = win._editor()
+        if (!ed || !ed.canvasItem) { Qt.callLater(win._goLiveForProbe); return }
+        ed.setActiveTab("canvas")
+        ed.canvasItem.fit()
+        ed.canvasItem.goLive(canvas.firstPageId())
+        console.log("PROBE live card:", canvas.livePage !== "" ? "armed" : "FAILED")
+    }
     readonly property var activeEditor: docContent.item ? docContent.item.editorItem : null   // the reactive form (menu checks)
     function _restoreActiveView() {
         var ed = win._editor()
@@ -1421,6 +1430,8 @@ ApplicationWindow {
             width = 1200; height = 900
             docs.newTab()
             if (!importer.importFile(_typeProbeFixture)) { console.log("TYPE-PROBE FAIL import"); Qt.exit(101) }
+            // --live-card (SPIKE S5): the same probe, typing into the page made LIVE in its card on the canvas.
+            if (Qt.application.arguments.indexOf("--live-card") >= 0) Qt.callLater(win._goLiveForProbe)
             return
         }
         if (_canvasProbeFixture !== "") {

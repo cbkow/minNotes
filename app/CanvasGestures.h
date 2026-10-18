@@ -25,6 +25,7 @@ public:
     Q_INVOKABLE void type(QQuickItem* item, const QString& text);
     Q_INVOKABLE void key(QQuickItem* item, int key, int modifiers = 0);
     Q_INVOKABLE void wheel(QQuickItem* item, qreal x, qreal y, int dx, int dy);   // a mouse wheel's angle delta (±120 per notch)
+    Q_INVOKABLE qint64 residentBytes() const;   // this process's resident set (the probe's leak check); -1 when unknown
 private:
     void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier);
     qint64 nextStamp(qint64 advance);
