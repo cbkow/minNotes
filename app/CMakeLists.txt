@@ -111,6 +111,8 @@ qt_add_executable(minnotesapp
     notes/PageContextLoader.cpp
     notes/CanvasInkCapture.h
     notes/CanvasInkCapture.cpp
+    notes/MediaHost.h
+    notes/MediaHost.cpp
     # Video engine (ported from ufb; audio omitted for v1). Cross-platform
     # core lives here; the platform hwaccel/zero-copy sources are added per-OS
     # below. VideoDecoder + VideoSurfaceItem are QML_ELEMENT types, so they must

@@ -603,14 +603,14 @@ Rectangle {
                         readonly property bool typeSlot: modelData.tool === "type"
                         readonly property string ctxIcon:
                             typeSlot && panel.editor
-                                && (panel.editor.activePdfRow >= 0
-                                    || panel.editor.activeVideoRow >= 0)
+                                && (panel.editor.pdfTabOpen
+                                    || panel.editor.videoTabOpen)
                                 ? "hand-pointing" : modelData.icon
                         readonly property string ctxTip: {
                             if (!typeSlot || !panel.editor) return modelData.tip
-                            if (panel.editor.activePdfRow >= 0)
+                            if (panel.editor.pdfTabOpen)
                                 return qsTr("Browse — scroll & pan pages")
-                            if (panel.editor.activeVideoRow >= 0)
+                            if (panel.editor.videoTabOpen)
                                 return qsTr("Browse — playback & note cards")
                             if (panel.editor.activeGridHead >= 0)
                                 return qsTr("Type — edit cells")
@@ -632,10 +632,10 @@ Rectangle {
                             if (panel.editor.activeCanvas) return ""
                             if (panel.editor.activeFrameId === "")
                                 return qsTr("drawing lives on the canvas")
-                            if (panel.editor.activePdfRow >= 0)
+                            if (panel.editor.pdfTabOpen)
                                 return qsTr("drawing on PDF pages returns with the canvas tools")
                             if (modelData.tool !== "text") return ""
-                            if (panel.editor.activeVideoRow >= 0)
+                            if (panel.editor.videoTabOpen)
                                 return qsTr("text boxes aren't part of video notes")
                             return ""
                         }

@@ -37,6 +37,7 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/DocumentManager.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/VideoNotesModel.cpp
     ${CMAKE_SOURCE_DIR}/app/notes/CanvasInkCapture.cpp
+    ${CMAKE_SOURCE_DIR}/app/notes/MediaHost.cpp
     ${CMAKE_SOURCE_DIR}/app/core/Converter.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp

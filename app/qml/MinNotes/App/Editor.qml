@@ -188,23 +188,23 @@ FocusScope {
     // Full width on the document view — ruling C.)
     // ONE zoom interface (ruling 2026-09-16): the badge and the keys act on the ACTIVE surface —
     // the PDF stage, the canvas, or the document. 100 % is true scale on each.
-    readonly property real zoomValue: activeCanvas ? canvasView.cam.zoom
-        : activePdfRow >= 0
-        ? (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0 ? pdfZoom * pdfFitPageW / blockModel.mediaW(activePdfRow) : 1)
+    readonly property real zoomValue: pdfTabOpen
+        ? (pdfFitPageW > 0 && mediaHost.w > 0 ? pdfZoom * pdfFitPageW / mediaHost.w : 1)
+        : canvasShown ? canvasView.cam.zoom
         : viewZoom
-    function zoomStep(dir) { if (activeCanvas) canvasView.zoomStep(dir); else if (activePdfRow >= 0) pdfZoomStep(dir); else docZoomStep(dir) }
+    function zoomStep(dir) { if (pdfTabOpen) pdfZoomStep(dir); else if (canvasShown) canvasView.zoomStep(dir); else docZoomStep(dir) }
     // The rail's slider (BottomRail): the active surface's range in TRUE-scale units, mapped
     // the Word way — 100 % dead centre, a linear half either side.
-    readonly property real pdfTrueK: pdfFitPageW > 0 && activePdfRow >= 0 && blockModel.mediaW(activePdfRow) > 0
-                                     ? pdfFitPageW / blockModel.mediaW(activePdfRow) : 1
+    readonly property real pdfTrueK: pdfFitPageW > 0 && pdfTabOpen && mediaHost.w > 0
+                                     ? pdfFitPageW / mediaHost.w : 1
     // A PDF: a quarter of fit width up to 400 % true scale (its own clamp allows 4 × fit, which
     // is far past useful and made the slider's right half a cliff).
-    readonly property real zoomFloor: activeCanvas ? 0.05 : activePdfRow >= 0 ? 0.25 * pdfTrueK : zoomSteps[0]
-    readonly property real zoomCeil:  activeCanvas ? 4 : activePdfRow >= 0 ? Math.max(4, 1.05 * pdfTrueK) : zoomSteps[zoomSteps.length - 1]
+    readonly property real zoomFloor: pdfTabOpen ? 0.25 * pdfTrueK : canvasShown ? 0.05 : zoomSteps[0]
+    readonly property real zoomCeil:  pdfTabOpen ? Math.max(4, 1.05 * pdfTrueK) : canvasShown ? 4 : zoomSteps[zoomSteps.length - 1]
     function zoomTo(v) {   // true scale, on the active surface, about its centre
         v = Math.max(zoomFloor, Math.min(zoomCeil, v))
-        if (activeCanvas) canvasView.zoomTo(v)
-        else if (activePdfRow >= 0) pdfZoomTo(v / pdfTrueK)
+        if (pdfTabOpen) pdfZoomTo(v / pdfTrueK)
+        else if (canvasShown) canvasView.zoomTo(v)
         else docZoomTo(v)
     }
     // Each half is LOGARITHMIC (a doubling takes the same travel everywhere): the document's
@@ -224,8 +224,8 @@ FocusScope {
     // in writing mode space types) and a left-drag pans the Flickable natively; the document
     // mouse layer and the ink canvas step aside while it's held. Middle-drag pans any time.
     property bool docSpaceHeld: false                     // (cleared in onInkModeChanged below)
-    function zoomFit()     { if (activeCanvas) canvasView.fit();      else if (activePdfRow >= 0) pdfZoomFit();     else toggleFullWidth() }
-    function zoom100()     { if (activeCanvas) canvasView.zoomTo(1);  else if (activePdfRow >= 0) pdfZoom100();     else docZoom100() }
+    function zoomFit()     { if (pdfTabOpen) pdfZoomFit();  else if (canvasShown) canvasView.fit();     else toggleFullWidth() }
+    function zoom100()     { if (pdfTabOpen) pdfZoom100();  else if (canvasShown) canvasView.zoomTo(1); else docZoom100() }
     // The width the sheet centres in: the viewport (the Inspector docks — it pushes the editor,
     // so flick.width already excludes it; the floating mode went with annotations).
     readonly property real centringWidth: flick.width
@@ -388,26 +388,28 @@ FocusScope {
         activePdfId === "" ? -1 : blockModel.rowForId(activePdfId))
     onActivePdfRowChanged: {
         if (activePdfId !== "" && activePdfRow < 0) activePdfId = ""
-        if (activePdfRow < 0) pdfSpaceHeld = false   // never leave the hand stuck across a tab switch
     }
+    onPdfTabOpenChanged: if (!pdfTabOpen) pdfSpaceHeld = false   // never leave the hand stuck across a tab switch
     // PDF tab zoom (2026-08-20): 1.0 = fit-width; the ListView grows a
     // horizontal content axis when zoomed past it (space-hand pans both).
     // Remembered PER TAB (2026-09-16), keyed on the ID (a row shifts on inserts); a fresh tab is 1.
     property real pdfZoom: 1.0
     property var pdfZooms: ({})
     property string _prevPdfId: ""
-    onActivePdfIdChanged: {
+    // The PDF tab's identity for the zoom memory: the block id, or (2.0 phase A) the media element's.
+    readonly property string pdfZoomKey: activePdfId !== "" ? activePdfId : (pdfTabOpen ? activeElementId : "")
+    onPdfZoomKeyChanged: {
         if (_prevPdfId !== "") pdfZooms[_prevPdfId] = pdfZoom
-        if (activePdfId !== "") pdfZoom = pdfZooms[activePdfId] !== undefined ? pdfZooms[activePdfId] : 1.0
-        _prevPdfId = activePdfId
+        if (pdfZoomKey !== "") pdfZoom = pdfZooms[pdfZoomKey] !== undefined ? pdfZooms[pdfZoomKey] : 1.0
+        _prevPdfId = pdfZoomKey
     }
     property real pdfFitPageW: 0            // pushed by the list (viewport-derived)
     function pdfZoomTo(z) { pdfZoom = Math.max(0.25, Math.min(4, z)) }
     function pdfZoomStep(dir) { pdfZoomTo(pdfZoom * (dir > 0 ? Math.SQRT2 : 1 / Math.SQRT2)) }
     function pdfZoomFit() { pdfZoomTo(1.0) }
     function pdfZoom100() {   // page at its POINT size (1 unit per pt)
-        if (pdfFitPageW > 0 && blockModel.mediaW(activePdfRow) > 0)
-            pdfZoomTo(blockModel.mediaW(activePdfRow) / pdfFitPageW)
+        if (pdfFitPageW > 0 && mediaHost.w > 0)
+            pdfZoomTo(mediaHost.w / pdfFitPageW)
     }
     // Space-hand panning in the PDF tab (the sketch-tab convention): while
     // held, the page canvases refuse mouse so drags fall through to the
@@ -422,18 +424,20 @@ FocusScope {
     readonly property int activeVideoRow: (blockModel.layoutRevision, blockModel.structureRevision,
         activeVideoId === "" ? -1 : blockModel.rowForId(activeVideoId))
     onActiveVideoRowChanged: if (activeVideoId !== "" && activeVideoRow < 0) activeVideoId = ""
-    onActiveVideoIdChanged: {
+    // The studio opens on whatever the HOST points at (a video block or a canvas video element) — PAUSED
+    // at its remembered playhead; a host switch inside the open studio re-activates likewise.
+    onVideoTabOpenChanged: {
         forceActiveFocus()
-        if (activeVideoId === "") {
+        if (!videoTabOpen) {
             // Leaving the studio with the block off-viewport: videoVisible was
             // false and STAYS false, so its change handler never runs — tear
             // down here or the decoder (and audio) would run on invisibly.
-            if (!videoVisible && videoPlayingRow >= 0) stopVideo()
+            if (!videoVisible && videoPlayingKey !== "") stopVideo()
             return
         }
-        var r = blockModel.rowForId(activeVideoId)
-        if (r >= 0) _activateVideo(r)
+        ensureHostActive()
     }
+    Connections { target: mediaHost; function onIdentityChanged() { if (root.videoTabOpen && root.videoPlayingKey !== mediaHost.key) root.ensureHostActive() } }
     // The block id shown full-frame ("" = Document view) — drives the tab strip's
     // active state across table, PDF, video and canvas tabs.
     // The canvas (B3) is a per-document view mode, not a block: its tab id is the literal "canvas"
@@ -442,6 +446,18 @@ FocusScope {
     // view is the focused page's. setActiveTab("canvas") / setActiveTab("") WRITE the focus (the manager
     // re-points blockModel); this reads it.
     readonly property bool activeCanvas: canvas.documentOpen && canvas.focusPage === ""
+    // A canvas MEDIA ELEMENT shown full-frame (its PDF tab / studio) over an unfocused canvas (2.0 phase A).
+    property string activeElementId: ""
+    readonly property bool canvasShown: activeCanvas && activeElementId === ""      // the canvas surface itself is up
+    readonly property bool videoTabOpen: mediaHost.valid && mediaHost.kind === "video"
+    readonly property bool pdfTabOpen: mediaHost.valid && !videoTabOpen            // any other media opens as the PDF-style tab (today's rule)
+    // The shared player is on the HOST's media (studio surface, transport, annotator bind to this).
+    readonly property bool hostIsPlaying: mediaHost.valid && videoPlayingKey !== "" && videoPlayingKey === mediaHost.key
+    function closeElementTab() {   // back to the canvas with the element selected
+        const id = activeElementId
+        setActiveTab("canvas")
+        if (id !== "") Qt.callLater(function() { canvasView.select(id) })   // after the view is visible (its hide clears the selection)
+    }
     // The canvas gave way to the page view (the same model may stay focused — the first page is the
     // canvas's fallback): the page lays out at the VIEW's width again, not its card's.
     onActiveCanvasChanged: {
@@ -468,7 +484,8 @@ FocusScope {
             if (z > 0) { canvasView.fit(); const o = canvasView.cam.worldToScreen(0, 0); canvasView.cam.zoomAboutPoint(z, o.x, o.y) }
         }
     }
-    readonly property string activeFrameId: activeCanvas ? "canvas"
+    readonly property string activeFrameId: activeElementId !== "" ? activeElementId   // a canvas media element's full-frame view (2.0 phase A)
+                                          : activeCanvas ? "canvas"
                                           : activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
                                           : activeVideoId
@@ -488,7 +505,7 @@ FocusScope {
     }
     // Drop the per-page frame state (tables / PDF / video tabs, the board) without touching the
     // canvas-vs-page focus — what a document change or a focus change needs.
-    function clearFrames() { boardMode = false; boardCol = -1; activeGridId = ""; activePdfId = ""; activeVideoId = "" }
+    function clearFrames() { boardMode = false; boardCol = -1; activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeElementId = "" }
     // blockModel just re-pointed to another page of the same file (a focus change, not a tab switch):
     // a fresh page view at the top, laid out at the view's width.
     function resetForPage() {
@@ -508,10 +525,16 @@ FocusScope {
         // in video tabs (text boxes are not part of the QCView flow).
         var t = inspector ? inspector.drawTool : "type"
         if (id === "canvas") {   // the file's canvas: no page focused; the draw tools are live here
-            activeGridId = ""; activePdfId = ""; activeVideoId = ""
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeElementId = ""
             if (canvas.documentOpen) canvas.focusPage = ""
             return
         }
+        if (canvas.documentOpen && canvas.elementKind(id) === "media") {   // a canvas media element's own full-frame view (2.0 phase A): the canvas stays unfocused underneath
+            if (t === "text") inspector.drawTool = "select"
+            activeGridId = ""; activePdfId = ""; activeVideoId = ""; activeElementId = id
+            return
+        }
+        activeElementId = ""
         if (canvas.documentOpen && canvas.focusPage === "") canvas.focusPage = canvas.focusedPageId()   // leaving the canvas → the page view
         if (id === "") {
             if (inspector && t !== "type") inspector.drawTool = "type"
@@ -553,7 +576,7 @@ FocusScope {
     // capture-before / restore-after around docs.setActive.
     function captureViewState() {
         if (_isFlickFrame(activeFrameId)) docZooms[activeFrameId] = viewZoom   // the current tab's zoom, up to date
-        if (activePdfId !== "") pdfZooms[activePdfId] = pdfZoom
+        if (pdfZoomKey !== "") pdfZooms[pdfZoomKey] = pdfZoom
         return {
             scrollY:       flick.contentY,
             focusRow:      cursor.focusRow,  focusCol:  cursor.focusCol,
@@ -944,6 +967,7 @@ FocusScope {
     // time" for free; scrolling the playing block out of view tears it down.
     // Transport logic is ported from ufb's VideoPreview. ---
     property int  videoPlayingRow: -1
+    property string videoPlayingKey: ""   // the playing media's anchor path (2.0 phase A: the key both a block and an element share)
     // T5 (S9c): a video whose column is narrower than this can't host the transport; its bar hides and
     // a click on the frame opens the review view instead.
     readonly property real transportMinW: 300
@@ -1001,7 +1025,7 @@ FocusScope {
     // changed back in the same tick doesn't tear down a live player.
     onVideoVisibleChanged: if (!videoVisible) Qt.callLater(root._maybeStopVideo)
     function _maybeStopVideo() {
-        if (!videoVisible && videoPlayingRow >= 0 && activeVideoRow < 0) stopVideo()
+        if (!videoVisible && videoPlayingKey !== "" && !videoTabOpen) stopVideo()
     }
 
     // Per-video playhead memory (keyed by file path) so a torn-down video shows
@@ -1009,19 +1033,15 @@ FocusScope {
     // poster bindings re-evaluate when a playhead is recorded.
     property var videoPlayheads: ({})
     property int videoPlayheadRev: 0
-    function videoPlayheadFor(row) {
-        // Anchor-path key: pure computation (no IO), stable whether the clip
-        // streams from a package or lives on disk.
-        var key = blockModel.mediaAnchorPath(row)
-        return (key !== "" && videoPlayheads[key] !== undefined) ? videoPlayheads[key] : 0
-    }
+    // Anchor-path key: pure computation (no IO), stable whether the clip streams from a package or
+    // lives on disk — the same key for a page's video block and a canvas video element.
+    function videoPlayheadForKey(key) { return (key !== "" && videoPlayheads[key] !== undefined) ? videoPlayheads[key] : 0 }
+    function videoPlayheadFor(row) { return videoPlayheadForKey(blockModel.mediaAnchorPath(row)) }
     function _rememberVideoPlayhead() {   // bank the last-accessed frame
-        if (videoPlayingRow < 0) return
-        var key = videoPlayingRow >= 0 ? blockModel.mediaAnchorPath(videoPlayingRow) : ""
         // _vidIntendedFrame: the scrubbed-to frame if mid-scrub, else the live
         // playhead — scrubToFrame leaves currentFrame at the old streaming spot,
         // so reading currentFrame here would lose the scrub position.
-        if (key !== "") { videoPlayheads[key] = _vidIntendedFrame(); videoPlayheadRev++ }
+        if (videoPlayingKey !== "") { videoPlayheads[videoPlayingKey] = _vidIntendedFrame(); videoPlayheadRev++ }
     }
 
     // Per-PDF current page, keyed by file path (stable across row shifts). The
@@ -1064,8 +1084,10 @@ FocusScope {
     // Make `row` the active video, opened PAUSED at its remembered playhead.
     // Does NOT start playback — so scrubbing/stepping a not-yet-playing video
     // shows frames without triggering play (ufb behaviour). Returns success.
-    function _activateVideo(row) {
-        if (videoPlayingRow === row) return true
+    // The player is keyed by SOURCE (2.0 phase A): `key` = the media's anchor path, `row` = its page
+    // row (-1 for a canvas element — nothing inline ever shows it; the studio is its only surface).
+    function _activateSource(p, key, row) {
+        if (key !== "" && videoPlayingKey === key) { videoPlayingRow = row; return true }
         _rememberVideoPlayhead()              // bank the outgoing video's frame
         _videoSurfaceReady = false            // hide the surface until THIS video paints
         // A teardown can land mid-gesture (note switch during a drag/FF hold);
@@ -1077,9 +1099,9 @@ FocusScope {
         _vidScrubTarget = -1
         // Playback source: disk path, or a subfile spec streaming a packaged
         // clip straight from the archive — play starts without extraction.
-        var p = blockModel.mediaPlaybackSource(row)
-        if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; _videoPlayingPath = ""; return false }
+        if (p === "" || !videoDec.open(p)) { videoPlayingRow = -1; videoPlayingKey = ""; _videoPlayingPath = ""; return false }
         videoPlayingRow = row
+        videoPlayingKey = key
         _videoPlayingPath = p
         videoAudio.initialize()   // idempotent; open() no-ops without it
         videoAudio.open(p)
@@ -1087,17 +1109,27 @@ FocusScope {
             videoDec.setPlaybackSpeed(videoSpeed)
             videoAudio.setPlaybackTempo(videoSpeed)
         }
-        var resume = videoPlayheadFor(row)    // pick up where we left off
+        var resume = videoPlayheadForKey(key) // pick up where we left off
         if (resume > 0) {
             videoDec.seekToFrame(resume)      // streaming decoder parks here (not a scrub)
             if (videoDec.fps > 0) videoAudio.seek(resume / videoDec.fps)
         }
         return true
     }
+    function _activateVideo(row) { return _activateSource(blockModel.mediaPlaybackSource(row), blockModel.mediaAnchorPath(row), row) }
     function ensureVideoActive(row) { return _activateVideo(row) }
+    // The host's media (the open studio's block OR element).
+    function ensureHostActive() { return mediaHost.valid ? _activateSource(mediaHost.playbackSource, mediaHost.key, mediaHost.row) : false }
     function playVideo(row) {
-        if (videoPlayingRow === row) { toggleVideo(); return }
+        if (videoPlayingRow === row && videoPlayingKey !== "") { toggleVideo(); return }
         if (_activateVideo(row)) {
+            videoDec.play()
+            if (videoAudio.hasAudio) videoAudio.play()
+        }
+    }
+    function playHost() {
+        if (hostIsPlaying) { toggleVideo(); return }
+        if (ensureHostActive()) {
             videoDec.play()
             if (videoAudio.hasAudio) videoAudio.play()
         }
@@ -1117,7 +1149,7 @@ FocusScope {
         if (videoAudio.shuttleActive()) videoAudio.endShuttle()   // see _activateVideo
         _scrubAudioActive = false
         videoDec.close(); videoAudio.close()
-        videoPlayingRow = -1; _videoPlayingPath = ""; _videoSurfaceReady = false
+        videoPlayingRow = -1; videoPlayingKey = ""; _videoPlayingPath = ""; _videoSurfaceReady = false
         _vidScrubTarget = -1; _vidFastSeekDir = 0; videoFastSeekTimer.stop()
     }
     // Frame-accurate step — implies review, so pause first.
@@ -1195,6 +1227,17 @@ FocusScope {
 
     VideoDecoder { id: videoDec }
     AudioPlayer  { id: videoAudio }
+    // The media-source seam (2.0 phase A2): what the PDF tab and the studio bind to. A page's PDF /
+    // video block by id, or a canvas media element by id — the element wins. Parked (no ids) it
+    // listens to nothing, so typing never reaches it.
+    MediaHost {
+        id: mediaHost
+        model: root.activeElementId === "" ? blockModel : null
+        blockId: root.activePdfId !== "" ? root.activePdfId : root.activeVideoId
+        canvas: canvas
+        elementId: root.activeElementId
+        onGone: if (root.activeElementId !== "") root.setActiveTab("canvas")   // the element went away under its tab
+    }
     // The note store: QCView's sidecar (.qcview/<media>/notes.json), loaded
     // for whichever video owns the screen — the studio's row when a video tab
     // is open (poster case included), else the inline player's. Root-owned so
@@ -1204,10 +1247,9 @@ FocusScope {
     // video, shared with QCView.
     VideoNotesModel {
         id: vnotes
-        readonly property int noteRow: root.activeVideoRow >= 0 ? root.activeVideoRow
-                                                                : root.videoPlayingRow
-        mediaPath: noteRow >= 0 ? blockModel.mediaAnchorPath(noteRow) : ""
-        fps: noteRow >= 0 ? blockModel.mediaFps(noteRow) : 0
+        readonly property int noteRow: root.videoPlayingRow
+        mediaPath: root.videoTabOpen ? mediaHost.anchorPath : (noteRow >= 0 ? blockModel.mediaAnchorPath(noteRow) : "")
+        fps: root.videoTabOpen ? mediaHost.fps : (noteRow >= 0 ? blockModel.mediaFps(noteRow) : 0)
     }
     // Keep audio aligned to the video playhead while playing (~30 Hz).
     Timer {
@@ -3014,7 +3056,7 @@ FocusScope {
 
     // Space-up releases the PDF tab's hand-pan (press side lives in Keys.onPressed below).
     Keys.onReleased: (event) => {
-        if (root.activePdfRow >= 0
+        if (root.pdfTabOpen
                  && event.key === Qt.Key_Space && !event.isAutoRepeat) {
             root.pdfSpaceHeld = false
             event.accepted = true
@@ -3033,16 +3075,17 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        if (k === Qt.Key_Escape && !root.activeCanvas) {   // (the canvas has its own Escape, below)
+        if (k === Qt.Key_Escape && (!root.activeCanvas || root.activeElementId !== "")) {   // (the canvas has its own Escape, below)
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
             // Studio first: drop an in-flight stroke, then disarm the tool.
-            if (root.activeVideoRow >= 0 && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
-            else if ((root.activeVideoRow >= 0 || root.activePdfRow >= 0)
+            if (root.videoTabOpen && studioAnnotator.drawing) { studioAnnotator.cancelStroke() }
+            else if ((root.videoTabOpen || root.pdfTabOpen)
                      && root.inspector && root.inspector.drawTool !== "type"
                      && root.inspector.drawTool !== "select") { root.inspector.drawTool = "select" }
-            else if (root.activeVideoRow >= 0 && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
+            else if (root.videoTabOpen && studioAnnotator.hasSelection) { studioAnnotator.clearSelection() }
+            else if (root.activeElementId !== "") { root.closeElementTab() }   // an element's tab → the canvas, element selected
             else if (root.dividerDragging) { root.cancelDividerDrag() }
             else if (root.pulling) { root.cancelPull() }
             else if (root.blockDragging) { root.blockDragging = false; root.blockDragRow = -1; root.dropGap = -1; root.blockDragCount = 1 }
@@ -3089,7 +3132,7 @@ FocusScope {
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
         // outside the document DB, so doc undo must not fire while the
         // hidden document is invisible.
-        else if (cmd && (k === Qt.Key_Z || k === Qt.Key_Y) && root.activeVideoRow >= 0) {
+        else if (cmd && (k === Qt.Key_Z || k === Qt.Key_Y) && root.videoTabOpen) {
             if (k === Qt.Key_Y || shift) studioAnnotator.redo(); else studioAnnotator.undo()
             event.accepted = true
         }
@@ -3097,10 +3140,10 @@ FocusScope {
         // ⌘Z/redo and Delete-selected-stroke pass through; everything else is
         // still swallowed so typing can't invisibly edit the hidden document.
         // Must sit above the generic ⌘Z/⌘V branches.
-        else if (root.activePdfRow >= 0) {
-            if (cmd && k === Qt.Key_Z && shift) blockModel.redo()
-            else if (cmd && k === Qt.Key_Z) blockModel.undo()
-            else if (cmd && k === Qt.Key_Y) blockModel.redo()
+        else if (root.pdfTabOpen) {
+            if (cmd && k === Qt.Key_Z && shift) mediaHost.redo()    // the owner's log: the page's or the canvas's
+            else if (cmd && k === Qt.Key_Z) mediaHost.undo()
+            else if (cmd && k === Qt.Key_Y) mediaHost.redo()
             else if (k === Qt.Key_Space && !event.isAutoRepeat)
                 root.pdfSpaceHeld = true            // hold the hand (list pan)
             // Zoom keys (2026-08-20) — the ZoomBadge menu's advertised pair
@@ -3129,7 +3172,7 @@ FocusScope {
         // Video tab: clipboard ops target the hidden document — gate ⌘V/⌘X (silent document edits);
         // ⌘C copies an invisible selection, swallow it too.
         else if (cmd && (k === Qt.Key_C || k === Qt.Key_V || k === Qt.Key_X)
-                 && root.activeVideoRow >= 0) {
+                 && root.videoTabOpen) {
             event.accepted = true
         }
         else if (cmd && k === Qt.Key_Z && shift) { root.undoTarget.redo(); event.accepted = true }
@@ -3162,15 +3205,15 @@ FocusScope {
         }
         // Video studio: transport keys, then swallow everything else so typing
         // can't invisibly edit the hidden document underneath.
-        else if (root.activeVideoRow >= 0) {
+        else if (root.videoTabOpen) {
             if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && studioAnnotator.hasSelection)
                 studioAnnotator.deleteSelection()
-            else if (k === Qt.Key_Space) { root.ensureVideoActive(root.activeVideoRow); root.toggleVideo() }
-            else if (k === Qt.Key_Left)  { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(-1) }
-            else if (k === Qt.Key_Right) { root.ensureVideoActive(root.activeVideoRow); root.stepVideoFrames(1) }
-            else if (k === Qt.Key_Home)  { root.ensureVideoActive(root.activeVideoRow); root.seekVideoStart() }
-            else if (k === Qt.Key_End)   { root.ensureVideoActive(root.activeVideoRow); root.seekVideoEnd() }
-            else if (k === Qt.Key_R)     { root.ensureVideoActive(root.activeVideoRow)
+            else if (k === Qt.Key_Space) { root.ensureHostActive(); root.toggleVideo() }
+            else if (k === Qt.Key_Left)  { root.ensureHostActive(); root.stepVideoFrames(-1) }
+            else if (k === Qt.Key_Right) { root.ensureHostActive(); root.stepVideoFrames(1) }
+            else if (k === Qt.Key_Home)  { root.ensureHostActive(); root.seekVideoStart() }
+            else if (k === Qt.Key_End)   { root.ensureHostActive(); root.seekVideoEnd() }
+            else if (k === Qt.Key_R)     { root.ensureHostActive()
                                            if (shift) root.setVideoSpeed(1.0); else root.cycleVideoSpeed() }
             event.accepted = true
         }
@@ -4014,6 +4057,7 @@ FocusScope {
                     check(root.activeCanvas && canvasView.visible && !flick.visible, "the Canvas tab shows the canvas and hides the page")
                     check(canvas.focusPage === "" && root.undoTarget === canvas && blockModel.pageId() === canvas.firstPageId(), "the Canvas tab = no focused page; ⌘Z targets the canvas log; blockModel falls back to the first page")
                     check(!cam.userCam && cam.zoom < 1, "a fresh canvas fits the elements (zoom " + cam.zoom + ")")
+                    check(!mediaHost.valid && root.activeElementId === "" && !root.pdfTabOpen && !root.videoTabOpen, "no media host on the bare canvas (phase A2)")
                     nextPhase("setup")
                 }
                 ++step; return
@@ -4717,7 +4761,7 @@ FocusScope {
 
     Flickable {
         id: flick
-        visible: root.activePdfRow < 0 && root.activeVideoRow < 0   // hidden in a full-frame tab
+        visible: !root.pdfTabOpen && !root.videoTabOpen   // hidden in a full-frame tab
                  && !root.activeCanvas                                             // the canvas is a full-frame tab too (B3)
                  && !(root.activeGridId !== "" && root.boardMode)                 // a table's board covers it
         anchors.fill: parent
@@ -5526,7 +5570,7 @@ FocusScope {
     // file URL; "" while no PDF tab is open. ---
     Rectangle {
         id: pdfFrame
-        visible: root.activePdfRow >= 0
+        visible: root.pdfTabOpen
         anchors.fill: parent
         color: Theme.colors.bgAlt   // full-frame tabs share the page field tone
         // A continuous-scroll page list (NOT PdfMultiPageView, whose internal
@@ -5538,11 +5582,11 @@ FocusScope {
         // "Cannot open:" on every empty source — the Loader keeps it uninstantiated.
         Loader {
             anchors.fill: parent
-            active: root.activePdfRow >= 0
+            active: root.pdfTabOpen
             sourceComponent: Item {
                 PdfDocument {
                     id: pdfFrameDoc
-                    source: blockModel.mediaUrl(root.activePdfRow)
+                    source: mediaHost.url
                 }
                 ListView {
                     id: pdfList
@@ -5615,11 +5659,10 @@ FocusScope {
                             // ink item. Drawing on PDF pages returns with the canvas tools (stage 2).
                             InkNodeItem {
                                 anchors.fill: parent
-                                envelope: (blockModel.contentRevision,
-                                           root.activePdfRow >= 0 ? blockModel.mediaPageInk(root.activePdfRow, index) : "")
+                                envelope: (mediaHost.revision, root.pdfTabOpen ? mediaHost.pageInk(index) : "")
                                 frameW: width; frameH: height
-                                sourceW: Math.max(1, blockModel.mediaW(root.activePdfRow))
-                                sourceH: Math.max(1, blockModel.mediaH(root.activePdfRow))
+                                sourceW: Math.max(1, mediaHost.w)
+                                sourceH: Math.max(1, mediaHost.h)
                             }
                         }
                     }
@@ -5641,7 +5684,7 @@ FocusScope {
     // inline surface + per-row bars hide while the studio owns the decoder. ---
     Rectangle {
         id: studioFrame
-        visible: root.activeVideoRow >= 0
+        visible: root.videoTabOpen
         anchors.fill: parent
         color: Theme.colors.bgAlt   // full-frame tabs share the page field tone
         readonly property int r: root.activeVideoRow
@@ -5670,8 +5713,8 @@ FocusScope {
             id: studioStage
             anchors { top: parent.top; left: parent.left; right: parent.right
                       bottom: studioBar.top; margins: 16; bottomMargin: 12 }
-            readonly property int vw: studioFrame.r >= 0 ? (blockModel.contentRevision, blockModel.mediaW(studioFrame.r)) : 0
-            readonly property int vh: studioFrame.r >= 0 ? blockModel.mediaH(studioFrame.r) : 0
+            readonly property int vw: root.videoTabOpen ? (mediaHost.revision, mediaHost.w) : 0
+            readonly property int vh: root.videoTabOpen ? mediaHost.h : 0
             readonly property real fitScale: (vw > 0 && vh > 0 && width > 0 && height > 0)
                 ? Math.min(width / vw, height / vh) : 0
             readonly property real boxW: Math.round(vw * fitScale)
@@ -5685,9 +5728,9 @@ FocusScope {
                 Image {   // poster: the banked playhead frame until the live one paints
                     anchors.fill: parent
                     visible: !studioSurface.visible
-                    source: studioFrame.r >= 0
-                        ? studioFrame._vframeSrc(blockModel.mediaPlaybackSource(studioFrame.r),
-                                                 (root.videoPlayheadRev, root.videoPlayheadFor(studioFrame.r)))
+                    source: root.videoTabOpen
+                        ? studioFrame._vframeSrc(mediaHost.playbackSource,
+                                                 (root.videoPlayheadRev, root.videoPlayheadForKey(mediaHost.key)))
                         : ""
                     asynchronous: true; cache: true
                     fillMode: Image.PreserveAspectFit
@@ -5698,9 +5741,7 @@ FocusScope {
                     id: studioSurface
                     anchors.fill: parent
                     videoDecoder: videoDec
-                    visible: root.activeVideoRow >= 0
-                             && root.videoPlayingRow === root.activeVideoRow
-                             && root._videoSurfaceReady
+                    visible: root.hostIsPlaying && root._videoSurfaceReady
                     fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g,
                                        Theme.colors.bgAlt.b, 1.0)   // letterbox = the tab's field tone
                 }
@@ -5722,10 +5763,10 @@ FocusScope {
                     notes: vnotes
                     sourceWidth: studioStage.vw
                     // Load-bearing reads only (reactivity rule 1e).
-                    frame: root.videoPlayingRow === studioFrame.r
+                    frame: root.hostIsPlaying
                         ? videoDec.currentFrame
-                        : (root.videoPlayheadRev >= 0 ? root.videoPlayheadFor(studioFrame.r) : 0)
-                    tool: (root.activeVideoRow >= 0 && root.inspector
+                        : (root.videoPlayheadRev >= 0 ? root.videoPlayheadForKey(mediaHost.key) : 0)
+                    tool: (root.videoTabOpen && root.inspector
                            && root.inspector.drawTool !== "type") ? root.inspector.drawTool : ""
                     color: root.inspector ? root.inspector.drawColor : "#FF0000"
                     strokeWidth: root.inspector ? root.inspector.drawWidth : 6
@@ -5740,8 +5781,8 @@ FocusScope {
             id: studioBar
             anchors { left: parent.left; right: parent.right; bottom: studioNotes.top }
             editor: root; dec: videoDec; audio: videoAudio
-            row: studioFrame.r
-            live: studioFrame.r >= 0 && root.videoPlayingRow === studioFrame.r
+            host: mediaHost; row: -1
+            live: root.hostIsPlaying
         }
 
         // Clicking studio dead space reclaims focus (commits a card's text
@@ -5785,9 +5826,9 @@ FocusScope {
                         // The note pins to the frame on screen: the scrub
                         // target mid-scrub, else the live playhead, else the
                         // banked one (decoder failed to open).
-                        var f = root.videoPlayingRow === studioFrame.r
+                        var f = root.hostIsPlaying
                             ? root._vidIntendedFrame()
-                            : root.videoPlayheadFor(studioFrame.r)
+                            : root.videoPlayheadForKey(mediaHost.key)
                         vnotes.addNoteAtFrame(f)
                         root.forceActiveFocus()
                     }
@@ -5859,7 +5900,7 @@ FocusScope {
                     readonly property real thumbH: Math.round((width - 16) * 9 / 16)
                     // The card under the playhead gets the family's selected
                     // look (divider fill is too heavy here — border brightens).
-                    readonly property bool current: root.videoPlayingRow === studioFrame.r
+                    readonly property bool current: root.hostIsPlaying
                         && videoDec.currentFrame === modelData.frame
                     width: 220
                     // Shrink to clear the horizontal scrollbar when it's shown (card
@@ -5901,7 +5942,7 @@ FocusScope {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    root.ensureVideoActive(studioFrame.r)
+                                    root.ensureHostActive()
                                     root.seekVideoFrame(noteCard.modelData.frame)
                                     root.forceActiveFocus()
                                 }
@@ -5988,7 +6029,7 @@ FocusScope {
     // never persisted into the document. ---
     CanvasView {
         id: canvasView
-        visible: root.activeCanvas
+        visible: root.canvasShown
         anchors.fill: parent
         editor: root
     }
@@ -6546,7 +6587,7 @@ FocusScope {
                 || (blockMenu.visible && row === root.menuRow)
             opacity: (blockSelected && !live) ? 0.35 : 1.0
             Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
-            visible: root.activePdfRow < 0 && root.activeVideoRow < 0
+            visible: !root.pdfTabOpen && !root.videoTabOpen
                      && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
                      && root.rowInView(row)
             readonly property real measure: root.measureForRow(row)
@@ -6643,7 +6684,7 @@ FocusScope {
             : (root.imgSelectedRow >= 0 && cursor.focusRow === root.imgSelectedRow
                && root._isResizableMediaRow(root.imgSelectedRow) ? root.imgSelectedRow : -1)
         visible: row >= 0
-                 && root.activePdfRow < 0 && root.activeVideoRow < 0
+                 && !root.pdfTabOpen && !root.videoTabOpen
         // A cell's media sits inside the cell inset (BlockView's colLeft: 8 px); the fit width is the
         // lane minus both insets.
         readonly property real inset: (blockModel.structureRevision, row >= 0 && blockModel.tableColumnOf(row) >= 0) ? 8 : 0
@@ -6759,7 +6800,7 @@ FocusScope {
     // Full FIELD like the focus fill and the multi-block selection band (one
     // row treatment); covers the whole selected run when the menu row is in it.
     Rectangle {
-        visible: root.menuHiScope === "block" && root.menuRow >= 0 && root.activePdfRow < 0 && root.activeVideoRow < 0
+        visible: root.menuHiScope === "block" && root.menuRow >= 0 && !root.pdfTabOpen && !root.videoTabOpen
         x: -flick.contentX
         y: root.vy((blockModel.layoutRevision, blockModel.yForRow(blockMenu.runLo)))
         width: Math.max(flick.width, root.contentSpan * root.viewZoom)
@@ -7024,7 +7065,7 @@ FocusScope {
             && (blockModel.structureRevision, blockModel.mediaKind(root.menuRow)) === "image"
         // In a full-frame tab (PDF/video) the menu is a view INTO one block, so
         // document-structural block ops (add/duplicate/copy block) don't belong.
-        readonly property bool inFrameTab: root.activePdfRow >= 0 || root.activeVideoRow >= 0
+        readonly property bool inFrameTab: root.pdfTabOpen || root.videoTabOpen
         // The menu row lies inside a multi-block selection → the menu is a RUN
         // menu: block ops (add above/below, duplicate, copy, paste, move,
         // insert below, delete) act on the whole run and the target highlight
@@ -7175,8 +7216,8 @@ FocusScope {
                           text: "Open " + root.truncUrl(root.menuLinkUrl)
                           onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
                 Rectangle { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.isPdf && root.activePdfRow < 0; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isVideo && root.activeVideoRow < 0; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isPdf && !root.pdfTabOpen; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isVideo && !root.videoTabOpen; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.menuInSel
                           text: "Insert choice chip"
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }

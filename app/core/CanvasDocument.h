@@ -155,6 +155,9 @@ public:
     Q_INVOKABLE QString resolveMediaPath(const QVariant& src) const;       // its local path
     Q_INVOKABLE QString mediaPlaybackSource(const QVariant& src) const;
     Q_INVOKABLE bool mediaExtracting(const QVariant& src) const;
+    // The path the media occupies (or WOULD — packaged clips stream): the sidecar anchor + the
+    // playhead / page-map key. Pure computation, no IO (MediaStore::anchorPathFor).
+    Q_INVOKABLE QString mediaAnchorPath(const QVariant& src) const;
     // A media element's file on disk — BLOCKING (packaged media extracts inline; the explicit-action
     // cost, like BlockModel::mediaLocalPath). "" for non-media elements, remote urls, unresolvable refs.
     Q_INVOKABLE QString elementLocalPath(const QString& id) const;

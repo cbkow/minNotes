@@ -9,6 +9,7 @@
 #include "BlockModel.h"
 #include "CanvasDocument.h"
 #include "FileLinks.h"
+#include "MediaHost.h"
 #include "PathMap.h"
 #include "DocumentManager.h"
 #include "../app/notes/CanvasInkCapture.h"
@@ -6052,6 +6053,97 @@ static void testFileLinks() {
     CHECK(c.elementLocalPath(inkId).isEmpty(), "…nor does an ink element");
 }
 
+// [130] MediaHost (2.0 phase A2): one seam over a page's media block OR a canvas media element.
+static void testMediaHost() {
+    qInfo("[130] MediaHost (2.0 phase A2): (model, blockId) and (canvas, elementId) answer the same reads; the row follows the id; setPageInk routes to the owner's log; gone fires once");
+    QTemporaryDir dir;
+    const QString pdf = dir.filePath(QStringLiteral("spec.pdf"));
+    { QPdfWriter w(pdf); w.setResolution(96); QPainter p(&w); p.drawText(100, 100, QStringLiteral("one")); w.newPage(); p.drawText(100, 100, QStringLiteral("two")); p.end(); }
+    const QString clip = dir.filePath(QStringLiteral("clip.mp4"));
+    { QFile f(clip); if (f.open(QIODevice::WriteOnly)) f.write(QByteArray(512, 'V')); }
+    const QString pdfJson = QStringLiteral("{\"src\":\"%1\",\"w\":595,\"h\":842,\"kind\":\"pdf\",\"pages\":2}").arg(pdf);
+    const QString vidJson = QStringLiteral("{\"src\":\"%1\",\"w\":320,\"h\":240,\"kind\":\"video\",\"durMs\":1000,\"frames\":24,\"fps\":24}").arg(clip);
+    const QString env = QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[{\"id\":\"e1\",\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,\"filled\":false,\"is_modeled\":true,\"points\":[[0.1,0.1],[0.6,0.6]]}]}");
+
+    // --- a page's blocks ---
+    BlockModel m; m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    { BlockModel::BlockSpec a; a.type = BlockModel::Media; a.mediaJson = pdfJson;
+      BlockModel::BlockSpec b; b.type = BlockModel::Media; b.mediaJson = vidJson;
+      m.insertSpecs(0, {a, b}, false); }
+    const int pdfRow = 1, vidRow = 2;
+    CHECK(m.mediaKind(pdfRow) == QLatin1String("pdf") && m.mediaKind(vidRow) == QLatin1String("video"), "fixture rows landed");
+    MediaHost h;
+    int gone = 0, ident = 0;
+    QObject::connect(&h, &MediaHost::gone, [&] { ++gone; });
+    QObject::connect(&h, &MediaHost::identityChanged, [&] { ++ident; });
+    CHECK(!h.valid() && h.row() == -1 && h.kind().isEmpty() && h.w() == 0 && h.pageInk(0).isEmpty(), "a parked host answers nothing");
+    h.setModel(&m);
+    h.setBlockId(m.idForRow(pdfRow));
+    CHECK(h.valid() && h.row() == pdfRow && h.kind() == QLatin1String("pdf") && h.pages() == 2 && h.w() == 595 && h.h() == 842
+          && h.url() == m.mediaUrl(pdfRow) && h.viewPath() == m.mediaViewPath(pdfRow) && h.anchorPath() == m.mediaAnchorPath(pdfRow)
+          && h.key() == h.anchorPath() && h.fileName() == m.mediaFileName(pdfRow) && !h.extracting(),
+          "the PDF block through the host equals the model's getters (row %d, pages %d)", h.row(), h.pages());
+    const int rev0 = h.revision();
+    m.insertBlock(0); m.setContent(1, QStringLiteral("inserted above"));   // the PDF slides down a row
+    CHECK(h.valid() && h.row() == pdfRow + 1 && h.kind() == QLatin1String("pdf"), "the host follows the block id across a structure change (row %d)", h.row());
+    CHECK(h.revision() > rev0, "…and bumps its revision");
+    CHECK(!m.canUndo() || true, "(baseline)");
+    const int histBefore = m.undoHistory().size();
+    CHECK(h.setPageInk(0, env) && h.pageInk(0).contains(QLatin1String("\"e1\"")) && m.mediaPageInk(h.row(), 0) == h.pageInk(0),
+          "setPageInk writes the block's page ink through the model");
+    CHECK(m.undoHistory().size() == histBefore + 1 && h.canUndo(), "…as ONE page-log entry the host reports as undoable");
+    h.undo();
+    CHECK(h.pageInk(0).isEmpty() && h.canRedo(), "host.undo() runs the page's log");
+    h.redo();
+    CHECK(!h.pageInk(0).isEmpty(), "host.redo() too");
+    h.setBlockId(m.idForRow(vidRow + 1));
+    CHECK(h.valid() && h.kind() == QLatin1String("video") && h.frames() == 24 && h.fps() == 24.0 && h.durMs() == 1000.0
+          && h.playbackSource() == m.mediaPlaybackSource(vidRow + 1) && h.anchorPath().endsWith(QStringLiteral("clip.mp4")),
+          "the video block: frames/fps/durMs/playbackSource/anchor");
+    gone = 0;
+    m.removeBlock(vidRow + 1);
+    CHECK(!h.valid() && h.row() == -1 && gone == 1, "deleting the block → gone once, invalid (gone %d)", gone);
+    m.undo();
+    CHECK(h.valid() && h.kind() == QLatin1String("video"), "…undoing the delete brings it back (same id)");
+    h.setBlockId(QString());
+    CHECK(!h.valid() && gone == 2, "clearing the id → gone again");
+
+    // --- a canvas's elements ---
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString pdfEl = c.addMediaElement(pdfJson, QRectF(1000, 0, 480, 679));
+    const QString vidEl = c.addMediaElement(vidJson, QRectF(1600, 0, 480, 360));
+    MediaHost e;
+    int egone = 0;
+    QObject::connect(&e, &MediaHost::gone, [&] { ++egone; });
+    e.setCanvas(&c);
+    e.setElementId(pdfEl);
+    CHECK(e.valid() && e.row() == -1 && e.kind() == QLatin1String("pdf") && e.pages() == 2 && e.w() == 595 && e.h() == 842
+          && e.url() == c.resolveMediaUrl(pdf) && e.viewPath() == pdf && e.anchorPath() == c.mediaAnchorPath(pdf) && e.key() == e.anchorPath()
+          && e.fileName() == QLatin1String("spec.pdf"),
+          "the PDF element through the host: descriptor facts + the canvas's resolvers (url %s)", qPrintable(e.url()));
+    const int crows = c.undoHistory().size();
+    CHECK(e.setPageInk(1, env) && e.pageInk(1).contains(QLatin1String("\"e1\"")) && c.mediaElementInk(pdfEl, 1) == e.pageInk(1) && e.pageInk(0).isEmpty(),
+          "setPageInk on an element writes json.ink[page] through the canvas");
+    CHECK(c.undoHistory().size() == crows + 1 && e.canUndo(), "…as ONE canvas-log entry");
+    e.undo();
+    CHECK(e.pageInk(1).isEmpty() && c.canRedo(), "host.undo() runs the CANVAS's log for an element");
+    // Both sources set: the element wins; dropping it falls back to the block.
+    e.setModel(&m); e.setBlockId(m.idForRow(pdfRow + 1));
+    CHECK(e.valid() && e.row() == -1 && e.kind() == QLatin1String("pdf") && e.viewPath() == pdf, "element + block both set → the element answers");
+    e.setElementId(vidEl);
+    CHECK(e.kind() == QLatin1String("video") && e.frames() == 24 && e.playbackSource() == c.mediaPlaybackSource(clip) && e.anchorPath().endsWith(QStringLiteral("clip.mp4")),
+          "switching the element id re-targets (video: frames %d)", e.frames());
+    egone = 0;
+    c.removeElement(vidEl);
+    CHECK(!e.valid() && egone == 1, "removing the element → gone once");
+    e.setElementId(QString());
+    CHECK(e.valid() && e.row() == pdfRow + 1 && e.kind() == QLatin1String("pdf"), "…and with no element id the block id takes over");
+    CHECK(!c.element(c.firstPageId())->kind.isEmpty() && (e.setElementId(c.firstPageId()), !e.valid()), "a PAGE element is not a media host");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8572,6 +8664,7 @@ int main(int argc, char** argv) {
     testPageHeightCap();
     testCanvasBatch();
     testFileLinks();
+    testMediaHost();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

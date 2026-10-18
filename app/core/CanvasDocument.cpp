@@ -812,6 +812,10 @@ QString CanvasDocument::ufbLink(const QString& id) const { return mn::ufbLinkFor
 void CanvasDocument::openElement(const QString& id) const { mn::openWithDefaultApp(elementLocalPath(id)); }
 void CanvasDocument::openElementInUfb(const QString& id) const { mn::openInUfb(elementLocalPath(id)); }
 void CanvasDocument::revealElement(const QString& id) const { mn::revealInFileManager(elementLocalPath(id)); }
+QString CanvasDocument::mediaAnchorPath(const QVariant& src) const {
+    if (!mediaStore_ || src.isNull()) return QString();
+    return mediaStore_->anchorPathFor(QJsonValue::fromVariant(src));
+}
 bool CanvasDocument::mediaExtracting(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return false;
     return mediaStore_->extractionPending(src.toString());

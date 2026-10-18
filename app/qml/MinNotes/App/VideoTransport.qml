@@ -14,10 +14,15 @@ Rectangle {
     property var dec: null        // the shared VideoDecoder
     property var audio: null      // the shared AudioPlayer
     property int row: -1          // this bar's video block row
+    property var host: null       // OR a MediaHost (the studio, 2.0 phase A) — wins over `row`
     property bool live: false
 
     readonly property int totalFrames: live ? dec.frameCount
+                                            : host ? host.frames
                                             : (blockModel.structureRevision, blockModel.mediaFrames(row))
+    function activate() { if (host) vt.editor.ensureHostActive(); else vt.editor.ensureVideoActive(vt.row) }
+    function playhead() { return host ? vt.editor.videoPlayheadForKey(host.key) : vt.editor.videoPlayheadFor(vt.row) }
+    function play()     { if (host) vt.editor.playHost(); else vt.editor.playVideo(vt.row) }
 
     height: editor ? editor.videoTransportH : 40
     color: Theme.colors.surfaceRaised   // the raised-chrome plane (tonal ladder)
@@ -31,21 +36,21 @@ Rectangle {
         spacing: 0
 
         FlatButton { iconName: "skip-back"; tooltip: qsTr("Jump to start"); tooltipSide: "top"
-            onClicked: { vt.editor.ensureVideoActive(vt.row); vt.editor.seekVideoStart() } }
+            onClicked: { vt.activate(); vt.editor.seekVideoStart() } }
         FlatButton { iconName: "rewind"; tooltip: qsTr("Rewind — hold"); tooltipSide: "top"
-            onPressed: { vt.editor.ensureVideoActive(vt.row); vt.editor.startVideoFastSeek(-1) }
+            onPressed: { vt.activate(); vt.editor.startVideoFastSeek(-1) }
             onReleased: vt.editor.stopVideoFastSeek() }
         FlatButton { iconName: "caret-left"; tooltip: qsTr("Step back"); tooltipSide: "top"
-            onClicked: { vt.editor.ensureVideoActive(vt.row); vt.editor.stepVideoFrames(-1) } }
+            onClicked: { vt.activate(); vt.editor.stepVideoFrames(-1) } }
         FlatButton { iconName: (vt.live && vt.dec.isPlaying) ? "pause" : "play"
-            tooltip: qsTr("Play / Pause"); tooltipSide: "top"; onClicked: vt.editor.playVideo(vt.row) }
+            tooltip: qsTr("Play / Pause"); tooltipSide: "top"; onClicked: vt.play() }
         FlatButton { iconName: "caret-right"; tooltip: qsTr("Step forward"); tooltipSide: "top"
-            onClicked: { vt.editor.ensureVideoActive(vt.row); vt.editor.stepVideoFrames(1) } }
+            onClicked: { vt.activate(); vt.editor.stepVideoFrames(1) } }
         FlatButton { iconName: "fast-forward"; tooltip: qsTr("Fast-forward — hold"); tooltipSide: "top"
-            onPressed: { vt.editor.ensureVideoActive(vt.row); vt.editor.startVideoFastSeek(1) }
+            onPressed: { vt.activate(); vt.editor.startVideoFastSeek(1) }
             onReleased: vt.editor.stopVideoFastSeek() }
         FlatButton { iconName: "skip-forward"; tooltip: qsTr("Jump to end"); tooltipSide: "top"
-            onClicked: { vt.editor.ensureVideoActive(vt.row); vt.editor.seekVideoEnd() } }
+            onClicked: { vt.activate(); vt.editor.seekVideoEnd() } }
 
         FlatSlider {
             id: vscrub
@@ -59,7 +64,7 @@ Rectangle {
             // the streaming decoder to the scrubbed frame first.
             onPressedChanged: {
                 if (pressed) {
-                    vt.editor.ensureVideoActive(vt.row)
+                    vt.activate()
                     wasPlaying = vt.dec.isPlaying
                     vt.dec.pause(); vt.audio.pause()
                     if (vt.dec.fps > 0)   // deck-style scrub audio for the drag
@@ -73,7 +78,7 @@ Rectangle {
                 }
             }
             onMoved: {
-                vt.editor.ensureVideoActive(vt.row)
+                vt.activate()
                 var f = Math.round(value)
                 vt.editor._vidScrubTo(f)
                 if (vt.dec.fps > 0) vt.editor.scrubAudioMove(f / vt.dec.fps)
@@ -88,7 +93,7 @@ Rectangle {
             // (not 0), so a torn-down video shows where it left off.
             Binding {
                 target: vscrub; property: "value"
-                value: (vt.editor.videoPlayheadRev, vt.editor.videoPlayheadFor(vt.row))
+                value: (vt.editor.videoPlayheadRev, vt.playhead())
                 when: !vt.live && !vscrub.pressed
             }
 
@@ -103,7 +108,7 @@ Rectangle {
                  // so growing digits don't reflow the row (the slider would
                  // shrink and the note markers would creep during playback)
             text: (vt.live ? vt.dec.currentFrame
-                           : (vt.editor.videoPlayheadRev, vt.editor.videoPlayheadFor(vt.row)))
+                           : (vt.editor.videoPlayheadRev, vt.playhead()))
                   + " / " + Math.max(0, vt.totalFrames - 1)
             color: Theme.colors.textMuted
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
@@ -123,7 +128,7 @@ Rectangle {
             MouseArea {   // click to cycle, matching the key
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: { vt.editor.ensureVideoActive(vt.row); vt.editor.cycleVideoSpeed() }
+                onClicked: { vt.activate(); vt.editor.cycleVideoSpeed() }
             }
         }
 
@@ -177,9 +182,9 @@ Rectangle {
         // markers work while the clip itself stays in the archive. (An
         // earlier blocking call here serialized package opens behind full
         // video extraction — the transport bar builds with the delegate.)
-        mediaPath: (vt.row >= 0 && blockModel.structureRevision >= 0)
-                   ? blockModel.mediaAnchorPath(vt.row) : ""
-        fps: vt.row >= 0 ? blockModel.mediaFps(vt.row) : 0
+        mediaPath: vt.host ? vt.host.anchorPath
+                 : (vt.row >= 0 && blockModel.structureRevision >= 0) ? blockModel.mediaAnchorPath(vt.row) : ""
+        fps: vt.host ? vt.host.fps : (vt.row >= 0 ? blockModel.mediaFps(vt.row) : 0)
     }
 
     // QCView note markers: solid triangles straddling the bar's top edge
@@ -214,7 +219,7 @@ Rectangle {
                 anchors.margins: -2
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    vt.editor.ensureVideoActive(vt.row)
+                    vt.activate()
                     vt.dec.pause(); vt.audio.pause()
                     vt.editor._vidScrubTo(nf)
                 }

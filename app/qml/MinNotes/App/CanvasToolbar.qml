@@ -11,7 +11,7 @@ Row {
     readonly property var inspector: editor ? editor.inspector : null
     readonly property string view: !editor || !inspector ? ""
                                   : editor.activeCanvas ? "canvas"
-                                  : (editor.activePdfRow >= 0 || editor.activeVideoRow >= 0) ? "frame" : ""
+                                  : (editor.pdfTabOpen || editor.videoTabOpen) ? "frame" : ""
     visible: view !== ""
     spacing: 2
     height: 36
