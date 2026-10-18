@@ -1060,7 +1060,7 @@ FocusScope {
     // single shared surface never flashes the PREVIOUS video's stale frame — the
     // (correct) poster stays up until the new frame is ready.
     property bool _videoSurfaceReady: false
-    readonly property real videoTransportH: 40
+    readonly property real videoTransportH: 22   // the compact strip under an inline video (== BlockModel's kVideoBar)
     readonly property real pdfNavH: 40          // reserved under an inline PDF page for the nav strip (matches kPdfNav)
     readonly property bool videoVisible: videoPlayingRow >= 0
         && activeFrameId === ""   // not in a full-frame tab — nor a table's grid frame (2026-09-16)
@@ -7172,7 +7172,7 @@ FocusScope {
             width: dispW * root.viewZoom
             height: root.videoTransportH
 
-            VideoTransport {
+            CompactTransport {   // the 22-px strip (QCView's compact mode); the full transport lives in the studio
                 anchors.fill: parent
                 editor: root; dec: videoDec; audio: videoAudio
                 row: vbar.row; live: vbar.live

@@ -33,11 +33,11 @@ Item {
     // shared player through the editor's canvasVideoHost; the surface paints inside the element meanwhile.
     readonly property bool isVideo: single && canvas.mediaElementKind(id_) === "video"
     readonly property var videoBar: transport   // probe
-    VideoTransport {
+    CompactTransport {
         id: transport
         visible: frame.isVideo && !!frame.view.editor && !!frame.view.editor.canvasVideoHost
         x: 0; y: frame.height + 6
-        width: Math.max(320, frame.width)
+        width: Math.max(260, frame.width)
         editor: frame.view.editor
         dec: frame.view.editor ? frame.view.editor.videoDecoder : null
         audio: frame.view.editor ? frame.view.editor.audioPlayer : null

@@ -63,7 +63,7 @@ constexpr double kLine     = 22.0;   // px per text line
 constexpr double kPadV     = 16.0;   // vertical padding per block
 constexpr double kHeading  = 40.0;
 constexpr double kWidthEst = 760.0;  // assumed content width for media estimate
-constexpr double kVideoBar = 40.0;   // transport toolbar reserved under a video
+constexpr double kVideoBar = 22.0;   // the compact transport strip reserved under a video (== Editor.videoTransportH)
 constexpr double kFileChip = 56.0;   // fixed height of an unsupported-file attachment chip
 constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline PDF page
 
