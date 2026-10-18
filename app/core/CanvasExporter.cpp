@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -75,6 +76,18 @@ std::vector<qcv::ActiveStroke> strokesOf(const QString& json, double w, double h
         if (!s.points.empty()) out.push_back(s);
     }
     return out;
+}
+// A text chip's look (CanvasShapeItem's rule): no fill / "transparent" = PLAIN text in its own colour (or the
+// theme's text); a fill = a box with contrast glyphs (black over a light fill, white over a dark one).
+struct TextChipLook { bool plain = true; QColor fill; QColor text; };
+TextChipLook textChipLook(const QJsonObject& o) {
+    TextChipLook l;
+    const QString fill = o.value(QStringLiteral("fill")).toString();
+    l.plain = fill.isEmpty() || fill == QLatin1String("transparent") || !QColor::isValidColorName(fill);
+    if (l.plain) { const QString c = o.value(QStringLiteral("color")).toString(); if (QColor::isValidColorName(c)) l.text = QColor(c); return l; }
+    l.fill = QColor(fill);
+    l.text = (l.fill.redF() * 0.299 + l.fill.greenF() * 0.587 + l.fill.blueF() * 0.114) > 0.6 ? QColor(Qt::black) : QColor(Qt::white);
+    return l;
 }
 QString cssColor(const QColor& c) { return c.alphaF() < 0.999 ? QStringLiteral("rgba(%1,%2,%3,%4)").arg(c.red()).arg(c.green()).arg(c.blue()).arg(num(c.alphaF())) : c.name(); }
 
@@ -154,9 +167,6 @@ font:13px/1 Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,san
 #mn-hud{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
 #mn-hud b{color:var(--text);font-weight:600;cursor:pointer}
 body.reading #mn-hud{display:none}
-body.canvas label[for=mn-ink]{position:static;top:auto;right:auto;padding:3px 8px;font:inherit}
-body.canvas #mn-ink:checked~#mn-tabs label[for=mn-ink]{color:var(--bright);background:var(--divider)}
-body.canvas #mn-ink:not(:checked)~* .ink{visibility:hidden}
 #mn-canvas{position:fixed;left:0;right:0;top:30px;bottom:0;overflow:hidden;cursor:grab;touch-action:none}
 #mn-canvas.panning{cursor:grabbing}
 #mn-canvas[hidden]{display:none}
@@ -172,6 +182,8 @@ figure.el{margin:0;background:var(--bg);border:1px solid var(--border);overflow:
 figure.el img{display:block;width:100%;height:auto;flex:0 0 auto}
 figure.el .poster{width:100%;flex:1 1 auto;object-fit:contain;background:#000;min-height:0}
 figure.el.pdf .poster{background:#fff}
+figure.el .inkwrap{position:relative;flex:1 1 auto;min-height:0;display:flex}
+figure.el .inkwrap .ink{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain}
 figure.el.image img{cursor:zoom-in}
 figure.el figcaption,.card .cap{padding:8px 12px;font-size:13px;color:var(--muted);line-height:1.4}
 .name{color:var(--text);font-size:14px;display:block}
@@ -211,11 +223,12 @@ function zoomAt(nz,x,y){nz=Math.max(0.05,Math.min(4,nz));px=x-(x-px)*nz/z;py=y-(
 v.addEventListener('wheel',function(e){e.preventDefault();var r=v.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
 if(e.ctrlKey||e.metaKey){zoomAt(z*Math.pow(2,-e.deltaY/400),x,y);}else{px-=e.deltaX;py-=e.deltaY;apply();}},{passive:false});
 var drag=null;
-v.addEventListener('pointerdown',function(e){if(e.target.closest('a'))return;drag={x:e.clientX-px,y:e.clientY-py,sx:e.clientX,sy:e.clientY,t:e.target};v.classList.add('panning');v.setPointerCapture(e.pointerId);});
-v.addEventListener('pointermove',function(e){if(!drag)return;px=e.clientX-drag.x;py=e.clientY-drag.y;apply();});
+v.addEventListener('pointerdown',function(e){if(e.target.closest('a'))return;drag={x:e.clientX-px,y:e.clientY-py,sx:e.clientX,sy:e.clientY,t:e.target,cap:false};});
+v.addEventListener('pointermove',function(e){if(!drag)return;if(!drag.cap){if(Math.abs(e.clientX-drag.sx)<=4&&Math.abs(e.clientY-drag.sy)<=4)return;drag.cap=true;v.classList.add('panning');v.setPointerCapture(e.pointerId);}px=e.clientX-drag.x;py=e.clientY-drag.y;apply();});
 v.addEventListener('pointerup',function(e){if(!drag)return;var d=drag;drag=null;v.classList.remove('panning');
-if(Math.abs(e.clientX-d.sx)>4||Math.abs(e.clientY-d.sy)>4)return;
+if(d.cap)return;
 if(d.t.tagName==='IMG'&&d.t.className.indexOf('poster')<0)return;
+if(d.t.closest('.cb[data-task]'))return;
 var o=d.t.closest('[data-open]');if(o)show(o.dataset.open);});
 document.addEventListener('keydown',function(e){if(e.target.tagName==='INPUT'||document.querySelector('#mn-lb.open'))return;
 if(e.key==='Escape'){if(cur!=='canvas'){show('canvas');e.preventDefault();}return;}
@@ -303,8 +316,15 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
             const QString src = md.value(QStringLiteral("src")).isString() ? md.value(QStringLiteral("src")).toString() : QString();
             if (kind == QLatin1String("image")) {
                 QString img = src.startsWith(QLatin1String("http")) ? src : (path.isEmpty() ? QString() : sink.addFile(path, name.isEmpty() ? QStringLiteral("image") : name));
-                body += QStringLiteral("<figure class=\"el media image\" style=\"%1\">%2</figure>\n")
-                            .arg(style(e), img.isEmpty() ? QStringLiteral("<figcaption>%1</figcaption>").arg(esc(name)) : QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(esc(img), esc(name)));
+                QString inner = img.isEmpty() ? QStringLiteral("<figcaption>%1</figcaption>").arg(esc(name)) : QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(esc(img), esc(name));
+                if (!img.isEmpty() && !path.isEmpty()) {   // the image's frame ink (json.ink["0"]) as a toggleable layer, lightbox-aware
+                    const QString env = c->mediaElementInk(e.id, 0);
+                    const QSize isz = env.isEmpty() ? QSize() : QImageReader(path).size();
+                    const QImage ov = isz.isValid() ? Exporter::inkOverlay(env, md.value(QStringLiteral("w")).toInt(isz.width()), md.value(QStringLiteral("h")).toInt(isz.height()), isz.scaled(1280, 1280, Qt::KeepAspectRatio).expandedTo(QSize(1, 1))) : QImage();
+                    const QString ovSrc = ov.isNull() ? QString() : sink.addImage(ov, (name.isEmpty() ? QStringLiteral("image") : name) + QStringLiteral("-ink"));
+                    if (!ovSrc.isEmpty()) { ++inkLayers; inner = QStringLiteral("<div class=\"inkwrap\">%1<img class=\"ink\" src=\"%2\" alt=\"\" style=\"left:0;top:0;width:100%\"></div>").arg(inner, esc(ovSrc)); }
+                }
+                body += QStringLiteral("<figure class=\"el media image\" style=\"%1\">%2</figure>\n").arg(style(e), inner);
             } else if (kind == QLatin1String("video") || kind == QLatin1String("pdf")) {
                 const bool video = kind == QLatin1String("video");
                 const QString base = name.isEmpty() ? kind : name;
@@ -319,6 +339,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                     : QStringLiteral("%1 page%2").arg(pages).arg(pages == 1 ? QString() : QStringLiteral("s"));
                 // The reader: the poster large with its reference caption, then the clip's QCView notes as the
                 // filmstrip (thumb + ink layer, timecode, text, addressed) or the PDF's inked pages.
+                QString cardInk;                                            // page 1's ink layer, shared by the card
                 QString reader = QStringLiteral("<figure class=\"ref\">%1%2</figure>")
                                      .arg(pimg.isEmpty() ? QString() : QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(esc(pimg), esc(name)), QString());
                 if (!video && !pimg.isEmpty() && !poster.isNull()) {   // page 1's element ink rides the poster as a toggleable layer
@@ -326,12 +347,15 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                     if (!ov.isNull()) {
                         const QString ovSrc = sink.addImage(ov, base + QStringLiteral("-page1-ink"));
                         if (!ovSrc.isEmpty()) {
-                            ++inkLayers;
+                            ++inkLayers; cardInk = ovSrc;
                             reader = QStringLiteral("<figure class=\"ref\"><div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\"><img class=\"ink\" src=\"%3\" alt=\"\"></div></figure>").arg(esc(pimg), esc(name), esc(ovSrc));
                         }
                     }
                 }
                 reader.insert(reader.lastIndexOf(QLatin1String("</figure>")), refCaption(name, path, esc(kind) + QStringLiteral(" · ") + meta));
+                const QString cardPoster = pimg.isEmpty() ? QString()
+                    : !cardInk.isEmpty() ? QStringLiteral("<div class=\"inkwrap\"><img class=\"poster\" src=\"%1\" alt=\"%2\"><img class=\"ink\" src=\"%3\" alt=\"\"></div>").arg(esc(pimg), esc(name), esc(cardInk))
+                    : QStringLiteral("<img class=\"poster\" src=\"%1\" alt=\"%2\">").arg(esc(pimg), esc(name));
                 int notes = 0;
                 if (video && opt.includeVideoNotes && !path.isEmpty()) {
                     const QString vn = Exporter::videoNotesHtml(path, sink, inkLayers);
@@ -358,7 +382,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                 store += QStringLiteral("<main class=\"reader %1\" id=\"m-%2\" data-title=\"%3\"><header class=\"doctitle\"><span>%3</span></header>\n%4</main>\n")
                              .arg(kind, esc(e.id), esc(name), reader);
                 body += QStringLiteral("<figure class=\"el media %1\" data-open=\"m-%2\" style=\"%3\">%4<figcaption><span class=\"name\">%5</span><span class=\"meta\">%6</span>%7</figcaption></figure>\n")
-                            .arg(kind, esc(e.id), style(e), pimg.isEmpty() ? QString() : QStringLiteral("<img class=\"poster\" src=\"%1\" alt=\"%2\">").arg(esc(pimg), esc(name)), esc(name), meta, pathLines(path));
+                            .arg(kind, esc(e.id), style(e), cardPoster, esc(name), meta, pathLines(path));
             } else if (kind == QLatin1String("bookmark")) {
                 const QString title = md.value(QStringLiteral("title")).toString(), host = md.value(QStringLiteral("host")).toString();
                 body += QStringLiteral("<a class=\"el card bookmark\" href=\"%1\" style=\"%2\"><span class=\"glyph\">&#x1F310;</span><span class=\"cap\"><span class=\"name\">%3</span><span class=\"meta\">%4</span><span class=\"path\">%1</span></span></a>\n")
@@ -385,23 +409,26 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
         } else if (e.kind == QLatin1String("shape")) {
             const QJsonObject o = QJsonDocument::fromJson(e.json.toUtf8()).object();
             if (o.value(QStringLiteral("shape")).toString() == QLatin1String("text")) {
-                const double size = o.value(QStringLiteral("fontSize")).toDouble(24);
-                const QString fill = o.value(QStringLiteral("fill")).toString();
-                body += QStringLiteral("<div class=\"el text\" style=\"%1;font-size:%2;padding:%3%4\">%5</div>\n")
-                            .arg(style(e), px(size), px(std::round(size * 0.3)), fill.isEmpty() ? QString() : QStringLiteral(";color:%1").arg(esc(fill)), esc(o.value(QStringLiteral("text")).toString()));
+                const double size = o.value(QStringLiteral("fontSize")).toDouble(14);
+                const TextChipLook look = textChipLook(o);
+                body += QStringLiteral("<div class=\"el text%1\" style=\"%2;font-size:%3;padding:%4;color:%5%6\">%7</div>\n")
+                            .arg(look.plain ? QString() : QStringLiteral(" box"), style(e), px(size), px(std::round(size * 0.3)), esc(look.text.isValid() ? cssColor(look.text) : QStringLiteral("var(--text)")),
+                                 look.plain ? QString() : QStringLiteral(";background:%1").arg(cssColor(look.fill)), esc(o.value(QStringLiteral("text")).toString()));
             }
         }
         // connectors: reserved; nothing is emitted until their renderer lands
     }
     body += QStringLiteral("</div></div>\n<div id=\"mn-reader\" hidden></div>\n<div id=\"mn-store\">\n%1</div>\n").arg(store);
-    // The strip: Canvas + (opened tabs, by the script) · the Annotations toggle when there is ink to toggle · the zoom HUD.
-    const QString toggle = inkLayers > 0 ? QStringLiteral("<input type=\"checkbox\" id=\"mn-ink\" checked>\n") : QString();
+    // The strip: Canvas + (opened tabs, by the script) · the zoom HUD.
+    // No Annotations toggle on the canvas (user ruling 2026-10-18): ink layers always show (the page CSS only
+    // hides .ink under an unchecked #mn-ink, which the canvas never emits; the lightbox shows ink when no toggle).
+    (void)inkLayers;
+    const QString toggle;
     const QString strip = QStringLiteral("<nav id=\"mn-tabs\"><div class=\"tabs\"><button class=\"tab on\" data-view=\"canvas\"><span>Canvas</span></button></div>"
-                                         "<div class=\"end\">%1<span id=\"mn-hud\">100% <b title=\"Fit (0)\">fit</b></span></div></nav>\n")
-                              .arg(inkLayers > 0 ? QStringLiteral("<label for=\"mn-ink\">Annotations</label>") : QString());
+                                         "<div class=\"end\"><span id=\"mn-hud\">100% <b title=\"Fit (0)\">fit</b></span></div></nav>\n");
     return QStringLiteral("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-                          "<meta name=\"generator\" content=\"minNotes\">\n<title>%1</title>\n<style>%2%3</style>\n</head>\n<body class=\"canvas\">\n%4%5%6%7%8</body>\n</html>\n")
-        .arg(esc(c->documentName()), Exporter::pageCss(), QString::fromUtf8(kCanvasCss), toggle, strip, body, Exporter::lightboxHtml(), QString::fromUtf8(kCanvasScript));
+                          "<meta name=\"generator\" content=\"minNotes\">\n<title>%1</title>\n<style>%2%3</style>\n</head>\n<body class=\"canvas\">\n%4%5%6%7%8%9</body>\n</html>\n")
+        .arg(esc(c->documentName()), Exporter::pageCss(), QString::fromUtf8(kCanvasCss), toggle, strip, body, Exporter::lightboxHtml(), QString::fromUtf8(kCanvasScript), Exporter::taskScript());
 }
 
 QImage CanvasExporter::toPoster(const Options& opt) const {
@@ -472,10 +499,13 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
         } else if (e.kind == QLatin1String("shape")) {
             const QJsonObject o = QJsonDocument::fromJson(e.json.toUtf8()).object();
             if (o.value(QStringLiteral("shape")).toString() == QLatin1String("text")) {
-                QFont f(QStringLiteral("Aspekta")); f.setPixelSize(std::max(2, int(std::round(o.value(QStringLiteral("fontSize")).toDouble(24) * s))));
-                const QColor col(o.value(QStringLiteral("fill")).toString());
-                p.setFont(f); p.setPen(col.isValid() ? col : text);
-                if (f.pixelSize() >= 4) p.drawText(r.adjusted(4 * s, 4 * s, -4 * s, -4 * s), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, o.value(QStringLiteral("text")).toString());
+                const double size = o.value(QStringLiteral("fontSize")).toDouble(14);
+                QFont f(QStringLiteral("Aspekta")); f.setPixelSize(std::max(2, int(std::round(size * s))));
+                const TextChipLook look = textChipLook(o);
+                if (!look.plain) p.fillRect(r, look.fill);
+                p.setFont(f); p.setPen(look.text.isValid() ? look.text : text);
+                const double pad = std::round(size * 0.3) * s;
+                if (f.pixelSize() >= 4) p.drawText(r.adjusted(pad, pad, -pad, -pad), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, o.value(QStringLiteral("text")).toString());
             }
         }
     }

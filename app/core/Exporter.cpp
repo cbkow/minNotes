@@ -1096,11 +1096,14 @@ QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
 // Mirrors the app's tri-state checkbox exactly (Editor.qml task item):
 // todo = muted 1.5px border; doing = accent border + centered accent dash;
 // done = borderless accent fill + white check. Pure CSS (.cb in kHtmlCss).
-QString taskGlyphHtml(int state) {
+// `key` (a block id) makes the box CHECKABLE in the browser (2026-10-18): the reader's clicks cycle the
+// app's three states and are remembered per browser (localStorage mn.tasks) until the authored state changes.
+QString taskGlyphHtml(int state, const QString& key = QString()) {
+    const QString k = key.isEmpty() ? QString() : QStringLiteral(" data-task=\"%1\" data-a=\"%2\"").arg(htmlEscape(key)).arg(state);
     switch (state) {
-    case BlockModel::TaskDoing: return QStringLiteral("<span class=\"cb doing\"></span>");
-    case BlockModel::TaskDone:  return QStringLiteral("<span class=\"cb done\"></span>");
-    default:                    return QStringLiteral("<span class=\"cb\"></span>");
+    case BlockModel::TaskDoing: return QStringLiteral("<span class=\"cb doing\"%1></span>").arg(k);
+    case BlockModel::TaskDone:  return QStringLiteral("<span class=\"cb done\"%1></span>").arg(k);
+    default:                    return QStringLiteral("<span class=\"cb\"%1></span>").arg(k);
     }
 }
 
@@ -1469,6 +1472,10 @@ blockquote p{padding:0}
 pre{background:var(--recess);border:1px solid var(--border);padding:12px 8px;margin:0 -8px;
 width:max-content;min-width:calc(100% + 16px);color:var(--codetext);font-size:13px;line-height:18px}
 main .blkw{padding:0}   /* the pre carries the 12 px inset itself */
+/* The code block's LANGUAGE (2026-10-18): the app's top-right chip — mono 11, muted, a 1-px border, no radius. */
+pre{position:relative}
+pre[data-lang]::before{content:attr(data-lang);position:absolute;top:-5px;right:8px;height:18px;padding:0 7px;
+font:11px/16px 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border)}
 code{font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 :not(pre)>code{background:var(--chipbg);color:var(--chiptext);padding:1px 5px}
 img{max-width:100%}
@@ -1483,6 +1490,7 @@ li.task .cb{position:absolute;left:2px;top:8px}
 /* Tri-state checkboxes, the app's exact recipe (squared, accent = task-state). */
 .cb{display:inline-block;width:14px;height:14px;box-sizing:border-box;position:relative;
 border:1.5px solid var(--muted);vertical-align:-2px;margin-right:6px}
+.cb[data-task]{cursor:pointer}
 .cb.doing{border-color:var(--accent)}
 .cb.doing::after{content:"";position:absolute;left:2px;top:4.5px;width:7px;height:2px;background:var(--accent)}
 .cb.done{background:var(--accent);border:0}
@@ -1611,7 +1619,7 @@ static const char kLightbox[] = R"MNLB(<div id="mn-lb"><button class="nav prev" 
 <script>
 (function(){
 var lb=document.getElementById('mn-lb');if(!lb)return;
-var imgs=[].slice.call(document.querySelectorAll('main figure img,main .notecard img,main td img,#world figure.media img')).filter(function(im){return im.className.indexOf('ink')<0});
+var imgs=[].slice.call(document.querySelectorAll('main figure img,main .notecard img,main td img,#world figure.media.image img')).filter(function(im){return im.className.indexOf('ink')<0});
 if(!imgs.length){lb.parentNode.removeChild(lb);return;}
 var stage=lb.querySelector('.stage'),cnt=lb.querySelector('.cnt'),cur=-1;
 function show(i){
@@ -1651,7 +1659,23 @@ e.preventDefault();});
 )MNLB";
 
 QString Exporter::pageCss() { return embeddedFontCss() + QLatin1String(kHtmlCss); }
+// Checkable task boxes (2026-10-18): a click cycles open → doing → done (the app's toggleTask); the choice is kept per
+// browser in localStorage (mn.tasks, keyed by block id, with the authored state — a re-export that changed the
+// authored state drops the memory). Shared by the page and canvas exports.
+static const char kTaskScript[] = R"MNTK(<script>
+(function(){var k='mn.tasks',st={};try{st=JSON.parse(localStorage.getItem(k)||'{}')||{}}catch(e){}
+function paint(b,s){b.classList.toggle('doing',s===1);b.classList.toggle('done',s===2);var li=b.closest('li.task');if(li)li.classList.toggle('done',s===2);}
+var dirty=false;
+[].forEach.call(document.querySelectorAll('.cb[data-task]'),function(b){var id=b.dataset.task,a=+b.dataset.a,m=st[id];
+if(m&&m.a===a)paint(b,m.s);else if(m){delete st[id];dirty=true;}
+b.addEventListener('click',function(e){e.stopPropagation();var s=b.classList.contains('done')?2:b.classList.contains('doing')?1:0;s=(s+1)%3;paint(b,s);
+if(s===a)delete st[id];else st[id]={a:a,s:s};try{localStorage.setItem(k,JSON.stringify(st))}catch(x){}});});
+if(dirty)try{localStorage.setItem(k,JSON.stringify(st))}catch(x){}
+})();
+</script>
+)MNTK";
 QString Exporter::lightboxHtml() { return QLatin1String(kLightbox); }
+QString Exporter::taskScript() { return QLatin1String(kTaskScript); }
 QString Exporter::videoNotesHtml(const QString& mediaPath, AssetSink& sink, int& inkLayers) { return emitVideoNotesHtml(mediaPath, sink, inkLayers); }
 QImage Exporter::inkOverlay(const QString& envelope, int srcW, int srcH, QSize size) { return renderEnvelopeOverlay(envelope, srcW, srcH, size); }
 QString Exporter::durationText(qreal ms) { return humanDuration(ms); }
@@ -1808,10 +1832,11 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                         .arg(bnum(row), emitInlineHtml(m, row, fn));
             break;
         case BlockModel::Code: {
-            const QString lang = m->languageForRow(row);
-            body += QStringLiteral("<div class=\"blkw\">%1<pre><code class=\"language-%2\">%3</code></pre></div>\n")
+            const QString lang = m->languageForRow(row), lname = m->codeLanguageName(row);
+            body += QStringLiteral("<div class=\"blkw\">%1<pre%4><code class=\"language-%2\">%3</code></pre></div>\n")
                         .arg(bnum(row), htmlEscape(lang),
-                             codeEmitter.colorize(lang, m->contentForRow(row)));
+                             codeEmitter.colorize(lang, m->contentForRow(row)),
+                             lname.isEmpty() ? QString() : QStringLiteral(" data-lang=\"%1\"").arg(htmlEscape(lname)));
             break;
         }
         case BlockModel::ListItem:
@@ -1835,7 +1860,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             }
             QString li = emitInlineHtml(m, row, fn);
             const bool task = type == BlockModel::TaskListItem;
-            if (task) li = taskGlyphHtml(m->taskStateForRow(row)) + li;
+            if (task) li = taskGlyphHtml(m->taskStateForRow(row), m->idForRow(row)) + li;
             // The li box starts at the app's text inset (bullets 22 + 24·depth, numbered 34 + 24·depth;
             // a task li pulls back to 24·depth and pads its own 22) — the ink's x is page-relative,
             // so subtract it.
@@ -1861,7 +1886,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         default: {
             if (tableHead >= 0 && lane >= 0 && m->tableRowOf(row) >= m->headerCount(tableHead)
                 && m->tableColumnKind(tableHead, lane) == 2) {       // a check cell: its box
-                body += taskGlyphHtml(m->tableCellCheck(tableHead, m->tableRowOf(row), lane)) + QLatin1Char('\n');
+                body += taskGlyphHtml(m->tableCellCheck(tableHead, m->tableRowOf(row), lane), m->idForRow(row)) + QLatin1Char('\n');
                 break;
             }
             const QString inl = emitInlineHtml(m, row, fn);
@@ -1963,9 +1988,9 @@ b.addEventListener('click',function(){var on=document.documentElement.classList.
                "<meta name=\"generator\" content=\"minNotes\">\n"
                "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n"
                "<header class=\"doctitle\"><span>%1</span><button class=\"cap\" type=\"button\" title=\"Readable width — the app's 760 measure\">Readable width</button></header>\n%4</main>\n"
-               "%5%6</body>\n</html>\n")
+               "%5%6%7</body>\n</html>\n")
         .arg(htmlEscape(m->documentName()), css, toggle, body,
-             QLatin1String(kLightbox), QLatin1String(kCapScript));
+             QLatin1String(kLightbox), QLatin1String(kCapScript), QLatin1String(kTaskScript));
 }
 
 QString Exporter::htmlFragment(int loRow, int hiRow) const {
@@ -2298,10 +2323,16 @@ public:
         setTheme(codeHighlightRepo().defaultTheme(
             KSyntaxHighlighting::Repository::LightTheme));
     }
-    void emitPara(QXmlStreamWriter& w, const QString& lang, const QString& code) {
+    void emitPara(QXmlStreamWriter& w, const QString& lang, const QString& code, const QString& langName = QString()) {
         DocxRunProps base;
         base.code = true;
         base.halfPtSize = 18;   // 9pt — the existing code-paragraph size
+        if (!langName.isEmpty()) {   // the language label (2026-10-18): a right-aligned muted line in the block's shading
+            DocxRunProps lp = base; lp.halfPtSize = 15; lp.color = QStringLiteral("#777777");
+            docxPlainPara(w, langName, lp, [](QXmlStreamWriter& pw) {
+                pw.writeStartElement(QStringLiteral("w:jc")); pw.writeAttribute(QStringLiteral("w:val"), QStringLiteral("right")); pw.writeEndElement();
+            });
+        }
         const KSyntaxHighlighting::Definition def = resolveCodeDefinition(lang);
         if (!def.isValid()) { docxPlainPara(w, code, base, nullptr); return; }
         setDefinition(def);
@@ -2853,7 +2884,7 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                 break;
             }
             case BlockModel::Code:
-                codeEmitter.emitPara(w, m->languageForRow(row), m->contentForRow(row));
+                codeEmitter.emitPara(w, m->languageForRow(row), m->contentForRow(row), m->codeLanguageName(row));
                 break;
             case BlockModel::ListItem:
             case BlockModel::TaskListItem:
@@ -3378,6 +3409,13 @@ void pdfCode(PdfCtx& c, int row, PdfCodeEmitter& ce) {
     mono.setFontFamilies(pdfMonoFamilies());
     mono.setFontPointSize(8.5);
     mono.setForeground(kPdfText);
+    const QString lname = c.m->codeLanguageName(row);
+    if (!lname.isEmpty()) {   // the language label (2026-10-18): the frame's first line, right-aligned, muted
+        QTextBlockFormat lb = bf; lb.setAlignment(Qt::AlignRight); lb.setBottomMargin(2);
+        QTextCharFormat lf = mono; lf.setFontPointSize(7.5); lf.setForeground(kPdfMuted);
+        ic.setBlockFormat(lb); ic.insertText(lname, lf);
+        ic.insertBlock(bf);
+    }
     ce.emitTo(ic, mono, c.m->languageForRow(row), c.m->contentForRow(row));
     c.toEnd();
 }

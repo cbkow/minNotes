@@ -76,6 +76,7 @@ public:
     // as note cards (thumb + ink layer, timecode, text, addressed), an ink envelope painted over a
     // transparent image, and the human duration text.
     static QString lightboxHtml();
+    static QString taskScript();    // checkable task boxes, remembered per browser
     static QString videoNotesHtml(const QString& mediaPath, AssetSink& sink, int& inkLayers);
     static QImage inkOverlay(const QString& envelope, int srcW, int srcH, QSize size);
     static QString durationText(qreal ms);

@@ -675,7 +675,7 @@ static void testExportMarkdown() {
     // Syntax colouring wraps tokens in inline-styled spans ("int" is a cpp
     // keyword; "=", "1", ";" get their own spans too), so assert the
     // structure + a coloured keyword + the identifier left plain between them.
-    CHECK(html.contains(QStringLiteral("<pre><code class=\"language-cpp\">"))
+    CHECK(html.contains(QStringLiteral("<pre data-lang=\"C++\"><code class=\"language-cpp\">")) && html.contains(QStringLiteral("pre[data-lang]::before{content:attr(data-lang)"))
               && html.contains(QStringLiteral(">int</span> x ")),
           "HTML code block with language class + syntax-coloured spans");
     // A table's header rows are <th> in <thead> (SR-4 S8b: the header ROLE is authored, not sniffed).
@@ -6607,8 +6607,10 @@ static void testCanvasHtml() {
     const QString textEl = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"a <chip> & more\",\"fontSize\":18,\"fill\":\"#ffffff\"}"), QRectF(2600, 200, 200, 40));
     // A video whose file is gone (no poster, no notes) still gets its reader; the PDF's page 1 carries element ink.
     const QString vidEl = c.addMediaElement(QStringLiteral("{\"kind\":\"video\",\"src\":\"%1\",\"name\":\"clip.mov\",\"w\":1920,\"h\":1080,\"fps\":24,\"frames\":48,\"durMs\":2000}").arg(dir.filePath(QStringLiteral("clip.mov"))), QRectF(2000, 1500, 480, 292));
+    const QString plainEl = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"plain words\",\"fontSize\":14,\"fill\":\"transparent\",\"color\":\"#4aa8ff\"}"), QRectF(2600, 260, 200, 40));
+    c.setMediaElementInk(imgEl, 0, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[{\"type\":\"rectangle\",\"color\":[0,1,0,1],\"stroke_width\":2,\"filled\":false,\"points\":[[0.2,0.2],[0.8,0.2],[0.8,0.8],[0.2,0.8]]}]}"));
     c.setMediaElementInk(pdfEl, 0, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[{\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,\"filled\":false,\"points\":[[0.1,0.1],[0.5,0.5],[0.9,0.1]]}]}"));
-    CHECK(!vidEl.isEmpty() && !imgEl.isEmpty() && !pdfEl.isEmpty() && !folderEl.isEmpty() && !fileEl.isEmpty() && !bmEl.isEmpty() && !audioEl.isEmpty() && !inkEl.isEmpty() && !textEl.isEmpty(), "fixtures placed");
+    CHECK(!vidEl.isEmpty() && !plainEl.isEmpty() && !imgEl.isEmpty() && !pdfEl.isEmpty() && !folderEl.isEmpty() && !fileEl.isEmpty() && !bmEl.isEmpty() && !audioEl.isEmpty() && !inkEl.isEmpty() && !textEl.isEmpty(), "fixtures placed");
 
     class NameSink : public Exporter::AssetSink {
     public:
@@ -6618,7 +6620,7 @@ static void testCanvasHtml() {
     };
     CanvasExporter ex; ex.setCanvas(&c);
     const QVariantMap sc = ex.scan();
-    CHECK(sc.value(QStringLiteral("pages")).toInt() == 2 && sc.value(QStringLiteral("media")).toInt() == 7 && sc.value(QStringLiteral("videos")).toInt() == 1 && sc.value(QStringLiteral("pdfs")).toInt() == 1 && sc.value(QStringLiteral("ink")).toInt() == 1 && sc.value(QStringLiteral("shapes")).toInt() == 1 && sc.value(QStringLiteral("refPaths")).toInt() == 5,
+    CHECK(sc.value(QStringLiteral("pages")).toInt() == 2 && sc.value(QStringLiteral("media")).toInt() == 7 && sc.value(QStringLiteral("videos")).toInt() == 1 && sc.value(QStringLiteral("pdfs")).toInt() == 1 && sc.value(QStringLiteral("ink")).toInt() == 1 && sc.value(QStringLiteral("shapes")).toInt() == 2 && sc.value(QStringLiteral("refPaths")).toInt() == 5,
           "scan counts (%d pages, %d media, %d refPaths)", sc.value(QStringLiteral("pages")).toInt(), sc.value(QStringLiteral("media")).toInt(), sc.value(QStringLiteral("refPaths")).toInt());
     NameSink sink;
     CanvasExporter::Options opt;
@@ -6626,7 +6628,7 @@ static void testCanvasHtml() {
     CHECK(html.startsWith(QLatin1String("<!doctype html>")) && html.contains(QLatin1String("id=\"world\"")) && html.contains(QLatin1String("@font-face")) && html.contains(QLatin1String("#mn-canvas{")) && html.contains(QLatin1String("<script>")),
           "a self-contained document: the world, the page CSS with embedded fonts, the canvas CSS, the pan/zoom script (%d chars)", int(html.size()));
     CHECK(html.contains(QLatin1String("<nav id=\"mn-tabs\"><div class=\"tabs\"><button class=\"tab on\" data-view=\"canvas\">")) && html.contains(QLatin1String("<div id=\"mn-reader\" hidden></div>")) && html.contains(QLatin1String("<div id=\"mn-store\">"))
-          && html.contains(QLatin1String("id=\"mn-lb\"")) && html.contains(QLatin1String("hashchange")) && html.contains(QLatin1String("mn.readableWidth")),
+          && html.contains(QLatin1String("id=\"mn-lb\"")) && html.contains(QLatin1String("hashchange")) && html.contains(QLatin1String("mn.readableWidth")) && html.contains(QLatin1String("'mn.tasks'")),
           "the redesign (2026-10-18): a tab strip (Canvas + opened tabs), a reader, a store for media readers, the shared lightbox, hash routing and the Readable-width cap");
     CHECK(html.count(QLatin1String("class=\"el page\"")) == 2 && html.contains(QLatin1String("Hello canvas export")) && html.contains(QLatin1String("Second page body"))
           && html.contains(QStringLiteral("data-open=\"pm-%1\"").arg(p1)) && html.contains(QStringLiteral("<main id=\"pm-%1\" data-home=\"p-%1\" data-title=\"").arg(p1)) && html.count(QLatin1String("<header class=\"doctitle\"><span>")) >= 2 && html.count(QLatin1String("<button class=\"cap\"")) == 2,
@@ -6639,8 +6641,8 @@ static void testCanvasHtml() {
     CHECK(html.contains(QStringLiteral("<figure class=\"el media pdf\" data-open=\"m-%1\"").arg(pdfEl)) && html.contains(QLatin1String("1 page</span>")) && html.contains(QLatin1String("spec.pdf</span>")) && html.contains(QDir::toNativeSeparators(pdf)) && !sink.images.isEmpty(),
           "the PDF element: a rendered first page, its name, its page count and its PATH; a click opens its reader");
     CHECK(html.contains(QStringLiteral("<main class=\"reader pdf\" id=\"m-%1\" data-title=\"spec.pdf\">").arg(pdfEl)) && html.contains(QLatin1String("<figure class=\"ref\"><div class=\"inkwrap\"><img src=\"assets/spec.pdf-page1.png\"")) && html.contains(QLatin1String("<img class=\"ink\" src=\"assets/spec.pdf-page1-ink.png\""))
-          && html.contains(QLatin1String("<div class=\"fname\">spec.pdf</div><div class=\"fpath\">")) && html.contains(QStringLiteral("pdf · 1 page</div>")) && html.contains(QLatin1String("<input type=\"checkbox\" id=\"mn-ink\" checked>")) && html.contains(QLatin1String("<label for=\"mn-ink\">Annotations</label>")),
-          "the PDF's reader: page 1 with its element ink as a toggleable layer, the reference caption with the path; the strip grows the Annotations toggle");
+          && html.contains(QLatin1String("<div class=\"fname\">spec.pdf</div><div class=\"fpath\">")) && html.contains(QStringLiteral("pdf · 1 page</div>")) && !html.contains(QLatin1String("id=\"mn-ink\"")) && !html.contains(QLatin1String("<label for=\"mn-ink\">")),
+          "the PDF's reader: page 1 with its element ink as a layer, the reference caption with the path; NO Annotations toggle on the canvas (ink always shows)");
     CHECK(html.contains(QStringLiteral("<figure class=\"el media video\" data-open=\"m-%1\"").arg(vidEl)) && html.contains(QStringLiteral("1920 × 1080 · 24 fps · ")) && html.contains(QStringLiteral("<main class=\"reader video\" id=\"m-%1\" data-title=\"clip.mov\">").arg(vidEl))
           && html.contains(QStringLiteral("video · 1920 × 1080")) && !html.contains(QLatin1String("<div class=\"notecard")),
           "a video element: the card with its meta opens a reader with the reference caption; a missing file has no poster and no notes");
@@ -6653,7 +6655,14 @@ static void testCanvasHtml() {
     CHECK(html.contains(QLatin1String("<svg class=\"el ink\"")) && html.contains(QLatin1String("viewBox=\"0 0 100 100\"")) && html.contains(QLatin1String("<path d=\"M0 0L50 20L100 0\" fill=\"none\" stroke=\"#ff0000\" stroke-width=\"4\""))
           && html.contains(QLatin1String("<rect x=\"10\" y=\"30\" width=\"80\" height=\"40\" fill=\"none\" stroke=\"#00ff00\"")) && html.contains(QLatin1String("<polygon points=\"100 90 ")) && html.contains(QLatin1String("<ellipse cx=\"50\" cy=\"50\" rx=\"20\" ry=\"10\" fill=\"rgba(255,255,0,0.5)\"")),
           "ink as SVG: a polyline path, a rect, an arrow with its head, a filled oval, in element-local px");
-    CHECK(html.contains(QLatin1String("class=\"el text\"")) && html.contains(QLatin1String("font-size:18px")) && html.contains(QLatin1String("a &lt;chip&gt; &amp; more")) && html.contains(QLatin1String("color:#ffffff")), "the text chip, escaped, at its size and colour");
+    CHECK(html.contains(QLatin1String("class=\"el text box\"")) && html.contains(QLatin1String("font-size:18px")) && html.contains(QLatin1String("a &lt;chip&gt; &amp; more")) && html.contains(QLatin1String("color:#000000;background:#ffffff")),
+          "a FILLED text chip: a box in its fill with contrast glyphs (black over white), escaped, at its size");
+    CHECK(html.contains(QLatin1String("class=\"el text\" style=")) && html.contains(QLatin1String("plain words")) && html.contains(QLatin1String("font-size:14px;padding:4px;color:#4aa8ff\"")) && !html.contains(QLatin1String("color:#4aa8ff;background")),
+          "a PLAIN text chip (the ⇧T tool): no box, its own text colour, the body size");
+    CHECK(html.contains(QLatin1String("<figure class=\"el media image\"")) && html.contains(QLatin1String("<div class=\"inkwrap\"><img src=\"assets/")) && html.contains(QLatin1String("-ink.png\" alt=\"\" style=\"left:0;top:0;width:100%\">")),
+          "an image element's frame ink (json.ink[0]) rides the card as a toggleable layer with the lightbox's geometry");
+    CHECK(html.contains(QLatin1String("<div class=\"inkwrap\"><img class=\"poster\" src=\"assets/spec.pdf-page1.png\" alt=\"spec.pdf\"><img class=\"ink\" src=\"assets/spec.pdf-page1-ink.png\"")),
+          "the PDF card shows page 1's element ink over its poster (the same layer the reader shows)");
     // z order: the first page comes before the ink element in the document; a brought-to-front element lands last.
     CHECK(html.indexOf(QStringLiteral("id=\"p-%1\"").arg(p1)) < html.indexOf(QLatin1String("<svg class=\"el ink\"")), "elements are written in z order");
     c.bringToFront(p1);
@@ -7932,7 +7941,7 @@ static void testGridTableExports() {
               && html.count(QRegularExpression(QStringLiteral("<th[ >]"))) == 3 && html.count(QRegularExpression(QStringLiteral("<td[ >]"))) == 6,
           "HTML: one table, three rows, header cells <th>, body cells <td>");
     CHECK(html.contains(QStringLiteral("<col style=\"width:200px\">")) && html.contains(QStringLiteral("<td style=\"background:#ff0000;\">"))
-              && html.contains(QStringLiteral("text-align:center;")) && html.contains(QStringLiteral("class=\"cb done\"")),
+              && html.contains(QStringLiteral("text-align:center;")) && html.contains(QStringLiteral("class=\"cb done\" data-task=\"")) && html.contains(QStringLiteral("data-a=\"2\"")) && html.contains(QStringLiteral("'mn.tasks'")),
           "HTML: px column widths, the cell colour, the column alignment, the check glyph");
     const int b1 = html.indexOf(QStringLiteral("b1</p>")), b1x = html.indexOf(QStringLiteral("b1x</p>"));
     CHECK(b1 >= 0 && b1 < b1x && !html.mid(b1, b1x - b1).contains(QStringLiteral("</td>"))
