@@ -1109,6 +1109,14 @@ FocusScope {
     function pdfPageFor(row) { return pdfPageForKey(blockModel.mediaViewPath(row)) }
     function setPdfPage(row, page) { setPdfPageKey(blockModel.mediaViewPath(row), page, blockModel.mediaPdfPages(row)) }
     function pdfStep(row, d) { setPdfPage(row, pdfPageFor(row) + d) }
+    // A click on a block's media strip (play, scrub, expand, a PDF page step) CHOOSES that block (walk 7c): the caret
+    // parks on it, so the focus fill moves there and the transport keys route to this video (focusedVideoRow).
+    function parkCaretOn(row) {
+        if (row < 0 || row >= blockModel.count) return
+        if (!cursor.hasSel && cursor.focusRow === row) return
+        if (cursor.focusRow >= 0 && cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow)
+        cursor.setCaret(row, 0); cursor.sync()
+    }
 
     // -1 = not scrubbing. Otherwise the frame scrubbed to but not yet resumed
     // from (the streaming decoder is repositioned lazily on resume).
@@ -4116,23 +4124,27 @@ FocusScope {
         onTriggered: {
             if (step === 0) {   // the PAGE: the caret on the video block routes the transport keys to the inline player
                 const row = blockModel.rowForId(blockModel.videoBlockIds()[0])
+                const other = blockModel.count > 1 ? (row === 0 ? 1 : 0) : blockModel.insertParagraphBelow(row)   // (a one-block clip document gets a paragraph)
                 root.forceActiveFocus()
-                cursor.setCaret(row, 0)
-                check(root.videoKeyContext === "page" && root.focusedVideoRow === row, "the focused video block is the key context (" + root.videoKeyContext + ")")
-                gestures.key(root, Qt.Key_Space); ++step; return
+                cursor.setCaret(other, 0); cursor.sync()   // the caret ELSEWHERE: a click on the bar must choose the video (walk 7c)
+                check(root.videoKeyContext === "" && root.focusedVideoRow < 0, "with the caret on another block there is no video key context (count " + blockModel.count + ", focusRow " + cursor.focusRow + ")")
+                const bar = videoBars.itemAt(0), ct = bar ? bar.children[0] : null, btn = ct ? ct.playButton : null
+                check(!!btn && bar.opacity === 1, "the inline bar is there, at full opacity")
+                if (btn) { const pb = btn.mapToItem(root, btn.width / 2, btn.height / 2); gestures.click(root, pb.x, pb.y) }   // a REAL click through the layers
+                ++step; return
             }
             if (step === 6) {
-                check(videoDec.isPlaying && root.videoPlayingRow === root.focusedVideoRow, "Space on the focused block plays inline (frame " + videoDec.currentFrame + ")")
+                const row = blockModel.rowForId(blockModel.videoBlockIds()[0]), bar = videoBars.itemAt(0)
+                check(videoDec.isPlaying && root.videoPlayingRow === row && cursor.focusRow === row && !cursor.hasSel && root.focusedVideoRow === row && root.videoKeyContext === "page",
+                      "a click on the bar's play button PARKS THE CARET on its block, plays, and takes the keys (focusRow " + cursor.focusRow + " vs " + row + ", ctx '" + root.videoKeyContext + "')")
+                check(!!bar && bar.opacity === 1, "…and the bar does not fade on the focused block")
                 // The inline chrome is page-layer CONTENT (walk 7c): the bar sits under its row in content units, the surface over the picture.
-                const row = root.focusedVideoRow, bar = videoBars.itemAt(0)
                 check(videoBars.count === 1 && !!bar && bar.parent === pageLayer && bar.visible && Math.abs(bar.y - ((blockModel.yForRow(row) + 6 + bar.dispH))) < 1 && Math.abs(bar.width - bar.dispW) < 1,
                       "the inline bar is page-layer content under its row (parent " + (bar ? bar.parent : "?") + ", y " + (bar ? bar.y.toFixed(0) : "?") + " vs " + (blockModel.yForRow(row) + 6 + (bar ? bar.dispH : 0)).toFixed(0) + ")")
                 check(videoSurfaceOverlay.parent === pageLayer && videoSurfaceOverlay.visible && Math.abs(videoSurfaceOverlay.y - (blockModel.yForRow(row) + 6)) < 1, "…and so is the live surface, over the picture")
-                const ct = bar ? bar.children[0] : null, btn = ct ? ct.playButton : null
-                if (btn) { const pb = btn.mapToItem(root, btn.width / 2, btn.height / 2); gestures.click(root, pb.x, pb.y) }
-                ++step; return
+                gestures.key(root, Qt.Key_Space); ++step; return
             }
-            if (step === 7) { check(!videoDec.isPlaying, "a real click on the bar's play button pauses (the strip takes its clicks above the document mouse layer)"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 7) { check(!videoDec.isPlaying, "Space right after the bar click pauses (the keys followed the bar's block)"); gestures.key(root, Qt.Key_K); ++step; return }
             if (step === 8) { check(videoDec.isPlaying, "K plays"); gestures.key(root, Qt.Key_K); ++step; return }
             if (step === 9) { const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
             if (step === 11) { check(root._vidIntendedFrame() === probeFrame + 1, "→ → ← steps one frame net (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
@@ -5757,16 +5769,8 @@ FocusScope {
                 required property int modelData
                 readonly property int row: modelData
                 readonly property bool live: row === root.videoPlayingRow
-                // Fade the toolbar back while this block is selected (focused, in a
-                // range, or the open context menu's target) so the selection/menu
-                // highlight reads clearly and the bright bar doesn't dominate above it
-                // — but stay full while it's the live player (you're using the controls).
-                readonly property bool blockSelected: (cursor.hasSel
-                    ? (row >= cursor.loRow && row <= cursor.hiRow)
-                    : (row === cursor.focusRow))
-                    || (blockMenu.visible && row === root.menuRow)
-                opacity: (blockSelected && !live) ? 0.35 : 1.0
-                Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
+                // (The strip never fades — walk 7c. It used to step back to 35 % on the focused block, which read as
+                // "disabled" in exactly the state the transport keys apply; the live player shows through its tones.)
                 visible: !root.pdfTabOpen && !root.videoTabOpen
                          && dispW >= root.transportMinW   // T5: no transport in a narrow cell (a click opens the review view)
                          && root.rowInView(row)
@@ -5800,12 +5804,6 @@ FocusScope {
                 id: pbar
                 required property int modelData
                 readonly property int row: modelData
-                readonly property bool blockSelected: (cursor.hasSel
-                    ? (row >= cursor.loRow && row <= cursor.hiRow)
-                    : (row === cursor.focusRow))
-                    || (blockMenu.visible && row === root.menuRow)
-                opacity: blockSelected ? 0.35 : 1.0
-                Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
                 // Document view only: a grid frame (a table's tab) clamps the same Flickable to the
                 // table, and a PDF just above it was still "in view" — its bar showed in the tab
                 // (2026-09-16).
@@ -5830,9 +5828,9 @@ FocusScope {
                     anchors.leftMargin: 6; anchors.rightMargin: 10
                     spacing: 0
                     FlatButton { iconName: "caret-left"; tooltip: qsTr("Previous page"); tooltipSide: "top"
-                        enabled_: pbar.page > 0; onClicked: root.pdfStep(pbar.row, -1) }
+                        enabled_: pbar.page > 0; onClicked: { root.parkCaretOn(pbar.row); root.pdfStep(pbar.row, -1) } }
                     FlatButton { iconName: "caret-right"; tooltip: qsTr("Next page"); tooltipSide: "top"
-                        enabled_: pbar.page < pbar.pages - 1; onClicked: root.pdfStep(pbar.row, 1) }
+                        enabled_: pbar.page < pbar.pages - 1; onClicked: { root.parkCaretOn(pbar.row); root.pdfStep(pbar.row, 1) } }
                     Item { Layout.fillWidth: true }
                     Text {
                         text: "Page " + (pbar.page + 1) + " of " + pbar.pages

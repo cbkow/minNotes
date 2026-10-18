@@ -20,8 +20,9 @@ Rectangle {
 
     function activate() { if (host) ct.editor.activateHost(host); else ct.editor.ensureVideoActive(ct.row) }
     function playhead() { return host ? ct.editor.videoPlayheadForKey(host.key) : ct.editor.videoPlayheadFor(ct.row) }
-    function play()     { if (host) ct.editor.playFromHost(host); else ct.editor.playVideo(ct.row); ct.editor.forceActiveFocus() }   // the keys stay with the editor
-    function expand()   { if (host) ct.editor.setActiveTab(host.elementId); else ct.editor.setActiveTab(blockModel.idForRow(ct.row)); ct.editor.forceActiveFocus() }
+    function choose()   { if (!host && ct.row >= 0 && ct.editor.parkCaretOn) ct.editor.parkCaretOn(ct.row) }   // a bar click CHOOSES its block (walk 7c): the caret parks there, the keys follow
+    function play()     { choose(); if (host) ct.editor.playFromHost(host); else ct.editor.playVideo(ct.row); ct.editor.forceActiveFocus() }   // the keys stay with the editor
+    function expand()   { choose(); if (host) ct.editor.setActiveTab(host.elementId); else ct.editor.setActiveTab(blockModel.idForRow(ct.row)); ct.editor.forceActiveFocus() }
     readonly property int frame: live && dec ? dec.currentFrame : (ct.editor.videoPlayheadRev, playhead())
     readonly property var playButton: playBtn   // probe
     readonly property var scrubTrack: track
@@ -35,6 +36,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: 0
             iconName: (ct.live && ct.dec && ct.dec.isPlaying) ? "pause" : "play"
+            iconColor: ct.live ? Theme.colors.textBright : "transparent"   // the live player reads through its tones (no opacity games)
             tooltip: (ct.live && ct.dec && ct.dec.isPlaying) ? qsTr("Pause (Space)") : qsTr("Play (Space)"); tooltipSide: "top"
             onClicked: ct.play()
         }
@@ -72,7 +74,7 @@ Rectangle {
                 x: Math.max(0, Math.min(track.width - width, track.width * track.fraction - width / 2))
                 anchors.verticalCenter: parent.verticalCenter
                 width: 3; height: 12
-                color: Theme.colors.textBright
+                color: ct.live ? Theme.colors.textBright : Theme.colors.textMuted   // bright only on the live player
             }
             MouseArea {
                 id: scrubMa
@@ -81,7 +83,7 @@ Rectangle {
                 cursorShape: Qt.PointingHandCursor
                 property bool wasPlaying: false
                 onPressed: (m) => {
-                    ct.activate()
+                    ct.choose(); ct.activate()
                     wasPlaying = !!ct.dec && ct.dec.isPlaying
                     if (ct.dec) { ct.dec.pause(); if (ct.audio) ct.audio.pause() }
                     const f = track.xToFrame(m.x)
