@@ -87,6 +87,17 @@ void CanvasGestures::key(QQuickItem* item, int key, int modifiers) {
     QCoreApplication::sendEvent(item->window(), &r);
 }
 
+void CanvasGestures::keyPress(QQuickItem* item, int key, int modifiers) {
+    if (!item || !item->window()) return;
+    QKeyEvent p(QEvent::KeyPress, key, Qt::KeyboardModifiers(modifiers));
+    QCoreApplication::sendEvent(item->window(), &p);
+}
+void CanvasGestures::keyRelease(QQuickItem* item, int key, int modifiers) {
+    if (!item || !item->window()) return;
+    QKeyEvent r(QEvent::KeyRelease, key, Qt::KeyboardModifiers(modifiers));
+    QCoreApplication::sendEvent(item->window(), &r);
+}
+
 qint64 CanvasGestures::residentBytes() const {
 #if defined(Q_OS_MACOS)
     mach_task_basic_info info{};

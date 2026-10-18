@@ -1210,6 +1210,53 @@ FocusScope {
     function seekVideoEnd()   { videoDec.pause(); videoAudio.pause(); _vidScrubTo(videoDec.frameCount - 1) }
     // Note-card click: park exactly on the note's frame (review → pause first).
     function seekVideoFrame(f) { videoDec.pause(); videoAudio.pause(); _vidScrubTo(f) }
+    // --- Transport keys (QCView parity, 2026-10-18): ONE router for the three places a video has focus — the
+    // studio, a page whose focused block is a video (the caret parks on the opaque row), the canvas with a video
+    // element selected. QCView's set: Space/K/W/S play-pause · Q/E ←/→ step · A/J D/L hold = shuttle · Home/End ·
+    // M mute · R / Shift+R review speed · V loop · ↑/↓ volume (studio only: a page's ↑/↓ walk blocks). On the canvas
+    // the single-key tools keep their letters (R rect, A arrow, E eraser …) except the JKL trio while a video is
+    // selected; Space plays there (the hand still has the middle button, ⌥-drag and the H tool). ---
+    readonly property int focusedVideoRow: (blockModel.structureRevision,
+        cursor.focusRow >= 0 && !cursor.hasSel && activeFrameId === "" && blockModel.typeForRow(cursor.focusRow) === 3
+            && blockModel.mediaKind(cursor.focusRow) === "video" ? cursor.focusRow : -1)
+    readonly property string videoKeyContext: videoTabOpen ? "studio"
+                                            : (canvasShown && !cardHosted && canvasHost.valid) ? "canvas"
+                                            : focusedVideoRow >= 0 ? "page" : ""
+    function _videoKeyActivate() {
+        if (videoKeyContext === "studio") return ensureHostActive()
+        if (videoKeyContext === "canvas") return activateHost(canvasHost)
+        if (videoKeyContext === "page") return _activateVideo(focusedVideoRow)
+        return false
+    }
+    function videoKeyPressed(event) {   // true = handled (the caller accepts the event)
+        const ctx = videoKeyContext
+        if (ctx === "") return false
+        const k = event.key, mods = event.modifiers & ~Qt.KeypadModifier
+        const plain = mods === Qt.NoModifier, shift = mods === Qt.ShiftModifier, onCanvas = ctx === "canvas"
+        const holdDir = (k === Qt.Key_J || (!onCanvas && k === Qt.Key_A)) ? -1 : (k === Qt.Key_L || (!onCanvas && k === Qt.Key_D)) ? 1 : 0
+        if (holdDir !== 0 && plain) { if (!event.isAutoRepeat && _videoKeyActivate()) startVideoFastSeek(holdDir); return true }   // (repeats are swallowed: the timer drives the shuttle)
+        if (plain && (k === Qt.Key_Left  || (!onCanvas && k === Qt.Key_Q))) { if (_videoKeyActivate()) stepVideoFrames(-1); return true }   // auto-repeat = hold to step
+        if (plain && (k === Qt.Key_Right || (!onCanvas && k === Qt.Key_E))) { if (_videoKeyActivate()) stepVideoFrames(1); return true }
+        if (event.isAutoRepeat) return false
+        if (plain && (k === Qt.Key_Space || k === Qt.Key_K || (!onCanvas && (k === Qt.Key_W || k === Qt.Key_S)))) { if (_videoKeyActivate()) toggleVideo(); return true }
+        if (plain && k === Qt.Key_Home) { if (_videoKeyActivate()) seekVideoStart(); return true }
+        if (plain && k === Qt.Key_End)  { if (_videoKeyActivate()) seekVideoEnd(); return true }
+        if (plain && k === Qt.Key_M)    { if (_videoKeyActivate()) toggleVideoMute(); return true }
+        if (!onCanvas) {
+            if (plain && k === Qt.Key_R) { if (_videoKeyActivate()) cycleVideoSpeed(); return true }
+            if (shift && k === Qt.Key_R) { if (_videoKeyActivate()) setVideoSpeed(1.0); return true }
+            if (plain && k === Qt.Key_V) { toggleVideoLoop(); return true }
+            if (ctx === "studio" && plain && k === Qt.Key_Up)   { videoAudio.setVolume(Math.min(1, videoAudio.volume + 0.05)); if (videoAudio.volume > 0) videoAudio.setMuted(false); return true }
+            if (ctx === "studio" && plain && k === Qt.Key_Down) { videoAudio.setVolume(Math.max(0, videoAudio.volume - 0.05)); return true }
+        }
+        return false
+    }
+    function videoKeyReleased(event) {   // the shuttle ends when its key lifts
+        if (event.isAutoRepeat || _vidFastSeekDir === 0) return false
+        const k = event.key
+        if (k === Qt.Key_J || k === Qt.Key_L || k === Qt.Key_A || k === Qt.Key_D) { stopVideoFastSeek(); return true }
+        return false
+    }
     function toggleVideoMute(){ if (videoAudio.hasAudio) videoAudio.setMuted(!videoAudio.muted) }
     function toggleVideoLoop(){ videoLoop = !videoLoop }
 
@@ -3120,6 +3167,7 @@ FocusScope {
 
     // Space-up releases the PDF tab's hand-pan (press side lives in Keys.onPressed below).
     Keys.onReleased: (event) => {
+        if (root.videoKeyReleased(event)) { event.accepted = true; return }
         if (root.pdfTabOpen
                  && event.key === Qt.Key_Space && !event.isAutoRepeat) {
             root.pdfSpaceHeld = false
@@ -3198,6 +3246,8 @@ FocusScope {
             }
             event.accepted = true
         }
+        // The transport keys wherever a video has focus (studio / page block / canvas element) — QCView's set.
+        else if (root.videoKeyPressed(event)) { event.accepted = true }
         // Studio: ⌘Z routes to the ANNOTATION undo stack — video notes live
         // outside the document DB, so doc undo must not fire while the
         // hidden document is invisible.
@@ -3274,16 +3324,9 @@ FocusScope {
         }
         // Video studio: transport keys, then swallow everything else so typing
         // can't invisibly edit the hidden document underneath.
-        else if (root.videoTabOpen) {
+        else if (root.videoTabOpen) {   // (the transport keys were routed above; the rest is swallowed so typing can't edit the hidden page)
             if ((k === Qt.Key_Delete || k === Qt.Key_Backspace) && studioAnnotator.hasSelection)
                 studioAnnotator.deleteSelection()
-            else if (k === Qt.Key_Space) { root.ensureHostActive(); root.toggleVideo() }
-            else if (k === Qt.Key_Left)  { root.ensureHostActive(); root.stepVideoFrames(-1) }
-            else if (k === Qt.Key_Right) { root.ensureHostActive(); root.stepVideoFrames(1) }
-            else if (k === Qt.Key_Home)  { root.ensureHostActive(); root.seekVideoStart() }
-            else if (k === Qt.Key_End)   { root.ensureHostActive(); root.seekVideoEnd() }
-            else if (k === Qt.Key_R)     { root.ensureHostActive()
-                                           if (shift) root.setVideoSpeed(1.0); else root.cycleVideoSpeed() }
             event.accepted = true
         }
         // View zoom (PLAN-zoom Z3): the same chords as the PDF tab.
@@ -4062,6 +4105,7 @@ FocusScope {
         property int step: 0
         property int fails: 0
         property string elId: ""
+        property int probeFrame: 0
         function check(ok, msg) { console.log("VIDEO-PROBE", ok ? "ok  " : "FAIL", msg); if (!ok) ++fails }
         function state(tag) {
             console.log("VIDEO-PROBE state", tag, "tabOpen", root.videoTabOpen, "hostValid", mediaHost.valid, "hostKind", mediaHost.kind, "hostRow", mediaHost.row,
@@ -4070,34 +4114,49 @@ FocusScope {
                         "surfaceReady", root._videoSurfaceReady, "studio", studioFrame.visible, "surface", studioSurface.visible, "hosted", root.cardHosted)
         }
         onTriggered: {
-            if (step === 0) { const id = blockModel.videoBlockIds()[0]; root.setActiveTab(id); ++step; return }
-            if (step === 10) { state("block studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row >= 0, "the block's studio is open on the host"); root.playHost(); ++step; return }
-            if (step === 35) { state("block studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the block plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows"); root.playHost(); ++step; return }
-            if (step === 40) { check(!videoDec.isPlaying, "play again = pause"); gestures.key(root, Qt.Key_Space); ++step; return }
-            if (step === 42) { check(videoDec.isPlaying, "Space in the studio plays"); gestures.key(root, Qt.Key_Space); ++step; return }
-            if (step === 43) { check(!videoDec.isPlaying, "…and pauses"); root.setActiveTab("canvas"); ++step; return }
-            if (step === 45) {
+            if (step === 0) {   // the PAGE: the caret on the video block routes the transport keys to the inline player
+                const row = blockModel.rowForId(blockModel.videoBlockIds()[0])
+                root.forceActiveFocus()
+                cursor.setCaret(row, 0)
+                check(root.videoKeyContext === "page" && root.focusedVideoRow === row, "the focused video block is the key context (" + root.videoKeyContext + ")")
+                gestures.key(root, Qt.Key_Space); ++step; return
+            }
+            if (step === 6) { check(videoDec.isPlaying && root.videoPlayingRow === root.focusedVideoRow, "Space on the focused block plays inline (frame " + videoDec.currentFrame + ")"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 7) { const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
+            if (step === 9) { check(root._vidIntendedFrame() === probeFrame + 1, "→ → ← steps one frame net (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
+            if (step === 10) { check(root._vidFastSeekDir === -1 && videoAudio.shuttleActive() === videoAudio.hasAudio, "J held = rewind shuttle"); gestures.keyRelease(root, Qt.Key_J); ++step; return }
+            if (step === 11) { check(root._vidFastSeekDir === 0, "…released = shuttle ends"); gestures.key(root, Qt.Key_Home); ++step; return }
+            if (step === 12) { check(root._vidIntendedFrame() === 0, "Home seeks to the start"); const id = blockModel.videoBlockIds()[0]; root.setActiveTab(id); ++step; return }
+            if (step === 20) { state("block studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row >= 0, "the block's studio is open on the host"); root.playHost(); ++step; return }
+            if (step === 45) { state("block studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the block plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows"); root.playHost(); ++step; return }
+            if (step === 50) { check(!videoDec.isPlaying, "play again = pause"); gestures.key(root, Qt.Key_Space); ++step; return }
+            if (step === 52) { check(videoDec.isPlaying, "Space in the studio plays"); gestures.key(root, Qt.Key_Space); ++step; return }
+            if (step === 53) { check(!videoDec.isPlaying, "…and pauses"); gestures.keyPress(root, Qt.Key_L); ++step; return }
+            if (step === 54) { check(root._vidFastSeekDir === 1, "L held = fast-forward shuttle in the studio"); gestures.keyRelease(root, Qt.Key_L); gestures.key(root, Qt.Key_R); ++step; return }
+            if (step === 55) { check(root._vidFastSeekDir === 0 && Math.abs(root.videoSpeed - 1.25) < 0.01, "…released; R cycles the review speed (" + root.videoSpeed + ")"); gestures.key(root, Qt.Key_R, Qt.ShiftModifier); root.setActiveTab("canvas"); ++step; return }
+            if (step === 60) {
                 const b = canvas.canvasBounds()
                 elId = canvas.addMediaElementFromUrl(videoProbe.clip, b.x + b.width + 100, b.y)
                 check(elId !== "" && canvas.mediaElementKind(elId) === "video", "the clip as a canvas element")
                 root.setActiveTab(elId); ++step; return
             }
-            if (step === 55) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
-            if (step === 80) { state("element studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the element plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows");
+            if (step === 65) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
+            if (step === 90) { state("element studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the element plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows");
                                gestures.key(root, Qt.Key_Space); ++step; return }
-            if (step === 85) { check(!videoDec.isPlaying, "Space in the element's studio pauses"); gestures.key(root, Qt.Key_Escape); ++step; return }
-            if (step === 90) {   // the CANVAS: the selected element's transport under the frame + its surface in the element
+            if (step === 95) { check(!videoDec.isPlaying, "Space in the element's studio pauses"); gestures.key(root, Qt.Key_Escape); ++step; return }
+            if (step === 100) {   // the CANVAS: the selected element's transport under the frame + its surface in the element
                 const cvw = root.canvasItem
                 check(root.canvasShown && cvw.selectedId === elId && root.canvasVideoHost.valid && cvw.selectionFrame.videoBar.visible, "back on the canvas the element is selected and shows its transport (host " + root.canvasVideoHost.valid + ", bar " + cvw.selectionFrame.videoBar.visible + ")")
-                root.playFromHost(root.canvasVideoHost); ++step; return
+                check(root.videoKeyContext === "canvas" && Math.abs(root.videoSpeed - 1) < 0.01, "…the selected element is the key context; Shift+R reset the speed")
+                gestures.key(root, Qt.Key_Space); ++step; return
             }
-            if (step === 115) {
+            if (step === 125) {
                 const it = root.canvasItem.pageItemFor(elId)
                 state("canvas element playing?")
                 check(videoDec.isPlaying && root.canvasHostPlaying && !!it && !!it.mediaItem && it.mediaItem.surfaceVisible, "the element plays IN PLACE with its surface (frame " + videoDec.currentFrame + ", surface " + (it && it.mediaItem ? it.mediaItem.surfaceVisible : "?") + ")")
                 root.canvasItem.clearSelection(); ++step; return
             }
-            if (step === 120) { check(!videoDec.isPlaying && root.videoPlayingKey === "", "deselecting the element stops playback"); console.log("VIDEO-PROBE DONE fails", fails); Qt.exit(Math.min(fails, 100)) }
+            if (step === 130) { check(!videoDec.isPlaying && root.videoPlayingKey === "", "deselecting the element stops playback"); console.log("VIDEO-PROBE DONE fails", fails); Qt.exit(Math.min(fails, 100)) }
             ++step
         }
     }

@@ -23,7 +23,9 @@ public:
     Q_INVOKABLE void rightClick(QQuickItem* item, qreal x, qreal y);
     // Keys to the focused item: a character per call (text + the key for letters), or a named key.
     Q_INVOKABLE void type(QQuickItem* item, const QString& text);
-    Q_INVOKABLE void key(QQuickItem* item, int key, int modifiers = 0);
+    Q_INVOKABLE void key(QQuickItem* item, int key, int modifiers = 0);          // a press (and its release, see the .cpp)
+    Q_INVOKABLE void keyPress(QQuickItem* item, int key, int modifiers = 0);     // a press alone (hold-to-shuttle)
+    Q_INVOKABLE void keyRelease(QQuickItem* item, int key, int modifiers = 0);   // its release
     Q_INVOKABLE void wheel(QQuickItem* item, qreal x, qreal y, int dx, int dy);   // a mouse wheel's angle delta (±120 per notch)
     Q_INVOKABLE qint64 residentBytes() const;   // this process's resident set (the probe's leak check); -1 when unknown
 private:
