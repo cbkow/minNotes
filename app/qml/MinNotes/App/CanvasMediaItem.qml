@@ -11,6 +11,7 @@ Item {
     required property var cam
     property string elementId: ""
     anchors.fill: parent
+    clip: mediaKind === "video"   // the picture never paints past its rect (the bar sits below it in the selection box)
 
     QtObject {
         id: standIn

@@ -3354,10 +3354,7 @@ FocusScope {
                 else if (root.inspector && canvasItem.drawing) root.inspector.drawTool = "select"   // disarm the pen first
                 else canvasItem.clearSelection()
             }
-            else if (k === Qt.Key_Return || k === Qt.Key_Enter) {   // Return = live IN PLACE for a page (SPIKE S4); Open for anything else
-                if (canvasItem.selectedId !== "" && canvas.elementKind(canvasItem.selectedId) === "page") canvasItem.liveSelected()
-                else canvasItem.openSelected()
-            }
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasItem.liveSelected()   // Return = live / FOCUS in place for every kind (SPIKE S4, walk 7c); Open = Shift-dbl / glyph / menu
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4165,6 +4162,9 @@ FocusScope {
                 const cvw = root.canvasItem
                 check(root.canvasShown && cvw.selectedId === elId && root.canvasVideoHost.valid && cvw.selectionFrame.videoBar.visible, "back on the canvas the element is selected and shows its transport (host " + root.canvasVideoHost.valid + ", bar " + cvw.selectionFrame.videoBar.visible + ")")
                 check(root.videoKeyContext === "canvas" && Math.abs(root.videoSpeed - 1) < 0.01, "…the selected element is the key context; Shift+R reset the speed")
+                const sf = cvw.selectionFrame
+                check(Math.abs(sf.height - (sf.pictureH + sf.videoBar.height)) < 0.5 && Math.abs(sf.videoBar.y - sf.pictureH) < 0.5 && sf.videoBar.height === 22,
+                      "the selection box encloses the picture AND its 22-px bar (box " + sf.height.toFixed(0) + " = picture " + sf.pictureH.toFixed(0) + " + bar " + sf.videoBar.height + ")")
                 const bar = cvw.selectionFrame.videoBar, btn = bar.playButton, pb = btn.mapToItem(cvw, btn.width / 2, btn.height / 2)
                 gestures.click(cvw, pb.x, pb.y)   // the bar's play button (it lies OUTSIDE the element's rect)
                 check(cvw.selectedId === elId && videoDec.isPlaying && root.activeFocus, "the bar's play button plays and the element STAYS selected with the editor focused (selected '" + cvw.selectedId + "', playing " + videoDec.isPlaying + ", focus " + root.activeFocus + ")")
@@ -4843,13 +4843,22 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 24) {
-                    check(studioFrame.visible && root.activeFrameId === vidElId, "double-click on a video element = its studio (phase A's fallback; C makes it live in place) (frame '" + root.activeFrameId + "', opens +" + (cvw.opens - probeOpens) + ", doubleTaps +" + (cvw.doubleTaps - probeTaps) + ", selected '" + cvw.selectedId + "')")
-                    g.key(root, Qt.Key_Escape)
+                    check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId && cvw.opens === probeOpens && cvw.mediaFocuses === 1
+                          && (cvw.camAnimating || cam.zoom >= 1) && cvw.selectionFrame.videoBar.visible && cvw.selectionFrame.height > cvw.selectionFrame.pictureH + 20,
+                          "double-click on a video element = FOCUS in place: selected, the camera heads to readable, its bar inside the selection box (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ", focuses " + cvw.mediaFocuses + ", animating " + cvw.camAnimating + ", zoom " + cam.zoom.toFixed(2) + ", box " + cvw.selectionFrame.height.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
+                    cvw.endLive(false); cvw.fit()   // (stops the camera animation; the other fixtures back in the window)
+                    const same = (a, b) => Math.abs(a - b) < 0.01
+                    let rr = cvw.edgeResize(Qt.rect(100, 100, 320, 240), 1, 0, 80, 0, true)
+                    check(same(rr.width, 400) && same(rr.height, 300) && same(rr.x, 100) && same(rr.y, 100), "aspect lock: the right edge drives the height (" + rr.width + "×" + rr.height + ")")
+                    rr = cvw.edgeResize(Qt.rect(100, 100, 320, 240), -1, -1, -40, -90, true)
+                    check(same(rr.width, 440) && same(rr.height, 330) && same(rr.x, -20) && same(rr.y, 10), "aspect lock: a top-left corner drag follows the larger delta and re-anchors the moved edges (" + rr.x + "," + rr.y + " " + rr.width + "×" + rr.height + ")")
+                    rr = cvw.edgeResize(Qt.rect(100, 100, 320, 240), 1, 0, 80, 0, false)
+                    check(same(rr.width, 400) && same(rr.height, 240), "…and an unlocked resize is free-form")
                     ++step; return
                 }
                 if (step === 26) {
                     const r = canvas.elementRect(livePage), c = cam.worldToScreen(r.x + 60, r.y + 60)
-                    check(cvw.visible && cvw.selectedId === vidElId, "…Escape back, the video selected")
+                    check(cvw.visible && cvw.selectedId === vidElId, "…the video stays selected (nothing to Escape from)")
                     g.doubleClick(cvw, c.x, c.y, Qt.ShiftModifier)
                     ++step; return
                 }

@@ -95,12 +95,19 @@ Rectangle {
     }
     function endSelectionDrag() { canvas.endBatch(); dragStarts = {} }
     function resizeSelected(rect) { if (selectedId !== "") canvas.setElementRect(selectedId, rect, "resize:" + selectedId) }
-    function edgeResize(start, dx, dy, ddx, ddy) {   // a handle's drag → the new world rect (min 8 px)
+    function edgeResize(start, dx, dy, ddx, ddy, lockAspect) {   // a handle's drag → the new world rect (min 8 px)
         let x = start.x, y = start.y, w = start.width, h = start.height
         if (dx < 0) { x = Math.min(start.x + ddx, start.x + start.width - 8); w = start.x + start.width - x }
         else if (dx > 0) w = Math.max(8, start.width + ddx)
         if (dy < 0) { y = Math.min(start.y + ddy, start.y + start.height - 8); h = start.y + start.height - y }
         else if (dy > 0) h = Math.max(8, start.height + ddy)
+        if (lockAspect && start.width > 0 && start.height > 0) {   // a video element keeps its picture's aspect (walk 7c)
+            const ratio = start.width / start.height
+            if (dx !== 0 && (dy === 0 || Math.abs(ddx) >= Math.abs(ddy) * ratio)) h = Math.max(8, w / ratio)
+            else w = Math.max(8, h * ratio)
+            if (dx < 0) x = start.x + start.width - w     // the moved edges stay under the pointer's side
+            if (dy < 0) y = start.y + start.height - h
+        }
         return Qt.rect(x, y, w, h)
     }
     function deleteSelected() {
@@ -111,9 +118,9 @@ Rectangle {
         selectedIds = selectedIds.filter(id => canvas.elementKind(id) !== "")   // (a last page refuses)
     }
     function drillSelected() { if (selectedId !== "" && canvas.elementKind(selectedId) === "page") canvas.focusPage = selectedId }
-    // OPEN (2.0 phase A4) — one action behind the open glyph, the context menu's row, Shift-double-click and
-    // Return: a page pops out to the page view, a video / PDF to its full-frame tab, a text chip to its editor,
-    // a bookmark to the browser, any other file to the platform's default app. (Phase C adds "live in place".)
+    // OPEN (2.0 phase A4) — one action behind the open glyph, the context menu's row and Shift-double-click: a
+    // page pops out to the page view, a video / PDF to its full-frame tab, a text chip to its editor, a bookmark
+    // to the browser, any other file to the platform's default app. (Double-click and Return = goLive: in place.)
     function canOpen(id) { const k = canvas.elementKind(id); return k === "page" || k === "shape" || k === "media" }
     function openLabel(id) {
         const k = canvas.elementKind(id)
@@ -298,9 +305,23 @@ Rectangle {
         return null
     }
     property int lives: 0   // probe diagnostics
+    property int mediaFocuses: 0   // probe
     function goLive(id) {
         const kind = canvas.elementKind(id)
         if (kind === "shape") { if (liveId !== "" && liveId !== id) endLive(false); editText(id); return }   // a text chip's live form is its editor
+        if (kind === "media") {   // FOCUS (walk 7c, the ladder's rung for media): the camera to readable, selected; a video plays with its bar
+            if (liveId !== "" && liveId !== id) endLive(false)
+            select(id); ++mediaFocuses
+            const target = readableCameraFor(canvas.elementRect(id))
+            const then = function() {
+                if (selectedId !== id || !editor) return
+                const h = editor.canvasVideoHost
+                if (canvas.mediaElementKind(id) === "video" && h && h.valid && !editor.canvasHostPlaying) editor.playFromHost(h)
+            }
+            if (target.moves) animateCameraTo(target.x, target.y, target.z, then); else then()
+            if (editor) editor.forceActiveFocus()
+            return
+        }
         if (kind !== "page" || !editor || !editor.homeSlot) return
         if (liveId !== "" && liveId !== id) endLive(false)
         select(id)

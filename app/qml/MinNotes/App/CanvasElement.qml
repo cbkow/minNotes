@@ -56,7 +56,7 @@ Item {
             if (tap.shift) { el.view.select(el.elementId); el.view.openSelected(); return }   // the "full window" rung
             if (el.kind === "page") el.view.goLive(el.elementId)   // live IN PLACE (SPIKE S4); the glyph / Shift pops out
             else if (el.kind === "shape") el.view.editText(el.elementId)
-            else if (el.kind === "media") { el.view.select(el.elementId); el.view.openSelected() }   // phase A: the full-frame view / Open (phase C re-points this to live-in-place)
+            else if (el.kind === "media") el.view.goLive(el.elementId)   // FOCUS in place (walk 7c): camera to readable, a video plays; Open stays on the glyph / Shift / the menu
         }
     }
     DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row
