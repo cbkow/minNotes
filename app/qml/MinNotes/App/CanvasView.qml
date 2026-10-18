@@ -39,7 +39,8 @@ Rectangle {
         // The default size is the document's body size (ruling 2026-10-18: never larger than the document's text).
         const size = editor.inspector && editor.inspector.drawTextSize ? editor.inspector.drawTextSize : Theme.font.sizeBody
         const pen = editor.inspector ? "" + editor.inspector.drawColor : "#ffffff"
-        const spec = plain ? { shape: "text", text: "", fontSize: size, fill: "transparent", color: pen }   // plain: no box, the pen's colour
+        const ink = editor.inspector ? "" + editor.inspector.fgColor : "" + Theme.colors.text
+        const spec = plain ? { shape: "text", text: "", fontSize: size, fill: "transparent", color: ink }   // plain: no box, the TEXT colour (user, 2026-10-18)
                            : { shape: "text", text: "", fontSize: size, fill: pen }
         const id = canvas.addShapeElement(JSON.stringify(spec), Qt.rect(w.x, w.y, Math.max(120, size * 6), size * 1.4 + Math.round(size * 0.6)))
         if (id === "") return ""
