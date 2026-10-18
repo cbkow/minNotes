@@ -248,7 +248,7 @@ Rectangle {
                 width: parent.width; spacing: 8
                 Text {
                     visible: threadRep.count === 0
-                    text: panel.editor && panel.editor.activeCanvas
+                    text: panel.editor && panel.editor.activeCanvas && !panel.editor.cardHosted
                           ? "No unanchored comments.\nComments live on pages —\nopen one to see its threads."
                           : "No comments yet.\nSelect text and use\n“Add comment”."
                     color: Theme.colors.textMuted
@@ -257,7 +257,7 @@ Rectangle {
                 Repeater {
                     id: threadRep
                     // On the canvas: the FILE's unanchored threads (no page is in view); on a page: its threads.
-                    model: panel.editor && panel.editor.activeCanvas
+                    model: panel.editor && panel.editor.activeCanvas && !panel.editor.cardHosted
                            ? (blockModel.commentsRevision, canvas.elementsRevision, canvas.orphanThreads())
                            : (blockModel.commentsRevision, blockModel.structureRevision, blockModel.commentThreads())
                     delegate: Rectangle {
@@ -629,7 +629,7 @@ Rectangle {
                                 return qsTr("tables have no ink surface")
                             // 2.0: the page's margin ink is gone; drawings live on the CANVAS, where every
                             // stroke tool and the eraser are live (text boxes return with the shape tools).
-                            if (panel.editor.activeCanvas) return ""
+                            if (panel.editor.activeCanvas && !panel.editor.cardHosted) return ""
                             if (panel.editor.activeFrameId === "")
                                 return qsTr("drawing lives on the canvas")
                             if (panel.editor.pdfTabOpen)

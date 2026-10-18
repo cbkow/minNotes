@@ -36,7 +36,7 @@ Item {
     // drag reads the SCENE delta (zoom-free) and rebases the world rect; a run coalesces into one
     // undo entry ("move:<id>"). Space held = hand: the view's pan handler takes over.
     readonly property var view: parent && parent.parent ? parent.parent : null   // canvasLayer → CanvasView
-    readonly property bool isLive: view && view.liveId === elementId   // the Editor owns the pointer inside a live card
+    readonly property bool isLive: view && view.liveKind === "page" && view.liveId === elementId   // the Editor owns the pointer inside a live card
     TapHandler {
         id: tap
         enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.isLive
@@ -46,7 +46,7 @@ Item {
         readonly property bool shift: (point.modifiers & Qt.ShiftModifier) !== 0
         onSingleTapped: (ev) => {
             ++el.view.taps
-            if (el.view.liveId !== "") el.view.endLive(false)   // a click on another element ends the live card
+            if (el.view.liveKind === "page") el.view.endLive(false)   // a click on another element ends the live card
             if (tap.shift) el.view.toggleSelect(el.elementId)
             else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
             el.editor.forceActiveFocus()

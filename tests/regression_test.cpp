@@ -6491,6 +6491,34 @@ static void testLivePage() {
     CHECK(docs.activeModel() == cv->pageModel(q1) && modelChanges == 2, "…and back to the fallback when liveness ends (%d)", modelChanges);
 }
 
+// [139] The page's remembered scroll (phase C5): a view fact in json.view.scrollY — no undo row, not dirty, saved with the file.
+static void testPageViewCache() {
+    qInfo("[139] cachePageView / pageScrollY (phase C5): written straight to the store, no history row, no revision bump, not dirty; survives save + reopen; non-pages ignored");
+    QTemporaryDir dir;
+    CanvasDocument c; CHECK(c.newCanvas(), "canvas");
+    const QString p = c.firstPageId();
+    c.pageModel(p)->setContent(0, QStringLiteral("x"));
+    CHECK(c.save() || true, "(an untitled canvas can't save in place — fine)");
+    const QString file = dir.filePath(QStringLiteral("v.mnd"));
+    CHECK(c.saveAs(file) && !c.dirty(), "saved clean");
+    const int rows = c.undoHistory().size(), rev = c.elementsRevision(), grev = c.geometryRevision();
+    CHECK(c.pageScrollY(p) == 0, "no scroll remembered yet");
+    c.cachePageView(p, 1234.6);
+    CHECK(c.pageScrollY(p) == 1235 && c.undoHistory().size() == rows && c.elementsRevision() == rev && c.geometryRevision() == grev && !c.dirty(),
+          "cachePageView rounds, writes no history row, bumps no revision, does not dirty the file (%g)", c.pageScrollY(p));
+    const QString ink = c.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}"), QRectF(2000, 0, 10, 10));
+    c.cachePageView(ink, 50);
+    CHECK(c.pageScrollY(ink) == 0, "a non-page element keeps no scroll");
+    c.cachePageView(p, -40);
+    CHECK(c.pageScrollY(p) == 0, "negative clamps to 0");
+    c.cachePageView(p, 777);
+    CHECK(c.save() && !c.dirty(), "saved again");
+    c.closeCanvas();
+    CanvasDocument d; CHECK(d.open(file), "reopened");
+    CHECK(d.pageScrollY(d.firstPageId()) == 777, "…the scroll survived the round trip (%g)", d.pageScrollY(d.firstPageId()));
+    CHECK(!d.canUndo(), "…with nothing to undo for it");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -9020,6 +9048,7 @@ int main(int argc, char** argv) {
     testMultiDocToCanvas();
     testAudioElements();
     testLivePage();
+    testPageViewCache();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

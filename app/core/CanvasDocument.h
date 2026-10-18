@@ -158,6 +158,11 @@ public:
     // A page card's laid-out height, written back to the element as a CACHE (culling, exporters):
     // no undo entry, no dirty flag; the next save carries it.
     Q_INVOKABLE void cachePageHeight(const QString& id, qreal h);
+    // The page's remembered scroll offset (phase C5) in `json.view.scrollY` — a VIEW fact like the camera: written
+    // straight to the store and the mirror, no undo row, no revision bump, not dirty (the next save carries it).
+    // A live card scrolls into it; drilling in opens the page view there.
+    Q_INVOKABLE void cachePageView(const QString& id, qreal scrollY);
+    Q_INVOKABLE qreal pageScrollY(const QString& id) const;
     // The camera: {x, y, z} pan/zoom; hasCamera false until set. Persisted with the file.
     bool hasCamera() const { return camValid_; }
     Q_INVOKABLE QVariantMap camera() const;

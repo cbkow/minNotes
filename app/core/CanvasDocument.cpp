@@ -762,6 +762,26 @@ void CanvasDocument::cachePageHeight(const QString& id, qreal h) {
     emit geometryChanged();
 }
 
+void CanvasDocument::cachePageView(const QString& id, qreal scrollY) {
+    const int i = indexById_.value(id, -1);
+    if (i < 0 || !db_.isOpen()) return;
+    Document::Element& e = elements_[size_t(i)];
+    if (e.kind != QLatin1String("page")) return;
+    QJsonObject root = QJsonDocument::fromJson(e.json.toUtf8()).object();
+    QJsonObject view = root.value(QStringLiteral("view")).toObject();
+    const qreal y = std::max<qreal>(0, std::round(scrollY));
+    if (std::abs(view.value(QStringLiteral("scrollY")).toDouble() - y) < 0.5) return;
+    view.insert(QStringLiteral("scrollY"), y);
+    root.insert(QStringLiteral("view"), view);
+    e.json = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    db_.updateElementJson(id, e.json);
+}
+qreal CanvasDocument::pageScrollY(const QString& id) const {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("page")) return 0;
+    return QJsonDocument::fromJson(e->json.toUtf8()).object().value(QStringLiteral("view")).toObject().value(QStringLiteral("scrollY")).toDouble();
+}
+
 QVariantMap CanvasDocument::camera() const {
     QVariantMap m;
     m.insert(QStringLiteral("x"), camX_);

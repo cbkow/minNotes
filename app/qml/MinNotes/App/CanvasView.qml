@@ -253,7 +253,39 @@ Rectangle {
     // --- LIVE CARD (2.0 SPIKE S4): a page edited IN PLACE. canvas.livePage makes the page the active model
     // (the manager re-points blockModel); the ONE Editor is reparented from its home slot into the card's
     // liveSlot and back. Keys and wheel go to it; the middle button and ⌥-drag pan the canvas; Escape ends it. ---
-    readonly property string liveId: canvas.livePage
+    // ONE state machine for "live" (phase C3): a page (canvas.livePage, the Editor in its card) or a text chip
+    // (textEditor.editingId). `liveId` names whichever is live; `liveKind` which kind.
+    readonly property string liveId: canvas.livePage !== "" ? canvas.livePage : textEditor.editingId
+    readonly property string liveKind: canvas.livePage !== "" ? "page" : textEditor.editingId !== "" ? "shape" : ""
+    // The camera animates to a readable zoom and brings the element into view before a page goes live (phase C2):
+    // 180 ms, OutCubic, then `camThen` runs. Skipped when already ≥ 100 % and in view.
+    property real camT: 0
+    property var camFrom: null
+    property var camTo: null
+    property var camThen: null
+    readonly property bool camAnimating: camAnim.running
+    NumberAnimation { id: camAnim; target: cv; property: "camT"; from: 0; to: 1; duration: 180; easing.type: Easing.OutCubic
+                      onFinished: { const f = cv.camThen; cv.camThen = null; cv.camFrom = cv.camTo = null; if (f) f() } }
+    onCamTChanged: if (camFrom && camTo) cam.setCamera(camFrom.x + (camTo.x - camFrom.x) * camT, camFrom.y + (camTo.y - camFrom.y) * camT, camFrom.z + (camTo.z - camFrom.z) * camT, true)
+    function animateCameraTo(panX, panY, zoom, then) {
+        camAnim.stop()
+        camFrom = { x: cam.panX, y: cam.panY, z: cam.zoom }; camTo = { x: panX, y: panY, z: zoom }; camThen = then
+        camT = 0; camAnim.restart()
+    }
+    // The camera that shows `r` at zoom ≥ 1 with the least movement: zoom about the rect's centre, then shift
+    // just enough to bring it inside the viewport (a rect wider / taller than the view aligns top-left).
+    function readableCameraFor(r) {
+        const z = Math.max(1, cam.zoom), pad = 24
+        const c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)            // the centre stays put through the zoom
+        let px = c.x - (r.x + r.width / 2) * z, py = c.y - (r.y + r.height / 2) * z
+        // pan ≥ lo keeps the rect's leading edge inside the padding; pan ≤ hi its trailing edge. Infeasible (the
+        // rect is bigger than the view) → align the leading edge.
+        const loX = pad - r.x * z, hiX = width - pad - (r.x + r.width) * z
+        const loY = pad - r.y * z, hiY = height - pad - (r.y + r.height) * z
+        px = loX <= hiX ? Math.max(loX, Math.min(hiX, px)) : loX
+        py = loY <= hiY ? Math.max(loY, Math.min(hiY, py)) : loY
+        return { x: px, y: py, z: z, moves: Math.abs(px - cam.panX) > 0.5 || Math.abs(py - cam.panY) > 0.5 || Math.abs(z - cam.zoom) > 0.001 }
+    }
     // Liveness can end from ANY path — a drill-in, a page removal, a close, a tab switch — not only Escape
     // here: whenever it does, the Editor goes home (a stranded Editor inside a card swallows every gesture).
     onLiveIdChanged: if (liveId === "" && editor && editor.homeSlot && editor.parent !== editor.homeSlot) {
@@ -267,34 +299,42 @@ Rectangle {
     }
     property int lives: 0   // probe diagnostics
     function goLive(id) {
-        if (canvas.elementKind(id) !== "page" || !editor || !editor.homeSlot) return
-        textEditor.commit()
+        const kind = canvas.elementKind(id)
+        if (kind === "shape") { if (liveId !== "" && liveId !== id) endLive(false); editText(id); return }   // a text chip's live form is its editor
+        if (kind !== "page" || !editor || !editor.homeSlot) return
         if (liveId !== "" && liveId !== id) endLive(false)
-        if (cam.zoom < 1) {   // readable first (phase C animates this)
-            const r = canvas.elementRect(id), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)
-            cam.zoomAboutPoint(1, c.x, c.y)
-        }
         select(id)
-        canvas.livePage = id          // → blockModel is this page; the card's preview unloads
-        ++lives
-        Qt.callLater(function() {     // mount after the press that asked for it has fully released
-            const p = pageItemFor(id)
-            if (!p || !p.page || canvas.livePage !== id) { canvas.livePage = ""; return }
-            editor.parent = p.page.liveSlot
-            editor.commitPageWidth(0)   // the card's measure (== what the preview told the model)
-            editor.forceActiveFocus()
-        })
+        const target = readableCameraFor(canvas.elementRect(id))
+        const mount = function() {
+            if (selectedId !== id || canvas.livePage !== "") return   // the user moved on during the animation
+            canvas.livePage = id          // → blockModel is this page; the card's preview unloads
+            ++lives
+            Qt.callLater(function() {     // mount after the press that asked for it has fully released
+                const p = pageItemFor(id)
+                if (!p || !p.page || canvas.livePage !== id) { canvas.livePage = ""; return }
+                editor.parent = p.page.liveSlot
+                editor.commitPageWidth(0)   // the card's measure (== what the preview told the model)
+                editor.restoreScrollY(canvas.pageScrollY(id))
+                editor.forceActiveFocus()
+            })
+        }
+        if (target.moves) animateCameraTo(target.x, target.y, target.z, mount); else mount()
     }
     function endLive(selectIt) {
-        const id = liveId
-        if (id === "") return
+        if (camAnim.running) { camAnim.stop(); camThen = null }
+        if (textEditor.editingId !== "") textEditor.commit()
+        const id = canvas.livePage
+        if (id === "") { if (selectIt && selectedId === "") {} return }
+        editor.flushScrollSave()
         if (editor.homeSlot) editor.parent = editor.homeSlot
         canvas.livePage = ""
         editor.commitPageWidth(0)
         if (selectIt) select(id)
         editor.forceActiveFocus()
     }
-    function liveSelected() { if (selectedId !== "" && canvas.elementKind(selectedId) === "page") goLive(selectedId) }
+    function liveSelected() { if (selectedId !== "") goLive(selectedId) }
+    // Below a readable zoom a live card is unusable: the camera dropping under 75 % ends liveness (phase C8).
+    Connections { target: cam; function onCameraChanged() { if (canvas.livePage !== "" && !camAnim.running && cam.zoom < 0.75) cv.endLive(true) } }
     Connections { target: cv.editor; function onLiveExitRequested() { cv.endLive(true) } }
     Connections {   // elements come, go or grow under a camera the user hasn't taken yet
         target: canvas
@@ -388,10 +428,10 @@ Rectangle {
         onSingleTapped: (ev) => {
             ++cv.taps
             if (!cv.emptyAt(ev.position.x, ev.position.y)) return
-            cv.endLive(false)   // a click elsewhere ends a live card
+            cv.endLive(false)   // a click elsewhere ends a live card (and commits a chip's edit)
             if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
             else if (cv.pageTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addPageAt(w.x, w.y); if (id !== "") cv.select(id) }
-            else { textEditor.commit(); cv.clearSelection(); cv.editor.forceActiveFocus() }
+            else { cv.clearSelection(); cv.editor.forceActiveFocus() }
         }
         onDoubleTapped: (ev) => { ++cv.doubleTaps; if (cv.pointerTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
     }

@@ -16,7 +16,7 @@ Rectangle {
     property var inspector: null      // the right inspector panel this rail toggles
     // Block and format actions act on the focused PAGE; on the canvas no page is in view, so they
     // grey (the Inspector's draw tools use the same language the other way round).
-    readonly property bool pageActions: !!editor && !editor.activeCanvas
+    readonly property bool pageActions: !!editor && (!editor.activeCanvas || editor.cardHosted)   // a live card is a page (phase C6)
 
     width: 46
     color: Theme.colors.surface
