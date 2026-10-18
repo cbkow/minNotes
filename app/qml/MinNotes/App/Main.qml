@@ -1525,7 +1525,7 @@ ApplicationWindow {
             Row {
                 id: tabRow
                 anchors.left: parent.left; anchors.top: parent.top
-                anchors.right: viewTools.left
+                anchors.right: navBtn.left
                 height: parent.height
                 clip: true
                 Repeater {
@@ -1618,14 +1618,6 @@ ApplicationWindow {
             // strip stays usable when many docs are open (the tabs clip; this
             // is always one click away). Mirrors TableTabs' overflow menu, but
             // opens DOWNWARD (the strip is at the window's top edge).
-            // The view's tools (2.0): the canvas's pointer / hand / page / text / ink tools, a PDF or video
-            // tab's ink tools; nothing for the page view. Right of the file tabs, before the strip buttons.
-            CanvasToolbar {
-                id: viewTools
-                anchors.right: navBtn.left; anchors.rightMargin: visible ? 8 : 0; anchors.top: parent.top
-                height: docTabBar.height
-                editor: win.activeEditor
-            }
             Rectangle {
                 id: navBtn
                 anchors.right: newTabBtn.left; anchors.top: parent.top
@@ -1695,7 +1687,7 @@ ApplicationWindow {
 
             Rectangle {   // new-tab button, pinned right
                 id: newTabBtn
-                anchors.right: annotCluster.left; anchors.top: parent.top
+                anchors.right: parent.right; anchors.top: parent.top
                 width: Theme.dim.tabRowH; height: docTabBar.height
                 color: newMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
@@ -1706,30 +1698,6 @@ ApplicationWindow {
                             cursorShape: Qt.PointingHandCursor; onClicked: docs.newTab() }
             }
 
-            // Document chrome at the strip's right edge (right of "+"): the Inspector toggle.
-            Row {
-                id: annotCluster
-                anchors.right: parent.right; anchors.top: parent.top
-                readonly property var ed: contentRow.editor
-                // Inspector (right sidebar) toggle — moved off the LeftRail.
-                // The arrow points where the panel will GO: left (slide out
-                // over the document) when closed, right (dismiss) when open.
-                Rectangle {
-                    visible: !!annotCluster.ed
-                    width: Theme.dim.tabRowH; height: docTabBar.height
-                    color: inspectorPanel.open ? Theme.colors.accent
-                                               : (sideMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-                    Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                                color: Theme.colors.border }
-                    Icon { anchors.centerIn: parent
-                           name: inspectorPanel.open ? "arrow-line-right" : "arrow-line-left"; size: 14
-                           color: inspectorPanel.open || sideMA.containsMouse ? Theme.colors.textBright
-                                                                              : Theme.colors.textMuted }
-                    MouseArea { id: sideMA; anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: inspectorPanel.open = !inspectorPanel.open }
-                }
-            }
         }
 
         // Rows 2 + 3 of the top chrome (2026-10-18, §2.14): the COMPONENTS row (pages / elements / frames — the
@@ -1744,7 +1712,9 @@ ApplicationWindow {
             // the two dimensions are independent.
             sourceComponent: Column {
                 property alias tabs: componentsRow
+                property alias toolbar: chromeToolbar
                 TableTabs { id: componentsRow; width: parent.width; editor: win.activeEditor }
+                ChromeToolbar { id: chromeToolbar; width: parent.width; editor: win.activeEditor; inspector: inspectorPanel }
             }
         }
 
@@ -1755,7 +1725,6 @@ ApplicationWindow {
             // editor is null while no document is open — the rail/inspector guard it,
             // and the welcome overlay covers everything.
             readonly property var editor: docContent.item ? docContent.item.editorItem : null
-            LeftRail { id: rail; height: parent.height; editor: parent.editor; inspector: inspectorPanel }
             // The editor surface only exists while a document is open, so no binding
             // ever queries the empty model (which would index empty vectors → crash).
             // The Inspector is anchored OUTSIDE this Row (below) so it can float
@@ -1764,7 +1733,7 @@ ApplicationWindow {
             Loader {
                 id: docContent
                 active: blockModel.documentOpen
-                width: parent.width - rail.width - (inspectorPanel.floating ? 0 : inspectorPanel.width)
+                width: parent.width - (inspectorPanel.floating ? 0 : inspectorPanel.width)
                 height: parent.height
                 sourceComponent: Column {
                     anchors.fill: parent
@@ -1776,7 +1745,7 @@ ApplicationWindow {
                     Item {
                         id: surface
                         width: parent.width
-                        height: parent.height - innerBottom.height
+                        height: parent.height
                         clip: true   // the canvas's elements (and a selection frame's glyph) may extend past the view: the chrome rows above must still take their clicks (2026-10-18)
                         Item {
                             id: editorSlot
@@ -1785,12 +1754,13 @@ ApplicationWindow {
                             // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
                             Editor { id: editorInner; anchors.fill: parent
                                      homeSlot: editorSlot; canvasItem: canvasView
-                                     inspector: inspectorPanel; toolbarItem: viewTools
-                                     tabsItem: chromeRows.item ? chromeRows.item.tabs : null }
+                                     inspector: inspectorPanel
+                                     tabsItem: chromeRows.item ? chromeRows.item.tabs : null
+                                     toolbarItem: chromeRows.item ? chromeRows.item.toolbar.canvasTools : null
+                                     chromeItem: chromeRows.item ? chromeRows.item.toolbar : null }
                         }
                         CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner }
                     }
-                    BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
                 }
             }
         }

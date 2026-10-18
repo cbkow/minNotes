@@ -42,8 +42,7 @@ Rectangle {
     // A divider line along the BOTTOM edge (the row sits above the content now).
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 1 }
 
-    property int selects: 0   // probe diagnostics
-    function _select(id) { ++selects; if (editor) editor.setActiveTab(id) }
+    function _select(id) { if (editor) editor.setActiveTab(id) }
     // A page tab: focus the page FIRST (the manager re-points blockModel), then the Document view.
     function _selectPage(id) { if (id === "") return; canvas.focusPage = id; _select("") }
     function _addPage() { const id = canvas.addPage(); if (id !== "") _selectPage(id) }
@@ -107,9 +106,8 @@ Rectangle {
             color: parent.active ? Theme.colors.textBright : Theme.colors.textMuted
             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall   // the tab tier (12)
         }
-        property int presses: 0; property int clicks: 0   // probe diagnostics
         MouseArea { id: tabMA; anchors.fill: parent; hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor; onPressed: ++btn.presses; onClicked: { ++btn.clicks; parent.clicked() } }
+                    cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked() }
         // Full name on hover — opens BELOW the row (it sits under the files row now). Left-aligned so
         // long filenames extend rightward.
         FlatToolTip {

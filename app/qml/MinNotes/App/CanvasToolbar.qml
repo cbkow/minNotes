@@ -1,8 +1,8 @@
-// The view's tools (2.0), in the top strip beside the file tabs — only what the view in front can
-// use: the canvas gets the pointer, the hand, the page tool, text and the ink tools; a PDF or video
-// tab the ink tools it takes frame ink with; the page view none (its formatting is the left rail).
-// The tool state stays the Inspector's `drawTool` (the studio and the pen read it); the swatch and
-// the width readout open the Inspector's palette, where the colour and the width live.
+// The view's tools (2.0): the canvas's pointer / hand / page / text / ink tools, a PDF or video tab's ink tools,
+// nothing for the page view (its formatting is the toolbar's page-mode set). A SEGMENT of ChromeToolbar since the
+// chrome re-organisation (2026-10-18); the probes read it as `editor.toolbarItem` (visible / view / enabled). The
+// tool state stays the Inspector's `drawTool` (the studio and the pen read it); the colour and the width live in the
+// colour flyout behind the toolbar's swatch stack.
 import QtQuick
 
 Row {
@@ -15,7 +15,7 @@ Row {
     visible: view !== ""
     enabled: !(editor && editor.cardHosted)   // while a page is live its keys and clicks belong to the editor (phase C6)
     spacing: 2
-    height: 36
+    height: Theme.dim.toolbarH
     readonly property var canvasTools: [
         { tool: "select",   icon: "cursor",         tip: qsTr("Select  (V)") },
         { tool: "hand",     icon: "hand",           tip: qsTr("Hand — pan  (H)") },
@@ -48,28 +48,11 @@ Row {
             required property var modelData
             anchors.verticalCenter: parent.verticalCenter
             iconName: modelData.icon; tooltip: modelData.tip; tooltipSide: "bottom"
-            implicitHeight: 28; implicitWidth: 30; iconSize: 16; radius: 0
+            implicitHeight: Theme.dim.chromeBtn; implicitWidth: Theme.dim.chromeBtn; iconSize: Theme.dim.chromeIcon; radius: 0
             checked: bar.isChecked(modelData.tool)
             checkedColor: Theme.colors.divider
             iconColor: checked ? Theme.colors.textBright : Theme.colors.textMuted
             onClicked: if (bar.inspector) { bar.inspector.drawTool = modelData.tool; if (bar.editor) bar.editor.forceActiveFocus() }
         }
-    }
-    Rectangle { width: 1; height: 20; anchors.verticalCenter: parent.verticalCenter; color: Theme.colors.border; visible: bar.view !== "" }
-    Rectangle {   // the draw colour: opens the palette
-        anchors.verticalCenter: parent.verticalCenter
-        width: 18; height: 18; radius: 0
-        color: bar.inspector ? bar.inspector.drawColor : "transparent"
-        border.width: 1; border.color: Theme.colors.border
-        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (bar.inspector) bar.inspector.view = "palette" }
-        FlatToolTip { visible: parent.children[0].containsMouse; text: qsTr("Colour — open the palette") }
-    }
-    Text {   // the pen width: opens the palette
-        anchors.verticalCenter: parent.verticalCenter
-        leftPadding: 6; rightPadding: 8
-        text: bar.inspector ? bar.inspector.drawWidth + " px" : ""
-        color: Theme.colors.textMuted
-        font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (bar.inspector) bar.inspector.view = "palette" }
     }
 }

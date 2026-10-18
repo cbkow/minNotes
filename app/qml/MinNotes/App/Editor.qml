@@ -332,7 +332,8 @@ FocusScope {
     property var canvasItem: null   // the CanvasView (a sibling in Main.qml; set there) — zoom / keys / view state route to it
     property Item homeSlot: null    // where this Editor lives in the page view (Main.qml's editorSlot); a live card borrows it
     property var tabsItem: null   // the bottom strip (set from Main.qml; the canvas probe counts its tabs)
-    property var toolbarItem: null   // the top strip's view toolbar (set from Main.qml; the probe)
+    property var toolbarItem: null
+    property var chromeItem: null     // the toolbar ROW (ChromeToolbar) — the chrome probe phase   // the top strip's view toolbar (set from Main.qml; the probe)
 
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
     // tab shows the board; a table with no grouping column stays in the document.

@@ -1,5 +1,4 @@
-// ZoomBadge — a full-frame tab's one piece of zoom chrome: a quiet corner
-// percent readout that is also a button. Click → a small popup (the in-editor
+// ZoomBadge — the toolbar's zoom chrome: a quiet percent readout that is also a button. Click → a small popup (the in-editor
 // context-menu recipe): Fit ⌘1, 100% ⌘0. Gestures and keys do the real zooming; this is the readout plus the
 // teaching surface for the shortcuts. Props/signals only, no sketch
 // dependencies — the PDF tab could mount it verbatim.
@@ -70,7 +69,7 @@ Item {
     Popup {
         id: menu
         x: badge.width - width
-        y: -height - 4          // opens upward from the bottom-corner badge
+        y: badge.height + 4     // opens DOWNWARD (the badge lives in the toolbar row at the top since 2026-10-18)
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: Rectangle {

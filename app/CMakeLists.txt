@@ -202,8 +202,6 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Icon.qml
         qml/MinNotes/App/FlatButton.qml
         qml/MinNotes/App/FlatToolTip.qml
-        qml/MinNotes/App/LeftRail.qml
-        qml/MinNotes/App/BottomRail.qml
         qml/MinNotes/App/BlockView.qml
         qml/MinNotes/App/TableTabs.qml
         qml/MinNotes/App/MediaBlock.qml
@@ -231,6 +229,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasSelectionFrame.qml
         qml/MinNotes/App/CanvasTextEditor.qml
         qml/MinNotes/App/CanvasToolbar.qml
+        qml/MinNotes/App/ChromeToolbar.qml
         qml/MinNotes/App/CanvasContextMenu.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES
