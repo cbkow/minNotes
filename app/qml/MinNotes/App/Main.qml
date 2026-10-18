@@ -1518,8 +1518,11 @@ ApplicationWindow {
             id: docTabBar
             width: parent.width
             visible: docs.count > 0
-            height: visible ? Theme.dim.tabRowH : 0   // 28 (was 36) — the files row of the three top rows (2026-10-18)
-            color: Theme.colors.surfaceRaised
+            height: visible ? Theme.dim.tabRowH : 0   // 24 — the files row of the three top rows (2026-10-18)
+            // The tab rows sit DARKER than the content (user ruling 2026-10-18): the strip is the window shell's
+            // tone; the ACTIVE tab is the content's own colour (it opens into the page); inactive tabs stay on the
+            // dark strip — no fill, no underline, the text brightens on hover.
+            color: Theme.colors.bg
             // (bottom hairline removed — the raised strip's tonal step against
             // the page separates on its own; border diet, product pass 2)
 
@@ -1538,15 +1541,9 @@ ApplicationWindow {
                         readonly property bool active: index === docs.activeIndex
                         width: Math.min(220, tabLabel.implicitWidth + 44)
                         height: docTabBar.height
-                        color: active ? Theme.colors.divider
-                             : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-                        Rectangle {   // active underline (white)
-                            visible: tab.active
-                            anchors.bottom: parent.bottom; width: parent.width; height: 2
-                            color: Theme.colors.textBright
-                        }
+                        color: active ? Theme.colors.bgAlt : "transparent"   // the active tab = the content's colour
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height
-                                    color: Theme.colors.border }
+                                    color: Theme.colors.bgAlt2; visible: !tab.active }
                         Text {
                             id: tabLabel
                             anchors.verticalCenter: parent.verticalCenter
@@ -1556,7 +1553,7 @@ ApplicationWindow {
                             // "•" marks an untitled (never-saved) OR a modified (unsaved-edits) doc.
                             text: ((tab.modelData.untitled || tab.modelData.dirty) ? "• " : "")
                                   + tab.modelData.documentName
-                            color: tab.active ? Theme.colors.textBright : Theme.colors.textMuted
+                            color: tab.active || tabMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
                             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall   // the tab tier (12)
                         }
                         FlatToolTip {   // the file's path (the bottom rail used to print it; the tab is the name now)
@@ -1602,10 +1599,10 @@ ApplicationWindow {
                             id: tabClose
                             anchors.right: parent.right; anchors.rightMargin: 6
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 16; height: 16
+                            width: 14; height: 14
                             visible: tabMA.containsMouse || closeMA.containsMouse || tab.active
                             color: closeMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
-                            Icon { anchors.centerIn: parent; name: "x"; size: 11
+                            Icon { anchors.centerIn: parent; name: "x"; size: 10
                                    color: closeMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
                             MouseArea { id: closeMA; anchors.fill: parent; hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
@@ -1623,10 +1620,9 @@ ApplicationWindow {
                 id: navBtn
                 anchors.right: newTabBtn.left; anchors.top: parent.top
                 width: Theme.dim.tabRowH; height: docTabBar.height   // square: one width for every strip button
-                color: navMenu.visible ? Theme.colors.divider
-                     : (navMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+                color: navMenu.visible ? Theme.colors.bgAlt : "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                            color: Theme.colors.border }
+                            color: Theme.colors.bgAlt2 }
                 Icon { anchors.centerIn: parent; name: "list"; size: 14
                        color: navMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
                 MouseArea { id: navMA; anchors.fill: parent; hoverEnabled: true
@@ -1690,9 +1686,9 @@ ApplicationWindow {
                 id: newTabBtn
                 anchors.right: parent.right; anchors.top: parent.top
                 width: Theme.dim.tabRowH; height: docTabBar.height
-                color: newMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
+                color: "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                            color: Theme.colors.border }
+                            color: Theme.colors.bgAlt2 }
                 Icon { anchors.centerIn: parent; name: "plus"; size: 14
                        color: newMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
                 MouseArea { id: newMA; anchors.fill: parent; hoverEnabled: true

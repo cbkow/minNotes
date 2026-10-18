@@ -37,7 +37,7 @@ Rectangle {
     visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
     readonly property int rowH: Theme.dim.componentRowH   // 24 (was 34)
     height: visible ? rowH : 0
-    color: Theme.colors.surfaceRaised   // sidebar tone — the item-tab strip is chrome, like the Inspector
+    color: Theme.colors.bg              // the dark strip; the active tab is the content's colour (ruling 2026-10-18, like the files row)
 
     // A divider line along the BOTTOM edge (the row sits above the content now).
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 1 }
@@ -92,18 +92,12 @@ Rectangle {
         readonly property bool fullyVisible: x + width <= rowClip.width + 0.5
         opacity: fullyVisible ? 1 : 0
         enabled: fullyVisible
-        // active fill matches the table toolbar's checked Table/Board segment
-        color: active ? Theme.colors.divider : (tabMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-        Rectangle {   // active underline (white — accent stays reserved for real highlights)
-            visible: parent.active
-            anchors.bottom: parent.bottom; width: parent.width; height: 2
-            color: Theme.colors.textBright
-        }
-        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.border }
+        color: active ? Theme.colors.bgAlt : "transparent"   // the active tab = the content's colour; no underline
+        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.bgAlt2; visible: !btn.active }
         Text {
             id: tabLabel
             anchors.centerIn: parent; text: parent.label
-            color: parent.active ? Theme.colors.textBright : Theme.colors.textMuted
+            color: parent.active || tabMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall   // the tab tier (12)
         }
         MouseArea { id: tabMA; anchors.fill: parent; hoverEnabled: true
@@ -215,9 +209,8 @@ Rectangle {
         id: menuBtn
         anchors.right: parent.right; anchors.top: parent.top
         width: tabs.rowH; height: tabs.rowH   // square
-        color: tabMenu.visible ? Theme.colors.divider
-             : (menuMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
-        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.border }
+        color: tabMenu.visible ? Theme.colors.bgAlt : "transparent"
+        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.bgAlt2 }
         Icon { anchors.centerIn: parent; name: "list"; size: 14
                color: tabMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
         // Overflow underline (white, the tab language): some tabs are hidden —

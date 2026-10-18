@@ -68,7 +68,7 @@ QtObject {
         readonly property int rulerHeight: 22        // the Inspector's top bar (was the PageRuler's band);
                                                      // the Inspector's top bar matches it (2026-08-20)
         // The three top rows (2.0 chrome re-organisation, user ruling 2026-10-18): files · components · toolbar.
-        readonly property int tabRowH:        28     // the files row
+        readonly property int tabRowH:        24     // the files row (== the components row; user: "the same size", 2026-10-18)
         readonly property int componentRowH:  24     // the components row (pages / elements / frames)
         readonly property int toolbarH:       30     // the toolbar row
         readonly property int chromeBtn:      28     // a toolbar button's edge (inside the 30-px row)
