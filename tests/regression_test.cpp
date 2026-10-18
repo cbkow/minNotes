@@ -6555,6 +6555,32 @@ static void testPageFixedHeight() {
     CHECK(!c.fitPageHeight(QStringLiteral("nope")), "a missing id is refused");
 }
 
+// [142] Re-styling ink after the fact (walk 7d): setInkWidth rewrites every stroke's width, grows the rect by the
+// half-width delta and shifts the points with it; setInkColor rewrites the colours; one history row each; undo restores.
+static void testInkStyle() {
+    qInfo("[142] ink re-style (walk 7d): setInkWidth / setInkColor on an ink element — strokes, rect and points move together, one history row each");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString env = QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[{\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,\"points\":[[3,3],[53,23]]},{\"type\":\"oval\",\"color\":[1,0,0,1],\"stroke_width\":6,\"points\":[[30,30],[10,8]]}]}");
+    const QString id = c.addInkElement(env, QRectF(100, 100, 56, 26));
+    CHECK(!id.isEmpty() && c.inkWidth(id) == 6, "an ink element with 6-px strokes (%g)", c.inkWidth(id));
+    const int h0 = c.undoHistory().size();
+    CHECK(c.setInkWidth(id, 12, QStringLiteral("inkw:x")) && c.inkWidth(id) == 12, "setInkWidth 12 (%g)", c.inkWidth(id));
+    CHECK(c.elementRect(id) == QRectF(97, 97, 62, 32), "the rect grew by the half-width delta (3) on every side (%g,%g %gx%g)", c.elementRect(id).x(), c.elementRect(id).y(), c.elementRect(id).width(), c.elementRect(id).height());
+    const QJsonArray shapes = QJsonDocument::fromJson(c.elementJson(id).toUtf8()).object().value(QStringLiteral("shapes")).toArray();
+    const QJsonArray p0 = shapes[0].toObject().value(QStringLiteral("points")).toArray(), p1 = shapes[1].toObject().value(QStringLiteral("points")).toArray();
+    CHECK(p0[0].toArray()[0].toDouble() == 6 && p0[0].toArray()[1].toDouble() == 6 && p0[1].toArray()[0].toDouble() == 56, "the freehand points shifted by the delta (%g,%g)", p0[0].toArray()[0].toDouble(), p0[0].toArray()[1].toDouble());
+    CHECK(p1[0].toArray()[0].toDouble() == 33 && p1[1].toArray()[0].toDouble() == 10 && p1[1].toArray()[1].toDouble() == 8, "the oval's centre shifted, its radii did not");
+    CHECK(c.undoHistory().size() == h0 + 1, "one history row for the width (%d → %d)", h0, c.undoHistory().size());
+    c.setInkWidth(id, 14, QStringLiteral("inkw:x"));
+    CHECK(c.undoHistory().size() == h0 + 2 && c.inkWidth(id) == 14, "a further width edit is its own batch row (%d)", c.undoHistory().size());
+    CHECK(c.setInkColor(id, QColor("#00ff00"), QStringLiteral("inkc:x")) && c.elementJson(id).contains(QStringLiteral("\"color\":[0,1,0,1]")), "setInkColor rewrites every stroke's colour");
+    CHECK(c.undoHistory().size() == h0 + 3, "…one row");
+    c.undo(); c.undo(); c.undo();
+    CHECK(c.inkWidth(id) == 6 && c.elementRect(id) == QRectF(100, 100, 56, 26) && c.elementJson(id).contains(QStringLiteral("\"color\":[1,0,0,1]")), "three undos restore width, rect, points and colour");
+    CHECK(!c.setInkWidth(QStringLiteral("nope"), 3) && !c.setInkWidth(c.firstPageId(), 3), "a missing id or a page is refused");
+}
+
 // [140] The canvas exporter (2.0 step 8): the world as positioned HTML (pages as the page export, media figures/cards with paths, ink as SVG, text) + the poster.
 static void testCanvasHtml() {
     qInfo("[140] canvas export (2.0 step 8): toHtml = a world with every element in z order at its rect; pages are the page export's fragments; cards ALWAYS print their path, ufb links only when asked; ink is SVG; the poster renders");
@@ -9173,6 +9199,7 @@ int main(int argc, char** argv) {
     testPageViewCache();
     testCanvasHtml();
     testPageFixedHeight();
+    testInkStyle();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

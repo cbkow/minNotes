@@ -246,6 +246,12 @@ public:
     Q_INVOKABLE QString duplicateElement(const QString& id);
     Q_INVOKABLE bool removeElement(const QString& id);            // a page follows removePage's rules
     Q_INVOKABLE bool setMediaElementInk(const QString& id, int page, const QString& envelope);   // "" clears
+    // Re-style an INK element after the fact (walk 7d, 2026-10-18): every stroke's width / colour. A width change
+    // grows the rect by the half-width delta and shifts the element-local points with it (an oval's radii point
+    // stays). One history row (a batch of the json + rect edits); `coalesce` folds a slider drag.
+    Q_INVOKABLE bool setInkWidth(const QString& id, qreal width, const QString& coalesce = QString());
+    Q_INVOKABLE bool setInkColor(const QString& id, const QColor& color, const QString& coalesce = QString());
+    Q_INVOKABLE qreal inkWidth(const QString& id) const;   // the widest stroke; 0 = not an ink element
     // Pages are elements too: a page's canvas measure is its rect width less the insets. [400, 4000].
     static constexpr double kMinPageMeasure = 400.0;
     static constexpr double kMaxPageMeasure = 4000.0;

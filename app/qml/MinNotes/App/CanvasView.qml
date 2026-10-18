@@ -197,6 +197,14 @@ Rectangle {
         canvas.endBatch()
         if (made.length) selectedIds = made
     }
+    // Re-style the SELECTED ink after the fact (walk 7d): the pen width / colour flyouts call these; one batch per
+    // slider drag (begin on press, end on release); each element coalesces its run inside the batch.
+    readonly property var selectedInkIds: (canvas.elementsRevision, selectedIds.filter(function(id) { return canvas.elementKind(id) === "ink" }))
+    property bool penStyleBatch: false
+    function beginPenStyle(label) { if (selectedInkIds.length && !penStyleBatch) { canvas.beginBatch(label); penStyleBatch = true } }
+    function endPenStyle() { if (penStyleBatch) { canvas.endBatch(); penStyleBatch = false } }
+    function applyPenWidth(w) { for (const id of selectedInkIds) canvas.setInkWidth(id, w, "inkw:" + id) }
+    function applyPenColor(hex) { for (const id of selectedInkIds) canvas.setInkColor(id, hex, "inkc:" + id) }
     function frontSelected() { canvas.beginBatch(qsTr("Bring to front")); for (const id of selectedIds) canvas.bringToFront(id); canvas.endBatch() }
     function backSelected() { canvas.beginBatch(qsTr("Send to back")); for (const id of selectedIds.slice().reverse()) canvas.sendToBack(id); canvas.endBatch() }
     // The topmost ink element under a world point (the eraser).

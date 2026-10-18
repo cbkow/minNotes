@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QColor>
 #include <QJsonObject>
 #include <QVariantMap>
 #include <algorithm>
@@ -1436,6 +1437,61 @@ bool CanvasDocument::setMediaElementInk(const QString& id, int page, const QStri
     if (empty) ink.remove(key); else ink.insert(key, env);
     if (ink.isEmpty()) root.remove(QStringLiteral("ink")); else root.insert(QStringLiteral("ink"), ink);
     return setElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)), QString());
+}
+
+qreal CanvasDocument::inkWidth(const QString& id) const {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("ink")) return 0;
+    qreal w = 0;
+    for (const QJsonValue& v : QJsonDocument::fromJson(e->json.toUtf8()).object().value(QStringLiteral("shapes")).toArray())
+        w = std::max(w, v.toObject().value(QStringLiteral("stroke_width")).toDouble());
+    return w;
+}
+
+bool CanvasDocument::setInkWidth(const QString& id, qreal width, const QString& coalesce) {
+    const auto cur = element(id);
+    if (!cur || cur->kind != QLatin1String("ink")) return false;
+    width = std::clamp(width, 1.0, 64.0);
+    QJsonObject root = QJsonDocument::fromJson(cur->json.toUtf8()).object();
+    QJsonArray shapes = root.value(QStringLiteral("shapes")).toArray();
+    if (shapes.isEmpty()) return false;
+    qreal oldW = 0;
+    for (const QJsonValue& v : shapes) oldW = std::max(oldW, v.toObject().value(QStringLiteral("stroke_width")).toDouble());
+    const qreal delta = (width - oldW) / 2.0;   // the rect is the stroke's bbox + half the width each side (CanvasInkCapture)
+    if (std::abs(delta) < 0.001) return true;
+    for (int i = 0; i < shapes.size(); ++i) {
+        QJsonObject sh = shapes[i].toObject();
+        sh.insert(QStringLiteral("stroke_width"), width);
+        const bool oval = sh.value(QStringLiteral("type")).toString() == QLatin1String("oval");
+        QJsonArray pts = sh.value(QStringLiteral("points")).toArray();
+        for (int k = 0; k < pts.size(); ++k) {
+            if (oval && k == 1) continue;              // the oval's radii are a size, not a position
+            QJsonArray p = pts[k].toArray();
+            if (p.size() < 2) continue;
+            pts[k] = QJsonArray{ p[0].toDouble() + delta, p[1].toDouble() + delta };
+        }
+        sh.insert(QStringLiteral("points"), pts);
+        shapes[i] = sh;
+    }
+    root.insert(QStringLiteral("shapes"), shapes);
+    const QRectF r(cur->x - delta, cur->y - delta, cur->w + 2 * delta, cur->h + 2 * delta);
+    beginBatch(tr("Pen width"));
+    setElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)), coalesce.isEmpty() ? QString() : coalesce + QStringLiteral(":j"));
+    setElementRect(id, r, coalesce.isEmpty() ? QString() : coalesce + QStringLiteral(":r"));
+    endBatch();
+    return true;
+}
+
+bool CanvasDocument::setInkColor(const QString& id, const QColor& color, const QString& coalesce) {
+    const auto cur = element(id);
+    if (!cur || cur->kind != QLatin1String("ink") || !color.isValid()) return false;
+    QJsonObject root = QJsonDocument::fromJson(cur->json.toUtf8()).object();
+    QJsonArray shapes = root.value(QStringLiteral("shapes")).toArray();
+    if (shapes.isEmpty()) return false;
+    const QJsonArray arr{ color.redF(), color.greenF(), color.blueF(), color.alphaF() };
+    for (int i = 0; i < shapes.size(); ++i) { QJsonObject sh = shapes[i].toObject(); sh.insert(QStringLiteral("color"), arr); shapes[i] = sh; }
+    root.insert(QStringLiteral("shapes"), shapes);
+    return setElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)), coalesce);
 }
 
 // ---------------------------------------------------------------------------

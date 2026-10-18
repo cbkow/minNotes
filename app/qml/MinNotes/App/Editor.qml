@@ -4496,6 +4496,15 @@ FocusScope {
                     let maxOther = -1
                     for (let i = 0; i < canvasItem.poolCount; ++i) { const it = canvasItem.elementItemAt(i); if (it && it.elementId !== "" && it.elementId !== id) maxOther = Math.max(maxOther, it.z) }
                     check(!!inkItem && inkItem.z > maxOther, "the new stroke PAINTS ABOVE every other element in view — stacking follows the file's z order, not the pool's slot order (z " + (inkItem ? inkItem.z : "?") + " vs max " + maxOther + ")")
+                    // Re-style after the fact (walk 7d): the selected stroke follows the pen width / colour — one history row per drag
+                    const hw0 = canvas.undoHistory().length, rw0 = canvas.elementRect(id)
+                    canvasItem.beginPenStyle("Pen width"); canvasItem.applyPenWidth(12); canvasItem.applyPenWidth(16); canvasItem.endPenStyle()
+                    const rw1 = canvas.elementRect(id)
+                    check(canvas.inkWidth(id) === 16 && rw1.width > rw0.width + 9 && canvas.undoHistory().length === hw0 + 1, "the selected stroke takes the new pen width — rect grown, ONE history row for the drag (" + canvas.inkWidth(id) + " px, +" + (rw1.width - rw0.width) + ", rows +" + (canvas.undoHistory().length - hw0) + ")")
+                    canvasItem.applyPenColor("#00ff00")
+                    check(canvas.elementJson(id).indexOf("[0,1,0,1]") >= 0 && canvas.undoHistory().length === hw0 + 2, "…and the pen colour recolours it (one more row)")
+                    canvas.undo(); canvas.undo()
+                    check(canvas.inkWidth(id) === 6 && canvas.elementRect(id).width === rw0.width, "two undos restore the stroke's width and rect")
                     ++step; return
                 }
                 if (step === 7) {   // a frame later: the new element's item has tessellated its stroke

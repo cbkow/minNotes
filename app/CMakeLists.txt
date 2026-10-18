@@ -231,6 +231,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasToolbar.qml
         qml/MinNotes/App/ChromeToolbar.qml
         qml/MinNotes/App/ColorFlyout.qml
+        qml/MinNotes/App/PenFlyout.qml
         qml/MinNotes/App/CanvasContextMenu.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES

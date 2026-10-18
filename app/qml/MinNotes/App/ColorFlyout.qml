@@ -2,7 +2,7 @@
 // under the toolbar's 3-stack swatch. The STATE stays on the Inspector object (fgColor / bgColor / drawColor /
 // drawWidth / target + their Settings — six files read `editor.inspector.*`); this is the picker UI only: the target
 // tabs, the HSV picker, Apply (pick-then-select) + live apply (select-then-pick — the gesture-order rule), Revert, the
-// presets + user slots, the pen width. No focus of its own (the keys stay with the editor); the hex field takes focus
+// presets + user slots (the pen width has its own flyout). No focus of its own (the keys stay with the editor); the hex field takes focus
 // when clicked and `onClosed` hands it back.
 import QtQuick
 import QtQuick.Controls
@@ -162,6 +162,7 @@ Popup {
                 if (!flyout._suppressApply && flyout.editor) {
                     if (flyout.inspector.target === "fg")      flyout.editor.pickTextColor("" + value)
                     else if (flyout.inspector.target === "bg") flyout.editor.pickHighlight("" + value)
+                    else if (flyout.editor.canvasItem)         flyout.editor.canvasItem.applyPenColor("" + value)   // selected ink follows the pen colour (walk 7d)
                 }
             }
             Component.onCompleted: if (flyout.inspector) flyout.setPickerValue(flyout.inspector.targetColor())   // init: no apply/arm
@@ -202,21 +203,6 @@ Popup {
                        anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea { id: revertMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: flyout.revertTarget() }
-        }
-        Row {   // the pen width (source px, 1..64)
-            spacing: 8
-            Text { text: qsTr("Pen width"); anchors.verticalCenter: parent.verticalCenter
-                   color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
-            FlatSlider {
-                width: flyout.contentW - 100
-                anchors.verticalCenter: parent.verticalCenter
-                from: 1; to: 64
-                value: flyout.inspector ? flyout.inspector.drawWidth : 6
-                fillColor: Theme.colors.textMuted
-                onMoved: if (flyout.inspector) flyout.inspector.drawWidth = value
-            }
-            Text { text: flyout.inspector ? Math.round(flyout.inspector.drawWidth) : ""; anchors.verticalCenter: parent.verticalCenter
-                   color: Theme.colors.textSubtle; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall }
         }
         Text { text: qsTr("Presets"); color: Theme.colors.textMuted; topPadding: 4
                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }

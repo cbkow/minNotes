@@ -36,6 +36,7 @@ Rectangle {
         if (!colors.visible) colors.open()
     }
     readonly property var colorFlyout: colors
+    readonly property var penFlyout: pen   // probe
 
     component ToolBtn: FlatButton {
         anchors.verticalCenter: parent.verticalCenter
@@ -220,6 +221,18 @@ Rectangle {
                      + (streamNotes.count === 1 ? qsTr(" note") : qsTr(" notes")) + qsTr(" — insert as blocks at the end")
             enabled_: streamNotes.count > 0 && !!bar.editor
             onClicked: bar.act(function() { streamNotes.insertNotesAsBlocks(blockModel, blockModel.count - 1) })
+        }
+        ToolBtn {   // the PEN WIDTH: a line as thick as the pen (scaled), its own flyout (walk 7d)
+            id: penBtn
+            tooltip: qsTr("Pen width") + " (" + Math.round(bar.inspector ? bar.inspector.drawWidth : 6) + " px)"
+            checked: pen.visible
+            Rectangle {
+                anchors.centerIn: parent
+                width: 16; height: Math.max(1, Math.min(9, Math.round((bar.inspector ? bar.inspector.drawWidth : 6) / 2.5))); radius: 0
+                color: penBtn.checked ? Theme.colors.textBright : Theme.colors.textMuted
+            }
+            onClicked: pen.visible ? pen.close() : pen.open()
+            PenFlyout { id: pen; parent: penBtn; inspector: bar.inspector; editor: bar.editor }
         }
         Item {   // the 3-CLIP swatch: text · highlight · pen as VERTICAL clips side by side (user, 2026-10-18); the target's clip is bright-bordered
             id: swatch
