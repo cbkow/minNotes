@@ -7941,10 +7941,11 @@ static void testGridTableExports() {
     RecordingSink fs;
     html = ex.toHtml(Exporter::Options{}, fs);
     CHECK(html.count(QStringLiteral("@font-face{font-family:'Aspekta'")) == 2
-              && html.count(QStringLiteral("@font-face{font-family:'Lora'")) == 4
+              && html.count(QStringLiteral("@font-face{font-family:'PT Serif'")) == 4
               && html.contains(QStringLiteral("@font-face{font-family:'JetBrains Mono'"))
+              && html.contains(QStringLiteral("main p{font:15px/20px 'PT Serif'"))
               && html.contains(QStringLiteral("format('truetype')")),
-          "HTML: Aspekta ×2, Lora ×4 and JetBrains Mono embed as @font-face data");
+          "HTML: Aspekta ×2, PT Serif ×4 and JetBrains Mono embed as @font-face data; paragraphs are PT Serif 15/20");
     CHECK(html.contains(QStringLiteral("font:14px/19px Aspekta,")) && html.contains(QStringLiteral("h1{font-size:30px;line-height:41px}"))
               && html.contains(QStringLiteral("main .blkw{margin:0;padding:6px 0}")) && html.contains(QStringLiteral("ul{margin:0;padding-left:22px}ol{margin:0;padding-left:34px}")),
           "HTML: the app's sizes, pinned line heights, block inset and list insets");

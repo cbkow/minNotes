@@ -1367,10 +1367,10 @@ static QString embeddedFontCss() {
         { "Aspekta",        400, "normal", "Aspekta-400.ttf" },
         { "Aspekta",        700, "normal", "Aspekta-700.ttf" },
         { "JetBrains Mono", 400, "normal", "JetBrainsMono-Regular.ttf" },
-        { "Lora",           400, "normal", "Lora-Regular.ttf" },
-        { "Lora",           400, "italic", "Lora-Italic.ttf" },
-        { "Lora",           700, "normal", "Lora-Bold.ttf" },
-        { "Lora",           700, "italic", "Lora-BoldItalic.ttf" },
+        { "PT Serif",       400, "normal", "PTSerif-Regular.ttf" },      // body paragraphs (the 2026-10-18 type pass)
+        { "PT Serif",       400, "italic", "PTSerif-Italic.ttf" },
+        { "PT Serif",       700, "normal", "PTSerif-Bold.ttf" },
+        { "PT Serif",       700, "italic", "PTSerif-BoldItalic.ttf" },
     };
     QString out;
     for (const Face& f : faces) {
@@ -1428,6 +1428,10 @@ background-repeat:no-repeat}
 body{background:transparent;color:var(--text);margin:0;
 font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main li,main figure,main .blkw{margin:0;padding:6px 0}
+/* The type pass (2026-10-18): body PARAGRAPHS in PT Serif at 15/20 (the app's serif size and its pinned
+   round(15 × 1.35) line height); headings, lists, quotes, table cells, notes and cards keep the sans. */
+main p{font:15px/20px 'PT Serif',Georgia,'Times New Roman',serif}
+main :is(td,th,blockquote,figure,figcaption,header,.notes,.note,.vnotes,.vn,.card,.chip) p{font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 /* Responsive page (2.0 stage 1C; was a fixed 1000px column): the sheet centres when the
    window is wider than it and REFLOWS when not — the app's page is its window's width, and
    the export mirrors that under a 760 measure cap (= kExportMeasure) with the app's 48px
@@ -1465,7 +1469,7 @@ h1{font-size:30px;line-height:41px}h2{font-size:26px;line-height:35px}h3{font-si
 h4{font-size:19px;line-height:26px}h5{font-size:17px;line-height:23px}h6{font-size:16px;line-height:22px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 hr{border:0;border-top:1px solid var(--divider);margin:14px 0 15px}   /* the app's 30 px divider row */
-blockquote{font-family:Lora,Georgia,'Times New Roman',serif;border-left:3px solid var(--quote);
+blockquote{font-family:Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;border-left:3px solid var(--quote);
 margin:0;padding:6px 0 6px 19px;color:var(--muted)}   /* text at 22 = the app's quote inset */
 blockquote p{padding:0}
 /* Code escapes the measure like tables do (user ruling: capping code is
@@ -2216,19 +2220,21 @@ void docxTaskGlyphRun(DocxCtx& c, QXmlStreamWriter& w, int state,
 
 struct DocxRunProps {
     bool b = false, i = false, strike = false, u = false, code = false;
+    bool serif = false;                          // a body paragraph's run: PT Serif (the type pass, 2026-10-18)
     QString color, highlight;                   // "#RRGGBB" or ""
     int halfPtSize = 0;                          // 0 = default
 };
 
 void docxRunProps(QXmlStreamWriter& w, const DocxRunProps& rp) {
-    if (!rp.b && !rp.i && !rp.strike && !rp.u && !rp.code
+    if (!rp.b && !rp.i && !rp.strike && !rp.u && !rp.code && !rp.serif
         && rp.color.isEmpty() && rp.highlight.isEmpty() && rp.halfPtSize == 0)
         return;
     w.writeStartElement(QStringLiteral("w:rPr"));
-    if (rp.code) {
+    if (rp.code || rp.serif) {
+        const QString fam = rp.code ? QStringLiteral("Courier New") : QStringLiteral("PT Serif");
         w.writeStartElement(QStringLiteral("w:rFonts"));
-        w.writeAttribute(QStringLiteral("w:ascii"), QStringLiteral("Courier New"));
-        w.writeAttribute(QStringLiteral("w:hAnsi"), QStringLiteral("Courier New"));
+        w.writeAttribute(QStringLiteral("w:ascii"), fam);
+        w.writeAttribute(QStringLiteral("w:hAnsi"), fam);
         w.writeEndElement();
     }
     if (rp.b) w.writeEmptyElement(QStringLiteral("w:b"));
@@ -2893,6 +2899,7 @@ QByteArray docxDocumentXml(DocxCtx& c) {
                     break;
                 }
                 DocxRunProps rp;
+                rp.serif = tableHead < 0;   // body paragraphs (not table cells) in the serif
                 std::function<void(QXmlStreamWriter&)> jc;
                 if (tableHead >= 0 && lane >= 0) {                  // a table cell: its colour, its column's alignment, tight spacing
                     rp.color = cellFg;
@@ -3713,6 +3720,10 @@ void buildPdfDoc(PdfCtx& c) {
             QTextCharFormat f; f.setForeground(kPdfText);
             if (cellFg.isValid()) f.setForeground(cellFg);
             if (c.cellPt > 0) f.setFontPointSize(c.cellPt);
+            else {   // a body paragraph (not a table cell): the serif at the app's 15 px (the type pass, 2026-10-18)
+                f.setFontFamilies({ QStringLiteral("PT Serif"), QStringLiteral("Georgia"), QStringLiteral("Times New Roman") });
+                f.setFontPointSize(11.25);
+            }
             c.newBlock(bf, f);
             if (tableHead >= 0 && lane >= 0 && tableR >= m->headerCount(tableHead)
                 && m->tableColumnKind(tableHead, lane) == 2) {       // a check cell: its painted box
