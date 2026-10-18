@@ -281,16 +281,27 @@ Rectangle {
     }
     // The camera that shows `r` at zoom ≥ 1 with the least movement: zoom about the rect's centre, then shift
     // just enough to bring it inside the viewport (a rect wider / taller than the view aligns top-left).
-    function readableCameraFor(r) {
-        const z = Math.max(1, cam.zoom), pad = 24
-        const c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)            // the centre stays put through the zoom
-        let px = c.x - (r.x + r.width / 2) * z, py = c.y - (r.y + r.height / 2) * z
-        // pan ≥ lo keeps the rect's leading edge inside the padding; pan ≤ hi its trailing edge. Infeasible (the
-        // rect is bigger than the view) → align the leading edge.
-        const loX = pad - r.x * z, hiX = width - pad - (r.x + r.width) * z
-        const loY = pad - r.y * z, hiY = height - pad - (r.y + r.height) * z
-        px = loX <= hiX ? Math.max(loX, Math.min(hiX, px)) : loX
-        py = loY <= hiY ? Math.max(loY, Math.min(hiY, py)) : loY
+    // FOCUS camera (walk 7c, user: "tighter — almost full width or full height, nothing pushed out of frame"): the element
+    // fits the view less a padding and less its SCREEN-SPACE chrome — the open glyph above / right of the frame, a video's
+    // bar or a PDF's pager below it — then sits centred in that box. Pages stay within [100 %, 200 %] (a card taller than
+    // that aligns its top edge, like the page view); media fit freely inside the camera's range.
+    function chromeFor(id) {
+        const k = canvas.elementKind(id), mk = k === "media" ? canvas.mediaElementKind(id) : ""
+        return { top: 24, right: 24, bottom: mk === "video" ? 24 : mk === "pdf" ? 28 : 0 }
+    }
+    function fitZoomFor(id) {
+        const r = canvas.elementRect(id), ch = chromeFor(id), pad = 32
+        const availW = Math.max(50, width - 2 * pad - ch.right), availH = Math.max(50, height - 2 * pad - ch.top - ch.bottom)
+        const fit = Math.min(availW / Math.max(1, r.width), availH / Math.max(1, r.height))
+        return canvas.elementKind(id) === "page" ? Math.max(1, Math.min(2, fit)) : Math.max(0.05, Math.min(4, fit))
+    }
+    function readableCameraFor(r, id) {
+        const pad = 32, ch = id ? chromeFor(id) : { top: 0, right: 0, bottom: 0 }
+        const z = id ? fitZoomFor(id) : Math.max(1, cam.zoom)
+        const availW = Math.max(50, width - 2 * pad - ch.right), availH = Math.max(50, height - 2 * pad - ch.top - ch.bottom)
+        // centred in the available box; infeasible (bigger than the box) → the leading edge at the padding
+        const px = r.width * z <= availW ? pad + (availW - r.width * z) / 2 - r.x * z : pad - r.x * z
+        const py = r.height * z <= availH ? pad + ch.top + (availH - r.height * z) / 2 - r.y * z : pad + ch.top - r.y * z
         return { x: px, y: py, z: z, moves: Math.abs(px - cam.panX) > 0.5 || Math.abs(py - cam.panY) > 0.5 || Math.abs(z - cam.zoom) > 0.001 }
     }
     // Liveness can end from ANY path — a drill-in, a page removal, a close, a tab switch — not only Escape
@@ -312,7 +323,7 @@ Rectangle {
         if (kind === "media") {   // FOCUS (walk 7c, the ladder's rung for media): the camera to readable, selected; a video plays with its bar
             if (liveId !== "" && liveId !== id) endLive(false)
             select(id); ++mediaFocuses
-            const target = readableCameraFor(canvas.elementRect(id))
+            const target = readableCameraFor(canvas.elementRect(id), id)
             const then = function() {
                 if (selectedId !== id || !editor) return
                 const h = editor.canvasVideoHost
@@ -325,7 +336,7 @@ Rectangle {
         if (kind !== "page" || !editor || !editor.homeSlot) return
         if (liveId !== "" && liveId !== id) endLive(false)
         select(id)
-        const target = readableCameraFor(canvas.elementRect(id))
+        const target = readableCameraFor(canvas.elementRect(id), id)
         const mount = function() {
             if (selectedId !== id || canvas.livePage !== "") return   // the user moved on during the animation
             canvas.livePage = id          // → blockModel is this page; the card's preview unloads

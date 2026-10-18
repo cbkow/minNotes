@@ -4184,8 +4184,16 @@ FocusScope {
             if (step === 71) { check(root._vidIntendedFrame() === probeFrame, "Q steps back"); gestures.keyPress(root, Qt.Key_D); ++step; return }
             if (step === 72) { check(root._vidFastSeekDir === 1, "D held = forward shuttle on the canvas"); gestures.keyRelease(root, Qt.Key_D); gestures.key(root, Qt.Key_R); ++step; return }
             if (step === 73) { check(root._vidFastSeekDir === 0 && Math.abs(root.videoSpeed - 1.25) < 0.01, "…released; R cycles the review speed (" + root.videoSpeed + ")"); gestures.key(root, Qt.Key_R, Qt.ShiftModifier); ++step; return }
-            if (step === 74) { check(Math.abs(root.videoSpeed - 1) < 0.01 && root.inspector && root.inspector.drawTool !== "rect" && root.inspector.drawTool !== "eraser", "Shift+R resets; no tool letter changed the tool (" + (root.inspector ? root.inspector.drawTool : "?") + ")"); root.setActiveTab(elId); step = 80; return }
-            if (step === 80) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
+            if (step === 74) { check(Math.abs(root.videoSpeed - 1) < 0.01 && root.inspector && root.inspector.drawTool !== "rect" && root.inspector.drawTool !== "eraser", "Shift+R resets; no tool letter changed the tool (" + (root.inspector ? root.inspector.drawTool : "?") + ")"); root.canvasItem.goLive(elId); ++step; return }   // FOCUS = fit the element
+            if (step === 80) {   // 240 ms later: the camera animation is done
+                const cvw = root.canvasItem, sf = cvw.selectionFrame, bar = sf.videoBar, z = cvw.fitZoomFor(elId)
+                check(!cvw.camAnimating && Math.abs(cvw.cam.zoom - z) < 0.01 && cvw.selectedId === elId, "double-click / goLive on a video FITS it (zoom " + cvw.cam.zoom.toFixed(3) + " vs fit " + z.toFixed(3) + ")")
+                check(sf.x >= 24 && sf.y >= 24 && sf.x + sf.width + 24 <= cvw.width && bar.y + bar.height <= cvw.height - 24 && sf.y + sf.height + 24 + 2 <= cvw.height,
+                      "…nothing is pushed out of frame: the glyph above/right and the bar below stay inside the view (frame " + sf.x.toFixed(0) + "," + sf.y.toFixed(0) + " " + sf.width.toFixed(0) + "×" + sf.height.toFixed(0) + ", bar bottom " + (bar.y + bar.height).toFixed(0) + ", view " + cvw.width + "×" + cvw.height + ")")
+                check(Math.min(cvw.width - (sf.x + sf.width + 24), cvw.height - (bar.y + bar.height)) <= 40 || Math.min(sf.x, sf.y) <= 40, "…and it is tight: one axis is within 40 px of the padding")
+                root.setActiveTab(elId); ++step; return
+            }
+            if (step === 81) { state("element studio opened"); check(root.videoTabOpen && studioFrame.visible && mediaHost.row === -1 && root.activeElementId === elId, "the element's studio is open"); root.ensureHostActive(); root.seekVideoStart(); root.playHost(); ++step; return }
             if (step === 100) { state("element studio playing?"); check(videoDec.isPlaying && videoDec.currentFrame > 0 && root.hostIsPlaying, "the element plays in the studio (frame " + videoDec.currentFrame + ")"); check(studioSurface.visible, "…and the surface shows");
                                gestures.key(root, Qt.Key_Space); ++step; return }
             if (step === 105) { check(!videoDec.isPlaying, "Space in the element's studio pauses"); gestures.key(root, Qt.Key_Escape); ++step; return }
