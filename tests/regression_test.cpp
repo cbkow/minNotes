@@ -6243,6 +6243,9 @@ static void testFolderDrops() {
     c.rescanFolder(fid);
     const QJsonObject fd2 = QJsonDocument::fromJson(c.elementJson(fid).toUtf8()).object().value(QStringLiteral("media")).toObject();
     CHECK(fd2.value(QStringLiteral("count")).toInt() == 11 && c.undoHistory().size() == rows3 && c.elementsRevision() > rev, "rescan refreshes the count (%d) without a history row", fd2.value(QStringLiteral("count")).toInt());
+    CHECK(!c.folderIsStream(fid), "a plain folder is not a stream");
+    { QFile f(folder + QStringLiteral("/notes.json")); if (f.open(QIODevice::WriteOnly)) f.write("{\"notes\":[]}"); }
+    CHECK(c.folderIsStream(fid) && !c.folderIsStream(ids[0]), "a folder holding notes.json is a QCView stream (an image element is not)");
     // Packing never carries a folder.
     const PackageExporter::PackPlan plan = PackageExporter::buildPackPlan(&c, true);
     bool folderPlanned = false;

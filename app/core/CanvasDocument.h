@@ -205,6 +205,7 @@ public:
     // A folder element's direct children (files + subfolders, first 48) as elements in a grid below it.
     Q_INVOKABLE QStringList spreadFolder(const QString& id);
     Q_INVOKABLE void rescanFolder(const QString& id);              // refresh a folder element's cached snapshot
+    Q_INVOKABLE bool folderIsStream(const QString& id) const;      // a QCView stream folder (holds notes.json) — "Open as stream"
     // Swap a media element's descriptor in place — NOT an undo entry (a view/cache fact: a folder rescan, a
     // fetched bookmark title, a localized remote image). Bumps elementsRevision, marks dirty.
     Q_INVOKABLE void patchMediaDescriptor(const QString& id, const QString& descriptorJson);

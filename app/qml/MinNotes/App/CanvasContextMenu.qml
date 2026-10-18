@@ -53,6 +53,8 @@ Popup {
               onTriggered: clipboard.writeText(menu.view.mediaOf(menu.view.selectedId).src || "") }
         Row { label: qsTr("Spread files here"); show: menu.view.selectedIsFolder; onTriggered: menu.view.spreadSelected() }
         Row { label: qsTr("Refresh");        show: menu.view.selectedIsFolder; onTriggered: canvas.rescanFolder(menu.view.selectedId) }
+        Row { label: qsTr("Open as stream"); show: menu.view.selectedIsFolder && canvas.folderIsStream(menu.view.selectedId)
+              onTriggered: docs.openStreamFolder(canvas.elementLocalPath(menu.view.selectedId)) }   // a QCView stream folder → its notes document (step 9)
         Row { label: qsTr("Next page");      show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(1) }
         Row { label: qsTr("Previous page");  show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(-1) }
         Row { label: qsTr("Duplicate");      show: menu.anyNonPage;        onTriggered: menu.view.duplicateSelected() }

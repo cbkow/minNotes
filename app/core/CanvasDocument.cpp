@@ -1105,6 +1105,11 @@ QStringList CanvasDocument::spreadFolder(const QString& id) {
     const QRectF r = elementRect(id);
     return addElementsFromUrls(urls, r.x(), r.y() + r.height() + kDropGridGap);
 }
+bool CanvasDocument::folderIsStream(const QString& id) const {
+    if (mediaElementKind(id) != QLatin1String("folder")) return false;
+    const QString dir = elementLocalPath(id);
+    return !dir.isEmpty() && QFileInfo::exists(dir + QStringLiteral("/notes.json"));
+}
 void CanvasDocument::rescanFolder(const QString& id) {
     const QString dir = elementLocalPath(id);
     if (dir.isEmpty() || !QFileInfo(dir).isDir()) return;
