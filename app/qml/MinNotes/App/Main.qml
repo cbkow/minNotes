@@ -1541,7 +1541,7 @@ ApplicationWindow {
                         readonly property bool active: index === docs.activeIndex
                         width: Math.min(220, tabLabel.implicitWidth + 44)
                         height: docTabBar.height
-                        color: active ? Theme.colors.bgAlt : "transparent"   // the active tab = the content's colour
+                        color: active ? Theme.colors.surfaceRaised : "transparent"   // the active tab = the toolbar's colour (user, 2026-10-18)
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height
                                     color: Theme.colors.bgAlt2; visible: !tab.active }
                         Text {
@@ -1618,9 +1618,9 @@ ApplicationWindow {
             // opens DOWNWARD (the strip is at the window's top edge).
             Rectangle {
                 id: navBtn
-                anchors.right: newTabBtn.left; anchors.top: parent.top
+                anchors.right: parent.right; anchors.top: parent.top
                 width: Theme.dim.tabRowH; height: docTabBar.height   // square: one width for every strip button
-                color: navMenu.visible ? Theme.colors.bgAlt : "transparent"
+                color: navMenu.visible ? Theme.colors.surfaceRaised : "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
                             color: Theme.colors.bgAlt2 }
                 Icon { anchors.centerIn: parent; name: "list"; size: 14
@@ -1682,13 +1682,11 @@ ApplicationWindow {
                 }
             }
 
-            Rectangle {   // new-tab button, pinned right
+            Rectangle {   // new-tab button: right after the last tab (browser-style; user ruling 2026-10-18), clamped at the strip's end when the tabs overflow
                 id: newTabBtn
-                anchors.right: parent.right; anchors.top: parent.top
+                x: Math.min(tabRow.implicitWidth, tabRow.width - width); y: 0
                 width: Theme.dim.tabRowH; height: docTabBar.height
                 color: "transparent"
-                Rectangle { anchors.left: parent.left; width: 1; height: parent.height
-                            color: Theme.colors.bgAlt2 }
                 Icon { anchors.centerIn: parent; name: "plus"; size: 14
                        color: newMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
                 MouseArea { id: newMA; anchors.fill: parent; hoverEnabled: true

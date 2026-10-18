@@ -92,7 +92,7 @@ Rectangle {
         readonly property bool fullyVisible: x + width <= rowClip.width + 0.5
         opacity: fullyVisible ? 1 : 0
         enabled: fullyVisible
-        color: active ? Theme.colors.bgAlt : "transparent"   // the active tab = the content's colour; no underline
+        color: active ? Theme.colors.surfaceRaised : "transparent"   // the active tab = the toolbar's colour (it joins the row below); no underline
         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.bgAlt2; visible: !btn.active }
         Text {
             id: tabLabel
@@ -209,7 +209,7 @@ Rectangle {
         id: menuBtn
         anchors.right: parent.right; anchors.top: parent.top
         width: tabs.rowH; height: tabs.rowH   // square
-        color: tabMenu.visible ? Theme.colors.bgAlt : "transparent"
+        color: tabMenu.visible ? Theme.colors.surfaceRaised : "transparent"
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.bgAlt2 }
         Icon { anchors.centerIn: parent; name: "list"; size: 14
                color: tabMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
