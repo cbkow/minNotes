@@ -11,6 +11,8 @@
 #  include "d3d11/d3d11_device_manager.h"
 #  include "d3d11/d3d11_vulkan_yuv_compositor.h"
 #  include "d3d11/d3d11_vulkan_decode_bridge.h"
+#  include "d3d11/d3d11va_decode_bridge.h"
+#  include "d3d11va_hw_device_ctx.h"
 #endif
 
 #include <QFile>
@@ -20,6 +22,7 @@
 #  include <rhi/qrhi_platform.h>   // QRhiD3D11NativeHandles
 #endif
 
+#include <cmath>
 #include <memory>
 
 namespace {
@@ -50,8 +53,41 @@ public:
         m_fill = s->fillColor();
         m_decoder = s->videoDecoder();
         m_window = s->window();
-        if (m_decoder)
+        if (m_decoder) {
             m_decoder->fetchLatest(&m_frame, &m_seenSeq);   // no-op if no newer frame
+            // Stored-space geometry hints (GUI thread is blocked here, so
+            // plain reads are safe). Rotation in quarter turns CW; SAR
+            // for the anamorphic un-squeeze. Both are applied at fit time
+            // in render(), so every frame kind — HW, software, scrub —
+            // gets them without touching the decode path.
+            const int deg = m_decoder->rotationDeg();
+            m_rotQ = (deg == 90) ? 1 : (deg == 180) ? 2 : (deg == 270) ? 3 : 0;
+            m_sarNum = m_decoder->sarNum();
+            m_sarDen = m_decoder->sarDen();
+            m_rangeOverride = m_decoder->rangeOverride();
+        } else {
+            m_rotQ = 0;
+            m_sarNum = m_sarDen = 1;
+            m_rangeOverride = 0;
+        }
+    }
+
+    // Display size of a stored-size frame: PAR acts in stored space
+    // (widen the larger-pixel axis UP so nothing is downsampled), then
+    // odd quarter-turns swap the axes. Ported from QCView's renderer
+    // geometry path.
+    QSize displaySizeFor(const QSize &stored) const
+    {
+        QSize s = stored;
+        const int w = stored.width(), h = stored.height();
+        if (w > 0 && h > 0 && m_sarNum > 0 && m_sarDen > 0 && m_sarNum != m_sarDen) {
+            if (m_sarNum > m_sarDen)
+                s.setWidth(static_cast<int>(std::lround(double(w) * m_sarNum / m_sarDen)));
+            else
+                s.setHeight(static_cast<int>(std::lround(double(h) * m_sarDen / m_sarNum)));
+        }
+        if (m_rotQ & 1) s.transpose();
+        return s;
     }
 
     void render(QRhiCommandBuffer *cb) override
@@ -63,6 +99,14 @@ public:
         QRhiGraphicsPipeline *pipe = nullptr;
         QRhiShaderResourceBindings *srb = nullptr;
         QSize frameSize;
+
+        // Rotation quarter-turns for the fragment shaders' inverse-rotated
+        // sampling (offset 8 of the shared std140 UBO; matrix/range at
+        // 0/4 are written by the Metal path as needed).
+        {
+            const int rotQ = m_rotQ;
+            u->updateDynamicBuffer(m_ubuf.get(), 8, 4, &rotQ);
+        }
 
         if (m_frame.isValid())
             prepareFrame(r, u, cb, &pipe, &srb, &frameSize);
@@ -93,10 +137,14 @@ public:
 
         if (pipe && srb && frameSize.width() > 0 && frameSize.height() > 0) {
             const QSize rt = renderTarget()->pixelSize();
-            const float scale = qMin(float(rt.width()) / frameSize.width(),
-                                     float(rt.height()) / frameSize.height());
-            const float vw = frameSize.width() * scale;
-            const float vh = frameSize.height() * scale;
+            // Fit the DISPLAY size (PAR un-squeezed, rotation-swapped);
+            // the shader inverse-rotates its UV back onto the stored
+            // texture, so the viewport is the only place geometry lives.
+            const QSize fit = displaySizeFor(frameSize);
+            const float scale = qMin(float(rt.width()) / fit.width(),
+                                     float(rt.height()) / fit.height());
+            const float vw = fit.width() * scale;
+            const float vh = fit.height() * scale;
             const float vx = (rt.width() - vw) * 0.5f;
             const float vy = (rt.height() - vh) * 0.5f;
             cb->setGraphicsPipeline(pipe);
@@ -136,11 +184,15 @@ private:
 
     // `blend` enables straight-alpha "over" compositing so formats that
     // carry real alpha (ProRes 4444 → AYUV on macOS, the Vulkan YUV
-    // compositor on Windows) blend against the cleared backdrop instead
-    // of writing transparent pixels as opaque RGB (which read as jagged,
-    // un-composited edges). Opaque formats emit alpha=1 so the blend is a
-    // no-op; the CPU passthrough pipeline keeps blend OFF so a stray
-    // alpha=0 from a software frame can never make normal video vanish.
+    // compositor on Windows, and yuva*/rgba software frames on the CPU
+    // path — every ProRes scrub frame on Windows is one) blend against
+    // the cleared backdrop instead of writing transparent pixels as
+    // opaque RGB (which read as jagged, un-composited edges). Opaque
+    // formats emit alpha=1 so the blend is a no-op. The CPU path used to
+    // keep blend OFF out of fear that a stray alpha=0 could blank normal
+    // video; swscale always writes alpha=255 for alpha-less sources, so
+    // that fear was unfounded and the opaque draw was what dropped alpha
+    // the moment a 4444 clip was scrubbed.
     std::unique_ptr<QRhiGraphicsPipeline> makePipeline(
         QRhi *r, const char *frag, QRhiShaderResourceBindings *srb,
         bool blend = false)
@@ -183,6 +235,10 @@ private:
 #if defined(Q_OS_WIN)
         if (m_frame.kind() == FrameHandle::Kind::Vulkan) {
             prepareVulkanFrame(r, cb, pipe, srb, frameSize);
+            return;
+        }
+        if (m_frame.kind() == FrameHandle::Kind::D3D11) {
+            prepareD3D11Frame(r, cb, pipe, srb, frameSize);
             return;
         }
 #endif
@@ -241,13 +297,14 @@ private:
                 m_cpuTex->create();
                 if (!m_srbCpu) m_srbCpu.reset(r->newShaderResourceBindings());
                 m_srbCpu->setBindings({
-                    B::sampledTexture(0, B::FragmentStage, m_cpuTex.get(),
+                    B::uniformBuffer(0, B::FragmentStage, m_ubuf.get()),
+                    B::sampledTexture(1, B::FragmentStage, m_cpuTex.get(),
                                       m_sampler.get()),
                 });
                 m_srbCpu->create();
                 m_pipeCpu = makePipeline(
                     r, ":/ufb/player/shaders/passthrough.frag.qsb",
-                    m_srbCpu.get());
+                    m_srbCpu.get(), /*blend*/ true);   // yuva/rgba CPU frames
             }
             const QImage up = (img.format() == QImage::Format_RGBA8888)
                                   ? img
@@ -310,7 +367,7 @@ private:
         // D3D11 pipeline state before our subsequent draw.
         const ufbplayer::D3D11VulkanDecodeBridge::ImportedFrame *imp = nullptr;
         cb->beginExternal();
-        imp = m_vkBridge->consume(m_frame, /*rangeOverride*/ 0);
+        imp = m_vkBridge->consume(m_frame, m_rangeOverride);
         cb->endExternal();
         if (!imp || imp->planes.empty() || !imp->planes.front().texture)
             return;
@@ -335,7 +392,8 @@ private:
 
             if (!m_srbVk) m_srbVk.reset(r->newShaderResourceBindings());
             m_srbVk->setBindings({
-                B::sampledTexture(0, B::FragmentStage, m_vkTex.get(),
+                B::uniformBuffer(0, B::FragmentStage, m_ubuf.get()),
+                B::sampledTexture(1, B::FragmentStage, m_vkTex.get(),
                                   m_sampler.get()),
             });
             m_srbVk->create();
@@ -349,6 +407,85 @@ private:
         *pipe = m_pipeVk.get();
         *srb = m_srbVk.get();
     }
+
+    // Phase K.1 — D3D11VA frame decoded into a texture array on Qt's
+    // device: the bridge builds per-slice views, runs its YUV→RGB
+    // compute into a bridge-owned RGBA16F texture, and we wrap that
+    // exactly like the Vulkan bridge's output. Opaque (NV12/P010), so
+    // no blend.
+    void prepareD3D11Frame(QRhi *r, QRhiCommandBuffer *cb,
+                           QRhiGraphicsPipeline **pipe,
+                           QRhiShaderResourceBindings **srb, QSize *frameSize)
+    {
+        using B = QRhiShaderResourceBinding;
+        if (m_vaInitFailed)
+            return;
+        // Lazy per-renderer bridge (the device itself was registered by
+        // installD3D11DeviceHook when the window's scene graph came up).
+        if (!m_vaBridge) {
+            const auto *nh = static_cast<const QRhiD3D11NativeHandles *>(
+                r->nativeHandles());
+            if (!nh || !nh->dev || !nh->context
+                || !ufbplayer::D3D11DeviceManager::instance()
+                        .initializeWithDevice(nh->dev, nh->context)) {
+                m_vaInitFailed = true;
+                ufbplayer::clearSharedD3D11Device();   // later clips → readback
+                return;
+            }
+            auto bridge = std::make_unique<ufbplayer::D3D11VaDecodeBridge>();
+            if (!bridge->initialize()) {
+                qWarning("VideoSurfaceItem: D3D11VA bridge init failed — "
+                         "unregistering the shared device; later clips take "
+                         "the readback path");
+                m_vaInitFailed = true;
+                ufbplayer::clearSharedD3D11Device();
+                return;
+            }
+            m_vaBridge = std::move(bridge);
+        }
+
+        // Native D3D11 compute + context binds behind QRhi's back;
+        // bracket so QRhi invalidates its cached pipeline state.
+        const ufbplayer::D3D11VulkanDecodeBridge::ImportedFrame *imp = nullptr;
+        cb->beginExternal();
+        imp = m_vaBridge->consume(m_frame, m_rangeOverride);
+        cb->endExternal();
+        if (!imp || imp->planes.empty() || !imp->planes.front().texture)
+            return;
+
+        ID3D11Texture2D *tex = imp->planes.front().texture;
+        const QSize sz(imp->pictureWidth, imp->pictureHeight);
+
+        if (m_vaTexNative != reinterpret_cast<quintptr>(tex)
+            || !m_vaTex || m_vaTex->pixelSize() != sz) {
+            m_vaTex.reset(r->newTexture(QRhiTexture::RGBA16F, sz, 1));
+            QRhiTexture::NativeTexture nt;
+            nt.object = static_cast<quint64>(reinterpret_cast<quintptr>(tex));
+            nt.layout = 0;
+            if (!m_vaTex->createFrom(nt)) {
+                qWarning("VideoSurfaceItem: createFrom(D3D11VA RGBA16F) failed");
+                m_vaTex.reset();
+                return;
+            }
+            m_vaTexNative = reinterpret_cast<quintptr>(tex);
+
+            if (!m_srbVa) m_srbVa.reset(r->newShaderResourceBindings());
+            m_srbVa->setBindings({
+                B::uniformBuffer(0, B::FragmentStage, m_ubuf.get()),
+                B::sampledTexture(1, B::FragmentStage, m_vaTex.get(),
+                                  m_sampler.get()),
+            });
+            m_srbVa->create();
+            if (!m_pipeVa)
+                m_pipeVa = makePipeline(
+                    r, ":/ufb/player/shaders/passthrough.frag.qsb",
+                    m_srbVa.get(), /*blend*/ false);   // NV12/P010: opaque
+        }
+
+        *frameSize = sz;
+        *pipe = m_pipeVa.get();
+        *srb = m_srbVa.get();
+    }
 #endif
 
     QColor m_fill{ 0, 0, 0 };
@@ -359,6 +496,10 @@ private:
     // recreates them) = 0 → always re-pulls the current frame.
     uint64_t m_seenSeq = 0;
     FrameHandle m_frame;
+    int m_rotQ = 0;            // quarter-turns CW, from the decoder
+    int m_sarNum = 1;          // sample aspect ratio
+    int m_sarDen = 1;
+    int m_rangeOverride = 0;   // 0 auto / 1 full / 2 limited
 
     std::unique_ptr<QRhiBuffer> m_vbuf;
     std::unique_ptr<QRhiSampler> m_sampler;
@@ -385,6 +526,15 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline>       m_pipeVk;
     quintptr m_vkTexNative   = 0;     // last wrapped ID3D11Texture2D*
     bool     m_d3dInitFailed = false; // one-shot: don't retry on every frame
+
+    // Phase K.1 — D3D11VA zero-copy (separate wrapper from the Vulkan
+    // one so a ProRes ↔ H.264 clip switch doesn't thrash one texture).
+    std::unique_ptr<ufbplayer::D3D11VaDecodeBridge> m_vaBridge;
+    std::unique_ptr<QRhiTexture>                m_vaTex;
+    std::unique_ptr<QRhiShaderResourceBindings> m_srbVa;
+    std::unique_ptr<QRhiGraphicsPipeline>       m_pipeVa;
+    quintptr m_vaTexNative  = 0;
+    bool     m_vaInitFailed = false;   // one-shot: don't retry on every frame
 #endif
 };
 
@@ -393,6 +543,36 @@ private:
 VideoSurfaceItem::VideoSurfaceItem(QQuickItem *parent)
     : QQuickRhiItem(parent)
 {
+}
+
+void VideoSurfaceItem::installD3D11DeviceHook(QQuickWindow *window)
+{
+#if defined(Q_OS_WIN)
+    if (!window) return;
+    // Both signals are emitted on the render thread; direct connections
+    // run there, which is where QQuickWindow::rhi() is valid.
+    QObject::connect(window, &QQuickWindow::sceneGraphInitialized, window, [window] {
+        QRhi *r = window->rhi();
+        if (!r || r->backend() != QRhi::D3D11) return;
+        const auto *nh = static_cast<const QRhiD3D11NativeHandles *>(r->nativeHandles());
+        if (!nh || !nh->dev || !nh->context) {
+            qWarning("VideoSurfaceItem: no D3D11 native handles at scene-graph "
+                     "init — D3D11VA stays on the readback path");
+            return;
+        }
+        if (!ufbplayer::D3D11DeviceManager::instance()
+                 .initializeWithDevice(nh->dev, nh->context))
+            return;
+        ufbplayer::setSharedD3D11Device(nh->dev, nh->context);
+    }, Qt::DirectConnection);
+    QObject::connect(window, &QQuickWindow::sceneGraphInvalidated, window, [] {
+        // The device is going away with the scene graph: drop the
+        // decoder-side registration + cached pools first.
+        ufbplayer::clearSharedD3D11Device();
+    }, Qt::DirectConnection);
+#else
+    Q_UNUSED(window);
+#endif
 }
 
 void VideoSurfaceItem::setFillColor(const QColor &c)

@@ -1,7 +1,16 @@
 #include "video_decoder.h"
 
 #include "decoder_cleanup_queue.h"
+#include "hw_routing.h"             // softwareOnlyCodec (all platforms)
+#include "rgb_range.h"
 #include "scrub_decoder.h"
+#include "seek_compat.h"
+#include "stream_extent.h"
+#include "sws_rgba_image.h"
+#include "sws_threaded.h"
+#include "thread_policy.h"
+#include "vulkan_hw_device_ctx.h"   // firstSoftwareFormat (all platforms)
+#include <cmath>
 #include <memory>
 
 #include <QDebug>
@@ -15,6 +24,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
@@ -32,7 +42,7 @@ extern "C" {
 #if defined(Q_OS_WIN)
 #  include <vulkan/vulkan.h>
 #  include "vulkan/vulkan_device_manager.h"
-#  include "vulkan_hw_device_ctx.h"
+#  include "d3d11va_hw_device_ctx.h"   // Phase K.1: D3D11VA on the renderer's device
 #endif
 
 // Defined in frame_handle.mm; lets video_decoder.cpp retain the
@@ -60,10 +70,35 @@ QString avErrToString(int err)
     return QString::fromUtf8(buf);
 }
 
+// Display-matrix rotation → clockwise display degrees {0,90,180,270}.
+// Phone footage (MP4 `tkhd` display matrix) is stored sideways and
+// relies on the player to rotate. av_display_rotation_get reports
+// counter-clockwise degrees and real phone files land near-quarter
+// (−89.97…), so negate then snap. Ported from QCView's metadata
+// extractor; rotation is applied purely renderer-side (fit-dim swap +
+// inverse-rotated sampling UV), so every path — HW, software, scrub —
+// gets it without touching the decode loop.
+int rotationFromStream(const AVStream *stream)
+{
+    const AVCodecParameters *cp = stream->codecpar;
+    const AVPacketSideData *sd = av_packet_side_data_get(
+        cp->coded_side_data, cp->nb_coded_side_data,
+        AV_PKT_DATA_DISPLAYMATRIX);
+    if (!sd || sd->size < 9 * sizeof(int32_t)) return 0;
+    const double theta =
+        av_display_rotation_get(reinterpret_cast<const int32_t *>(sd->data));
+    if (std::isnan(theta)) return 0;
+    int rot = static_cast<int>(std::lround(-theta)) % 360;
+    if (rot < 0) rot += 360;
+    return ((rot + 45) / 90 * 90) % 360;
+}
+
 // Presentation timestamp for a decoded frame. We deliberately prefer
-// frame->pts over frame->best_effort_timestamp: on the FFmpeg builds UFB
-// vendors today (7.1) the best_effort value comes back as a constant
-// garbage timestamp for VideoToolbox frames, which flatlines the pacer.
+// frame->pts over frame->best_effort_timestamp: on the FFmpeg 7.1 build
+// UFB first shipped with, the best_effort value came back as a constant
+// garbage timestamp for VideoToolbox frames, which flatlined the pacer.
+// pkt_timebase is set now (which fixes best_effort), but pts-first is
+// still the safer order and costs nothing.
 // frame->pts is the correct post-decode presentation timestamp (verified
 // advancing for both H.264 and ProRes). Fall back to best_effort then dts.
 inline int64_t framePresentationPts(const AVFrame *f)
@@ -125,6 +160,15 @@ FfmpegLogInstaller g_ffmpegLogInstaller;
 // successfully — otherwise FFmpeg uses its default selection.
 AVPixelFormat hwaccelGetFormat(AVCodecContext *ctx, const AVPixelFormat *fmts)
 {
+    // hw_routing.h — codecs whose registered hwaccels don't work
+    // (ProRes RAW): never pick a hw format, straight to software.
+    if (ctx && ufbplayer::softwareOnlyCodec(ctx->codec_id)) {
+        const AVPixelFormat sw = ufbplayer::firstSoftwareFormat(fmts);
+        qInfo("VideoDecoder: get_format codec=%s → %s (software-only codec, "
+              "hwaccels skipped)", ctx->codec ? ctx->codec->name : "?",
+              av_get_pix_fmt_name(sw));
+        return sw;
+    }
     // Per-platform candidate list, tried in priority order. On Windows
     // we route per-codec: ProRes gets Vulkan (libplacebo compute is
     // the only viable hardware path), everything else gets D3D11VA
@@ -135,16 +179,15 @@ AVPixelFormat hwaccelGetFormat(AVCodecContext *ctx, const AVPixelFormat *fmts)
 #if defined(Q_OS_MACOS)
     constexpr AVPixelFormat kPreferred[] = { AV_PIX_FMT_VIDEOTOOLBOX };
 #elif defined(Q_OS_WIN)
-    static constexpr AVPixelFormat kProResPreferred[] = {
-        AV_PIX_FMT_VULKAN, AV_PIX_FMT_D3D11, AV_PIX_FMT_NONE
+    // Phase K.3 — the ONLY acceptable hw format is the one the attached
+    // device serves (initFFmpeg already made the Vulkan-vs-D3D11VA
+    // routing decision when it attached the device). FFmpeg lists every
+    // hwaccel the codec has regardless of the device type; picking e.g.
+    // `vulkan` for FFV1 while a D3D11VA device is attached fails with
+    // "Invalid setup for format vulkan" and costs a second round.
+    const AVPixelFormat kPreferred[] = {
+        ufbplayer::attachedHwPixelFormat(ctx), AV_PIX_FMT_NONE
     };
-    static constexpr AVPixelFormat kOtherPreferred[] = {
-        AV_PIX_FMT_D3D11, AV_PIX_FMT_VULKAN, AV_PIX_FMT_NONE
-    };
-    const bool isProRes =
-        ctx && ctx->codec && ctx->codec->id == AV_CODEC_ID_PRORES;
-    const AVPixelFormat *kPreferred =
-        isProRes ? kProResPreferred : kOtherPreferred;
 #elif defined(Q_OS_LINUX)
     constexpr AVPixelFormat kPreferred[] = { AV_PIX_FMT_VULKAN, AV_PIX_FMT_VAAPI };
 #else
@@ -171,24 +214,49 @@ AVPixelFormat hwaccelGetFormat(AVCodecContext *ctx, const AVPixelFormat *fmts)
         const AVPixelFormat want = *p;
         for (int i = 0; fmts[i] != AV_PIX_FMT_NONE; ++i) {
             if (fmts[i] == want) {
-                qInfo("VideoDecoder: get_format codec=%s offered=[%s] picked=%s",
+                qInfo("VideoDecoder: get_format codec=%s offered=[%s] picked=%s "
+                      "[ctx=%p %dx%d threads=%d active_type=%d cur_pix=%s hwfc=%p]",
                       ctx && ctx->codec ? ctx->codec->name : "?",
                       qPrintable(offered),
-                      av_get_pix_fmt_name(want));
+                      av_get_pix_fmt_name(want), static_cast<void *>(ctx),
+                      ctx->width, ctx->height, ctx->thread_count,
+                      ctx->active_thread_type, av_get_pix_fmt_name(ctx->pix_fmt),
+                      static_cast<void *>(ctx->hw_frames_ctx));
                 // Pool sizing + alpha feasibility is decided upfront
                 // in initFFmpeg via the Vulkan hwframes probe — see
-                // the "Unified pre-probe" block there. Nothing else
-                // to do here: return the picked hw pix_fmt.
+                // the "Unified pre-probe" block there.
+#if defined(Q_OS_WIN)
+                // Phase I.E — own the Vulkan frame pool. FFmpeg has
+                // just unref'd any previous hw_frames_ctx (it does so
+                // on every get_format call); handing it a ref to our
+                // cached pool means a mid-stream re-call reuses the
+                // same images instead of destroying them under the
+                // bridge. Null → FFmpeg allocates as before.
+                if (want == AV_PIX_FMT_VULKAN && ctx && !ctx->hw_frames_ctx) {
+                    ctx->hw_frames_ctx = ufbplayer::acquireSharedVulkanFramesCtx(ctx);
+                }
+                // Phase K.1 — same ownership rule for D3D11VA on the
+                // renderer's device (shared-device contexts only; a
+                // FFmpeg-owned device keeps FFmpeg's own pool + readback).
+                if (want == AV_PIX_FMT_D3D11 && ctx && !ctx->hw_frames_ctx
+                    && ufbplayer::isSharedD3D11VaDeviceCtx(ctx->hw_device_ctx)) {
+                    ctx->hw_frames_ctx = ufbplayer::acquireSharedD3D11VaFramesCtx(ctx);
+                }
+#endif
                 return want;
             }
         }
     }
+    // Codec doesn't support our hwaccel; let FFmpeg use the first SW
+    // fmt. fmts[0] can itself be a foreign hwaccel (`vulkan` for
+    // FFV1/APV, `vaapi` for VVC) that FFmpeg would reject before
+    // re-calling us, so pick the first real software format.
+    const AVPixelFormat sw = ufbplayer::firstSoftwareFormat(fmts);
     qInfo("VideoDecoder: get_format codec=%s offered=[%s] picked=%s (SW fallback)",
           ctx && ctx->codec ? ctx->codec->name : "?",
           qPrintable(offered),
-          av_get_pix_fmt_name(fmts[0]));
-    // Codec doesn't support our hwaccel; let FFmpeg use the first SW fmt.
-    return fmts[0];
+          av_get_pix_fmt_name(sw));
+    return sw;
 }
 
 // Phase F.2.12.a — createSharedVulkanHwDeviceCtx moved to
@@ -259,6 +327,7 @@ bool VideoDecoder::open(const QString &path)
     m_loggedCpuFormat       = false;
     m_loggedHwToCpuFallback = false;
     m_loggedVulkanFormat    = false;
+    m_loggedD3D11Format     = false;
     // Open paused. Autoplay-on-open was disorienting in QC review
     // workflows where the user wants to scrub a freshly-loaded clip
     // before pressing Space. Callers (load, drop, project click)
@@ -452,6 +521,8 @@ void VideoDecoder::close()
     if (!m_sourcePath.isEmpty()) {
         m_sourcePath.clear();
         m_width = m_height = m_frameCount = 0;
+        m_rotationDeg = 0;
+        m_sarNum = m_sarDen = 1;
         m_codecName.clear();
         m_pixelFormat.clear();
         m_sourceTimecode.clear();
@@ -695,14 +766,26 @@ bool VideoDecoder::initFFmpeg(const QString &path)
     const bool kForceSoftwareDecode = !kHwDecodeEnabled;
     const bool kIsProRes =
         codecpar && codecpar->codec_id == AV_CODEC_ID_PRORES;
+    // ProRes RAW (FFmpeg 9.0+): the decoder emits a 16-bit Bayer mosaic
+    // (bayer_*16). The Vulkan hwaccel would hand the bridge a single R16
+    // image our compositor cannot debayer, and D3D11VA has no ProRes
+    // RAW at all — so software decode + swscale's Bayer→RGB cascade.
+    const bool kIsProResRaw =
+        codecpar && codecpar->codec_id == AV_CODEC_ID_PRORES_RAW;
+    // Vulkan is reserved for ProRes (FFV1 / APV measured 6-20× slower
+    // on Vulkan than in software in QCView's bench; inter codecs go to
+    // D3D11VA; everything else is software).
     bool skipVulkan = !kIsProRes || kForceSoftwareDecode;
-    bool skipAllHw  = kForceSoftwareDecode;
+    bool skipAllHw  = kForceSoftwareDecode || kIsProResRaw;
     if (kForceSoftwareDecode) {
         qInfo("VideoDecoder: software decode forced — "
               "performance/hardwareDecodeEnabled is off");
+    } else if (kIsProResRaw) {
+        qInfo("VideoDecoder: codec=prores_raw → software decode + CPU "
+              "debayer (GPU debayer not implemented)");
     } else if (skipVulkan) {
-        qInfo("VideoDecoder: codec=%s → routing to D3D11VA (Vulkan "
-              "reserved for ProRes on Windows)",
+        qInfo("VideoDecoder: codec=%s → D3D11VA if the codec has it, else "
+              "software (Vulkan reserved for ProRes on Windows)",
               avcodec_get_name(codecpar ? codecpar->codec_id : AV_CODEC_ID_NONE));
     }
 
@@ -741,6 +824,16 @@ bool VideoDecoder::initFFmpeg(const QString &path)
         // probe below validates THIS clip's format/dim against the
         // device — codec change between clips is fine because the
         // device context is codec-agnostic.
+        // Phase K.3 — the cached device may be a D3D11VA one left by
+        // the previous (non-ProRes) clip; probing Vulkan frames on it
+        // fails with "hardware pixel format 'vulkan' is not supported
+        // by the device type 'D3D11VA'", which used to read as a driver
+        // rejection and sent ProRes to software. Only reuse a Vulkan
+        // device here.
+        if (m_hwDeviceCtx
+            && ufbplayer::attachedHwDeviceType(m_hwDeviceCtx) != AV_HWDEVICE_TYPE_VULKAN) {
+            av_buffer_unref(&m_hwDeviceCtx);
+        }
         const bool reuseCachedDevice = (m_hwDeviceCtx != nullptr);
         AVBufferRef *deviceProbe = reuseCachedDevice
             ? av_buffer_ref(m_hwDeviceCtx)
@@ -807,14 +900,15 @@ bool VideoDecoder::initFFmpeg(const QString &path)
         m_cctx->get_format    = hwaccelGetFormat;
         m_hwAccelType         = QStringLiteral("vulkan");
         qInfo("VideoDecoder: vulkan hwaccel attached (FFmpeg-managed pool)");
-    } else if (!skipAllHw
-               && av_hwdevice_ctx_create(&m_hwDeviceCtx, kHwType, nullptr, nullptr, 0) >= 0) {
+    } else if (!skipAllHw && attachD3D11VaDevice()) {
         m_cctx->hw_device_ctx = av_buffer_ref(m_hwDeviceCtx);
         m_cctx->get_format = hwaccelGetFormat;
         m_hwAccelType = QString::fromUtf8(kHwName);
-        qInfo("VideoDecoder: %s hwaccel attached%s", kHwName,
+        qInfo("VideoDecoder: %s hwaccel attached%s%s", kHwName,
               skipVulkan ? " (codec-routed)"
-                         : " (Vulkan shared-device unavailable)");
+                         : " (Vulkan shared-device unavailable)",
+              m_d3d11ZeroCopy ? " [shared device, zero-copy]"
+                              : " [FFmpeg device, readback]");
     } else {
         qInfo("VideoDecoder: no hwaccel available; software decode%s",
               kForceSoftwareDecode ? " (forced by user setting)" : "");
@@ -839,18 +933,34 @@ bool VideoDecoder::initFFmpeg(const QString &path)
     // proper multithreading on the software fallback path. Auto
     // is the default; user override comes from Settings via
     // QSettings("performance/ffmpegThreads").
+    // Intra-only codecs get SLICE threads only (see thread_policy.h for
+    // the numbers — ProRes RAW's first frame went from 1.8 s to 118 ms in
+    // QCView's measurements; frame threading has to fill every slot
+    // before the first frame comes out).
     {
         QSettings s;
-        m_cctx->thread_count =
-            s.value(QStringLiteral("performance/ffmpegThreads"), 0).toInt();
-        m_cctx->thread_type  = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        ufbplayer::applySoftwareThreadPolicy(
+            m_cctx, codec,
+            s.value(QStringLiteral("performance/ffmpegThreads"), 0).toInt());
+        qInfo("VideoDecoder: threading %s (count=%d)",
+              ufbplayer::threadPolicyName(m_cctx), m_cctx->thread_count);
     }
-    // FFmpeg derives frame->best_effort_timestamp from the packet PTS using
-    // the codec context's pkt_timebase (guess_correct_pts). FFmpeg 8.1
-    // (QCView's target) tolerates leaving this unset; 7.1 (what UFB vendors
-    // today) does not — without it best_effort_timestamp comes back as a
-    // constant garbage value, the pacer sees zero PTS delta, and playback
-    // runs as fast as it decodes. Set it from the stream's time base.
+    // Phase I.E — no frame threading under the Vulkan hwaccel. The GPU
+    // does the decode, so 16 frame threads buy nothing, and each
+    // worker carries a private codec context whose first frame can
+    // re-enter get_format (observed: same AVCodecContext, two calls
+    // ~10 ms apart on 1440x1080 ProRes) → pool churn. One thread
+    // removes the re-entrancy source; the cached pool covers any
+    // re-call that still happens.
+    if (m_hwAccelType == QLatin1String("vulkan")) {
+        m_cctx->thread_count = 1;
+    }
+    // FFmpeg derives frame->best_effort_timestamp from the packet PTS
+    // using the codec context's pkt_timebase (guess_correct_pts).
+    // Without it best_effort_timestamp can come back as a constant
+    // garbage value, the pacer sees zero PTS delta, and playback runs
+    // as fast as it decodes; 9.0 also needs it to re-stamp frames
+    // after discarded samples. Set it from the stream's time base.
     m_cctx->pkt_timebase = st->time_base;
     if (int err = avcodec_open2(m_cctx, codec, nullptr); err < 0) {
         setError(tr("avcodec_open2 failed: %1").arg(avErrToString(err)));
@@ -859,6 +969,15 @@ bool VideoDecoder::initFFmpeg(const QString &path)
 
     m_width      = codecpar->width;
     m_height     = codecpar->height;
+    m_rotationDeg = rotationFromStream(st);
+    // Sample aspect ratio — reconciles the stream SAR with the codec
+    // SAR (av_guess_* prefers the stream's). SAR ≠ 1:1 ⇒ anamorphic /
+    // non-square pixels; the renderer un-squeezes in stored space.
+    {
+        const AVRational sar = av_guess_sample_aspect_ratio(m_fmt, st, nullptr);
+        if (sar.num > 0 && sar.den > 0) { m_sarNum = sar.num; m_sarDen = sar.den; }
+        else                            { m_sarNum = m_sarDen = 1; }
+    }
     m_frameCount = static_cast<int>(st->nb_frames);
     m_codecName  = QString::fromUtf8(codec->long_name ? codec->long_name : codec->name);
     if (const char *pn = av_get_pix_fmt_name(static_cast<AVPixelFormat>(codecpar->format))) {
@@ -891,6 +1010,13 @@ bool VideoDecoder::initFFmpeg(const QString &path)
         total = static_cast<int>(av_rescale_q(m_fmt->duration,
                                               { 1, AV_TIME_BASE },
                                               { fr.den, fr.num }));
+    }
+    if (total <= 0) {
+        // No frame count and no duration anywhere (animated WebP / GIF /
+        // APNG demuxers): count the packets — see stream_extent.h.
+        const ufbplayer::StreamExtent ext =
+            ufbplayer::scanStreamExtent(path, m_videoStreamIdx);
+        if (ext.ok) total = ext.frames;
     }
     m_frameIndex = FrameIndex(tb.num, tb.den, fr.num, fr.den, total, intraOnly);
     if (total > 0) m_frameCount = total;
@@ -951,6 +1077,11 @@ void VideoDecoder::releaseCachedHwDevice()
     if (m_hwDeviceCtx) {
         av_buffer_unref(&m_hwDeviceCtx);
     }
+#if defined(Q_OS_WIN)
+    // Phase I.E — the cached frame pools belong to the same (now
+    // lost) device; drop them so a recovered device starts clean.
+    ufbplayer::releaseSharedVulkanFramesCache();
+#endif
 }
 
 bool VideoDecoder::initSwsContext(AVFrame *frame)
@@ -966,53 +1097,19 @@ bool VideoDecoder::initSwsContext(AVFrame *frame)
         sws_freeContext(m_sws);
         m_sws = nullptr;
     }
-    m_sws = sws_getContext(
-        frame->width, frame->height,
-        static_cast<AVPixelFormat>(frame->format),
-        frame->width, frame->height,
-        AV_PIX_FMT_RGBA,
-        SWS_BILINEAR, nullptr, nullptr, nullptr);
+    // Dynamic-mode context (sws_threaded.h): matrix + range travel on
+    // the frame via swsConvertToBuffer, and the conversion is sliced
+    // across the context's threads (the legacy pointer API is always
+    // single-threaded).
+    m_sws = ufbplayer::swsCreateThreaded();
     if (!m_sws) {
-        setError(tr("sws_getContext failed"));
+        setError(tr("swscale context init failed"));
         return false;
     }
 
-    // Pick the matrix that matches the source colorspace metadata, not
-    // swscale's BT.601 default. Wrong matrix = "crunched" colors —
-    // saturated greens shift toward cyan, oranges go pink, shadows
-    // milky. (Phase 2 will replace this CPU path with proper OCIO
-    // input transforms; for Phase 1.8.1 we just pick the right matrix
-    // and let macOS handle BT.709 → sRGB-display approximately.)
-    int srcCsp;
-    switch (frame->colorspace) {
-        case AVCOL_SPC_BT709:      srcCsp = SWS_CS_ITU709; break;
-        case AVCOL_SPC_BT470BG:    srcCsp = SWS_CS_ITU601; break;
-        case AVCOL_SPC_SMPTE170M:  srcCsp = SWS_CS_SMPTE170M; break;
-        case AVCOL_SPC_SMPTE240M:  srcCsp = SWS_CS_SMPTE240M; break;
-        case AVCOL_SPC_FCC:        srcCsp = SWS_CS_FCC; break;
-        case AVCOL_SPC_BT2020_NCL: srcCsp = SWS_CS_BT2020; break;
-        case AVCOL_SPC_BT2020_CL:  srcCsp = SWS_CS_BT2020; break;
-        default:
-            // Heuristic: HD content is BT.709, SD is BT.601. Matches
-            // what most video tools do when metadata is missing.
-            srcCsp = (frame->width >= 1280 || frame->height >= 720)
-                     ? SWS_CS_ITU709 : SWS_CS_SMPTE170M;
-            break;
-    }
-    // Phase 3.G — apply the user's per-clip range override when set.
-    // The detected `frame->color_range` only feeds the conversion when
-    // the override is Auto (0). Wrong-range mistagged sources are
-    // common enough to need a manual escape hatch.
-    int srcFullRange = (frame->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
-    const int rangeOv = m_rangeOverride.load(std::memory_order_acquire);
-    if (rangeOv == 1) srcFullRange = 1;        // Full
-    else if (rangeOv == 2) srcFullRange = 0;   // Limited
-
-    sws_setColorspaceDetails(
-        m_sws,
-        sws_getCoefficients(srcCsp), srcFullRange,
-        sws_getCoefficients(SWS_CS_ITU709), /*dstFullRange=*/1,
-        /*brightness=*/0, /*contrast=*/1 << 16, /*saturation=*/1 << 16);
+    // Matrix + range are set on the frame by swsConvertToBuffer
+    // (sws_threaded.h: tagged matrix or HD/SD heuristic, range override,
+    // RGB sources declare no range change).
 
     m_swsSrcWidth  = frame->width;
     m_swsSrcHeight = frame->height;
@@ -1046,13 +1143,19 @@ void VideoDecoder::publishCpuFrame(AVFrame *frame)
         m_loggedCpuFormat = true;
     }
 
-    QImage rgba(frame->width, frame->height, QImage::Format_RGBA8888);
-    uint8_t *dst[4] = { rgba.bits(), nullptr, nullptr, nullptr };
-    int dstStride[4] = { static_cast<int>(rgba.bytesPerLine()), 0, 0, 0 };
-
-    sws_scale(m_sws,
-              frame->data, frame->linesize, 0, frame->height,
-              dst, dstStride);
+    // Padded-destination helper — a bare QImage overflows on odd widths
+    // (see sws_rgba_image.h).
+    // RGB sources: swscale applies no range handling on an RGB→RGB
+    // conversion, so legal-range RGB masters would come up flat — apply
+    // the legal→full expansion under the shared rule (rgb_range.h; same
+    // helper the scrub path uses).
+    const int rangeOv = m_rangeOverride.load(std::memory_order_acquire);
+    QImage rgba = swsFrameToRgbaImage(
+        m_sws, frame, rgbFrameNeedsLegalExpansion(frame, rangeOv), rangeOv);
+    if (rgba.isNull()) {
+        qWarning("VideoDecoder: sws_scale failed; frame dropped");
+        return;
+    }
 
     const int64_t pts = framePresentationPts(frame);
     // Stamp the FrameHandle with PTS in microseconds — common
@@ -1134,6 +1237,51 @@ void VideoDecoder::publishVulkanFrame(AVFrame *frame)
     Q_UNUSED(frame);
 #endif
 }
+
+#if defined(Q_OS_WIN)
+bool VideoDecoder::attachD3D11VaDevice()
+{
+    // A leftover context from the previous clip (e.g. a cached Vulkan
+    // device ref for ProRes) must not leak when this clip goes D3D11VA.
+    if (m_hwDeviceCtx) av_buffer_unref(&m_hwDeviceCtx);
+    m_d3d11ZeroCopy = false;
+    m_hwDeviceCtx = ufbplayer::createSharedD3D11VaHwDeviceCtx();
+    if (m_hwDeviceCtx) {
+        m_d3d11ZeroCopy = true;
+        return true;
+    }
+    // No shared device registered yet (the renderer hasn't painted a
+    // first frame) — FFmpeg's own device + readback, the pre-K.1 path.
+    return av_hwdevice_ctx_create(&m_hwDeviceCtx, AV_HWDEVICE_TYPE_D3D11VA,
+                                  nullptr, nullptr, 0) >= 0;
+}
+
+void VideoDecoder::publishD3D11Frame(AVFrame *frame)
+{
+    // Phase K.1 — mirror of publishVulkanFrame for D3D11VA frames on
+    // the renderer's device: clone the AVFrame (keeps the pool slice
+    // reserved while the renderer samples it) and hand it over.
+    if (!m_loggedD3D11Format) {
+        const auto *fc = frame->hw_frames_ctx
+            ? reinterpret_cast<const AVHWFramesContext *>(frame->hw_frames_ctx->data)
+            : nullptr;
+        qInfo("VideoDecoder[%s]: D3D11 zero-copy publish — sw_format=%s (%dx%d)",
+              qPrintable(QFileInfo(m_sourcePath).fileName()),
+              fc ? av_get_pix_fmt_name(fc->sw_format) : "<none>",
+              frame->width, frame->height);
+        m_loggedD3D11Format = true;
+    }
+    AVFrame *cloned = av_frame_clone(frame);
+    if (!cloned) {
+        qWarning("VideoDecoder: av_frame_clone failed for D3D11 frame; dropping");
+        return;
+    }
+    const int64_t pts = framePresentationPts(frame);
+    const int64_t ptsUs = ptsToMicroseconds(pts);
+    publishHandle(FrameHandle::d3d11(cloned, frame->width, frame->height, ptsUs),
+                  pts, /*pace=*/true);
+}
+#endif
 
 void VideoDecoder::publishExternalFrame(FrameHandle handle, int64_t pts)
 {
@@ -1355,6 +1503,14 @@ void VideoDecoder::decodeLoop()
                 // D3D11 on the renderer thread.
                 publishVulkanFrame(frame);
             }
+#if defined(Q_OS_WIN)
+            else if (frame->format == AV_PIX_FMT_D3D11 && m_d3d11ZeroCopy
+                     && ufbplayer::d3d11FrameIsZeroCopyConsumable(frame)) {
+                // Phase K.1 — decoded straight into the renderer's
+                // texture array; publish the slice, no readback.
+                publishD3D11Frame(frame);
+            }
+#endif
             else if (frame->format == AV_PIX_FMT_D3D11 ||
                      frame->format == AV_PIX_FMT_VAAPI) {
                 if (int xferErr = av_hwframe_transfer_data(swFrame, frame, 0); xferErr < 0) {
@@ -1397,8 +1553,10 @@ void VideoDecoder::performSeek(int targetFrame, AVPacket *pkt,
     // on the keyframe at-or-before target. For intra codecs every
     // frame is a keyframe so this is exact; for inter codecs we
     // decode forward from the keyframe.
-    if (av_seek_frame(m_fmt, m_videoStreamIdx, targetPts,
-                      AVSEEK_FLAG_BACKWARD) < 0) {
+    // seekStream — av_seek_frame, or a reopen-at-start for demuxers
+    // that cannot seek (animated WebP); see seek_compat.h.
+    if (ufbplayer::seekStream(&m_fmt, m_videoStreamIdx, targetPts,
+                              AVSEEK_FLAG_BACKWARD) < 0) {
         recordDecodeError(tr("av_seek_frame failed for frame %1").arg(targetFrame));
         return;
     }
@@ -1463,6 +1621,12 @@ void VideoDecoder::performSeek(int targetFrame, AVPacket *pkt,
                 else if (frame->format == AV_PIX_FMT_VULKAN) {
                     publishVulkanFrame(frame);
                 }
+#if defined(Q_OS_WIN)
+                else if (frame->format == AV_PIX_FMT_D3D11 && m_d3d11ZeroCopy
+                         && ufbplayer::d3d11FrameIsZeroCopyConsumable(frame)) {
+                    publishD3D11Frame(frame);   // Phase K.1
+                }
+#endif
                 else if (frame->format == AV_PIX_FMT_D3D11 ||
                          frame->format == AV_PIX_FMT_VAAPI) {
                     if (av_hwframe_transfer_data(swFrame, frame, 0) >= 0) {

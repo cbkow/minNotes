@@ -127,6 +127,16 @@ qt_add_executable(minnotesapp
     player/frame_index.cpp
     player/scrub_decoder.h
     player/scrub_decoder.cpp
+    # UFB 2026-09-10 sync (PC-A): FFmpeg 9 cut-over helpers ported from QCView — codec routing, software
+    # threading policy, demuxer seek shim, packet-walk extent for duration-less containers, threaded swscale,
+    # RGB legal-range expansion, the padded swscale target.
+    player/sws_rgba_image.h
+    player/rgb_range.h
+    player/hw_routing.h
+    player/thread_policy.h
+    player/seek_compat.h
+    player/stream_extent.h
+    player/sws_threaded.h
     player/scrub_frame_cache.h
     player/scrub_frame_cache.cpp
     player/simple_lru.h
@@ -602,6 +612,12 @@ elseif(WIN32)
         player/d3d11/d3d11_vulkan_yuv_compositor.cpp
         player/d3d11/d3d11_vulkan_decode_bridge.h
         player/d3d11/d3d11_vulkan_decode_bridge.cpp
+        # Zero-copy D3D11VA (UFB 2026-09-10, from QCView): H.264 / HEVC / AV1 / VP9 decode into a texture array
+        # on Qt's own D3D11 device; the bridge samples the slice — no readback.
+        player/d3d11va_hw_device_ctx.h
+        player/d3d11va_hw_device_ctx.cpp
+        player/d3d11/d3d11va_decode_bridge.h
+        player/d3d11/d3d11va_decode_bridge.cpp
         player/wasapi_audio_device.h
         player/wasapi_audio_device.cpp)
     find_package(Vulkan REQUIRED)
@@ -612,7 +628,7 @@ elseif(WIN32)
     # WASAPI MMCSS thread priority.
     target_link_libraries(minnotesapp PRIVATE
         "$ENV{VULKAN_SDK}/Lib/shaderc_combined.lib"
-        d3d11 dxgi dxguid avrt)
+        d3d11 dxgi dxguid d3dcompiler avrt)   # d3dcompiler: the D3D11VA bridge compiles its YUV→RGB compute shader at runtime
 endif()
 # The canvas pen smooths freehand strokes through ink-stroke-modeler (the tests build the capture
 # item without it and check the raw-point path).

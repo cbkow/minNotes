@@ -53,6 +53,13 @@ class VideoDecoder : public QObject
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY sourcePathChanged)
     Q_PROPERTY(int width READ width NOTIFY metadataChanged)
     Q_PROPERTY(int height READ height NOTIFY metadataChanged)
+    // Stored-space geometry hints the renderer applies at fit time:
+    // display-matrix rotation (0/90/180/270, clockwise) and the sample
+    // aspect ratio (≠1:1 ⇒ anamorphic). width/height stay the stored
+    // (coded) size.
+    Q_PROPERTY(int rotationDeg READ rotationDeg NOTIFY metadataChanged)
+    Q_PROPERTY(int sarNum READ sarNum NOTIFY metadataChanged)
+    Q_PROPERTY(int sarDen READ sarDen NOTIFY metadataChanged)
     Q_PROPERTY(int frameCount READ frameCount NOTIFY metadataChanged)
     Q_PROPERTY(QString codecName READ codecName NOTIFY metadataChanged)
     Q_PROPERTY(QString pixelFormat READ pixelFormat NOTIFY metadataChanged)
@@ -130,6 +137,9 @@ public:
     QString lastError() const { return m_lastError; }
     int width() const { return m_width; }
     int height() const { return m_height; }
+    int rotationDeg() const { return m_rotationDeg; }
+    int sarNum() const { return m_sarNum; }
+    int sarDen() const { return m_sarDen; }
     int frameCount() const { return m_frameCount; }
     QString codecName() const { return m_codecName; }
     QString pixelFormat() const { return m_pixelFormat; }
@@ -244,6 +254,13 @@ private:
     // FrameHandle::Vulkan, publishes. The renderer-side bridge
     // (F.2.4.3) imports the VkImage into D3D11 via NT shared handle.
     void publishVulkanFrame(AVFrame *frame);
+#if defined(Q_OS_WIN)
+    // Phase K.1 — D3D11VA on the renderer's device. attachD3D11VaDevice
+    // prefers the shared device (zero-copy) and falls back to FFmpeg's
+    // own (readback); publishD3D11Frame mirrors publishVulkanFrame.
+    bool attachD3D11VaDevice();
+    void publishD3D11Frame(AVFrame *frame);
+#endif
     void publishHandle(FrameHandle handle, int64_t pts, bool pace);
     // Performs a synchronous seek + decode-forward to the target
     // frame number on the decode thread. Caller owns pkt/frame/swFrame.
@@ -272,6 +289,9 @@ private:
     bool    m_reopening = false;
     int     m_width = 0;
     int     m_height = 0;
+    int     m_rotationDeg = 0;   // 0/90/180/270 CW, from the display matrix
+    int     m_sarNum = 1;        // sample aspect ratio (1:1 = square pixels)
+    int     m_sarDen = 1;
     int     m_frameCount = 0;
     QString m_codecName;
     QString m_pixelFormat;
@@ -301,6 +321,8 @@ private:
     bool    m_loggedCpuFormat       = false;
     bool    m_loggedHwToCpuFallback = false;
     bool    m_loggedVulkanFormat    = false;
+    bool    m_loggedD3D11Format     = false;   // Phase K.1
+    bool    m_d3d11ZeroCopy         = false;   // Phase K.1: shared-device D3D11VA attached
 
     // Convert a stream-time-base PTS to microseconds. Used so
     // FrameHandles from different sources can be compared on a
