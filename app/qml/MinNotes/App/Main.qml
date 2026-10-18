@@ -6,6 +6,7 @@ import Qt.labs.platform as Platform
 
 ApplicationWindow {
     id: win
+    minimumWidth: 640; minimumHeight: 480   // the toolbar row's budget (§2.14: 589 / 621 px with a stream chip) and the tallest flyout
     visible: true
     width: 960
     height: 760
