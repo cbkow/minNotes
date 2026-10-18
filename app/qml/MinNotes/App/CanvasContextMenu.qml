@@ -55,6 +55,7 @@ Popup {
         Row { label: qsTr("Refresh");        show: menu.view.selectedIsFolder; onTriggered: canvas.rescanFolder(menu.view.selectedId) }
         Row { label: qsTr("Open as stream"); show: menu.view.selectedIsFolder && canvas.folderIsStream(menu.view.selectedId)
               onTriggered: docs.openStreamFolder(canvas.elementLocalPath(menu.view.selectedId)) }   // a QCView stream folder → its notes document (step 9)
+        Row { label: qsTr("Notes as a page below"); show: menu.view.selectedIsVideo; onTriggered: menu.view.notesPageBelow(menu.view.selectedId) }   // the clip's QCView notes as blocks on a new page (2026-10-18)
         Row { label: qsTr("Next page");      show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(1) }
         Row { label: qsTr("Previous page");  show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(-1) }
         Row { label: qsTr("Fit height to content"); show: menu.n === 1 && menu.kind1 === "page" && canvas.pageHeightFixed(menu.view.selectedId)

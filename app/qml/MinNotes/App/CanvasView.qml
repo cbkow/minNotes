@@ -140,6 +140,39 @@ Rectangle {
     function pdfKeyOf(id) { return canvas.resolveMediaPath(mediaOf(id).src) }
     function pdfPagesOf(id) { return mediaOf(id).pages || 0 }
     readonly property bool selectedIsPdf: selectedId !== "" && canvas.mediaElementKind(selectedId) === "pdf"
+    readonly property bool selectedIsVideo: selectedId !== "" && canvas.mediaElementKind(selectedId) === "video"
+    // The pointer says what the tool does (2026-10-18): a cross for the pen / shapes / the page tool, an I-beam for
+    // text, an open hand for the hand, the arrow for the pointer. Chrome with its own cursor (the bar) still wins.
+    HoverHandler {
+        cursorShape: cv.drawing ? Qt.CrossCursor : cv.textTool ? Qt.IBeamCursor : cv.handTool ? Qt.OpenHandCursor
+                   : cv.pageTool ? Qt.CrossCursor : Qt.ArrowCursor
+    }
+    // A video element's QCView notes as a PAGE below it (2026-10-18): "Notes — <clip>" heading, the notes as blocks
+    // (image + vector ink + caption, VideoNotesModel's recipe), between dividers.
+    VideoNotesModel { id: elNotes }
+    function notesPageBelow(id) {
+        if (canvas.mediaElementKind(id) !== "video") return ""
+        const m = mediaOf(id), r = canvas.elementRect(id)
+        elNotes.mediaPath = canvas.mediaAnchorPath(m.src)
+        elNotes.fps = m.fps || 0
+        if (elNotes.count === 0) { Toasts.show(qsTr("This clip has no notes")); return "" }
+        canvas.beginBatch(qsTr("Notes page"))
+        const pid = canvas.addPageAt(r.x, r.y + r.height + 24 + 40, Math.max(400, Math.round(r.width) - 48))
+        canvas.endBatch()
+        if (pid === "") return ""
+        const pm = canvas.pageModel(pid)
+        if (pm) {
+            pm.beginGroup(0, 0)
+            const name = canvas.mediaElementName(id)
+            pm.setContent(0, qsTr("Notes") + (name !== "" ? " — " + name : ""))
+            pm.setHeading(0, 2)
+            const d1 = pm.insertDivider(0)
+            elNotes.insertNotesAsBlocks(pm, d1)
+            pm.endGroup()
+        }
+        select(pid)
+        return pid
+    }
     readonly property int pdfPageOfSelected: (editor.pdfPageRev, selectedIsPdf ? editor.pdfPageForKey(pdfKeyOf(selectedId)) : 0)
     function pdfStepSelected(d) { if (selectedIsPdf) editor.pdfStepKey(pdfKeyOf(selectedId), d, pdfPagesOf(selectedId)) }
     // Dropped / pasted TEXT (phase A7): one http(s) line → a remote image (image extension) or a bookmark; anything

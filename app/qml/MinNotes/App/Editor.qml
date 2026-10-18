@@ -1283,6 +1283,26 @@ FocusScope {
         return false
     }
     function toggleVideoMute(){ if (videoAudio.hasAudio) videoAudio.setMuted(!videoAudio.muted) }
+    // A video block's QCView notes as a headered SECTION below it (2026-10-18): "Notes — <clip>", a divider, the
+    // notes as blocks (image + vector ink + caption), a divider — one undo step.
+    VideoNotesModel { id: rowNotes }
+    function insertVideoNotesBelow(row) {
+        if (row < 0 || blockModel.mediaKind(row) !== "video") return 0
+        rowNotes.mediaPath = blockModel.mediaAnchorPath(row)
+        rowNotes.fps = blockModel.mediaFps(row)
+        if (rowNotes.count === 0) { Toasts.show(qsTr("This clip has no notes")); return 0 }
+        blockModel.beginGroup(row, row)
+        const h = blockModel.insertParagraphBelow(row)
+        const name = blockModel.mediaFileName(row)
+        blockModel.setContent(h, qsTr("Notes") + (name !== "" ? " — " + name : ""))
+        blockModel.setHeading(h, 2)
+        const d1 = blockModel.insertDivider(h)
+        blockModel.insertDivider(d1)                       // the closing divider goes in first; the notes land between the two
+        const n = rowNotes.insertNotesAsBlocks(blockModel, d1)
+        blockModel.endGroup()
+        cursor.setCaret(h, 0); cursor.sync(); ensureVisible(h)
+        return n
+    }
     function toggleVideoLoop(){ videoLoop = !videoLoop }
 
     // Accelerating fast-seek shuttle (held rewind/ff): a 33 ms timer advances a
@@ -7238,7 +7258,20 @@ FocusScope {
                     hoverEnabled: false
                     cursorShape: root.blockDragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                     property real pressY: 0
-                    onPressed: (m) => { pressY = m.y }
+                    onPressed: (m) => {
+                        pressY = m.y
+                        // A press on the handle SELECTS the block (user, 2026-10-18) — the run a drag would carry —
+                        // unless the block already sits inside the selection (then a drag carries the whole run).
+                        if (!(cursor.hasSel && rnum.prow >= cursor.loRow && rnum.prow <= cursor.hiRow)) {
+                            const run = blockModel.typeForRow(rnum.prow) === 10 ? root.dragRunFor(rnum.prow) : [rnum.prow, 1]
+                            const a = run[0], b = run[0] + run[1] - 1
+                            cursor.clearMarks()
+                            cursor.anchorRow = a; cursor.anchorCol = 0
+                            cursor.focusRow = b; cursor.focusCol = cursor.opaque(b) ? 0 : blockModel.contentForRow(b).length
+                            cursor.goalX = -1; cursor.sync()
+                            root.forceActiveFocus()
+                        }
+                    }
                     onPositionChanged: (m) => {
                         if (!pressed) return
                         var vy = mapToItem(root, m.x, m.y).y
@@ -7939,6 +7972,7 @@ FocusScope {
                 Rectangle { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow { visible: blockMenu.isPdf && !root.pdfTabOpen; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
                 MenuRow { visible: blockMenu.isVideo && !root.videoTabOpen; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isVideo && !blockMenu.inFrameTab; text: "Insert notes below"; onActivated: root.insertVideoNotesBelow(root.menuRow) }   // the clip's QCView notes as a headered section (2026-10-18)
                 MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.menuInSel
                           text: "Insert choice chip"
                           onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
