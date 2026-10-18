@@ -1708,11 +1708,25 @@ ApplicationWindow {
                 sourceComponent: Column {
                     anchors.fill: parent
                     property alias editorItem: editorInner
-                    // The validated passive-surface editor (model owns the cursor; blocks
-                    // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
-                    Editor { id: editorInner; width: parent.width
-                             height: parent.height - innerTabs.height - innerBottom.height
-                             inspector: inspectorPanel; tabsItem: innerTabs; toolbarItem: viewTools }
+                    // The document surface (2.0 SPIKE S1): the ONE Editor in its home slot, the CanvasView a sibling
+                    // OVER it in the same rect (shown when the canvas is up; the Editor stays visible underneath as
+                    // the key sink, as it was when the canvas was its child). A live card reparents the Editor into
+                    // the canvas and back to `editorSlot` (S4).
+                    Item {
+                        id: surface
+                        width: parent.width
+                        height: parent.height - innerTabs.height - innerBottom.height
+                        Item {
+                            id: editorSlot
+                            anchors.fill: parent
+                            // The validated passive-surface editor (model owns the cursor; blocks
+                            // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
+                            Editor { id: editorInner; anchors.fill: parent
+                                     homeSlot: editorSlot; canvasItem: canvasView
+                                     inspector: inspectorPanel; tabsItem: innerTabs; toolbarItem: viewTools }
+                        }
+                        CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner }
+                    }
                     TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
                     BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
                 }

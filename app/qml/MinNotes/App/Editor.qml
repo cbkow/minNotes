@@ -190,9 +190,9 @@ FocusScope {
     // the PDF stage, the canvas, or the document. 100 % is true scale on each.
     readonly property real zoomValue: pdfTabOpen
         ? (pdfFitPageW > 0 && mediaHost.w > 0 ? pdfZoom * pdfFitPageW / mediaHost.w : 1)
-        : canvasShown ? canvasView.cam.zoom
+        : canvasShown ? canvasItem.cam.zoom
         : viewZoom
-    function zoomStep(dir) { if (pdfTabOpen) pdfZoomStep(dir); else if (canvasShown) canvasView.zoomStep(dir); else docZoomStep(dir) }
+    function zoomStep(dir) { if (pdfTabOpen) pdfZoomStep(dir); else if (canvasShown) canvasItem.zoomStep(dir); else docZoomStep(dir) }
     // The rail's slider (BottomRail): the active surface's range in TRUE-scale units, mapped
     // the Word way — 100 % dead centre, a linear half either side.
     readonly property real pdfTrueK: pdfFitPageW > 0 && pdfTabOpen && mediaHost.w > 0
@@ -204,7 +204,7 @@ FocusScope {
     function zoomTo(v) {   // true scale, on the active surface, about its centre
         v = Math.max(zoomFloor, Math.min(zoomCeil, v))
         if (pdfTabOpen) pdfZoomTo(v / pdfTrueK)
-        else if (canvasShown) canvasView.zoomTo(v)
+        else if (canvasShown) canvasItem.zoomTo(v)
         else docZoomTo(v)
     }
     // Each half is LOGARITHMIC (a doubling takes the same travel everywhere): the document's
@@ -224,8 +224,8 @@ FocusScope {
     // in writing mode space types) and a left-drag pans the Flickable natively; the document
     // mouse layer and the ink canvas step aside while it's held. Middle-drag pans any time.
     property bool docSpaceHeld: false                     // (cleared in onInkModeChanged below)
-    function zoomFit()     { if (pdfTabOpen) pdfZoomFit();  else if (canvasShown) canvasView.fit();     else toggleFullWidth() }
-    function zoom100()     { if (pdfTabOpen) pdfZoom100();  else if (canvasShown) canvasView.zoomTo(1); else docZoom100() }
+    function zoomFit()     { if (pdfTabOpen) pdfZoomFit();  else if (canvasShown) canvasItem.fit();     else toggleFullWidth() }
+    function zoom100()     { if (pdfTabOpen) pdfZoom100();  else if (canvasShown) canvasItem.zoomTo(1); else docZoom100() }
     // The width the sheet centres in: the viewport (the Inspector docks — it pushes the editor,
     // so flick.width already excludes it; the floating mode went with annotations).
     readonly property real centringWidth: flick.width
@@ -322,6 +322,8 @@ FocusScope {
     // The right Inspector panel (set from Main.qml) — the studio's drawing
     // tool/color/width live there (its Draw target).
     property var inspector: null
+    property var canvasItem: null   // the CanvasView (a sibling in Main.qml; set there) — zoom / keys / view state route to it
+    property Item homeSlot: null    // where this Editor lives in the page view (Main.qml's editorSlot); a live card borrows it
     property var tabsItem: null   // the bottom strip (set from Main.qml; the canvas probe counts its tabs)
     property var toolbarItem: null   // the top strip's view toolbar (set from Main.qml; the probe)
 
@@ -457,7 +459,7 @@ FocusScope {
     function closeElementTab() {   // back to the canvas with the element selected
         const id = activeElementId
         setActiveTab("canvas")
-        if (id !== "") Qt.callLater(function() { canvasView.select(id) })   // after the view is visible (its hide clears the selection)
+        if (id !== "") Qt.callLater(function() { canvasItem.select(id) })   // after the view is visible (its hide clears the selection)
     }
     // The canvas gave way to the page view (the same model may stay focused — the first page is the
     // canvas's fallback): the page lays out at the VIEW's width again, not its card's.
@@ -482,7 +484,7 @@ FocusScope {
         onTriggered: {
             root.setActiveTab("canvas")
             const z = parseFloat(root.canvasOnLoad)
-            if (z > 0) { canvasView.fit(); const o = canvasView.cam.worldToScreen(0, 0); canvasView.cam.zoomAboutPoint(z, o.x, o.y) }
+            if (z > 0) { canvasItem.fit(); const o = canvasItem.cam.worldToScreen(0, 0); canvasItem.cam.zoomAboutPoint(z, o.x, o.y) }
         }
     }
     readonly property string activeFrameId: activeElementId !== "" ? activeElementId   // a canvas media element's full-frame view (2.0 phase A)
@@ -585,7 +587,7 @@ FocusScope {
             activeFrameId: root.activeFrameId,
             boardMode:     root.boardMode,   boardCol:  root.boardCol,
             zoom:          viewZoom,         docZooms:  docZooms,   pdfZooms: pdfZooms,   // per document tab (2026-09-16)
-            canvasCam:     canvasView.captureCam()                                      // the canvas camera (B3), never persisted
+            canvasCam:     canvasItem.captureCam()                                      // the canvas camera (B3), never persisted
         }
     }
     function restoreViewState(m) {
@@ -593,7 +595,7 @@ FocusScope {
         // No saved state (a freshly-opened tab) → the standard fresh-doc reset.
         if (!m || m.focusRow === undefined) {
             docZooms = ({}); pdfZooms = ({}); _prevFlickFrameId = ""; _prevPdfId = ""
-            canvasView.resetCam()
+            canvasItem.resetCam()
             root.clearFrames()
             if (viewZoom !== 1) { docZoomTo(1); docZoomSettle() }
             cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
@@ -603,7 +605,7 @@ FocusScope {
         docZooms = m.docZooms || ({}); pdfZooms = m.pdfZooms || ({})
         _prevFlickFrameId = ""; _prevPdfId = ""
         root.setActiveTab(m.activeFrameId)              // restores the frame tab (table/pdf/video/canvas)
-        canvasView.restoreCam(m.canvasCam)
+        canvasItem.restoreCam(m.canvasCam)
         if (_isFlickFrame(m.activeFrameId)) {
             const z = m.zoom !== undefined ? m.zoom : 1
             if (z !== viewZoom) { docZoomTo(z); docZoomSettle() }
@@ -975,7 +977,7 @@ FocusScope {
     readonly property bool audioIsPlaying: audioPlayingKey !== "" && videoAudio.isPlaying
     function stopAudio() { if (audioPlayingKey === "") return; videoAudio.close(); audioPlayingKey = "" }
     function playAudioElement(id) {
-        const md = canvasView.mediaOf(id)
+        const md = canvasItem.mediaOf(id)
         const key = canvas.mediaAnchorPath(md.src), path = canvas.resolveMediaPath(md.src)
         if (key === "" || path === "") return
         if (audioPlayingKey === key) { if (videoAudio.isPlaying) videoAudio.pause(); else videoAudio.play(); return }
@@ -3083,7 +3085,7 @@ FocusScope {
             event.accepted = true
         }
         else if (root.activeCanvas && event.key === Qt.Key_Space && !event.isAutoRepeat) {
-            canvasView.spaceHeld = false
+            canvasItem.spaceHeld = false
             event.accepted = true
         }
     }
@@ -3146,7 +3148,7 @@ FocusScope {
             else if (root.activeFrameId === "" && canvas.documentOpen) {   // nothing to cancel: the canvas is one Esc away (ruling 6), the page SELECTED there
                 const pid = canvas.focusPage
                 root.setActiveTab("canvas")
-                if (pid !== "") Qt.callLater(function() { canvasView.select(pid) })
+                if (pid !== "") Qt.callLater(function() { canvasItem.select(pid) })
             }
             event.accepted = true
         }
@@ -3249,18 +3251,18 @@ FocusScope {
             const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
             const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
                                [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" }
-            if (k === Qt.Key_Space && !event.isAutoRepeat) canvasView.spaceHeld = true
+            if (k === Qt.Key_Space && !event.isAutoRepeat) canvasItem.spaceHeld = true
             else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
-            else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasView.deleteSelected()
-            else if (cmd && k === Qt.Key_V) canvasView.pasteAt(canvasView.width / 2, canvasView.height / 2)   // ⌘V → elements at the viewport's centre (phase A7)
-            else if (k === Qt.Key_PageDown) canvasView.pdfStepSelected(1)      // a selected PDF element pages (phase A5)
-            else if (k === Qt.Key_PageUp) canvasView.pdfStepSelected(-1)
+            else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasItem.deleteSelected()
+            else if (cmd && k === Qt.Key_V) canvasItem.pasteAt(canvasItem.width / 2, canvasItem.height / 2)   // ⌘V → elements at the viewport's centre (phase A7)
+            else if (k === Qt.Key_PageDown) canvasItem.pdfStepSelected(1)      // a selected PDF element pages (phase A5)
+            else if (k === Qt.Key_PageUp) canvasItem.pdfStepSelected(-1)
             else if (k === Qt.Key_Escape) {
-                if (canvasView.inkCapture.drawing) canvasView.inkCapture.cancelStroke()
-                else if (root.inspector && canvasView.drawing) root.inspector.drawTool = "select"   // disarm the pen first
-                else canvasView.clearSelection()
+                if (canvasItem.inkCapture.drawing) canvasItem.inkCapture.cancelStroke()
+                else if (root.inspector && canvasItem.drawing) root.inspector.drawTool = "select"   // disarm the pen first
+                else canvasItem.clearSelection()
             }
-            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasView.openSelected()   // Return = Open (a page: the page view; media: its tab)
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasItem.openSelected()   // Return = Open (a page: the page view; media: its tab)
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4061,19 +4063,19 @@ FocusScope {
         }
         function activeItems() {   // every live element item
             const out = []
-            for (let i = 0; i < canvasView.poolCount; ++i) { const c = canvasView.elementItemAt(i); if (c && c.active) out.push(c) }
+            for (let i = 0; i < canvasItem.poolCount; ++i) { const c = canvasItem.elementItemAt(i); if (c && c.active) out.push(c) }
             return out
         }
         function pageItem(id) { return activeItems().find(c => c.elementId === id) || null }
-        function cv_textTool() { return canvasView.textTool }
+        function cv_textTool() { return canvasItem.textTool }
         function win_toolbar() { return root.toolbarItem }
-        function selFrameX() { return canvasView.selectionFrame.x }
-        function selFrameW() { return canvasView.selectionFrame.width }
+        function selFrameX() { return canvasItem.selectionFrame.x }
+        function selFrameW() { return canvasItem.selectionFrame.width }
         onTriggered: {
             started = true
             if (phase === lastPhase && step === lastStep) { if (++stalled > 250) { fail("stalled at phase " + phase + " step " + step); console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "(stalled)"); Qt.exit(Math.min(Math.max(fails, 1), 100)) } }
             else { lastPhase = phase; lastStep = step; stalled = 0 }
-            const cam = canvasView.cam
+            const cam = canvasItem.cam
             if (phase === 0) {   // P0: pages, the tab, fit
                 if (step === 0) {
                     livePage = blockModel.pageId()
@@ -4090,9 +4092,9 @@ FocusScope {
                     shapeId = canvas.addShapeElement(JSON.stringify({ shape: "text", text: "a label", fontSize: 24, fill: "#ffffffff" }), Qt.rect(base.x + base.width + 664, base.y, 160, 40))
                     check(inkId !== "" && mediaId !== "" && shapeId !== "" && canvas.elementCount() === 6, "an ink, a media and a text shape element added")
                     root.setActiveTab("canvas")
-                } else if (step === 3) { canvasView.fit() }
+                } else if (step === 3) { canvasItem.fit() }
                 else if (step === 8) {
-                    check(root.activeCanvas && canvasView.visible && !flick.visible, "the Canvas tab shows the canvas and hides the page")
+                    check(root.activeCanvas && canvasItem.visible && !flick.visible, "the Canvas tab shows the canvas and hides the page")
                     check(canvas.focusPage === "" && root.undoTarget === canvas && blockModel.pageId() === canvas.firstPageId(), "the Canvas tab = no focused page; ⌘Z targets the canvas log; blockModel falls back to the first page")
                     check(!cam.userCam && cam.zoom < 1, "a fresh canvas fits the elements (zoom " + cam.zoom + ")")
                     check(!mediaHost.valid && root.activeElementId === "" && !root.pdfTabOpen && !root.videoTabOpen, "no media host on the bare canvas (phase A2)")
@@ -4125,14 +4127,14 @@ FocusScope {
                 nextPhase("model"); return
             }
             if (phase === 2) {   // P2: pan sweep at zoom 0.5
-                if (step === 0) { cam.zoomAboutPoint(0.5, canvasView.width / 2, canvasView.height / 2); ++step; return }
+                if (step === 0) { cam.zoomAboutPoint(0.5, canvasItem.width / 2, canvasItem.height / 2); ++step; return }
                 if (step % 2 === 1) {   // move
                     const b = canvas.canvasBounds()
                     const wx = b.x + rnd() * b.width, wy = b.y + rnd() * b.height
-                    cam.setPan(canvasView.width / 2 - wx * cam.zoom, canvasView.height / 2 - wy * cam.zoom)
+                    cam.setPan(canvasItem.width / 2 - wx * cam.zoom, canvasItem.height / 2 - wy * cam.zoom)
                     ++step; return
                 }
-                const vis = canvasView.visibleElements, items = activeItems()
+                const vis = canvasItem.visibleElements, items = activeItems()
                 const seen = {}
                 let ok = items.length === vis.length
                 for (const c of items) {
@@ -4141,24 +4143,24 @@ FocusScope {
                     const r = canvas.elementRect(c.elementId)
                     if (Math.abs(c.x - r.x) > 0.5 || Math.abs(c.y - r.y) > 0.5 || Math.abs(c.width - r.width) > 0.5 || Math.abs(c.height - r.height) > 0.5) { ok = false; fail("element " + c.elementId + " at " + c.x + "," + c.y + " vs rect " + r.x + "," + r.y) }
                     if (c.kind === "page" && c.tier !== 2) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + cam.zoom) }
-                    const tl = cam.screenToWorld(-canvasView.width * 0.5, -canvasView.height * 0.5), br = cam.screenToWorld(canvasView.width * 1.5, canvasView.height * 1.5)
+                    const tl = cam.screenToWorld(-canvasItem.width * 0.5, -canvasItem.height * 0.5), br = cam.screenToWorld(canvasItem.width * 1.5, canvasItem.height * 1.5)
                     if (r.x + r.width < tl.x || r.x > br.x || r.y + r.height < tl.y || r.y > br.y) { ok = false; fail("element " + c.elementId + " outside the overscan") }
                 }
                 check(ok, "pan step " + step + ": one item per visible element (" + items.length + " of " + vis.length + "), at its rect, live, inside the overscan")
                 if (++step >= 24) nextPhase("pan"); return
             }
             if (phase === 3) {   // P3: zoom sweep about random anchors
-                if (step === 0) { canvasView.fit(); prevTier = -1; ++step; return }
+                if (step === 0) { canvasItem.fit(); prevTier = -1; ++step; return }
                 const zs = [0.05, 0.07, 0.09, 0.11, 0.2, 0.3, 0.34, 0.37, 0.4, 0.6, 1, 1.5, 2, 3, 4, 0.36, 0.33, 0.31, 0.12, 0.08]
                 const i = step - 1
                 if (i >= zs.length) { nextPhase("zoom"); return }
-                const ax = rnd() * canvasView.width, ay = rnd() * canvasView.height
+                const ax = rnd() * canvasItem.width, ay = rnd() * canvasItem.height
                 const w = cam.screenToWorld(ax, ay)
                 cam.zoomAboutPoint(zs[i], ax, ay)
                 const s = cam.worldToScreen(w.x, w.y)
                 check(Math.abs(s.x - ax) < 0.5 && Math.abs(s.y - ay) < 0.5 && Math.abs(cam.zoom - zs[i]) < 1e-9, "zoom " + zs[i] + ": the anchored point stays put (" + (s.x - ax) + "," + (s.y - ay) + ")")
                 const items = activeItems()
-                let ok = items.length === canvasView.visibleElements.length
+                let ok = items.length === canvasItem.visibleElements.length
                 const pagesHere = items.filter(c => c.kind === "page")
                 for (const c of pagesHere) if (c.tier !== expectedTier(zs[i], prevTier)) { ok = false; fail("element " + c.elementId + " tier " + c.tier + " at zoom " + zs[i] + " (prev tier " + prevTier + ")") }
                 check(ok, "zoom " + zs[i] + ": every page is in the tier the hysteresis predicts (" + items.length + " elements)")
@@ -4168,7 +4170,7 @@ FocusScope {
             if (phase === 4) {   // P4: live content on the fixture's page at zoom 1
                 if (step === 0) {
                     const r = canvas.elementRect(livePage)
-                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasView.width / 2 - (r.x + r.width / 2), 80 - r.y)
+                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasItem.width / 2 - (r.x + r.width / 2), 80 - r.y)
                     ++step; return
                 }
                 const c = pageItem(livePage)
@@ -4197,7 +4199,7 @@ FocusScope {
             if (phase === 5) {   // P5: the ink, media and shape elements render (zoom 1 over them)
                 if (step === 0) {
                     const r = canvas.elementRect(inkId)
-                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasView.width / 2 - (r.x + 400), canvasView.height / 2 - (r.y + 70))
+                    cam.zoomAboutPoint(1, 0, 0); cam.setPan(canvasItem.width / 2 - (r.x + 400), canvasItem.height / 2 - (r.y + 70))
                     ++step; return
                 }
                 if (step < 12) { ++step; return }
@@ -4211,16 +4213,16 @@ FocusScope {
             }
             if (phase === 6) {   // P6: the pointer and the pen through the same functions the handlers call
                 if (step === 0) {
-                    canvasView.select(inkId)
-                    check(canvasView.selectedId === inkId, "select")
+                    canvasItem.select(inkId)
+                    check(canvasItem.selectedId === inkId, "select")
                     const r0 = canvas.elementRect(inkId), hist0 = canvas.undoHistory().length
-                    canvasView.moveSelectedBy(10, 0); canvasView.moveSelectedBy(10, 0); canvasView.moveSelectedBy(5, 7)
+                    canvasItem.moveSelectedBy(10, 0); canvasItem.moveSelectedBy(10, 0); canvasItem.moveSelectedBy(5, 7)
                     const r1 = canvas.elementRect(inkId)
                     check(r1.x === r0.x + 25 && r1.y === r0.y + 7 && canvas.undoHistory().length === hist0 + 1, "three coalesced moves = one undo entry (" + (canvas.undoHistory().length - hist0) + ")")
-                    canvasView.resizeSelected(canvasView.edgeResize(r1, 1, 1, 30, 20))
+                    canvasItem.resizeSelected(canvasItem.edgeResize(r1, 1, 1, 30, 20))
                     const r2 = canvas.elementRect(inkId)
                     check(r2.width === r1.width + 30 && r2.height === r1.height + 20 && r2.x === r1.x, "a corner resize grows the rect")
-                    canvasView.resizeSelected(canvasView.edgeResize(r2, -1, 0, 1000, 0))
+                    canvasItem.resizeSelected(canvasItem.edgeResize(r2, -1, 0, 1000, 0))
                     check(canvas.elementRect(inkId).width === 8, "a left-edge drag past the right edge floors at 8 px")
                     canvas.undo(); canvas.undo(); canvas.undo()
                     check(canvas.elementRect(inkId).x === r0.x && canvas.elementRect(inkId).width === r0.width, "three undos restore the rect")
@@ -4235,19 +4237,19 @@ FocusScope {
                 // stroke modeler is time-based (a burst of points at dt = 0 collapses to its ends).
                 if (step === 2) {
                     root.inspector.drawTool = "freehand"
-                    check(canvasView.drawing && canvasView.inkCapture.active, "a stroke tool arms the pen overlay")
+                    check(canvasItem.drawing && canvasItem.inkCapture.active, "a stroke tool arms the pen overlay")
                     penN0 = canvas.elementCount()
-                    canvasView.inkCapture.beginStroke(100, 100); ++step; return
+                    canvasItem.inkCapture.beginStroke(100, 100); ++step; return
                 }
-                if (step === 3) { canvasView.inkCapture.movePoint(140, 130); ++step; return }
-                if (step === 4) { canvasView.inkCapture.movePoint(180, 100); ++step; return }
-                if (step === 5) { canvasView.inkCapture.movePoint(220, 130); ++step; return }
+                if (step === 3) { canvasItem.inkCapture.movePoint(140, 130); ++step; return }
+                if (step === 4) { canvasItem.inkCapture.movePoint(180, 100); ++step; return }
+                if (step === 5) { canvasItem.inkCapture.movePoint(220, 130); ++step; return }
                 if (step === 6) {
                     const n0 = penN0
-                    const cap = canvasView.inkCapture
+                    const cap = canvasItem.inkCapture
                     cap.endStroke(260, 100)
                     const n1 = canvas.elementCount()
-                    const id = canvasView.selectedId
+                    const id = canvasItem.selectedId
                     const w0 = cap.toWorld(100, 100), w1 = cap.toWorld(260, 130)
                     const r = canvas.elementRect(id)
                     const env = JSON.parse(canvas.elementJson(id))
@@ -4262,17 +4264,17 @@ FocusScope {
                 if (step === 7) {   // a frame later: the new element's item has tessellated its stroke
                     const item = activeItems().find(c => c.elementId === penId)
                     check(!!item && !!item.inkItem && item.inkItem.strokeCount === 1 && item.inkItem.vertexCount > 0, "…and it renders (" + (item && item.inkItem ? item.inkItem.strokeCount + " strokes" : "no item") + ")")
-                    const cap = canvasView.inkCapture, n0 = canvas.elementCount() - 1, id = penId
+                    const cap = canvasItem.inkCapture, n0 = canvas.elementCount() - 1, id = penId
                     root.inspector.drawTool = "rect"
                     cap.beginStroke(300, 300); cap.movePoint(350, 340); cap.endStroke(400, 380)
-                    const rid = canvasView.selectedId, renv = JSON.parse(canvas.elementJson(rid))
+                    const rid = canvasItem.selectedId, renv = JSON.parse(canvas.elementJson(rid))
                     check(canvas.elementCount() === n0 + 2 && renv.shapes[0].type === "rect" && renv.shapes[0].points.length === 4, "a rect tool drag = one rect shape with four corners")
                     root.inspector.drawTool = "eraser"
                     const rr = canvas.elementRect(rid), c = cap.toWorld(0, 0)   // the eraser reports a world point: aim at the rect's centre
                     cap.beginStroke((rr.x + rr.width / 2) * cam.zoom + cam.panX, (rr.y + rr.height / 2) * cam.zoom + cam.panY)
                     check(canvas.elementCount() === n0 + 1 && canvas.elementKind(rid) === "", "the eraser removes the ink element under the point")
                     root.inspector.drawTool = "select"
-                    check(!canvasView.drawing, "select disarms the pen")
+                    check(!canvasItem.drawing, "select disarms the pen")
                     canvas.undo(); canvas.undo(); canvas.undo()
                     check(canvas.elementCount() === n0 - 0 && !canvas.elementKind(id), "undo takes the erase, the rect and the stroke back (" + canvas.elementCount() + ")")
                     ++step; return
@@ -4285,13 +4287,13 @@ FocusScope {
                           "addPageAt: a page at the point, the floor height, one paragraph (" + pr.height + ")")
                     root.inspector.drawTool = "text"
                     check(cv_textTool(), "the text tool arms")
-                    const tid = canvasView.newTextAt(200, 200)
-                    check(tid !== "" && canvas.elementKind(tid) === "shape" && canvasView.textEditorItem.editingId === tid && canvasView.selectedId === tid, "a text tap makes a chip and edits it")
-                    canvasView.textEditorItem.editingId = tid
-                    canvasView.textEditorItem.commit()   // empty → removed
-                    check(canvas.elementKind(tid) === "" && canvasView.selectedId === "", "committing an empty chip removes it")
-                    const tid2 = canvasView.newTextAt(200, 200)
-                    const te = canvasView.textEditorItem
+                    const tid = canvasItem.newTextAt(200, 200)
+                    check(tid !== "" && canvas.elementKind(tid) === "shape" && canvasItem.textEditorItem.editingId === tid && canvasItem.selectedId === tid, "a text tap makes a chip and edits it")
+                    canvasItem.textEditorItem.editingId = tid
+                    canvasItem.textEditorItem.commit()   // empty → removed
+                    check(canvas.elementKind(tid) === "" && canvasItem.selectedId === "", "committing an empty chip removes it")
+                    const tid2 = canvasItem.newTextAt(200, 200)
+                    const te = canvasItem.textEditorItem
                     te.editingId = tid2
                     check(te.shown, "editing the second chip")
                     root.inspector.drawTool = "select"
@@ -4299,18 +4301,18 @@ FocusScope {
                 }
                 if (step === 9) {
                     // (commit through the editor's text: set it, then commit)
-                    const tid2 = canvasView.textEditorItem.editingId
-                    canvasView.textEditorItem.editingId = tid2
+                    const tid2 = canvasItem.textEditorItem.editingId
+                    canvasItem.textEditorItem.editingId = tid2
                     ++step; return
                 }
                 nextPhase("interaction"); return
             }
             if (phase === 7) {   // P7: the same actions as REAL gestures (gestures posts mouse / key events into the window)
-                const g = gestures, cvw = canvasView
+                const g = gestures, cvw = canvasItem
                 function centreOf(id) { const r = canvas.elementRect(id), s = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2); return s }
                 if (step === 0) {
                     root.inspector.drawTool = "select"
-                    if (canvasView.selectedId !== "") canvasView.clearSelection()
+                    if (canvasItem.selectedId !== "") canvasItem.clearSelection()
                     const r = canvas.elementRect(inkId)
                     cam.zoomAboutPoint(1, 0, 0); cam.setPan(cvw.width / 2 - (r.x + r.width / 2), cvw.height / 2 - (r.y + r.height / 2))
                     ++step; return
@@ -4565,7 +4567,7 @@ FocusScope {
                 nextPhase("round-trip"); return
             }
             if (phase === 9) {   // P9 (phase A3): element tabs — a canvas video / PDF opens its OWN full-frame view over the unfocused canvas
-                const g = gestures, cvw = canvasView, t = root.tabsItem
+                const g = gestures, cvw = canvasItem, t = root.tabsItem
                 if (step === 0) {
                     const b = canvas.canvasBounds()
                     pdfElId = canvas.addMediaElement(JSON.stringify({ kind: "pdf", src: "missing/doc.pdf", w: 612, h: 792, pages: 3 }), Qt.rect(b.x + b.width + 200, b.y, 480, 622))
@@ -4720,7 +4722,7 @@ FocusScope {
                 nextPhase("element-tabs"); return
             }
             if (phase === 10) {   // P10 (phase A6): wide drops — a folder element, a file card, a batch grid, one history row
-                const g = gestures, cvw = canvasView
+                const g = gestures, cvw = canvasItem
                 if (step === 0) {
                     const arg = Qt.application.arguments.find(function(a) { return a.indexOf("--canvas-probe=") === 0 }) || ""
                     const fix = arg.substring("--canvas-probe=".length), fixDir = fix.substring(0, fix.lastIndexOf("/"))
@@ -6298,15 +6300,9 @@ FocusScope {
         }
     }
 
-    // --- The canvas view (B3): the document's blocks as cards on an infinite surface. A sibling
-    // of the other full-frame tabs; read-only in phase 1; the camera is session state (view state),
-    // never persisted into the document. ---
-    CanvasView {
-        id: canvasView
-        visible: root.canvasShown
-        anchors.fill: parent
-        editor: root
-    }
+    // --- The canvas view lives in Main.qml now (2.0 SPIKE S1): a SIBLING over this Editor in the same rect,
+    // reached as `canvasItem`. The Editor is the page view (and the key sink under the canvas); a live card
+    // reparents this one Editor INTO the canvas (S4), which it could never do while the canvas was its child. ---
 
     // --- Comment margin pins: one per row carrying comment spans, in the
     // right margin. Root-level + model-driven (never per-delegate), gated to
