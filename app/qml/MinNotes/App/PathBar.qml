@@ -77,7 +77,7 @@ Rectangle {
         property bool menuOpen: false
         signal clicked()
         height: bar.height - 1
-        width: segRow.implicitWidth + 16
+        width: segRow.implicitWidth + 20
         radius: 0
         color: menuOpen ? Theme.colors.divider : (segMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
         Row {
@@ -87,11 +87,11 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: seg.label
                 color: seg.current || segMA.containsMouse || seg.menuOpen ? Theme.colors.textBright : Theme.colors.textMuted
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome   // the chrome tier (13): no reduced size any more
                 elide: Text.ElideMiddle
                 width: Math.min(implicitWidth, 220)
             }
-            Icon { visible: seg.dropdown; anchors.verticalCenter: parent.verticalCenter; name: "caret-down"; size: 9
+            Icon { visible: seg.dropdown; anchors.verticalCenter: parent.verticalCenter; name: "caret-down"; size: 10
                    color: seg.current || segMA.containsMouse ? Theme.colors.textMuted : Theme.colors.textSubtle }
         }
         MouseArea { id: segMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: seg.clicked() }

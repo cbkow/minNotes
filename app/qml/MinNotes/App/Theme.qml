@@ -69,8 +69,7 @@ QtObject {
         readonly property int rulerHeight: 22        // the Inspector's top bar (was the PageRuler's band);
                                                      // the Inspector's top bar matches it (2026-08-20)
         // The three top rows (2.0 chrome re-organisation, user ruling 2026-10-18): files · components · toolbar.
-        readonly property int tabRowH:        24     // the files row (== the components row; user: "the same size", 2026-10-18)
-        readonly property int componentRowH:  24     // the components row (pages / elements / frames)
+        readonly property int tabRowH:        30     // the PATH BAR (== the toolbar row; the reduced tab size went with the tab strips, 2026-10-18)
         readonly property int toolbarH:       30     // the toolbar row
         readonly property int chromeBtn:      28     // a toolbar button's edge (inside the 30-px row)
         readonly property int chromeIcon:     16     // a toolbar button's icon
@@ -115,7 +114,7 @@ QtObject {
         readonly property string body:   theme.aspektaFont.name      // Aspekta (document body)
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
         readonly property string serif:  theme.serifFont.name        // Lora (quotes)
-        readonly property int sizeSmall: 12  // captions — and the TAB LABELS of the top rows (ruling 2026-10-18: "make tabs smaller, text and size")
+        readonly property int sizeSmall: 12  // captions
         readonly property int sizeChrome: 13 // panel/toolbar labels (was a bare literal ~20 places)
         readonly property int sizeBody: 14   // a notch above the 13px kanban/tab tier
         readonly property int sizeMono: 13
