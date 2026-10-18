@@ -4187,8 +4187,8 @@ FocusScope {
                 check(root.canvasShown && cvw.selectedId === elId && root.canvasVideoHost.valid && cvw.selectionFrame.videoBar.visible, "back on the canvas the element is selected and shows its transport (host " + root.canvasVideoHost.valid + ", bar " + cvw.selectionFrame.videoBar.visible + ")")
                 check(root.videoKeyContext === "canvas" && Math.abs(root.videoSpeed - 1) < 0.01, "…the selected element is the key context; Shift+R reset the speed")
                 const sf = cvw.selectionFrame
-                check(Math.abs(sf.height - (sf.pictureH + sf.videoBar.height + 1)) < 0.5 && Math.abs(sf.videoBar.y - sf.pictureH) < 0.5 && sf.videoBar.height === 22 && sf.videoBar.x === 1 && sf.videoBar.width <= sf.width - 2,
-                      "the selection box encloses the picture AND its 22-px bar with the accent showing on all four sides (box " + sf.height.toFixed(0) + " = picture " + sf.pictureH.toFixed(0) + " + bar " + sf.videoBar.height + " + 1)")
+                check(Math.abs(sf.height - sf.pictureH) < 0.5 && Math.abs(sf.videoBar.y - (sf.pictureH + 2)) < 0.5 && sf.videoBar.height === 22 && sf.videoBar.x === 0,
+                      "the selection box is the picture; its 22-px bar hangs 2 px below it (box " + sf.height.toFixed(0) + ", bar y " + sf.videoBar.y.toFixed(0) + ")")
                 const bar = cvw.selectionFrame.videoBar, btn = bar.playButton, pb = btn.mapToItem(cvw, btn.width / 2, btn.height / 2)
                 gestures.click(cvw, pb.x, pb.y)   // the bar's play button (it lies OUTSIDE the element's rect)
                 check(cvw.selectedId === elId && videoDec.isPlaying && root.activeFocus, "the bar's play button plays and the element STAYS selected with the editor focused (selected '" + cvw.selectedId + "', playing " + videoDec.isPlaying + ", focus " + root.activeFocus + ")")
@@ -4868,8 +4868,8 @@ FocusScope {
                 }
                 if (step === 24) {
                     check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId && cvw.opens === probeOpens && cvw.mediaFocuses === 1
-                          && (cvw.camAnimating || cam.zoom >= 1) && cvw.selectionFrame.videoBar.visible && cvw.selectionFrame.height > cvw.selectionFrame.pictureH + 20,
-                          "double-click on a video element = FOCUS in place: selected, the camera heads to readable, its bar inside the selection box (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ", focuses " + cvw.mediaFocuses + ", animating " + cvw.camAnimating + ", zoom " + cam.zoom.toFixed(2) + ", box " + cvw.selectionFrame.height.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
+                          && (cvw.camAnimating || cam.zoom >= 1) && cvw.selectionFrame.videoBar.visible && Math.abs(cvw.selectionFrame.videoBar.y - (cvw.selectionFrame.pictureH + 2)) < 0.5,
+                          "double-click on a video element = FOCUS in place: selected, the camera heads to readable, its bar under the selection box (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ", focuses " + cvw.mediaFocuses + ", animating " + cvw.camAnimating + ", zoom " + cam.zoom.toFixed(2) + ", bar y " + cvw.selectionFrame.videoBar.y.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
                     cvw.endLive(false); cvw.fit()   // (stops the camera animation; the other fixtures back in the window)
                     const same = (a, b) => Math.abs(a - b) < 0.01
                     let rr = cvw.edgeResize(Qt.rect(100, 100, 320, 240), 1, 0, 80, 0, true)

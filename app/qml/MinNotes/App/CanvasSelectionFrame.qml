@@ -14,16 +14,14 @@ Item {
     readonly property rect world: shown ? (canvas.geometryRevision, view.selectedIds, view.selectionRect()) : Qt.rect(0, 0, 0, 0)
     readonly property point tl: (view.cam.rev, view.cam.worldToScreen(world.x, world.y))
     x: tl.x; y: tl.y
-    // The box = the element's picture + (a video) its 22-px bar: ONE object with one hit rect (walk 7c). The stored
-    // rect stays the picture (geometry, exports, ink untouched); `pictureH` is where the picture ends.
+    // The box is the element's picture (the selectable rect); a video's 22-px bar hangs 2 px BELOW it (walk 7c, user:
+    // the accent must not wrap chrome that isn't selectable; the bar is still the frame's chrome for hit-testing).
     readonly property real pictureH: Math.max(1, world.height * view.cam.zoom)
-    readonly property real barH: transport.visible ? transport.height + 1 : 0   // + the box's bottom border under the bar (the accent stays visible on all four sides)
-    width: Math.max(1, world.width * view.cam.zoom); height: pictureH + barH
+    width: Math.max(1, world.width * view.cam.zoom); height: pictureH
     opacity: shown ? 1 : 0
     enabled: shown
 
-    Rectangle { x: 0; y: 0; width: Math.max(frame.width, transport.visible ? transport.width + 2 : 0); height: frame.height
-                color: "transparent"; border.width: 1; border.color: Theme.colors.accent; radius: 0 }
+    Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Theme.colors.accent; radius: 0 }
 
     // The OPEN glyph (2.0 phase A4): a 20-px square off the frame's top-right corner, screen space, no
     // accent (the frame carries it) — the "full window" rung of the gesture ladder for a single element.
@@ -41,8 +39,8 @@ Item {
     CompactTransport {
         id: transport
         visible: frame.isVideo && !!frame.view.editor && !!frame.view.editor.canvasVideoHost
-        x: 1; y: frame.pictureH   // inside the box, under the picture, one pixel in from the box's sides and bottom
-        width: Math.max(200, frame.width - 2)
+        x: 0; y: frame.pictureH + 2   // just under the box: the bottom accent shows between picture and bar
+        width: Math.max(200, frame.width)
         editor: frame.view.editor
         dec: frame.view.editor ? frame.view.editor.videoDecoder : null
         audio: frame.view.editor ? frame.view.editor.audioPlayer : null
