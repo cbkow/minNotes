@@ -91,7 +91,9 @@ KeyLatencyProbe::KeyLatencyProbe(QQuickWindow* w, int synthKeys, QObject* parent
     }
     // MN_KEYLAT_TRAP=1: stop for an attached lldb once the document is up (so a breakpoint set after
     // this point skips the thousands of start-up hits): lldb -b ... -o 'process launch ...' -o 'breakpoint set ...' -o continue
-    if (qEnvironmentVariableIntValue("MN_KEYLAT_TRAP") > 0) QTimer::singleShot(2400, this, [] { raise(SIGSTOP); });
+#ifndef Q_OS_WIN
+    if (qEnvironmentVariableIntValue("MN_KEYLAT_TRAP") > 0) QTimer::singleShot(2400, this, [] { raise(SIGSTOP); });   // (POSIX only: no SIGSTOP on Windows)
+#endif
 }
 
 QString KeyLatencyProbe::chainOf(QQuickItem* item, int depth) {
