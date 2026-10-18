@@ -976,16 +976,19 @@ FocusScope {
     // window-shell tone, so the document reads as a constrained shape that
     // follows the width setting. Both sides since the sheet centres
     // (2026-09-16). Tracks the pan; width 0 (hidden) at full width.
+    // (The desk tint beyond the sheet — the darker shell tone on both sides of a capped measure — is RETIRED, user
+    // ruling 2026-10-18: one field tone, bgAlt, across the whole page view. The sheet geometry still drives the
+    // layout; nothing paints it. The rectangles stay for the focus-fill's sheet seams to anchor against.)
     Rectangle {
         readonly property real sheetRight: root.vx(root.sheetRight)
-        visible: flick.visible && width > 0
+        visible: false
         x: sheetRight
         width: Math.max(0, parent.width - sheetRight)
         height: parent.height
         color: Theme.colors.bg
     }
     Rectangle {
-        visible: flick.visible && width > 0
+        visible: false
         x: 0
         width: Math.max(0, root.vx(root.sheetLeft))
         height: parent.height

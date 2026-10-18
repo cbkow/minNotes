@@ -106,7 +106,7 @@ Popup {
         property bool userSlot: false
         readonly property string hex: userSlot ? flyout.userSlots[idx] : flyout.presets[idx]
         readonly property bool selected: userSlot ? flyout.selUser === idx : flyout.selPreset === idx
-        width: 18; height: 18; radius: 0
+        width: Math.floor((flyout.contentW - 4 * 4) / 5); height: 18; radius: 0   // WIDE clips, five across (user, 2026-10-18)
         color: hex !== "" ? hex : "transparent"
         border.width: 1
         border.color: selected ? Theme.colors.textBright : Theme.colors.border
@@ -221,13 +221,13 @@ Popup {
         Text { text: qsTr("Presets"); color: Theme.colors.textMuted; topPadding: 4
                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
         Grid {
-            columns: 10; spacing: 4
+            columns: 5; spacing: 4
             Repeater { model: flyout.presets.length; delegate: Swatch { required property int index; idx: index } }
         }
         Text { text: qsTr("Yours"); color: Theme.colors.textMuted; topPadding: 2
                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
-        Row {
-            spacing: 4
+        Grid {
+            columns: 5; spacing: 4
             Repeater { model: flyout.userSlots.length; delegate: Swatch { required property int index; idx: index; userSlot: true } }
         }
         // Right-click menu for a user slot: clear it back to empty (+).
