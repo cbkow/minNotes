@@ -111,6 +111,56 @@ bool MediaStore::isVideoPath(const QString& path) {
     return exts.contains(QFileInfo(p).suffix().toLower());
 }
 
+bool MediaStore::isAudioPath(const QString& path) {
+    static const QStringList exts = {
+        QStringLiteral("wav"), QStringLiteral("aif"), QStringLiteral("aiff"), QStringLiteral("mp3"),
+        QStringLiteral("flac"), QStringLiteral("m4a"), QStringLiteral("aac"), QStringLiteral("ogg"),
+        QStringLiteral("opus"), QStringLiteral("wma"),
+    };
+    QString p = path;
+    if (p.startsWith(QLatin1String("file:"))) p = QUrl(p).toLocalFile();
+    return exts.contains(QFileInfo(p).suffix().toLower());
+}
+
+MediaStore::AudioRef MediaStore::importAudioFile(const QString& fileUrlOrPath) const {
+    QString path = fileUrlOrPath;
+    if (path.startsWith(QLatin1String("file:"))) path = QUrl(path).toLocalFile();
+    if (!QFileInfo(path).isFile()) return {};
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) != 0) return {};
+    AudioRef ref;
+    if (avformat_find_stream_info(fmt, nullptr) >= 0) {
+        const int as = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+        if (as >= 0) {
+            AVStream* st = fmt->streams[as];
+            ref.src = path;                        // referenced in place (absolute)
+            ref.sampleRate = st->codecpar->sample_rate;
+#if LIBAVCODEC_VERSION_MAJOR >= 59
+            ref.channels = st->codecpar->ch_layout.nb_channels;
+#else
+            ref.channels = st->codecpar->channels;
+#endif
+            if (st->duration != AV_NOPTS_VALUE && st->time_base.den != 0)
+                ref.durationMs = qint64(1000.0 * st->duration * av_q2d(st->time_base));
+            else if (fmt->duration != AV_NOPTS_VALUE)
+                ref.durationMs = fmt->duration / (AV_TIME_BASE / 1000);
+        }
+    }
+    avformat_close_input(&fmt);
+    return ref;
+}
+
+QString MediaStore::audioDescriptorJson(const AudioRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"),        mn::toRef(ref.src));
+    o.insert(QStringLiteral("kind"),       QStringLiteral("audio"));
+    o.insert(QStringLiteral("name"),       QFileInfo(ref.src).fileName());
+    o.insert(QStringLiteral("durMs"),      double(ref.durationMs));
+    o.insert(QStringLiteral("sampleRate"), ref.sampleRate);
+    o.insert(QStringLiteral("channels"),   ref.channels);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
 bool MediaStore::isPdfPath(const QString& path) {
     QString p = path;
     if (p.startsWith(QLatin1String("file:"))) p = QUrl(p).toLocalFile();

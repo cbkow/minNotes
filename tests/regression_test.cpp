@@ -58,6 +58,7 @@
 
 #include <QGuiApplication>
 #include <QBuffer>
+#include <QDataStream>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -6416,6 +6417,40 @@ static void testMultiDocToCanvas() {
     CHECK(!bad.value(QStringLiteral("ok")).toBool() && !bad.value(QStringLiteral("error")).toString().isEmpty(), "a single-document file is refused with a reason");
 }
 
+// [137] Audio elements (2.0 phase A9).
+static void testAudioElements() {
+    qInfo("[137] audio elements (2.0 phase A9): isAudioPath; importAudioFile probes a PCM WAV (duration, rate, channels); the descriptor; a dropped .wav = a 360×56 audio element whose path resolves and that the pack plan carries");
+    QTemporaryDir dir;
+    const QString wav = dir.filePath(QStringLiteral("take 3.wav"));
+    {   // 1 s of silence: 8 kHz, mono, 16-bit PCM = 16000 data bytes + a 44-byte RIFF header
+        QByteArray d; QDataStream ds(&d, QIODevice::WriteOnly); ds.setByteOrder(QDataStream::LittleEndian);
+        const quint32 dataBytes = 16000;
+        ds.writeRawData("RIFF", 4); ds << quint32(36 + dataBytes); ds.writeRawData("WAVE", 4);
+        ds.writeRawData("fmt ", 4); ds << quint32(16) << quint16(1) << quint16(1) << quint32(8000) << quint32(16000) << quint16(2) << quint16(16);
+        ds.writeRawData("data", 4); ds << dataBytes;
+        d.append(QByteArray(int(dataBytes), '\0'));
+        QFile f(wav); CHECK(f.open(QIODevice::WriteOnly) && f.write(d) == d.size(), "wav fixture written (%lld bytes)", (long long)d.size());
+    }
+    CHECK(MediaStore::isAudioPath(wav) && MediaStore::isAudioPath(QStringLiteral("x.MP3")) && MediaStore::isAudioPath(QUrl::fromLocalFile(wav).toString()) && !MediaStore::isAudioPath(QStringLiteral("x.mp4")) && !MediaStore::isAudioPath(QStringLiteral("x.png")),
+          "isAudioPath by extension (file urls too); video and images are not audio");
+    CanvasDocument c; CHECK(c.newCanvas(), "canvas");
+    const MediaStore::AudioRef ref = c.mediaStore()->importAudioFile(wav);
+    CHECK(ref.ok() && ref.sampleRate == 8000 && ref.channels == 1 && ref.durationMs >= 990 && ref.durationMs <= 1010, "the probe reads 8 kHz mono ≈ 1000 ms (%lld ms, %d Hz, %d ch)", (long long)ref.durationMs, ref.sampleRate, ref.channels);
+    const QJsonObject d = QJsonDocument::fromJson(MediaStore::audioDescriptorJson(ref).toUtf8()).object();
+    CHECK(d.value(QStringLiteral("kind")).toString() == QLatin1String("audio") && d.value(QStringLiteral("name")).toString() == QLatin1String("take 3.wav") && d.value(QStringLiteral("durMs")).toDouble() == double(ref.durationMs),
+          "the descriptor: kind audio, the file name, durMs");
+    CHECK(!c.mediaStore()->importAudioFile(dir.filePath(QStringLiteral("missing.wav"))).ok(), "a missing file probes to nothing");
+    const int rows0 = c.undoHistory().size();
+    const QString id = c.addMediaElementFromUrl(QUrl::fromLocalFile(wav).toString(), 1000, 0);
+    CHECK(!id.isEmpty() && c.mediaElementKind(id) == QLatin1String("audio") && c.elementRect(id).size() == QSizeF(CanvasDocument::kAudioCardW, CanvasDocument::kAudioCardH) && c.undoHistory().size() == rows0 + 1,
+          "a dropped .wav is an audio element card, one history row");
+    CHECK(QFileInfo(c.elementLocalPath(id)).canonicalFilePath() == QFileInfo(wav).canonicalFilePath() && c.mediaElementName(id) == QLatin1String("take 3.wav"), "…its path resolves; its name shows");
+    CHECK(c.fullFrameMediaIds().isEmpty(), "audio has no full-frame tab (it plays in place)");
+    const PackageExporter::PackPlan plan = PackageExporter::buildPackPlan(&c, true);
+    bool packed = false; for (const auto& it : plan.items) if (it.srcPath.endsWith(QLatin1String("take 3.wav"))) packed = true;
+    CHECK(packed, "the pack plan carries the audio file like any referenced media (%d items)", int(plan.items.size()));
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8943,6 +8978,7 @@ int main(int argc, char** argv) {
     testBookmarkAndRemote();
     testCopyPagesIn();
     testMultiDocToCanvas();
+    testAudioElements();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

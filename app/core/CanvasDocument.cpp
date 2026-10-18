@@ -932,6 +932,10 @@ QString CanvasDocument::addMediaElementFromUrl(const QString& fileUrl, qreal wx,
         const MediaStore::PdfRef ref = mediaStore_->importPdfFile(fileUrl);
         if (ref.ok()) return addMediaElement(MediaStore::pdfDescriptorJson(ref), sized(ref.w, ref.h));
     }
+    if (MediaStore::isAudioPath(fileUrl)) {   // phase A9: an audio element (name, duration, path; inline play)
+        const MediaStore::AudioRef ref = mediaStore_->importAudioFile(fileUrl);
+        if (ref.ok()) return addMediaElement(MediaStore::audioDescriptorJson(ref), QRectF(wx, wy, kAudioCardW, kAudioCardH));
+    }
     {
         const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, /*forceCopy*/false);
         if (ref.ok()) {

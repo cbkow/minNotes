@@ -451,7 +451,7 @@ FocusScope {
     readonly property var canvasDoc: canvas       // the `canvas` context property, reachable from object scopes that shadow the name
     readonly property bool canvasShown: activeCanvas && activeElementId === ""      // the canvas surface itself is up
     readonly property bool videoTabOpen: mediaHost.valid && mediaHost.kind === "video"
-    readonly property bool pdfTabOpen: mediaHost.valid && !videoTabOpen            // any other media opens as the PDF-style tab (today's rule)
+    readonly property bool pdfTabOpen: mediaHost.valid && !videoTabOpen && mediaHost.kind !== "audio"   // any other media opens as the PDF-style tab (today's rule); audio plays in place
     // The shared player is on the HOST's media (studio surface, transport, annotator bind to this).
     readonly property bool hostIsPlaying: mediaHost.valid && videoPlayingKey !== "" && videoPlayingKey === mediaHost.key
     function closeElementTab() {   // back to the canvas with the element selected
@@ -969,6 +969,22 @@ FocusScope {
     // Transport logic is ported from ufb's VideoPreview. ---
     property int  videoPlayingRow: -1
     property string videoPlayingKey: ""   // the playing media's anchor path (2.0 phase A: the key both a block and an element share)
+    // An AUDIO element playing on the shared AudioPlayer (phase A9): one thing plays at a time — starting a video
+    // stops it and vice versa. Keyed by the media's anchor path like the video.
+    property string audioPlayingKey: ""
+    readonly property bool audioIsPlaying: audioPlayingKey !== "" && videoAudio.isPlaying
+    function stopAudio() { if (audioPlayingKey === "") return; videoAudio.close(); audioPlayingKey = "" }
+    function playAudioElement(id) {
+        const md = canvasView.mediaOf(id)
+        const key = canvas.mediaAnchorPath(md.src), path = canvas.resolveMediaPath(md.src)
+        if (key === "" || path === "") return
+        if (audioPlayingKey === key) { if (videoAudio.isPlaying) videoAudio.pause(); else videoAudio.play(); return }
+        stopVideo(); stopAudio()
+        videoAudio.initialize()   // idempotent
+        if (!videoAudio.open(path)) return
+        audioPlayingKey = key
+        videoAudio.play()
+    }
     // T5 (S9c): a video whose column is narrower than this can't host the transport; its bar hides and
     // a click on the frame opens the review view instead.
     readonly property real transportMinW: 300
@@ -1096,7 +1112,7 @@ FocusScope {
         // would keep reading the OLD clip after the swap.
         if (videoAudio.shuttleActive()) videoAudio.endShuttle()
         _scrubAudioActive = false
-        videoDec.close(); videoAudio.close()
+        videoDec.close(); videoAudio.close(); audioPlayingKey = ""   // (an audio element loses the shared player)
         _vidScrubTarget = -1
         // Playback source: disk path, or a subfile spec streaming a packaged
         // clip straight from the archive — play starts without extraction.
@@ -4018,6 +4034,7 @@ FocusScope {
         property string fileElId: ""
         property string bookmarkElId: ""
         property string probeFixDir: ""
+        property string audioElId: ""
         property string textElId: ""
         property string remoteElId: ""
         property string pdfElId: ""            // P9: the element-tab fixtures
@@ -4766,6 +4783,7 @@ FocusScope {
                     check(!!bc && bc.kind === "bookmark" && bc.hostText.text === "example.invalid", "the bookmark card shows the host (" + (bc ? bc.hostText.text : "no card") + "; the fetch fails fast offline)")
                     // A minNotes file dropped on the canvas COPIES its pages in (phase A8): the 1.0 fixture converts on its working copy.
                     const b = canvas.canvasBounds()
+                    audioElId = canvas.addMediaElement(JSON.stringify({ kind: "audio", src: "missing/take.wav", name: "take.wav", durMs: 61000, sampleRate: 48000, channels: 2 }), Qt.rect(b.x + b.width + 100, b.y + 400, 360, 56))
                     probeN0 = canvas.elementCount(); probePages0 = canvas.pageIds.length; probeRows0 = canvas.undoHistory().length
                     const ids = canvas.copyPagesFrom("file://" + probeFixDir + "/v1-sample.mnd", b.x, b.y + b.height + 200)
                     check(ids.length >= 2 && canvas.pageIds.length === probePages0 + 1 && canvas.elementKind(ids[0]) === "page", "the v1 fixture copies in as a page + its converted elements (" + ids.length + ")")
@@ -4774,6 +4792,8 @@ FocusScope {
                     ++step; return
                 }
                 if (step < 30) { ++step; return }   // the copied page's card loads
+                const ai = pageItem(audioElId), ac = ai && ai.mediaItem ? ai.mediaItem.card : null
+                check(!!ac && ac.kind === "audio" && ac.durText.text === "1:01" && root.audioPlayingKey === "", "an audio element's card shows its duration (" + (ac ? ac.durText.text : "no card") + "); nothing plays until asked")
                 const copied = canvas.pageIds[canvas.pageIds.length - 1], ci = pageItem(copied)
                 check(!!ci && ci.tier >= 0 && canvas.pageTitle(copied) !== "", "the copied page has a card and a title (tier " + (ci ? ci.tier : -1) + " at this zoom, '" + canvas.pageTitle(copied) + "')")
                 canvas.undo()

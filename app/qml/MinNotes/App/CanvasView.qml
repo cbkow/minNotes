@@ -120,7 +120,7 @@ Rectangle {
         if (k === "page") return qsTr("Open page")
         if (k === "shape") return qsTr("Edit text")
         const mk = canvas.mediaElementKind(id)
-        return mk === "video" ? qsTr("Open in studio") : mk === "pdf" ? qsTr("Open PDF") : mk === "bookmark" ? qsTr("Open link") : mk === "folder" ? qsTr("Open folder") : qsTr("Open")
+        return mk === "video" ? qsTr("Open in studio") : mk === "pdf" ? qsTr("Open PDF") : mk === "bookmark" ? qsTr("Open link") : mk === "folder" ? qsTr("Open folder") : mk === "audio" ? qsTr("Play") : qsTr("Open")
     }
     // A selected PDF element pages (phase A5): the page lives in the editor's path-keyed map, so the
     // same PDF inline in a page and as an element show the same page.
@@ -179,6 +179,7 @@ Rectangle {
         if (k !== "media") return
         const mk = canvas.mediaElementKind(id)
         if (mk === "video" || mk === "pdf") { editor.setActiveTab(id); return }
+        if (mk === "audio") { editor.playAudioElement(id); return }
         if (mk === "bookmark") { try { Qt.openUrlExternally(JSON.parse(canvas.elementJson(id)).media.src) } catch (e) {} return }
         canvas.openElement(id)
     }

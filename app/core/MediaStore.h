@@ -49,6 +49,12 @@ public:
     // Reference an existing video file. Probes dims + duration/fps/frames via
     // libavformat (header-only: open + find_stream_info; no decode, no threads).
     VideoRef importVideoFile(const QString& fileUrlOrPath) const;
+    // AUDIO (2.0 phase A9): referenced in place like video; probed header-only via libavformat.
+    struct AudioRef { QString src; qint64 durationMs = 0; int sampleRate = 0; int channels = 0;
+        bool ok() const { return !src.isEmpty() && sampleRate > 0; } };
+    static bool isAudioPath(const QString& path);   // wav aif aiff mp3 flac m4a aac ogg opus wma
+    AudioRef importAudioFile(const QString& fileUrlOrPath) const;
+    static QString audioDescriptorJson(const AudioRef& ref);   // {src, kind:"audio", name, durMs, sampleRate, channels}
 
     // Decode a single frame (software) of a video to an RGBA image — used for
     // the inline poster thumbnail (frame 0 at rest; the remembered playhead

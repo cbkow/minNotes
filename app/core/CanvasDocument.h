@@ -66,6 +66,7 @@ public:
     static double pageHeightCap(double elementWidth);
     static double clampPageHeight(double elementWidth, double h);
     static constexpr double kBookmarkCardW = 320, kBookmarkCardH = 72;  // a bookmark element's card
+    static constexpr double kAudioCardW = 360, kAudioCardH = 56;       // an audio element's card
     static constexpr double kFolderCardW = 320, kFolderCardH = 112;   // a folder element's card
     static constexpr double kFileCardW = 320, kFileCardH = 56;        // a file chip element's card (name + path)
     static constexpr double kDropGridGap = 24;                       // a batch drop's grid gap
