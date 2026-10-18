@@ -1732,10 +1732,26 @@ ApplicationWindow {
             }
         }
 
+        // Rows 2 + 3 of the top chrome (2026-10-18, §2.14): the COMPONENTS row (pages / elements / frames — the
+        // former bottom strip) and, from S3, the TOOLBAR. A Loader like docContent: nothing here touches the
+        // empty model while no document is open.
+        Loader {
+            id: chromeRows
+            width: parent.width
+            active: blockModel.documentOpen
+            // NO explicit height: a Loader with an explicit size resizes its ITEM to itself (the rows collapsed to 0
+            // and the content slid up under them); unset, the Loader takes the item's height. Width only is fine —
+            // the two dimensions are independent.
+            sourceComponent: Column {
+                property alias tabs: componentsRow
+                TableTabs { id: componentsRow; width: parent.width; editor: win.activeEditor }
+            }
+        }
+
         Row {
             id: contentRow
             width: parent.width
-            height: parent.height - docTabBar.height
+            height: parent.height - docTabBar.height - chromeRows.height
             // editor is null while no document is open — the rail/inspector guard it,
             // and the welcome overlay covers everything.
             readonly property var editor: docContent.item ? docContent.item.editorItem : null
@@ -1760,7 +1776,8 @@ ApplicationWindow {
                     Item {
                         id: surface
                         width: parent.width
-                        height: parent.height - innerTabs.height - innerBottom.height
+                        height: parent.height - innerBottom.height
+                        clip: true   // the canvas's elements (and a selection frame's glyph) may extend past the view: the chrome rows above must still take their clicks (2026-10-18)
                         Item {
                             id: editorSlot
                             anchors.fill: parent
@@ -1768,11 +1785,11 @@ ApplicationWindow {
                             // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
                             Editor { id: editorInner; anchors.fill: parent
                                      homeSlot: editorSlot; canvasItem: canvasView
-                                     inspector: inspectorPanel; tabsItem: innerTabs; toolbarItem: viewTools }
+                                     inspector: inspectorPanel; toolbarItem: viewTools
+                                     tabsItem: chromeRows.item ? chromeRows.item.tabs : null }
                         }
                         CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner }
                     }
-                    TableTabs { id: innerTabs; width: parent.width; editor: editorInner }
                     BottomRail { id: innerBottom; width: parent.width; editor: editorInner }
                 }
             }
@@ -1787,7 +1804,7 @@ ApplicationWindow {
         id: inspectorPanel
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: parent.height - (docTabBar.visible ? docTabBar.height : 0)
+        height: parent.height - docTabBar.height - chromeRows.height   // (docTabBar.height is 0 when hidden)
         z: 5   // above the editor content; the welcome overlay (z:100) still covers
         editor: contentRow.editor
     }
@@ -1902,7 +1919,7 @@ ApplicationWindow {
         opacity: Toasts.active ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
         anchors { top: parent.top; right: parent.right
-                  topMargin: (docTabBar.visible ? docTabBar.height : 0) + 8; rightMargin: 12 }
+                  topMargin: docTabBar.height + chromeRows.height + 8; rightMargin: 12 }
         width: toastRow.implicitWidth + 24
         height: 32
         radius: 0

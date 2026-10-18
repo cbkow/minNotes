@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 
-// Bottom tab strip (2.0): ONE LEVEL PER MODE (ruling 2026-10-17). Canvas mode shows canvas things:
+// The COMPONENTS row (2.0; under the files row since the chrome re-organisation, 2026-10-18 — it was the bottom
+// strip): ONE LEVEL PER MODE (ruling 2026-10-17). Canvas mode shows canvas things:
 // "Canvas" · one tab per PAGE (its title) · "+". Page mode shows page things: "Canvas" (the way back)
 // · this page's tab (its Document view) · its frame tabs — each table a "Table N" tab, each PDF /
 // video a tab labelled by its file name. The navigator menu (≡) lists everything in both modes.
@@ -32,15 +33,17 @@ Rectangle {
     readonly property int elementTabCount: canvasMode ? elemRep.count : 0
     function elementTabAt(i) { return elemRep.itemAt(i) }
     readonly property var canvasTabItem: canvasTab
+    readonly property var navMenuItem: tabMenu   // probe (the chrome phase checks it opens DOWNWARD)
     visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
-    readonly property int rowH: 34
+    readonly property int rowH: Theme.dim.componentRowH   // 24 (was 34)
     height: visible ? rowH : 0
     color: Theme.colors.surfaceRaised   // sidebar tone — the item-tab strip is chrome, like the Inspector
 
-    // A divider line along the top edge.
-    Rectangle { width: parent.width; height: 1; color: Theme.colors.border; z: 1 }
+    // A divider line along the BOTTOM edge (the row sits above the content now).
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 1 }
 
-    function _select(id) { if (editor) editor.setActiveTab(id) }
+    property int selects: 0   // probe diagnostics
+    function _select(id) { ++selects; if (editor) editor.setActiveTab(id) }
     // A page tab: focus the page FIRST (the manager re-points blockModel), then the Document view.
     function _selectPage(id) { if (id === "") return; canvas.focusPage = id; _select("") }
     function _addPage() { const id = canvas.addPage(); if (id !== "") _selectPage(id) }
@@ -80,7 +83,7 @@ Rectangle {
         property string tooltip: label
         property bool active: false
         signal clicked()
-        width: tabLabel.implicitWidth + 36
+        width: tabLabel.implicitWidth + 24
         height: tabs.rowH
         // Whole tabs only: a tab that doesn't fully fit left of the menu
         // button hides completely (opacity keeps its Row slot — visible:false
@@ -102,16 +105,17 @@ Rectangle {
             id: tabLabel
             anchors.centerIn: parent; text: parent.label
             color: parent.active ? Theme.colors.textBright : Theme.colors.textMuted
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall   // the tab tier (12)
         }
+        property int presses: 0; property int clicks: 0   // probe diagnostics
         MouseArea { id: tabMA; anchors.fill: parent; hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked() }
-        // Full name on hover — opens above the strip (it sits at the window's
-        // bottom edge). Left-aligned so long filenames extend rightward.
+                    cursorShape: Qt.PointingHandCursor; onPressed: ++btn.presses; onClicked: { ++btn.clicks; parent.clicked() } }
+        // Full name on hover — opens BELOW the row (it sits under the files row now). Left-aligned so
+        // long filenames extend rightward.
         FlatToolTip {
             parent: btn
             x: 0
-            y: -implicitHeight - 6
+            y: btn.height + 6
             visible: tabMA.containsMouse && btn.tooltip.length > 0
             text: btn.tooltip
         }
@@ -212,11 +216,11 @@ Rectangle {
     Rectangle {
         id: menuBtn
         anchors.right: parent.right; anchors.top: parent.top
-        width: 34; height: tabs.rowH
+        width: tabs.rowH; height: tabs.rowH   // square
         color: tabMenu.visible ? Theme.colors.divider
              : (menuMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.border }
-        Icon { anchors.centerIn: parent; name: "list"; size: 16
+        Icon { anchors.centerIn: parent; name: "list"; size: 14
                color: tabMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
         // Overflow underline (white, the tab language): some tabs are hidden —
         // the full list lives in this menu.
@@ -231,7 +235,7 @@ Rectangle {
     }
 
     // --- The navigator popup: scrollable, sectioned, full filenames. Opens
-    // upward (the strip lives at the window's bottom) and right-aligns to the
+    // DOWNWARD (the row lives under the files row) and right-aligns to the
     // menu button.
     component SectionHeader: Text {
         property string title: ""
@@ -268,7 +272,7 @@ Rectangle {
         width: 320
         height: Math.min(360, menuCol.implicitHeight + 2)
         x: tabs.width - width
-        y: -height - 2
+        y: tabs.height + 2
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: Rectangle { color: Theme.colors.surface; radius: 0
                                 border.width: 1; border.color: Theme.colors.border }

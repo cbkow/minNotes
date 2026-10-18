@@ -4675,7 +4675,7 @@ FocusScope {
                           "page mode: this page and its frames only (" + (t ? t.frameTabCount : -1) + " frames)")
                     const ct = t ? t.canvasTabItem : null
                     if (ct) { const p = ct.mapToItem(t, ct.width / 2, ct.height / 2); g.click(t, p.x, p.y) }
-                    check(root.activeCanvas && t.canvasMode, "a click on the Canvas tab returns to the canvas")
+                    check(root.activeCanvas && t.canvasMode, "a click on the Canvas tab returns to the canvas (tabs at window y " + t.mapToItem(null, 0, 0).y.toFixed(0) + ", h " + t.height + ")")
                     if (!root.activeCanvas) root.setActiveTab("canvas")
                     ++step; return
                 }
