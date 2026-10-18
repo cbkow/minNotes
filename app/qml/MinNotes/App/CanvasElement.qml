@@ -88,6 +88,7 @@ Item {
     Component { id: mediaComponent; CanvasMediaItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }
     Component { id: shapeComponent; CanvasShapeItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }
     readonly property var inkItem: shownKind === "ink" ? content.item : null   // probe: strokeCount / vertexCount
+    readonly property var mediaItem: shownKind === "media" ? content.item : null   // probe: pdfPage / posterFrame
     Component {   // connectors: a frame until their renderer lands
         id: placeholderComponent
         Rectangle {

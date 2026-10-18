@@ -1049,16 +1049,16 @@ FocusScope {
     // pdfPageRev bump re-evaluates the page bindings when the nav changes it.
     property var pdfPages: ({})
     property int pdfPageRev: 0
-    function pdfPageFor(row) {
-        var key = blockModel.mediaViewPath(row)   // non-blocking (delegate bindings)
-        return (key !== "" && pdfPages[key] !== undefined) ? pdfPages[key] : 0
-    }
-    function setPdfPage(row, page) {
-        var n = blockModel.mediaPdfPages(row)
+    // Keyed by the PDF's view path (non-blocking) — the same key for a page's PDF block and a canvas
+    // PDF element (phase A5), so paging one pages the other.
+    function pdfPageForKey(key) { return (key !== "" && pdfPages[key] !== undefined) ? pdfPages[key] : 0 }
+    function setPdfPageKey(key, page, n) {
         var p = Math.max(0, Math.min(page, n - 1))
-        var key = blockModel.mediaViewPath(row)
         if (key !== "") { pdfPages[key] = p; pdfPageRev++ }
     }
+    function pdfStepKey(key, d, n) { setPdfPageKey(key, pdfPageForKey(key) + d, n) }
+    function pdfPageFor(row) { return pdfPageForKey(blockModel.mediaViewPath(row)) }
+    function setPdfPage(row, page) { setPdfPageKey(blockModel.mediaViewPath(row), page, blockModel.mediaPdfPages(row)) }
     function pdfStep(row, d) { setPdfPage(row, pdfPageFor(row) + d) }
 
     // -1 = not scrubbing. Otherwise the frame scrubbed to but not yet resumed
@@ -3236,6 +3236,8 @@ FocusScope {
             if (k === Qt.Key_Space && !event.isAutoRepeat) canvasView.spaceHeld = true
             else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
             else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasView.deleteSelected()
+            else if (k === Qt.Key_PageDown) canvasView.pdfStepSelected(1)      // a selected PDF element pages (phase A5)
+            else if (k === Qt.Key_PageUp) canvasView.pdfStepSelected(-1)
             else if (k === Qt.Key_Escape) {
                 if (canvasView.inkCapture.drawing) canvasView.inkCapture.cancelStroke()
                 else if (root.inspector && canvasView.drawing) root.inspector.drawTool = "select"   // disarm the pen first
@@ -4647,8 +4649,8 @@ FocusScope {
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 8,
-                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 10,
+                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -4660,8 +4662,34 @@ FocusScope {
                     cvw.contextMenu.close()
                     ++step; return
                 }
-                if (step < 38) { ++step; return }
-                check(cvw.selectedId === livePage, "menus closed, the page stays selected")
+                if (step === 38) {   // PDF paging on a selected element (phase A5)
+                    check(cvw.selectedId === livePage, "menus closed, the page stays selected")
+                    cvw.select(pdfElId)
+                    ++step; return
+                }
+                if (step === 40) {
+                    const fr = cvw.selectionFrame
+                    check(fr.isPdf && fr.pagerNext.visible && cvw.pdfPageOfSelected === 0, "a selected PDF element shows the pager at page 1 (" + cvw.pdfPageOfSelected + ")")
+                    const p = fr.pagerNext.mapToItem(cvw, fr.pagerNext.width / 2, fr.pagerNext.height / 2)
+                    check(cvw.frameHit(p), "…the pager counts as the frame for the press gate")
+                    g.click(cvw, p.x, p.y)
+                    ++step; return
+                }
+                if (step === 42) {
+                    const it = pageItem(pdfElId)
+                    check(cvw.pdfPageOfSelected === 1 && !!it && !!it.mediaItem && it.mediaItem.pdfPage === 1, "› pages to 2; the element's preview follows (page " + cvw.pdfPageOfSelected + ", item " + (it && it.mediaItem ? it.mediaItem.pdfPage : -1) + ")")
+                    g.key(root, Qt.Key_PageDown)
+                    check(cvw.pdfPageOfSelected === 2, "PageDown pages on (" + cvw.pdfPageOfSelected + ")")
+                    g.key(root, Qt.Key_PageDown)
+                    check(cvw.pdfPageOfSelected === 2, "…and clamps at the last page")
+                    g.key(root, Qt.Key_PageUp)
+                    check(cvw.pdfPageOfSelected === 1, "PageUp pages back (" + cvw.pdfPageOfSelected + ")")
+                    const fr = cvw.selectionFrame, p = fr.pagerPrev.mapToItem(cvw, fr.pagerPrev.width / 2, fr.pagerPrev.height / 2)
+                    g.click(cvw, p.x, p.y)
+                    ++step; return
+                }
+                if (step < 44) { ++step; return }
+                check(cvw.pdfPageOfSelected === 0, "‹ pages back to 1 (" + cvw.pdfPageOfSelected + ")")
                 nextPhase("element-tabs")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))

@@ -6169,6 +6169,29 @@ static void testElementTabs() {
     CHECK((c.fullFrameMediaIds() == QStringList{pdf, vid}), "…undo restores it at its z");
 }
 
+// [132] The canvas's media anchor path (2.0 phase A5): the sidecar / playhead / page-map key, no IO.
+static void testCanvasMediaAnchor() {
+    qInfo("[132] canvas mediaAnchorPath (2.0 phase A5): an absolute src is its own anchor; a .minnotes/ src anchors under the file's sidecar WITHOUT touching disk; {vol,rel} resolves; null → \"\"");
+    QTemporaryDir dir;
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString abs = dir.filePath(QStringLiteral("shots/take.mov"));
+    CHECK(c.mediaAnchorPath(abs) == c.mediaStore()->anchorPathFor(QJsonValue(abs)) && c.mediaAnchorPath(abs) == abs, "absolute src → itself (%s)", qPrintable(c.mediaAnchorPath(abs)));
+    const QString rel = QStringLiteral(".minnotes/clip.mp4");
+    const QString anchored = c.mediaAnchorPath(rel);
+    CHECK(anchored == QDir::cleanPath(c.mediaStore()->docDir()) + QStringLiteral("/.minnotes/clip.mp4") || anchored == c.mediaStore()->docDir() + QStringLiteral("/.minnotes/clip.mp4"),
+          "a sidecar src anchors under the file's .minnotes (%s)", qPrintable(anchored));
+    CHECK(!QFileInfo::exists(anchored), "…and nothing was extracted or created to say so");
+    CHECK(c.mediaAnchorPath(QVariant()).isEmpty(), "null → \"\"");
+    const QString vol = dir.path() + QStringLiteral("/vol"); QDir().mkpath(vol);
+    QVector<mn::PathMapping> saved = mn::activeMappings();
+    mn::PathMapping pm; pm.id = QStringLiteral("anchorvol"); pm.label = QStringLiteral("t"); pm.mac = vol; pm.win = vol; pm.lin = vol;
+    mn::setActiveMappings({pm});
+    const QJsonValue ref = mn::toRef(vol + QStringLiteral("/b.mp4"));
+    CHECK(ref.isObject() && c.mediaAnchorPath(ref.toVariant()) == vol + QStringLiteral("/b.mp4"), "a {vol,rel} ref resolves to this machine's path (%s)", qPrintable(c.mediaAnchorPath(ref.toVariant())));
+    mn::setActiveMappings(saved);
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8691,6 +8714,7 @@ int main(int argc, char** argv) {
     testFileLinks();
     testMediaHost();
     testElementTabs();
+    testCanvasMediaAnchor();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

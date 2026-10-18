@@ -35,10 +35,19 @@ Item {
         function mediaViewPath(row) { return canvas.resolveMediaPath(media.src) }
         function mediaPlaybackSource(row) { return canvas.mediaPlaybackSource(media.src) }
         function mediaExtracting(row) { return canvas.mediaExtracting(media.src) }
+        function mediaPdfPages(row) { return media.pages || 0 }
+        function mediaFps(row) { return media.fps || 0 }
+        function mediaFrames(row) { return media.frames || 0 }
+        function mediaAnchorPath(row) { return canvas.mediaAnchorPath(media.src) }
         function mediaDispWidth(row) { return mi.width }
         function mediaDisplayHeight(row) { return mi.height }
         function mediaPageInk(row, page) { return canvas.mediaElementInk(mi.elementId, page) }
     }
+    // The shown PDF page and the video poster frame follow the editor's path-keyed maps (phase A5):
+    // page with the pager under the selection frame; the poster is the studio's banked playhead.
+    readonly property string pdfKey: standIn.media.kind === "pdf" ? standIn.mediaViewPath(0) : ""
+    readonly property int pdfPage: (mi.editor.pdfPageRev, pdfKey !== "" ? mi.editor.pdfPageForKey(pdfKey) : 0)
+    readonly property int posterFrame: (mi.editor.videoPlayheadRev, standIn.media.kind === "video" ? mi.editor.videoPlayheadForKey(standIn.mediaAnchorPath(0)) : 0)
     PageContextLoader {
         anchors.fill: parent
         active: mi.elementId !== ""
@@ -49,6 +58,8 @@ Item {
                 logicalRow: 0
                 maxWidth: mi.width
                 width: mi.width; height: mi.height
+                pdfPage: mi.pdfPage
+                posterFrame: mi.posterFrame
             }
         }
     }

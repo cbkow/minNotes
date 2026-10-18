@@ -24,10 +24,44 @@ Item {
     // accent (the frame carries it) — the "full window" rung of the gesture ladder for a single element.
     readonly property bool canOpen: single && view.canOpen(id_)
     readonly property var openGlyph: glyph   // probe
-    function glyphHit(p) {   // p in the view's coordinates
-        if (!glyph.visible) return false
+    function glyphHit(p) {   // p in the view's coordinates: over the open glyph or the PDF pager (the frame's chrome)
         const q = mapFromItem(view, p.x, p.y)
-        return q.x >= glyph.x && q.x <= glyph.x + glyph.width && q.y >= glyph.y && q.y <= glyph.y + glyph.height
+        const inside = (it) => it.visible && q.x >= it.x && q.x <= it.x + it.width && q.y >= it.y && q.y <= it.y + it.height
+        return inside(glyph) || inside(pager)
+    }
+    // The PDF pager (phase A5): ‹ n / N › under a selected PDF element — screen space, chrome tone.
+    readonly property bool isPdf: single && canvas.mediaElementKind(id_) === "pdf"
+    readonly property var pagerPrev: prevBtn   // probe
+    readonly property var pagerNext: nextBtn
+    Rectangle {
+        id: pager
+        visible: frame.isPdf
+        x: Math.round(frame.width / 2 - width / 2); y: frame.height + 6
+        width: 118; height: 22; radius: 0
+        color: Theme.colors.surfaceRaised
+        border.width: 1; border.color: Theme.colors.border
+        Rectangle {
+            id: prevBtn
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            width: 24; color: prevHover.hovered ? Theme.colors.surfaceHover : "transparent"
+            Icon { anchors.centerIn: parent; name: "caret-left"; size: 12; color: Theme.colors.textMuted }
+            HoverHandler { id: prevHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: frame.view.pdfStepSelected(-1) }
+        }
+        Text {
+            anchors.centerIn: parent
+            text: (frame.view.pdfPageOfSelected + 1) + " / " + Math.max(1, frame.view.pdfPagesOf(frame.id_))
+            color: Theme.colors.textMuted
+            font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeMono
+        }
+        Rectangle {
+            id: nextBtn
+            anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
+            width: 24; color: nextHover.hovered ? Theme.colors.surfaceHover : "transparent"
+            Icon { anchors.centerIn: parent; name: "caret-right"; size: 12; color: Theme.colors.textMuted }
+            HoverHandler { id: nextHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: frame.view.pdfStepSelected(1) }
+        }
     }
     Rectangle {
         id: glyph

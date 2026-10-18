@@ -122,6 +122,14 @@ Rectangle {
         const mk = canvas.mediaElementKind(id)
         return mk === "video" ? qsTr("Open in studio") : mk === "pdf" ? qsTr("Open PDF") : mk === "bookmark" ? qsTr("Open link") : qsTr("Open")
     }
+    // A selected PDF element pages (phase A5): the page lives in the editor's path-keyed map, so the
+    // same PDF inline in a page and as an element show the same page.
+    function mediaOf(id) { try { return JSON.parse(canvas.elementJson(id)).media || {} } catch (e) { return {} } }
+    function pdfKeyOf(id) { return canvas.resolveMediaPath(mediaOf(id).src) }
+    function pdfPagesOf(id) { return mediaOf(id).pages || 0 }
+    readonly property bool selectedIsPdf: selectedId !== "" && canvas.mediaElementKind(selectedId) === "pdf"
+    readonly property int pdfPageOfSelected: (editor.pdfPageRev, selectedIsPdf ? editor.pdfPageForKey(pdfKeyOf(selectedId)) : 0)
+    function pdfStepSelected(d) { if (selectedIsPdf) editor.pdfStepKey(pdfKeyOf(selectedId), d, pdfPagesOf(selectedId)) }
     property int opens: 0                // probe diagnostics
     function openSelected() {
         const id = selectedId
