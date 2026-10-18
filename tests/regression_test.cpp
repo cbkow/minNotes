@@ -6013,13 +6013,11 @@ static void testCanvasBatch() {
 // [129] One file-link recipe (2.0 phase A1): ufb deep links, element local paths through the store.
 static void testFileLinks() {
     qInfo("[129] file links (2.0 phase A1): mn::ufbLinkFor normalises + percent-encodes with literal slashes; CanvasDocument::elementLocalPath resolves absolute and {vol,rel} srcs; non-media → \"\"");
-    const QString expectOs = QStringLiteral(
 #if defined(Q_OS_WIN)
-        "win"
+    const QString expectOs = QStringLiteral("win");
 #else
-        "mac"
+    const QString expectOs = QStringLiteral("mac");   // (MSVC rejects a preprocessor conditional inside a macro's arguments)
 #endif
-    );
     CHECK(mn::ufbLinkFor(QStringLiteral("C:\\a b\\c.mov")) == QStringLiteral("ufb:///") + expectOs + QStringLiteral("/C%3A/a%20b/c.mov"),
           "backslashes normalise, spaces encode, slashes stay literal: %s", qPrintable(mn::ufbLinkFor(QStringLiteral("C:\\a b\\c.mov"))));
     CHECK(mn::ufbLinkFor(QStringLiteral("/Volumes/jobs/é/#1.png")) == QStringLiteral("ufb:///") + expectOs + QStringLiteral("//Volumes/jobs/%C3%A9/%231.png"),
