@@ -12,6 +12,7 @@ QtObject {
         // Tone separates planes; borders only where same-tone surfaces meet.
         readonly property color bg:          "#121211"   // window shell
         readonly property color bgAlt:       "#181817"   // the "desk" right of the page (the overflow margin field)
+        readonly property color bgStrip:  "#151514"   // the two tab rows: halfway between the shell (bg) and the field (bgAlt) — user ruling 2026-10-18
         readonly property color bgAlt2:      "#1d1d1c"   // desk zebra stripe — every other block's span on the desk
         readonly property color surface:     "#121211"   // the document "page"
         readonly property color surfaceRecess: "#0e0e0e" // inset wells — inputs, code, thumbnail beds, tooltip

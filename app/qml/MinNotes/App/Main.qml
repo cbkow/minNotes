@@ -1519,10 +1519,10 @@ ApplicationWindow {
             width: parent.width
             visible: docs.count > 0
             height: visible ? Theme.dim.tabRowH : 0   // 24 — the files row of the three top rows (2026-10-18)
-            // The tab rows share the page's field tone (bgAlt — user ruling 2026-10-18, the second pass); the ACTIVE
-            // tab is the toolbar's raised tone; inactive tabs sit on the field — no fill, no underline, the text
-            // brightens on hover.
-            color: Theme.colors.bgAlt
+            // The tab rows sit a half-step darker than the page's field (bgStrip — user ruling 2026-10-18, third pass);
+            // the ACTIVE tab is the toolbar's raised tone; inactive tabs sit on the strip — no fill, no underline,
+            // the text brightens on hover.
+            color: Theme.colors.bgStrip
             // (bottom hairline removed — the raised strip's tonal step against
             // the page separates on its own; border diet, product pass 2)
 

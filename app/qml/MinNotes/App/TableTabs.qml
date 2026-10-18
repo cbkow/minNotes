@@ -37,7 +37,7 @@ Rectangle {
     visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
     readonly property int rowH: Theme.dim.componentRowH   // 24 (was 34)
     height: visible ? rowH : 0
-    color: Theme.colors.bgAlt           // the page's field tone, like the files row; the active tab is the toolbar's raised tone (ruling 2026-10-18)
+    color: Theme.colors.bgStrip         // a half-step darker than the field, like the files row; the active tab is the toolbar's raised tone (ruling 2026-10-18)
 
     // A divider line along the BOTTOM edge (the row sits above the content now).
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 1 }
