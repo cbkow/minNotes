@@ -36,6 +36,13 @@ ApplicationWindow {
             else quitConfirmDialog.open()
         }
     }
+    // Modal dialogs (the quit / close-tab prompts, conflicts, export options…) DARKEN the app behind them (user,
+    // 2026-10-18): the window overlay's modal backdrop, one component for every modal popup. The flyouts opt out
+    // with `dim: false`, so the canvas keeps its light while a menu is up.
+    Component {
+        id: modalDim
+        Rectangle { color: Qt.rgba(0, 0, 0, 0.55) }
+    }
     Dialog {
         id: quitConfirmDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 460; padding: 20
@@ -827,7 +834,9 @@ ApplicationWindow {
         property bool checkSpelling: true
         property bool checkGrammar: true
         property string ignoredRules: "[]"
-        Component.onCompleted: { spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ignoredRulesJson = ignoredRules }
+        Component.onCompleted: {
+        Overlay.overlay.modal = modalDim; Overlay.overlay.modeless = null   // the modal backdrop (see modalDim above)
+spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ignoredRulesJson = ignoredRules }
     }
     Connections {
         target: spell
