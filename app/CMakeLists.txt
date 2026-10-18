@@ -159,6 +159,7 @@ qt_add_executable(minnotesapp
     # servo, constant-pitch review speeds (SoundTouch WSOLA), grain shuttle
     # audio for FF/RW + drag-scrub.
     player/audio_sync_servo.h
+    player/audio_drain_stage.h   # QCView 2026-10-09: the faded drain stage (sample-accurate seeks, post-seek hold)
     player/fractional_resampler.h
     player/audio_routing_matrix.h
     player/tempo_stage.h
