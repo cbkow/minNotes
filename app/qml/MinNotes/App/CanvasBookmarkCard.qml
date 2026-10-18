@@ -1,5 +1,6 @@
-// A BOOKMARK element's card (2.0 phase A7): a dropped / pasted URL — favicon, the page's title (the host until
-// the fetch lands), the host. Open opens it in the browser. Squared, chrome tones, no accent.
+// A BOOKMARK element's card (2.0 phase A7): a dropped / pasted / typed URL — favicon, the page's title (the host
+// until the fetch lands) and ALWAYS the URL itself (the card's "path", mono, middle-elided; the whole URL on hover —
+// the folder / file cards' rule, 2026-10-18). Open opens it in the browser. Squared, chrome tones, no accent.
 import QtQuick
 
 Rectangle {
@@ -37,11 +38,11 @@ Rectangle {
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
             }
             Text {
-                id: hostLabel
+                id: hostLabel   // the URL line (the probe's hostText)
                 width: parent.width; elide: Text.ElideMiddle
-                text: card.media.host || ""
-                color: Theme.colors.textMuted
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+                text: card.media.src || card.media.host || ""
+                color: Theme.colors.textSubtle
+                font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             }
         }
     }

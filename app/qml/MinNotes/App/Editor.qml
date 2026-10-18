@@ -5098,7 +5098,7 @@ FocusScope {
                 }
                 if (step === 14) {
                     const bi = pageItem(bookmarkElId), bc = bi && bi.mediaItem ? bi.mediaItem.card : null
-                    check(!!bc && bc.kind === "bookmark" && bc.hostText.text === "example.invalid", "the bookmark card shows the host (" + (bc ? bc.hostText.text : "no card") + "; the fetch fails fast offline)")
+                    check(!!bc && bc.kind === "bookmark" && bc.hostText.text === "https://example.invalid/some/page", "the bookmark card prints its URL (" + (bc ? bc.hostText.text : "no card") + "; the fetch fails fast offline)")
                     // A minNotes file dropped on the canvas COPIES its pages in (phase A8): the 1.0 fixture converts on its working copy.
                     const b = canvas.canvasBounds()
                     audioElId = canvas.addMediaElement(JSON.stringify({ kind: "audio", src: "missing/take.wav", name: "take.wav", durMs: 61000, sampleRate: 48000, channels: 2 }), Qt.rect(b.x + b.width + 100, b.y + 400, 360, 56))
