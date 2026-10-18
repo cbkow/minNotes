@@ -89,10 +89,21 @@ QtObject {
     readonly property FontLoader aspektaBoldFont: FontLoader { source: Qt.resolvedUrl("fonts/Aspekta-700.ttf") }
     // Lora (serif) for quote blocks — all four faces so bold/italic/
     // bold-italic inside a quote render with a real face, not a fallback.
-    readonly property FontLoader serifFont:           FontLoader { source: Qt.resolvedUrl("fonts/Lora-Regular.ttf") }
-    readonly property FontLoader serifBoldFont:       FontLoader { source: Qt.resolvedUrl("fonts/Lora-Bold.ttf") }
-    readonly property FontLoader serifItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Lora-Italic.ttf") }
-    readonly property FontLoader serifBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Lora-BoldItalic.ttf") }
+    // TRIAL (2026-10-18): `--serif-font=<file.ttf>` loads another serif (its italic / bold files beside it, named
+    // <stem>-Italic / <stem>-Bold, are loaded when present); `--serif-font=<Family Name>` uses an installed family.
+    readonly property string serifArg: { const a = Qt.application.arguments.find(function(x) { return x.indexOf("--serif-font=") === 0 }); return a ? a.substring(13) : "" }
+    readonly property bool serifArgIsFile: /\.(ttf|otf)$/i.test(serifArg)
+    readonly property string serifStem: serifArgIsFile ? serifArg.replace(/(-Regular)?(\[[^\]]*\])?\.(ttf|otf)$/i, "") : ""
+    readonly property FontLoader serifFont:           FontLoader { source: theme.serifArgIsFile ? "file://" + theme.serifArg : Qt.resolvedUrl("fonts/Lora-Regular.ttf") }
+    readonly property FontLoader serifBoldFont:       FontLoader { source: theme.serifArgIsFile ? "file://" + theme.serifStem + "-Bold.ttf" : Qt.resolvedUrl("fonts/Lora-Bold.ttf") }
+    readonly property FontLoader serifItalicFont:     FontLoader { source: theme.serifArgIsFile ? "file://" + theme.serifStem + "-Italic" + (theme.serifArg.indexOf("[") >= 0 ? theme.serifArg.substring(theme.serifArg.indexOf("[")) : ".ttf") : Qt.resolvedUrl("fonts/Lora-Italic.ttf") }
+    readonly property FontLoader serifBoldItalicFont: FontLoader { source: theme.serifArgIsFile ? "" : Qt.resolvedUrl("fonts/Lora-BoldItalic.ttf") }
+    // PT Serif (OFL) — the body-copy serif trial's alternative (2026-10-18), all four faces.
+    readonly property FontLoader ptSerifFont:           FontLoader { source: Qt.resolvedUrl("fonts/PTSerif-Regular.ttf") }
+    readonly property FontLoader ptSerifBoldFont:       FontLoader { source: Qt.resolvedUrl("fonts/PTSerif-Bold.ttf") }
+    readonly property FontLoader ptSerifItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/PTSerif-Italic.ttf") }
+    readonly property FontLoader ptSerifBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/PTSerif-BoldItalic.ttf") }
+    readonly property string serifSizeArg: { const a = Qt.application.arguments.find(function(x) { return x.indexOf("--serif-size=") === 0 }); return a ? a.substring(13) : "" }   // trial
     readonly property FontLoader phosphorFont:         FontLoader { source: Qt.resolvedUrl("fonts/Phosphor.ttf") }
     readonly property FontLoader phosphorFillFont:     FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Fill.ttf") }
     readonly property FontLoader phosphorDuotoneFont:  FontLoader { source: Qt.resolvedUrl("fonts/Phosphor-Duotone.ttf") }
@@ -113,7 +124,10 @@ QtObject {
         readonly property string family: theme.interFont.name        // Inter (chrome)
         readonly property string body:   theme.aspektaFont.name      // Aspekta (document body)
         readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
-        readonly property string serif:  theme.serifFont.name        // Lora (quotes)
+        readonly property string serif:  theme.serifArg !== "" && !theme.serifArgIsFile ? theme.serifArg
+                                       : theme.serifArg === "lora" ? theme.serifFont.name : theme.ptSerifFont.name   // PT Serif (the 2026-10-18 pick) — Lora via --serif-font=lora, or the trial's --serif-font
+        readonly property int sizeSerif: theme.serifSizeArg !== "" ? parseInt(theme.serifSizeArg) : 15   // body paragraphs in the serif (PT Serif's x-height wants a point over the sans's 14)
+        readonly property bool bodySerif: true                       // TRIAL 2026-10-18: body copy (paragraphs, lists, tasks) in the serif; headings / quotes / cells / chrome stay sans
         readonly property int sizeSmall: 12  // captions
         readonly property int sizeChrome: 13 // panel/toolbar labels (was a bare literal ~20 places)
         readonly property int sizeBody: 14   // a notch above the 13px kanban/tab tier

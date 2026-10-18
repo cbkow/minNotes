@@ -640,11 +640,12 @@ Item {
              : (btype === 8 && taskState === 2) ? Theme.colors.textMuted   // done task
              : Theme.colors.text
         font.family: btype === 2 ? Theme.font.mono
-                   : btype === 4 ? Theme.font.serif   // quote → Merriweather
-                   : Theme.font.body                  // document body → Aspekta
+                   : (btype === 0 && !cell.inTable && Theme.font.bodySerif) ? Theme.font.serif   // PARAGRAPHS → the serif (trial 2026-10-18)
+                   : Theme.font.body                                                    // headings, quotes, lists, tasks, table cells → Aspekta
         font.pixelSize: {
             var _ = cell.rev   // dep (NOT layoutRevision: the size feeds the height)
             if (btype === 2) return Theme.font.sizeMono
+            if (btype === 0 && !cell.inTable && Theme.font.bodySerif) return Theme.font.sizeSerif   // serif paragraphs: their own size
             if (btype !== 1 || !cell.active) return Theme.font.sizeBody
             return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
         }

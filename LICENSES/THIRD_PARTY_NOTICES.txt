@@ -180,3 +180,10 @@ libraries impose copyleft obligations on minNotes.
 
 For the GPL-3 text under which minNotes is itself distributed see /LICENSE in
 the source tree (or the copy installed alongside the application).
+
+15. PT Serif (typeface)
+    Copyright (c) 2010, ParaType Ltd., with Reserved Font Names "PT Sans", "PT Serif" and "ParaType"
+    License: SIL Open Font License, Version 1.1
+    File:    PTSerif-OFL-1.1.txt
+    https://www.paratype.com/public
+    Asset:   bundled document font — body paragraphs (app/qml/MinNotes/App/fonts/PTSerif-*.ttf).
