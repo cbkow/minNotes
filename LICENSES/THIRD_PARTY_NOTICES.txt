@@ -187,3 +187,24 @@ the source tree (or the copy installed alongside the application).
     File:    PTSerif-OFL-1.1.txt
     https://www.paratype.com/public
     Asset:   bundled document font — body paragraphs (app/qml/MinNotes/App/fonts/PTSerif-*.ttf).
+
+16. Inter (typeface)
+    Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+    License: SIL Open Font License, Version 1.1
+    File:    Inter-OFL-1.1.txt
+    https://rsms.me/inter/
+    Asset:   bundled chrome font (app/qml/MinNotes/App/fonts/Inter_18pt-*.ttf).
+
+17. Lora (typeface)
+    Copyright 2011 The Lora Project Authors (https://github.com/cyrealtype/Lora-Cyrillic), with Reserved Font Name "Lora"
+    License: SIL Open Font License, Version 1.1
+    File:    Lora-OFL-1.1.txt
+    https://github.com/cyrealtype/Lora-Cyrillic
+    Asset:   bundled alternative serif (app/qml/MinNotes/App/fonts/Lora-*.ttf; selectable with --serif-font=lora).
+
+18. JetBrains Mono (typeface)
+    Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+    License: SIL Open Font License, Version 1.1
+    File:    JetBrainsMono-OFL-1.1.txt
+    https://www.jetbrains.com/lp/mono/
+    Asset:   bundled code font (app/qml/MinNotes/App/fonts/JetBrainsMono-Regular.ttf).
