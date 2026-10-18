@@ -6144,6 +6144,31 @@ static void testMediaHost() {
     CHECK(!c.element(c.firstPageId())->kind.isEmpty() && (e.setElementId(c.firstPageId()), !e.valid()), "a PAGE element is not a media host");
 }
 
+// [131] Element tabs (2.0 phase A3): which canvas media elements get a full-frame tab, and their names.
+static void testElementTabs() {
+    qInfo("[131] element tabs (2.0 phase A3): fullFrameMediaIds = videos + PDFs in z order; mediaElementName from name / src string / {vol,rel}; mediaElementKind");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const int rev0 = c.elementsRevision();
+    const QString img = c.addMediaElement(QStringLiteral("{\"src\":\"/x/pic.png\",\"w\":12,\"h\":10}"), QRectF(1000, 0, 100, 80));
+    const QString vid = c.addMediaElement(QStringLiteral("{\"kind\":\"video\",\"src\":\"/x/shots/take_01.mov\",\"w\":1920,\"h\":1080,\"fps\":24,\"frames\":48}"), QRectF(1200, 0, 480, 270));
+    const QString pdf = c.addMediaElement(QStringLiteral("{\"kind\":\"pdf\",\"src\":{\"vol\":\"jobs\",\"rel\":[\"docs\",\"spec_v3.pdf\"]},\"w\":612,\"h\":792,\"pages\":9}"), QRectF(1200, 300, 480, 622));
+    const QString chip = c.addMediaElement(QStringLiteral("{\"kind\":\"file\",\"src\":\"/x/a.zip\",\"name\":\"archive.zip\"}"), QRectF(1200, 1000, 260, 44));
+    CHECK(c.elementsRevision() > rev0, "adding elements bumps elementsRevision");
+    CHECK((c.fullFrameMediaIds() == QStringList{vid, pdf}), "only the video and the PDF get tabs, in z order (%d ids)", c.fullFrameMediaIds().size());
+    CHECK(c.bringToFront(vid) && (c.fullFrameMediaIds() == QStringList{pdf, vid}), "…z order is the tab order");
+    CHECK(c.mediaElementKind(img) == QLatin1String("image") && c.mediaElementKind(vid) == QLatin1String("video") && c.mediaElementKind(pdf) == QLatin1String("pdf")
+          && c.mediaElementKind(chip) == QLatin1String("file") && c.mediaElementKind(c.firstPageId()).isEmpty() && c.mediaElementKind(QStringLiteral("nope")).isEmpty(),
+          "mediaElementKind: the descriptor's kind, image by default, \"\" for non-media");
+    CHECK(c.mediaElementName(vid) == QLatin1String("take_01.mov") && c.mediaElementName(pdf) == QLatin1String("spec_v3.pdf") && c.mediaElementName(chip) == QLatin1String("archive.zip")
+          && c.mediaElementName(img) == QLatin1String("pic.png") && c.mediaElementName(c.firstPageId()).isEmpty(),
+          "mediaElementName: `name`, else the src string's / the {vol,rel} ref's basename (%s / %s)", qPrintable(c.mediaElementName(vid)), qPrintable(c.mediaElementName(pdf)));
+    const int rev1 = c.elementsRevision();
+    CHECK(c.removeElement(vid) && (c.fullFrameMediaIds() == QStringList{pdf}) && c.elementsRevision() > rev1, "removing the video drops its tab + bumps the revision");
+    c.undo();
+    CHECK((c.fullFrameMediaIds() == QStringList{pdf, vid}), "…undo restores it at its z");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8665,6 +8690,7 @@ int main(int argc, char** argv) {
     testCanvasBatch();
     testFileLinks();
     testMediaHost();
+    testElementTabs();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

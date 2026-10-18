@@ -35,9 +35,12 @@ Rectangle {
             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             anchors.verticalCenter: parent.verticalCenter
         }
-        Text {   // File ▸ Page breadcrumb (2.0): the focused page's title when the file has several pages
-            visible: canvas.documentOpen && canvas.pageIds.length > 1 && canvas.focusPage !== ""
-            text: (canvas.pagesRevision, blockModel.contentRevision, "▸ " + canvas.pageTitle(canvas.focusPage))
+        Text {   // File ▸ Page breadcrumb (2.0): the focused page's title when the file has several pages;
+                 // File ▸ <media name> while a canvas media element's full-frame view is up (phase A3)
+            readonly property bool elementTab: !!bar.editor && bar.editor.activeElementId !== ""
+            visible: canvas.documentOpen && (elementTab || (canvas.pageIds.length > 1 && canvas.focusPage !== ""))
+            text: elementTab ? (canvas.elementsRevision, "▸ " + canvas.mediaElementName(bar.editor.activeElementId))
+                             : (canvas.pagesRevision, blockModel.contentRevision, "▸ " + canvas.pageTitle(canvas.focusPage))
             color: Theme.colors.text
             font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
             anchors.verticalCenter: parent.verticalCenter

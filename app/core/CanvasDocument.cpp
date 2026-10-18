@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QVariantMap>
@@ -812,6 +813,34 @@ QString CanvasDocument::ufbLink(const QString& id) const { return mn::ufbLinkFor
 void CanvasDocument::openElement(const QString& id) const { mn::openWithDefaultApp(elementLocalPath(id)); }
 void CanvasDocument::openElementInUfb(const QString& id) const { mn::openInUfb(elementLocalPath(id)); }
 void CanvasDocument::revealElement(const QString& id) const { mn::revealInFileManager(elementLocalPath(id)); }
+static QJsonObject mediaDescriptorOf(const Document::Element& e) {
+    return QJsonDocument::fromJson(e.json.toUtf8()).object().value(QStringLiteral("media")).toObject();
+}
+QStringList CanvasDocument::fullFrameMediaIds() const {
+    QStringList out;
+    for (const auto& e : elements_) {
+        if (e.kind != QLatin1String("media")) continue;
+        const QString k = mediaDescriptorOf(e).value(QStringLiteral("kind")).toString();
+        if (k == QLatin1String("video") || k == QLatin1String("pdf")) out << e.id;
+    }
+    return out;
+}
+QString CanvasDocument::mediaElementKind(const QString& id) const {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return QString();
+    return mediaDescriptorOf(*e).value(QStringLiteral("kind")).toString(QStringLiteral("image"));
+}
+QString CanvasDocument::mediaElementName(const QString& id) const {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return QString();
+    const QJsonObject d = mediaDescriptorOf(*e);
+    const QString n = d.value(QStringLiteral("name")).toString();
+    if (!n.isEmpty()) return n;
+    const QJsonValue s = d.value(QStringLiteral("src"));
+    QString path = s.isString() ? s.toString() : QString();
+    if (s.isObject()) { const QJsonArray rel = s.toObject().value(QStringLiteral("rel")).toArray(); if (!rel.isEmpty()) path = rel.last().toString(); }
+    return path.mid(path.lastIndexOf(QLatin1Char('/')) + 1);
+}
 QString CanvasDocument::mediaAnchorPath(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return QString();
     return mediaStore_->anchorPathFor(QJsonValue::fromVariant(src));

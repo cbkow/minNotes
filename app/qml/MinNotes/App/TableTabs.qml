@@ -22,11 +22,15 @@ Rectangle {
                                    blockModel.pdfBlockIds())
     readonly property var videoIds: (blockModel.structureRevision,
                                      blockModel.videoBlockIds())
+    // Canvas mode's second kind of tab (phase A3): the canvas's own media elements with a full-frame view.
+    readonly property var elementIds: canvasMode ? (canvas.elementsRevision, canvas.fullFrameMediaIds()) : []
     readonly property string activeId: !!editor ? editor.activeFrameId : ""
     readonly property bool canvasMode: !!editor && editor.activeCanvas
     // Probe hooks: the tab counts per level and the Canvas tab item.
     readonly property int pageTabCount: canvasMode ? pageRep.count : (canvas.documentOpen ? 1 : 0)
     readonly property int frameTabCount: canvasMode ? 0 : tableRep.count + pdfRep.count + videoRep.count
+    readonly property int elementTabCount: canvasMode ? elemRep.count : 0
+    function elementTabAt(i) { return elemRep.itemAt(i) }
     readonly property var canvasTabItem: canvasTab
     visible: true   // always (ruling 2026-10-16): the Canvas tab lives here for every document
     readonly property int rowH: 34
@@ -53,6 +57,11 @@ Rectangle {
         var r = blockModel.rowForId(id)
         var n = r >= 0 ? blockModel.mediaFileName(r) : ""
         if (n === "") return fallback
+        return n.length > 22 ? n.substring(0, 9) + "…" + n.substring(n.length - 12) : n
+    }
+    function _elementLabel(id) {
+        var n = canvas.mediaElementName(id)
+        if (n === "") return canvas.mediaElementKind(id) === "video" ? "Video" : "PDF"
         return n.length > 22 ? n.substring(0, 9) + "…" + n.substring(n.length - 12) : n
     }
     // The overflow menu shows the WHOLE name (the whole point of the menu).
@@ -142,6 +151,17 @@ Rectangle {
                 tooltip: "Add a page"
                 visible: tabs.canvasMode && canvas.documentOpen
                 onClicked: tabs._addPage()
+            }
+            Repeater {   // the canvas's videos / PDFs: each opens its element-hosted full-frame view
+                id: elemRep
+                model: tabs.elementIds
+                delegate: TabBtn {
+                    required property string modelData
+                    label: (canvas.elementsRevision, tabs._elementLabel(modelData))
+                    tooltip: (canvas.elementsRevision, canvas.mediaElementName(modelData))
+                    active: tabs.activeId === modelData
+                    onClicked: tabs._select(modelData)
+                }
             }
             // --- page mode: this page, then its frames ---
             TabBtn {
@@ -270,6 +290,14 @@ Rectangle {
                         required property int index
                         required property string modelData
                         label: (canvas.pagesRevision, blockModel.contentRevision, tabs._pageLabel(modelData, index)); pageId: modelData
+                    }
+                }
+                SectionHeader { visible: tabs.canvasMode && tabs.elementIds.length > 0; title: "Media" }
+                Repeater {
+                    model: tabs.elementIds
+                    delegate: MenuItem {
+                        required property string modelData
+                        label: (canvas.elementsRevision, canvas.mediaElementName(modelData)); tabId: modelData
                     }
                 }
                 SectionHeader { visible: !tabs.canvasMode && tabs.ids.length > 0; title: "Tables" }

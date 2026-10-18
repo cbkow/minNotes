@@ -448,6 +448,7 @@ FocusScope {
     readonly property bool activeCanvas: canvas.documentOpen && canvas.focusPage === ""
     // A canvas MEDIA ELEMENT shown full-frame (its PDF tab / studio) over an unfocused canvas (2.0 phase A).
     property string activeElementId: ""
+    readonly property var canvasDoc: canvas       // the `canvas` context property, reachable from object scopes that shadow the name
     readonly property bool canvasShown: activeCanvas && activeElementId === ""      // the canvas surface itself is up
     readonly property bool videoTabOpen: mediaHost.valid && mediaHost.kind === "video"
     readonly property bool pdfTabOpen: mediaHost.valid && !videoTabOpen            // any other media opens as the PDF-style tab (today's rule)
@@ -1234,7 +1235,7 @@ FocusScope {
         id: mediaHost
         model: root.activeElementId === "" ? blockModel : null
         blockId: root.activePdfId !== "" ? root.activePdfId : root.activeVideoId
-        canvas: canvas
+        canvas: root.canvasDoc          // (inside this block `canvas` would name the host's OWN property)
         elementId: root.activeElementId
         onGone: if (root.activeElementId !== "") root.setActiveTab("canvas")   // the element went away under its tab
     }
@@ -4001,6 +4002,8 @@ FocusScope {
         property int checks: 0
         property var heightsBefore: ({})
         property string livePage: ""           // the fixture's page (the big one)
+        property string pdfElId: ""            // P9: the element-tab fixtures
+        property string vidElId: ""
         property string inkId: ""
         property string mediaId: ""
         property string shapeId: ""
@@ -4524,7 +4527,61 @@ FocusScope {
                 let ok = true
                 for (const row in heightsBefore) if (Math.abs(blockModel.heightForRow(parseInt(row)) - heightsBefore[row]) > 0.5) ok = false
                 check(ok && root.activeCanvas, "…and back on the canvas they still hold (no alternation)")
-                nextPhase("round-trip")
+                nextPhase("round-trip"); return
+            }
+            if (phase === 9) {   // P9 (phase A3): element tabs — a canvas video / PDF opens its OWN full-frame view over the unfocused canvas
+                const g = gestures, cvw = canvasView, t = root.tabsItem
+                if (step === 0) {
+                    const b = canvas.canvasBounds()
+                    pdfElId = canvas.addMediaElement(JSON.stringify({ kind: "pdf", src: "missing/doc.pdf", w: 612, h: 792, pages: 3 }), Qt.rect(b.x + b.width + 200, b.y, 480, 622))
+                    vidElId = canvas.addMediaElement(JSON.stringify({ kind: "video", src: "missing/clip.mp4", w: 1920, h: 1080, fps: 24, frames: 48, durMs: 2000 }), Qt.rect(b.x + b.width + 200, b.y + 700, 480, 270))
+                    check(pdfElId !== "" && vidElId !== "", "a PDF and a video element added (missing files: the views open on their descriptors)")
+                    ++step; return
+                }
+                if (step === 2) {
+                    check(!!t && t.canvasMode && t.elementTabCount === 2 && t.pageTabCount === canvas.pageIds.length, "canvas mode: one tab per full-frame media element beside the page tabs (" + (t ? t.elementTabCount : -1) + ")")
+                    root.setActiveTab(pdfElId)
+                    ++step; return
+                }
+                if (step === 4) {
+                    check(root.activeFrameId === pdfElId && root.activeElementId === pdfElId && root.activeCanvas && !cvw.visible && !flick.visible && pdfFrame.visible,
+                          "the PDF element's tab shows the PDF view over the unfocused canvas (frame '" + root.activeFrameId + "', pdfFrame " + pdfFrame.visible + ")")
+                    check(mediaHost.valid && mediaHost.kind === "pdf" && mediaHost.pages === 3 && mediaHost.w === 612 && root.pdfTabOpen && !root.videoTabOpen, "the host is the element (pages " + mediaHost.pages + ")")
+                    check(root.undoTarget === canvas && root.zoomValue > 0, "⌘Z still targets the canvas log; the zoom readout is the PDF's")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step === 6) {
+                    check(root.activeElementId === "" && root.canvasShown && cvw.visible && cvw.selectedId === pdfElId, "Escape returns to the canvas with the element SELECTED ('" + cvw.selectedId + "')")
+                    root.setActiveTab(vidElId)
+                    ++step; return
+                }
+                if (step === 8) {
+                    check(studioFrame.visible && !pdfFrame.visible && root.videoTabOpen && mediaHost.kind === "video" && mediaHost.frames === 48 && mediaHost.fps === 24,
+                          "the video element's tab opens the studio on the element (frames " + mediaHost.frames + ")")
+                    check(root.videoPlayingKey === "" && !root.hostIsPlaying, "a missing clip fails to open quietly (no player, no crash)")
+                    const it = t ? t.elementTabAt(0) : null   // z order: the PDF
+                    if (it) { const p = it.mapToItem(t, it.width / 2, it.height / 2); g.click(t, p.x, p.y) }
+                    ++step; return
+                }
+                if (step === 10) {
+                    check(root.activeFrameId === pdfElId && pdfFrame.visible && !studioFrame.visible, "clicking the other element's tab switches views (frame '" + root.activeFrameId + "')")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step === 12) {
+                    check(root.canvasShown && cvw.selectedId === pdfElId && t.elementTabCount === 2, "…and Escape lands back on the canvas, element selected")
+                    canvas.removeElement(vidElId)
+                    ++step; return
+                }
+                if (step === 14) {
+                    check(t.elementTabCount === 1, "removing the video drops its tab (" + t.elementTabCount + ")")
+                    canvas.undo()
+                    ++step; return
+                }
+                if (step < 16) { ++step; return }
+                check(t.elementTabCount === 2, "…undo brings it back (" + t.elementTabCount + ")")
+                nextPhase("element-tabs")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))
             }

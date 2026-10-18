@@ -158,6 +158,10 @@ public:
     // The path the media occupies (or WOULD — packaged clips stream): the sidecar anchor + the
     // playhead / page-map key. Pure computation, no IO (MediaStore::anchorPathFor).
     Q_INVOKABLE QString mediaAnchorPath(const QVariant& src) const;
+    // Media elements with a FULL-FRAME view (videos, PDFs), z order — the canvas-mode element tabs (phase A3).
+    Q_INVOKABLE QStringList fullFrameMediaIds() const;
+    Q_INVOKABLE QString mediaElementKind(const QString& id) const;   // the descriptor's kind ("" for non-media)
+    Q_INVOKABLE QString mediaElementName(const QString& id) const;   // its display name: `name`, else the src's basename
     // A media element's file on disk — BLOCKING (packaged media extracts inline; the explicit-action
     // cost, like BlockModel::mediaLocalPath). "" for non-media elements, remote urls, unresolvable refs.
     Q_INVOKABLE QString elementLocalPath(const QString& id) const;
