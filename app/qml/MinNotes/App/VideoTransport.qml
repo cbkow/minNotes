@@ -17,6 +17,9 @@ Rectangle {
     property var host: null       // OR a MediaHost (the studio, 2.0 phase A) — wins over `row`
     property bool live: false
 
+    readonly property real fpsVal: live && dec ? dec.fps : host ? host.fps : (row >= 0 ? blockModel.mediaFps(row) : 0)
+    readonly property bool timecode: !!editor && editor.videoTimecode
+    function counterText(f) { return timecode && editor ? editor.videoTimecodeFor(f, fpsVal) : "" + Math.max(0, f) }
     readonly property int totalFrames: live ? dec.frameCount
                                             : host ? host.frames
                                             : (blockModel.structureRevision, blockModel.mediaFrames(row))
@@ -102,19 +105,23 @@ Rectangle {
         TextMetrics {   // the counter's widest possible string for this clip
             id: counterMetrics
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-            text: Math.max(0, vt.totalFrames - 1) + " / " + Math.max(0, vt.totalFrames - 1)
+            text: vt.counterText(Math.max(0, vt.totalFrames - 1)) + " / " + vt.counterText(Math.max(0, vt.totalFrames - 1))
         }
-        Text {   // frame counter (mirrors ufb) — width RESERVED at the clip max
-                 // so growing digits don't reflow the row (the slider would
-                 // shrink and the note markers would creep during playback)
-            text: (vt.live ? vt.dec.currentFrame
-                           : (vt.editor.videoPlayheadRev, vt.playhead()))
-                  + " / " + Math.max(0, vt.totalFrames - 1)
-            color: Theme.colors.textMuted
+        Text {   // the counter: timecode (default) or frames — a CLICK flips every player (user, 2026-10-18). Width
+                 // RESERVED at the clip max so growing digits don't reflow the row (the slider would shrink and the
+                 // note markers would creep during playback)
+            id: counterText
+            text: vt.counterText(vt.live ? vt.dec.currentFrame : (vt.editor.videoPlayheadRev, vt.playhead()))
+                  + " / " + vt.counterText(Math.max(0, vt.totalFrames - 1))
+            color: counterMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
             Layout.preferredWidth: counterMetrics.width
             horizontalAlignment: Text.AlignRight
             Layout.rightMargin: 4
+            MouseArea { id: counterMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: { if (vt.editor) { vt.editor.toggleVideoCounter(); vt.editor.forceActiveFocus() } } }
+            FlatToolTip { parent: counterText; x: 0; y: -implicitHeight - 6; visible: counterMA.containsMouse
+                          text: vt.timecode ? qsTr("Timecode — click for frames") : qsTr("Frames — click for timecode") }
         }
 
         Text {   // review-speed readout — only when rate ≠ 1x (R cycles, Shift+R resets)

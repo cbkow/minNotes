@@ -55,6 +55,18 @@ FocusScope {
         // "page width is window width" (ruling 2026-10-16): the cap is the OPT-IN. Stored as capMeasure so the
         // earlier build's persisted `view.fullWidth = false` (written as its default) no longer wins.
         property bool capMeasure: false
+        property bool frameCounter: false   // the video counters show TIMECODE by default; a click on a counter flips every player (2026-10-18)
+    }
+    // Every video player's counter (the studio, the inline strips, the canvas bar): timecode HH:MM:SS:FF by default,
+    // frames on a click — one shared, persisted preference.
+    readonly property bool videoTimecode: !viewPrefs.frameCounter
+    function toggleVideoCounter() { viewPrefs.frameCounter = !viewPrefs.frameCounter }
+    function videoTimecodeFor(frame, fps) {
+        if (!(fps > 0)) return "" + Math.max(0, frame)
+        const f = Math.max(0, Math.round(frame)), r = Math.round(fps)
+        const ff = f % r, secs = Math.floor(f / r)
+        const p = (n) => (n < 10 ? "0" : "") + n
+        return p(Math.floor(secs / 3600)) + ":" + p(Math.floor(secs / 60) % 60) + ":" + p(secs % 60) + ":" + p(ff)
     }
     readonly property real pageMargin: cardHosted ? 24 : 48   // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair); in a live card = kPageInset, so the page sits where its preview drew it
     readonly property real minPageWidth: 320   // two lanes stay legal (2 · 120 + 24)
@@ -4215,6 +4227,15 @@ FocusScope {
                 check(cvw.selectedId === elId && videoDec.isPlaying && root.activeFocus, "the bar's play button plays and the element STAYS selected with the editor focused (selected '" + cvw.selectedId + "', playing " + videoDec.isPlaying + ", focus " + root.activeFocus + ")")
                 gestures.key(root, Qt.Key_Space)
                 check(!videoDec.isPlaying, "…Space right after the button click pauses (the keys stayed with the editor)")
+                // The counter: timecode by default; a click flips EVERY player to frames and back (2026-10-18)
+                viewPrefs.frameCounter = false   // (the dev settings domain may hold a previous run's flip)
+                const ctr = bar.counterItem, cp = ctr.mapToItem(cvw, ctr.width / 2, ctr.height / 2)
+                check(root.videoTimecode && /^\d\d:\d\d:\d\d:\d\d \/ \d\d:\d\d:\d\d:\d\d$/.test(ctr.text), "the counter shows timecode by default ('" + ctr.text + "')")
+                gestures.click(cvw, cp.x, cp.y)
+                check(!root.videoTimecode && /^\d+ \/ \d+$/.test(ctr.text) && root.activeFocus, "a click on the counter flips it to frames ('" + ctr.text + "'), the keys stay with the editor")
+                const cp2 = ctr.mapToItem(cvw, ctr.width / 2, ctr.height / 2)   // (the counter is narrower in frames mode)
+                gestures.click(cvw, cp2.x, cp2.y)
+                check(root.videoTimecode, "…and back to timecode")
                 const tr = bar.scrubTrack, a = tr.mapToItem(cvw, tr.width * 0.2, tr.height / 2), b = tr.mapToItem(cvw, tr.width * 0.6, tr.height / 2)
                 gestures.drag(cvw, a.x, a.y, b.x, b.y, 6)
                 check(cvw.selectedId === elId && root._vidIntendedFrame() > videoDec.frameCount * 0.5 && root._vidIntendedFrame() < videoDec.frameCount * 0.7, "dragging the scrub line scrubs (frame " + root._vidIntendedFrame() + " of " + videoDec.frameCount + ") and keeps the selection")

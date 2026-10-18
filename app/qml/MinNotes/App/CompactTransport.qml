@@ -26,8 +26,10 @@ Rectangle {
     readonly property int frame: live && dec ? dec.currentFrame : (ct.editor.videoPlayheadRev, playhead())
     readonly property var playButton: playBtn   // probe
     readonly property var scrubTrack: track
+    readonly property var counterItem: counterText
 
     Row {
+        id: strip
         anchors.fill: parent
         anchors.leftMargin: 2; anchors.rightMargin: 4
         spacing: 6
@@ -40,14 +42,22 @@ Rectangle {
             tooltip: (ct.live && ct.dec && ct.dec.isPlaying) ? qsTr("Pause (Space)") : qsTr("Play (Space)"); tooltipSide: "top"
             onClicked: ct.play()
         }
-        TextMetrics { id: counterMetrics; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
-                      text: Math.max(0, ct.totalFrames - 1) + " / " + Math.max(0, ct.totalFrames - 1) }
-        Text {   // the frame counter, width reserved at the clip's widest digits (no reflow while playing)
+        readonly property real fpsVal: ct.live && ct.dec ? ct.dec.fps : ct.host ? ct.host.fps : (ct.row >= 0 ? blockModel.mediaFps(ct.row) : 0)
+        readonly property bool timecode: !!ct.editor && ct.editor.videoTimecode
+        function counterText(f) { return timecode ? ct.editor.videoTimecodeFor(f, fpsVal) : "" + Math.max(0, f) }
+        TextMetrics { id: counterMetrics; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall   // (a TextMetrics has no `parent`: name the row)
+                      text: strip.counterText(Math.max(0, ct.totalFrames - 1)) + " / " + strip.counterText(Math.max(0, ct.totalFrames - 1)) }
+        Text {   // the counter: timecode (default) or frames; a CLICK flips every player (user, 2026-10-18). Width reserved at the widest string (no reflow while playing)
+            id: counterText
             anchors.verticalCenter: parent.verticalCenter
             width: counterMetrics.width
-            text: ct.frame + " / " + Math.max(0, ct.totalFrames - 1)
-            color: Theme.colors.textMuted
+            text: strip.counterText(ct.frame) + " / " + strip.counterText(Math.max(0, ct.totalFrames - 1))
+            color: counterMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted
             font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall
+            MouseArea { id: counterMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: { if (ct.editor) { ct.editor.toggleVideoCounter(); ct.editor.forceActiveFocus() } } }
+            FlatToolTip { parent: counterText; x: 0; y: counterText.height + 6; visible: counterMA.containsMouse
+                          text: strip.timecode ? qsTr("Timecode — click for frames") : qsTr("Frames — click for timecode") }
             horizontalAlignment: Text.AlignRight
         }
         Item {   // the scrub line: played part, playhead, note markers; press / drag scrubs (the slider's gesture, deck audio)
