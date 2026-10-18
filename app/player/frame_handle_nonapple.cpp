@@ -131,6 +131,7 @@ FrameHandle FrameHandle::clone() const
     }
     // Metal never occurs on non-Apple (see reset()).
     return out;
+}
 
 FrameHandle FrameHandle::d3d11(AVFrame *avFrame, int width, int height,
                                int64_t pts)
