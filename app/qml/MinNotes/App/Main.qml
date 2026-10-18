@@ -1541,7 +1541,7 @@ ApplicationWindow {
                         readonly property bool active: index === docs.activeIndex
                         width: Math.min(220, tabLabel.implicitWidth + 44)
                         height: docTabBar.height
-                        color: active ? Theme.colors.surfaceRaised : "transparent"   // the active tab = the toolbar's colour (user, 2026-10-18)
+                        color: active ? Theme.colors.divider : "transparent"   // the family's selection grey (user, 2026-10-18, final)
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height
                                     color: Theme.colors.bgAlt2; visible: !tab.active }
                         Text {
@@ -1620,7 +1620,7 @@ ApplicationWindow {
                 id: navBtn
                 anchors.right: parent.right; anchors.top: parent.top
                 width: Theme.dim.tabRowH; height: docTabBar.height   // square: one width for every strip button
-                color: navMenu.visible ? Theme.colors.surfaceRaised : "transparent"
+                color: navMenu.visible ? Theme.colors.divider : "transparent"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height
                             color: Theme.colors.bgAlt2 }
                 Icon { anchors.centerIn: parent; name: "list"; size: 14

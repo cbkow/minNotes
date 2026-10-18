@@ -92,7 +92,7 @@ Rectangle {
         readonly property bool fullyVisible: x + width <= rowClip.width + 0.5
         opacity: fullyVisible ? 1 : 0
         enabled: fullyVisible
-        color: active ? Theme.colors.surfaceRaised : "transparent"   // the active tab = the toolbar's colour (it joins the row below); no underline
+        color: active ? Theme.colors.divider : "transparent"   // the family's selection grey (user, 2026-10-18, final); no underline
         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.colors.bgAlt2; visible: !btn.active }
         Text {
             id: tabLabel
@@ -209,7 +209,7 @@ Rectangle {
         id: menuBtn
         anchors.right: parent.right; anchors.top: parent.top
         width: tabs.rowH; height: tabs.rowH   // square
-        color: tabMenu.visible ? Theme.colors.surfaceRaised : "transparent"
+        color: tabMenu.visible ? Theme.colors.divider : "transparent"
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.colors.bgAlt2 }
         Icon { anchors.centerIn: parent; name: "stack"; size: 14   // pages stacked — not the files row's ≡ (user, 2026-10-18)
                color: tabMenu.visible ? Theme.colors.textBright : Theme.colors.textMuted }
