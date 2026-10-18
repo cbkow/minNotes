@@ -24,6 +24,7 @@ public:
     // Keys to the focused item: a character per call (text + the key for letters), or a named key.
     Q_INVOKABLE void type(QQuickItem* item, const QString& text);
     Q_INVOKABLE void key(QQuickItem* item, int key, int modifiers = 0);
+    Q_INVOKABLE void wheel(QQuickItem* item, qreal x, qreal y, int dx, int dy);   // a mouse wheel's angle delta (±120 per notch)
 private:
     void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier);
     qint64 nextStamp(qint64 advance);

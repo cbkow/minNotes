@@ -36,6 +36,10 @@ class CanvasDocument : public QObject {
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
     Q_PROPERTY(int saveState READ saveState NOTIFY saveStateChanged)
     Q_PROPERTY(QString focusPage READ focusPage WRITE setFocusPage NOTIFY focusChanged)
+    // The LIVE page (2.0 SPIKE S2): a page edited IN ITS CARD while the canvas stays in view. focusedModel()
+    // prefers it, so `blockModel` and everything that follows it act on the live page with focusPage "".
+    // Not persisted. A drill-in (setFocusPage), a close, an open, removing the page all end liveness.
+    Q_PROPERTY(QString livePage READ livePage WRITE setLivePage NOTIFY liveChanged)
     Q_PROPERTY(QStringList pageIds READ pageIds NOTIFY pagesChanged)
     Q_PROPERTY(int pagesRevision READ pagesRevision NOTIFY pagesChanged)
     // The canvas undo log (the second log; ⌘Z routes by focus). Same contract as BlockModel's.
@@ -129,6 +133,8 @@ public:
     // The focused page ("" = the canvas itself is in view). focusedModel() never returns null
     // while the file is open: it falls back to the first page.
     QString focusPage() const { return focusPage_; }
+    QString livePage() const { return livePage_; }
+    void setLivePage(const QString& id);
     void setFocusPage(const QString& id);
     Q_INVOKABLE QString focusedPageId() const;
     BlockModel* focusedModel();
@@ -258,6 +264,7 @@ signals:
     void dirtyChanged();
     void saveStateChanged();
     void focusChanged();
+    void liveChanged();
     void pagesChanged();
     void undoStackChanged();
     void cameraChanged();
@@ -334,6 +341,7 @@ private:
     QHash<QString, BlockModel*> pages_;   // page id → its model (loaded pages only)
     mutable QHash<QString, QString> titleCache_;   // unloaded pages' titles (cleared on open/close/page changes)
     QString focusPage_;
+    QString livePage_;
     int pagesRevision_ = 0;
     std::vector<Document::Element> elements_;   // z order, then creation (the table's order)
     QHash<QString, int> indexById_;

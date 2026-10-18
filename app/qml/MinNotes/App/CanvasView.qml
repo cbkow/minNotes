@@ -248,7 +248,54 @@ Rectangle {
     }
     onWidthChanged: if (visible && !cam.userCam) fit()
     onHeightChanged: if (visible && !cam.userCam) fit()
-    onVisibleChanged: { if (!visible) clearSelection(); else if (!cam.userCam) fit() }
+    onVisibleChanged: { if (!visible) { endLive(false); clearSelection() } else if (!cam.userCam) fit() }
+
+    // --- LIVE CARD (2.0 SPIKE S4): a page edited IN PLACE. canvas.livePage makes the page the active model
+    // (the manager re-points blockModel); the ONE Editor is reparented from its home slot into the card's
+    // liveSlot and back. Keys and wheel go to it; the middle button and ⌥-drag pan the canvas; Escape ends it. ---
+    readonly property string liveId: canvas.livePage
+    // Liveness can end from ANY path — a drill-in, a page removal, a close, a tab switch — not only Escape
+    // here: whenever it does, the Editor goes home (a stranded Editor inside a card swallows every gesture).
+    onLiveIdChanged: if (liveId === "" && editor && editor.homeSlot && editor.parent !== editor.homeSlot) {
+        editor.parent = editor.homeSlot
+        editor.commitPageWidth(0)
+        editor.forceActiveFocus()
+    }
+    function pageItemFor(id) {
+        for (let i = 0; i < elementRepeater.count; ++i) { const it = elementRepeater.itemAt(i); if (it && it.elementId === id) return it }
+        return null
+    }
+    property int lives: 0   // probe diagnostics
+    function goLive(id) {
+        if (canvas.elementKind(id) !== "page" || !editor || !editor.homeSlot) return
+        textEditor.commit()
+        if (liveId !== "" && liveId !== id) endLive(false)
+        if (cam.zoom < 1) {   // readable first (phase C animates this)
+            const r = canvas.elementRect(id), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)
+            cam.zoomAboutPoint(1, c.x, c.y)
+        }
+        select(id)
+        canvas.livePage = id          // → blockModel is this page; the card's preview unloads
+        ++lives
+        Qt.callLater(function() {     // mount after the press that asked for it has fully released
+            const p = pageItemFor(id)
+            if (!p || !p.page || canvas.livePage !== id) { canvas.livePage = ""; return }
+            editor.parent = p.page.liveSlot
+            editor.commitPageWidth(0)   // the card's measure (== what the preview told the model)
+            editor.forceActiveFocus()
+        })
+    }
+    function endLive(selectIt) {
+        const id = liveId
+        if (id === "") return
+        if (editor.homeSlot) editor.parent = editor.homeSlot
+        canvas.livePage = ""
+        editor.commitPageWidth(0)
+        if (selectIt) select(id)
+        editor.forceActiveFocus()
+    }
+    function liveSelected() { if (selectedId !== "" && canvas.elementKind(selectedId) === "page") goLive(selectedId) }
+    Connections { target: cv.editor; function onLiveExitRequested() { cv.endLive(true) } }
     Connections {   // elements come, go or grow under a camera the user hasn't taken yet
         target: canvas
         function onGeometryChanged() { if (cv.visible && !cam.userCam) cv.fit() }
@@ -341,6 +388,7 @@ Rectangle {
         onSingleTapped: (ev) => {
             ++cv.taps
             if (!cv.emptyAt(ev.position.x, ev.position.y)) return
+            cv.endLive(false)   // a click elsewhere ends a live card
             if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
             else if (cv.pageTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addPageAt(w.x, w.y); if (id !== "") cv.select(id) }
             else { textEditor.commit(); cv.clearSelection(); cv.editor.forceActiveFocus() }
@@ -455,6 +503,16 @@ Rectangle {
     DragHandler {   // middle-drag ALWAYS pans — selection, tool or element under the pointer notwithstanding
         target: null
         acceptedButtons: Qt.MiddleButton
+        property real sx: 0
+        property real sy: 0
+        onActiveChanged: if (active) { sx = cam.panX; sy = cam.panY; ++cv.pans }
+        onActiveTranslationChanged: if (active) cam.setPan(sx + activeTranslation.x, sy + activeTranslation.y)
+    }
+    DragHandler {   // ⌥-drag pans while a page is LIVE (ruling 2026-10-18: Space types there) — takes over from the card's editor past the threshold
+        target: null
+        enabled: cv.liveId !== ""
+        acceptedButtons: Qt.LeftButton
+        acceptedModifiers: Qt.AltModifier
         property real sx: 0
         property real sy: 0
         onActiveChanged: if (active) { sx = cam.panX; sy = cam.panY; ++cv.pans }

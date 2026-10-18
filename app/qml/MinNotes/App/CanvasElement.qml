@@ -36,26 +36,31 @@ Item {
     // drag reads the SCENE delta (zoom-free) and rebases the world rect; a run coalesces into one
     // undo entry ("move:<id>"). Space held = hand: the view's pan handler takes over.
     readonly property var view: parent && parent.parent ? parent.parent : null   // canvasLayer → CanvasView
+    readonly property bool isLive: view && view.liveId === elementId   // the Editor owns the pointer inside a live card
     TapHandler {
-        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool
+        id: tap
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.isLive
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
+        // (the signals' first argument is an eventPoint, which carries no modifiers — the handler's point does)
+        readonly property bool shift: (point.modifiers & Qt.ShiftModifier) !== 0
         onSingleTapped: (ev) => {
             ++el.view.taps
-            if (ev.modifiers & Qt.ShiftModifier) el.view.toggleSelect(el.elementId)
+            if (el.view.liveId !== "") el.view.endLive(false)   // a click on another element ends the live card
+            if (tap.shift) el.view.toggleSelect(el.elementId)
             else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
             el.editor.forceActiveFocus()
         }
         onDoubleTapped: (ev) => {
             ++el.view.doubleTaps
-            if (ev.modifiers & Qt.ShiftModifier) { el.view.select(el.elementId); el.view.openSelected(); return }   // the "full window" rung
-            if (el.kind === "page") canvas.focusPage = el.elementId
+            if (tap.shift) { el.view.select(el.elementId); el.view.openSelected(); return }   // the "full window" rung
+            if (el.kind === "page") el.view.goLive(el.elementId)   // live IN PLACE (SPIKE S4); the glyph / Shift pops out
             else if (el.kind === "shape") el.view.editText(el.elementId)
             else if (el.kind === "media") { el.view.select(el.elementId); el.view.openSelected() }   // phase A: the full-frame view / Open (phase C re-points this to live-in-place)
         }
     }
     DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row
-        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.isLive
         acceptedButtons: Qt.LeftButton
         target: null
         onActiveChanged: {

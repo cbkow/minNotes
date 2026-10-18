@@ -56,12 +56,13 @@ FocusScope {
         // earlier build's persisted `view.fullWidth = false` (written as its default) no longer wins.
         property bool capMeasure: false
     }
-    readonly property real pageMargin: 48      // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair)
+    readonly property real pageMargin: cardHosted ? 24 : 48   // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair); in a live card = kPageInset, so the page sits where its preview drew it
     readonly property real minPageWidth: 320   // two lanes stay legal (2 · 120 + 24)
     // The width the page COULD take: the viewport at the SETTLED zoom (a slider drag never
     // touches layout) less the two margins; the target applies the cap unless Full width is on.
     readonly property real availPageWidth: Math.max(minPageWidth, Math.floor(centringWidth / zoom) - 2 * pageMargin)
-    readonly property real targetPageWidth: !viewPrefs.capMeasure ? availPageWidth : Math.min(availPageWidth, viewPrefs.measureCap)
+    readonly property real targetPageWidth: cardHosted ? availPageWidth   // a live card's measure IS the page's (the cap is a window preference)
+                                          : !viewPrefs.capMeasure ? availPageWidth : Math.min(availPageWidth, viewPrefs.measureCap)
     readonly property bool fullWidth: !viewPrefs.capMeasure
     readonly property int measureCap: viewPrefs.measureCap
     property real pageWidth: Theme.dim.columnWidth   // committed by commitPageWidth ONLY
@@ -102,7 +103,7 @@ FocusScope {
     function setMeasureCap(w) { viewPrefs.measureCap = Math.max(minPageWidth, Math.round(w)); commitPageWidth(0) }
     // Media is known-geometry: tell the model the width it derives media heights from (and, 1C,
     // the width its text estimates wrap at). The one layout-moving write.
-    onPageWidthChanged: blockModel.setContentWidth(pageWidth)
+    onPageWidthChanged: if (ownsWidth) blockModel.setContentWidth(pageWidth)   // (on the canvas the model keeps its CARD measure)
     // The document's CONTENT width: the viewport, grown to hold the sheet
     // (page or the widest measured block — wide tables — plus the trailing
     // gutter) so the PAGE scrolls horizontally when the window is narrower
@@ -150,6 +151,7 @@ FocusScope {
     // the point under the anchor — a WORD, which the recentre shifts within the content by the
     // edge's change — stays under it. The settle then only flips the layout zoom and clamps.
     function docZoomTo(z, ax, ay) {
+        if (cardHosted) return   // a live card has no zoom of its own (phase C routes it to the camera)
         z = Math.max(zoomSteps[0], Math.min(zoomSteps[zoomSteps.length - 1], z))
         if (ax === undefined) ax = flick.width / 2
         if (ay === undefined) ay = flick.height / 2
@@ -448,6 +450,11 @@ FocusScope {
     // view is the focused page's. setActiveTab("canvas") / setActiveTab("") WRITE the focus (the manager
     // re-points blockModel); this reads it.
     readonly property bool activeCanvas: canvas.documentOpen && canvas.focusPage === ""
+    // LIVE CARD (2.0 SPIKE S3): this one Editor sits inside a page card on the canvas (CanvasView.goLive
+    // reparented it into the card's liveSlot). The page view's gates read this: keys, undo, width, chrome.
+    readonly property bool cardHosted: homeSlot !== null && parent !== homeSlot
+    readonly property bool ownsWidth: cardHosted || !activeCanvas   // who may write the model's content width
+    signal liveExitRequested()                                       // Escape in a live card → the view ends liveness
     // A canvas MEDIA ELEMENT shown full-frame (its PDF tab / studio) over an unfocused canvas (2.0 phase A).
     property string activeElementId: ""
     readonly property var canvasDoc: canvas       // the `canvas` context property, reachable from object scopes that shadow the name
@@ -471,7 +478,7 @@ FocusScope {
     }
     // ⌘Z / ⌘⇧Z / the History panel / the rail buttons route by focus: the canvas log on the canvas, the
     // page log on a page (two logs, one ⌘Z — ruling 8).
-    readonly property var undoTarget: activeCanvas ? canvas : blockModel
+    readonly property var undoTarget: (activeCanvas && !cardHosted) ? canvas : blockModel
     // Dev-only (B3): `--canvas` opens on the Canvas tab (fit); `--canvas=<zoom>` then zooms about the
     // top-left card's origin so a --shot shows live cards. After the launch's view-state restore.
     readonly property string canvasOnLoad: {
@@ -488,7 +495,7 @@ FocusScope {
         }
     }
     readonly property string activeFrameId: activeElementId !== "" ? activeElementId   // a canvas media element's full-frame view (2.0 phase A)
-                                          : activeCanvas ? "canvas"
+                                          : (activeCanvas && !cardHosted) ? "canvas"   // (a live card IS the page view: its editing gates are live)
                                           : activeGridId !== "" ? activeGridId
                                           : activePdfId !== "" ? activePdfId
                                           : activeVideoId
@@ -513,7 +520,7 @@ FocusScope {
     // a fresh page view at the top, laid out at the view's width.
     function resetForPage() {
         clearFrames()
-        blockModel.setContentWidth(pageWidth)
+        if (ownsWidth) blockModel.setContentWidth(pageWidth)
         cursor.clearMarks(); cursor.setCaret(0, 0); root.ensureVisible(0)
     }
     function setActiveTab(id) {
@@ -591,7 +598,7 @@ FocusScope {
         }
     }
     function restoreViewState(m) {
-        blockModel.setContentWidth(pageWidth)   // the width is the VIEW's: the incoming model lays out at it (1C)
+        if (ownsWidth) blockModel.setContentWidth(pageWidth)   // the width is the VIEW's: the incoming model lays out at it (1C)
         // No saved state (a freshly-opened tab) → the standard fresh-doc reset.
         if (!m || m.focusRow === undefined) {
             docZooms = ({}); pdfZooms = ({}); _prevFlickFrameId = ""; _prevPdfId = ""
@@ -938,7 +945,7 @@ FocusScope {
 
     // The whole editor field is ONE tone now (user ruling 2026-07-12): the
     // page shares the desk grey and the desk RULES alone carry structure.
-    Rectangle { anchors.fill: parent; color: Theme.colors.bgAlt }
+    Rectangle { anchors.fill: parent; color: root.cardHosted ? Theme.colors.surface : Theme.colors.bgAlt }   // a live card keeps the card's tone
     // AMENDED 2026-08-20 (user ruling): the SHEET — the page plus EQUAL
     // left/right margins (an ink gutter each side), stretched by wide content
     // (sheetRight) — keeps the field tone; the area beyond it drops to the
@@ -3094,7 +3101,7 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
-        if (k === Qt.Key_Escape && (!root.activeCanvas || root.activeElementId !== "")) {   // (the canvas has its own Escape, below)
+        if (k === Qt.Key_Escape && (!root.activeCanvas || root.activeElementId !== "" || root.cardHosted)) {   // (the canvas has its own Escape, below)
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
             // cell selection, else step the caret out below the table.
@@ -3145,6 +3152,7 @@ FocusScope {
                 const th = blockModel.tableHeadOf(rec)   // a table row picked this way is an object (Delete removes it)
                 root.selObject = th >= 0 ? { kind: "row", head: th, r: blockModel.tableRowOf(rec), lo: first, hi: last } : null
             }
+            else if (root.cardHosted) { root.liveExitRequested() }   // a live card: nothing to cancel → back to the canvas, the page selected
             else if (root.activeFrameId === "" && canvas.documentOpen) {   // nothing to cancel: the canvas is one Esc away (ruling 6), the page SELECTED there
                 const pid = canvas.focusPage
                 root.setActiveTab("canvas")
@@ -3210,7 +3218,7 @@ FocusScope {
             event.accepted = true
         }
         else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
-        else if (cmd && k === Qt.Key_V && !root.activeCanvas) { root.doPaste(); event.accepted = true }   // (the canvas pastes below — never into the hidden page)
+        else if (cmd && k === Qt.Key_V && (!root.activeCanvas || root.cardHosted)) { root.doPaste(); event.accepted = true }   // (the canvas pastes below — never into the hidden page)
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
         // ⌥⌘↑ / ⌥⌘↓ (0.5.0): move the focused block — or the whole selected
         // run — one slot. Document view only. (Arrow keys carry no macOS
@@ -3247,7 +3255,7 @@ FocusScope {
         else if (cmd && k === Qt.Key_1) { root.zoomFit(); event.accepted = true }   // the document: Full width toggle
         // The canvas (B3, read-only): Space holds the hand; everything else is swallowed so typing
         // can't edit the document invisibly (the global chords above still work).
-        else if (root.activeCanvas) {
+        else if (root.activeCanvas && !root.cardHosted) {
             const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
             const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
                                [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" }
@@ -3262,7 +3270,10 @@ FocusScope {
                 else if (root.inspector && canvasItem.drawing) root.inspector.drawTool = "select"   // disarm the pen first
                 else canvasItem.clearSelection()
             }
-            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasItem.openSelected()   // Return = Open (a page: the page view; media: its tab)
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) {   // Return = live IN PLACE for a page (SPIKE S4); Open for anything else
+                if (canvasItem.selectedId !== "" && canvas.elementKind(canvasItem.selectedId) === "page") canvasItem.liveSelected()
+                else canvasItem.openSelected()
+            }
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4037,6 +4048,10 @@ FocusScope {
         property string bookmarkElId: ""
         property string probeFixDir: ""
         property string audioElId: ""
+        property int probeLives: 0             // P11
+        property real probeW: 0
+        property real probeScroll: 0
+        property string probeText: ""
         property string textElId: ""
         property string remoteElId: ""
         property string pdfElId: ""            // P9: the element-tab fixtures
@@ -4404,16 +4419,16 @@ FocusScope {
                     check(cvw.selectedId === livePage, "a click on a page card's margin selects it (selected '" + cvw.selectedId + "', empty " + cvw.emptyAt(s.x, s.y) + ", under " + canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01).length + ", item " + (cvw.childAt ? "" : "") + ")")
                     const d0 = cvw.doubleTaps
                     g.doubleClick(cvw, s.x, s.y)
-                    check(!root.activeCanvas && canvas.focusPage === livePage, "double-click on a page card's margin opens that page (focus '" + canvas.focusPage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
-                    root.setActiveTab("canvas")
+                    check(root.activeCanvas && canvas.livePage === livePage && canvas.focusPage === "", "double-click on a page card's margin makes it LIVE in place (live '" + canvas.livePage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
+                    cvw.endLive(false)
                     ++step; return
                 }
                 if (step === 17) {   // over the page's text (a block delegate under the pointer)
                     const r = canvas.elementRect(livePage), s = cam.worldToScreen(r.x + 100, r.y + 100)
                     const d0 = cvw.doubleTaps
                     g.doubleClick(cvw, s.x, s.y)
-                    check(!root.activeCanvas && canvas.focusPage === livePage, "double-click over a page card's text opens that page (focus '" + canvas.focusPage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
-                    root.setActiveTab("canvas")
+                    check(root.activeCanvas && canvas.livePage === livePage, "double-click over a page card's text makes it LIVE too (live '" + canvas.livePage + "' dbl +" + (cvw.doubleTaps - d0) + ")")
+                    cvw.endLive(false)
                     ++step; return
                 }
                 if (step === 19) {   // the footer's "open the page" link: pan the card's bottom edge into view
@@ -4670,16 +4685,17 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 32) {
-                    check(!root.activeCanvas && canvas.focusPage === livePage, "Return on a selected page opens it")
-                    root.setActiveTab("canvas")
+                    check(root.activeCanvas && canvas.livePage === livePage, "Return on a selected page makes it LIVE in place (live '" + canvas.livePage + "')")
+                    cvw.endLive(true)
                     ++step; return
                 }
                 if (step === 34) {
+                    cvw.fit()   // Return went LIVE at 100 % about the page — the other fixtures left the window; bring them back
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
                     check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 10,
-                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -4800,7 +4816,61 @@ FocusScope {
                 check(!!ci && ci.tier >= 0 && canvas.pageTitle(copied) !== "", "the copied page has a card and a title (tier " + (ci ? ci.tier : -1) + " at this zoom, '" + canvas.pageTitle(copied) + "')")
                 canvas.undo()
                 check(canvas.elementCount() === probeN0 && canvas.pageIds.length === probePages0, "undo takes the whole copy-in back")
-                nextPhase("drops")
+                nextPhase("drops"); return
+            }
+            if (phase === 11) {   // P11 (SPIKE): the LIVE CARD — double-click a page, type in it, wheel-scroll inside its cap, Escape out
+                const g = gestures, cvw = canvasItem
+                if (step === 0) {
+                    cvw.clearSelection()
+                    const r = canvas.elementRect(livePage)
+                    cvw.cam.zoomAboutPoint(1, 0, 0)                                           // readable, and the card in view
+                    const c = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
+                    const o = cvw.cam.worldToScreen(r.x + r.width / 2 - cvw.width / 2 / cvw.cam.zoom + 40, r.y + 100 - cvw.height / 2 / cvw.cam.zoom + 60)
+                    cvw.cam.setPan(cvw.cam.panX - o.x + 0, cvw.cam.panY - o.y + 0)             // bring the card's top centre near the viewport's
+                    probeW = blockModel.contentWidth()
+                    const c2 = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
+                    check(c2.x > 0 && c2.x < cvw.width && c2.y > 0 && c2.y < cvw.height, "the page card is in view at 100 % (" + Math.round(c2.x) + "," + Math.round(c2.y) + ")")
+                    probeLives = cvw.lives
+                    g.doubleClick(cvw, c2.x, c2.y)
+                    ++step; return
+                }
+                if (step === 3) {
+                    const it = pageItem(livePage)
+                    check(cvw.lives === probeLives + 1 && canvas.livePage === livePage && canvas.focusPage === "", "double-click on a page makes it LIVE in place (lives +" + (cvw.lives - probeLives) + ", live '" + canvas.livePage + "', focus '" + canvas.focusPage + "')")
+                    check(root.cardHosted && !!it && !!it.page && root.parent === it.page.liveSlot && it.page.live, "the one Editor sits in the card's live slot (hosted " + root.cardHosted + ")")
+                    check(blockModel.pageId() === livePage && root.undoTarget === blockModel && root.activeCanvas && cvw.visible && flick.visible && root.activeFrameId === "",
+                          "blockModel IS the live page; ⌘Z targets its log; the canvas stays in view under the card; the page view's editing gates are live")
+                    check(Math.abs(blockModel.contentWidth() - (canvas.elementRect(livePage).width - 48)) < 1 && Math.abs(root.pageWidth - blockModel.contentWidth()) < 1,
+                          "the live page lays out at the CARD's measure (" + blockModel.contentWidth() + " vs card " + (canvas.elementRect(livePage).width - 48) + ", editor " + root.pageWidth + ")")
+                    check(!!it && !it.page.loaderActive, "the card's preview delegates are unloaded while live (one renderer per keystroke)")
+                    check(root.activeFocus, "the Editor has focus")
+                    cursor.setCaret(0, 0)
+                    probeText = blockModel.contentForRow(0)
+                    g.type(root, "live card ")
+                    ++step; return
+                }
+                if (step === 5) {
+                    check(blockModel.contentForRow(0) === "live card " + probeText && blockModel.canUndo, "typing lands in the live page's first block ('" + blockModel.contentForRow(0).substring(0, 24) + "…')")
+                    const camRev = cvw.cam.rev, y0 = flick.contentY
+                    g.wheel(root, root.width / 2, root.height / 2, 0, -240)   // two notches down over the card
+                    probeW = camRev; probeScroll = y0
+                    ++step; return
+                }
+                if (step === 9) {
+                    check(flick.contentY > probeScroll && cvw.cam.rev === probeW, "the wheel scrolls INSIDE the card (" + probeScroll + " → " + Math.round(flick.contentY) + "), the canvas camera untouched")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step < 12) { ++step; return }
+                const it = pageItem(livePage)
+                check(!root.cardHosted && root.parent === root.homeSlot && canvas.livePage === "", "Escape ends liveness: the Editor is home again (live '" + canvas.livePage + "')")
+                check(cvw.visible && cvw.selectedId === livePage && root.activeCanvas && !flick.visible && root.undoTarget === canvas, "…the canvas shows with the page SELECTED; ⌘Z targets the canvas log again")
+                check(!!it && !it.page.live && it.page.loaderActive, "…the card's preview is back")
+                check(Math.abs(blockModel.contentWidth() - (canvas.elementRect(livePage).width - 48)) < 1, "…the model keeps the CARD's measure on the canvas (no reflow on the round trip: " + blockModel.contentWidth() + ")")
+                check(blockModel.contentForRow(0).indexOf("live card ") === 0, "…the typed text is in the page")
+                blockModel.undo()
+                check(blockModel.contentForRow(0) === probeText, "…and the page's own undo takes it back")
+                nextPhase("live")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))
             }
@@ -5038,7 +5108,7 @@ FocusScope {
     Flickable {
         id: flick
         visible: !root.pdfTabOpen && !root.videoTabOpen   // hidden in a full-frame tab
-                 && !root.activeCanvas                                             // the canvas is a full-frame tab too (B3)
+                 && (!root.activeCanvas || root.cardHosted)                        // the canvas is a full-frame tab too (B3) — unless this Editor IS a live card
                  && !(root.activeGridId !== "" && root.boardMode)                 // a table's board covers it
         anchors.fill: parent
         // The grid frame's clamp (S9b): the table's top sits under the tab toolbar, its bottom at the end.
@@ -5608,6 +5678,7 @@ FocusScope {
         }
         DragHandler {
             acceptedButtons: Qt.MiddleButton
+            enabled: !root.cardHosted   // in a live card the middle button pans the CANVAS (the view's handler takes it)
             target: null
             cursorShape: Qt.ClosedHandCursor
             property point last: Qt.point(0, 0)

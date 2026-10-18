@@ -2,6 +2,7 @@
 #include <QCoreApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QQuickWindow>
 
 qint64 CanvasGestures::nextStamp(qint64 advance) { stamp_ += advance; return stamp_; }
@@ -33,6 +34,16 @@ void CanvasGestures::doubleClick(QQuickItem* item, qreal x, qreal y, int modifie
         mouse(item, QEvent::MouseButtonPress, x, y, Qt::LeftButton, Qt::LeftButton, m);
         mouse(item, QEvent::MouseButtonRelease, x, y, Qt::LeftButton, Qt::NoButton, m);
     }
+}
+
+void CanvasGestures::wheel(QQuickItem* item, qreal x, qreal y, int dx, int dy) {
+    if (!item || !item->window()) return;
+    QQuickWindow* w = item->window();
+    const QPointF scene = item->mapToScene(QPointF(x, y));
+    const QPointF global = w->mapToGlobal(scene.toPoint());
+    QWheelEvent ev(scene, global, QPoint(), QPoint(dx, dy), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    ev.setTimestamp(static_cast<quint64>(nextStamp(40)));
+    QCoreApplication::sendEvent(w, &ev);
 }
 
 void CanvasGestures::drag(QQuickItem* item, qreal x0, qreal y0, qreal x1, qreal y1, int steps) {

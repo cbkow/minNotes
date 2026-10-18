@@ -19,6 +19,11 @@ Rectangle {
     required property var cam
     property string elementId: ""
     readonly property bool active: elementId !== ""
+    // LIVE (2.0 SPIKE S4): the real Editor sits in `liveSlot`; the preview delegates unload meanwhile (two
+    // renderers of one model per keystroke is the regression the speed programme forbids) and rebuild after.
+    readonly property bool live: active && canvas.livePage === elementId
+    readonly property Item liveSlot: liveHost
+    readonly property bool loaderActive: loader.active   // probe
     // The page's model loads at GREEK zoom and above (a ghost card is a frame and a title from the
     // element's persisted height and the cached title — fifty long pages zoomed out load nothing).
     readonly property var pageModel: active && tier > 0 ? canvas.pageModel(elementId) : null
@@ -94,7 +99,7 @@ Rectangle {
     PageContextLoader {
         id: loader
         anchors.fill: parent
-        active: page.active && page.tier > 0
+        active: page.active && page.tier > 0 && !page.live
         pageModel: page.pageModel
         extraContext: ({ spell: spellStub })
         sourceComponent: bodyComponent
@@ -152,7 +157,7 @@ Rectangle {
     Rectangle {   // the page length's edge: the rows below fade out under the footer
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
         height: 72
-        opacity: page.overflows && page.tier > 0 ? 1 : 0
+        opacity: page.overflows && page.tier > 0 && !page.live ? 1 : 0
         gradient: Gradient {
             GradientStop { position: 0.0; color: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g, Theme.colors.surface.b, 0) }
             GradientStop { position: 0.6; color: Theme.colors.surface }
@@ -169,11 +174,12 @@ Rectangle {
             TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { ++page.linkTaps; if (page.active) canvas.focusPage = page.elementId } }
         }
     }
+    Item { id: liveHost; anchors.fill: parent; z: 5 }   // the live Editor's seat (above the preview, under nothing)
     readonly property var openLinkItem: openLink   // probe
     property int linkTaps: 0
     Text {   // ghost and greek: the page's title
         x: page.inset; y: page.inset; width: page.width - 2 * page.inset
-        opacity: page.active && page.tier < 2 ? 1 : 0
+        opacity: page.active && page.tier < 2 && !page.live ? 1 : 0
         text: page.active && page.tier < 2 ? (canvas.pagesRevision, page.pageModel ? page.pageModel.contentRevision : 0, canvas.pageTitle(page.elementId)) : ""
         elide: Text.ElideRight; maximumLineCount: 1
         color: Theme.colors.text

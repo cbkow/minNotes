@@ -6451,6 +6451,46 @@ static void testAudioElements() {
     CHECK(packed, "the pack plan carries the audio file like any referenced media (%d items)", int(plan.items.size()));
 }
 
+// [138] The live page (2.0 SPIKE S2): focusedModel prefers it; focus / remove / close end it; the manager re-points.
+static void testLivePage() {
+    qInfo("[138] livePage (2.0 spike S2): focusedModel() prefers the live page while focusPage stays; setFocusPage / removePage / closeCanvas / an unknown id; DocumentManager re-points activeModel on liveChanged");
+    CanvasDocument c; CHECK(c.newCanvas(), "canvas");
+    const QString p1 = c.firstPageId(), p2 = c.addPage();
+    int lives = 0; QObject::connect(&c, &CanvasDocument::liveChanged, [&] { ++lives; });
+    CHECK(c.livePage().isEmpty() && c.focusedModel() == c.pageModel(c.focusedPageId()), "no live page: the focused model is the focused page's");
+    c.setLivePage(QStringLiteral("nope"));
+    CHECK(c.livePage().isEmpty() && lives == 0, "an unknown id is ignored");
+    c.setFocusPage(QString());
+    c.setLivePage(p2);
+    CHECK(c.livePage() == p2 && c.focusPage().isEmpty() && c.focusedModel() == c.pageModel(p2) && c.focusedPageId() == p1 && lives == 1,
+          "a live page: the focused MODEL is its model while focusPage stays \"\" (the canvas in view) and focusedPageId is still the fallback");
+    c.setLivePage(p2);
+    CHECK(lives == 1, "setting the same live page again is a no-op");
+    c.setFocusPage(p1);
+    CHECK(c.livePage().isEmpty() && c.focusPage() == p1 && lives == 2 && c.focusedModel() == c.pageModel(p1), "a drill-in ends liveness (liveChanged, then focusChanged)");
+    c.setFocusPage(QString());
+    c.setLivePage(p2);
+    CHECK(c.removePage(p2) && c.livePage().isEmpty() && lives == 4 && c.focusedModel() == c.pageModel(p1), "removing the live page ends liveness (%d)", lives);
+    c.undo();
+    c.setLivePage(c.pageIds().last());
+    CHECK(!c.livePage().isEmpty(), "live again on the restored page");
+    c.closeCanvas();
+    CHECK(c.livePage().isEmpty(), "closing ends liveness");
+    // The manager: a live change re-points the active model like a focus change.
+    DocumentManager docs;
+    docs.newTab();
+    CanvasDocument* cv = docs.activeCanvas();
+    const QString q1 = cv->firstPageId(), q2 = cv->addPage();
+    cv->setFocusPage(QString());
+    int modelChanges = 0, focusChanges = 0;
+    QObject::connect(&docs, &DocumentManager::activeModelChanged, [&] { ++modelChanges; });
+    QObject::connect(&docs, &DocumentManager::activeFocusChanged, [&] { ++focusChanges; });
+    cv->setLivePage(q2);
+    CHECK(docs.activeModel() == cv->pageModel(q2) && modelChanges == 1 && focusChanges == 1, "livePage → activeModel is the live page (model %d, focus %d)", modelChanges, focusChanges);
+    cv->setLivePage(QString());
+    CHECK(docs.activeModel() == cv->pageModel(q1) && modelChanges == 2, "…and back to the fallback when liveness ends (%d)", modelChanges);
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8979,6 +9019,7 @@ int main(int argc, char** argv) {
     testCopyPagesIn();
     testMultiDocToCanvas();
     testAudioElements();
+    testLivePage();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();
