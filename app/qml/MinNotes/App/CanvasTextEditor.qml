@@ -15,8 +15,11 @@ Item {
         canvas.elementsRevision
         try { return JSON.parse(shown ? canvas.elementJson(editingId) : "{}") } catch (e) { return {} }
     }
-    readonly property real fontSize: (spec.fontSize ? spec.fontSize : 24)
-    readonly property color fill: spec.fill ? spec.fill : "#ffffffff"
+    readonly property real fontSize: (spec.fontSize ? spec.fontSize : Theme.font.sizeBody)
+    readonly property bool plain: !spec.fill || spec.fill === "transparent"
+    readonly property color fill: !plain ? spec.fill : "transparent"
+    readonly property color textColor: plain ? (spec.color ? spec.color : Theme.colors.text)
+                                             : ((fill.r * 0.299 + fill.g * 0.587 + fill.b * 0.114) > 0.6 ? "black" : "white")
     x: tl.x; y: tl.y
     width: Math.max(40, world.width * view.cam.zoom); height: Math.max(20, world.height * view.cam.zoom)
     visible: shown
@@ -52,7 +55,7 @@ Item {
         id: te
         anchors.fill: parent; anchors.margins: Math.round(ed.fontSize * 0.3 * ed.view.cam.zoom)
         wrapMode: TextEdit.NoWrap
-        color: (ed.fill.r * 0.299 + ed.fill.g * 0.587 + ed.fill.b * 0.114) > 0.6 ? "black" : "white"
+        color: ed.textColor
         font.family: Theme.font.body; font.pixelSize: Math.max(4, ed.fontSize * ed.view.cam.zoom)
         selectByMouse: true
         Keys.onPressed: (event) => {

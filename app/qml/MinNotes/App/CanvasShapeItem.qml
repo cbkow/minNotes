@@ -14,10 +14,13 @@ Item {
         try { return JSON.parse(elementId !== "" ? canvas.elementJson(elementId) : "{}") } catch (e) { return {} }
     }
     readonly property string kind: spec.shape || ""
-    readonly property color fill: spec.fill ? spec.fill : "#ffffffff"
-    readonly property real fontSize: spec.fontSize ? spec.fontSize : 16
+    readonly property bool plain: !spec.fill || spec.fill === "transparent"   // plain text: no box, its own colour (2026-10-18)
+    readonly property color fill: !plain ? spec.fill : "transparent"
+    readonly property color textColor: plain ? (spec.color ? spec.color : Theme.colors.text)
+                                             : ((fill.r * 0.299 + fill.g * 0.587 + fill.b * 0.114) > 0.6 ? "black" : "white")
+    readonly property real fontSize: spec.fontSize ? spec.fontSize : Theme.font.sizeBody
 
-    Rectangle {   // text chip
+    Rectangle {   // text chip (or plain text)
         visible: sh.kind === "text"
         anchors.fill: parent
         color: sh.fill
@@ -26,7 +29,7 @@ Item {
             anchors.fill: parent; anchors.margins: Math.round(sh.fontSize * 0.3)
             text: sh.spec.text || ""
             wrapMode: Text.Wrap
-            color: (sh.fill.r * 0.299 + sh.fill.g * 0.587 + sh.fill.b * 0.114) > 0.6 ? "black" : "white"
+            color: sh.textColor
             font.family: Theme.font.body; font.pixelSize: sh.fontSize
         }
     }

@@ -19,7 +19,8 @@ Rectangle {
     // and select are the pointer (tap selects, drag moves, handles resize, empty-space drag pans) ---
     readonly property string tool: editor.inspector ? editor.inspector.drawTool : "type"
     readonly property bool drawing: !spaceHeld && (tool === "freehand" || tool === "rect" || tool === "oval" || tool === "arrow" || tool === "line" || tool === "eraser")
-    readonly property bool textTool: !spaceHeld && tool === "text"
+    readonly property bool textTool: !spaceHeld && (tool === "text" || tool === "plaintext")   // a boxed chip, or plain text (no fill — 2026-10-18)
+    readonly property bool plainTextTool: !spaceHeld && tool === "plaintext"
     readonly property bool pageTool: !spaceHeld && tool === "page"
     readonly property bool handTool: spaceHeld || tool === "hand"
     readonly property bool pointerTool: !spaceHeld && (tool === "select" || tool === "type")
@@ -33,11 +34,14 @@ Rectangle {
         return id
     }
     // The text tool: a tap makes a text chip there and edits it; a double-tap on a chip edits it.
-    function newTextAt(sx, sy) {
+    function newTextAt(sx, sy, plain) {
         const w = cam.screenToWorld(sx, sy)
-        const size = editor.inspector && editor.inspector.drawTextSize ? editor.inspector.drawTextSize : 24
-        const fill = editor.inspector ? editor.inspector.drawColor : "#ffffff"
-        const id = canvas.addShapeElement(JSON.stringify({ shape: "text", text: "", fontSize: size, fill: "" + fill }), Qt.rect(w.x, w.y, Math.max(120, size * 6), size * 1.4 + Math.round(size * 0.6)))
+        // The default size is the document's body size (ruling 2026-10-18: never larger than the document's text).
+        const size = editor.inspector && editor.inspector.drawTextSize ? editor.inspector.drawTextSize : Theme.font.sizeBody
+        const pen = editor.inspector ? "" + editor.inspector.drawColor : "#ffffff"
+        const spec = plain ? { shape: "text", text: "", fontSize: size, fill: "transparent", color: pen }   // plain: no box, the pen's colour
+                           : { shape: "text", text: "", fontSize: size, fill: pen }
+        const id = canvas.addShapeElement(JSON.stringify(spec), Qt.rect(w.x, w.y, Math.max(120, size * 6), size * 1.4 + Math.round(size * 0.6)))
         if (id === "") return ""
         select(id)
         textEditor.begin(id)
@@ -470,7 +474,7 @@ Rectangle {
             if (cv.frameHit(ev.position)) return   // the selection frame's chrome (the transport, the pager, the glyph) sits OUTSIDE the element's rect: never "empty canvas"
             if (!cv.emptyAt(ev.position.x, ev.position.y)) return
             cv.endLive(false)   // a click elsewhere ends a live card (and commits a chip's edit)
-            if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
+            if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y, cv.plainTextTool)
             else if (cv.pageTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addPageAt(w.x, w.y); if (id !== "") cv.select(id) }
             else { cv.clearSelection(); cv.editor.forceActiveFocus() }
         }

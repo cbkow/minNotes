@@ -13,7 +13,10 @@ Item {
     property bool fitChecked: false            // the toggle's state (the document's Full width); Fit rows never check
     signal fitRequested()
     signal hundredRequested()
+    property real sliderPos: 0.5          // the active surface's zoom on a 0..1 travel (the editor's log-scale mapping)
+    signal sliderMoved(real p)
     readonly property var menuItem: menu   // probe
+    readonly property var sliderItem: zoomSlider
 
     implicitWidth: label.implicitWidth + 16
     implicitHeight: 24
@@ -78,6 +81,19 @@ Item {
             border.width: 1; border.color: Theme.colors.border
         }
         contentItem: Column {
+            Item {   // the slider (2026-10-18, like the pen width's): 100 % dead centre, a log half either side
+                width: 148; height: 28
+                FlatSlider {
+                    id: zoomSlider
+                    anchors.centerIn: parent
+                    width: 136; height: 24
+                    from: 0; to: 1
+                    value: badge.sliderPos
+                    fillColor: Theme.colors.textMuted
+                    onMoved: badge.sliderMoved(value)
+                    Rectangle { x: parent.leftPadding + parent.availableWidth / 2 - 0.5; y: parent.height / 2 - 5; width: 1; height: 10; color: Theme.colors.textSubtle }
+                }
+            }
             ZoomRow { text: (badge.fitChecked ? "✓ " : "") + badge.fitLabel; shortcut: "⌘ 1"; onActivated: badge.fitRequested() }
             ZoomRow { text: qsTr("100%"); shortcut: "⌘ 0"; onActivated: badge.hundredRequested() }
         }

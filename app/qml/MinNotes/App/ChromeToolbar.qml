@@ -273,6 +273,8 @@ Rectangle {
             zoomValue: bar.editor ? bar.editor.zoomValue : 1
             fitLabel: bar.editor && (bar.editor.pdfTabOpen || bar.editor.activeCanvas) ? qsTr("Fit") : qsTr("Full width")
             fitChecked: !!bar.editor && !bar.editor.pdfTabOpen && !bar.editor.activeCanvas && bar.editor.fullWidth
+            sliderPos: bar.editor ? bar.editor.zoomSliderPos : 0.5
+            onSliderMoved: (p) => { if (bar.editor) bar.editor.zoomSliderTo(p) }
             onFitRequested: bar.act(function() { bar.editor.zoomFit() })
             onHundredRequested: bar.act(function() { bar.editor.zoom100() })
         }

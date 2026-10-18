@@ -3345,9 +3345,9 @@ FocusScope {
             event.accepted = true
         }
         // View zoom (PLAN-zoom Z3): the same chords as the PDF tab.
-        else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) { root.docZoomStep(1); event.accepted = true }
-        else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore)) { root.docZoomStep(-1); event.accepted = true }
-        else if (cmd && k === Qt.Key_0) { root.docZoom100(); event.accepted = true }
+        else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) { root.zoomStep(1); event.accepted = true }     // the ACTIVE surface: the canvas, a PDF, the document (2026-10-18: ⌘± never reached the canvas)
+        else if (cmd && (k === Qt.Key_Minus || k === Qt.Key_Underscore)) { root.zoomStep(-1); event.accepted = true }
+        else if (cmd && k === Qt.Key_0) { root.zoom100(); event.accepted = true }
         else if (cmd && k === Qt.Key_1) { root.zoomFit(); event.accepted = true }   // the document: Full width toggle
         // The canvas (B3, read-only): Space holds the hand; everything else is swallowed so typing
         // can't edit the document invisibly (the global chords above still work). A selected VIDEO element
@@ -3357,6 +3357,7 @@ FocusScope {
             const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
                                [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" }
             if (k === Qt.Key_Space && !event.isAutoRepeat) canvasItem.spaceHeld = true
+            else if (plain && shift && k === Qt.Key_T && root.inspector) root.inspector.drawTool = "plaintext"      // ⇧T: plain text (no box)
             else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
             else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasItem.deleteSelected()
             else if (cmd && k === Qt.Key_V) canvasItem.pasteAt(canvasItem.width / 2, canvasItem.height / 2)   // ⌘V → elements at the viewport's centre (phase A7)
@@ -4596,7 +4597,7 @@ FocusScope {
                     root.inspector.drawTool = "select"   // (with the text tool still armed a click away would start another chip)
                     g.click(cvw, 8, 8)   // commit by clicking away
                     const spec = JSON.parse(canvas.elementJson(tid) || "{}")
-                    check(cvw.textEditorItem.editingId === "" && spec.text === "hi there" && canvas.elementRect(tid).width > 60, "clicking away commits the typed text and sizes the chip (\"" + spec.text + "\", " + canvas.elementRect(tid).width + " wide)")
+                    check(cvw.textEditorItem.editingId === "" && spec.text === "hi there" && canvas.elementRect(tid).width > 40, "clicking away commits the typed text and sizes the chip (body-size text since 2026-10-18) (\"" + spec.text + "\", " + canvas.elementRect(tid).width + " wide)")
                     const c = centreOf(tid), r0 = canvas.elementRect(tid)
                     g.drag(cvw, c.x, c.y, c.x + 25, c.y - 15, 5)
                     const r1 = canvas.elementRect(tid)
