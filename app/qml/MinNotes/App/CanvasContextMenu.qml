@@ -49,6 +49,8 @@ Popup {
         Row { label: menu.onMac ? qsTr("Reveal in Finder") : qsTr("Show in Explorer"); show: menu.localMedia; onTriggered: canvas.revealElement(menu.view.selectedId) }
         Row { label: qsTr("Open in ufb");    show: menu.localMedia;        onTriggered: canvas.openElementInUfb(menu.view.selectedId) }
         Row { label: qsTr("Copy path");      show: menu.localMedia;        onTriggered: clipboard.writeText(canvas.elementLocalPath(menu.view.selectedId)) }
+        Row { label: qsTr("Copy link");      show: menu.n === 1 && menu.kind1 === "media" && canvas.mediaElementKind(menu.view.selectedId) === "bookmark"
+              onTriggered: clipboard.writeText(menu.view.mediaOf(menu.view.selectedId).src || "") }
         Row { label: qsTr("Spread files here"); show: menu.view.selectedIsFolder; onTriggered: menu.view.spreadSelected() }
         Row { label: qsTr("Refresh");        show: menu.view.selectedIsFolder; onTriggered: canvas.rescanFolder(menu.view.selectedId) }
         Row { label: qsTr("Next page");      show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(1) }

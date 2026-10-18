@@ -130,6 +130,42 @@ Rectangle {
     readonly property bool selectedIsPdf: selectedId !== "" && canvas.mediaElementKind(selectedId) === "pdf"
     readonly property int pdfPageOfSelected: (editor.pdfPageRev, selectedIsPdf ? editor.pdfPageForKey(pdfKeyOf(selectedId)) : 0)
     function pdfStepSelected(d) { if (selectedIsPdf) editor.pdfStepKey(pdfKeyOf(selectedId), d, pdfPagesOf(selectedId)) }
+    // Dropped / pasted TEXT (phase A7): one http(s) line → a remote image (image extension) or a bookmark; anything
+    // else → a text chip sized to its text (body 14). Screen coordinates in, the element id out.
+    function dropUrl(u, wx, wy) {
+        return /\.(png|jpe?g|gif|webp|bmp|svg|avif)(\?.*)?$/i.test(u) ? canvas.addRemoteImageElement(u, wx, wy) : canvas.addBookmarkElement(u, wx, wy)
+    }
+    function dropText(text, sx, sy) {
+        const t = ("" + text).trim()
+        if (t === "") return ""
+        const w = cam.screenToWorld(sx, sy)
+        if (/^https?:\/\/\S+$/i.test(t)) return dropUrl(t, w.x, w.y)
+        const size = 14, pad = Math.round(size * 0.3)
+        measureText.text = t
+        const tw = Math.min(480, Math.ceil(measureText.contentWidth) + 2 * pad + 4), th = Math.ceil(measureText.contentHeight) + 2 * pad
+        return canvas.addShapeElement(JSON.stringify({ shape: "text", text: t, fontSize: size, fill: "" + Theme.colors.text }), Qt.rect(w.x, w.y, Math.max(60, tw), Math.max(size * 1.4, th)))
+    }
+    Text { id: measureText; visible: false; width: 480 - 12; wrapMode: Text.Wrap; font.family: Theme.font.body; font.pixelSize: 14 }
+    // ⌘V on the canvas (phase A7): files → elements (a grid), an image → an image element, a bare remote image →
+    // a remote image, text → dropText. The viewport's centre is the drop point.
+    function pasteAt(sx, sy) {
+        if (!canvas.documentOpen) return
+        const w = cam.screenToWorld(sx, sy)
+        const urls = clipboard.readUrls()
+        let ids = []
+        if (urls.length) {
+            const local = urls.filter(u => !/^https?:/i.test(u)), remote = urls.filter(u => /^https?:/i.test(u))
+            ids = local.length ? canvas.addElementsFromUrls(local, w.x, w.y) : []
+            for (const u of remote) { const id = dropUrl(u, w.x, w.y); if (id !== "") ids.push(id) }
+        } else if (clipboard.hasImage()) {
+            const id = canvas.addClipboardImageElement(w.x, w.y); if (id !== "") ids = [id]
+        } else if (clipboard.hasHtml() && canvas.bareRemoteImageSrc(clipboard.readHtml()) !== "") {
+            const id = canvas.addRemoteImageElement(canvas.bareRemoteImageSrc(clipboard.readHtml()), w.x, w.y); if (id !== "") ids = [id]
+        } else {
+            const id = dropText(clipboard.readText(), sx, sy); if (id !== "") ids = [id]
+        }
+        if (ids.length) selectMany(ids)
+    }
     readonly property bool selectedIsFolder: selectedId !== "" && canvas.mediaElementKind(selectedId) === "folder"
     function spreadSelected() { if (selectedIsFolder) { const ids = canvas.spreadFolder(selectedId); if (ids.length) selectMany(ids) } }
     property int opens: 0                // probe diagnostics
@@ -273,14 +309,24 @@ Rectangle {
     // into a new page there — Main.qml answers canvas.importFileRequested). Several files stagger.
     DropArea {
         anchors.fill: parent; z: 5
-        keys: ["text/uri-list"]
+        keys: ["text/uri-list", "text/plain", "text/html"]
         onDropped: (drop) => {
-            if (!drop.hasUrls || !canvas.documentOpen) return
+            if (!canvas.documentOpen) return
             const w = cam.screenToWorld(drop.x, drop.y)
-            const urls = []
-            for (let i = 0; i < drop.urls.length; ++i) urls.push(drop.urls[i].toString())
-            const ids = canvas.addElementsFromUrls(urls, w.x, w.y)   // one → in place; many → a grid, ONE history row (phase A6)
-            if (ids.length) cv.selectMany(ids)
+            if (drop.hasUrls && drop.urls.length) {
+                const urls = []
+                for (let i = 0; i < drop.urls.length; ++i) urls.push(drop.urls[i].toString())
+                const local = urls.filter(u => !/^https?:/i.test(u)), remote = urls.filter(u => /^https?:/i.test(u))
+                const ids = local.length ? canvas.addElementsFromUrls(local, w.x, w.y) : []   // one → in place; many → a grid, ONE history row (phase A6)
+                for (const u of remote) { const id = cv.dropUrl(u, w.x, w.y); if (id !== "") ids.push(id) }
+                if (ids.length) cv.selectMany(ids)
+            } else if (drop.hasHtml && canvas.bareRemoteImageSrc(drop.html) !== "") {
+                const id = canvas.addRemoteImageElement(canvas.bareRemoteImageSrc(drop.html), w.x, w.y)
+                if (id !== "") cv.select(id)
+            } else if (drop.hasText) {
+                const id = cv.dropText(drop.text, drop.x, drop.y)
+                if (id !== "") cv.select(id)
+            }
             drop.accept()
             cv.editor.forceActiveFocus()
         }

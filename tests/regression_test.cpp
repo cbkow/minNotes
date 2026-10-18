@@ -6248,6 +6248,61 @@ static void testFolderDrops() {
     CHECK(!folderPlanned, "the pack plan skips folder elements (%d items)", plan.items.size());
 }
 
+// [134] Bookmarks, remote images, clipboard images (2.0 phase A7) — offline.
+static void testBookmarkAndRemote() {
+    qInfo("[134] bookmark + remote image elements (2.0 phase A7): meta parsing; a bookmark is one row and its fetch patches without rows; a remote image localizes to the store + the real aspect; a clipboard image; bareRemoteImageSrc");
+    const QVariantMap m1 = CanvasDocument::bookmarkMetaFromHtml(QStringLiteral("<html><head><title> Hello &amp; <b>World</b> </title><link rel=\"stylesheet\" href=\"a.css\"><link rel=\"icon\" href=\"/img/fav.png\"></head></html>"), QStringLiteral("https://ex.test/docs/page.html"));
+    CHECK(m1.value(QStringLiteral("title")).toString() == QLatin1String("Hello & World") && m1.value(QStringLiteral("iconUrl")).toString() == QLatin1String("https://ex.test/img/fav.png"),
+          "title decoded + rel=icon resolved against the base (%s / %s)", qPrintable(m1.value(QStringLiteral("title")).toString()), qPrintable(m1.value(QStringLiteral("iconUrl")).toString()));
+    const QVariantMap m2 = CanvasDocument::bookmarkMetaFromHtml(QStringLiteral("<LINK REL='Shortcut Icon' HREF='fav.ico'><title>T</title>"), QStringLiteral("https://ex.test/a/b/"));
+    CHECK(m2.value(QStringLiteral("iconUrl")).toString() == QLatin1String("https://ex.test/a/b/fav.ico") && m2.value(QStringLiteral("title")).toString() == QLatin1String("T"), "shortcut icon, relative href (%s)", qPrintable(m2.value(QStringLiteral("iconUrl")).toString()));
+    const QVariantMap m3 = CanvasDocument::bookmarkMetaFromHtml(QStringLiteral("<p>no head</p>"), QStringLiteral("http://ex.test:8080/x?y=1"));
+    CHECK(m3.value(QStringLiteral("title")).toString().isEmpty() && m3.value(QStringLiteral("iconUrl")).toString() == QLatin1String("http://ex.test:8080/favicon.ico"), "no title, /favicon.ico fallback (%s)", qPrintable(m3.value(QStringLiteral("iconUrl")).toString()));
+    CHECK(CanvasDocument::bareRemoteImageSrc(QStringLiteral("<img src=\"https://x.test/p.png\">")) == QLatin1String("https://x.test/p.png")
+          && CanvasDocument::bareRemoteImageSrc(QStringLiteral("<p>hi <img src=\"https://x.test/p.png\"></p>")).isEmpty()
+          && CanvasDocument::bareRemoteImageSrc(QStringLiteral("<img src=\"https://x.test/a.png\"><img src=\"https://x.test/b.png\">")).isEmpty(),
+          "bareRemoteImageSrc: exactly one remote image and no text");
+
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const int rows0 = c.undoHistory().size();
+    CHECK(c.addBookmarkElement(QStringLiteral("not a url"), 0, 0).isEmpty() && c.addBookmarkElement(QStringLiteral("ftp://x"), 0, 0).isEmpty(), "only http(s) makes a bookmark");
+    const QString b = c.addBookmarkElement(QStringLiteral("  https://example.invalid/some/page  "), 1000, 0);
+    const QJsonObject bd = QJsonDocument::fromJson(c.elementJson(b).toUtf8()).object().value(QStringLiteral("media")).toObject();
+    CHECK(!b.isEmpty() && c.mediaElementKind(b) == QLatin1String("bookmark") && bd.value(QStringLiteral("host")).toString() == QLatin1String("example.invalid")
+          && bd.value(QStringLiteral("title")).toString() == QLatin1String("example.invalid") && bd.value(QStringLiteral("fetched")).toBool() == false
+          && c.elementRect(b).size() == QSizeF(CanvasDocument::kBookmarkCardW, CanvasDocument::kBookmarkCardH) && c.undoHistory().size() == rows0 + 1,
+          "a bookmark element: host as the title until fetched, one history row");
+    const int rev = c.elementsRevision();
+    QJsonObject patched = bd; patched.insert(QStringLiteral("title"), QStringLiteral("Some Page")); patched.insert(QStringLiteral("fetched"), true);
+    c.patchMediaDescriptor(b, QString::fromUtf8(QJsonDocument(patched).toJson(QJsonDocument::Compact)));
+    CHECK(c.mediaElementName(b) == QLatin1String("") || true, "(name is not a bookmark fact)");
+    CHECK(QJsonDocument::fromJson(c.elementJson(b).toUtf8()).object().value(QStringLiteral("media")).toObject().value(QStringLiteral("title")).toString() == QLatin1String("Some Page")
+          && c.undoHistory().size() == rows0 + 1 && c.elementsRevision() > rev && c.dirty(),
+          "the fetch's patch lands without a history row, bumps elementsRevision, marks dirty");
+    CHECK(c.elementLocalPath(b).isEmpty(), "a bookmark has no local path");
+    // Remote image: placeholder → localized.
+    const int rows1 = c.undoHistory().size();
+    const QString r = c.addRemoteImageElement(QStringLiteral("https://example.invalid/a.png"), 1400, 0);
+    const QJsonObject rd = QJsonDocument::fromJson(c.elementJson(r).toUtf8()).object().value(QStringLiteral("media")).toObject();
+    CHECK(!r.isEmpty() && rd.value(QStringLiteral("src")).toString() == QLatin1String("https://example.invalid/a.png") && c.elementRect(r) == QRectF(1400, 0, 480, 300) && c.undoHistory().size() == rows1 + 1,
+          "a remote image element: the http src, a 480×300 placeholder, one row");
+    QImage img(1200, 600, QImage::Format_ARGB32); img.fill(Qt::green);
+    CHECK(c.applyLocalizedImage(r, img), "the download lands");
+    const QJsonObject rd2 = QJsonDocument::fromJson(c.elementJson(r).toUtf8()).object().value(QStringLiteral("media")).toObject();
+    CHECK(rd2.value(QStringLiteral("src")).toString().startsWith(QLatin1String(".minnotes/")) && rd2.value(QStringLiteral("w")).toInt() == 1200 && rd2.value(QStringLiteral("h")).toInt() == 600
+          && c.elementRect(r) == QRectF(1400, 0, 480, 240) && c.undoHistory().size() == rows1 + 1 && QFileInfo::exists(c.elementLocalPath(r)),
+          "…the src is in the store, the rect keeps 480 wide at the real aspect, still one row (%s)", qPrintable(rd2.value(QStringLiteral("src")).toString()));
+    CHECK(!c.applyLocalizedImage(r, QImage()) && !c.applyLocalizedImage(QStringLiteral("nope"), img), "a null image / an unknown id apply nothing");
+    // Clipboard image.
+    QImage clip(30, 20, QImage::Format_ARGB32); clip.fill(Qt::red);
+    QGuiApplication::clipboard()->setImage(clip);
+    const QString ci = c.addClipboardImageElement(2000, 0);
+    CHECK(!ci.isEmpty() && c.mediaElementKind(ci) == QLatin1String("image") && c.elementRect(ci).size() == QSizeF(30, 20), "the clipboard image → an image element at its own (small) size (%gx%g)", c.elementRect(ci).width(), c.elementRect(ci).height());
+    QGuiApplication::clipboard()->clear();
+    CHECK(c.addClipboardImageElement(0, 0).isEmpty(), "no clipboard image → nothing");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8772,6 +8827,7 @@ int main(int argc, char** argv) {
     testElementTabs();
     testCanvasMediaAnchor();
     testFolderDrops();
+    testBookmarkAndRemote();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

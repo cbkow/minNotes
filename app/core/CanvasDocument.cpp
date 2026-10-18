@@ -19,6 +19,14 @@
 #include <QPointer>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QImage>
+#include <QTextDocumentFragment>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QRegularExpression>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QNetworkAccessManager>
 
 namespace {
 QString g_scratchRoot;   // set once by main() to this session's subdir
@@ -986,6 +994,164 @@ void CanvasDocument::rescanFolder(const QString& id) {
     const QString dir = elementLocalPath(id);
     if (dir.isEmpty() || !QFileInfo(dir).isDir()) return;
     patchMediaDescriptor(id, MediaStore::folderDescriptorJson(dir));
+}
+QNetworkAccessManager* CanvasDocument::net() {
+    if (!net_) net_ = new QNetworkAccessManager(this);
+    return net_;
+}
+static QNetworkRequest webRequest(const QUrl& u) {
+    QNetworkRequest req(u);
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("minNotes"));
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(8000);
+    return req;
+}
+static QJsonObject mediaOfElementJson(const QString& json) {
+    return QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("media")).toObject();
+}
+QString CanvasDocument::addBookmarkElement(const QString& url, qreal wx, qreal wy) {
+    if (!db_.isOpen()) return QString();
+    const QUrl u(url.trimmed());
+    if (!u.isValid() || (u.scheme() != QLatin1String("http") && u.scheme() != QLatin1String("https"))) return QString();
+    QJsonObject o;
+    o.insert(QStringLiteral("kind"), QStringLiteral("bookmark"));
+    o.insert(QStringLiteral("src"), u.toString());
+    o.insert(QStringLiteral("host"), u.host());
+    o.insert(QStringLiteral("title"), u.host());
+    o.insert(QStringLiteral("icon"), QString());
+    o.insert(QStringLiteral("fetched"), false);
+    const QString id = addMediaElement(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)), QRectF(wx, wy, kBookmarkCardW, kBookmarkCardH));
+    if (!id.isEmpty()) fetchBookmarkMeta(id);
+    return id;
+}
+QVariantMap CanvasDocument::bookmarkMetaFromHtml(const QString& html, const QString& baseUrl) {
+    QVariantMap out;
+    const QUrl base(baseUrl);
+    QString title;
+    const QRegularExpression titleRe(QStringLiteral("<title[^>]*>(.*?)</title>"), QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
+    if (const auto m = titleRe.match(html); m.hasMatch()) title = QTextDocumentFragment::fromHtml(m.captured(1)).toPlainText().simplified();
+    QString icon;
+    const QRegularExpression linkRe(QStringLiteral(R"(<link\b[^>]*>)"), QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression relRe(QStringLiteral(R"(\brel\s*=\s*["']([^"']*)["'])"), QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression hrefRe(QStringLiteral(R"(\bhref\s*=\s*["']([^"']*)["'])"), QRegularExpression::CaseInsensitiveOption);
+    int best = 99;
+    for (auto it = linkRe.globalMatch(html); it.hasNext();) {
+        const QString tag = it.next().captured(0);
+        const auto rm = relRe.match(tag), hm = hrefRe.match(tag);
+        if (!rm.hasMatch() || !hm.hasMatch()) continue;
+        const QString rel = rm.captured(1).toLower();
+        int rank = rel == QLatin1String("icon") ? 0 : rel == QLatin1String("shortcut icon") ? 1 : rel.contains(QLatin1String("apple-touch-icon")) ? 2 : -1;
+        if (rank < 0 || rank >= best) continue;
+        best = rank; icon = hm.captured(1);
+    }
+    QUrl iconUrl = icon.isEmpty() ? QUrl(base.scheme() + QStringLiteral("://") + base.authority() + QStringLiteral("/favicon.ico")) : base.resolved(QUrl(icon));
+    out.insert(QStringLiteral("title"), title);
+    out.insert(QStringLiteral("iconUrl"), iconUrl.toString());
+    return out;
+}
+void CanvasDocument::fetchBookmarkMeta(const QString& id) {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return;
+    const QJsonObject d = mediaOfElementJson(e->json);
+    if (d.value(QStringLiteral("kind")).toString() != QLatin1String("bookmark")) return;
+    const QString url = d.value(QStringLiteral("src")).toString();
+    QPointer<CanvasDocument> self(this);
+    QNetworkReply* reply = net()->get(webRequest(QUrl(url)));
+    connect(reply, &QNetworkReply::finished, this, [self, reply, id, url]() {
+        reply->deleteLater();
+        if (!self || !self->db_.isOpen()) return;
+        const auto cur = self->element(id);
+        if (!cur || reply->error() != QNetworkReply::NoError) return;
+        const QVariantMap meta = bookmarkMetaFromHtml(QString::fromUtf8(reply->read(256 * 1024)), url);
+        QJsonObject d = mediaOfElementJson(cur->json);
+        const QString title = meta.value(QStringLiteral("title")).toString();
+        if (!title.isEmpty()) d.insert(QStringLiteral("title"), title);
+        d.insert(QStringLiteral("fetched"), true);
+        self->patchMediaDescriptor(id, QString::fromUtf8(QJsonDocument(d).toJson(QJsonDocument::Compact)));
+        const QString iconUrl = meta.value(QStringLiteral("iconUrl")).toString();
+        if (iconUrl.isEmpty()) return;
+        QNetworkReply* ir = self->net()->get(webRequest(QUrl(iconUrl)));
+        QObject::connect(ir, &QNetworkReply::finished, self.data(), [self, ir, id]() {
+            ir->deleteLater();
+            if (!self || !self->db_.isOpen() || !self->mediaStore_) return;
+            const auto cur = self->element(id);
+            if (!cur || ir->error() != QNetworkReply::NoError) return;
+            QImage img;
+            if (!img.loadFromData(ir->read(512 * 1024)) || img.isNull()) return;
+            const MediaStore::ImageRef ref = self->mediaStore_->importImage(img);
+            if (!ref.ok()) return;
+            QJsonObject d = mediaOfElementJson(cur->json);
+            d.insert(QStringLiteral("icon"), ref.src);
+            self->patchMediaDescriptor(id, QString::fromUtf8(QJsonDocument(d).toJson(QJsonDocument::Compact)));
+        });
+    });
+}
+QString CanvasDocument::addRemoteImageElement(const QString& url, qreal wx, qreal wy) {
+    if (!db_.isOpen()) return QString();
+    const QString id = addMediaElement(MediaStore::remoteImageDescriptorJson(url.trimmed()), QRectF(wx, wy, kDropMediaWidth, 300));
+    if (!id.isEmpty()) localizeRemoteMedia(id);
+    return id;
+}
+void CanvasDocument::localizeRemoteMedia(const QString& id) {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return;
+    const QString src = mediaOfElementJson(e->json).value(QStringLiteral("src")).toString();
+    if (!src.startsWith(QLatin1String("http"))) return;
+    QPointer<CanvasDocument> self(this);
+    QNetworkReply* reply = net()->get(webRequest(QUrl(src)));
+    connect(reply, &QNetworkReply::finished, this, [self, reply, id]() {
+        reply->deleteLater();
+        if (!self || !self->db_.isOpen() || reply->error() != QNetworkReply::NoError) return;
+        QImage img;
+        if (!img.loadFromData(reply->readAll()) || img.isNull()) return;
+        self->applyLocalizedImage(id, img);
+    });
+}
+bool CanvasDocument::applyLocalizedImage(const QString& id, const QImage& img) {
+    if (!db_.isOpen() || !mediaStore_ || img.isNull()) return false;
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return false;
+    const MediaStore::ImageRef ref = mediaStore_->importImage(img);
+    if (!ref.ok()) return false;
+    QJsonObject d = mediaOfElementJson(e->json);
+    d.insert(QStringLiteral("src"), ref.src);
+    d.insert(QStringLiteral("w"), ref.w);
+    d.insert(QStringLiteral("h"), ref.h);
+    patchMediaDescriptor(id, QString::fromUtf8(QJsonDocument(d).toJson(QJsonDocument::Compact)));
+    // The rect keeps its width and takes the real aspect — a cache fact like the descriptor, no undo row.
+    const double w = e->w > 0 ? e->w : kDropMediaWidth, h = std::round(w * ref.h / double(ref.w));
+    db_.begin(); db_.updateElementRect(id, e->x, e->y, w, h); db_.commit();
+    reloadElements();
+    noteChanged(QStringLiteral("media"), false, true, false);
+    return true;
+}
+QString CanvasDocument::addClipboardImageElement(qreal wx, qreal wy) {
+    if (!db_.isOpen() || !mediaStore_) return QString();
+    const MediaStore::ImageRef ref = mediaStore_->importClipboardImage();
+    if (!ref.ok()) return QString();
+    const double dw = std::min<double>(kDropMediaWidth, ref.w);
+    return addMediaElement(MediaStore::imageDescriptorJson(ref), QRectF(wx, wy, dw, dw * ref.h / ref.w));
+}
+QString CanvasDocument::bareRemoteImageSrc(const QString& html) {
+    if (html.isEmpty()) return QString();
+    QTextDocument doc;
+    doc.setHtml(html);
+    QString remote; int images = 0;
+    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+        for (auto it = b.begin(); !it.atEnd(); ++it) {
+            const QTextFragment frag = it.fragment();
+            if (!frag.isValid()) continue;
+            const QTextCharFormat cf = frag.charFormat();
+            if (cf.isImageFormat()) {
+                ++images;
+                const QString src = cf.toImageFormat().name();
+                if (src.startsWith(QLatin1String("http://")) || src.startsWith(QLatin1String("https://"))) remote = src;
+            } else if (!frag.text().trimmed().isEmpty() && frag.text() != QString(QChar::ObjectReplacementCharacter)) {
+                return QString();
+            }
+        }
+    }
+    return images == 1 ? remote : QString();
 }
 void CanvasDocument::patchMediaDescriptor(const QString& id, const QString& descriptorJson) {
     if (!db_.isOpen()) return;

@@ -51,14 +51,15 @@ Item {
     // Routing by descriptor kind (phase A6): folder and file chips have their own cards (name + full path);
     // images / videos / PDFs are MediaBlock over the stand-in. (Bookmarks and audio get cards in A7 / A9.)
     readonly property string mediaKind: standIn.media.kind || "image"
-    readonly property bool ownCard: mediaKind === "folder" || mediaKind === "file"
+    readonly property bool ownCard: mediaKind === "folder" || mediaKind === "file" || mediaKind === "bookmark"
     readonly property var card: cardLoader.item   // probe
     Loader {
         id: cardLoader
         anchors.fill: parent
         active: mi.elementId !== "" && mi.ownCard
-        sourceComponent: mi.mediaKind === "folder" ? folderCard : fileCard
+        sourceComponent: mi.mediaKind === "folder" ? folderCard : mi.mediaKind === "bookmark" ? bookmarkCard : fileCard
     }
+    Component { id: bookmarkCard; CanvasBookmarkCard { media: standIn.media } }
     Component { id: folderCard; CanvasFolderCard { media: standIn.media; path: standIn.mediaViewPath(0) } }
     Component { id: fileCard;   CanvasFileCard   { media: standIn.media; path: standIn.mediaViewPath(0) } }
     PageContextLoader {

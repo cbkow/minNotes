@@ -3192,7 +3192,7 @@ FocusScope {
             event.accepted = true
         }
         else if (cmd && k === Qt.Key_C) { root.doCopy(); event.accepted = true }
-        else if (cmd && k === Qt.Key_V) { root.doPaste(); event.accepted = true }
+        else if (cmd && k === Qt.Key_V && !root.activeCanvas) { root.doPaste(); event.accepted = true }   // (the canvas pastes below — never into the hidden page)
         else if (cmd && !shift && k === Qt.Key_X) { root.doCut(); event.accepted = true }
         // ⌥⌘↑ / ⌥⌘↓ (0.5.0): move the focused block — or the whole selected
         // run — one slot. Document view only. (Arrow keys carry no macOS
@@ -3236,6 +3236,7 @@ FocusScope {
             if (k === Qt.Key_Space && !event.isAutoRepeat) canvasView.spaceHeld = true
             else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
             else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasView.deleteSelected()
+            else if (cmd && k === Qt.Key_V) canvasView.pasteAt(canvasView.width / 2, canvasView.height / 2)   // ⌘V → elements at the viewport's centre (phase A7)
             else if (k === Qt.Key_PageDown) canvasView.pdfStepSelected(1)      // a selected PDF element pages (phase A5)
             else if (k === Qt.Key_PageUp) canvasView.pdfStepSelected(-1)
             else if (k === Qt.Key_Escape) {
@@ -4015,6 +4016,9 @@ FocusScope {
         property int probeRows0: 0
         property string folderElId: ""
         property string fileElId: ""
+        property string bookmarkElId: ""
+        property string textElId: ""
+        property string remoteElId: ""
         property string pdfElId: ""            // P9: the element-tab fixtures
         property string vidElId: ""
         property string inkId: ""
@@ -4738,8 +4742,26 @@ FocusScope {
                     canvas.redo(); canvas.redo()
                     ++step; return
                 }
-                if (step < 10) { ++step; return }
-                check(canvas.elementCount() === probeN0 + 3, "…two redos bring the page and the batch back (" + canvas.elementCount() + ")")
+                if (step === 10) {
+                    check(canvas.elementCount() === probeN0 + 3, "…two redos bring the page and the batch back (" + canvas.elementCount() + ")")
+                    const b = canvas.canvasBounds()
+                    bookmarkElId = canvas.addBookmarkElement("https://example.invalid/some/page", b.x + b.width + 100, b.y)
+                    const c = cam.worldToScreen(b.x + b.width + 100, b.y + 120)
+                    textElId = cvw.dropText("  hello canvas  ", c.x, c.y)
+                    const c2 = cam.worldToScreen(b.x + b.width + 100, b.y + 200)
+                    remoteElId = cvw.dropText("https://example.invalid/a.png", c2.x, c2.y)
+                    check(bookmarkElId !== "" && canvas.mediaElementKind(bookmarkElId) === "bookmark", "a URL drop makes a bookmark element")
+                    check(textElId !== "" && canvas.elementKind(textElId) === "shape" && JSON.parse(canvas.elementJson(textElId)).text === "hello canvas", "a text drop makes a text chip with the trimmed text")
+                    check(remoteElId !== "" && canvas.mediaElementKind(remoteElId) === "image" && cvw.mediaOf(remoteElId).src === "https://example.invalid/a.png" && canvas.elementRect(remoteElId).width === 480,
+                          "an image URL drop makes a remote-image element, 480 wide, on the http src")
+                    check(canvas.bareRemoteImageSrc("<html><body><img src=\"https://x.test/p.png\"></body></html>") === "https://x.test/p.png" && canvas.bareRemoteImageSrc("<p>hi <img src=\"https://x.test/p.png\"></p>") === "",
+                          "bareRemoteImageSrc: one image and nothing else")
+                    cvw.fit()
+                    ++step; return
+                }
+                if (step < 14) { ++step; return }
+                const bi = pageItem(bookmarkElId), bc = bi && bi.mediaItem ? bi.mediaItem.card : null
+                check(!!bc && bc.kind === "bookmark" && bc.hostText.text === "example.invalid", "the bookmark card shows the host (" + (bc ? bc.hostText.text : "no card") + "; the fetch fails fast offline)")
                 nextPhase("drops")
                 console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                 Qt.exit(Math.min(fails, 100))

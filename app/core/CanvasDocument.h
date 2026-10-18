@@ -12,6 +12,8 @@
 
 class BlockModel;
 class MediaStore;
+class QImage;
+class QNetworkAccessManager;
 
 // The FILE (2.0 stage 2). A minNotes file is a canvas: a SQLite store holding page ELEMENTS
 // (and, later, media / ink / shape / connector elements) plus every page's blocks, partitioned
@@ -63,6 +65,7 @@ public:
     // bounds, fit, culling and the poster never see a 195,000 px card.
     static double pageHeightCap(double elementWidth);
     static double clampPageHeight(double elementWidth, double h);
+    static constexpr double kBookmarkCardW = 320, kBookmarkCardH = 72;  // a bookmark element's card
     static constexpr double kFolderCardW = 320, kFolderCardH = 112;   // a folder element's card
     static constexpr double kFileCardW = 320, kFileCardH = 56;        // a file chip element's card (name + path)
     static constexpr double kDropGridGap = 24;                       // a batch drop's grid gap
@@ -193,6 +196,22 @@ public:
     // Swap a media element's descriptor in place — NOT an undo entry (a view/cache fact: a folder rescan, a
     // fetched bookmark title, a localized remote image). Bumps elementsRevision, marks dirty.
     Q_INVOKABLE void patchMediaDescriptor(const QString& id, const QString& descriptorJson);
+    // --- Phase A7: what a dropped / pasted URL or text becomes ---
+    // A BOOKMARK element: {kind:"bookmark", src:url, host, title (= host until fetched), icon (a store src), fetched}.
+    // The title + favicon arrive asynchronously (fetchBookmarkMeta) and patch the descriptor — no undo row.
+    Q_INVOKABLE QString addBookmarkElement(const QString& url, qreal wx, qreal wy);
+    Q_INVOKABLE void fetchBookmarkMeta(const QString& id);
+    // <title> + the rel=icon href (resolved against `baseUrl`; /favicon.ico when none): {title, iconUrl}.
+    Q_INVOKABLE static QVariantMap bookmarkMetaFromHtml(const QString& html, const QString& baseUrl);
+    // A REMOTE IMAGE element: the page's recipe — a 480×300 placeholder on the http src, then the download lands
+    // in the store and the descriptor + rect are patched to the real image (no undo row for the swap).
+    Q_INVOKABLE QString addRemoteImageElement(const QString& url, qreal wx, qreal wy);
+    Q_INVOKABLE void localizeRemoteMedia(const QString& id);
+    bool applyLocalizedImage(const QString& id, const QImage& img);   // the swap (tests call it directly)
+    // The clipboard's image → the store → an image element (480 wide at most, small images as-is).
+    Q_INVOKABLE QString addClipboardImageElement(qreal wx, qreal wy);
+    // The one http(s) <img> src of an HTML fragment that is nothing but that image ("" otherwise).
+    Q_INVOKABLE static QString bareRemoteImageSrc(const QString& html);
     Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementJson(const QString& id, const QString& json, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementZ(const QString& id, int z);
@@ -301,6 +320,8 @@ private:
     qint64 origMtime_ = -1;    // original file mtime/size at load + each save (conflict baseline)
     qint64 origSize_ = -1;
     std::unique_ptr<MediaStore> mediaStore_;
+    QNetworkAccessManager* net_ = nullptr;   // bookmark meta + remote images (created on first use)
+    QNetworkAccessManager* net();
     QHash<QString, BlockModel*> pages_;   // page id → its model (loaded pages only)
     mutable QHash<QString, QString> titleCache_;   // unloaded pages' titles (cleared on open/close/page changes)
     QString focusPage_;

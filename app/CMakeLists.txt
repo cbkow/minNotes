@@ -209,6 +209,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasMediaItem.qml
         qml/MinNotes/App/CanvasFolderCard.qml
         qml/MinNotes/App/CanvasFileCard.qml
+        qml/MinNotes/App/CanvasBookmarkCard.qml
         qml/MinNotes/App/CanvasShapeItem.qml
         qml/MinNotes/App/CanvasSelectionFrame.qml
         qml/MinNotes/App/CanvasTextEditor.qml
