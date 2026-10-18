@@ -8,6 +8,8 @@
 // of failed checks (0 = all pass).
 #include "BlockModel.h"
 #include "CanvasDocument.h"
+#include "FileLinks.h"
+#include "PathMap.h"
 #include "DocumentManager.h"
 #include "../app/notes/CanvasInkCapture.h"
 #include "Exporter.h"
@@ -6005,6 +6007,51 @@ static void testCanvasBatch() {
           "addPageAt takes a measure, clamped (%g)", c.elementRect(p).width());
 }
 
+// [129] One file-link recipe (2.0 phase A1): ufb deep links, element local paths through the store.
+static void testFileLinks() {
+    qInfo("[129] file links (2.0 phase A1): mn::ufbLinkFor normalises + percent-encodes with literal slashes; CanvasDocument::elementLocalPath resolves absolute and {vol,rel} srcs; non-media → \"\"");
+    const QString expectOs = QStringLiteral(
+#if defined(Q_OS_WIN)
+        "win"
+#else
+        "mac"
+#endif
+    );
+    CHECK(mn::ufbLinkFor(QStringLiteral("C:\\a b\\c.mov")) == QStringLiteral("ufb:///") + expectOs + QStringLiteral("/C%3A/a%20b/c.mov"),
+          "backslashes normalise, spaces encode, slashes stay literal: %s", qPrintable(mn::ufbLinkFor(QStringLiteral("C:\\a b\\c.mov"))));
+    CHECK(mn::ufbLinkFor(QStringLiteral("/Volumes/jobs/é/#1.png")) == QStringLiteral("ufb:///") + expectOs + QStringLiteral("//Volumes/jobs/%C3%A9/%231.png"),
+          "utf-8 + '#' percent-encode; a POSIX root keeps its leading slash after the os tag: %s", qPrintable(mn::ufbLinkFor(QStringLiteral("/Volumes/jobs/é/#1.png"))));
+    CHECK(mn::ufbLinkFor(QString()).isEmpty(), "empty in, empty out");
+
+    QTemporaryDir dir;
+    const QString vol = dir.path() + QStringLiteral("/vol");
+    QDir().mkpath(vol);
+    QImage img(8, 8, QImage::Format_ARGB32); img.fill(Qt::red);
+    const QString pngAbs = dir.path() + QStringLiteral("/abs.png");
+    const QString pngVol = vol + QStringLiteral("/mapped.png");
+    CHECK(img.save(pngAbs) && img.save(pngVol), "fixtures written");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    // An absolute src (a video/pdf-style in-place reference) and a {vol,rel} ref under a mapping.
+    const QString absId = c.addMediaElement(QStringLiteral("{\"kind\":\"file\",\"src\":%1,\"name\":\"abs.png\"}")
+                                              .arg(QString::fromUtf8(QJsonDocument(QJsonArray{pngAbs}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)),
+                                            QRectF(1000, 0, 260, 44));
+    QVector<mn::PathMapping> saved = mn::activeMappings();
+    mn::PathMapping pm; pm.id = QStringLiteral("testvol"); pm.label = QStringLiteral("test"); pm.mac = vol; pm.win = vol; pm.lin = vol;
+    mn::setActiveMappings({pm});
+    const QJsonValue ref = mn::toRef(pngVol);
+    CHECK(ref.isObject() && ref.toObject().value(QStringLiteral("vol")).toString() == QLatin1String("testvol"), "the mapped path becomes a {vol,rel} ref");
+    QJsonObject md; md.insert(QStringLiteral("kind"), QStringLiteral("file")); md.insert(QStringLiteral("src"), ref); md.insert(QStringLiteral("name"), QStringLiteral("mapped.png"));
+    const QString volId = c.addMediaElement(QString::fromUtf8(QJsonDocument(md).toJson(QJsonDocument::Compact)), QRectF(1300, 0, 260, 44));
+    CHECK(QFileInfo(c.elementLocalPath(absId)).canonicalFilePath() == QFileInfo(pngAbs).canonicalFilePath(), "absolute src → its path (%s)", qPrintable(c.elementLocalPath(absId)));
+    CHECK(QFileInfo(c.elementLocalPath(volId)).canonicalFilePath() == QFileInfo(pngVol).canonicalFilePath(), "{vol,rel} src → resolved through the mapping (%s)", qPrintable(c.elementLocalPath(volId)));
+    CHECK(c.ufbLink(volId).startsWith(QStringLiteral("ufb:///") + expectOs + QLatin1Char('/')) && c.ufbLink(volId).endsWith(QStringLiteral("/mapped.png")), "ufbLink(id) wraps the resolved path: %s", qPrintable(c.ufbLink(volId)));
+    mn::setActiveMappings(saved);
+    CHECK(c.elementLocalPath(c.firstPageId()).isEmpty() && c.ufbLink(QStringLiteral("nope")).isEmpty(), "a page / an unknown id have no path");
+    const QString inkId = c.addInkElement(QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}"), QRectF(1600, 0, 10, 10));
+    CHECK(c.elementLocalPath(inkId).isEmpty(), "…nor does an ink element");
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -8524,6 +8571,7 @@ int main(int argc, char** argv) {
     testCanvasCreate();
     testPageHeightCap();
     testCanvasBatch();
+    testFileLinks();
     testTableGeometry();
     testTableStructureOps();
     testTableAttrsBulkSort();

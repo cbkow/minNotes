@@ -25,6 +25,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QDesktopServices>
+#include "FileLinks.h"
 #include <QTextDocument>
 #include <QTextBlock>
 #include <QTextList>
@@ -4557,44 +4558,16 @@ void BlockModel::refreshMedia() {
     noteStructure();
     contentSpike();
 }
-void BlockModel::revealMedia(int row) const {
-    const QString path = mediaLocalPath(row);
-    if (path.isEmpty() || !QFileInfo::exists(path)) return;
-#if defined(Q_OS_MACOS)
-    QProcess::startDetached(QStringLiteral("open"), { QStringLiteral("-R"), path });
-#elif defined(Q_OS_WIN)
-    QProcess::startDetached(QStringLiteral("explorer"),
-                            { QStringLiteral("/select,") + QDir::toNativeSeparators(path) });
-#else
-    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
-#endif
-}
+void BlockModel::revealMedia(int row) const { mn::revealInFileManager(mediaLocalPath(row)); }
 void BlockModel::revealMediaFolder() const {
     if (!mediaStore()) return;
     // Package views: the store anchors to the extraction scratch — show the
     // .mnpkg itself instead. No .minnotes yet (nothing pasted/collected) →
     // select the document, so the user still lands in the right folder.
-    QString dir = QDir::cleanPath(mediaStore()->docDir()) + QStringLiteral("/.minnotes");
+    const QString dir = QDir::cleanPath(mediaStore()->docDir()) + QStringLiteral("/.minnotes");
     const bool pkg = !mediaStore()->packageSource().isEmpty();
-    if (pkg || !QFileInfo::exists(dir)) {
-        if (!QFileInfo::exists(documentPath())) return;
-#if defined(Q_OS_MACOS)
-        QProcess::startDetached(QStringLiteral("open"), { QStringLiteral("-R"), documentPath() });
-#elif defined(Q_OS_WIN)
-        QProcess::startDetached(QStringLiteral("explorer"),
-                                { QStringLiteral("/select,") + QDir::toNativeSeparators(documentPath()) });
-#else
-        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(documentPath()).absolutePath()));
-#endif
-        return;
-    }
-#if defined(Q_OS_MACOS)
-    QProcess::startDetached(QStringLiteral("open"), { dir });
-#elif defined(Q_OS_WIN)
-    QProcess::startDetached(QStringLiteral("explorer"), { QDir::toNativeSeparators(dir) });
-#else
-    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
-#endif
+    if (pkg || !QFileInfo::exists(dir)) { mn::revealInFileManager(documentPath()); return; }
+    mn::openFolder(dir);
 }
 QString BlockModel::mediaFileName(int row) const {
     row = clampRow(row);
@@ -4757,20 +4730,8 @@ void BlockModel::pdfRemovePageText(int row, int page, int idx) {
     pageObj.insert(QStringLiteral("texts"), texts);
     writePdfPageObject(row, page, pageObj);
 }
-// Open the media's file in the sibling ufb browser via its deep-link scheme:
-// ufb:///{os}/{percent-encoded path} (slashes kept literal, matching ufb's
-// build_path_uri). No-op if ufb isn't installed (no handler registered).
-void BlockModel::openMediaInUfb(int row) const {
-    const QString path = mediaLocalPath(row);
-    if (path.isEmpty()) return;
-#if defined(Q_OS_WIN)
-    const QString os = QStringLiteral("win");
-#else
-    const QString os = QStringLiteral("mac");
-#endif
-    const QString enc = QString::fromLatin1(QUrl::toPercentEncoding(path, "/"));
-    QDesktopServices::openUrl(QUrl(QStringLiteral("ufb:///") + os + QLatin1Char('/') + enc));
-}
+// Open the media's file in the sibling ufb browser (the shared recipe in FileLinks.h).
+void BlockModel::openMediaInUfb(int row) const { mn::openInUfb(mediaLocalPath(row)); }
 int BlockModel::mediaW(int row) const {
     row = clampRow(row);
     if (rowAt(row).type != Media) return 0;

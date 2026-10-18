@@ -42,6 +42,7 @@ qt_add_executable(minnotesapp
     core/DocumentManager.cpp
     core/PathMap.h
     core/PathMap.cpp
+    core/FileLinks.cpp
     core/PathMapController.h
     core/PathMapController.cpp
     core/Document.h

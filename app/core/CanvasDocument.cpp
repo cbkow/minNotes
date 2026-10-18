@@ -2,6 +2,7 @@
 #include "BlockModel.h"
 #include "Importer.h"
 #include "MediaStore.h"
+#include "FileLinks.h"
 #include "PackageFormat.h"
 
 #include <QDateTime>
@@ -795,6 +796,22 @@ QString CanvasDocument::mediaPlaybackSource(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return QString();
     return mediaStore_->playbackSourceFor(QJsonValue::fromVariant(src));
 }
+QString CanvasDocument::elementLocalPath(const QString& id) const {
+    if (!mediaStore_) return QString();
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return QString();
+    const QJsonValue src = QJsonDocument::fromJson(e->json.toUtf8()).object()
+                               .value(QStringLiteral("media")).toObject().value(QStringLiteral("src"));
+    if (src.isUndefined() || src.isNull()) return QString();
+    const QString url = mediaStore_->resolveUrl(src);
+    if (url.isEmpty()) return QString();
+    const QUrl u(url);
+    return u.isLocalFile() ? u.toLocalFile() : QString();
+}
+QString CanvasDocument::ufbLink(const QString& id) const { return mn::ufbLinkFor(elementLocalPath(id)); }
+void CanvasDocument::openElement(const QString& id) const { mn::openWithDefaultApp(elementLocalPath(id)); }
+void CanvasDocument::openElementInUfb(const QString& id) const { mn::openInUfb(elementLocalPath(id)); }
+void CanvasDocument::revealElement(const QString& id) const { mn::revealInFileManager(elementLocalPath(id)); }
 bool CanvasDocument::mediaExtracting(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return false;
     return mediaStore_->extractionPending(src.toString());

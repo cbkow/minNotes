@@ -4,6 +4,7 @@
 #include "BlockModel.h"
 #include "CodeSyntax.h"
 #include "MediaStore.h"
+#include "FileLinks.h"
 #include <QFontMetricsF>
 
 #include <KSyntaxHighlighting/AbstractHighlighter>
@@ -58,21 +59,7 @@ QString localPathOf(const QString& urlOrPath) {
     return u.isLocalFile() ? u.toLocalFile() : urlOrPath;
 }
 
-// ufb deep link for a local path — the openMediaInUfb recipe verbatim:
-// ufb:///{os}/{percent-encoded path, slashes literal}. ufb parses the OS
-// tag, translates through the user's cross-OS path mappings, then reveals
-// the file (navigate to parent + select; directories navigate directly).
-QString ufbLinkFor(const QString& path) {
-    if (path.isEmpty()) return {};
-#if defined(Q_OS_WIN)
-    const QString os = QStringLiteral("win");
-#else
-    const QString os = QStringLiteral("mac");
-#endif
-    const QString norm = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
-    return QStringLiteral("ufb:///") + os + QLatin1Char('/')
-         + QString::fromLatin1(QUrl::toPercentEncoding(norm, "/"));
-}
+using mn::ufbLinkFor;   // the shared recipe (FileLinks.h)
 
 // Escape markdown punctuation in plain prose. NOT applied inside code spans
 // or code blocks. Line-start-only hazards ('#'/'>' openers) are left alone:

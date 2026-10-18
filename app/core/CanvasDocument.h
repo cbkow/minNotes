@@ -155,6 +155,13 @@ public:
     Q_INVOKABLE QString resolveMediaPath(const QVariant& src) const;       // its local path
     Q_INVOKABLE QString mediaPlaybackSource(const QVariant& src) const;
     Q_INVOKABLE bool mediaExtracting(const QVariant& src) const;
+    // A media element's file on disk — BLOCKING (packaged media extracts inline; the explicit-action
+    // cost, like BlockModel::mediaLocalPath). "" for non-media elements, remote urls, unresolvable refs.
+    Q_INVOKABLE QString elementLocalPath(const QString& id) const;
+    Q_INVOKABLE QString ufbLink(const QString& id) const;            // mn::ufbLinkFor(elementLocalPath)
+    Q_INVOKABLE void openElement(const QString& id) const;           // the platform's default app
+    Q_INVOKABLE void openElementInUfb(const QString& id) const;
+    Q_INVOKABLE void revealElement(const QString& id) const;         // select in Finder / Explorer
 
     // --- Element mutators. Each is ONE undo entry; a non-empty `coalesce` key merges a live run
     // (a drag: "move:<id>", "resize:<id>", "ink:<id>") into the current entry, like typing. ---
