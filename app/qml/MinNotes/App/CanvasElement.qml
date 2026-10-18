@@ -8,6 +8,10 @@ Item {
     required property var editor
     required property var cam
     property int elementIndex: -1
+    // Paint order = the FILE's z order (the index into the z-ordered mirror), not the slot order: the pool hands a
+    // new element whatever slot is free, so without this a fresh stroke over a PDF painted UNDER it until a reload
+    // re-assigned the slots in order (walk 7d, 2026-10-18). Changes only on structure, never per frame.
+    z: elementIndex
     readonly property string elementId: elementIndex >= 0 ? (canvas.elementsRevision, canvas.elementIdAt(elementIndex)) : ""
     readonly property bool active: elementId !== ""
     readonly property string kind: active ? (canvas.elementsRevision, canvas.elementKind(elementId)) : ""

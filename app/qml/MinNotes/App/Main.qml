@@ -1523,6 +1523,7 @@ ApplicationWindow {
             // the ACTIVE tab is the toolbar's raised tone; inactive tabs sit on the strip — no fill, no underline,
             // the text brightens on hover.
             color: Theme.colors.bgStrip
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }   // the seam between the two tab rows (user, 2026-10-18)
             // (bottom hairline removed — the raised strip's tonal step against
             // the page separates on its own; border diet, product pass 2)
 

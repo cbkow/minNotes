@@ -224,14 +224,14 @@ Rectangle {
         Item {   // the 3-CLIP swatch: text · highlight · pen as VERTICAL clips side by side (user, 2026-10-18); the target's clip is bright-bordered
             id: swatch
             anchors.verticalCenter: parent.verticalCenter
-            width: 80; height: Theme.dim.chromeBtn
+            width: 82; height: Theme.dim.chromeBtn
             readonly property var layers: [ { key: "fg", tip: qsTr("Text colour") }, { key: "bg", tip: qsTr("Highlight colour") }, { key: "draw", tip: qsTr("Pen colour") } ]
             function colorOf(key) { return !bar.inspector ? "transparent" : key === "fg" ? bar.inspector.fgColor : key === "bg" ? bar.inspector.bgColor : bar.inspector.drawColor }
             function layerAt(i) { return layerRep.itemAt(i) }
             ColorFlyout { id: colors; parent: swatch; inspector: bar.inspector }
             Row {
                 anchors.centerIn: parent
-                spacing: 1
+                spacing: 2
                 Repeater {
                     id: layerRep
                     model: swatch.layers
@@ -240,10 +240,7 @@ Rectangle {
                         required property int index
                         width: 24; height: 16; radius: 0   // WIDE clips (user, 2026-10-18: twice as wide at least)
                         color: swatch.colorOf(modelData.key)
-                        // The target reads by CONTRAST, not a border: the other clips fade back (hover lifts one)
-                        readonly property bool isTarget: !!bar.inspector && bar.inspector.target === modelData.key
-                        opacity: isTarget ? 1.0 : (layerMA.containsMouse ? 0.75 : 0.45)
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                        // No selection state on the clips (user, 2026-10-18): all three at full strength; the flyout's tabs show the target.
                         MouseArea { id: layerMA; anchors.fill: parent; anchors.margins: -1; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: bar.openColors(modelData.key) }
                         FlatToolTip { parent: parent; x: -implicitWidth / 2 + 12; y: parent.height + 8; visible: layerMA.containsMouse; text: modelData.tip }

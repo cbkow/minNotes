@@ -4492,6 +4492,10 @@ FocusScope {
                               && r.x <= w0.x + 12 && r.y <= w0.y + 12 && r.width >= (w1.x - w0.x) * 0.8 && r.height >= (w1.y - w0.y) * 0.4,   // the modeler shifts the ends by a few px
                           "the stroke became an ink element: rect = its world bbox, points element-local (" + env.shapes[0].points.length + " points; n " + n0 + "→" + n1 + " kind " + canvas.elementKind(id) + " local " + local + " r " + r.x + "," + r.y + " " + r.width + "x" + r.height + " w0 " + w0.x + "," + w0.y + " w1 " + w1.x + "," + w1.y + ")")
                     penId = id
+                    const inkItem = canvasItem.pageItemFor(id)
+                    let maxOther = -1
+                    for (let i = 0; i < canvasItem.poolCount; ++i) { const it = canvasItem.elementItemAt(i); if (it && it.elementId !== "" && it.elementId !== id) maxOther = Math.max(maxOther, it.z) }
+                    check(!!inkItem && inkItem.z > maxOther, "the new stroke PAINTS ABOVE every other element in view — stacking follows the file's z order, not the pool's slot order (z " + (inkItem ? inkItem.z : "?") + " vs max " + maxOther + ")")
                     ++step; return
                 }
                 if (step === 7) {   // a frame later: the new element's item has tessellated its stroke
