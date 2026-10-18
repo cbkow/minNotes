@@ -427,13 +427,14 @@ Rectangle {
         gesturePolicy: TapHandler.DragThreshold
         onSingleTapped: (ev) => {
             ++cv.taps
+            if (cv.frameHit(ev.position)) return   // the selection frame's chrome (the transport, the pager, the glyph) sits OUTSIDE the element's rect: never "empty canvas"
             if (!cv.emptyAt(ev.position.x, ev.position.y)) return
             cv.endLive(false)   // a click elsewhere ends a live card (and commits a chip's edit)
             if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y)
             else if (cv.pageTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addPageAt(w.x, w.y); if (id !== "") cv.select(id) }
             else { cv.clearSelection(); cv.editor.forceActiveFocus() }
         }
-        onDoubleTapped: (ev) => { ++cv.doubleTaps; if (cv.pointerTool && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
+        onDoubleTapped: (ev) => { ++cv.doubleTaps; if (cv.pointerTool && !cv.frameHit(ev.position) && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
     }
     // Right-click: the context menu for the element under the pointer (joins the selection) or for empty canvas.
     property int rightClicks: 0   // probe diagnostics
@@ -461,6 +462,9 @@ Rectangle {
         target: null
         acceptedButtons: Qt.LeftButton
         enabled: cv.pointerTool && !cv.pressOnElement
+        // (It must keep the default CanTakeOverFromItems: on empty canvas the press falls through to the Editor's
+        // background MouseArea underneath, so the marquee always starts by taking over from an item. The frame's
+        // chrome protects itself instead — the compact transport's scrub area is preventStealing.)
         onActiveChanged: {
             if (active) { cv.marqueeActive = true; cv.marqueeRect = Qt.rect(centroid.pressPosition.x, centroid.pressPosition.y, 0, 0) }
             else if (cv.marqueeActive) {

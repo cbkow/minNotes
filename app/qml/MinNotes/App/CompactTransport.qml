@@ -20,15 +20,18 @@ Rectangle {
 
     function activate() { if (host) ct.editor.activateHost(host); else ct.editor.ensureVideoActive(ct.row) }
     function playhead() { return host ? ct.editor.videoPlayheadForKey(host.key) : ct.editor.videoPlayheadFor(ct.row) }
-    function play()     { if (host) ct.editor.playFromHost(host); else ct.editor.playVideo(ct.row) }
-    function expand()   { if (host) ct.editor.setActiveTab(host.elementId); else ct.editor.setActiveTab(blockModel.idForRow(ct.row)) }
+    function play()     { if (host) ct.editor.playFromHost(host); else ct.editor.playVideo(ct.row); ct.editor.forceActiveFocus() }   // the keys stay with the editor
+    function expand()   { if (host) ct.editor.setActiveTab(host.elementId); else ct.editor.setActiveTab(blockModel.idForRow(ct.row)); ct.editor.forceActiveFocus() }
     readonly property int frame: live && dec ? dec.currentFrame : (ct.editor.videoPlayheadRev, playhead())
+    readonly property var playButton: playBtn   // probe
+    readonly property var scrubTrack: track
 
     Row {
         anchors.fill: parent
         anchors.leftMargin: 2; anchors.rightMargin: 4
         spacing: 6
         FlatButton {
+            id: playBtn
             anchors.verticalCenter: parent.verticalCenter
             implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: 0
             iconName: (ct.live && ct.dec && ct.dec.isPlaying) ? "pause" : "play"
@@ -74,6 +77,7 @@ Rectangle {
             MouseArea {
                 id: scrubMa
                 anchors.fill: parent; hoverEnabled: true
+                preventStealing: true   // the canvas's marquee takes over from items past the drag threshold — not from a scrub
                 cursorShape: Qt.PointingHandCursor
                 property bool wasPlaying: false
                 onPressed: (m) => {
@@ -93,6 +97,7 @@ Rectangle {
                 onReleased: {
                     ct.editor.endScrubAudio()
                     if (wasPlaying && ct.dec) { ct.editor._vidSyncForResume(); ct.dec.play(); if (ct.audio && ct.audio.hasAudio) ct.audio.play() }
+                    ct.editor.forceActiveFocus()
                 }
             }
         }

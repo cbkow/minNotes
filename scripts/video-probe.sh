@@ -6,8 +6,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${MN_BIN:-$ROOT/build/debug/app/minNotes.app/Contents/MacOS/minNotes}"
 CLIP="$(mktemp -t video-probe).mp4"
-"$ROOT/external/ffmpeg/bin/ffmpeg" -hide_banner -loglevel error -f lavfi -i testsrc=size=320x240:rate=24 -t 12 \
-  -c:v h264_videotoolbox -pix_fmt yuv420p -y "$CLIP" || { echo "no clip"; exit 2; }
+"$ROOT/external/ffmpeg/bin/ffmpeg" -hide_banner -loglevel error -f lavfi -i testsrc=size=320x240:rate=24 \
+  -f lavfi -i sine=frequency=440:sample_rate=48000 -t 12 -c:v h264_videotoolbox -pix_fmt yuv420p -c:a aac -shortest -y "$CLIP" || { echo "no clip"; exit 2; }
 LOG="$(mktemp -t video-probe)"
 QT_QPA_PLATFORM=offscreen "$BIN" --video-probe="$CLIP" >"$LOG" 2>&1 &
 PID=$!

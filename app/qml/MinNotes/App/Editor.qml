@@ -4149,6 +4149,14 @@ FocusScope {
                 const cvw = root.canvasItem
                 check(root.canvasShown && cvw.selectedId === elId && root.canvasVideoHost.valid && cvw.selectionFrame.videoBar.visible, "back on the canvas the element is selected and shows its transport (host " + root.canvasVideoHost.valid + ", bar " + cvw.selectionFrame.videoBar.visible + ")")
                 check(root.videoKeyContext === "canvas" && Math.abs(root.videoSpeed - 1) < 0.01, "…the selected element is the key context; Shift+R reset the speed")
+                const bar = cvw.selectionFrame.videoBar, btn = bar.playButton, pb = btn.mapToItem(cvw, btn.width / 2, btn.height / 2)
+                gestures.click(cvw, pb.x, pb.y)   // the bar's play button (it lies OUTSIDE the element's rect)
+                check(cvw.selectedId === elId && videoDec.isPlaying && root.activeFocus, "the bar's play button plays and the element STAYS selected with the editor focused (selected '" + cvw.selectedId + "', playing " + videoDec.isPlaying + ", focus " + root.activeFocus + ")")
+                gestures.key(root, Qt.Key_Space)
+                check(!videoDec.isPlaying, "…Space right after the button click pauses (the keys stayed with the editor)")
+                const tr = bar.scrubTrack, a = tr.mapToItem(cvw, tr.width * 0.2, tr.height / 2), b = tr.mapToItem(cvw, tr.width * 0.6, tr.height / 2)
+                gestures.drag(cvw, a.x, a.y, b.x, b.y, 6)
+                check(cvw.selectedId === elId && root._vidIntendedFrame() > videoDec.frameCount * 0.5 && root._vidIntendedFrame() < videoDec.frameCount * 0.7, "dragging the scrub line scrubs (frame " + root._vidIntendedFrame() + " of " + videoDec.frameCount + ") and keeps the selection")
                 gestures.key(root, Qt.Key_Space); ++step; return
             }
             if (step === 125) {
