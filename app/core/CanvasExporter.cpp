@@ -135,19 +135,44 @@ QString inkSvg(const std::vector<qcv::ActiveStroke>& strokes, double w, double h
     return out;
 }
 
+// The canvas export's own chrome (2026-10-18 redesign): a 30-px tab strip over the world — "Canvas" plus a tab per
+// opened element — and a READER below it that hosts ONE DOM copy of each page (moved out of its card and back) or a
+// media element's reader main (moved out of #mn-store). House style: radius 0, 13-px chrome, the strip a half-step
+// darker than the field, the active tab in the selection grey.
 const char* kCanvasCss = R"CSS(
-html,body{height:100%;margin:0;overflow:hidden;background:var(--desk);background-image:none}
-#mn-canvas{position:fixed;inset:0;overflow:hidden;cursor:grab;touch-action:none}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)}
+#mn-tabs{position:fixed;top:0;left:0;right:0;height:30px;z-index:5;display:flex;align-items:stretch;background:#151514;border-bottom:1px solid var(--border);
+font:13px/1 Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
+#mn-tabs .tabs{display:flex;align-items:stretch;flex:1 1 auto;min-width:0;overflow:hidden}
+#mn-tabs .tab{display:flex;align-items:center;gap:8px;max-width:260px;padding:0 12px;border:0;border-right:1px solid var(--border);background:transparent;color:var(--muted);font:inherit;cursor:pointer;white-space:nowrap}
+#mn-tabs .tab span{overflow:hidden;text-overflow:ellipsis}
+#mn-tabs .tab:hover{color:var(--text)}
+#mn-tabs .tab.on{background:var(--divider);color:var(--bright)}
+#mn-tabs .tab .x{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--subtle);font-size:14px;line-height:1}
+#mn-tabs .tab .x:hover{color:var(--bright);background:var(--border)}
+#mn-tabs .end{display:flex;align-items:center;gap:14px;padding:0 12px;color:var(--muted);flex:none}
+#mn-hud{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+#mn-hud b{color:var(--text);font-weight:600;cursor:pointer}
+body.reading #mn-hud{display:none}
+body.canvas label[for=mn-ink]{position:static;top:auto;right:auto;padding:3px 8px;font:inherit}
+body.canvas #mn-ink:checked~#mn-tabs label[for=mn-ink]{color:var(--bright);background:var(--divider)}
+body.canvas #mn-ink:not(:checked)~* .ink{visibility:hidden}
+#mn-canvas{position:fixed;left:0;right:0;top:30px;bottom:0;overflow:hidden;cursor:grab;touch-action:none}
 #mn-canvas.panning{cursor:grabbing}
+#mn-canvas[hidden]{display:none}
 #world{position:absolute;left:0;top:0;transform-origin:0 0}
 .el{position:absolute;box-sizing:border-box}
+.el[data-open]{cursor:pointer}
 .page{background:var(--bg);border:1px solid var(--border);overflow:hidden}
-.page main{max-width:none;margin:0;width:100%;box-sizing:border-box;padding:24px}
+#world .page main{max-width:none;margin:0;width:100%;box-sizing:border-box;padding:24px}
+#world .page main .cap{display:none}
 .page .more{position:absolute;left:0;right:0;bottom:0;height:72px;padding:0 24px 20px 0;display:flex;align-items:flex-end;justify-content:flex-end;
-background:linear-gradient(to bottom,rgba(24,24,23,0),var(--bg) 60%);color:var(--subtle);font-size:13px}
+background:linear-gradient(to bottom,rgba(24,24,23,0),var(--bg) 60%);color:var(--subtle);font-size:13px;pointer-events:none}
 figure.el{margin:0;background:var(--bg);border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column}
 figure.el img{display:block;width:100%;height:auto;flex:0 0 auto}
-figure.el .poster{width:100%;flex:1 1 auto;object-fit:contain;background:#000}
+figure.el .poster{width:100%;flex:1 1 auto;object-fit:contain;background:#000;min-height:0}
+figure.el.pdf .poster{background:#fff}
+figure.el.image img{cursor:zoom-in}
 figure.el figcaption,.card .cap{padding:8px 12px;font-size:13px;color:var(--muted);line-height:1.4}
 .name{color:var(--text);font-size:14px;display:block}
 .meta{color:var(--muted);font-size:13px;display:block}
@@ -160,28 +185,61 @@ a.ufblink{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
 a.bookmark{color:inherit;text-decoration:none}
 svg.el{overflow:visible}
 .text{white-space:pre-wrap;color:var(--text);font-family:'Aspekta',system-ui,sans-serif;line-height:1.4}
-#mn-hud{position:fixed;right:12px;bottom:12px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border);padding:4px 8px;user-select:none}
-#mn-hud b{color:var(--text);font-weight:600;cursor:pointer}
-@media print{#mn-hud{display:none}}
+#mn-reader{position:fixed;left:0;right:0;top:30px;bottom:0;overflow:auto;background:var(--bg)}
+#mn-reader[hidden],#mn-store{display:none}
+#mn-reader main{max-width:none;margin:0;padding:48px 48px 96px}
+html.cap #mn-reader main{max-width:856px;margin:0 auto}
+#mn-reader main.reader figure.ref img{max-width:100%}
+#mn-reader main.reader.pdf figure.ref img:not(.ink){background:#fff}
+#mn-reader main.reader .vnotes{margin-top:24px}
+@media print{#mn-tabs{display:none}}
 )CSS";
 
+// Pan/zoom over the world (⌘/ctrl-wheel zooms about the pointer, wheel pans, drag pans; + − 0 1 keys), the tab strip
+// (a click on an openable element — never a drag — opens its tab; × closes; Escape returns to the canvas), the reader
+// (one DOM copy per page: its <main> moves from the card into the reader and back), hash routing (#canvas / #pm-<id>
+// / #m-<id>) and the pages' "Readable width" cap (html.cap, remembered per browser).
 const char* kCanvasScript = R"JS(<script>
 (function(){
 var v=document.getElementById('mn-canvas'),w=document.getElementById('world'),hud=document.getElementById('mn-hud');
+var rd=document.getElementById('mn-reader'),st=document.getElementById('mn-store'),tabs=document.querySelector('#mn-tabs .tabs');
 var W=+w.dataset.w,H=+w.dataset.h,z=1,px=0,py=0;
 function apply(){w.style.transform='translate('+px+'px,'+py+'px) scale('+z+')';hud.firstChild.textContent=Math.round(z*100)+'% ';}
-function fit(){var pad=48,zx=(v.clientWidth-2*pad)/W,zy=(v.clientHeight-2*pad)/H;z=Math.max(0.05,Math.min(4,Math.min(zx,zy)));px=(v.clientWidth-W*z)/2;py=(v.clientHeight-H*z)/2;apply();}
+var needFit=false;
+function fit(){if(v.hidden){needFit=true;return;}needFit=false;var pad=48,zx=(v.clientWidth-2*pad)/W,zy=(v.clientHeight-2*pad)/H;z=Math.max(0.05,Math.min(4,Math.min(zx,zy)));px=(v.clientWidth-W*z)/2;py=(v.clientHeight-H*z)/2;apply();}
 function zoomAt(nz,x,y){nz=Math.max(0.05,Math.min(4,nz));px=x-(x-px)*nz/z;py=y-(y-py)*nz/z;z=nz;apply();}
 v.addEventListener('wheel',function(e){e.preventDefault();var r=v.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
 if(e.ctrlKey||e.metaKey){zoomAt(z*Math.pow(2,-e.deltaY/400),x,y);}else{px-=e.deltaX;py-=e.deltaY;apply();}},{passive:false});
 var drag=null;
-v.addEventListener('pointerdown',function(e){if(e.target.closest('a'))return;drag={x:e.clientX-px,y:e.clientY-py};v.classList.add('panning');v.setPointerCapture(e.pointerId);});
+v.addEventListener('pointerdown',function(e){if(e.target.closest('a'))return;drag={x:e.clientX-px,y:e.clientY-py,sx:e.clientX,sy:e.clientY,t:e.target};v.classList.add('panning');v.setPointerCapture(e.pointerId);});
 v.addEventListener('pointermove',function(e){if(!drag)return;px=e.clientX-drag.x;py=e.clientY-drag.y;apply();});
-v.addEventListener('pointerup',function(){drag=null;v.classList.remove('panning');});
-document.addEventListener('keydown',function(e){if(e.target.tagName==='INPUT')return;var cx=v.clientWidth/2,cy=v.clientHeight/2;
+v.addEventListener('pointerup',function(e){if(!drag)return;var d=drag;drag=null;v.classList.remove('panning');
+if(Math.abs(e.clientX-d.sx)>4||Math.abs(e.clientY-d.sy)>4)return;
+if(d.t.tagName==='IMG'&&d.t.className.indexOf('poster')<0)return;
+var o=d.t.closest('[data-open]');if(o)show(o.dataset.open);});
+document.addEventListener('keydown',function(e){if(e.target.tagName==='INPUT'||document.querySelector('#mn-lb.open'))return;
+if(e.key==='Escape'){if(cur!=='canvas'){show('canvas');e.preventDefault();}return;}
+if(cur!=='canvas')return;var cx=v.clientWidth/2,cy=v.clientHeight/2;
 if(e.key==='+'||e.key==='=')zoomAt(z*1.25,cx,cy);else if(e.key==='-')zoomAt(z/1.25,cx,cy);else if(e.key==='0')fit();else if(e.key==='1')zoomAt(1,cx,cy);else return;e.preventDefault();});
 hud.querySelector('b').addEventListener('click',fit);
 window.addEventListener('resize',fit);fit();
+var cur='canvas',open={};
+function home(m){var h=m.dataset.home;if(h){var s=document.getElementById(h);if(s){s.insertBefore(m,s.firstChild);return;}}st.appendChild(m);}
+function tabFor(id){if(open[id])return open[id];var m=document.getElementById(id),b=document.createElement('button');b.className='tab';b.dataset.view=id;
+b.innerHTML='<span></span><i class="x" title="Close">&times;</i>';b.firstChild.textContent=m.dataset.title||id;tabs.appendChild(b);open[id]=b;return b;}
+function show(id){if(id!=='canvas'&&!document.getElementById(id))id='canvas';
+var m=rd.firstElementChild;if(m)home(m);
+if(id==='canvas'){v.hidden=false;rd.hidden=true;document.body.classList.remove('reading');}
+else{tabFor(id);rd.appendChild(document.getElementById(id));v.hidden=true;rd.hidden=false;rd.scrollTop=0;document.body.classList.add('reading');}
+cur=id;[].forEach.call(tabs.children,function(b){b.classList.toggle('on',b.dataset.view===id);});
+var h='#'+id;if(location.hash!==h){try{history.replaceState(null,'',h);}catch(e){location.hash=h;}}
+if(id==='canvas'&&needFit)fit();}
+function close(id){var b=open[id];if(!b)return;delete open[id];b.parentNode.removeChild(b);if(cur===id)show('canvas');}
+tabs.addEventListener('click',function(e){var x=e.target.closest('.x'),b=e.target.closest('.tab');if(!b)return;if(x)close(b.dataset.view);else show(b.dataset.view);});
+window.addEventListener('hashchange',function(){var id=location.hash.slice(1)||'canvas';if(id!==cur)show(id);});
+document.addEventListener('click',function(e){if(!e.target.closest('header.doctitle .cap'))return;var on=document.documentElement.classList.toggle('cap');try{localStorage.setItem('mn.readableWidth',on?'1':'0');}catch(x){}});
+try{if(localStorage.getItem('mn.readableWidth')==='1')document.documentElement.classList.add('cap');}catch(e){}
+var h0=location.hash.slice(1);if(h0&&h0!=='canvas')show(h0);
 })();
 </script>
 )JS";
@@ -194,14 +252,24 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
     const QRectF b = c->canvasBounds();
     const double ox = -b.x() + 24, oy = -b.y() + 24;            // the world starts at the bounds' top-left (+ a margin)
     const double W = std::max(1.0, b.width() + 48), H = std::max(1.0, b.height() + 48);
-    QString body;
+    QString body, store;
+    int inkLayers = 0;                                          // stacked ink layers (note thumbs, PDF page ink) → the Annotations toggle
     body += QStringLiteral("<div id=\"mn-canvas\"><div id=\"world\" data-w=\"%1\" data-h=\"%2\" style=\"width:%3;height:%4\">\n").arg(num(W), num(H), px(W), px(H));
-    Exporter::Options popt; popt.includeVideoNotes = opt.includeVideoNotes; popt.ufbLinks = opt.ufbLinks;
+    Exporter::Options popt; popt.includeVideoNotes = opt.includeVideoNotes; popt.ufbLinks = opt.ufbLinks; popt.fragmentComments = true;
     auto pathLines = [&](const QString& path) {
         if (path.isEmpty()) return QString();
         QString s = QStringLiteral("<span class=\"path\">%1</span>").arg(esc(QDir::toNativeSeparators(path)));
         if (opt.ufbLinks) s += QStringLiteral("<a class=\"ufblink\" href=\"%1\">%1</a>").arg(esc(mn::ufbLinkFor(path)));
         return s;
+    };
+    // The reader's reference caption (the page export's .fname/.fpath/.fmeta typography).
+    auto refCaption = [&](const QString& name, const QString& path, const QString& meta) {
+        QString s = QStringLiteral("<figcaption><div class=\"fname\">%1</div>").arg(esc(name));
+        if (!path.isEmpty()) {
+            s += QStringLiteral("<div class=\"fpath\">%1</div>").arg(esc(QDir::toNativeSeparators(path)));
+            if (opt.ufbLinks) s += QStringLiteral("<a class=\"ufblink\" href=\"%1\">%1</a>").arg(esc(mn::ufbLinkFor(path)));
+        }
+        return s + QStringLiteral("<div class=\"fmeta\">%1</div></figcaption>").arg(meta);
     };
     auto style = [&](const Document::Element& e) {
         return QStringLiteral("left:%1;top:%2;width:%3;height:%4").arg(px(e.x + ox), px(e.y + oy), px(e.w), px(e.h));
@@ -214,14 +282,19 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
             m->setContentWidth(measure);
             Exporter ex; ex.setModel(m);
             const QString frag = ex.toHtml(popt, sink, -1, -1, /*fragment*/true);
+            inkLayers += frag.count(QLatin1String("<img class=\"ink\""));
             // The card's cap: rows whose top lies inside the element's height; the rest hide under a note.
             const int n = m->rowCountQml();
             int shown = n;
             if (n > 0 && m->totalHeight() + 48 > e.h + 1) { shown = std::clamp(m->rowForY(std::max(0.0, e.h - 48)), 0, n); }
             const int below = std::max(0, n - shown);
-            body += QStringLiteral("<section class=\"el page\" id=\"p-%1\" style=\"%2\"><main><header class=\"doctitle\">%3</header>\n%4</main>%5</section>\n")
-                        .arg(esc(e.id), style(e), esc(c->pageTitle(e.id)), frag,
-                             below > 0 ? QStringLiteral("<div class=\"more\">%1 more block%2</div>").arg(below).arg(below == 1 ? QString() : QStringLiteral("s")) : QString());
+            const QString title = c->pageTitle(e.id);
+            // ONE copy of the page: its <main> lives in the card and moves into the reader when its tab opens.
+            body += QStringLiteral("<section class=\"el page\" id=\"p-%1\" data-open=\"pm-%1\" style=\"%2\">"
+                                   "<main id=\"pm-%1\" data-home=\"p-%1\" data-title=\"%3\"><header class=\"doctitle\"><span>%3</span>"
+                                   "<button class=\"cap\" type=\"button\" title=\"Readable width — the app's 760 measure\">Readable width</button></header>\n%4</main>%5</section>\n")
+                        .arg(esc(e.id), style(e), esc(title), frag,
+                             below > 0 ? QStringLiteral("<div class=\"more\">%1 more block%2 — open the page</div>").arg(below).arg(below == 1 ? QString() : QStringLiteral("s")) : QString());
         } else if (e.kind == QLatin1String("media")) {
             const QJsonObject md = mediaOf(e);
             const QString kind = md.value(QStringLiteral("kind")).toString(QStringLiteral("image"));
@@ -233,14 +306,59 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                 body += QStringLiteral("<figure class=\"el media image\" style=\"%1\">%2</figure>\n")
                             .arg(style(e), img.isEmpty() ? QStringLiteral("<figcaption>%1</figcaption>").arg(esc(name)) : QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(esc(img), esc(name)));
             } else if (kind == QLatin1String("video") || kind == QLatin1String("pdf")) {
+                const bool video = kind == QLatin1String("video");
+                const QString base = name.isEmpty() ? kind : name;
+                // The poster (frame 0 / page 1) renders ONCE at reader size; the card shows the same asset small.
                 QImage poster;
-                if (!path.isEmpty()) poster = kind == QLatin1String("video") ? MediaStore::extractFrame(path, 0, 960) : MediaStore::renderPdfPage(path, 0, 960);
-                const QString pimg = poster.isNull() ? QString() : sink.addImage(poster, name + QStringLiteral("-poster"));
-                const QString meta = kind == QLatin1String("video")
-                    ? QStringLiteral("%1 × %2 · %3 fps").arg(md.value(QStringLiteral("w")).toInt()).arg(md.value(QStringLiteral("h")).toInt()).arg(num(md.value(QStringLiteral("fps")).toDouble()))
-                    : QStringLiteral("%1 page%2").arg(md.value(QStringLiteral("pages")).toInt()).arg(md.value(QStringLiteral("pages")).toInt() == 1 ? QString() : QStringLiteral("s"));
-                body += QStringLiteral("<figure class=\"el media %1\" style=\"%2\">%3<figcaption><span class=\"name\">%4</span><span class=\"meta\">%5</span>%6</figcaption></figure>\n")
-                            .arg(kind, style(e), pimg.isEmpty() ? QString() : QStringLiteral("<img class=\"poster\" src=\"%1\" alt=\"%2\">").arg(esc(pimg), esc(name)), esc(name), meta, pathLines(path));
+                if (!path.isEmpty()) poster = video ? MediaStore::extractFrame(path, 0, 1280) : MediaStore::renderPdfPage(path, 0, 1280);
+                const QString pimg = poster.isNull() ? QString() : sink.addImage(poster, base + (video ? QStringLiteral("-poster") : QStringLiteral("-page1")));
+                const int pages = md.value(QStringLiteral("pages")).toInt();
+                QString meta = video
+                    ? QStringLiteral("%1 × %2 · %3 fps · %4").arg(md.value(QStringLiteral("w")).toInt()).arg(md.value(QStringLiteral("h")).toInt())
+                          .arg(num(md.value(QStringLiteral("fps")).toDouble()), Exporter::durationText(md.value(QStringLiteral("durMs")).toDouble()))
+                    : QStringLiteral("%1 page%2").arg(pages).arg(pages == 1 ? QString() : QStringLiteral("s"));
+                // The reader: the poster large with its reference caption, then the clip's QCView notes as the
+                // filmstrip (thumb + ink layer, timecode, text, addressed) or the PDF's inked pages.
+                QString reader = QStringLiteral("<figure class=\"ref\">%1%2</figure>")
+                                     .arg(pimg.isEmpty() ? QString() : QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(esc(pimg), esc(name)), QString());
+                if (!video && !pimg.isEmpty() && !poster.isNull()) {   // page 1's element ink rides the poster as a toggleable layer
+                    const QImage ov = Exporter::inkOverlay(c->mediaElementInk(e.id, 0), md.value(QStringLiteral("w")).toInt(), md.value(QStringLiteral("h")).toInt(), poster.size());
+                    if (!ov.isNull()) {
+                        const QString ovSrc = sink.addImage(ov, base + QStringLiteral("-page1-ink"));
+                        if (!ovSrc.isEmpty()) {
+                            ++inkLayers;
+                            reader = QStringLiteral("<figure class=\"ref\"><div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\"><img class=\"ink\" src=\"%3\" alt=\"\"></div></figure>").arg(esc(pimg), esc(name), esc(ovSrc));
+                        }
+                    }
+                }
+                reader.insert(reader.lastIndexOf(QLatin1String("</figure>")), refCaption(name, path, esc(kind) + QStringLiteral(" · ") + meta));
+                int notes = 0;
+                if (video && opt.includeVideoNotes && !path.isEmpty()) {
+                    const QString vn = Exporter::videoNotesHtml(path, sink, inkLayers);
+                    notes = vn.count(QLatin1String("<div class=\"notecard"));
+                    reader += vn;
+                } else if (!video && !path.isEmpty()) {
+                    for (int pg = 1; pg < pages; ++pg) {   // every OTHER page carrying ink: clean base + toggleable overlay
+                        const QString env = c->mediaElementInk(e.id, pg);
+                        if (env.isEmpty()) continue;
+                        const QImage pgImg = MediaStore::renderPdfPage(path, pg, 1280);
+                        if (pgImg.isNull()) continue;
+                        const QString baseSrc = sink.addImage(pgImg, base + QStringLiteral("-page%1").arg(pg + 1));
+                        if (baseSrc.isEmpty()) continue;
+                        const QImage ov = Exporter::inkOverlay(env, md.value(QStringLiteral("w")).toInt(), md.value(QStringLiteral("h")).toInt(), pgImg.size());
+                        const QString ovSrc = ov.isNull() ? QString() : sink.addImage(ov, base + QStringLiteral("-page%1-ink").arg(pg + 1));
+                        if (!ovSrc.isEmpty()) ++inkLayers;
+                        reader += QStringLiteral("<figure class=\"ref\">%1<figcaption><div class=\"fmeta\">%2 · page %3 of %4</div></figcaption></figure>")
+                                      .arg(ovSrc.isEmpty() ? QStringLiteral("<img src=\"%1\" alt=\"%2\">").arg(esc(baseSrc), esc(name))
+                                                           : QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\"><img class=\"ink\" src=\"%3\" alt=\"\"></div>").arg(esc(baseSrc), esc(name), esc(ovSrc)),
+                                           esc(name)).arg(pg + 1).arg(pages);
+                    }
+                }
+                if (notes > 0) meta += QStringLiteral(" · %1 note%2").arg(notes).arg(notes == 1 ? QString() : QStringLiteral("s"));
+                store += QStringLiteral("<main class=\"reader %1\" id=\"m-%2\" data-title=\"%3\"><header class=\"doctitle\"><span>%3</span></header>\n%4</main>\n")
+                             .arg(kind, esc(e.id), esc(name), reader);
+                body += QStringLiteral("<figure class=\"el media %1\" data-open=\"m-%2\" style=\"%3\">%4<figcaption><span class=\"name\">%5</span><span class=\"meta\">%6</span>%7</figcaption></figure>\n")
+                            .arg(kind, esc(e.id), style(e), pimg.isEmpty() ? QString() : QStringLiteral("<img class=\"poster\" src=\"%1\" alt=\"%2\">").arg(esc(pimg), esc(name)), esc(name), meta, pathLines(path));
             } else if (kind == QLatin1String("bookmark")) {
                 const QString title = md.value(QStringLiteral("title")).toString(), host = md.value(QStringLiteral("host")).toString();
                 body += QStringLiteral("<a class=\"el card bookmark\" href=\"%1\" style=\"%2\"><span class=\"glyph\">&#x1F310;</span><span class=\"cap\"><span class=\"name\">%3</span><span class=\"meta\">%4</span><span class=\"path\">%1</span></span></a>\n")
@@ -275,10 +393,15 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
         }
         // connectors: reserved; nothing is emitted until their renderer lands
     }
-    body += QStringLiteral("</div></div>\n<div id=\"mn-hud\">100% <b title=\"Fit (0)\">fit</b> · drag to pan · ⌘/ctrl-wheel to zoom</div>\n");
+    body += QStringLiteral("</div></div>\n<div id=\"mn-reader\" hidden></div>\n<div id=\"mn-store\">\n%1</div>\n").arg(store);
+    // The strip: Canvas + (opened tabs, by the script) · the Annotations toggle when there is ink to toggle · the zoom HUD.
+    const QString toggle = inkLayers > 0 ? QStringLiteral("<input type=\"checkbox\" id=\"mn-ink\" checked>\n") : QString();
+    const QString strip = QStringLiteral("<nav id=\"mn-tabs\"><div class=\"tabs\"><button class=\"tab on\" data-view=\"canvas\"><span>Canvas</span></button></div>"
+                                         "<div class=\"end\">%1<span id=\"mn-hud\">100% <b title=\"Fit (0)\">fit</b></span></div></nav>\n")
+                              .arg(inkLayers > 0 ? QStringLiteral("<label for=\"mn-ink\">Annotations</label>") : QString());
     return QStringLiteral("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-                          "<meta name=\"generator\" content=\"minNotes\">\n<title>%1</title>\n<style>%2%3</style>\n</head>\n<body class=\"canvas\">\n%4%5</body>\n</html>\n")
-        .arg(esc(c->documentName()), Exporter::pageCss(), QLatin1String(kCanvasCss), body, QLatin1String(kCanvasScript));
+                          "<meta name=\"generator\" content=\"minNotes\">\n<title>%1</title>\n<style>%2%3</style>\n</head>\n<body class=\"canvas\">\n%4%5%6%7%8</body>\n</html>\n")
+        .arg(esc(c->documentName()), Exporter::pageCss(), QString::fromUtf8(kCanvasCss), toggle, strip, body, Exporter::lightboxHtml(), QString::fromUtf8(kCanvasScript));
 }
 
 QImage CanvasExporter::toPoster(const Options& opt) const {

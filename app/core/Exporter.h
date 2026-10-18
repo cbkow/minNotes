@@ -49,6 +49,8 @@ public:
         // (video/pdf/file references). Off by default — they only mean
         // something to recipients who run ufb (user ruling 2026-08-21).
         bool ufbLinks = false;
+        // fragment mode keeps the comments section (a canvas page is the page export, chrome-less).
+        bool fragmentComments = false;
     };
 
     // Where emitted assets go. addFile/addImage return the path to write into
@@ -70,6 +72,13 @@ public:
     // The page export's whole design system (embedded fonts + the page CSS) — the canvas exporter
     // shares it so a page on the canvas is the page export, positioned (2.0 step 8).
     static QString pageCss();
+    // Shared with the canvas exporter (2026-10-18): the lightbox markup + script, a clip's QCView notes
+    // as note cards (thumb + ink layer, timecode, text, addressed), an ink envelope painted over a
+    // transparent image, and the human duration text.
+    static QString lightboxHtml();
+    static QString videoNotesHtml(const QString& mediaPath, AssetSink& sink, int& inkLayers);
+    static QImage inkOverlay(const QString& envelope, int srcW, int srcH, QSize size);
+    static QString durationText(qreal ms);
     static constexpr int exportMeasure = 760;   // == kExportMeasure
 
     // Pure generation (testable): the whole document as markdown, assets

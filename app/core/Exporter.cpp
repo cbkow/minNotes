@@ -402,11 +402,11 @@ QString mediaInkStyle(const QRectF& b) {
 // SOURCE px = the descriptor's page-point width). The overlay variant is
 // transparent (the HTML .ink stack / Annotations toggle); the annotated
 // variant bakes onto the rendered page (flowed formats).
-QImage renderPdfPageInkOverlay(const BlockModel* m, int row, int page, QSize pageSize) {
-    const QString env = m->pdfPageInk(row, page);
+// An ink envelope (strokes + chips, normalised over srcW × srcH) painted over a transparent pageSize
+// image — the PDF page-ink overlay for a block (below) and for a canvas media element (Exporter::inkOverlay).
+QImage renderEnvelopeOverlay(const QString& env, int srcW, int srcH, QSize pageSize) {
     if (env.isEmpty() || pageSize.isEmpty()) return {};
-    const int srcW = std::max(1, m->mediaW(row));
-    const int srcH = std::max(1, m->mediaH(row));
+    srcW = std::max(1, srcW); srcH = std::max(1, srcH);
     QImage img(pageSize, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     QPainter p(&img);
@@ -423,6 +423,9 @@ QImage renderPdfPageInkOverlay(const BlockModel* m, int row, int page, QSize pag
         qcv::paintStroke(p, s, pageSize.width(), pageSize.height(), ws);
     p.end();
     return img;
+}
+QImage renderPdfPageInkOverlay(const BlockModel* m, int row, int page, QSize pageSize) {
+    return renderEnvelopeOverlay(m->pdfPageInk(row, page), m->mediaW(row), m->mediaH(row), pageSize);
 }
 QImage renderPdfPageAnnotated(const BlockModel* m, int row, int page,
                               const QString& path, int maxW) {
@@ -1602,7 +1605,56 @@ QString Exporter::DataUriSink::addImage(const QImage& img, const QString&) {
     img.save(&buf, "PNG");
     return QStringLiteral("data:image/png;base64,%1").arg(QString::fromLatin1(png.toBase64()));
 }
+// The lightbox (markup + script): the page export's, shared with the canvas export, whose world figures
+// join the image list (2026-10-18).
+static const char kLightbox[] = R"MNLB(<div id="mn-lb"><button class="nav prev" aria-label="Previous"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg></button><div class="stage"></div><button class="nav next" aria-label="Next"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button><button class="nav close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><span class="cnt"></span></div>
+<script>
+(function(){
+var lb=document.getElementById('mn-lb');if(!lb)return;
+var imgs=[].slice.call(document.querySelectorAll('main figure img,main .notecard img,main td img,#world figure.media img')).filter(function(im){return im.className.indexOf('ink')<0});
+if(!imgs.length){lb.parentNode.removeChild(lb);return;}
+var stage=lb.querySelector('.stage'),cnt=lb.querySelector('.cnt'),cur=-1;
+function show(i){
+cur=(i+imgs.length)%imgs.length;
+var im=imgs[cur];
+stage.innerHTML='';
+var wrap=document.createElement('div');
+var b=document.createElement('img');b.src=im.src;wrap.appendChild(b);
+var tgl=document.getElementById('mn-ink');
+var p=im.parentElement;
+var inks=(p&&(p.className.indexOf('inkwrap')>=0||p.className.indexOf('thumb')>=0))
+?p.querySelectorAll('img.ink'):[];
+if(!tgl||tgl.checked)[].forEach.call(inks,function(ink){
+var o=document.createElement('img');o.src=ink.src;
+var st=ink.getAttribute('style');
+o.setAttribute('style',st||'left:0;top:0;width:100%;max-width:none');
+o.style.position='absolute';
+wrap.appendChild(o);});
+stage.appendChild(wrap);
+cnt.textContent=(cur+1)+' / '+imgs.length;
+lb.classList.add('open');}
+imgs.forEach(function(im,i){im.addEventListener('click',function(){show(i)})});
+function close(){lb.classList.remove('open');cur=-1}
+lb.addEventListener('click',function(e){if(e.target===lb)close()});
+lb.querySelector('.prev').addEventListener('click',function(){show(cur-1)});
+lb.querySelector('.next').addEventListener('click',function(){show(cur+1)});
+lb.querySelector('.close').addEventListener('click',close);
+document.addEventListener('keydown',function(e){
+if(cur<0)return;
+if(e.key==='Escape')close();
+else if(e.key==='ArrowLeft')show(cur-1);
+else if(e.key==='ArrowRight')show(cur+1);
+else return;
+e.preventDefault();});
+})();
+</script>
+)MNLB";
+
 QString Exporter::pageCss() { return embeddedFontCss() + QLatin1String(kHtmlCss); }
+QString Exporter::lightboxHtml() { return QLatin1String(kLightbox); }
+QString Exporter::videoNotesHtml(const QString& mediaPath, AssetSink& sink, int& inkLayers) { return emitVideoNotesHtml(mediaPath, sink, inkLayers); }
+QImage Exporter::inkOverlay(const QString& envelope, int srcW, int srcH, QSize size) { return renderEnvelopeOverlay(envelope, srcW, srcH, size); }
+QString Exporter::durationText(qreal ms) { return humanDuration(ms); }
 
 namespace {
 
@@ -1821,7 +1873,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     }
     closeLanes(-1, count);
     closeListsTo(0);
-    if (fragment) return body;
+    if (fragment && !opt.fragmentComments) return body;
 
     // Comments section (linked from the superscript refs).
     if (!fn.threadIds.isEmpty()) {
@@ -1857,6 +1909,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         }
         body += QStringLiteral("</ol></section>\n");
     }
+    if (fragment) return body;   // (a canvas page: the body + its comments, no page chrome)
 
     // The Annotations toggle (the app's eye switch, CSS-only): present only
     // when ink layers were actually emitted. Checked = ink shown, matching
@@ -1903,48 +1956,6 @@ try{if(localStorage.getItem(k)==='1')document.documentElement.classList.add('cap
 b.addEventListener('click',function(){var on=document.documentElement.classList.toggle('cap');try{localStorage.setItem(k,on?'1':'0');}catch(e){}});})();
 </script>
 )MNCAP";
-    static const char kLightbox[] = R"MNLB(<div id="mn-lb"><button class="nav prev" aria-label="Previous"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg></button><div class="stage"></div><button class="nav next" aria-label="Next"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button><button class="nav close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><span class="cnt"></span></div>
-<script>
-(function(){
-var lb=document.getElementById('mn-lb');if(!lb)return;
-var imgs=[].slice.call(document.querySelectorAll('main figure img,main .notecard img,main td img')).filter(function(im){return im.className.indexOf('ink')<0});
-if(!imgs.length){lb.parentNode.removeChild(lb);return;}
-var stage=lb.querySelector('.stage'),cnt=lb.querySelector('.cnt'),cur=-1;
-function show(i){
-cur=(i+imgs.length)%imgs.length;
-var im=imgs[cur];
-stage.innerHTML='';
-var wrap=document.createElement('div');
-var b=document.createElement('img');b.src=im.src;wrap.appendChild(b);
-var tgl=document.getElementById('mn-ink');
-var p=im.parentElement;
-var inks=(p&&(p.className.indexOf('inkwrap')>=0||p.className.indexOf('thumb')>=0))
-?p.querySelectorAll('img.ink'):[];
-if(!tgl||tgl.checked)[].forEach.call(inks,function(ink){
-var o=document.createElement('img');o.src=ink.src;
-var st=ink.getAttribute('style');
-o.setAttribute('style',st||'left:0;top:0;width:100%;max-width:none');
-o.style.position='absolute';
-wrap.appendChild(o);});
-stage.appendChild(wrap);
-cnt.textContent=(cur+1)+' / '+imgs.length;
-lb.classList.add('open');}
-imgs.forEach(function(im,i){im.addEventListener('click',function(){show(i)})});
-function close(){lb.classList.remove('open');cur=-1}
-lb.addEventListener('click',function(e){if(e.target===lb)close()});
-lb.querySelector('.prev').addEventListener('click',function(){show(cur-1)});
-lb.querySelector('.next').addEventListener('click',function(){show(cur+1)});
-lb.querySelector('.close').addEventListener('click',close);
-document.addEventListener('keydown',function(e){
-if(cur<0)return;
-if(e.key==='Escape')close();
-else if(e.key==='ArrowLeft')show(cur-1);
-else if(e.key==='ArrowRight')show(cur+1);
-else return;
-e.preventDefault();});
-})();
-</script>
-)MNLB";
 
     return QStringLiteral(
                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"

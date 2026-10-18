@@ -6605,7 +6605,10 @@ static void testCanvasHtml() {
         "{\"type\":\"arrow\",\"color\":[0,0,1,1],\"stroke_width\":4,\"filled\":false,\"points\":[[0,90],[100,90]]},"
         "{\"type\":\"oval\",\"color\":[1,1,0,0.5],\"stroke_width\":2,\"filled\":true,\"points\":[[50,50],[20,10]]}]}"), QRectF(2600, 0, 100, 100));
     const QString textEl = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"a <chip> & more\",\"fontSize\":18,\"fill\":\"#ffffff\"}"), QRectF(2600, 200, 200, 40));
-    CHECK(!imgEl.isEmpty() && !pdfEl.isEmpty() && !folderEl.isEmpty() && !fileEl.isEmpty() && !bmEl.isEmpty() && !audioEl.isEmpty() && !inkEl.isEmpty() && !textEl.isEmpty(), "fixtures placed");
+    // A video whose file is gone (no poster, no notes) still gets its reader; the PDF's page 1 carries element ink.
+    const QString vidEl = c.addMediaElement(QStringLiteral("{\"kind\":\"video\",\"src\":\"%1\",\"name\":\"clip.mov\",\"w\":1920,\"h\":1080,\"fps\":24,\"frames\":48,\"durMs\":2000}").arg(dir.filePath(QStringLiteral("clip.mov"))), QRectF(2000, 1500, 480, 292));
+    c.setMediaElementInk(pdfEl, 0, QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"normalized\",\"shapes\":[{\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,\"filled\":false,\"points\":[[0.1,0.1],[0.5,0.5],[0.9,0.1]]}]}"));
+    CHECK(!vidEl.isEmpty() && !imgEl.isEmpty() && !pdfEl.isEmpty() && !folderEl.isEmpty() && !fileEl.isEmpty() && !bmEl.isEmpty() && !audioEl.isEmpty() && !inkEl.isEmpty() && !textEl.isEmpty(), "fixtures placed");
 
     class NameSink : public Exporter::AssetSink {
     public:
@@ -6615,22 +6618,32 @@ static void testCanvasHtml() {
     };
     CanvasExporter ex; ex.setCanvas(&c);
     const QVariantMap sc = ex.scan();
-    CHECK(sc.value(QStringLiteral("pages")).toInt() == 2 && sc.value(QStringLiteral("media")).toInt() == 6 && sc.value(QStringLiteral("pdfs")).toInt() == 1 && sc.value(QStringLiteral("ink")).toInt() == 1 && sc.value(QStringLiteral("shapes")).toInt() == 1 && sc.value(QStringLiteral("refPaths")).toInt() == 4,
+    CHECK(sc.value(QStringLiteral("pages")).toInt() == 2 && sc.value(QStringLiteral("media")).toInt() == 7 && sc.value(QStringLiteral("videos")).toInt() == 1 && sc.value(QStringLiteral("pdfs")).toInt() == 1 && sc.value(QStringLiteral("ink")).toInt() == 1 && sc.value(QStringLiteral("shapes")).toInt() == 1 && sc.value(QStringLiteral("refPaths")).toInt() == 5,
           "scan counts (%d pages, %d media, %d refPaths)", sc.value(QStringLiteral("pages")).toInt(), sc.value(QStringLiteral("media")).toInt(), sc.value(QStringLiteral("refPaths")).toInt());
     NameSink sink;
     CanvasExporter::Options opt;
     const QString html = ex.toHtml(opt, sink);
     CHECK(html.startsWith(QLatin1String("<!doctype html>")) && html.contains(QLatin1String("id=\"world\"")) && html.contains(QLatin1String("@font-face")) && html.contains(QLatin1String("#mn-canvas{")) && html.contains(QLatin1String("<script>")),
           "a self-contained document: the world, the page CSS with embedded fonts, the canvas CSS, the pan/zoom script (%d chars)", int(html.size()));
-    CHECK(html.count(QLatin1String("class=\"el page\"")) == 2 && html.contains(QLatin1String("Hello canvas export")) && html.contains(QLatin1String("Second page body")) && html.contains(QLatin1String("<main><header class=\"doctitle\">")),
-          "both pages as positioned sections holding the page export's fragment under its title");
+    CHECK(html.contains(QLatin1String("<nav id=\"mn-tabs\"><div class=\"tabs\"><button class=\"tab on\" data-view=\"canvas\">")) && html.contains(QLatin1String("<div id=\"mn-reader\" hidden></div>")) && html.contains(QLatin1String("<div id=\"mn-store\">"))
+          && html.contains(QLatin1String("id=\"mn-lb\"")) && html.contains(QLatin1String("hashchange")) && html.contains(QLatin1String("mn.readableWidth")),
+          "the redesign (2026-10-18): a tab strip (Canvas + opened tabs), a reader, a store for media readers, the shared lightbox, hash routing and the Readable-width cap");
+    CHECK(html.count(QLatin1String("class=\"el page\"")) == 2 && html.contains(QLatin1String("Hello canvas export")) && html.contains(QLatin1String("Second page body"))
+          && html.contains(QStringLiteral("data-open=\"pm-%1\"").arg(p1)) && html.contains(QStringLiteral("<main id=\"pm-%1\" data-home=\"p-%1\" data-title=\"").arg(p1)) && html.count(QLatin1String("<header class=\"doctitle\"><span>")) >= 2 && html.count(QLatin1String("<button class=\"cap\"")) == 2,
+          "both pages as positioned sections holding ONE copy of the page export (data-open → its main, data-home → its card) under a title with the Readable-width button");
     const QRectF pr = c.elementRect(p2), bnd = c.canvasBounds();
-    CHECK(html.contains(QStringLiteral("id=\"p-%1\" style=\"left:%2px;top:%3px;width:%4px;height:%5px\"").arg(p2).arg(pr.x() - bnd.x() + 24).arg(pr.y() - bnd.y() + 24).arg(pr.width()).arg(pr.height())),
+    CHECK(html.contains(QStringLiteral("id=\"p-%1\" data-open=\"pm-%1\" style=\"left:%2px;top:%3px;width:%4px;height:%5px\"").arg(p2).arg(pr.x() - bnd.x() + 24).arg(pr.y() - bnd.y() + 24).arg(pr.width()).arg(pr.height())),
           "a page's section sits at its element rect, translated to the world's origin");
     CHECK(html.contains(QLatin1String("<figure class=\"el media image\"")) && html.contains(QLatin1String("<img src=\"assets/")) && !sink.names.isEmpty() && sink.names.first().endsWith(QLatin1String(".png")),
           "the image element is a figure through the sink (the store's content-addressed name: %s)", qPrintable(sink.names.value(0)));
-    CHECK(html.contains(QLatin1String("<figure class=\"el media pdf\"")) && html.contains(QLatin1String("1 page</span>")) && html.contains(QLatin1String("spec.pdf</span>")) && html.contains(QDir::toNativeSeparators(pdf)) && !sink.images.isEmpty(),
-          "the PDF element: a rendered first page, its name, its page count and its PATH");
+    CHECK(html.contains(QStringLiteral("<figure class=\"el media pdf\" data-open=\"m-%1\"").arg(pdfEl)) && html.contains(QLatin1String("1 page</span>")) && html.contains(QLatin1String("spec.pdf</span>")) && html.contains(QDir::toNativeSeparators(pdf)) && !sink.images.isEmpty(),
+          "the PDF element: a rendered first page, its name, its page count and its PATH; a click opens its reader");
+    CHECK(html.contains(QStringLiteral("<main class=\"reader pdf\" id=\"m-%1\" data-title=\"spec.pdf\">").arg(pdfEl)) && html.contains(QLatin1String("<figure class=\"ref\"><div class=\"inkwrap\"><img src=\"assets/spec.pdf-page1.png\"")) && html.contains(QLatin1String("<img class=\"ink\" src=\"assets/spec.pdf-page1-ink.png\""))
+          && html.contains(QLatin1String("<div class=\"fname\">spec.pdf</div><div class=\"fpath\">")) && html.contains(QStringLiteral("pdf · 1 page</div>")) && html.contains(QLatin1String("<input type=\"checkbox\" id=\"mn-ink\" checked>")) && html.contains(QLatin1String("<label for=\"mn-ink\">Annotations</label>")),
+          "the PDF's reader: page 1 with its element ink as a toggleable layer, the reference caption with the path; the strip grows the Annotations toggle");
+    CHECK(html.contains(QStringLiteral("<figure class=\"el media video\" data-open=\"m-%1\"").arg(vidEl)) && html.contains(QStringLiteral("1920 × 1080 · 24 fps · ")) && html.contains(QStringLiteral("<main class=\"reader video\" id=\"m-%1\" data-title=\"clip.mov\">").arg(vidEl))
+          && html.contains(QStringLiteral("video · 1920 × 1080")) && !html.contains(QLatin1String("<div class=\"notecard")),
+          "a video element: the card with its meta opens a reader with the reference caption; a missing file has no poster and no notes");
     CHECK(html.contains(QLatin1String("class=\"el card folder\"")) && html.contains(QStringLiteral("1 item · a.bin")) && html.contains(QDir::toNativeSeparators(folder).toHtmlEscaped()),
           "the folder card: count, entries, PATH (expected '%s' in: %s)", qPrintable(QDir::toNativeSeparators(folder).toHtmlEscaped()), qPrintable(html.mid(html.indexOf(QLatin1String("<span class=\"path\">"), html.indexOf(QLatin1String("card folder"))), 200)));
     CHECK(html.contains(QLatin1String("class=\"el card file\"")) && html.contains(QLatin1String("notes.xyz</span>")) && html.contains(QDir::toNativeSeparators(odd)), "the file card: name + PATH");
@@ -6648,7 +6661,7 @@ static void testCanvasHtml() {
     CHECK(html2.indexOf(QStringLiteral("id=\"p-%1\"").arg(p1)) > html2.indexOf(QLatin1String("<svg class=\"el ink\"")), "…so bring-to-front moves the page after the ink");
     opt.ufbLinks = true;
     const QString html3 = ex.toHtml(opt, sink);
-    CHECK(html3.count(QLatin1String("ufb:///")) >= 4 && html3.contains(QStringLiteral("href=\"%1\"").arg(mn::ufbLinkFor(folder).toHtmlEscaped())), "with the option, every printed path carries its ufb link (%d)", int(html3.count(QLatin1String("ufb:///"))));
+    CHECK(html3.count(QLatin1String("ufb:///")) >= 5 && html3.contains(QStringLiteral("href=\"%1\"").arg(mn::ufbLinkFor(folder).toHtmlEscaped())), "with the option, every printed path carries its ufb link (%d)", int(html3.count(QLatin1String("ufb:///"))));
     // The poster.
     CanvasExporter::Options popt; popt.posterWidth = 800;
     const QImage poster = ex.toPoster(popt);
