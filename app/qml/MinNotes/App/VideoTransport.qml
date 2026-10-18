@@ -24,7 +24,7 @@ Rectangle {
     function playhead() { return host ? vt.editor.videoPlayheadForKey(host.key) : vt.editor.videoPlayheadFor(vt.row) }
     function play()     { if (host) vt.editor.playFromHost(host); else vt.editor.playVideo(vt.row) }
 
-    height: editor ? editor.videoTransportH : 40
+    height: 40   // the FULL family bar (the studio); the inline strips are CompactTransport at editor.videoTransportH (22) — walk 7c
     color: Theme.colors.surfaceRaised   // the raised-chrome plane (tonal ladder)
     // (top hairline removed — the raised bar separates from the frame above
     // by tone; border diet, product pass 2)
