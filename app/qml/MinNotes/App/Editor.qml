@@ -4799,8 +4799,19 @@ FocusScope {
                     check(cvw.contextMenu.visibleRows === 4, "an ink element's menu shows only Duplicate / Bring to front / Send to back / Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     g.rightClick(cvw, 8, cvw.height - 8)
-                    check(cvw.contextMenu.visible && cvw.selectionCount === 0 && cvw.contextMenu.visibleRows === 1, "empty canvas: New page here alone (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.selectionCount === 0 && cvw.contextMenu.visibleRows === 2, "empty canvas: New page here · Add link… (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
+                    {   // Add link… (2026-10-18): the prompt opens at the point; a typed URL becomes a selected bookmark; junk is refused
+                        const nl = canvas.elementCount()
+                        cvw.promptLink(r.x + r.width + 600, r.y)
+                        check(cvw.linkPrompt.visible, "Add link… opens the URL prompt")
+                        check(cvw.commitLink("not a url") === "" && canvas.elementCount() === nl, "a non-URL is refused")
+                        const lid = cvw.commitLink("www.example.invalid/typed")
+                        check(lid !== "" && canvas.elementCount() === nl + 1 && canvas.mediaElementKind(lid) === "bookmark" && cvw.selectedId === lid && canvas.elementJson(lid).indexOf("https://www.example.invalid/typed") > 0,
+                              "a typed URL (www. gets https://) becomes a bookmark element at the point, selected (" + canvas.elementJson(lid).slice(0, 80) + ")")
+                        cvw.linkPrompt.close()
+                        canvas.undo()
+                    }
                     cvw.select(id)
                     const n0 = canvas.elementCount()
                     cvw.duplicateSelected()

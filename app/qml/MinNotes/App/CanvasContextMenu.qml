@@ -66,5 +66,6 @@ Popup {
         Row { label: qsTr("Delete");         show: menu.n > 0;             onTriggered: menu.view.deleteSelected() }
         Row { label: qsTr("New page here");  show: menu.n === 0
               onTriggered: { const id = canvas.addPageAt(menu.worldX, menu.worldY); if (id !== "") menu.view.select(id) } }
+        Row { label: qsTr("Add link…");      show: menu.n === 0;           onTriggered: menu.view.promptLink(menu.worldX, menu.worldY) }   // a bookmark element from a typed URL (2026-10-18)
     }
 }

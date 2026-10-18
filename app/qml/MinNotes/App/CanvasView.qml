@@ -6,6 +6,7 @@
 // (canvas_meta on save); a canvas without one fits every element and keeps re-fitting on resize
 // until the user takes the camera (wheel, drag, pinch, zoom keys).
 import QtQuick
+import QtQuick.Controls
 
 Rectangle {
     id: cv
@@ -191,6 +192,55 @@ Rectangle {
         return canvas.addShapeElement(JSON.stringify({ shape: "text", text: t, fontSize: size, fill: "" + Theme.colors.text }), Qt.rect(w.x, w.y, Math.max(60, tw), Math.max(size * 1.4, th)))
     }
     Text { id: measureText; visible: false; width: 480 - 12; wrapMode: Text.Wrap; font.family: Theme.font.body; font.pixelSize: 14 }
+    // "Add link…" (2026-10-18): a typed URL becomes a bookmark element (or a remote image) at the point — the drop
+    // and paste paths' third door. The prompt is the editor's ⌘K popup, squared, under the point.
+    readonly property var linkPrompt: linkPromptPopup   // probe
+    function promptLink(wx, wy) {
+        linkPromptPopup.wx = wx; linkPromptPopup.wy = wy
+        const sx = wx * cam.zoom + cam.panX, sy = wy * cam.zoom + cam.panY
+        linkPromptPopup.x = Math.max(8, Math.min(sx, cv.width - linkPromptPopup.width - 8))
+        linkPromptPopup.y = Math.max(8, Math.min(sy, cv.height - 60))
+        linkField.text = ""
+        linkPromptPopup.open()
+        linkField.forceActiveFocus()
+    }
+    function commitLink(text) {
+        let t = ("" + text).trim()
+        if (t === "") return ""
+        if (/^www\./i.test(t)) t = "https://" + t
+        if (!/^https?:\/\/\S+$/i.test(t)) return ""
+        const id = dropUrl(t, linkPromptPopup.wx, linkPromptPopup.wy)
+        if (id !== "") select(id)
+        return id
+    }
+    Popup {
+        id: linkPromptPopup
+        property real wx: 0; property real wy: 0
+        width: 320; padding: 8; z: 60
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: cv.editor.forceActiveFocus()
+        background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+        contentItem: Rectangle {
+            width: 304; height: 30; radius: 0
+            color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
+            TextInput {
+                id: linkField
+                anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
+                verticalAlignment: TextInput.AlignVCenter
+                clip: true; selectByMouse: true
+                color: Theme.colors.text; selectionColor: Theme.colors.selectionBg
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody
+                onAccepted: { if (cv.commitLink(text) !== "" || text.trim() === "") linkPromptPopup.close() }
+                Keys.onEscapePressed: linkPromptPopup.close()
+                Text {
+                    anchors.fill: parent; verticalAlignment: Text.AlignVCenter
+                    visible: linkField.text.length === 0
+                    text: "https://…"
+                    color: Theme.colors.textSubtle; font: linkField.font
+                }
+            }
+        }
+    }
     // ⌘V on the canvas (phase A7): files → elements (a grid), an image → an image element, a bare remote image →
     // a remote image, text → dropText. The viewport's centre is the drop point.
     function pasteAt(sx, sy) {
