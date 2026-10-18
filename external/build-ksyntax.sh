@@ -13,8 +13,10 @@ git clone --depth 1 --branch "$TAG" https://invent.kde.org/frameworks/extra-cmak
 cmake -S ecm -B ecm-build -G Ninja -DCMAKE_INSTALL_PREFIX="$PFX" -DBUILD_TESTING=OFF
 cmake --build ecm-build --target install
 git clone --depth 1 --branch "$TAG" https://invent.kde.org/frameworks/syntax-highlighting.git ksynt
+# The app's deployment floor (root CMakeLists sets 13.0): without it the dylib's minos is the HOST's macOS and the
+# app refuses to launch on anything older (the 2.0.0 release near-miss, 2026-10-18).
 cmake -S ksynt -B ksynt-build -G Ninja -DCMAKE_INSTALL_PREFIX="$PFX" \
-  -DCMAKE_PREFIX_PATH="$PFX;$QT" -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_PREFIX_PATH="$PFX;$QT" -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
 cmake --build ksynt-build --parallel
 cmake --build ksynt-build --target install
 echo "KSyntaxHighlighting installed to $PFX"
