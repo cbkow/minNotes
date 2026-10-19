@@ -6689,6 +6689,71 @@ static void testCanvasHtml() {
     CHECK(!ex.exportHtml(dir.filePath(QStringLiteral("nodir/x.html")), true) && !ex.lastError().isEmpty(), "an unwritable path fails with a reason");
 }
 
+// [144] The pen inside the PDF view (2026-10-19): MediaHost::addPageStroke takes what the canvas capture commits over the
+// PAGE ITEM (element-local px at zoom 1) and appends it to the page's envelope normalized over the frame with its width
+// in SOURCE px; erasePageStrokeAt removes the topmost stroke within reach; both route to the owner's log (one row each)
+// and keep whatever else the envelope holds (the model's writer re-adds a page's text chips itself).
+static void testPdfPageDrawing() {
+    qInfo("[144] pen in the PDF view: addPageStroke normalizes + width → source px; erasePageStrokeAt hits by distance (topmost first); one owner-log row each; texts kept");
+    const auto shapeCount = [](const QString& env) { return QJsonDocument::fromJson(env.toUtf8()).object().value(QStringLiteral("shapes")).toArray().size(); };
+    const auto shape = [](const QString& env, int i) { return QJsonDocument::fromJson(env.toUtf8()).object().value(QStringLiteral("shapes")).toArray().at(i).toObject(); };
+    // What CanvasInkCapture commits: points relative to the stroke's bbox, the bbox separately (here (100, 200) in an 800 × 1035 page frame).
+    const QString freehand = QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[{\"type\":\"freehand\",\"color\":[1,0,0,1],\"stroke_width\":6,\"filled\":false,\"is_modeled\":false,\"points\":[[0,0],[50,30]]}]}");
+    const QString line = QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[{\"type\":\"line\",\"color\":[0,0,1,1],\"stroke_width\":4,\"filled\":false,\"is_modeled\":false,\"points\":[[0,0],[100,0]]}]}");
+    const QString oval = QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[{\"type\":\"oval\",\"color\":[0,1,0,1],\"stroke_width\":4,\"filled\":false,\"is_modeled\":false,\"points\":[[40,30],[40,30]]}]}");
+
+    // --- a PDF block in a page (the page's log) ---
+    BlockModel m; m.newDocument();
+    while (m.rowCountQml() > 0) m.removeBlock(0);
+    m.insertBlock(0); m.setContent(0, QStringLiteral("anchor"));
+    { BlockModel::BlockSpec a; a.type = BlockModel::Media; a.mediaJson = QStringLiteral("{\"src\":\"/nowhere/spec.pdf\",\"w\":612,\"h\":792,\"kind\":\"pdf\",\"pages\":2}"); m.insertSpecs(0, {a}, false); }
+    const int row = 1;
+    CHECK(m.mediaKind(row) == QLatin1String("pdf"), "fixture row landed");
+    MediaHost h; h.setModel(&m); h.setBlockId(m.idForRow(row));
+    CHECK(h.valid() && h.w() == 612 && h.pageInk(0).isEmpty(), "the host sees the block; page 0 has no ink yet");
+    const int rows0 = m.undoHistory().size();
+    CHECK(h.addPageStroke(0, freehand, 100, 200, 800, 1035), "a freehand stroke appended to page 0");
+    QString env = h.pageInk(0);
+    CHECK(shapeCount(env) == 1 && env.contains(QLatin1String("\"coordinate_system\":\"normalized\"")), "…one shape in a normalized envelope (%s)", qPrintable(env.left(80)));
+    {
+        const QJsonObject s0 = shape(env, 0);
+        const QJsonArray p0 = s0.value(QStringLiteral("points")).toArray().at(0).toArray(), p1 = s0.value(QStringLiteral("points")).toArray().at(1).toArray();
+        CHECK(std::abs(p0.at(0).toDouble() - 100.0 / 800) < 1e-9 && std::abs(p0.at(1).toDouble() - 200.0 / 1035) < 1e-9
+              && std::abs(p1.at(0).toDouble() - 150.0 / 800) < 1e-9 && std::abs(p1.at(1).toDouble() - 230.0 / 1035) < 1e-9,
+              "…points = (bbox + local) / frame (%.4f, %.4f)", p0.at(0).toDouble(), p0.at(1).toDouble());
+        CHECK(std::abs(s0.value(QStringLiteral("stroke_width")).toDouble() - 6.0 * 612 / 800) < 1e-9, "…width 6 frame px → %.3f source px", s0.value(QStringLiteral("stroke_width")).toDouble());
+    }
+    CHECK(m.undoHistory().size() == rows0 + 1, "…one page-log row");
+    CHECK(h.addPageStroke(0, line, 300, 600, 800, 1035) && shapeCount(h.pageInk(0)) == 2, "a line appended as a second shape");
+    CHECK(h.addPageStroke(1, oval, 400, 400, 800, 1035) && shapeCount(h.pageInk(1)) == 1 && shapeCount(h.pageInk(0)) == 2, "an oval on page 1 lands on page 1 only");
+    {
+        const QJsonObject o = shape(h.pageInk(1), 0);
+        const QJsonArray c = o.value(QStringLiteral("points")).toArray().at(0).toArray(), r = o.value(QStringLiteral("points")).toArray().at(1).toArray();
+        CHECK(std::abs(c.at(0).toDouble() - 440.0 / 800) < 1e-9 && std::abs(r.at(0).toDouble() - 40.0 / 800) < 1e-9 && std::abs(r.at(1).toDouble() - 30.0 / 1035) < 1e-9,
+              "…the oval's centre is rebased, its radii only scaled (%.4f, %.4f)", c.at(0).toDouble(), r.at(0).toDouble());
+    }
+    CHECK(!h.erasePageStrokeAt(0, 700, 900, 800, 1035) && shapeCount(h.pageInk(0)) == 2, "the eraser on empty paper removes nothing");
+    CHECK(h.erasePageStrokeAt(0, 350, 603, 800, 1035) && shapeCount(h.pageInk(0)) == 1 && shape(h.pageInk(0), 0).value(QStringLiteral("type")).toString() == QLatin1String("freehand"),
+          "…3 px off the line removes the LINE, the freehand stays");
+    CHECK(h.erasePageStrokeAt(1, 480, 430, 800, 1035) && shapeCount(h.pageInk(1)) == 0, "…on the oval's ring (its right edge) removes it → page 1 has no shapes");
+    CHECK(h.erasePageStrokeAt(0, 125, 215, 800, 1035) && shapeCount(h.pageInk(0)) == 0, "…on the freehand's midpoint removes it too");
+    const int rowsAll = m.undoHistory().size();
+    CHECK(rowsAll == rows0 + 6, "every write is one row (+%d)", rowsAll - rows0);
+    h.undo();
+    CHECK(shapeCount(h.pageInk(0)) == 1, "host.undo() brings the freehand back");
+
+    // --- a PDF element on the canvas (the canvas's log) ---
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "new canvas");
+    const QString el = c.addMediaElement(QStringLiteral("{\"src\":\"/nowhere/spec.pdf\",\"w\":612,\"h\":792,\"kind\":\"pdf\",\"pages\":2}"), QRectF(1000, 0, 480, 622));
+    MediaHost e; e.setCanvas(&c); e.setElementId(el);
+    const int crows = c.undoHistory().size();
+    CHECK(e.addPageStroke(0, freehand, 100, 200, 800, 1035) && shapeCount(c.mediaElementInk(el, 0)) == 1 && c.undoHistory().size() == crows + 1, "an element's stroke → json.ink[0], one canvas row");
+    CHECK(e.erasePageStrokeAt(0, 125, 215, 800, 1035) && c.mediaElementInk(el, 0).isEmpty() && c.undoHistory().size() == crows + 2, "…erased → the key goes, another row");
+    e.undo();
+    CHECK(shapeCount(c.mediaElementInk(el, 0)) == 1, "…undo on the canvas's log restores it");
+}
+
 // [143] Search (v2.0.1): ONE file — the current page's hits first, then the other pages, cards, PDF text (cached in the
 // file), video notes, comments; folded matching; every hit carries what its jump needs.
 static void testSearch() {
@@ -9277,6 +9342,7 @@ int main(int argc, char** argv) {
     testPageViewCache();
     testCanvasHtml();
     testSearch();
+    testPdfPageDrawing();
     testPageFixedHeight();
     testInkStyle();
     testTableGeometry();

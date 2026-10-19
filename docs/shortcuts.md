@@ -50,6 +50,16 @@ Shift, **⌥** is Alt/Option.
 | Paste files, an image, text or a link as cards | ⌘V |
 | Page a selected PDF | PageUp / PageDown |
 
+## PDF View (full-window)
+
+| Action | Shortcut |
+|---|---|
+| Pen / Rectangle / Oval / Line / Arrow / Eraser (strokes stay on that page) | P / R / O / L / A / E |
+| Back to the pointer | V |
+| Scroll with the hand while a tool is armed | hold Space and drag |
+| Undo / redo a stroke | ⌘Z / ⌘⇧Z |
+| Drop the tool → back to the canvas | Esc (repeat) |
+
 ## Editing
 
 | Action | Shortcut |

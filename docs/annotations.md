@@ -27,10 +27,18 @@ is still fine at 50%.
 
 A PDF opens full-window from its card, its inline block, or the path bar.
 Pages scroll, zoom with the usual keys, and the frame segment switches
-between the page's PDFs. Markup made on PDF pages in 1.x stays with the
-PDF — it shows on the inline preview, on the canvas card, in the PDF's
-frame, and exports as marked-up page images. The PDF file itself is never
-touched.
+between the page's PDFs.
+
+The toolbar shows the pen tools there: freehand, rectangle, oval, line,
+arrow and an eraser (`P` `R` `O` `L` `A` `E`; `V` is the pointer again,
+`Esc` drops the tool). A stroke belongs to the page you drew it on — it
+scrolls and zooms with that page, shows on the inline preview and the
+canvas card, and exports as a marked-up page image. The eraser removes the
+stroke under the pointer; `⌘Z` undoes the last one. Hold `Space` to scroll
+with the hand while a tool is armed. The PDF file itself is never touched.
+
+Drawing on the canvas over a PDF card is a different thing: that ink is
+canvas ink, floating above the card, and stays put when the PDF pages.
 
 ## Video
 

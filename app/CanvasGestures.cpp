@@ -6,6 +6,7 @@
 #include <QWheelEvent>
 #include <QQuickWindow>
 #include <QGuiApplication>
+#include <QStandardPaths>
 #include <QQuickItem>
 #if defined(Q_OS_MACOS)
 #include <mach/mach.h>
@@ -146,3 +147,5 @@ bool CanvasGestures::envSet(const QString& name) const {
     const QByteArray v = qgetenv(name.toLatin1());
     return !v.isEmpty() && v != "0";
 }
+
+QString CanvasGestures::tempDir() const { return QStandardPaths::writableLocation(QStandardPaths::TempLocation); }

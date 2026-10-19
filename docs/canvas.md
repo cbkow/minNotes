@@ -46,7 +46,7 @@ Drop a file, or paste, and it lands where you drop it:
 | Dropped | Becomes |
 |---|---|
 | Video | A poster card. Select it for the transport bar; it plays in place. Double-click to focus it; the open glyph or **Open in studio** opens the review studio. |
-| PDF | Its first page. Select it to page with the strip under the card or `PageUp` / `PageDown`; open it full-window to read and zoom. |
+| PDF | Its first page. Select it to page with the strip under the card or `PageUp` / `PageDown`; open it full-window to read, zoom and draw on its pages. |
 | Image | The image, at its size up to 480 wide. Drag a corner to resize. |
 | Audio | A card with its duration and a play button. |
 | Folder | A card with the folder's name, count, first entries and full path. **Spread files here** lays its files out as cards. A QCView stream folder offers **Open as stream**. |

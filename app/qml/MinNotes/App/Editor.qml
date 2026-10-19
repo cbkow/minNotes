@@ -440,6 +440,11 @@ FocusScope {
     // canvas keeps the grab (SketchCanvas::mousePressEvent) so the list can
     // never steal a stroke; wheel scrolling works throughout.
     property bool pdfSpaceHeld: false
+    // The pen inside the PDF view (2026-10-19): a frame tool armed in the toolbar (or by its letter) mounts the
+    // canvas capture over every page; Space-hand and the resting tool leave the list's own drag alone.
+    readonly property bool pdfDrawing: pdfTabOpen && !pdfSpaceHeld && !!inspector
+                                       && ["freehand", "rect", "oval", "line", "arrow", "eraser"].indexOf(inspector.drawTool) >= 0
+    readonly property var pdfListItem: pdfLoader.item ? pdfLoader.item.list : null   // probe
     // Active video tab (the studio: surface + transport + notes panel); "" = not
     // in a video tab. Opening it activates the video PAUSED at its remembered
     // playhead so the studio comes up showing a frame, not a void.
@@ -3327,6 +3332,9 @@ FocusScope {
             else if (cmd && k === Qt.Key_Y) mediaHost.redo()
             else if (k === Qt.Key_Space && !event.isAutoRepeat)
                 root.pdfSpaceHeld = true            // hold the hand (list pan)
+            else if (!cmd && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && root.inspector
+                     && ({ [Qt.Key_V]: "select", [Qt.Key_P]: "freehand", [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" })[k] !== undefined)
+                root.inspector.drawTool = ({ [Qt.Key_V]: "select", [Qt.Key_P]: "freehand", [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" })[k]   // the canvas's tool letters, for the pen on PDF pages
             // Zoom keys (2026-08-20) — the ZoomBadge menu's advertised pair
             // (Fit ⌘1 / 100% ⌘0) plus ⌘±, previously swallowed unhandled.
             else if (cmd && (k === Qt.Key_Plus || k === Qt.Key_Equal)) root.pdfZoomStep(1)
@@ -4334,6 +4342,9 @@ FocusScope {
         property string textElId: ""
         property string remoteElId: ""
         property string pdfElId: ""            // P9: the element-tab fixtures
+        property string pdfInkElId: ""         // P15: a real one-page PDF, drawn on in its view
+        property string pdfInkPageId: ""
+        property int pdfInkRows0: 0
         property string vidElId: ""
         property string inkId: ""
         property string mediaId: ""
@@ -5374,6 +5385,85 @@ FocusScope {
                     canvas.removeElement(searchChipId)
                     root.setActiveTab("canvas")
                     nextPhase("search")
+                }
+            }
+            if (phase === 15) {   // P15 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
+                                  // with real gestures: strokes land in THAT page's ink (normalized, widths in source px), one owner-log
+                                  // row each, the eraser removes the stroke under the pointer, Space-hand parks the pen, Escape drops it
+                const g = gestures, cvw = canvasItem
+                const shapes = (env) => { try { return (JSON.parse(env || "{}").shapes || []).length } catch (e) { return -1 } }
+                if (step === 0) {   // a small page to export (the fixture page would be a long PDF): focus it, the model re-points next tick
+                    const b = canvas.canvasBounds()
+                    pdfInkPageId = canvas.addPageAt(b.x + b.width + 300, b.y + 1200, 760)
+                    canvas.focusPage = pdfInkPageId
+                    ++step; return
+                }
+                if (step === 1) {
+                    check(blockModel.pageId() === pdfInkPageId, "the export page is the focused model")
+                    blockModel.setContent(0, "A page to draw on")
+                    const path = g.tempDir() + "/mn-canvas-probe-ink.pdf"
+                    const ok = exporter.exportPdf(path, false)
+                    root.setActiveTab("canvas")
+                    const b = canvas.canvasBounds()
+                    pdfInkElId = ok ? canvas.addMediaElementFromUrl("file://" + (path.startsWith("/") ? "" : "/") + path, b.x + b.width + 300, b.y) : ""
+                    check(ok && pdfInkElId !== "" && canvas.mediaElementKind(pdfInkElId) === "pdf", "the page exported to a one-page PDF and dropped back as a PDF element (" + (ok ? pdfInkElId : "export failed") + ")")
+                    pdfInkRows0 = canvas.undoHistory().length
+                    ++step; return
+                }
+                if (step === 2) { root.setActiveTab(pdfInkElId); ++step; return }
+                if (step < 40) {   // the PdfDocument loads and the list lays its pages out
+                    const li = root.pdfListItem
+                    if (!(root.pdfTabOpen && li && li.count > 0 && li.itemAtIndex(0) && li.itemAtIndex(0).width > 0)) { ++step; return }
+                    step = 40; return
+                }
+                if (step === 40) {
+                    const li = root.pdfListItem, pg = li.itemAtIndex(0), rect = pg.page
+                    check(mediaHost.valid && mediaHost.kind === "pdf" && mediaHost.pages >= 1 && mediaHost.w > 0 && !pg.capture.active, "the PDF view is up on the element's host (" + mediaHost.pages + " page(s), " + mediaHost.w + " pt wide); nothing captures the mouse with the pointer tool")
+                    g.key(root, Qt.Key_P)
+                    check(root.inspector.drawTool === "freehand" && root.pdfDrawing && pg.capture.active, "P arms the pen in the PDF tab and the page's capture goes live")
+                    const w = rect.width, h = rect.height
+                    g.drag(rect, w * 0.2, h * 0.2, w * 0.5, h * 0.3, 6)
+                    const e0 = mediaHost.pageInk(0), s0 = shapes(e0)
+                    check(s0 === 1, "a drag on the page commits ONE stroke into page 0's ink (" + s0 + ")")
+                    let p0 = null, wid = 0
+                    try { const sh = JSON.parse(e0).shapes[0]; p0 = sh.points[0]; wid = sh.stroke_width } catch (e) {}
+                    check(!!p0 && p0[0] > 0.1 && p0[0] < 0.3 && p0[1] > 0.1 && p0[1] < 0.3, "…normalized over the page (first point " + JSON.stringify(p0) + ")")
+                    check(Math.abs(wid - root.inspector.drawWidth * mediaHost.w / w) < 0.05, "…its width in SOURCE px (" + wid.toFixed(2) + " for " + root.inspector.drawWidth + " px on a " + Math.round(w) + "-px page of " + mediaHost.w + " pt)")
+                    check(canvas.undoHistory().length === pdfInkRows0 + 1 && root.undoTarget === canvas, "…as ONE row on the canvas's log (the element's owner)")
+                    g.key(root, Qt.Key_L)
+                    g.drag(rect, w * 0.3, h * 0.6, w * 0.7, h * 0.6, 4)
+                    check(shapes(mediaHost.pageInk(0)) === 2 && canvas.undoHistory().length === pdfInkRows0 + 2, "a line is a second stroke, a second row")
+                    ++step; return
+                }
+                if (step === 41) { ++step; return }   // a tick for the page's ink item to tessellate (no idle fallthrough in this probe)
+                if (step === 42) {
+                    const li = root.pdfListItem, pg = li.itemAtIndex(0), rect = pg.page, w = rect.width, h = rect.height
+                    check(pg.inkItem.strokeCount === 2, "the page's ink item renders both strokes (" + pg.inkItem.strokeCount + ")")
+                    g.key(root, Qt.Key_Z, Qt.ControlModifier)
+                    check(shapes(mediaHost.pageInk(0)) === 1, "⌘Z in the PDF tab undoes the last stroke on the owner's log")
+                    g.key(root, Qt.Key_Z, Qt.ControlModifier | Qt.ShiftModifier)
+                    check(shapes(mediaHost.pageInk(0)) === 2, "⌘⇧Z redoes it")
+                    g.key(root, Qt.Key_E)
+                    check(root.inspector.drawTool === "eraser" && pg.capture.active, "E arms the eraser")
+                    g.click(rect, w * 0.5, h * 0.6)   // on the line
+                    check(shapes(mediaHost.pageInk(0)) === 1, "an eraser click on the line removes it, the freehand stays (" + shapes(mediaHost.pageInk(0)) + ")")
+                    g.click(rect, w * 0.9, h * 0.9)   // empty paper
+                    check(shapes(mediaHost.pageInk(0)) === 1 && canvas.undoHistory().length === pdfInkRows0 + 3, "…a click on empty paper changes nothing (rows +" + (canvas.undoHistory().length - pdfInkRows0) + ")")
+                    g.key(root, Qt.Key_P)
+                    g.keyPress(root, Qt.Key_Space)
+                    check(root.pdfSpaceHeld && !root.pdfDrawing && !pg.capture.active, "Space held parks the pen (the hand scrolls the list)")
+                    g.keyRelease(root, Qt.Key_Space)
+                    check(!root.pdfSpaceHeld && pg.capture.active, "…and releasing it re-arms the pen")
+                    g.key(root, Qt.Key_Escape)
+                    check(root.inspector.drawTool === "select" && !pg.capture.active && root.pdfTabOpen, "Escape drops the tool first, the PDF view stays")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return   // the element is selected AFTER the canvas is visible again (closeElementTab's callLater)
+                }
+                if (step === 43) {
+                    check(root.activeCanvas && !root.pdfTabOpen && cvw.selectedId === pdfInkElId, "the next Escape returns to the canvas with the PDF selected")
+                    const inkJson = JSON.parse(canvas.elementJson(pdfInkElId) || "{}")
+                    check(!!inkJson.ink && shapes(JSON.stringify(inkJson.ink["0"])) === 1 && Object.keys(inkJson.ink).length === 1, "the element's json carries the page-0 envelope only")
+                    nextPhase("pdfink")
                     console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                     Qt.exit(Math.min(fails, 100))
                 }
@@ -6625,9 +6715,11 @@ FocusScope {
         // PdfDocument.source would bind to "" and QML's PdfDocument logs
         // "Cannot open:" on every empty source — the Loader keeps it uninstantiated.
         Loader {
+            id: pdfLoader
             anchors.fill: parent
             active: root.pdfTabOpen
             sourceComponent: Item {
+                readonly property var list: pdfList   // probe
                 PdfDocument {
                     id: pdfFrameDoc
                     source: mediaHost.url
@@ -6670,6 +6762,9 @@ FocusScope {
                     }
                     delegate: Item {
                         required property int index
+                        readonly property var capture: pageCapture   // probe
+                        readonly property var inkItem: pageInkItem   // probe
+                        readonly property var page: pageRect         // probe
                         readonly property size pts: pdfFrameDoc.status === PdfDocument.Ready
                             ? pdfFrameDoc.pagePointSize(index) : Qt.size(8.5, 11)
                         // Reserve a full scrollbar width on each side of the centered page
@@ -6679,6 +6774,7 @@ FocusScope {
                         height: pts.width > 0 ? Math.round(pageW * pts.height / pts.width)
                                               : Math.round(pageW * 1.294)
                         Rectangle {   // white page with a hairline edge on the dark backdrop
+                            id: pageRect
                             anchors.horizontalCenter: parent.horizontalCenter
                             width: pageW; height: parent.height
                             color: "white"; border.width: 1; border.color: Theme.colors.border
@@ -6699,15 +6795,38 @@ FocusScope {
                                 Connections { target: pageImg.parent; function onWidthChanged() { settle.restart() } }
                                 sourceSize.width: Math.round(settledW * Screen.devicePixelRatio)
                             }
-                            // Per-PAGE ink (2.0 stage 1): the page's media ink, view-only through the GPU
-                            // ink item. Drawing on PDF pages returns with the canvas tools (stage 2).
+                            // Per-PAGE ink: the page's media ink through the GPU ink item (normalized over the
+                            // page, widths in source px — the item scales them by frameW / sourceW).
                             InkNodeItem {
+                                id: pageInkItem
                                 anchors.fill: parent
                                 envelope: (mediaHost.revision, root.pdfTabOpen ? mediaHost.pageInk(index) : "")
                                 frameW: width; frameH: height
                                 sourceW: Math.max(1, mediaHost.w)
                                 sourceH: Math.max(1, mediaHost.h)
                             }
+                            // Drawing on the page (2026-10-19): the canvas pen capture over the page item at zoom 1.
+                            // A committed stroke is appended to THIS page's ink through the host (one owner-log
+                            // entry — the page's or the canvas's); the eraser removes the stroke under the pointer.
+                            // Inactive, the capture refuses the mouse and a drag scrolls the list as before.
+                            CanvasInkCapture {
+                                id: pageCapture
+                                anchors.fill: parent; z: 2
+                                active: root.pdfDrawing
+                                tool: root.inspector ? root.inspector.drawTool : "type"
+                                color: root.inspector ? root.inspector.drawColor : "#ff0000"
+                                strokeWidth: root.inspector ? root.inspector.drawWidth : 6
+                                zoom: 1; panX: 0; panY: 0
+                                onStrokeCommitted: (json, rect) => mediaHost.addPageStroke(index, json, rect.x, rect.y, width, height)
+                                onEraseAt: (x, y) => mediaHost.erasePageStrokeAt(index, x, y, width, height)
+                                InkNodeItem {   // the in-progress stroke
+                                    anchors.fill: parent
+                                    envelope: pageCapture.liveEnvelope
+                                    frameW: width; frameH: height; sourceW: width; sourceH: height
+                                    pxScale: 1
+                                }
+                            }
+                            HoverHandler { enabled: root.pdfDrawing; cursorShape: Qt.CrossCursor }
                         }
                     }
                 }

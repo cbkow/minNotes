@@ -19,8 +19,9 @@ canvas**, as cards. Drag a file into a page, or paste from the clipboard:
   press-and-hold fast forward / rewind, and the full transport keys while
   the video has the caret. Notes are interchangeable with
   [QCView](https://qcview.com).
-- **PDF** — paged inline with prev / next; open full-frame to read and
-  zoom. The PDF file is never modified.
+- **PDF** — paged inline with prev / next; open full-frame to read, zoom
+  and draw on its pages (see [Drawing & Video](annotations.md)). The PDF
+  file is never modified.
 - **Other files** — an attachment chip; double-click to reveal in Finder /
   Explorer.
 

@@ -53,10 +53,11 @@ bool CanvasInkCapture::isStrokeTool() const {
 void CanvasInkCapture::mousePressEvent(QMouseEvent* e) {
     if (!active_ || e->button() != Qt::LeftButton) { e->ignore(); return; }
     beginStroke(e->position().x(), e->position().y());
+    setKeepMouseGrab(true);   // inside a Flickable (the PDF view's page list) the drag must never become a flick
     e->accept();
 }
 void CanvasInkCapture::mouseMoveEvent(QMouseEvent* e) { if (drawing_) movePoint(e->position().x(), e->position().y()); e->accept(); }
-void CanvasInkCapture::mouseReleaseEvent(QMouseEvent* e) { if (drawing_) endStroke(e->position().x(), e->position().y()); e->accept(); }
+void CanvasInkCapture::mouseReleaseEvent(QMouseEvent* e) { if (drawing_) endStroke(e->position().x(), e->position().y()); setKeepMouseGrab(false); e->accept(); }
 
 void CanvasInkCapture::beginStroke(qreal x, qreal y) {
     if (tool_ == QLatin1String("eraser")) {

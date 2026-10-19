@@ -33,6 +33,7 @@ public:
     Q_INVOKABLE QString itemsUnder(QQuickItem* item, qreal x, qreal y) const;
     Q_INVOKABLE QString focusItemName() const;   // the window's active focus item (class + objectName), for key walks
     Q_INVOKABLE bool envSet(const QString& name) const;
+    Q_INVOKABLE QString tempDir() const;   // a writable scratch dir for probe files (the OS temp location)
 private:
     void mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier);
     qint64 nextStamp(qint64 advance);

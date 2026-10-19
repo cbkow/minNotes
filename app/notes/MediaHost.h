@@ -79,6 +79,13 @@ public:
     Q_INVOKABLE bool setPageInk(int page, const QString& envelope);    // → the owner's undo log
     Q_INVOKABLE void undo();                                           // the owner's log
     Q_INVOKABLE void redo();
+    // Drawing on a page in the full-frame view (2026-10-19). `localEnvelope` is what CanvasInkCapture commits over
+    // the PAGE ITEM at zoom 1 (element-local px; its bbox at (ox, oy) in a page frame of frameW × frameH px): the
+    // stroke is normalized over the frame, its width converted to SOURCE px (the page ink's unit — the renderer
+    // scales by frameW / sourceW) and appended to the page's envelope → one owner-log entry per stroke.
+    Q_INVOKABLE bool addPageStroke(int page, const QString& localEnvelope, qreal ox, qreal oy, qreal frameW, qreal frameH);
+    // The eraser: removes the topmost stroke within reach of (fx, fy) frame px (half its pen + 4, at least 6).
+    Q_INVOKABLE bool erasePageStrokeAt(int page, qreal fx, qreal fy, qreal frameW, qreal frameH);
 
 signals:
     void sourceChanged();
