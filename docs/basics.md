@@ -46,7 +46,8 @@ threads. Hits group by source with the current page's first; a snippet
 shows each match. `↑` / `↓` walk the list and `Return` jumps: a page hit
 opens the page with the match selected, a card hit selects it on the
 canvas, a PDF hit opens that page, a video note opens the studio at that
-frame. `Esc` closes. A PDF's text is read once, the first time you search
+frame. `Esc` closes the search, from the field or from the page, before it does
+anything else. A PDF's text is read once, the first time you search
 after adding it, and kept in the file.
 
 <!-- ![The search bar with results](images/mn036.png) -->

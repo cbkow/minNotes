@@ -3245,6 +3245,10 @@ FocusScope {
         var shift = (event.modifiers & Qt.ShiftModifier) !== 0
         var cmd = (event.modifiers & Qt.ControlModifier) !== 0   // Cmd on macOS (Qt maps it)
         var k = event.key
+        // An open search bar is the topmost thing Esc dismisses, wherever focus is (after a jump the match is
+        // selected in the page: without this rung the first Esc collapsed the selection and the second left for
+        // the canvas, and the bar stayed). The field's own Escape does the same.
+        if (k === Qt.Key_Escape && root.searchItem && root.searchItem.open) { root.searchItem.hide(); event.accepted = true; return }
         if (k === Qt.Key_Escape && (!root.activeCanvas || root.activeElementId !== "" || root.cardHosted)) {   // (the canvas has its own Escape, below)
             // Cancel the current op: block-drag (revert, no move) → text-drag →
             // collapse selection → disarm format toggle. In a table: collapse the
@@ -5345,10 +5349,13 @@ FocusScope {
                 if (step === 8) {
                     check(!root.activeCanvas && canvas.focusPage === searchPageId && cursor.focusRow === 1 && cursor.hasSel && blockModel.contentForRow(1).substr(cursor.loCol, cursor.hiCol - cursor.loCol) === "zebra-quartz",
                           "Enter on the page hit opens the page with the match selected (row " + cursor.focusRow + ", sel " + cursor.hasSel + ", '" + blockModel.contentForRow(1).substr(cursor.loCol, cursor.hiCol - cursor.loCol) + "')")
-                    sb.hide(); ++step; return
+                    gestures.key(root, Qt.Key_Escape); ++step; return   // the REAL key with focus in the page (the match selected)
                 }
                 if (step === 10) {
-                    check(!sb.open && sb.height === 0 && root.activeFocus, "Escape closes the bar and hands focus back to the editor")
+                    check(!sb.open && sb.height === 0 && root.activeFocus && !root.activeCanvas && canvas.focusPage === searchPageId,
+                          "Escape from the page closes the bar first — the page stays (open " + sb.open + ", canvas " + root.activeCanvas + ")")
+                    gestures.key(root, Qt.Key_Escape)
+                    check(!root.activeCanvas && cursor.hasSel === false, "the next Escape runs the page's own chain (the selection collapses; canvas " + root.activeCanvas + ")")
                     canvas.pageModel(searchPageId).setContent(1, searchRowWas)
                     canvas.removeElement(searchChipId)
                     root.setActiveTab("canvas")

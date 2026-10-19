@@ -1,7 +1,8 @@
 // Search (v2.0.1): ⌘F opens this strip under the toolbar — one field, the hit count, a close box — and the results
 // drop down beneath it as a list grouped by source (This page · Pages · Cards · PDFs · Video notes · Comments; the
 // current page's hits first, the engine's order). Live as you type (a short debounce); ↑ / ↓ walk, Return jumps,
-// Escape closes and hands focus back to the editor. Scope = the whole file, never other files. House style: 30 px,
+// Escape closes and hands focus back to the editor — from the field AND from the page or canvas while the bar is open
+// (the Editor's key handler checks `searchItem.open` before its own Escape chain). Scope = the whole file, never other files. House style: 30 px,
 // chrome 13, squared, the strip tone; the list a surface with a 1-px border.
 import QtQuick
 import QtQuick.Controls
