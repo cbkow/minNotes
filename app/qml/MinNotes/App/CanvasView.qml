@@ -63,8 +63,10 @@ Rectangle {
         measureChip.font.pixelSize = size
         measureChip.wrapMode = spec.fixedW ? Text.Wrap : Text.NoWrap
         measureChip.width = spec.fixedW ? Math.max(8, boxW - 2 * pad - 4) : 100000
-        measureChip.text = (spec.text && spec.text !== "") ? spec.text : " "
+        const text = (spec.text && spec.text !== "") ? spec.text : " "
+        measureChip.text = text
         const w = spec.fixedW ? Math.max(24, boxW) : Math.max(24, Math.ceil(measureChip.contentWidth) + 2 * pad + 4)
+        if (text.endsWith("\n")) measureChip.text = text + "x"   // a Text drops a trailing newline from its height; the editor (a TextEdit) shows that empty line, so count it
         const h = Math.max(Math.ceil(size * 1.4), Math.ceil(measureChip.contentHeight) + 2 * pad)
         return Qt.size(w, h)
     }

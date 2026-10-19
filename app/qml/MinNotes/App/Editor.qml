@@ -4655,6 +4655,11 @@ FocusScope {
                     g.type(cvw, "hi there")
                     const live = canvas.elementRect(tid)
                     check(cvw.textEditorItem.editingId === tid && live.width > 40 && live.width < 120, "the box follows the text live while typing (auto width, " + live.width + " wide)")
+                    g.key(cvw, Qt.Key_Return)   // a new, still empty line: the box must grow down at once (a Text drops a trailing newline; the measure counts it)
+                    const live2 = canvas.elementRect(tid)
+                    check(live2.height > live.height + 10 && Math.abs(live2.width - live.width) < 0.01, "Return grows the box by a line before anything is typed on it (" + live.height + " → " + live2.height + ")")
+                    g.key(cvw, Qt.Key_Backspace)
+                    check(Math.abs(canvas.elementRect(tid).height - live.height) < 0.01, "Backspace over the empty line shrinks it back")
                     root.inspector.drawTool = "select"   // (with the text tool still armed a click away would start another chip)
                     g.click(cvw, 8, 8)   // commit by clicking away
                     const spec = JSON.parse(canvas.elementJson(tid) || "{}")
