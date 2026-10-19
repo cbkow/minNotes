@@ -1163,6 +1163,17 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Platform.MenuItem { text: qsTr("Canvas as HTML…"); role: Platform.MenuItem.NoRole; enabled: canvas.documentOpen; onTriggered: win.startExport("canvas") }
                 Platform.MenuItem { text: qsTr("Canvas Poster (PNG)…"); role: Platform.MenuItem.NoRole; enabled: canvas.documentOpen; onTriggered: win.startExport("poster") }
             }
+            Platform.Menu {   // Edit (2.0.1): undo / redo of the surface in front (the page's log or the canvas's) and Find. Undo / Redo
+                              // carry NO key equivalent on purpose: a native one would take ⌘Z before the search field or a chip's TextEdit sees it.
+                title: qsTr("Edit")
+                Platform.MenuItem { text: qsTr("Undo"); role: Platform.MenuItem.NoRole; enabled: !!win.activeEditor && win.activeEditor.undoTarget.canUndo
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.undo() } }
+                Platform.MenuItem { text: qsTr("Redo"); role: Platform.MenuItem.NoRole; enabled: !!win.activeEditor && win.activeEditor.undoTarget.canRedo
+                                    onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.redo() } }
+                Platform.MenuSeparator {}
+                Platform.MenuItem { text: qsTr("Find in File…"); role: Platform.MenuItem.NoRole; shortcut: StandardKey.Find; enabled: blockModel.documentOpen
+                                    onTriggered: win.findInFile() }
+            }
             Platform.Menu {
                 title: qsTr("Document")
                 Platform.MenuItem { text: qsTr("Check Spelling"); role: Platform.MenuItem.NoRole; checkable: true
@@ -1188,9 +1199,6 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             // teaches it), so the items carry no shortcut of their own.
             Platform.Menu {
                 title: qsTr("View")
-                Platform.MenuItem { text: qsTr("Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen
-                                    onTriggered: win.findInFile() }
-                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Full Width"); role: Platform.MenuItem.NoRole; checkable: true
                                     enabled: blockModel.documentOpen
                                     checked: win.activeEditor ? win.activeEditor.fullWidth : false
@@ -1297,6 +1305,13 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("&Canvas as HTML…"); enabled: canvas.documentOpen; onTriggered: win.startExport("canvas") }
                 Action { text: qsTr("Canvas P&oster (PNG)…"); enabled: canvas.documentOpen; onTriggered: win.startExport("poster") }
             }
+            ThemedMenu {   // Edit (2.0.1): see the macOS menu — Undo / Redo without a bound shortcut (the editor routes ⌘Z itself)
+                title: qsTr("&Edit")
+                Action { text: qsTr("&Undo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canUndo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.undo() } }
+                Action { text: qsTr("&Redo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canRedo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.redo() } }
+                MenuSeparator {}
+                Action { text: qsTr("&Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
+            }
             ThemedMenu {
                 title: qsTr("&Document")
                 Action { text: qsTr("Check &Spelling"); checkable: true; checked: spell.checkSpelling
@@ -1318,8 +1333,6 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             }
             ThemedMenu {
                 title: qsTr("&View")
-                Action { text: qsTr("&Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
-                MenuSeparator {}
                 Action { text: qsTr("&Full Width"); checkable: true; enabled: blockModel.documentOpen
                          checked: win.activeEditor ? win.activeEditor.fullWidth : false
                          onToggled: { var ed = win._editor(); if (ed && ed.fullWidth !== checked) ed.toggleFullWidth() } }

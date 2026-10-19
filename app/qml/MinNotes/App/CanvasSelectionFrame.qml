@@ -1,7 +1,9 @@
 // The selected element's frame and handles (2.0), drawn in SCREEN space over the canvas so the
 // chrome stays one pixel wide at every zoom. Edge/corner drags resize through
 // canvas.setElementRect(…, "resize:<id>") — a page keeps only its side handles (its width is its
-// measure; its height follows its content) and the mutator clamps the measure.
+// measure; its height follows its content) and the mutator clamps the measure. A TEXT chip has no
+// top / bottom handle either (its height is its text's); its side and corner handles set the WIDTH,
+// which pins it (the text wraps there); a double-click on one returns it to auto width.
 import QtQuick
 
 Item {
@@ -11,6 +13,7 @@ Item {
     readonly property bool shown: view.selectionCount > 0
     readonly property bool single: view.selectionCount === 1 && canvas.elementKind(id_) !== ""
     readonly property bool isPage: single && canvas.elementKind(id_) === "page"
+    readonly property bool isText: single && canvas.elementKind(id_) === "shape" && view.textSpec(id_).shape === "text"
     readonly property rect world: shown ? (canvas.geometryRevision, view.selectedIds, view.selectionRect()) : Qt.rect(0, 0, 0, 0)
     readonly property point tl: (view.cam.rev, view.cam.worldToScreen(world.x, world.y))
     x: tl.x; y: tl.y
@@ -100,16 +103,16 @@ Item {
     component Handle: Rectangle {
         required property int dx     // -1 left edge, 1 right edge, 0 neither
         required property int dy
-        visible: frame.single   // handles resize ONE element; a set only moves (a page's height too — walk 7c: fixed-height pages)
+        visible: frame.single && !(frame.isText && dx === 0)   // handles resize ONE element; a set only moves (a page's height too — walk 7c: fixed-height pages); a text chip's height is its text's
         width: 8; height: 8; radius: 0
         color: Theme.colors.accent
         z: 3   // above the bar (the bottom handles sit on the picture/bar seam, never on the bar's buttons)
         x: (dx < 0 ? 0 : dx > 0 ? frame.width : frame.width / 2) - 4
         y: (dy < 0 ? 0 : dy > 0 ? frame.pictureH : frame.pictureH / 2) - 4
-        TapHandler {   // a double-click on a top/bottom handle of a page = Fit height to content (back to auto)
-            enabled: frame.isPage && parent.dy !== 0
+        TapHandler {   // a double-click on a top/bottom handle of a page = Fit height to content; on a text chip's handle = Fit width to text (back to auto)
+            enabled: (frame.isPage && parent.dy !== 0) || frame.isText
             acceptedButtons: Qt.LeftButton
-            onDoubleTapped: canvas.fitPageHeight(frame.id_)
+            onDoubleTapped: frame.isPage ? canvas.fitPageHeight(frame.id_) : frame.view.unpinText(frame.id_)
         }
         DragHandler {
             target: null
@@ -119,7 +122,8 @@ Item {
                 if (!active) return
                 const ddx = (centroid.scenePosition.x - centroid.scenePressPosition.x) / frame.view.cam.zoom
                 const ddy = (centroid.scenePosition.y - centroid.scenePressPosition.y) / frame.view.cam.zoom
-                frame.view.resizeSelected(frame.view.edgeResize(start, parent.dx, parent.dy, ddx, ddy, frame.isVideo))   // a video keeps its aspect: nothing to letterbox or crop
+                if (frame.isText) frame.view.resizeTextSelected(start, parent.dx, ddx)   // width only; the text's height follows
+                else frame.view.resizeSelected(frame.view.edgeResize(start, parent.dx, parent.dy, ddx, ddy, frame.isVideo))   // a video keeps its aspect: nothing to letterbox or crop
             }
         }
     }

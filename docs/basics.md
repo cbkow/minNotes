@@ -38,7 +38,7 @@ Closing a file or quitting with unsaved work prompts you first.
 
 ## Search
 
-`⌘F` (**View ▸ Find in File…**) opens a search field under the toolbar.
+`⌘F` (**Edit ▸ Find in File…**) opens a search field under the toolbar.
 It searches the **whole file**: every page's text, the cards on the canvas
 (file names and paths, link titles and addresses, folder entries, text
 chips), the text inside every PDF, each video's QCView notes, and comment

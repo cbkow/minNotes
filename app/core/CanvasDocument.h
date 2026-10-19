@@ -274,6 +274,7 @@ public:
     // a selection's delete). Nested begins fold into the outer batch; a batch of one part is that part.
     Q_INVOKABLE void beginBatch(const QString& label);
     Q_INVOKABLE void endBatch();
+    Q_INVOKABLE void discardBatch();   // end the batch WITHOUT a history row — for a run whose parts net to nothing (a chip added, sized and removed empty)
 
     Document& db() { return db_; }
     const Document& db() const { return db_; }

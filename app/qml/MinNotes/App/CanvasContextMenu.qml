@@ -60,6 +60,8 @@ Popup {
         Row { label: qsTr("Previous page");  show: menu.view.selectedIsPdf; onTriggered: menu.view.pdfStepSelected(-1) }
         Row { label: qsTr("Fit height to content"); show: menu.n === 1 && menu.kind1 === "page" && canvas.pageHeightFixed(menu.view.selectedId)
               onTriggered: canvas.fitPageHeight(menu.view.selectedId) }   // a hand-sized page back to auto height (walk 7c)
+        Row { label: qsTr("Fit width to text"); show: (canvas.elementsRevision, menu.n === 1 && menu.kind1 === "shape" && menu.view.textFixed(menu.view.selectedId))
+              onTriggered: menu.view.unpinText(menu.view.selectedId) }   // a pinned-width text chip back to auto width (2026-10-19)
         Row { label: qsTr("Duplicate");      show: menu.anyNonPage;        onTriggered: menu.view.duplicateSelected() }
         Row { label: qsTr("Bring to front"); show: menu.n > 0;             onTriggered: menu.view.frontSelected() }
         Row { label: qsTr("Send to back");   show: menu.n > 0;             onTriggered: menu.view.backSelected() }

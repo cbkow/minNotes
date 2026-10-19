@@ -113,7 +113,10 @@ selection.
 
 Text boxes take the pen color as their fill with contrasting type; the
 plain text tool writes in the text color with no box. Both start at the
-body size; double-click a chip to edit it.
+body size; double-click a chip to edit it. A chip fits its text: the box
+grows as you type. Drag a side handle and the width stays where you put it,
+the text wraps there and the box grows down to hold it; double-click a side
+handle (or choose **Fit width to text**) to let it fit its text again.
 
 ## Exporting the canvas
 

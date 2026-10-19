@@ -4607,9 +4607,9 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 9) {
-                    // (commit through the editor's text: set it, then commit)
                     const tid2 = canvasItem.textEditorItem.editingId
-                    canvasItem.textEditorItem.editingId = tid2
+                    canvasItem.textEditorItem.commit()   // empty → removed, and its batch discarded (an open batch would swallow the next phases' rows)
+                    check(canvas.elementKind(tid2) === "", "the second empty chip is removed on commit")
                     ++step; return
                 }
                 nextPhase("interaction"); return
@@ -4653,6 +4653,8 @@ FocusScope {
                     const tid = cvw.selectedId
                     check(canvas.elementCount() === n0 + 1 && tid !== "" && canvas.elementKind(tid) === "shape" && cvw.textEditorItem.editingId === tid, "a text-tool tap makes a chip and opens its editor")
                     g.type(cvw, "hi there")
+                    const live = canvas.elementRect(tid)
+                    check(cvw.textEditorItem.editingId === tid && live.width > 40 && live.width < 120, "the box follows the text live while typing (auto width, " + live.width + " wide)")
                     root.inspector.drawTool = "select"   // (with the text tool still armed a click away would start another chip)
                     g.click(cvw, 8, 8)   // commit by clicking away
                     const spec = JSON.parse(canvas.elementJson(tid) || "{}")
@@ -4666,6 +4668,13 @@ FocusScope {
                     check(cvw.textEditorItem.editingId === tid, "a double-click on a chip edits it again")
                     g.key(cvw, Qt.Key_Escape)
                     check(cvw.textEditorItem.editingId === "" && JSON.parse(canvas.elementJson(tid)).text === "hi there", "Escape commits (unchanged text)")
+                    const ra = canvas.elementRect(tid)
+                    cvw.resizeTextSelected(ra, 1, 36 - ra.width)   // the right handle dragged in to 36 wide
+                    const rp = canvas.elementRect(tid), sp = JSON.parse(canvas.elementJson(tid))
+                    check(sp.fixedW === true && Math.abs(rp.width - 36) < 0.01 && rp.height > ra.height, "a side-handle drag pins the width: the text wraps and the box grows down (" + rp.width + "×" + rp.height + " from " + ra.width + "×" + ra.height + ")")
+                    cvw.unpinText(tid)
+                    const ru = canvas.elementRect(tid)
+                    check(!JSON.parse(canvas.elementJson(tid)).fixedW && Math.abs(ru.width - ra.width) < 0.01 && Math.abs(ru.height - ra.height) < 0.01, "Fit width to text unpins: back to the auto size (" + ru.width + "×" + ru.height + ")")
                     textId = tid
                     ++step; return
                 }

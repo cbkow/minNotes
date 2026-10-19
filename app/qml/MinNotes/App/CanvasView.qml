@@ -43,13 +43,55 @@ Rectangle {
         const ink = editor.inspector ? "" + editor.inspector.fgColor : "" + Theme.colors.text
         const spec = plain ? { shape: "text", text: "", fontSize: size, fill: "transparent", color: ink }   // plain: no box, the TEXT colour (user, 2026-10-18)
                            : { shape: "text", text: "", fontSize: size, fill: pen }
-        const id = canvas.addShapeElement(JSON.stringify(spec), Qt.rect(w.x, w.y, Math.max(120, size * 6), size * 1.4 + Math.round(size * 0.6)))
-        if (id === "") return ""
+        canvas.beginBatch(qsTr("Text"))   // ONE history row for the chip + its text + its size (the editor ends it on commit; discarded if it ends empty)
+        const s0 = chipSize(spec, 0)      // a fresh chip is a caret's box: it only ever grows from here
+        const id = canvas.addShapeElement(JSON.stringify(spec), Qt.rect(w.x, w.y, s0.width, s0.height))
+        if (id === "") { canvas.discardBatch(); return "" }
         select(id)
-        textEditor.begin(id)
+        textEditor.begin(id, true)
         return id
     }
-    function editText(id) { if (canvas.elementKind(id) === "shape") { select(id); textEditor.begin(id) } }
+    function editText(id) { if (canvas.elementKind(id) === "shape") { select(id); textEditor.begin(id, false) } }
+    // Text chips size by ONE rule (2026-10-19; user: the box did not follow typing, then grew to one line, then wrapped on a
+    // resize): AUTO WIDTH by default — the box fits the text with no wrap and grows as you type; a side / corner handle
+    // drag PINS the width (`fixedW`) — the text wraps at it and the HEIGHT follows the content, while typing and after.
+    // Height is never user-set for text. `chipSize` is the one measure (the editor, the resize, the paste path and the
+    // renderer's padding agree), so nothing jumps on commit. Pasted text longer than 480 px starts pinned at 480.
+    Text { id: measureChip; visible: false; font.family: Theme.font.body }
+    function chipSize(spec, boxW) {   // world px → the chip's size for its text at its font (boxW matters only when pinned)
+        const size = spec.fontSize ? spec.fontSize : Theme.font.sizeBody, pad = Math.round(size * 0.3)
+        measureChip.font.pixelSize = size
+        measureChip.wrapMode = spec.fixedW ? Text.Wrap : Text.NoWrap
+        measureChip.width = spec.fixedW ? Math.max(8, boxW - 2 * pad - 4) : 100000
+        measureChip.text = (spec.text && spec.text !== "") ? spec.text : " "
+        const w = spec.fixedW ? Math.max(24, boxW) : Math.max(24, Math.ceil(measureChip.contentWidth) + 2 * pad + 4)
+        const h = Math.max(Math.ceil(size * 1.4), Math.ceil(measureChip.contentHeight) + 2 * pad)
+        return Qt.size(w, h)
+    }
+    function textSpec(id) { try { return JSON.parse(canvas.elementJson(id) || "{}") } catch (e) { return {} } }
+    function textFixed(id) { return canvas.elementKind(id) === "shape" && !!textSpec(id).fixedW }
+    function fitTextChip(id, key) {   // the rect from the spec: its width when pinned, the text's when auto; the height always the text's
+        const r = canvas.elementRect(id), s = chipSize(textSpec(id), r.width)
+        if (Math.abs(s.width - r.width) > 0.5 || Math.abs(s.height - r.height) > 0.5) canvas.setElementRect(id, Qt.rect(r.x, r.y, s.width, s.height), key)
+    }
+    function resizeTextSelected(start, dx, ddx) {   // a side / corner handle on a text chip: width only (min 24); the first drag pins it
+        const id = selectedId; if (id === "") return
+        let x = start.x, w = start.width
+        if (dx < 0) { x = Math.min(start.x + ddx, start.x + start.width - 24); w = start.x + start.width - x }
+        else if (dx > 0) w = Math.max(24, start.width + ddx)
+        const spec = textSpec(id)
+        if (!spec.fixedW) { spec.fixedW = true; canvas.setElementJson(id, JSON.stringify(spec), "resize:" + id) }   // the rect writes fold into this entry
+        const s = chipSize(spec, w)
+        canvas.setElementRect(id, Qt.rect(x, start.y, w, s.height), "resize:" + id)
+    }
+    function unpinText(id) {   // back to auto width: a double-click on a side handle, or the context row
+        const spec = textSpec(id); if (!spec.fixedW) return
+        delete spec.fixedW
+        canvas.beginBatch(qsTr("Fit width to text"))
+        canvas.setElementJson(id, JSON.stringify(spec))
+        fitTextChip(id, "")
+        canvas.endBatch()
+    }
     readonly property var textEditorItem: textEditor   // probe
     function emptyAt(sx, sy) { const w = cam.screenToWorld(sx, sy); return canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01).length === 0 }
 
@@ -186,12 +228,11 @@ Rectangle {
         if (t === "") return ""
         const w = cam.screenToWorld(sx, sy)
         if (/^https?:\/\/\S+$/i.test(t)) return dropUrl(t, w.x, w.y)
-        const size = 14, pad = Math.round(size * 0.3)
-        measureText.text = t
-        const tw = Math.min(480, Math.ceil(measureText.contentWidth) + 2 * pad + 4), th = Math.ceil(measureText.contentHeight) + 2 * pad
-        return canvas.addShapeElement(JSON.stringify({ shape: "text", text: t, fontSize: size, fill: "" + Theme.colors.text }), Qt.rect(w.x, w.y, Math.max(60, tw), Math.max(size * 1.4, th)))
+        const spec = { shape: "text", text: t, fontSize: 14, fill: "" + Theme.colors.text }
+        let s = chipSize(spec, 0)
+        if (s.width > 480) { spec.fixedW = true; s = chipSize(spec, 480) }   // long text wraps at 480 and keeps that width (pinned)
+        return canvas.addShapeElement(JSON.stringify(spec), Qt.rect(w.x, w.y, s.width, s.height))
     }
-    Text { id: measureText; visible: false; width: 480 - 12; wrapMode: Text.Wrap; font.family: Theme.font.body; font.pixelSize: 14 }
     // "Add link…" (2026-10-18): a typed URL becomes a bookmark element (or a remote image) at the point — the drop
     // and paste paths' third door. The prompt is the editor's ⌘K popup, squared, under the point.
     readonly property var linkPrompt: linkPromptPopup   // probe

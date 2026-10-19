@@ -6657,9 +6657,9 @@ static void testCanvasHtml() {
     CHECK(html.contains(QLatin1String("<svg class=\"el ink\"")) && html.contains(QLatin1String("viewBox=\"0 0 100 100\"")) && html.contains(QLatin1String("<path d=\"M0 0L50 20L100 0\" fill=\"none\" stroke=\"#ff0000\" stroke-width=\"4\""))
           && html.contains(QLatin1String("<rect x=\"10\" y=\"30\" width=\"80\" height=\"40\" fill=\"none\" stroke=\"#00ff00\"")) && html.contains(QLatin1String("<polygon points=\"100 90 ")) && html.contains(QLatin1String("<ellipse cx=\"50\" cy=\"50\" rx=\"20\" ry=\"10\" fill=\"rgba(255,255,0,0.5)\"")),
           "ink as SVG: a polyline path, a rect, an arrow with its head, a filled oval, in element-local px");
-    CHECK(html.contains(QLatin1String("class=\"el text box\"")) && html.contains(QLatin1String("font-size:18px")) && html.contains(QLatin1String("a &lt;chip&gt; &amp; more")) && html.contains(QLatin1String("color:#000000;background:#ffffff")),
+    CHECK(html.contains(QLatin1String("class=\"el text box auto\"")) && html.contains(QLatin1String("font-size:18px")) && html.contains(QLatin1String("a &lt;chip&gt; &amp; more")) && html.contains(QLatin1String("color:#000000;background:#ffffff")),
           "a FILLED text chip: a box in its fill with contrast glyphs (black over white), escaped, at its size");
-    CHECK(html.contains(QLatin1String("class=\"el text\" style=")) && html.contains(QLatin1String("plain words")) && html.contains(QLatin1String("font-size:14px;padding:4px;color:#4aa8ff\"")) && !html.contains(QLatin1String("color:#4aa8ff;background")),
+    CHECK(html.contains(QLatin1String("class=\"el text auto\" style=")) && html.contains(QLatin1String("plain words")) && html.contains(QLatin1String("font-size:14px;padding:4px;color:#4aa8ff\"")) && !html.contains(QLatin1String("color:#4aa8ff;background")),
           "a PLAIN text chip (the ⇧T tool): no box, its own text colour, the body size");
     CHECK(html.contains(QLatin1String("<figure class=\"el media image\"")) && html.contains(QLatin1String("<div class=\"inkwrap\"><img src=\"assets/")) && html.contains(QLatin1String("-ink.png\" alt=\"\" style=\"left:0;top:0;width:100%\">")),
           "an image element's frame ink (json.ink[0]) rides the card as a toggleable layer with the lightbox's geometry");

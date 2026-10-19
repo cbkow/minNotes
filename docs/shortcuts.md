@@ -18,7 +18,7 @@ Shift, **⌥** is Alt/Option.
 | Save | ⌘S |
 | Save As… | ⌘⇧S |
 | Close file | ⌘W |
-| Find in file (pages, cards, PDFs, video notes, comments) | ⌘F |
+| Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes, comments) | ⌘F |
 | Walk the hits · jump · close | ↑ / ↓ · Return · Esc |
 
 ## View

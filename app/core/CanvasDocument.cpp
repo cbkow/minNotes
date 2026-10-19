@@ -1550,6 +1550,12 @@ void CanvasDocument::beginBatch(const QString& label) {
     if (batchDepth_++ == 0) { batch_ = UndoEntry{}; batch_.label = label; }
 }
 
+void CanvasDocument::discardBatch() {
+    if (batchDepth_ <= 0) return;
+    if (--batchDepth_ > 0) return;
+    batch_ = UndoEntry{};
+}
+
 void CanvasDocument::endBatch() {
     if (batchDepth_ <= 0) return;
     if (--batchDepth_ > 0) return;

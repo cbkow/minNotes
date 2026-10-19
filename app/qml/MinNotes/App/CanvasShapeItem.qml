@@ -28,7 +28,7 @@ Item {
         Text {
             anchors.fill: parent; anchors.margins: Math.round(sh.fontSize * 0.3)
             text: sh.spec.text || ""
-            wrapMode: Text.Wrap
+            wrapMode: Text.Wrap   // an auto-width chip's rect fits its text (CanvasView.chipSize), so this only wraps a PINNED width — or a legacy rect
             color: sh.textColor
             font.family: Theme.font.body; font.pixelSize: sh.fontSize
         }

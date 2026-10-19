@@ -197,6 +197,7 @@ a.ufblink{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
 a.bookmark{color:inherit;text-decoration:none}
 svg.el{overflow:visible}
 .text{white-space:pre-wrap;color:var(--text);font-family:'Aspekta',system-ui,sans-serif;line-height:1.4}
+.text.auto{white-space:pre}
 #mn-reader{position:fixed;left:0;right:0;top:30px;bottom:0;overflow:auto;background:var(--bg)}
 #mn-reader[hidden],#mn-store{display:none}
 #mn-reader main{max-width:none;margin:0;padding:48px 48px 96px}
@@ -412,7 +413,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                 const double size = o.value(QStringLiteral("fontSize")).toDouble(14);
                 const TextChipLook look = textChipLook(o);
                 body += QStringLiteral("<div class=\"el text%1\" style=\"%2;font-size:%3;padding:%4;color:%5%6\">%7</div>\n")
-                            .arg(look.plain ? QString() : QStringLiteral(" box"), style(e), px(size), px(std::round(size * 0.3)), esc(look.text.isValid() ? cssColor(look.text) : QStringLiteral("var(--text)")),
+                            .arg((look.plain ? QString() : QStringLiteral(" box")) + (o.value(QStringLiteral("fixedW")).toBool() ? QString() : QStringLiteral(" auto")), style(e), px(size), px(std::round(size * 0.3)), esc(look.text.isValid() ? cssColor(look.text) : QStringLiteral("var(--text)")),
                                  look.plain ? QString() : QStringLiteral(";background:%1").arg(cssColor(look.fill)), esc(o.value(QStringLiteral("text")).toString()));
             }
         }
