@@ -32,8 +32,6 @@ PDF — it shows on the inline preview, on the canvas card, in the PDF's
 frame, and exports as marked-up page images. The PDF file itself is never
 touched.
 
-![A PDF open full-window](images/mn019.png)
-
 ## Video
 
 Open a video full-window for the review studio: scrub with skim audio,

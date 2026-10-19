@@ -99,12 +99,12 @@ selection with `⌘\`.
 ### Colours
 
 The three clips at the right end of the toolbar are the **text**,
-**highlight** and **pen** colours. Click one to open the palette for that
-layer: pick a swatch with text selected to colour it; with nothing
-selected the colour arms for what you type next. **Apply** colours the
-current selection with the armed colour, **Revert** clears back to the
+**highlight** and **pen** colors. Click one to open the palette for that
+layer: pick a swatch with text selected to color it; with nothing
+selected the color arms for what you type next. **Apply** colors the
+current selection with the armed color, **Revert** clears back to the
 default, and the bottom row holds your own saved swatches. The same
-palette colours table selections — whole rows and columns included (see
+palette colors table selections — whole rows and columns included (see
 [Tables](tables.md)).
 
 ![The colour palette](images/mn009.png)

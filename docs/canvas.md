@@ -13,7 +13,7 @@ zoom with `⌘+` / `⌘−`, `⌘`-wheel, or a pinch; `⌘1` fits everything in 
 window and `⌘0` returns to 100%. The zoom badge at the right end of the
 toolbar shows the level and opens a slider.
 
-<!-- ![A canvas with pages, media and ink](images/mn030.png) -->
+![A canvas with pages, media and ink](images/mn030.png) 
 
 ## Pages
 
@@ -23,7 +23,7 @@ first). Type, paste, use every block feature; the wheel scrolls inside
 the card; `⌥`-drag pans the canvas around it. `Esc` hands you back the
 canvas with the page selected.
 
-<!-- ![A live page card](images/mn031.png) -->
+![A live page card](images/mn031.png) 
 
 To open a page **full-window**, click the open glyph at the card's
 top-right, `Shift`-double-click it, pick **Open page** from its menu, or
@@ -61,7 +61,7 @@ shows its **full path**, and its menu offers **Reveal in Finder /
 Explorer**, **Open in ufb**, and **Copy path** — see
 [Media](media.md) for where files live.
 
-<!-- ![Folder, file, link and audio cards](images/mn034.png) -->
+![Folder, file, link and audio cards](images/mn034.png) 
 
 ## Selecting and arranging
 
@@ -72,7 +72,7 @@ Duplicate, Bring to front, Send to back, Delete, and the rows that fit the
 card. Every gesture is one undo step on the canvas's own history; inside a
 live page, `⌘Z` works on the page.
 
-<!-- ![The canvas context menu](images/mn033.png) -->
+![The canvas context menu](images/mn033.png) 
 
 With a **video** selected the keyboard is its transport: `Space` (or
 `K`, `W`, `S`) plays and pauses, `←` / `→` (or `Q` / `E`) step frames,
@@ -81,7 +81,7 @@ the review speed, `V` loops, `M` mutes. The tool letters wait until the
 video is deselected. The counter shows timecode; click it to flip every
 player to frames.
 
-<!-- ![A selected video with its transport](images/mn032.png) -->
+![A selected video with its transport](images/mn032.png) 
 
 ## Drawing
 
@@ -109,10 +109,10 @@ elements: select, move, duplicate and reorder them like anything else.
 `Esc` cancels a stroke in progress, then drops the tool, then clears the
 selection.
 
-<!-- ![Ink and shapes on the canvas](images/mn018.png) -->
+![Ink and shapes on the canvas](images/mn018.png) 
 
-Text boxes take the pen colour as their fill with contrasting type; the
-plain text tool writes in the text colour with no box. Both start at the
+Text boxes take the pen color as their fill with contrasting type; the
+plain text tool writes in the text color with no box. Both start at the
 body size; double-click a chip to edit it.
 
 ## Exporting the canvas

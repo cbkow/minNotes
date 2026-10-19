@@ -60,8 +60,6 @@ trouble shared storage usually brings.
 - Local files copy into the file's media folder automatically; network
   shares stay referenced in place, with cross-OS path mapping
 
-![A page open full-window](images/mn001c.png)
-
 ### Files
 - Import: Markdown, text, CSV/TSV, HTML, Word, Excel, OpenDocument,
   source code, RTF (macOS), Evernote, Notion
