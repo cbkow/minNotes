@@ -15,6 +15,8 @@
 #include "../app/notes/CanvasInkCapture.h"
 #include "Exporter.h"
 #include "CanvasExporter.h"
+#include "../notes/annotation_io.h"
+#include "SearchEngine.h"
 #include "Importer.h"
 #include "TableGrid.h"
 #include <QTextDocument>
@@ -6687,6 +6689,61 @@ static void testCanvasHtml() {
     CHECK(!ex.exportHtml(dir.filePath(QStringLiteral("nodir/x.html")), true) && !ex.lastError().isEmpty(), "an unwritable path fails with a reason");
 }
 
+// [143] Search (v2.0.1): ONE file — the current page's hits first, then the other pages, cards, PDF text (cached in the
+// file), video notes, comments; folded matching; every hit carries what its jump needs.
+static void testSearch() {
+    qInfo("[143] search (v2.0.1): the current page's hits first, then pages / cards / PDF text (cached in the .mnd) / video notes / comments; case + accent folding; hits carry their jump targets");
+    QTemporaryDir dir;
+    CanvasDocument c; CHECK(c.newCanvas(), "canvas");
+    const QString p1 = c.firstPageId();
+    c.pageModel(p1)->setContent(0, QStringLiteral("Québec quartz on page one"));
+    const QString p2 = c.addPage(); c.pageModel(p2)->setContent(0, QStringLiteral("Zebra Quartz on page two"));
+    const QString odd = dir.filePath(QStringLiteral("quartz-notes.xyz")); { QFile f(odd); f.open(QIODevice::WriteOnly); f.write("?"); }
+    const QString fileEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(odd).toString(), 2000, 0);
+    const QString chipEl = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"a quartz chip\",\"fontSize\":14,\"fill\":\"transparent\"}"), QRectF(2000, 100, 200, 40));
+    const QString tid = c.pageModel(p1)->addComment(0, 0, 6); c.pageModel(p1)->addCommentMessage(tid, QStringLiteral("quartz comment here"));
+    const QString pdf = dir.filePath(QStringLiteral("spec.pdf"));
+    { QPdfWriter w(pdf); w.setResolution(96); QPainter p(&w); p.drawText(100, 100, QStringLiteral("quartz inside the pdf")); w.newPage(); p.drawText(100, 100, QStringLiteral("page two text")); p.end(); }
+    const QString pdfEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(pdf).toString(), 2000, 200);
+    const QString clip = dir.filePath(QStringLiteral("clip.mov"));
+    { std::vector<qcv::AnnotationNote> notes; qcv::AnnotationNote n; n.timecode = QStringLiteral("00:00:01:12"); n.frame = 36; n.text = QStringLiteral("the quartz shot"); notes.push_back(n);
+      CHECK(qcv::annotation_io::saveNotes(notes, clip), "a QCView sidecar beside a (missing) clip"); }
+    const QString vidEl = c.addMediaElement(QStringLiteral("{\"kind\":\"video\",\"src\":\"%1\",\"name\":\"clip.mov\",\"w\":1920,\"h\":1080,\"fps\":24,\"frames\":48,\"durMs\":2000}").arg(clip), QRectF(2000, 800, 480, 292));
+    CHECK(!fileEl.isEmpty() && !chipEl.isEmpty() && !tid.isEmpty() && !pdfEl.isEmpty() && !vidEl.isEmpty(), "fixtures placed");
+
+    SearchEngine se; se.setCanvas(&c);
+    auto kinds = [](const QVariantList& l) { QStringList k; for (const QVariant& v : l) k << v.toMap().value(QStringLiteral("kind")).toString(); return k.join(QLatin1Char(',')); };
+    QVariantList hits = se.search(QStringLiteral("quartz"), p2);
+    CHECK(hits.size() == 6, "six hits before the PDF is indexed: 2 pages, 2 cards, 1 note, 1 comment (%d: %s)", int(hits.size()), qPrintable(kinds(hits)));
+    CHECK(hits.size() >= 2 && hits.at(0).toMap().value(QStringLiteral("pageId")).toString() == p2 && hits.at(1).toMap().value(QStringLiteral("pageId")).toString() == p1,
+          "the CURRENT page's hit comes first, the other page's next");
+    CHECK(hits.size() >= 1 && hits.at(0).toMap().value(QStringLiteral("snippet")).toString() == QStringLiteral("Zebra <b>Quartz</b> on page two") && hits.at(0).toMap().value(QStringLiteral("col")).toInt() == 6 && hits.at(0).toMap().value(QStringLiteral("len")).toInt() == 6,
+          "a page hit: the snippet keeps the original case with the match in <b>, col/len locate it (%s)", qPrintable(hits.at(0).toMap().value(QStringLiteral("snippet")).toString()));
+    CHECK(kinds(hits) == QStringLiteral("page,page,card,card,video,comment"), "group order: pages, cards, video notes, comments (%s)", qPrintable(kinds(hits)));
+    int cardFile = -1, cardChip = -1, vid = -1, com = -1;
+    for (int i = 0; i < hits.size(); ++i) { const QVariantMap h = hits.at(i).toMap(); const QString el = h.value(QStringLiteral("elementId")).toString();
+        if (el == fileEl) cardFile = i; if (el == chipEl) cardChip = i; if (el == vidEl) vid = i; if (h.value(QStringLiteral("threadId")).toString() == tid) com = i; }
+    CHECK(cardFile >= 0 && hits.at(cardFile).toMap().value(QStringLiteral("title")).toString() == QStringLiteral("quartz-notes.xyz"), "the file card matched by its name");
+    CHECK(cardChip >= 0 && hits.at(cardChip).toMap().value(QStringLiteral("snippet")).toString().contains(QStringLiteral("a <b>quartz</b> chip")), "the text chip matched by its text");
+    CHECK(vid >= 0 && hits.at(vid).toMap().value(QStringLiteral("frame")).toInt() == 36 && hits.at(vid).toMap().value(QStringLiteral("timecode")).toString() == QStringLiteral("00:00:01:12") && !hits.at(vid).toMap().value(QStringLiteral("key")).toString().isEmpty(),
+          "the video note: its frame, timecode and the player's anchor key");
+    CHECK(com >= 0 && hits.at(com).toMap().value(QStringLiteral("pageId")).toString() == p1 && !hits.at(com).toMap().value(QStringLiteral("blockId")).toString().isEmpty(), "the comment: the page and block anchoring its thread");
+    // PDF text: queued on the first search (extraction on a worker), cached in the file; the test extracts now.
+    se.indexPdfsNow();
+    hits = se.search(QStringLiteral("quartz"), p2);
+    int pdfi = -1; for (int i = 0; i < hits.size(); ++i) if (hits.at(i).toMap().value(QStringLiteral("kind")) == QLatin1String("pdf")) pdfi = i;
+    CHECK(pdfi >= 0 && hits.size() == 7 && hits.at(pdfi).toMap().value(QStringLiteral("page")).toInt() == 0 && hits.at(pdfi).toMap().value(QStringLiteral("viewPath")).toString() == pdf && hits.at(pdfi).toMap().value(QStringLiteral("elementId")).toString() == pdfEl,
+          "after indexing, the PDF's page 1 text hits with its page index and view path (%d hits: %s)", int(hits.size()), qPrintable(kinds(hits)));
+    CHECK(se.search(QStringLiteral("page two text"), p1).size() == 1 && se.search(QStringLiteral("page two text"), p1).at(0).toMap().value(QStringLiteral("page")).toInt() == 1, "PDF page 2's text hits with page index 1");
+    CHECK(kinds(hits).endsWith(QStringLiteral("card,pdf,video,comment")), "PDF hits sit between cards and video notes (%s)", qPrintable(kinds(hits)));
+    // Folding: case and accents both ways.
+    CHECK(se.search(QStringLiteral("QUÉBEC"), p1).size() == 1 && se.search(QStringLiteral("quebec"), p1).size() == 1 && se.search(QStringLiteral("QUARTZ"), p1).size() == 7, "matching folds case and accents");
+    CHECK(se.search(QStringLiteral("  "), p1).isEmpty() && se.search(QStringLiteral("nothing-here"), p1).isEmpty(), "blank or unmatched queries return nothing");
+    // The cache lives in the file: a fresh engine on the same canvas finds the PDF without extracting.
+    { SearchEngine se2; se2.setCanvas(&c); const QVariantList h2 = se2.search(QStringLiteral("inside the pdf"), p1);
+      CHECK(h2.size() == 1 && h2.at(0).toMap().value(QStringLiteral("kind")) == QLatin1String("pdf") && !se2.indexing(), "the PDF text cache persists in the .mnd (no re-extraction)"); }
+}
+
 static void testElements() {
     qInfo("[117] canvas schema (2.0 stage 2): ensureCanvasSchema is explicit + idempotent; element CRUD, z order, page cascade, canvas_meta");
     QTemporaryDir dir;
@@ -9219,6 +9276,7 @@ int main(int argc, char** argv) {
     testLivePage();
     testPageViewCache();
     testCanvasHtml();
+    testSearch();
     testPageFixedHeight();
     testInkStyle();
     testTableGeometry();

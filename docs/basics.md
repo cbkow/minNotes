@@ -36,6 +36,21 @@ Click any segment to the left to go up a level. **New** (`⌘N`), **Open**
 (`⌘O`), **Save As** (`⌘⇧S`), and **Close** (`⌘W`) live in the File menu.
 Closing a file or quitting with unsaved work prompts you first.
 
+## Search
+
+`⌘F` (**View ▸ Find in File…**) opens a search field under the toolbar.
+It searches the **whole file**: every page's text, the cards on the canvas
+(file names and paths, link titles and addresses, folder entries, text
+chips), the text inside every PDF, each video's QCView notes, and comment
+threads. Hits group by source with the current page's first; a snippet
+shows each match. `↑` / `↓` walk the list and `Return` jumps: a page hit
+opens the page with the match selected, a card hit selects it on the
+canvas, a PDF hit opens that page, a video note opens the studio at that
+frame. `Esc` closes. A PDF's text is read once, the first time you search
+after adding it, and kept in the file.
+
+<!-- ![The search bar with results](images/mn036.png) -->
+
 ## Saving
 
 minNotes edits a fast local working copy of your file and writes back to

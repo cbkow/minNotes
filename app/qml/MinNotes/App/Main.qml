@@ -939,6 +939,8 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         console.log("PROBE live card:", canvas.livePage !== "" ? "armed" : "FAILED")
     }
     readonly property var activeEditor: docContent.item ? docContent.item.editorItem : null   // the reactive form (menu checks)
+    property var activeCanvasView: null   // the hoisted CanvasView (the search bar jumps through it)
+    function findInFile() { if (chromeRows.item && chromeRows.item.searchBar) chromeRows.item.searchBar.toggle() }
     function _restoreActiveView() {
         var ed = win._editor()
         if (ed && docs.activeIndex >= 0)
@@ -1186,6 +1188,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             // teaches it), so the items carry no shortcut of their own.
             Platform.Menu {
                 title: qsTr("View")
+                Platform.MenuItem { text: qsTr("Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen
+                                    onTriggered: win.findInFile() }
+                Platform.MenuSeparator {}
                 Platform.MenuItem { text: qsTr("Full Width"); role: Platform.MenuItem.NoRole; checkable: true
                                     enabled: blockModel.documentOpen
                                     checked: win.activeEditor ? win.activeEditor.fullWidth : false
@@ -1313,6 +1318,8 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             }
             ThemedMenu {
                 title: qsTr("&View")
+                Action { text: qsTr("&Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
+                MenuSeparator {}
                 Action { text: qsTr("&Full Width"); checkable: true; enabled: blockModel.documentOpen
                          checked: win.activeEditor ? win.activeEditor.fullWidth : false
                          onToggled: { var ed = win._editor(); if (ed && ed.fullWidth !== checked) ed.toggleFullWidth() } }
@@ -1482,8 +1489,10 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             sourceComponent: Column {
                 property alias tabs: pathBar
                 property alias toolbar: chromeToolbar
+                property alias searchBar: searchBar
                 PathBar { id: pathBar; width: parent.width; editor: win.activeEditor }
                 ChromeToolbar { id: chromeToolbar; width: parent.width; editor: win.activeEditor; inspector: inspectorPanel }
+                SearchBar { id: searchBar; width: parent.width; editor: win.activeEditor; canvasView: win.activeCanvasView; inspector: inspectorPanel }   // ⌘F (v2.0.1)
             }
         }
 
@@ -1527,9 +1536,11 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                                      tabsItem: chromeRows.item ? chromeRows.item.tabs : null
                                      toolbarItem: chromeRows.item ? chromeRows.item.toolbar.canvasTools : null
                                      chromeItem: chromeRows.item ? chromeRows.item.toolbar : null
+                                     searchItem: chromeRows.item ? chromeRows.item.searchBar : null
                                      onMergeFileRequested: (gap) => win.openMergePicker(gap) }
                         }
-                        CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner }
+                        CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner
+                                     Component.onCompleted: win.activeCanvasView = canvasView; Component.onDestruction: if (win.activeCanvasView === canvasView) win.activeCanvasView = null }
                     }
                 }
             }

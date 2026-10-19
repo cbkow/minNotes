@@ -154,6 +154,12 @@ public:
     void assignOrphanBlocks(const QString& pageId);
     // The distinct page ids whose blocks' attrs contain `needle` (a thread id: which pages anchor it).
     QStringList pagesMentioning(const QString& needle) const;
+    // Search (v2.0.1): a PDF's extracted page texts, cached in the file (`pdf_text`, created on first write) keyed by
+    // the descriptor's src + the file's mtime + size, so a stale cache is simply missed. Empty = none / stale.
+    QStringList pdfTextCache(const QString& key, qint64 mtime, qint64 size) const;
+    // Every comment message in the file as (threadId, body), oldest first (search).
+    QList<QPair<QString, QString>> allCommentMessages() const;
+    void setPdfTextCache(const QString& key, qint64 mtime, qint64 size, const QStringList& pages);
 
     QString canvasMeta(const QString& key) const;        // "" when absent
     void setCanvasMeta(const QString& key, const QString& value);

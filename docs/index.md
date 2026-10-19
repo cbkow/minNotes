@@ -44,6 +44,7 @@ trouble shared storage usually brings.
 - Blocks side by side: drag any block next to another to make lanes
 - A block rail down the right side — drag a block's handle to reorder
 - Full undo history: the page's timeline, click to time-travel
+- Search the whole file: pages, cards, PDF text, video notes, comments
 
 ### Tables
 - Cells hold blocks — text, formatting, images, video; choice, checkmark,

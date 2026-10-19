@@ -27,6 +27,7 @@
 #include "CanvasGestures.h"
 #include "core/Exporter.h"
 #include "core/CanvasExporter.h"
+#include "core/SearchEngine.h"
 #include "core/Importer.h"
 #include "core/PackageExporter.h"
 #include "core/DocumentMerger.h"
@@ -245,6 +246,11 @@ int main(int argc, char *argv[])
         canvasExporter.setCanvas(docs.activeCanvas());
     });
     engine.rootContext()->setContextProperty("canvasExporter", &canvasExporter);
+    // Search (v2.0.1): one file, everything on its canvas. Follows the active tab's canvas.
+    SearchEngine search;
+    search.setCanvas(docs.activeCanvas());
+    QObject::connect(&docs, &DocumentManager::activeChanged, &search, [&search, &docs] { search.setCanvas(docs.activeCanvas()); });
+    engine.rootContext()->setContextProperty("search", &search);
     // Document import (File ▸ Import…, drop/paste intercepts, welcome screen).
     // Follows the active tab the same way the exporter does — a fresh tab is
     // opened first, so the import lands in the new active model.

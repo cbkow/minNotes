@@ -52,6 +52,7 @@ qt_add_executable(minnotesapp
     core/Exporter.h
     core/Exporter.cpp
     core/CanvasExporter.cpp
+    core/SearchEngine.cpp
     core/InlineMarkdownHighlighter.h
     core/InlineMarkdownHighlighter.cpp
     core/CodeHighlighter.h
@@ -233,6 +234,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/ColorFlyout.qml
         qml/MinNotes/App/PenFlyout.qml
         qml/MinNotes/App/CanvasContextMenu.qml
+        qml/MinNotes/App/SearchBar.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js

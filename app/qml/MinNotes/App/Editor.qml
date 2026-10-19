@@ -345,6 +345,7 @@ FocusScope {
     property Item homeSlot: null    // where this Editor lives in the page view (Main.qml's editorSlot); a live card borrows it
     property var tabsItem: null   // the bottom strip (set from Main.qml; the canvas probe counts its tabs)
     property var toolbarItem: null
+    property var searchItem: null     // the search bar (Main.qml; the probe drives it)
     property var chromeItem: null     // the toolbar ROW (ChromeToolbar) — the chrome probe phase   // the top strip's view toolbar (set from Main.qml; the probe)
 
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
@@ -1128,6 +1129,16 @@ FocusScope {
     function pdfStep(row, d) { setPdfPage(row, pdfPageFor(row) + d) }
     // A click on a block's media strip (play, scrub, expand, a PDF page step) CHOOSES that block (walk 7c): the caret
     // parks on it, so the focus fill moves there and the transport keys route to this video (focusedVideoRow).
+    // A search hit: park the caret on the row, select the matched span, bring it into view (v2.0.1).
+    function selectInRow(row, col, len) {
+        if (row < 0 || row >= blockModel.count) return
+        if (cursor.focusRow >= 0 && cursor.focusRow !== row) blockModel.commitMarkdown(cursor.focusRow)
+        cursor.setCaret(row, Math.max(0, col))
+        if (len > 0) cursor.move(row, col + len, true)
+        cursor.sync()
+        root.ensureVisible(row)
+        root.forceActiveFocus()
+    }
     function parkCaretOn(row) {
         if (row < 0 || row >= blockModel.count) return
         if (!cursor.hasSel && cursor.focusRow === row) return
@@ -4305,6 +4316,9 @@ FocusScope {
         property string folderElId: ""
         property string fileElId: ""
         property string bookmarkElId: ""
+        property string searchChipId: ""
+        property string searchPageId: ""
+        property string searchRowWas: ""
         property string probeFixDir: ""
         property string audioElId: ""
         property int probeLives: 0             // P11
@@ -5297,7 +5311,48 @@ FocusScope {
                     c.zoomBadge.menuItem.close()
                     check(!!c.inspectorToggle && c.inspectorToggle.checked === root.inspector.open, "the Inspector toggle mirrors the panel (" + root.inspector.open + ")")
                     root.setActiveTab("canvas")
-                    nextPhase("chrome")
+                    nextPhase("chrome"); return
+                }
+            }
+            if (phase === 14) {   // P14 (v2.0.1 search): ⌘F's bar — plant a page match + a chip, open, hits grouped with the current page first, jump to the card and to the page, close
+                const sb = root.searchItem, cvw = root.canvasItem
+                if (step % 2 === 1) { ++step; return }
+                if (step === 0) {
+                    check(!!sb && !sb.open, "the search bar exists and starts closed")
+                    root.setActiveTab("canvas")
+                    const b = canvas.canvasBounds()
+                    searchChipId = canvas.addShapeElement(JSON.stringify({ shape: "text", text: "zebra-quartz chip", fontSize: 14, fill: "transparent" }), Qt.rect(b.x + b.width + 400, b.y, 220, 40))
+                    searchPageId = canvas.focusedPageId()
+                    const m = canvas.pageModel(searchPageId)
+                    searchRowWas = m.contentForRow(1)
+                    m.setContent(1, "a zebra-quartz match in the page")
+                    sb.show(); ++step; return
+                }
+                if (step === 2) {
+                    check(sb.open && sb.field.activeFocus && sb.height > 0, "⌘F opens the bar under the toolbar with the field focused (open " + sb.open + ", focus " + sb.field.activeFocus + ")")
+                    sb.field.text = "zebra-quartz"; sb.run(); ++step; return
+                }
+                if (step === 4) {
+                    check(sb.count === 2 && sb.hits[0].kind === "page" && sb.hits[0].pageId === searchPageId && sb.hits[1].kind === "card" && sb.hits[1].elementId === searchChipId,
+                          "two hits: the current page's block first, then the chip card (" + sb.count + ": " + sb.hits.map(h => h.kind).join(",") + ")")
+                    check(sb.hits.length > 0 && sb.hits[0].snippet.indexOf("<b>zebra-quartz</b>") >= 0 && sb.groupOf(sb.hits[0]) === "This page", "the page hit's snippet bolds the match and files under This page")
+                    sb.current = 1; sb.jumpCurrent(); ++step; return
+                }
+                if (step === 6) {
+                    check(root.activeCanvas && cvw.selectedId === searchChipId && sb.jumps === 1, "Enter on the card hit returns to the canvas with the card selected (selected '" + cvw.selectedId + "')")
+                    sb.current = 0; sb.jumpCurrent(); ++step; return
+                }
+                if (step === 8) {
+                    check(!root.activeCanvas && canvas.focusPage === searchPageId && cursor.focusRow === 1 && cursor.hasSel && blockModel.contentForRow(1).substr(cursor.loCol, cursor.hiCol - cursor.loCol) === "zebra-quartz",
+                          "Enter on the page hit opens the page with the match selected (row " + cursor.focusRow + ", sel " + cursor.hasSel + ", '" + blockModel.contentForRow(1).substr(cursor.loCol, cursor.hiCol - cursor.loCol) + "')")
+                    sb.hide(); ++step; return
+                }
+                if (step === 10) {
+                    check(!sb.open && sb.height === 0 && root.activeFocus, "Escape closes the bar and hands focus back to the editor")
+                    canvas.pageModel(searchPageId).setContent(1, searchRowWas)
+                    canvas.removeElement(searchChipId)
+                    root.setActiveTab("canvas")
+                    nextPhase("search")
                     console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                     Qt.exit(Math.min(fails, 100))
                 }

@@ -654,6 +654,38 @@ QStringList Document::pagesMentioning(const QString& needle) const {
     return out;
 }
 
+QStringList Document::pdfTextCache(const QString& key, qint64 mtime, qint64 size) const {
+    QStringList out;
+    if (!isOpen() || !hasTable(QStringLiteral("pdf_text"))) return out;
+    QSqlQuery q(db());
+    q.prepare("SELECT page, text FROM pdf_text WHERE key = ? AND mtime = ? AND size = ? ORDER BY page");
+    q.addBindValue(key); q.addBindValue(mtime); q.addBindValue(size);
+    if (!q.exec()) return out;
+    while (q.next()) { const int p = q.value(0).toInt(); while (out.size() <= p) out << QString(); out[p] = q.value(1).toString(); }
+    return out;
+}
+
+void Document::setPdfTextCache(const QString& key, qint64 mtime, qint64 size, const QStringList& pages) {
+    if (!isOpen()) return;
+    QSqlQuery q(db());
+    q.exec("CREATE TABLE IF NOT EXISTS pdf_text (key TEXT NOT NULL, page INTEGER NOT NULL, mtime INTEGER, size INTEGER, text TEXT NOT NULL DEFAULT '', PRIMARY KEY (key, page))");
+    q.prepare("DELETE FROM pdf_text WHERE key = ?"); q.addBindValue(key); q.exec();
+    for (int p = 0; p < pages.size(); ++p) {
+        q.prepare("INSERT INTO pdf_text (key, page, mtime, size, text) VALUES (?, ?, ?, ?, ?)");
+        q.addBindValue(key); q.addBindValue(p); q.addBindValue(mtime); q.addBindValue(size); q.addBindValue(pages.at(p));
+        q.exec();
+    }
+}
+
+QList<QPair<QString, QString>> Document::allCommentMessages() const {
+    QList<QPair<QString, QString>> out;
+    if (!isOpen()) return out;
+    QSqlQuery q(db());
+    if (!q.exec("SELECT thread_id, body FROM comment_messages ORDER BY created")) return out;
+    while (q.next()) out.append({q.value(0).toString(), q.value(1).toString()});
+    return out;
+}
+
 QString Document::canvasMeta(const QString& key) const {
     if (!isOpen()) return {};
     QSqlQuery q(db());
