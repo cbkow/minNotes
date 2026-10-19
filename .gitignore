@@ -22,6 +22,7 @@ compile_commands.json
 # Vendored prebuilt FFmpeg for the video engine (app/player/) — per-platform
 # binaries (macOS dylibs / Windows lib+dll), not built from this tree.
 /external/ffmpeg/
+/external/ffmpeg
 
 # Vendored WinSparkle (Windows auto-update). Binary lib+dll copied from ufb's
 # external/winsparkle; not built here. The CMake WIN32 block guards on its
@@ -35,6 +36,7 @@ compile_commands.json
 # fetched from the Sparkle GitHub release; not committed (binary framework).
 # The CMake bundle block guards on its presence, so the build works without it.
 /external/Sparkle/
+/external/Sparkle
 
 # Sparkle EdDSA PRIVATE key. `generate_keys -x` exports it to a plaintext file —
 # it must NEVER be committed (the private key signs every future auto-update).
