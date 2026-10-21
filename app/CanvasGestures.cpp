@@ -28,10 +28,16 @@ void CanvasGestures::press(QQuickItem* item, qreal x, qreal y)   { mouse(item, Q
 void CanvasGestures::move(QQuickItem* item, qreal x, qreal y)    { mouse(item, QEvent::MouseMove, x, y, Qt::NoButton, Qt::LeftButton); }
 void CanvasGestures::release(QQuickItem* item, qreal x, qreal y) { mouse(item, QEvent::MouseButtonRelease, x, y, Qt::LeftButton, Qt::NoButton); }
 
-void CanvasGestures::click(QQuickItem* item, qreal x, qreal y) {
+void CanvasGestures::click(QQuickItem* item, qreal x, qreal y, int modifiers) {
     nextStamp(1000);   // never within a double-click window of the previous tap
-    press(item, x, y);
-    release(item, x, y);
+    const Qt::KeyboardModifiers m = Qt::KeyboardModifiers(modifiers);
+    mouse(item, QEvent::MouseButtonPress, x, y, Qt::LeftButton, Qt::LeftButton, m);
+    mouse(item, QEvent::MouseButtonRelease, x, y, Qt::LeftButton, Qt::NoButton, m);
+}
+
+bool CanvasGestures::grab(QQuickItem* item, const QString& path) const {
+    if (!item || !item->window()) return false;
+    return item->window()->grabWindow().save(path);
 }
 
 void CanvasGestures::doubleClick(QQuickItem* item, qreal x, qreal y, int modifiers) {

@@ -7,7 +7,8 @@ nav_order: 14
 # Keyboard Shortcuts
 
 macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is
-Shift, **⌥** is Alt/Option.
+Shift, **⌥** is Alt/Option. The same list is in the app under Help ▸ Keyboard
+Shortcuts (⌘/).
 
 ## Files
 
@@ -20,6 +21,7 @@ Shift, **⌥** is Alt/Option.
 | Close file | ⌘W |
 | Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes) | ⌘F |
 | Walk the hits · jump · close | ↑ / ↓ · Return · Esc |
+| Keyboard shortcuts (this sheet) | ⌘/ |
 
 ## View
 
@@ -49,6 +51,8 @@ Shift, **⌥** is Alt/Option.
 | Select several (marquee) | drag on empty canvas |
 | Paste files, an image, text or a link as cards | ⌘V |
 | Page a selected PDF | PageUp / PageDown |
+| Step the selection forward / back one layer | ⌘] / ⌘[ |
+| Bring to front / send to back | ⌥⌘] / ⌥⌘[ |
 
 ## PDF View (full-window)
 
@@ -65,11 +69,11 @@ Shift, **⌥** is Alt/Option.
 | Action | Shortcut |
 |---|---|
 | Undo (the page's or the canvas's history) | ⌘Z |
-| Redo | ⌘⇧Z &nbsp;or&nbsp; ⌘Y |
+| Redo | ⌘⇧Z or ⌘Y |
 | Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
 | Copy as Markdown | ⌘⇧C |
 | Insert a choice chip (To do / Doing / Done) | ⌥⌘C |
-| Indent / outdent list item | Tab / ⇧Tab |
+| Indent / outdent a list item | Tab / ⇧Tab, or ⌘] / ⌘[ |
 | Next / previous lane (in a split row) | Tab / ⇧Tab |
 | New line in a code block (Enter on a blank last line exits) | ⇧Enter |
 | Step out of the page to the canvas (nothing selected) | Esc |

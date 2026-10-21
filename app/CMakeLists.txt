@@ -242,8 +242,11 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasContextMenu.qml
         qml/MinNotes/App/SearchBar.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
+        qml/MinNotes/App/ShortcutsSheet.qml
+        qml/MinNotes/App/LayerPanel.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
+        qml/MinNotes/App/ShortcutCatalog.js
         qml/MinNotes/App/fonts/Phosphor.ttf
         qml/MinNotes/App/fonts/Phosphor-Fill.ttf
         qml/MinNotes/App/fonts/Phosphor-Duotone.ttf

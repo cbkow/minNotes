@@ -77,13 +77,48 @@ Rectangle {
     Rectangle { width: 1; height: parent.height; color: Theme.colors.border }
 
     // Fixed-width content anchored to the right edge so it doesn't squish during the slide; the panel's animating
-    // width just reveals/hides it. ONE scroller over the history list.
+    // width just reveals/hides it. While the CANVAS is up: the Layers panel on top (2026-10-21) over the history;
+    // in a page, the history alone. ONE scroller over the history list.
+    readonly property bool layersShown: !!editor && editor.canvasShown
+    readonly property alias layers: layerPanel
     Item {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+        Text {
+            id: layersLabel
+            visible: panel.layersShown
+            x: 12; y: 8; height: visible ? 18 : 0
+            text: qsTr("Layers")
+            color: Theme.colors.textMuted
+            font.family: Theme.font.family; font.pixelSize: 11; font.bold: true
+        }
+        LayerPanel {
+            id: layerPanel
+            objectName: "layerPanel"
+            visible: panel.layersShown
+            x: 12; width: panel.contentW
+            anchors.top: layersLabel.bottom
+            height: visible ? Math.round((parent.height - 40) * 0.6) : 0
+            editor: panel.editor
+        }
+        Rectangle {
+            id: layersRule
+            visible: panel.layersShown
+            anchors.top: layerPanel.bottom; anchors.topMargin: 8
+            width: parent.width; height: visible ? 1 : 0
+            color: Theme.colors.border
+        }
+        Text {
+            id: historyLabel
+            visible: panel.layersShown
+            x: 12; anchors.top: layersRule.bottom; anchors.topMargin: 6; height: visible ? 18 : 0
+            text: qsTr("History")
+            color: Theme.colors.textMuted
+            font.family: Theme.font.family; font.pixelSize: 11; font.bold: true
+        }
         Flickable {
             id: outer
-            anchors.fill: parent
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; top: historyLabel.bottom }
             contentWidth: width
             contentHeight: col.implicitHeight + 8
             clip: true
@@ -93,7 +128,7 @@ Rectangle {
                 id: col
                 width: outer.width
                 spacing: 0
-                Item { width: 1; height: 8 }
+                Item { width: 1; height: panel.layersShown ? 2 : 8 }
 
         // --- History: the undo stack's ACTIVE PATH, oldest at the top
         // (the Photoshop reading). The current state carries the divider

@@ -3370,6 +3370,13 @@ FocusScope {
         else if (cmd && k === Qt.Key_Z && shift) { root.undoTarget.redo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Z) { root.undoTarget.undo(); event.accepted = true }
         else if (cmd && k === Qt.Key_Y) { root.undoTarget.redo(); event.accepted = true }
+        // ⌘] / ⌘[ on the canvas (2026-10-21, the Layers panel's keys): the selection steps one layer forward / back
+        // (an ink run counts as one layer); with ⌥, to the front / the back.
+        else if (cmd && root.activeCanvas && !root.cardHosted && (k === Qt.Key_BracketRight || k === Qt.Key_BracketLeft)) {
+            if (event.modifiers & Qt.AltModifier) { if (k === Qt.Key_BracketRight) canvasItem.frontSelected(); else canvasItem.backSelected() }
+            else canvasItem.stepSelected(k === Qt.Key_BracketRight ? 1 : -1)
+            event.accepted = true
+        }
         // ⌘] / ⌘[ (SR-0 §4.7): list indent / outdent everywhere — inside a lane Tab moves
         // between lanes, so indent needs its own keys.
         else if (cmd && (k === Qt.Key_BracketRight || k === Qt.Key_BracketLeft)) {
@@ -5390,7 +5397,80 @@ FocusScope {
                     nextPhase("search")
                 }
             }
-            if (phase === 15) {   // P15 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
+            if (phase === 15) {   // P15 (2026-10-21): the LAYERS panel — rows front-first with ink runs, click / ⇧-click / run selection + partial,
+                                  // ⌘] ⌘[ ⌥⌘] step + front/back on the canvas keys, a drag reorders (one history row), undo restores
+                const g = gestures, cvw = canvasItem
+                const sel = () => cvw.selectedIds.slice().sort().join(",")
+                if (step === 0) {
+                    root.setActiveTab("canvas")
+                    cvw.clearSelection()
+                    const b = canvas.canvasBounds()
+                    const inkJ = JSON.stringify({ version: "2.0", coordinate_system: "element-local", shapes: [] })
+                    multiIds = []
+                    multiIds.push(canvas.addShapeElement(JSON.stringify({ shape: "text", text: "Layer A\nsecond line", fontSize: 20 }), Qt.rect(b.x + b.width + 900, b.y + 1500, 160, 40)))   // sA
+                    multiIds.push(canvas.addInkElement(inkJ, Qt.rect(b.x + b.width + 900, b.y + 1560, 20, 20)))   // iA
+                    multiIds.push(canvas.addInkElement(inkJ, Qt.rect(b.x + b.width + 930, b.y + 1560, 20, 20)))   // iB
+                    multiIds.push(canvas.addShapeElement(JSON.stringify({ shape: "rect" }), Qt.rect(b.x + b.width + 900, b.y + 1600, 120, 60)))   // sB
+                    probeW = root.inspector.open ? 1 : 0   // (restored at the end: the next phase's PDF view must not relayout under its strokes)
+                    root.inspector.open = true
+                    ++step; return
+                }
+                if (step < 10) { if (root.inspector.width >= root.inspector.panelW - 0.5) step = 10; else ++step; return }   // the panel slides in
+                if (step === 10) {
+                    const [sA, iA, iB, sB] = multiIds
+                    const lp = root.inspector.layers, rows = canvas.layerRows()
+                    let sum = 0; for (const r of rows) sum += r.count
+                    check(root.inspector.layersShown && lp.visible && lp.height > 100 && lp.list.count === rows.length && sum === canvas.elementCount(),
+                          "the Inspector shows Layers above History on the canvas; one row per element, ink per run (" + lp.list.count + " rows for " + canvas.elementCount() + " elements)")
+                    check(rows[0].id === sB && rows[1].kind === "ink" && rows[1].count === 2 && rows[1].ids.join() === [iA, iB].join() && rows[2].id === sA && rows[2].name === "Layer A" && rows[2].kind === "text",
+                          "front-most first: the rect, ONE run of the two strokes, the text chip named by its first line (" + rows.slice(0, 3).map(r => r.kind + ":" + r.count).join(" ") + ")")
+                    const it0 = lp.list.itemAtIndex(0), it1 = lp.list.itemAtIndex(1), it2 = lp.list.itemAtIndex(2)
+                    check(!!it0 && !!it1 && !!it2 && it0.height === 26, "the rows are instantiated (" + (it0 ? it0.height : "none") + ")")
+                    g.click(it0, 20, 13)
+                    check(sel() === sB, "a click on a row selects its element (" + sel() + ")")
+                    g.click(it2, 20, 13, Qt.ShiftModifier)
+                    check(sel() === [sA, sB].sort().join(","), "⇧-click adds another row (" + sel() + ")")
+                    g.click(it1, 20, 13)
+                    check(sel() === [iA, iB].sort().join(",") && it1.full && !it1.partial, "a click on the run selects BOTH strokes; the row reads fully selected")
+                    cvw.select(iA)
+                    check(it1.partial && !it1.full, "one stroke selected on the canvas → the run row reads PARTIAL")
+                    // The keys: ⌘] steps the chip over the whole run; ⌘[ back; ⌥⌘] to the front; ⌘Z restores.
+                    cvw.select(sA)
+                    const h0 = canvas.undoHistory().length
+                    g.key(root, Qt.Key_BracketRight, Qt.ControlModifier)
+                    let r = canvas.layerRows()
+                    check(r[0].id === sB && r[1].id === sA && r[2].kind === "ink" && r[2].count === 2 && canvas.undoHistory().length === h0 + 1,
+                          "⌘] steps the chip over the WHOLE run in one history row (" + r.slice(0, 3).map(x => x.kind).join(" ") + ")")
+                    g.key(root, Qt.Key_BracketLeft, Qt.ControlModifier)
+                    r = canvas.layerRows()
+                    check(r[1].kind === "ink" && r[2].id === sA, "⌘[ steps it back under the run")
+                    g.key(root, Qt.Key_BracketRight, Qt.ControlModifier | Qt.AltModifier)
+                    r = canvas.layerRows()
+                    check(r[0].id === sA && r[1].id === sB, "⌥⌘] brings it to the front")
+                    g.key(root, Qt.Key_Z, Qt.ControlModifier); g.key(root, Qt.Key_Z, Qt.ControlModifier); g.key(root, Qt.Key_Z, Qt.ControlModifier)
+                    r = canvas.layerRows()
+                    check(r[0].id === sB && r[1].kind === "ink" && r[2].id === sA && canvas.undoHistory().length === h0 + 3 && !canvas.canRedo === false, "three ⌘Z restore the stack (rows " + (canvas.undoHistory().length - h0) + ")")
+                    ++step; return
+                }
+                if (step === 11) {   // a drag: the rect's row (0) to the gap BELOW the run → directly above the chip; one history row
+                    const [sA, iA, iB, sB] = multiIds
+                    const lp = root.inspector.layers
+                    const done = () => canvas.undoHistory().filter(x => !x.future).length   // (the three ⌘Z left redo rows; a new action drops them)
+                    const h0 = done()
+                    g.drag(lp.list, 20, 13, 20, 2 * 27 + 2, 10)
+                    const r = canvas.layerRows()
+                    check(r[0].kind === "ink" && r[0].count === 2 && r[1].id === sB && r[2].id === sA && done() === h0 + 1 && !lp.dragging,
+                          "a row drag reorders: the run on top, the rect above the chip, ONE history row (" + r.slice(0, 3).map(x => x.kind).join(" ") + ", rows +" + (done() - h0) + ")")
+                    check(String(canvas.undoHistory()[canvas.undoHistory().length - 1].label).indexOf("Reorder") === 0, "…labelled Reorder (" + canvas.undoHistory()[canvas.undoHistory().length - 1].label + ")")
+                    const shotArg = Qt.application.arguments.find(a => a.indexOf("--layers-shot=") === 0)
+                    if (shotArg) { cvw.select(sB); g.grab(root, shotArg.substring(14)) }
+                    for (const id of multiIds) canvas.removeElement(id)
+                    cvw.clearSelection()
+                    root.inspector.open = probeW === 1
+                    nextPhase("layers")
+                }
+            }
+            if (phase === 16) {   // P16 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
                                   // with real gestures: strokes land in THAT page's ink (normalized, widths in source px), one owner-log
                                   // row each, the eraser removes the stroke under the pointer, Space-hand parks the pen, Escape drops it
                 const g = gestures, cvw = canvasItem

@@ -15,7 +15,7 @@ public:
     Q_INVOKABLE void press(QQuickItem* item, qreal x, qreal y);
     Q_INVOKABLE void move(QQuickItem* item, qreal x, qreal y);
     Q_INVOKABLE void release(QQuickItem* item, qreal x, qreal y);
-    Q_INVOKABLE void click(QQuickItem* item, qreal x, qreal y);
+    Q_INVOKABLE void click(QQuickItem* item, qreal x, qreal y, int modifiers = 0);   // Qt.ShiftModifier etc. (the Layers panel's ⇧-click)
     Q_INVOKABLE void doubleClick(QQuickItem* item, qreal x, qreal y, int modifiers = 0);   // Qt.ShiftModifier etc.
     // A drag in `steps` moves (each a real move event with advancing timestamps).
     Q_INVOKABLE void drag(QQuickItem* item, qreal x0, qreal y0, qreal x1, qreal y1, int steps = 8);
@@ -31,6 +31,7 @@ public:
     // The item chain under (x, y) in `item`'s coordinates, top-most leaf first, naming the ones that ACCEPT mouse
     // buttons (the press stops at the first of those) — the probe's "who ate my click" diagnostic.
     Q_INVOKABLE QString itemsUnder(QQuickItem* item, qreal x, qreal y) const;
+    Q_INVOKABLE bool grab(QQuickItem* item, const QString& path) const;   // the item's window to a PNG (a probe's mid-run picture)
     Q_INVOKABLE QString focusItemName() const;   // the window's active focus item (class + objectName), for key walks
     Q_INVOKABLE bool envSet(const QString& name) const;
     Q_INVOKABLE QString tempDir() const;   // a writable scratch dir for probe files (the OS temp location)

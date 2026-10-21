@@ -19,6 +19,7 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <QPointer>
+#include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QImage>
@@ -1388,6 +1389,128 @@ bool CanvasDocument::sendToBack(const QString& id) {
     int bottom = 0;
     for (const Document::Element& e : elements_) bottom = std::min(bottom, e.z);
     return cur->z == bottom && elements_.size() > 1 && elements_.front().id == id ? true : setElementZ(id, bottom - 1);
+}
+
+QVariantList CanvasDocument::layerRows() const {
+    QVariantList rows;
+    const int n = static_cast<int>(elements_.size());
+    for (int i = n - 1; i >= 0;) {
+        const Document::Element& e = elements_[size_t(i)];
+        QVariantMap r;
+        if (e.kind == QLatin1String("ink")) {
+            QStringList ids;
+            int j = i;
+            while (j >= 0 && elements_[size_t(j)].kind == QLatin1String("ink")) { ids.prepend(elements_[size_t(j)].id); --j; }
+            r.insert(QStringLiteral("kind"), QStringLiteral("ink"));
+            r.insert(QStringLiteral("name"), tr("Ink"));
+            r.insert(QStringLiteral("ids"), ids);
+            r.insert(QStringLiteral("count"), ids.size());
+            r.insert(QStringLiteral("id"), ids.last());
+            i = j;
+        } else {
+            QString kind = e.kind, name;
+            if (e.kind == QLatin1String("page")) { name = pageTitle(e.id); }
+            else if (e.kind == QLatin1String("media")) {
+                kind = mediaElementKind(e.id);
+                if (kind.isEmpty()) kind = QStringLiteral("file");
+                name = mediaElementName(e.id);
+                if (name.isEmpty()) name = kind == QLatin1String("bookmark") ? tr("Link") : kind == QLatin1String("folder") ? tr("Folder") : tr("File");
+            } else if (e.kind == QLatin1String("shape")) {
+                const QJsonObject spec = QJsonDocument::fromJson(e.json.toUtf8()).object();
+                const QString shape = spec.value(QStringLiteral("shape")).toString();
+                if (shape == QLatin1String("text") || shape.isEmpty()) {
+                    kind = QStringLiteral("text");
+                    name = spec.value(QStringLiteral("text")).toString().section(QLatin1Char('\n'), 0, 0).simplified();
+                    if (name.isEmpty()) name = tr("Text");
+                } else {
+                    kind = QStringLiteral("shape");
+                    name = shape == QLatin1String("rect") ? tr("Rectangle") : shape == QLatin1String("oval") ? tr("Oval")
+                         : shape == QLatin1String("line") ? tr("Line") : shape == QLatin1String("arrow") ? tr("Arrow") : shape;
+                }
+            } else if (e.kind == QLatin1String("connector")) { name = tr("Connector"); }
+            else { name = e.kind; }
+            r.insert(QStringLiteral("kind"), kind);
+            r.insert(QStringLiteral("name"), name);
+            r.insert(QStringLiteral("ids"), QStringList{e.id});
+            r.insert(QStringLiteral("count"), 1);
+            r.insert(QStringLiteral("id"), e.id);
+            --i;
+        }
+        rows.push_back(r);
+    }
+    return rows;
+}
+
+bool CanvasDocument::applyOrder(const std::vector<QString>& order, const QString& label) {
+    std::vector<UndoEntry> parts;
+    for (int z = 0; z < static_cast<int>(order.size()); ++z) {
+        const auto cur = element(order[size_t(z)]);
+        if (!cur || cur->z == z) continue;
+        UndoEntry u;
+        u.id = cur->id;
+        u.before = snapshot(cur->id, false);
+        u.label = tr("Reorder %1").arg(kindLabel(cur->kind));
+        parts.push_back(std::move(u));
+        db_.updateElementZ(cur->id, z);
+    }
+    if (parts.empty()) return true;   // already in that order
+    reloadElements();
+    beginBatch(label);
+    for (UndoEntry& u : parts) { u.after = snapshot(u.id, false); pushEntry(std::move(u), QString()); }
+    endBatch();
+    noteChanged(QString(), true, false, false);
+    return true;
+}
+
+bool CanvasDocument::placeAbove(const QStringList& ids, const QString& anchorId) {
+    if (!db_.isOpen() || ids.isEmpty()) return false;
+    const QSet<QString> moving(ids.begin(), ids.end());
+    if (moving.contains(anchorId)) return false;
+    std::vector<QString> block, rest;
+    for (const Document::Element& e : elements_) (moving.contains(e.id) ? block : rest).push_back(e.id);
+    if (block.empty()) return false;
+    std::vector<QString> order;
+    order.reserve(elements_.size());
+    if (anchorId.isEmpty()) { order = block; order.insert(order.end(), rest.begin(), rest.end()); }
+    else {
+        bool placed = false;
+        for (const QString& id : rest) {
+            order.push_back(id);
+            if (id == anchorId) { order.insert(order.end(), block.begin(), block.end()); placed = true; }
+        }
+        if (!placed) return false;
+    }
+    return applyOrder(order, tr("Reorder"));
+}
+
+bool CanvasDocument::stepLayers(const QStringList& ids, int dir) {
+    if (!db_.isOpen() || ids.isEmpty() || dir == 0) return false;
+    const QSet<QString> moving(ids.begin(), ids.end());
+    const int n = static_cast<int>(elements_.size());
+    int lo = n, hi = -1;
+    bool allInk = true;
+    for (int i = 0; i < n; ++i) {
+        const Document::Element& e = elements_[size_t(i)];
+        if (!moving.contains(e.id)) continue;
+        lo = std::min(lo, i); hi = std::max(hi, i);
+        if (e.kind != QLatin1String("ink")) allInk = false;
+    }
+    if (hi < 0) return false;
+    const auto isInk = [&](int i) { return elements_[size_t(i)].kind == QLatin1String("ink"); };
+    if (dir > 0) {
+        int i = hi + 1;
+        while (i < n && moving.contains(elements_[size_t(i)].id)) ++i;
+        if (i >= n) return false;   // already on top
+        if (!allInk && isInk(i)) while (i + 1 < n && isInk(i + 1) && !moving.contains(elements_[size_t(i + 1)].id)) ++i;   // over the whole run
+        return placeAbove(ids, elements_[size_t(i)].id);
+    }
+    int i = lo - 1;
+    while (i >= 0 && moving.contains(elements_[size_t(i)].id)) --i;
+    if (i < 0) return false;        // already at the bottom
+    if (!allInk && isInk(i)) while (i - 1 >= 0 && isInk(i - 1) && !moving.contains(elements_[size_t(i - 1)].id)) --i;
+    --i;                            // the anchor is what sits BELOW the neighbour (run)
+    while (i >= 0 && moving.contains(elements_[size_t(i)].id)) --i;
+    return placeAbove(ids, i >= 0 ? elements_[size_t(i)].id : QString());
 }
 
 QString CanvasDocument::duplicateElement(const QString& id) {

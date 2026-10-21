@@ -6638,6 +6638,61 @@ static void testPdfPageDrawing() {
     CHECK(shapeCount(c.mediaElementInk(el, 0)) == 1, "…undo on the canvas's log restores it");
 }
 
+// [145] The Layers panel's model (2026-10-21): layerRows = the z order front-most first with ink collapsed into runs
+// (derived, never stored); placeAbove re-packs z as ONE history row; stepLayers hops a whole run; undo restores.
+static void testLayerRows() {
+    qInfo("[145] layers: layerRows front-first with ink runs; placeAbove = one row, z re-packed; stepLayers hops an ink run; a stroke sent behind another run merges into it; undo");
+    const QString inkJson = QStringLiteral("{\"version\":\"2.0\",\"coordinate_system\":\"element-local\",\"shapes\":[]}");
+    CanvasDocument c; CHECK((c.newCanvas() && c.elementCount() == 1), "canvas (one page)");
+    const QString page = c.elementIdAt(0);   // the new canvas's page
+    const QString s1 = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"first line\\nsecond\"}"), QRectF(1000, 0, 100, 40));
+    const QString i1 = c.addInkElement(inkJson, QRectF(1000, 100, 10, 10));
+    const QString i2 = c.addInkElement(inkJson, QRectF(1020, 100, 10, 10));
+    const QString s2 = c.addShapeElement(QStringLiteral("{\"shape\":\"rect\"}"), QRectF(1200, 0, 100, 40));
+    const QString i3 = c.addInkElement(inkJson, QRectF(1040, 100, 10, 10));
+    const auto ids = [&c] { QStringList out; for (const QVariant& r : c.layerRows()) out << r.toMap().value(QStringLiteral("id")).toString(); return out; };
+    const auto zs  = [&c] { QList<int> out; for (int i = 0; i < c.elementCount(); ++i) out << c.elementZ(c.elementIdAt(i)); return out; };
+    QVariantList rows = c.layerRows();
+    CHECK((rows.size() == 5 && ids() == QStringList{i3, s2, i2, s1, page}), "front-most first: i3 · s2 · Ink(i1,i2) · s1 · page (" + ids().join(' ').toUtf8() + ")");
+    const QVariantMap run = rows.at(2).toMap();
+    CHECK((run.value(QStringLiteral("kind")) == QLatin1String("ink") && run.value(QStringLiteral("count")).toInt() == 2
+              && run.value(QStringLiteral("ids")).toStringList() == QStringList{i1, i2} && run.value(QStringLiteral("name")).toString() == QStringLiteral("Ink")),
+          "the two adjacent strokes are ONE run row (ids back-to-front, id = the top one)");
+    CHECK((rows.at(3).toMap().value(QStringLiteral("name")).toString() == QStringLiteral("first line") && rows.at(3).toMap().value(QStringLiteral("kind")) == QLatin1String("text")
+              && rows.at(1).toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Rectangle") && rows.at(1).toMap().value(QStringLiteral("kind")) == QLatin1String("shape")
+              && rows.at(4).toMap().value(QStringLiteral("kind")) == QLatin1String("page")),
+          "names: a text chip's first line, a shape's kind, the page");
+
+    // placeAbove: s1 straight to the top (above i3) — one history row, z re-packed 0..n-1.
+    const int rows0 = c.undoHistory().size();
+    CHECK((c.placeAbove({s1}, i3) && ids() == QStringList{s1, i3, s2, i2, page} && c.undoHistory().size() == rows0 + 1),
+          "placeAbove(s1, i3): s1 on top; the run i1,i2 reads as one row still; ONE history row (" + ids().join(' ').toUtf8() + ")");
+    CHECK((zs() == QList<int>{0, 1, 2, 3, 4, 5}), "z re-packed to the index");
+    c.undo();
+    CHECK((ids() == QStringList{i3, s2, i2, s1, page}), "undo restores the order");
+    c.redo();
+    CHECK((ids() == QStringList{s1, i3, s2, i2, page}), "redo re-applies it");
+    CHECK((!c.placeAbove({s1}, s1) && !c.placeAbove({s1}, QStringLiteral("nope"))), "the anchor can't be a moving id or unknown");
+    CHECK((c.placeAbove({s1}, QString()) && ids() == QStringList{i3, s2, i2, page, s1} && c.elementIdAt(0) == s1), "anchor \"\" = the very bottom");
+
+    // stepLayers: s2 (+1) hops the single stroke i3 above it; s2 (−1, −1) hops back down over the run i1,i2 in ONE step.
+    CHECK((c.stepLayers({s2}, 1) && ids() == QStringList{s2, i3, page, s1} && c.layerRows().at(1).toMap().value(QStringLiteral("count")).toInt() == 3),
+          "step forward: s2 over i3 — and the run closes behind it (i1,i2,i3 = one row of 3) (" + ids().join(' ').toUtf8() + ")");
+    CHECK((!c.stepLayers({s2}, 1)), "…and no further (top)");
+    CHECK((c.stepLayers({s2}, -1) && ids() == QStringList{i3, s2, page, s1} && c.layerRows().at(0).toMap().value(QStringLiteral("count")).toInt() == 3),
+          "step back: s2 hops the WHOLE run of 3 in one step (" + ids().join(' ').toUtf8() + ")");
+    CHECK((c.stepLayers({s2}, -1) && ids() == QStringList{i3, page, s2, s1}), "step back again: under the page");
+    // A stroke sent behind the other strokes merges into their run: i3 (the run's top) stepped to the bottom.
+    CHECK((c.stepLayers({i3}, -1) && c.layerRows().size() == 4), "an ink block steps ONE element (stays in the run)");
+    CHECK((c.placeAbove({i3}, QString()) && ids() == QStringList{i2, page, s2, s1, i3} && c.layerRows().size() == 5),
+          "…sent to the bottom it is its own run of 1 below everything (" + ids().join(' ').toUtf8() + ")");
+    CHECK((c.placeAbove({i3}, s1) && ids() == QStringList{i2, page, s2, i3, s1} && c.layerRows().size() == 5), "…above s1, still alone (" + ids().join(' ').toUtf8() + ")");
+    CHECK((c.placeAbove({page}, QString()) && ids() == QStringList{i2, s2, i3, s1, page} && c.layerRows().at(2).toMap().value(QStringLiteral("count")).toInt() == 1), "the page to the bottom");
+    CHECK((c.placeAbove({i3}, i2) && ids() == QStringList{i3, s2, s1, page} && c.layerRows().at(0).toMap().value(QStringLiteral("count")).toInt() == 3),
+          "a stroke placed onto another run MERGES into it (3 strokes, one row) — nothing is stored about runs (" + ids().join(' ').toUtf8() + ")");
+    CHECK((!c.stepLayers({page}, -1)), "the bottom element can't step back");
+}
+
 // [143] Search (v2.0.1): ONE file — the current page's hits first, then the other pages, cards, PDF text (cached in the
 // file), video notes; folded matching; every hit carries what its jump needs.
 static void testSearch() {
@@ -9204,6 +9259,7 @@ int main(int argc, char** argv) {
     testPageViewCache();
     testCanvasHtml();
     testSearch();
+    testLayerRows();
     testPdfPageDrawing();
     testPageFixedHeight();
     testInkStyle();

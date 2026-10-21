@@ -836,6 +836,7 @@ ApplicationWindow {
     // Cross-OS path mappings editor (opened from the File menu). Edits a draft +
     // commits through the `pathMap` bridge, which re-resolves open media.
     PathMappingsDialog { id: pathMappingsDialog; anchors.centerIn: Overlay.overlay }
+    ShortcutsSheet { id: shortcutsSheet }   // Help ▸ Keyboard Shortcuts… / ⌘/ (2026-10-21)
 
     // --- Recent documents (persisted JSON list, most-recent first, cap 10) ---
     Settings { id: recentsStore; category: "recents"; property string paths: "[]" }
@@ -1239,6 +1240,12 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                     onTriggered: appUpdater.checkForUpdates()
                 }
                 Platform.MenuItem {
+                    text: qsTr("Keyboard Shortcuts…")
+                    role: Platform.MenuItem.NoRole
+                    shortcut: "Ctrl+/"
+                    onTriggered: shortcutsSheet.toggle()
+                }
+                Platform.MenuItem {
                     text: qsTr("Third-Party Notices")
                     role: Platform.MenuItem.NoRole
                     onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/")
@@ -1348,6 +1355,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             ThemedMenu {
                 title: qsTr("Help")
                 Action { text: qsTr("Check for Updates…"); onTriggered: appUpdater.checkForUpdates() }
+                Action { text: qsTr("Keyboard Shortcuts…"); shortcut: "Ctrl+/"; onTriggered: shortcutsSheet.toggle() }
                 Action { text: qsTr("Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
             }
         }

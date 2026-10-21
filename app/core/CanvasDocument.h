@@ -239,6 +239,18 @@ public:
     Q_INVOKABLE bool setElementZ(const QString& id, int z);
     Q_INVOKABLE bool bringToFront(const QString& id);
     Q_INVOKABLE bool sendToBack(const QString& id);
+    // The LAYERS panel (2026-10-21): the z order as rows, FRONT-MOST FIRST, ink strokes collapsed into one row per
+    // contiguous run (a run is derived here each call, never stored — a stroke sent behind another run simply reads
+    // as part of it). Row: kind (page · image/video/pdf/audio/folder/file/bookmark · text/shape · ink · connector),
+    // name, ids (back-to-front), count, id (the row's TOP element — the drop anchor).
+    Q_INVOKABLE QVariantList layerRows() const;
+    // Reorder as ONE history row: `ids` (their relative order kept, made contiguous) go directly ABOVE `anchorId`
+    // ("" = the very bottom); every element's z re-packs to its index in the new order. False when the anchor is
+    // among the moving ids or unknown.
+    Q_INVOKABLE bool placeAbove(const QStringList& ids, const QString& anchorId);
+    // One layer step (dir +1 = forward / -1 = back): a block that is not all ink steps over a WHOLE ink run (the
+    // panel's row); an ink block steps one element (merging into a neighbouring run). False at the end of the stack.
+    Q_INVOKABLE bool stepLayers(const QStringList& ids, int dir);
     // A copy beside the original (+24, +24), on top. Pages are not duplicated (their blocks would need new ids).
     Q_INVOKABLE QString duplicateElement(const QString& id);
     Q_INVOKABLE bool removeElement(const QString& id);            // a page follows removePage's rules
@@ -324,6 +336,7 @@ private:
     ElementSnap snapshot(const QString& id, bool withBlocks) const;
     void applySnap(const QString& id, const ElementSnap& s);   // the db + loaded models follow the snapshot
     void pushEntry(UndoEntry e, const QString& coalesce);
+    bool applyOrder(const std::vector<QString>& order, const QString& label);   // z := index, the changed ones as one batch
     QString addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label);
     void noteChanged(const QString& kind, bool set, bool geometry, bool ink);
     void detachPageModel(const QString& id);

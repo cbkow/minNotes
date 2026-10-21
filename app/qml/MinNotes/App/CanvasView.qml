@@ -336,6 +336,8 @@ Rectangle {
     function endPenStyle() { if (penStyleBatch) { canvas.endBatch(); penStyleBatch = false } }
     function applyPenWidth(w) { for (const id of selectedInkIds) canvas.setInkWidth(id, w, "inkw:" + id) }
     function applyPenColor(hex) { for (const id of selectedInkIds) canvas.setInkColor(id, hex, "inkc:" + id) }
+    function stepSelected(dir) { if (selectedIds.length) canvas.stepLayers(selectedIds, dir) }   // ⌘] / ⌘[ — one layer (an ink run counts as one), 2026-10-21
+    function contextMenuAt(sx, sy) { const w = cam.screenToWorld(sx, sy); ctxMenu.worldX = w.x; ctxMenu.worldY = w.y; ctxMenu.popupAt(sx, sy) }   // the Layers panel's right-click
     function frontSelected() { canvas.beginBatch(qsTr("Bring to front")); for (const id of selectedIds) canvas.bringToFront(id); canvas.endBatch() }
     function backSelected() { canvas.beginBatch(qsTr("Send to back")); for (const id of selectedIds.slice().reverse()) canvas.sendToBack(id); canvas.endBatch() }
     // The topmost ink element under a world point (the eraser).

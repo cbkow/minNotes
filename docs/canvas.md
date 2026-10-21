@@ -74,6 +74,18 @@ live page, `⌘Z` works on the page.
 
 ![The canvas context menu](images/mn033.png) 
 
+**Layers.** Open the Inspector while the canvas is up and its top section
+lists the stack, front-most first: pages by their title, cards by their
+file name, text chips by their first line. Ink reads as one row per run of
+strokes ("Ink · 12"), so a card that sits between two runs shows between
+them — the list is exactly what the canvas paints. Click a row to select
+its element (a run selects all of its strokes; a run with only some
+strokes selected shows a dimmer fill), `Shift`-click to add, double-click
+to go live, right-click for the same menu. Drag a row to reorder, or use
+`⌘]` / `⌘[` to step the selection one layer forward or back and `⌥⌘]` /
+`⌥⌘[` for front and back. Each move is one undo step. History sits below
+the layers.
+
 With a **video** selected the keyboard is its transport: `Space` (or
 `K`, `W`, `S`) plays and pauses, `←` / `→` (or `Q` / `E`) step frames,
 `J` / `L` (or `A` / `D`) hold to shuttle, `Home` / `End` jump, `R` cycles
