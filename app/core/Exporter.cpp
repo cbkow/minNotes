@@ -378,7 +378,7 @@ QString mediaInkStyle(const QRectF& b) {
 // --- Per-page PDF ink (strokes + text chips), 2026-08-20. The page envelope
 // is the sketch schema (coordinate_system "normalized"; strokeWidth/size in
 // SOURCE px = the descriptor's page-point width). The overlay variant is
-// transparent (the HTML .ink stack / Annotations toggle); the annotated
+// transparent (the HTML .ink stack); the annotated
 // variant bakes onto the rendered page (flowed formats).
 // An ink envelope (strokes + chips, normalised over srcW × srcH) painted over a transparent pageSize
 // image — the PDF page-ink overlay for a block (below) and for a canvas media element (Exporter::inkOverlay).
@@ -1009,13 +1009,10 @@ QString taskGlyphHtml(int state, const QString& key = QString()) {
 }
 
 // Note thumbs export as LAYERS when possible: the clean frame at the base
-// and the ink on a transparent PNG stacked above it (z), so the page-level
-// Annotations toggle can flip between marked-up and clean — the in-app eye
-// switch, carried into the deliverable. The ink layer reuses
+// and the ink on a transparent PNG stacked above it (z) — the lightbox stages the layers together. The ink layer reuses
 // renderNoteThumbnail's exact geometry by passing a transparent base.
 // Falls back to the flattened annotated/composited image when the clean
-// frame is missing or a render fails. `inkLayers` counts emitted layers so
-// the toggle only appears on pages that have something to toggle.
+// frame is missing or a render fails. `inkLayers` counts emitted layers (no toggle hangs on it any more).
 QString emitVideoNotesHtml(const QString& mediaPath, Exporter::AssetSink& sink,
                            int& inkLayers) {
     std::vector<qcv::AnnotationNote> notes;
@@ -1144,7 +1141,7 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
             poster = sink.addImage(p, sanitizedBase(path) + QStringLiteral("_page1"));
             posterSize = p.size();
             // Page 1's PAGE ink (strokes + chips) rides the same .ink stack
-            // as margin ink — toggle-aware, lightbox-aware (2026-08-20).
+            // as margin ink — lightbox-aware (2026-08-20).
             const QImage ov = renderPdfPageInkOverlay(m, row, 0, p.size());
             if (!ov.isNull())
                 pageInk0 = sink.addImage(ov, sanitizedBase(path) + QStringLiteral("_page1_ink"));
@@ -1157,7 +1154,7 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
     Q_UNUSED(posterSize);
 
     QString out = QStringLiteral("<figure class=\"ref\">");
-    if (!poster.isEmpty() && !pageInk0.isEmpty()) {   // page-1 PDF ink: a toggleable overlay over the poster
+    if (!poster.isEmpty() && !pageInk0.isEmpty()) {   // page-1 PDF ink: an ink overlay over the poster
         out += QStringLiteral("<div class=\"inkwrap\"><img src=\"%1\" alt=\"%2\">")
                    .arg(poster, htmlEscape(name));
         ++inkLayers;
@@ -1176,7 +1173,7 @@ QString emitMediaHtml(const BlockModel* m, int row, const Exporter::Options& opt
 
     if (kind == QLatin1String("pdf")) {
         // Poster + annotated pages (ruling 2026-08-20): one figure per OTHER
-        // page carrying ink/chips — clean page base + toggleable overlay.
+        // page carrying ink/chips — clean page base + ink overlay.
         const int pages = m->mediaPdfPages(row);
         for (int pg = 1; pg < pages; ++pg) {
             if (m->pdfPageInk(row, pg).isEmpty()) continue;
@@ -1353,8 +1350,7 @@ td>:last-child,th>:last-child{margin-bottom:0}
 td img:not(.ink),th img:not(.ink){max-width:100%!important;height:auto}
 .lane pre{width:auto;min-width:0;overflow-x:auto}
 .lane img:not(.ink){max-width:100%!important;height:auto}
-/* Media-ink z-stack: frame-normalized margin ink rides its media exactly;
-   the Annotations toggle governs it like the note-thumb layers. */
+/* Media-ink z-stack: frame-normalized margin ink rides its media exactly. */
 img.ink{pointer-events:none}
 .inkwrap{position:relative}
 .inkwrap img{display:block;max-width:100%}
@@ -1419,8 +1415,7 @@ pre[data-lang]::before{border-radius:var(--rs)}
 .cb{border-radius:3px}
 .ref,.notecard{border-radius:var(--r)}
 main figure>img:not(.ink),main .inkwrap{border-radius:var(--r);overflow:hidden}
-label[for=mn-ink]{border-radius:var(--rs)}
-header.doctitle .cap,label[for=mn-ink],#mn-lb .nav,a{transition:background-color 100ms,color 100ms,border-color 100ms}
+header.doctitle .cap,#mn-lb .nav,a{transition:background-color 100ms,color 100ms,border-color 100ms}
 .ref{background:transparent;border:1px solid var(--border)}
 .ref img{display:block;width:100%}
 .ref figcaption{padding:10px 14px}
@@ -1434,23 +1429,13 @@ a.ufblink:hover{text-decoration:underline}
 .notecard{display:flex;gap:12px;background:transparent;border:1px solid var(--border);
 padding:10px;margin-bottom:10px;align-items:flex-start}
 .notecard>img{width:220px;flex:none;background:var(--recess)}
-/* Layered thumbs: clean frame at the base, ink on a transparent PNG above
-   (z-stack) — the page-level Annotations toggle flips the ink layer. */
+/* Layered thumbs: clean frame at the base, ink on a transparent PNG above (z-stack). */
 .notecard .thumb{position:relative;width:220px;flex:none}
 .notecard .thumb img{display:block;width:100%;background:var(--recess)}
 .notecard .thumb .ink{position:absolute;inset:0;z-index:1;background:transparent}
-#mn-ink{display:none}
-label[for=mn-ink]{position:fixed;top:14px;right:16px;z-index:9;cursor:pointer;
-user-select:none;font-size:12px;padding:5px 12px;color:var(--muted);
-background:var(--recess);border:1px solid var(--border)}
-#mn-ink:checked~label[for=mn-ink]{color:var(--bright);background:var(--divider);
-border-color:var(--divider)}
-#mn-ink:not(:checked)~main .ink{visibility:hidden}
-@media print{label[for=mn-ink]{display:none}}
 /* Lightbox: click any figure image for full-screen; ‹ › buttons or arrow
    keys navigate document order, Esc / backdrop closes. Annotation overlays
-   ride along (their percent offsets scale with the staged image) and honour
-   the Annotations toggle. Squared, monochrome — the family chrome. */
+   ride along (their percent offsets scale with the staged image). Monochrome — the family chrome. */
 main figure img:not(.ink),main .notecard img:not(.ink),main td img{cursor:zoom-in}
 #mn-lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99;
 display:flex;align-items:center;justify-content:center;
@@ -1520,11 +1505,10 @@ var im=imgs[cur];
 stage.innerHTML='';
 var wrap=document.createElement('div');
 var b=document.createElement('img');b.src=im.src;wrap.appendChild(b);
-var tgl=document.getElementById('mn-ink');
 var p=im.parentElement;
 var inks=(p&&(p.className.indexOf('inkwrap')>=0||p.className.indexOf('thumb')>=0))
 ?p.querySelectorAll('img.ink'):[];
-if(!tgl||tgl.checked)[].forEach.call(inks,function(ink){
+[].forEach.call(inks,function(ink){
 var o=document.createElement('img');o.src=ink.src;
 var st=ink.getAttribute('style');
 o.setAttribute('style',st||'left:0;top:0;width:100%;max-width:none');
@@ -1550,7 +1534,18 @@ e.preventDefault();});
 </script>
 )MNLB";
 
-QString Exporter::pageCss() { return embeddedFontCss() + QLatin1String(kHtmlCss); }
+// The page stylesheet, shared by the page export and the canvas export (its readers). Code blocks fill with the
+// syntax THEME's editor background (the app's recipe, Editor.qml) so the token colours sit on the surface they were
+// designed for — patched over the static recess tone here, so both exports agree (2026-10-21: the canvas reader's
+// code blocks sat on the recess grey).
+QString Exporter::pageCss() {
+    QString css = embeddedFontCss() + QLatin1String(kHtmlCss);
+    const QColor codeBg = HtmlCodeEmitter().themeBackground();
+    if (codeBg.isValid())
+        css.replace(QLatin1String("pre{background:var(--recess)"),
+                    QStringLiteral("pre{background:%1").arg(codeBg.name()));
+    return css;
+}
 // Checkable task boxes (2026-10-18): a click cycles open → doing → done (the app's toggleTask); the choice is kept per
 // browser in localStorage (mn.tasks, keyed by block id, with the authored state — a re-export that changed the
 // authored state drops the memory). Shared by the page and canvas exports.
@@ -1583,7 +1578,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // at the readable cap and reflows below it — the model's page width is no longer consulted.
     const int pw = kExportMeasure;
     QString body;
-    int inkLayers = 0;                // stacked ink layers emitted (gates the toggle)
+    int inkLayers = 0;                // stacked ink layers emitted (once gated the Annotations toggle; counted still)
     HtmlCodeEmitter codeEmitter;      // syntax colours, the app's engine + theme
     std::vector<QString> listStack;   // open list tags, one per depth level
 
@@ -1791,23 +1786,10 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     closeListsTo(0);
     if (fragment) return body;   // (a canvas page: the body alone, no page chrome)
 
-    // The Annotations toggle (the app's eye switch, CSS-only): present only
-    // when ink layers were actually emitted. Checked = ink shown, matching
-    // how the app opens; unchecking hides every .ink layer via the sibling
-    // selector. Works without JavaScript and disappears in print.
-    const QString toggle = inkLayers > 0
-        ? QStringLiteral("<input type=\"checkbox\" id=\"mn-ink\" checked>"
-                         "<label for=\"mn-ink\">Annotations</label>\n")
-        : QString();
-
-    // Code blocks fill with the syntax THEME's editor background (the app's
-    // recipe, Editor.qml) so the token colours sit on the surface they were
-    // designed for — patch it over the static recess tone.
-    QString css = embeddedFontCss() + QLatin1String(kHtmlCss);
-    const QColor codeBg = codeEmitter.themeBackground();
-    if (codeBg.isValid())
-        css.replace(QLatin1String("pre{background:var(--recess)"),
-                    QStringLiteral("pre{background:%1").arg(codeBg.name()));
+    // No Annotations toggle (2026-10-21, matching the canvas export's 2026-10-18 ruling): ink layers always show.
+    // The 2.0 app has no page-level eye switch for the toggle to mirror (page annotations went in 2.0).
+    (void)inkLayers;
+    const QString css = pageCss();
 
     // The sheet band follows the widest table (the Editor's sheetSpan rule):
     // its right edge = the widest table's RENDERED width (same min/max
@@ -1826,7 +1808,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
 
     // Lightbox: the page's one script (everything else is CSS-only). Vanilla,
     // self-contained; removes itself when the page has no figure images. The
-    // stage rebuilds base + (toggle-honouring) annotation overlay per show —
+    // stage rebuilds base + annotation overlay per show —
     // the overlay reuses the layer's own percent geometry, so overshoot ink
     // scales with the staged image exactly as it does in the page.
     // The width toggle (2026-10-18): html.cap = the readable measure; remembered per browser.
@@ -1841,10 +1823,10 @@ b.addEventListener('click',function(){var on=document.documentElement.classList.
                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
                "<meta name=\"generator\" content=\"minNotes\">\n"
-               "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n%3<main>\n"
-               "<header class=\"doctitle\"><span>%1</span><button class=\"cap\" type=\"button\" title=\"Readable width — the app's 760 measure\">Readable width</button></header>\n%4</main>\n"
-               "%5%6%7</body>\n</html>\n")
-        .arg(htmlEscape(m->documentName()), css, toggle, body,
+               "<title>%1</title>\n<style>%2</style>\n</head>\n<body>\n<main>\n"
+               "<header class=\"doctitle\"><span>%1</span><button class=\"cap\" type=\"button\" title=\"Readable width — the app's 760 measure\">Readable width</button></header>\n%3</main>\n"
+               "%4%5%6</body>\n</html>\n")
+        .arg(htmlEscape(m->documentName()), css, body,
              QLatin1String(kLightbox), QLatin1String(kCapScript), QLatin1String(kTaskScript));
 }
 

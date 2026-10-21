@@ -522,7 +522,7 @@ static void testExportMarkdown() {
 
     // --- Media ink → HTML z-layer: a synthetic image block with a
     // programmatic Frame-space ink blob must export an .inkwrap stack and
-    // arm the Annotations toggle. ---
+    // carry no Annotations toggle (dropped 2026-10-21). ---
     {
         const QString imgPath = QDir::temp().filePath(QStringLiteral("mn_ink_test.png"));
         QImage probe(64, 48, QImage::Format_RGB32);
@@ -545,8 +545,8 @@ static void testExportMarkdown() {
         CHECK(ihtml.contains(QStringLiteral("class=\"inkwrap\""))
                   && ihtml.contains(QStringLiteral("class=\"ink\"")),
               "media ink exports as a z-layer stack");
-        CHECK(ihtml.contains(QStringLiteral("id=\"mn-ink\"")),
-              "ink layer arms the Annotations toggle");
+        CHECK(!ihtml.contains(QStringLiteral("mn-ink")),
+              "no Annotations toggle (2026-10-21): ink layers always show");
 
         // --- DOCX: real Word parts, embedded image. ---
         const QString docxPath = QDir::temp().filePath(QStringLiteral("mn_export_test.docx"));
@@ -2129,8 +2129,8 @@ static void testPdfPageInkExport() {
     CHECK(!html.contains(QStringLiteral("page 2 of 3")), "clean page 2 NOT exported");
     CHECK(html.contains(QStringLiteral("_page1_ink"))
               && html.contains(QStringLiteral("_page3_ink")),
-          "page-ink overlays ride the .ink stack (toggle-aware)");
-    CHECK(html.contains(QStringLiteral("id=\"mn-ink\"")), "Annotations toggle armed");
+          "page-ink overlays ride the .ink stack");
+    CHECK(!html.contains(QStringLiteral("mn-ink")), "no Annotations toggle (2026-10-21): the page-ink overlays always show");
     CHECK(html.contains(QStringLiteral("<header class=\"doctitle\">")),
           "document-name header leads the HTML");
     bool anyLit = false;

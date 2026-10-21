@@ -423,8 +423,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
     }
     body += QStringLiteral("</div></div>\n<div id=\"mn-reader\" hidden></div>\n<div id=\"mn-store\">\n%1</div>\n").arg(store);
     // The strip: Canvas + (opened tabs, by the script) · the zoom HUD.
-    // No Annotations toggle on the canvas (user ruling 2026-10-18): ink layers always show (the page CSS only
-    // hides .ink under an unchecked #mn-ink, which the canvas never emits; the lightbox shows ink when no toggle).
+    // No Annotations toggle (user ruling 2026-10-18; the page export dropped its own 2026-10-21): ink layers always show.
     (void)inkLayers;
     const QString toggle;
     const QString strip = QStringLiteral("<nav id=\"mn-tabs\"><div class=\"tabs\"><button class=\"tab on\" data-view=\"canvas\"><span>Canvas</span></button></div>"
