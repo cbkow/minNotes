@@ -163,6 +163,8 @@ font:13px/1 Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,san
 #mn-tabs .tab.on{background:var(--divider);color:var(--bright)}
 #mn-tabs .tab .x{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--subtle);font-size:14px;line-height:1}
 #mn-tabs .tab .x:hover{color:var(--bright);background:var(--border)}
+#mn-tabs .tab,#mn-tabs .tab .x{transition:background-color 100ms,color 100ms}
+#mn-tabs .tab .x{border-radius:var(--rs)}
 #mn-tabs .end{display:flex;align-items:center;gap:14px;padding:0 12px;color:var(--muted);flex:none}
 #mn-hud{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
 #mn-hud b{color:var(--text);font-weight:600;cursor:pointer}

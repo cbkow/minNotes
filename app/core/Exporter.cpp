@@ -1412,6 +1412,15 @@ td,th{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-al
 th{font-weight:700;background:#252525}
 td>p,th>p,td>li,th>li{padding:0}td>p+p,th>p+p{margin-top:12px}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright);border-radius:var(--rs)}
+/* The humanist pass (2026-10-21): the app's corners (3 on chips / pills / boxes / buttons, 6 on frames, cards and
+   code) and its 100-ms hover ramps, carried through. */
+pre[data-lang]::before{border-radius:var(--rs)}
+:not(pre)>code{border-radius:var(--rs)}
+.cb{border-radius:3px}
+.ref,.notecard{border-radius:var(--r)}
+main figure>img:not(.ink),main .inkwrap{border-radius:var(--r);overflow:hidden}
+label[for=mn-ink]{border-radius:var(--rs)}
+header.doctitle .cap,label[for=mn-ink],#mn-lb .nav,a{transition:background-color 100ms,color 100ms,border-color 100ms}
 .ref{background:transparent;border:1px solid var(--border)}
 .ref img{display:block;width:100%}
 .ref figcaption{padding:10px 14px}

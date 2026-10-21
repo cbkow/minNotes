@@ -8948,7 +8948,7 @@ static int writeStyleSample(const QString& outPath) {
     add(QStringLiteral("Task to do"), BlockModel::TaskListItem);
     { const int t = add(QStringLiteral("Task doing"), BlockModel::TaskListItem); m.toggleTask(t); }
     { const int t = add(QStringLiteral("Task done"), BlockModel::TaskListItem); m.toggleTask(t); m.toggleTask(t); }
-    { const int c = add(QStringLiteral("def hello():\n    return \"world\"  # code"), BlockModel::Code); m.setCodeLanguage(c, QStringLiteral("python")); }
+    { const int c = add(QStringLiteral("def hello():\n    return \"world\"  # code")); m.makeCodeBlock(c, QStringLiteral("python")); }   // (setBlockType leaves a paragraph — makeCodeBlock is the real path)
     add(QString(), BlockModel::Divider);
     {   // an image at a set width
         QImage img(600, 200, QImage::Format_RGB32);
