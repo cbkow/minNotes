@@ -5479,6 +5479,23 @@ FocusScope {
                 }
                 if (step < 30) { ++step; return }   // ~0.7 s for the dropped preview's async decode before the picture
                 if (step === 30) {
+                    // Optional (dev): `--ref-file=<path>` adds the file as a {vol, rel} PORTABLE REF (what a network-share
+                    // reference stores) by mapping its folder as a volume first — the 2026-10-21 "not collected" report.
+                    const refArg = Qt.application.arguments.find(a => a.indexOf("--ref-file=") === 0)
+                    if (refArg) {
+                        const rp = refArg.substring(11).replace(/\\/g, "/"), dirP = rp.substring(0, rp.lastIndexOf("/")), nameP = rp.substring(rp.lastIndexOf("/") + 1)
+                        pathMap.setMappingsJson(JSON.stringify([{ id: "probevol", label: "probevol", win: dirP, mac: dirP, lin: dirP, enabled: true }]))
+                        const ext = nameP.substring(nameP.lastIndexOf(".") + 1).toLowerCase()
+                        const desc = ext === "ai" || ext === "pdf" ? { src: { vol: "probevol", rel: [nameP] }, kind: "pdf", pages: 1, w: 612, h: 792, name: nameP }
+                                                                  : { src: { vol: "probevol", rel: [nameP] }, w: 320, h: 200, name: nameP }
+                        const b3 = canvas.canvasBounds()
+                        const refId = canvas.addMediaElement(JSON.stringify(desc), Qt.rect(b3.x + b3.width + 1200, b3.y + 1500, 480, 480 * desc.h / desc.w))
+                        const url = canvas.resolveMediaUrl(desc.src)
+                        check(refId !== "" && url !== "" && canvas.elementLocalPath(refId) === rp,
+                              "a {vol, rel} ref resolves on the canvas (url '" + url + "', local '" + canvas.elementLocalPath(refId) + "', kind " + canvas.mediaElementKind(refId) + ")")
+                        cvw.cam.fitRect(canvas.elementRect(refId), cvw.width, cvw.height, 120); cvw.select(refId)
+                        multiIds.push(refId)
+                    }
                     const shotArg = Qt.application.arguments.find(a => a.indexOf("--layers-shot=") === 0)
                     if (shotArg) g.grab(root, shotArg.substring(14))
                     if (textId !== "") { canvas.removeElement(textId); textId = "" }

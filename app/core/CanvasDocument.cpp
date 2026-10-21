@@ -19,6 +19,7 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <QPointer>
+#include <QJSValue>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
@@ -843,9 +844,17 @@ QString CanvasDocument::mediaElementInk(const QString& id, int page) const {
     return v.isObject() ? QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)) : QString();
 }
 
+// A descriptor `src` handed over from QML: a plain string, or a {vol, rel} PORTABLE REF — which arrives as a wrapped
+// JS value, not a QVariantMap, so QJsonValue::fromVariant() alone made it undefined and every network-share
+// reference on the canvas resolved to "" (the 2026-10-21 "not collected files don't render on the canvas" report;
+// the page never crosses this boundary). Unwrap first.
+static QJsonValue srcFromQml(const QVariant& src) {
+    if (src.userType() == qMetaTypeId<QJSValue>()) return QJsonValue::fromVariant(src.value<QJSValue>().toVariant());
+    return QJsonValue::fromVariant(src);
+}
 QString CanvasDocument::resolveMediaUrl(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return QString();
-    return mediaStore_->resolveUrlAsync(QJsonValue::fromVariant(src));
+    return mediaStore_->resolveUrlAsync(srcFromQml(src));
 }
 QString CanvasDocument::resolveMediaPath(const QVariant& src) const {
     const QString url = resolveMediaUrl(src);
@@ -853,7 +862,7 @@ QString CanvasDocument::resolveMediaPath(const QVariant& src) const {
 }
 QString CanvasDocument::mediaPlaybackSource(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return QString();
-    return mediaStore_->playbackSourceFor(QJsonValue::fromVariant(src));
+    return mediaStore_->playbackSourceFor(srcFromQml(src));
 }
 QString CanvasDocument::elementLocalPath(const QString& id) const {
     if (!mediaStore_) return QString();
@@ -928,7 +937,7 @@ QString CanvasDocument::mediaElementName(const QString& id) const {
 }
 QString CanvasDocument::mediaAnchorPath(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return QString();
-    return mediaStore_->anchorPathFor(QJsonValue::fromVariant(src));
+    return mediaStore_->anchorPathFor(srcFromQml(src));
 }
 bool CanvasDocument::mediaExtracting(const QVariant& src) const {
     if (!mediaStore_ || src.isNull()) return false;
