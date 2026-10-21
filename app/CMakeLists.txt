@@ -9,6 +9,8 @@ qt_add_executable(minnotesapp
     CanvasGestures.cpp
     MinNotesApplication.h
     MinNotesApplication.cpp
+    WindowChrome.h
+    WindowChrome.cpp
     AppUpdater.h                 # Q_OBJECT — Sparkle "Check for Updates" bridge
     sparkle_updater_macos.h
     core/FenwickTree.h
@@ -205,6 +207,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/FlatToolTip.qml
         qml/MinNotes/App/BlockView.qml
         qml/MinNotes/App/PathBar.qml
+        qml/MinNotes/App/TitleBar.qml
         qml/MinNotes/App/MediaBlock.qml
         qml/MinNotes/App/FlatSlider.qml
         qml/MinNotes/App/Inspector.qml
@@ -495,6 +498,7 @@ if(WIN32)
     set_target_properties(minnotesapp PROPERTIES
         OUTPUT_NAME "minNotes"
         WIN32_EXECUTABLE TRUE)
+    target_link_libraries(minnotesapp PRIVATE user32)   # WindowChrome.cpp: the caption strip (SetWindowLongPtrW)
 
     # ---- App icon + version resource (.rc) ----------------------------
     # The MSVC linker embeds the ICON (Explorer/taskbar/Alt-Tab + Qt's default
@@ -589,6 +593,7 @@ endif()
 if(APPLE)
     # Metal zero-copy bridge + CoreVideo CVPixelBuffer handle (frame_handle.mm),
     # and the CoreAudio output device.
+    target_sources(minnotesapp PRIVATE WindowChrome_mac.mm)   # the chromeless window's AppKit half
     target_sources(minnotesapp PRIVATE
         player/frame_handle.mm
         player/zero_copy_bridge_metal.h

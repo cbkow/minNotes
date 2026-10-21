@@ -19,6 +19,7 @@
 #include <QFileInfo>
 #include <QWindow>           // raise the existing window on a secondary launch
 #include "MinNotesApplication.h"
+#include "WindowChrome.h"
 #include "AppUpdater.h"
 #include "sparkle_updater_macos.h"
 #include "core/BlockModel.h"
@@ -194,6 +195,8 @@ int main(int argc, char *argv[])
     // state, backed by the manager's empty fallback model); the File menu / a
     // passed file open or create one.
     DocumentManager docs;
+    // The chromeless window (2026-10-21): `--native-frame` (dev) keeps the OS title bar.
+    WindowChrome windowChrome(!app.arguments().contains(QStringLiteral("--native-frame")));
     Clipboard clipboard;
     AppUpdater appUpdater;   // "Check for Updates…" → Sparkle (no-op off-macOS)
     // Cross-OS path mappings for referenced media. Loads from QSettings + feeds
@@ -296,6 +299,7 @@ int main(int argc, char *argv[])
     // MinNotesApplication and surfaced as quitRequested; Main.qml runs the
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.
     engine.rootContext()->setContextProperty("minApp", &app);
+    engine.rootContext()->setContextProperty("windowChrome", &windowChrome);
     // A mapping edit must re-resolve media in every open tab.
     QObject::connect(&pathMap, &PathMapController::mappingsChanged, &docs,
                      [&docs] { docs.refreshMedia(); });
@@ -304,6 +308,8 @@ int main(int argc, char *argv[])
     engine.loadFromModule("MinNotes.App", "Main");
     if (engine.rootObjects().isEmpty())
         return -1;
+    for (QObject* o : engine.rootObjects())
+        if (auto* w = qobject_cast<QWindow*>(o)) { windowChrome.attach(w); break; }
 
     // File / URI opening: Finder double-click and minnotes:// deep links arrive
     // as QFileOpenEvents (captured by MinNotesApplication); terminal/CLI args are

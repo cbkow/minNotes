@@ -21,7 +21,12 @@ QtObject {
         readonly property color surfaceRaised: "#202020" // raised panels (inspector, transport, tab strip)
         readonly property color codeBg:      "#0e0e0e"   // code block fill — a recessed well (was #121212, invisible against the page)
         readonly property color border:      "#2a2a2a"
+        readonly property color borderStrong: "#333333"  // a border that must read on its own (QCView token, 2026-10-21)
         readonly property color divider:     "#333333"   // hr / separators / the SELECTION fill
+        // Raised affordances (QCView's affordanceIdle / affordanceHover, adopted 2026-10-21 for the window's own
+        // chrome — the title bar's dot, segments and caption buttons): a step up from surfaceHover on hover.
+        readonly property color affordanceIdle:  "#262626"
+        readonly property color affordanceHover: "#323232"
 
         readonly property color text:        "#E4E3E2"   // body (default type colour)
         readonly property color textBright:  "#f0f0f0"   // headings / selected chrome (sub-white: no glow on dark, matches the highlighter's light text)

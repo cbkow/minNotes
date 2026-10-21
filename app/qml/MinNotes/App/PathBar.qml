@@ -79,7 +79,7 @@ Rectangle {
         height: bar.height - 1
         width: segRow.implicitWidth + 20
         radius: 0
-        color: menuOpen ? Theme.colors.divider : (segMA.containsMouse ? Theme.colors.surfaceHover : "transparent")
+        color: menuOpen ? Theme.colors.divider : (segMA.containsMouse ? Theme.colors.affordanceHover : "transparent")   // the title bar's hover (2026-10-21)
         Row {
             id: segRow
             anchors.centerIn: parent; spacing: 5

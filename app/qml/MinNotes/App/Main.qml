@@ -7,6 +7,12 @@ import Qt.labs.platform as Platform
 ApplicationWindow {
     id: win
     minimumWidth: 640; minimumHeight: 480   // the toolbar row's budget (§2.14: 589 / 621 px with a stream chip) and the tallest flyout
+    // The chromeless window (2026-10-21, WindowChrome.h): on macOS the content extends under a transparent title
+    // bar and the native traffic lights stay (TitleBar.qml insets past them); Windows strips its caption natively.
+    // BEFORE `visible` — the hints must be in place when the native window is created.
+    flags: windowChrome.nativeLights ? (Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint) : Qt.Window
+    // ApplicationWindow pads its content by the safe area unless told otherwise (6.9) — the row goes UNDER the lights.
+    topPadding: 0; leftPadding: 0; rightPadding: 0; bottomPadding: 0
     visible: true
     width: 960
     height: 760
@@ -1109,13 +1115,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         }
     }
 
-    // --- Menu bar. macOS uses the native Qt.labs.platform system menu bar
-    // (a Component created on macOS only). Windows/Linux use an in-window Qt
-    // Quick Controls MenuBar themed via Fusion `palette` + the ThemedMenu
-    // wrapper — the sister-app pattern (Fusion honors palette, so plain
-    // Action/MenuItem need no custom delegates). Both are created in
-    // Component.onCompleted so the Windows menu's shortcut Actions exist only on
-    // that platform (no double-binding with the macOS native menu). ---
+    // --- Menus. macOS uses the native Qt.labs.platform system menu bar (a Component created on macOS only);
+    // the title bar's dot opens the app menu below on every platform (2026-10-21: it replaced the Windows
+    // in-window MenuBar). Both are created in Component.onCompleted. ---
     Component {
         id: macMenuBarComp
         Platform.MenuBar {
@@ -1236,35 +1238,24 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         }
     }
 
+    // The APP MENU (2026-10-21, the chromeless window): ONE ThemedMenu with the six menus as submenus, opened from
+    // the title bar's dot on BOTH platforms — it replaced the Windows in-window MenuBar. macOS keeps the native
+    // system menu bar above (the Component before this one), so the Actions here bind their shortcuts only where
+    // no native bar carries them (a native key equivalent would otherwise fire twice).
+    readonly property bool nativeMenuBar: Qt.platform.os === "osx"
+    property var appMenu: null
+    function _sc(seq) { return nativeMenuBar ? "" : seq }
     Component {
-        id: winMenuBarComp
-        MenuBar {
-            // Match the palette/inspector panel: surfaceRaised fill + bottom
-            // hairline border; Fusion reads palette for the items + hover.
-            palette.window:          Theme.colors.surfaceRaised
-            palette.windowText:      Theme.colors.text
-            palette.button:          Theme.colors.surfaceRaised
-            palette.buttonText:      Theme.colors.text
-            palette.highlight:       Theme.colors.surfaceHover
-            palette.highlightedText: Theme.colors.textBright
-            background: Rectangle {
-                color: Theme.colors.surfaceRaised
-                Rectangle {
-                    anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                    height: 1
-                    color: Theme.colors.border
-                }
-            }
+        id: appMenuComp
+        ThemedMenu {
             ThemedMenu {
-                title: qsTr("&File")
-                Action { text: qsTr("&New");   shortcut: StandardKey.New;  onTriggered: docs.newTab() }
-                Action { text: qsTr("&Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
+                title: qsTr("File")
+                Action { text: qsTr("New");   shortcut: win._sc(StandardKey.New);  onTriggered: docs.newTab() }
+                Action { text: qsTr("Open…"); shortcut: win._sc(StandardKey.Open); onTriggered: openDialog.open() }
                 ThemedMenu {
-                    id: winRecentMenu
-                    title: qsTr("Open &Recent")
-                    width: 360
-                    // Repeater (vs Instantiator + insertItem): rebuilds cleanly
-                    // when the recents list bumps-to-front on open.
+                    id: recentMenu
+                    title: qsTr("Open Recent")
+                    // Repeater (vs Instantiator + insertItem): rebuilds cleanly when the recents list bumps-to-front on open.
                     Repeater {
                         model: win.recents
                         MenuItem {
@@ -1284,56 +1275,54 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                     }
                 }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Import…"); onTriggered: importDialog.open() }
-                Action { text: qsTr("&Merge File Into This Page…"); enabled: blockModel.documentOpen && docs.count > 1; onTriggered: win.openMergePicker(-1) }
+                Action { text: qsTr("Import…"); onTriggered: importDialog.open() }
+                Action { text: qsTr("Merge File Into This Page…"); enabled: blockModel.documentOpen && docs.count > 1; onTriggered: win.openMergePicker(-1) }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
-                Action { text: qsTr("Save &As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
+                Action { text: qsTr("Save");    shortcut: win._sc(StandardKey.Save);   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
+                Action { text: qsTr("Save As…"); shortcut: win._sc(StandardKey.SaveAs); enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
-            }
-            // Menu split (2026-08-19): File / Export / Document / Help — the
-            // exact macOS structure above.
-            ThemedMenu {
-                title: qsTr("&Export")
-                Action { text: qsTr("as &Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
-                Action { text: qsTr("as &HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
-                Action { text: qsTr("as &Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
-                Action { text: qsTr("as P&DF…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("pdf") }
-                Action { text: qsTr("as &Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
-                MenuSeparator {}
-                Action { text: qsTr("&Canvas as HTML…"); enabled: canvas.documentOpen; onTriggered: win.startExport("canvas") }
-                Action { text: qsTr("Canvas P&oster (PNG)…"); enabled: canvas.documentOpen; onTriggered: win.startExport("poster") }
-            }
-            ThemedMenu {   // Edit (2.0.1): see the macOS menu — Undo / Redo without a bound shortcut (the editor routes ⌘Z itself)
-                title: qsTr("&Edit")
-                Action { text: qsTr("&Undo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canUndo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.undo() } }
-                Action { text: qsTr("&Redo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canRedo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.redo() } }
-                MenuSeparator {}
-                Action { text: qsTr("&Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
+                Action { text: qsTr("Close"); shortcut: win._sc(StandardKey.Close); enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
             }
             ThemedMenu {
-                title: qsTr("&Document")
-                Action { text: qsTr("Check &Spelling"); checkable: true; checked: spell.checkSpelling
+                title: qsTr("Export")
+                Action { text: qsTr("as Markdown…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("md") }
+                Action { text: qsTr("as HTML…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("html") }
+                Action { text: qsTr("as Word Document…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("docx") }
+                Action { text: qsTr("as PDF…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("pdf") }
+                Action { text: qsTr("as Package…"); enabled: blockModel.documentOpen; onTriggered: win.startExport("mnpkg") }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("Canvas as HTML…"); enabled: canvas.documentOpen; onTriggered: win.startExport("canvas") }
+                Action { text: qsTr("Canvas Poster (PNG)…"); enabled: canvas.documentOpen; onTriggered: win.startExport("poster") }
+            }
+            ThemedMenu {   // Edit (2.0.1): Undo / Redo without a bound shortcut (the editor routes ⌘Z itself)
+                title: qsTr("Edit")
+                Action { text: qsTr("Undo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canUndo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.undo() } }
+                Action { text: qsTr("Redo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canRedo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.redo() } }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("Find in File…"); shortcut: win._sc(StandardKey.Find); enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
+            }
+            ThemedMenu {
+                title: qsTr("Document")
+                Action { text: qsTr("Check Spelling"); checkable: true; checked: spell.checkSpelling
                          onToggled: spell.checkSpelling = checked }
-                Action { text: qsTr("Check &Grammar"); checkable: true; checked: spell.checkGrammar
+                Action { text: qsTr("Check Grammar"); checkable: true; checked: spell.checkGrammar
                          onToggled: spell.checkGrammar = checked }
-                Action { text: qsTr("Reset &Ignored Rules"); enabled: spell.ignoredRulesJson !== "[]"
+                Action { text: qsTr("Reset Ignored Rules"); enabled: spell.ignoredRulesJson !== "[]"
                          onTriggered: spell.ignoredRulesJson = "[]" }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("Copy as &Markdown"); enabled: blockModel.documentOpen
+                Action { text: qsTr("Copy as Markdown"); enabled: blockModel.documentOpen
                          onTriggered: { clipboard.writeText(exporter.copyMarkdown(-1, -1)); Toasts.show(qsTr("Copied document as Markdown")) } }
-                Action { text: qsTr("&Insert Choice Chip"); enabled: blockModel.documentOpen
+                Action { text: qsTr("Insert Choice Chip"); enabled: blockModel.documentOpen
                          onTriggered: { var ed = win._editor(); if (ed) ed.insertChoiceChip() } }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("&Collect Media…"); enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
-                Action { text: qsTr("&Reveal Media Folder"); enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
+                Action { text: qsTr("Collect Media…"); enabled: blockModel.documentOpen; onTriggered: win.startCollectMedia() }
+                Action { text: qsTr("Reveal Media Folder"); enabled: blockModel.documentOpen; onTriggered: blockModel.revealMediaFolder() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("Path &Mappings…"); onTriggered: pathMappingsDialog.open2() }
+                Action { text: qsTr("Path Mappings…"); onTriggered: pathMappingsDialog.open2() }
             }
             ThemedMenu {
-                title: qsTr("&View")
-                Action { text: qsTr("&Full Width"); checkable: true; enabled: blockModel.documentOpen
+                title: qsTr("View")
+                Action { text: qsTr("Full Width"); checkable: true; enabled: blockModel.documentOpen
                          checked: win.activeEditor ? win.activeEditor.fullWidth : false
                          onToggled: { var ed = win._editor(); if (ed && ed.fullWidth !== checked) ed.toggleFullWidth() } }
                 ThemedMenuSeparator {}
@@ -1349,9 +1338,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                          onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(880) } }
             }
             ThemedMenu {
-                title: qsTr("&Help")
-                Action { text: qsTr("Check for &Updates…"); onTriggered: appUpdater.checkForUpdates() }
-                Action { text: qsTr("&Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
+                title: qsTr("Help")
+                Action { text: qsTr("Check for Updates…"); onTriggered: appUpdater.checkForUpdates() }
+                Action { text: qsTr("Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
             }
         }
     }
@@ -1462,10 +1451,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         }
         if (winState.maximized) win.showMaximized()
         _geomRestored = true
-        // macOS: native system menu bar. Windows/Linux: in-window themed bar
-        // assigned as the window menuBar.
-        if (Qt.platform.os === "osx") macMenuBarComp.createObject(win)
-        else win.menuBar = winMenuBarComp.createObject(win)
+        // macOS: the native system menu bar. Every platform: the app menu behind the title bar's dot.
+        if (win.nativeMenuBar) macMenuBarComp.createObject(win)
+        win.appMenu = appMenuComp.createObject(win)
     }
     function _captureGeometry() {
         if (!_geomRestored || _poolProbeFixture !== "" || _typeProbeFixture !== "") return
@@ -1484,13 +1472,16 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
     onVisibilityChanged: geomSave.restart()
     Timer { id: geomSave; interval: 500; onTriggered: win._captureGeometry() }
 
-    // Document tab strip on top + (thin left action rail + editor page over a
-    // bottom status strip + a collapsible right inspector).
+    // The title bar on top (always), then the toolbar + search rows (with a document), then the editor page
+    // beside a collapsible right inspector.
     Column {
         anchors.fill: parent
 
-        // Rows 2 + 3 of the top chrome (2026-10-18, §2.14): the COMPONENTS row (pages / elements / frames — the
-        // former bottom strip) and, from S3, the TOOLBAR. A Loader like docContent: nothing here touches the
+        // Row 1 (2026-10-21): the TITLE BAR — the window's own chrome (app-menu dot, native traffic lights or our
+        // caption buttons, the drag strip) with the PathBar inside it while a document is open.
+        TitleBar { id: titleBar; width: parent.width; editor: win.activeEditor }
+
+        // Row 2 (the TOOLBAR, 2026-10-18 §2.14) + the search bar. A Loader like docContent: nothing here touches the
         // empty model while no document is open.
         Loader {
             id: chromeRows
@@ -1500,10 +1491,8 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             // and the content slid up under them); unset, the Loader takes the item's height. Width only is fine —
             // the two dimensions are independent.
             sourceComponent: Column {
-                property alias tabs: pathBar
                 property alias toolbar: chromeToolbar
                 property alias searchBar: searchBar
-                PathBar { id: pathBar; width: parent.width; editor: win.activeEditor }
                 ChromeToolbar { id: chromeToolbar; width: parent.width; editor: win.activeEditor; inspector: inspectorPanel }
                 SearchBar { id: searchBar; width: parent.width; editor: win.activeEditor; canvasView: win.activeCanvasView }   // ⌘F (v2.0.1)
             }
@@ -1512,7 +1501,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         Row {
             id: contentRow
             width: parent.width
-            height: parent.height - chromeRows.height
+            height: parent.height - titleBar.height - chromeRows.height
             // editor is null while no document is open — the rail/inspector guard it,
             // and the welcome overlay covers everything.
             readonly property var editor: docContent.item ? docContent.item.editorItem : null
@@ -1546,7 +1535,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                             Editor { id: editorInner; anchors.fill: parent
                                      homeSlot: editorSlot; canvasItem: canvasView
                                      inspector: inspectorPanel
-                                     tabsItem: chromeRows.item ? chromeRows.item.tabs : null
+                                     tabsItem: titleBar.pathBar
                                      toolbarItem: chromeRows.item ? chromeRows.item.toolbar.canvasTools : null
                                      chromeItem: chromeRows.item ? chromeRows.item.toolbar : null
                                      searchItem: chromeRows.item ? chromeRows.item.searchBar : null
@@ -1568,15 +1557,16 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         id: inspectorPanel
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: parent.height - chromeRows.height
+        height: parent.height - titleBar.height - chromeRows.height
         z: 5   // above the editor content; the welcome overlay (z:100) still covers
         editor: contentRow.editor
     }
 
     // --- No-document welcome state: covers the (empty) editor until a document is
-    // opened or created. New / Open + a recents list. ---
+    // opened or created. New / Open + a recents list. The title bar stays above it. ---
     Rectangle {
         anchors.fill: parent
+        anchors.topMargin: titleBar.height
         visible: !blockModel.documentOpen
         z: 100
         color: Theme.colors.bg
