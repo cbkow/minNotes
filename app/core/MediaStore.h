@@ -16,7 +16,9 @@
 // future open/new-file flow. (Built for images; video/poster will extend it.)
 class MediaStore {
 public:
-    struct ImageRef { QString src; int w = 0; int h = 0; bool ok() const { return !src.isEmpty() && w > 0 && h > 0; } };
+    // `name` = the source file's name when the image came from a file (a copied image's src is a content hash —
+    // the Layers panel, cards and chips show the name instead; 2026-10-21); empty for pasted / embedded rasters.
+    struct ImageRef { QString src; int w = 0; int h = 0; QString name; bool ok() const { return !src.isEmpty() && w > 0 && h > 0; } };
     // Video descriptor: dims + transport metadata (duration/fps/frame-count) so
     // the inline poster reserves correct height and the transport bar has its
     // range without re-probing. Like images, the file is referenced in place —

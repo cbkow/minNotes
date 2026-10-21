@@ -6738,6 +6738,15 @@ static void testPreviewPass() {
     // --- the store ---
     MediaStore store(dir.filePath(QStringLiteral("doc.mnd")));
     CHECK((MediaStore::isPreviewablePath(hdr) && !MediaStore::isPreviewablePath(dir.filePath(QStringLiteral("a.png")))), "isPreviewablePath by extension");
+    {   // a copied image keeps its file NAME in the descriptor (its src is a content hash) — the Layers row / chips show it
+        const QString png = dir.filePath(QStringLiteral("hero shot.png"));
+        QImage pi(8, 6, QImage::Format_RGB32); pi.fill(Qt::darkCyan); pi.save(png, "PNG");
+        const MediaStore::ImageRef iref = store.importFile(png);
+        const QJsonObject idesc = QJsonDocument::fromJson(MediaStore::imageDescriptorJson(iref).toUtf8()).object();
+        CHECK((iref.ok() && iref.name == QStringLiteral("hero shot.png") && idesc.value(QStringLiteral("name")).toString() == QStringLiteral("hero shot.png")
+               && idesc.value(QStringLiteral("src")).toString().startsWith(QLatin1String(".minnotes/"))),
+              "importFile: a copied image carries its original file name (src = the hash)");
+    }
     const MediaStore::PreviewRef ref = store.importPreview(hdr);
     CHECK((ref.ok() && ref.img.src.startsWith(QLatin1String(".minnotes/")) && ref.img.src.endsWith(QLatin1String(".png")) && ref.img.w == 2 && ref.img.h == 2
            && ref.format == QStringLiteral("HDR") && ref.sourcePath == QFileInfo(hdr).absoluteFilePath() && ref.size > 0 && ref.mtime > 0),

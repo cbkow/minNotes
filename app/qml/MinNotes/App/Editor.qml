@@ -5470,7 +5470,7 @@ FocusScope {
                         const pvPath = pvArg.substring(15).replace(/\\/g, "/")   // a Windows path needs file:///C:/… (never assume POSIX)
                         pvId = canvas.addMediaElementFromUrl((/^[A-Za-z]:\//.test(pvPath) ? "file:///" : "file://") + pvPath, b2.x + b2.width + 1200, b2.y + 1500)
                         check(pvId !== "" && canvas.mediaElementKind(pvId) === "image" && canvas.elementPreviewFormat(pvId) !== "" && !canvas.elementPreviewStale(pvId),
-                              "the preview file drops as an image element with a format pill (" + canvas.elementPreviewFormat(pvId) + ")")
+                              "the preview file drops as an image element with a format pill (id '" + pvId + "' kind " + canvas.elementKind(pvId) + "/" + canvas.mediaElementKind(pvId) + " format '" + canvas.elementPreviewFormat(pvId) + "' json " + canvas.elementJson(pvId).substring(0, 160) + ")")
                         cvw.cam.fitRect(canvas.elementRect(pvId), cvw.width, cvw.height, 120); cvw.select(pvId)   // frame it for the shot
                     }
                     textId = pvId   // (carried to the shot step)

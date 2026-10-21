@@ -71,6 +71,7 @@ QString MediaStore::imageDescriptorJson(const ImageRef& ref) {
     o.insert(QStringLiteral("src"), mn::toRef(ref.src));
     o.insert(QStringLiteral("w"), ref.w);
     o.insert(QStringLiteral("h"), ref.h);
+    if (!ref.name.isEmpty()) o.insert(QStringLiteral("name"), ref.name);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 QString MediaStore::folderDescriptorJson(const QString& absDir) {
@@ -412,12 +413,12 @@ MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath, bool f
                 assetsDir();               // ensure the folder
                 QFile out(abs);
                 if (out.open(QIODevice::WriteOnly)) { out.write(bytes); out.close(); }
-                else return { path, sz.width(), sz.height() };  // copy failed → reference
+                else return { path, sz.width(), sz.height(), QFileInfo(path).fileName() };  // copy failed → reference
             }
-            return { rel, sz.width(), sz.height() };
+            return { rel, sz.width(), sz.height(), QFileInfo(path).fileName() };
         }
     }
-    return { path, sz.width(), sz.height() };   // referenced in place (absolute)
+    return { path, sz.width(), sz.height(), QFileInfo(path).fileName() };   // referenced in place (absolute)
 }
 
 QString MediaStore::importBytes(const QByteArray& bytes, const QString& suggestedName) const {
