@@ -1116,8 +1116,8 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
     }
 
     // --- Menus. macOS uses the native Qt.labs.platform system menu bar (a Component created on macOS only);
-    // the title bar's dot opens the app menu below on every platform (2026-10-21: it replaced the Windows
-    // in-window MenuBar). Both are created in Component.onCompleted. ---
+    // elsewhere the title bar's hamburger opens the app menu below (2026-10-21: it replaced the Windows in-window
+    // MenuBar). One or the other is created in Component.onCompleted. ---
     Component {
         id: macMenuBarComp
         Platform.MenuBar {
@@ -1239,19 +1239,18 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
     }
 
     // The APP MENU (2026-10-21, the chromeless window): ONE ThemedMenu with the six menus as submenus, opened from
-    // the title bar's dot on BOTH platforms — it replaced the Windows in-window MenuBar. macOS keeps the native
-    // system menu bar above (the Component before this one), so the Actions here bind their shortcuts only where
-    // no native bar carries them (a native key equivalent would otherwise fire twice).
+    // the title bar's hamburger — it replaced the Windows in-window MenuBar. Created only where there is no native
+    // menu bar (macOS keeps the system bar above — ruling 2026-10-21: no second menu there), so the Actions' shortcuts
+    // never double-bind a native key equivalent.
     readonly property bool nativeMenuBar: Qt.platform.os === "osx"
     property var appMenu: null
-    function _sc(seq) { return nativeMenuBar ? "" : seq }
     Component {
         id: appMenuComp
         ThemedMenu {
             ThemedMenu {
                 title: qsTr("File")
-                Action { text: qsTr("New");   shortcut: win._sc(StandardKey.New);  onTriggered: docs.newTab() }
-                Action { text: qsTr("Open…"); shortcut: win._sc(StandardKey.Open); onTriggered: openDialog.open() }
+                Action { text: qsTr("New");   shortcut: StandardKey.New;  onTriggered: docs.newTab() }
+                Action { text: qsTr("Open…"); shortcut: StandardKey.Open; onTriggered: openDialog.open() }
                 ThemedMenu {
                     id: recentMenu
                     title: qsTr("Open Recent")
@@ -1278,10 +1277,10 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("Import…"); onTriggered: importDialog.open() }
                 Action { text: qsTr("Merge File Into This Page…"); enabled: blockModel.documentOpen && docs.count > 1; onTriggered: win.openMergePicker(-1) }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("Save");    shortcut: win._sc(StandardKey.Save);   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
-                Action { text: qsTr("Save As…"); shortcut: win._sc(StandardKey.SaveAs); enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
+                Action { text: qsTr("Save");    shortcut: StandardKey.Save;   enabled: blockModel.documentOpen; onTriggered: win._saveOrSaveAs() }
+                Action { text: qsTr("Save As…"); shortcut: StandardKey.SaveAs; enabled: blockModel.documentOpen; onTriggered: saveAsDialog.open() }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("Close"); shortcut: win._sc(StandardKey.Close); enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
+                Action { text: qsTr("Close"); shortcut: StandardKey.Close; enabled: blockModel.documentOpen; onTriggered: win.requestCloseTab(docs.activeIndex) }
             }
             ThemedMenu {
                 title: qsTr("Export")
@@ -1299,7 +1298,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("Undo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canUndo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.undo() } }
                 Action { text: qsTr("Redo"); enabled: !!win.activeEditor && win.activeEditor.undoTarget.canRedo; onTriggered: { var ed = win._editor(); if (ed) ed.undoTarget.redo() } }
                 ThemedMenuSeparator {}
-                Action { text: qsTr("Find in File…"); shortcut: win._sc(StandardKey.Find); enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
+                Action { text: qsTr("Find in File…"); shortcut: StandardKey.Find; enabled: blockModel.documentOpen; onTriggered: win.findInFile() }
             }
             ThemedMenu {
                 title: qsTr("Document")
@@ -1451,9 +1450,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         }
         if (winState.maximized) win.showMaximized()
         _geomRestored = true
-        // macOS: the native system menu bar. Every platform: the app menu behind the title bar's dot.
+        // macOS: the native system menu bar. Elsewhere: the app menu behind the title bar's hamburger.
         if (win.nativeMenuBar) macMenuBarComp.createObject(win)
-        win.appMenu = appMenuComp.createObject(win)
+        else win.appMenu = appMenuComp.createObject(win)
     }
     function _captureGeometry() {
         if (!_geomRestored || _poolProbeFixture !== "" || _typeProbeFixture !== "") return

@@ -1,6 +1,6 @@
 // The TITLE BAR (cleanup 2026-10-21 — the chromeless window, see WindowChrome.h): the one row that is always
-// there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app-menu
-// dot (every menu, on both platforms; macOS keeps its native menu bar too) · the PathBar (• File ▾ › Canvas › …,
+// there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app MENU
+// button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
 // only while a document is open) · on Windows our own minimize / maximize / close. Every stretch of the row no
 // control claims DRAGS the window (ruling: all non-tab space), a double-click zooms. The drag starts after a
 // small movement, so clicks and double-clicks on the bare strip stay clicks.
@@ -13,7 +13,7 @@ Rectangle {
     readonly property var pathBar: pathLoader.item          // the PathBar's probe hooks (null while no document is open)
     readonly property bool lightsInset: windowChrome.nativeLights && win.visibility !== Window.FullScreen
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
-    readonly property var appMenuButton: dot                // probe
+    readonly property var appMenuButton: menuBtn            // probe
     height: Theme.dim.tabRowH
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
@@ -41,18 +41,19 @@ Rectangle {
         height: bar.height - 1
         spacing: 0
         Item { width: bar.lightsInset ? bar.lightsWidth : 6; height: 1 }   // the traffic lights' room, or the strip's edge
-        // The app menu: one dot (the family's rationed glyphs — a hamburger is a drawer's promise, this is a menu's).
+        // The app menu (Windows): the hamburger, where the menu bar used to be. macOS has its native menu bar.
         Rectangle {
-            id: dot
-            width: 28; height: parent.height
+            id: menuBtn
+            visible: !win.nativeMenuBar
+            width: visible ? 30 : 0; height: parent.height
             radius: 0
             readonly property bool menuOpen: !!win.appMenu && win.appMenu.visible
-            color: menuOpen ? Theme.colors.divider : (dotMA.containsMouse ? Theme.colors.affordanceHover : "transparent")
-            Icon { anchors.centerIn: parent; name: "circle"; weight: "fill"; size: 8
-                   color: dot.menuOpen || dotMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-            MouseArea { id: dotMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                        onClicked: { if (!win.appMenu) return; if (win.appMenu.visible) win.appMenu.close(); else win.appMenu.popup(dot, 0, dot.height + 1) } }
-            FlatToolTip { visible: dotMA.containsMouse && !dot.menuOpen; text: qsTr("Menu"); x: 0; y: dot.height + 6 }
+            color: menuOpen ? Theme.colors.divider : (menuMA.containsMouse ? Theme.colors.affordanceHover : "transparent")
+            Icon { anchors.centerIn: parent; name: "list"; size: 16
+                   color: menuBtn.menuOpen || menuMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+            MouseArea { id: menuMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: { if (!win.appMenu) return; if (win.appMenu.visible) win.appMenu.close(); else win.appMenu.popup(menuBtn, 0, menuBtn.height + 1) } }
+            FlatToolTip { visible: menuMA.containsMouse && !menuBtn.menuOpen; text: qsTr("Menu"); x: 0; y: menuBtn.height + 6 }
         }
     }
 
