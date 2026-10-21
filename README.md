@@ -36,6 +36,9 @@ editor is a virtualized Qt Quick surface that owns the page model directly.
   `external/Sparkle/` (auto-update is a no-op shim if absent).
 - **ink-stroke-modeler**, **SoundTouch**, **Hunspell** — fetched automatically
   by CMake (FetchContent); Hunspell is compiled in as a static library.
+- **miniz**, **psd_sdk**, **stb_image** — vendored source under `external/`
+  (the `.mnpkg` zip backend; the Photoshop and Radiance HDR readers behind the
+  preview pass), compiled in; nothing to fetch.
 - **Spelling / grammar data** — committed under `app/spell/en/`: a merged
   US + UK SCOWL dictionary and the parse-free subset of LanguageTool's English
   rules. Regenerate with `scripts/build-merged-dictionary.py` and
@@ -65,7 +68,7 @@ app/core/    C++ model: CanvasDocument (the file), BlockModel (a page), Document
              Exporter (md/HTML/DOCX/PDF), CanvasExporter (HTML + poster), providers
 app/notes/   ink stroke engine (canvas ink, media ink, video annotations), MediaHost
 app/qml/     QML UI tree (Main, Editor, MediaBlock, tables, dialogs, …)
-external/    vendored deps (ffmpeg, kf6, Sparkle, aspekta font) + build-ksyntax.sh
+external/    vendored deps (ffmpeg, kf6, Sparkle, miniz, psd_sdk, stb, aspekta font) + build-ksyntax.sh
 packaging/   macOS bundle (Info.plist, entitlements, icon) + Windows installer
 scripts/     sign / notarize / appcast tooling
 LICENSES/    third-party license texts (see below)
@@ -81,8 +84,9 @@ text and [`LICENSES/`](LICENSES/) for the third-party license texts minNotes
 redistributes (Qt LGPL-3.0, FFmpeg LGPL-2.1+, KSyntaxHighlighting MIT,
 ink-stroke-modeler Apache-2.0, SoundTouch LGPL-2.1, Hunspell LGPL-2.1 (of its
 MPL/GPL/LGPL tri-license), SCOWL word lists (permissive SCOWL notice),
-LanguageTool rule data LGPL-2.1, Sparkle / WinSparkle MIT, Phosphor MIT,
-Aspekta SIL OFL, SQLite public domain). The same texts ship inside the app
+LanguageTool rule data LGPL-2.1, miniz MIT, psd_sdk BSD-2-Clause, stb_image MIT,
+Sparkle / WinSparkle MIT, Phosphor MIT, the Aspekta / PT Serif / Inter / Lora /
+JetBrains Mono typefaces SIL OFL 1.1, SQLite public domain). The same texts ship inside the app
 (`Contents/Resources/Licenses` on macOS, `Licenses\` beside the exe on
 Windows) and are reproduced at <https://minnotes.app/licenses/>.
 [`LICENSES/THIRD_PARTY_NOTICES.txt`](LICENSES/THIRD_PARTY_NOTICES.txt) is the
