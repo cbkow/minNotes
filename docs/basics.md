@@ -50,7 +50,7 @@ frame. `Esc` closes the search, from the field or from the page, before it does
 anything else. A PDF's text is read once, the first time you search
 after adding it, and kept in the file.
 
-<!-- ![The search bar with results](images/mn036.png) -->
+![The search bar with results](images/mn036.png) 
 
 ## Saving
 

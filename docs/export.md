@@ -54,7 +54,7 @@ page that carries ink. Images open in the lightbox. Folder, file, link and
 audio cards print their paths. `Esc` returns to the canvas, and the tabs
 stay open while you look around.
 
-<!-- ![A canvas export in a browser](images/mn035.png) -->
+![A canvas export in a browser](images/mn035.png) 
 
 **Canvas Poster (PNG)…** renders the zoomed-out canvas — pages as sheets
 with their titles, media thumbnails, ink — as one image.
