@@ -6809,6 +6809,40 @@ static void testPreviewPass() {
     CHECK((prow >= 0 && m.mediaKind(prow) == QLatin1String("image") && m.mediaPreviewFormat(prow) == QStringLiteral("PSD") && m.mediaSourcePath(prow) == QFileInfo(psd).absoluteFilePath()),
           "…a page drop lands it as an image block with the PSD pill");
 
+    // --- under a PATH MAPPING (the NAS case): the preview's source is a {vol, rel} ref, the preview PNG stays relative;
+    //     stale / refresh / source path / search all resolve through the mapping; an unmapped volume degrades quietly ---
+    {
+        mn::PathMapping vol; vol.id = QStringLiteral("probevol"); vol.label = QStringLiteral("probe"); vol.mac = dir.path(); vol.win = dir.path(); vol.lin = dir.path();
+        mn::setActiveMappings({vol});
+        const MediaStore::PreviewRef mref = store.importPreview(hdr);
+        const QJsonObject mdesc = QJsonDocument::fromJson(MediaStore::previewDescriptorJson(mref).toUtf8()).object();
+        const QJsonObject msrc = mdesc.value(QStringLiteral("preview")).toObject().value(QStringLiteral("src")).toObject();
+        CHECK((mref.ok() && msrc.value(QStringLiteral("vol")).toString() == QStringLiteral("probevol") && msrc.value(QStringLiteral("rel")).toArray().last().toString() == QStringLiteral("comp.hdr")
+               && mdesc.value(QStringLiteral("src")).isString() && mdesc.value(QStringLiteral("src")).toString().startsWith(QLatin1String(".minnotes/"))),
+              "mapped: the preview's SOURCE is a {vol, rel} ref, the preview PNG a relative store path");
+        CHECK((store.previewSourcePath(mdesc) == QFileInfo(hdr).absoluteFilePath() && !store.previewStale(mdesc)), "mapped: the source resolves through the volume; fresh");
+        const int mrow = m.insertMediaFromUrl(m.rowCountQml() - 1, QUrl::fromLocalFile(hdr).toString());
+        CHECK((mrow >= 0 && m.mediaSourcePath(mrow) == QFileInfo(hdr).absoluteFilePath() && m.mediaPreviewFormat(mrow) == QStringLiteral("HDR")), "mapped: a page block's source path resolves");
+        const QString mid = c.addMediaElementFromUrl(QUrl::fromLocalFile(hdr).toString(), 2200, 0);
+        CHECK((mid != "" && c.elementSourcePath(mid) == QFileInfo(hdr).absoluteFilePath() && c.elementPreviewFormat(mid) == QStringLiteral("HDR") && !c.elementPreviewStale(mid)),
+              "mapped: a canvas element's source path resolves, not stale");
+        writeHdr(hdr, 2, 1);
+        CHECK((c.elementPreviewStale(mid) && c.refreshElementPreview(mid) && !c.elementPreviewStale(mid) && c.mediaElementKind(mid) == QLatin1String("image")), "mapped: stale → refresh through the volume");
+        const QJsonObject after = QJsonDocument::fromJson(c.elementJson(mid).toUtf8()).object().value(QStringLiteral("media")).toObject();
+        CHECK((after.value(QStringLiteral("preview")).toObject().value(QStringLiteral("src")).isObject()), "…and the refreshed descriptor keeps the {vol, rel} source");
+        // The .ai (a PDF) under the mapping: its src is a ref too, and the element still reads as a PDF
+        const QString mai = dir.filePath(QStringLiteral("mapped.ai"));
+        { QPdfWriter w(mai); w.setPageSize(QPageSize(QPageSize::A5)); QPainter p(&w); p.drawText(40, 40, QStringLiteral("mapped ai")); p.end(); }
+        const QString aid = c.addMediaElementFromUrl(QUrl::fromLocalFile(mai).toString(), 2600, 0);
+        const QJsonObject aidesc = QJsonDocument::fromJson(c.elementJson(aid).toUtf8()).object().value(QStringLiteral("media")).toObject();
+        CHECK((aid != "" && c.mediaElementKind(aid) == QLatin1String("pdf") && aidesc.value(QStringLiteral("src")).isObject() && c.elementLocalPath(aid) == QFileInfo(mai).absoluteFilePath()),
+              "mapped: an .ai lands as a PDF element with a {vol, rel} src that resolves");
+        mn::setActiveMappings({});   // the volume goes away (another machine without the mapping)
+        CHECK((store.previewSourcePath(mdesc).isEmpty() && !store.previewStale(mdesc) && store.refreshedPreviewJson(mdesc).isEmpty() && !c.refreshElementPreview(mid)),
+              "unmapped: the source is unknown → not stale, refresh declines, the stored preview still shows");
+        writeHdr(hdr, 2, 2);
+    }
+
     // --- Illustrator = PDF ---
     const QString ai = dir.filePath(QStringLiteral("logo.ai"));
     { QPdfWriter w(ai); w.setPageSize(QPageSize(QPageSize::A5)); QPainter p(&w); p.drawText(40, 40, QStringLiteral("ai as pdf")); p.end(); }

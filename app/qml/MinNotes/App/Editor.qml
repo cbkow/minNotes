@@ -5468,7 +5468,16 @@ FocusScope {
                     if (pvArg) {
                         const b2 = canvas.canvasBounds()
                         const pvPath = pvArg.substring(15).replace(/\\/g, "/")   // a Windows path needs file:///C:/… (never assume POSIX)
+                        if (Qt.application.arguments.indexOf("--preview-mapped") >= 0) {   // …its folder as a mapped VOLUME: the source becomes a {vol, rel} ref
+                            const dirP = pvPath.substring(0, pvPath.lastIndexOf("/"))
+                            pathMap.setMappingsJson(JSON.stringify([{ id: "probevol", label: "probevol", win: dirP, mac: dirP, lin: dirP, enabled: true }]))
+                        }
                         pvId = canvas.addMediaElementFromUrl((/^[A-Za-z]:\//.test(pvPath) ? "file:///" : "file://") + pvPath, b2.x + b2.width + 1200, b2.y + 1500)
+                        if (Qt.application.arguments.indexOf("--preview-mapped") >= 0) {
+                            let pvSrc = null; try { pvSrc = JSON.parse(canvas.elementJson(pvId)).media.preview.src } catch (e) {}
+                            check(!!pvSrc && pvSrc.vol === "probevol" && canvas.elementSourcePath(pvId) === pvPath && canvas.elementLocalPath(pvId).indexOf(".minnotes/") >= 0,
+                                  "mapped: the preview's source is a {vol, rel} ref that resolves; the picture is the stored PNG (" + JSON.stringify(pvSrc) + ")")
+                        }
                         check(pvId !== "" && canvas.mediaElementKind(pvId) === "image" && canvas.elementPreviewFormat(pvId) !== "" && !canvas.elementPreviewStale(pvId),
                               "the preview file drops as an image element with a format pill (id '" + pvId + "' kind " + canvas.elementKind(pvId) + "/" + canvas.mediaElementKind(pvId) + " format '" + canvas.elementPreviewFormat(pvId) + "' json " + canvas.elementJson(pvId).substring(0, 160) + ")")
                         cvw.cam.fitRect(canvas.elementRect(pvId), cvw.width, cvw.height, 120); cvw.select(pvId)   // frame it for the shot
