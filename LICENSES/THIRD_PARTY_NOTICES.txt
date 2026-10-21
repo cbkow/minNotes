@@ -112,6 +112,15 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
              compiled into minNotes). The zip backend for .mnpkg packages
              (zip64 + streaming; app/core/PackageFormat.cpp).
 
+11a. stb_image 2.30
+    Copyright (c) 2017 Sean Barrett
+    License: MIT (dual-licensed MIT / public domain; used under MIT)
+    File:    stb_image-MIT.txt
+    https://github.com/nothings/stb
+    Linkage: static (single-header library vendored at external/stb, compiled
+             into minNotes). The Radiance HDR decoder behind the preview pass
+             (app/core/PreviewRender.cpp); every other image format is Qt's.
+
 12. Hunspell 1.7.3
     Copyright (C) 2002-2022 Németh László and the Hunspell contributors
     License: LGPL v2.1 or later (the LGPL leg of the MPL 1.1 / GPL 2.0 /

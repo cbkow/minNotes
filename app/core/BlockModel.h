@@ -778,6 +778,13 @@ public:
     Q_INVOKABLE void pdfRemovePageText(int row, int page, int idx);
     // Unsupported file → a generic attachment chip (referenced in place, no copy).
     Q_INVOKABLE int insertFileFromUrl(int afterRow, const QString& fileUrl);
+    // The preview pass (2026-10-21): a previewable file (PSD, HEIC, RAW, HDR) lands as an IMAGE block showing its
+    // rendered preview; the original is referenced under `preview` (see MediaStore). -1 when no backend takes it.
+    Q_INVOKABLE int insertPreviewFromUrl(int afterRow, const QString& fileUrl);
+    Q_INVOKABLE QString mediaPreviewFormat(int row) const;   // the pill ("PSD", "HDR"…); "" for a plain image
+    Q_INVOKABLE bool    mediaPreviewStale(int row) const;    // the source changed since the render (stat; bind with contentRevision)
+    Q_INVOKABLE void    refreshMediaPreview(int row);        // re-render from the source — one undo step
+    Q_INVOKABLE QString mediaSourcePath(int row) const;      // the ORIGINAL for a preview, else mediaLocalPath — reveal / open / copy path
     // Route a dropped/pasted file: video → pdf → image → file-attachment fallback.
     // forceCopy (paste only): the clipboard carried raster bytes alongside
     // this URL — a capture-app temp file; copy it into .minnotes even if it

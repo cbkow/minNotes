@@ -867,10 +867,37 @@ QString CanvasDocument::elementLocalPath(const QString& id) const {
     const QUrl u(url);
     return u.isLocalFile() ? u.toLocalFile() : QString();
 }
-QString CanvasDocument::ufbLink(const QString& id) const { return mn::ufbLinkFor(elementLocalPath(id)); }
-void CanvasDocument::openElement(const QString& id) const { mn::openWithDefaultApp(elementLocalPath(id)); }
-void CanvasDocument::openElementInUfb(const QString& id) const { mn::openInUfb(elementLocalPath(id)); }
-void CanvasDocument::revealElement(const QString& id) const { mn::revealInFileManager(elementLocalPath(id)); }
+static QJsonObject mediaDescriptorOf(const Document::Element& e);   // (defined with the media helpers below)
+QString CanvasDocument::elementSourcePath(const QString& id) const {
+    if (!mediaStore_) return QString();
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return QString();
+    const QString src = mediaStore_->previewSourcePath(mediaDescriptorOf(*e));
+    return src.isEmpty() ? elementLocalPath(id) : src;
+}
+QString CanvasDocument::elementPreviewFormat(const QString& id) const {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("media")) return QString();
+    return mediaDescriptorOf(*e).value(QStringLiteral("preview")).toObject().value(QStringLiteral("format")).toString();
+}
+bool CanvasDocument::elementPreviewStale(const QString& id) const {
+    const auto e = element(id);
+    if (!e || !mediaStore_ || e->kind != QLatin1String("media")) return false;
+    return mediaStore_->previewStale(mediaDescriptorOf(*e));
+}
+bool CanvasDocument::refreshElementPreview(const QString& id) {
+    const auto e = element(id);
+    if (!e || !mediaStore_ || e->kind != QLatin1String("media")) return false;
+    const QString fresh = mediaStore_->refreshedPreviewJson(mediaDescriptorOf(*e));
+    if (fresh.isEmpty()) return false;
+    QJsonObject root = QJsonDocument::fromJson(e->json.toUtf8()).object();
+    root.insert(QStringLiteral("media"), QJsonDocument::fromJson(fresh.toUtf8()).object());
+    return setElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+}
+QString CanvasDocument::ufbLink(const QString& id) const { return mn::ufbLinkFor(elementSourcePath(id)); }
+void CanvasDocument::openElement(const QString& id) const { mn::openWithDefaultApp(elementSourcePath(id)); }   // a preview opens its ORIGINAL
+void CanvasDocument::openElementInUfb(const QString& id) const { mn::openInUfb(elementSourcePath(id)); }
+void CanvasDocument::revealElement(const QString& id) const { mn::revealInFileManager(elementSourcePath(id)); }
 static QJsonObject mediaDescriptorOf(const Document::Element& e) {
     return QJsonDocument::fromJson(e.json.toUtf8()).object().value(QStringLiteral("media")).toObject();
 }
@@ -983,6 +1010,13 @@ QString CanvasDocument::addMediaElementFromUrl(const QString& fileUrl, qreal wx,
     if (MediaStore::isAudioPath(fileUrl)) {   // phase A9: an audio element (name, duration, path; inline play)
         const MediaStore::AudioRef ref = mediaStore_->importAudioFile(fileUrl);
         if (ref.ok()) return addMediaElement(MediaStore::audioDescriptorJson(ref), QRectF(wx, wy, kAudioCardW, kAudioCardH));
+    }
+    if (MediaStore::isPreviewablePath(fileUrl)) {   // the preview pass (2026-10-21): PSD / HEIC / RAW / HDR as a rendered image
+        const MediaStore::PreviewRef ref = mediaStore_->importPreview(fileUrl);
+        if (ref.ok()) {
+            const double dw = std::min<double>(kDropMediaWidth, ref.img.w);
+            return addMediaElement(MediaStore::previewDescriptorJson(ref), QRectF(wx, wy, dw, dw * ref.img.h / ref.img.w));
+        }
     }
     {
         const MediaStore::ImageRef ref = mediaStore_->importFile(fileUrl, /*forceCopy*/false);

@@ -16,6 +16,8 @@ qt_add_executable(minnotesapp
     core/FenwickTree.h
     core/BlockModel.h
     core/BlockModel.cpp
+    core/PreviewRender.h
+    core/PreviewRender.cpp
     core/InlineText.h
     core/InlineText.cpp
     core/ViewportSlots.h
@@ -277,6 +279,8 @@ target_include_directories(minnotesapp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/notes
     ${CMAKE_CURRENT_SOURCE_DIR}/player
     ${CMAKE_CURRENT_SOURCE_DIR}/player/d3d11
+    # stb_image (MIT, vendored at external/stb): the Radiance HDR preview backend (PreviewRender.cpp)
+    ${CMAKE_SOURCE_DIR}/external/stb
     # miniz: the .mnpkg zip backend (zip64 + streaming — Qt's private QZip
     # caps at 4 GiB and RAM-buffers whole entries, so packages outgrew it).
     ${CMAKE_SOURCE_DIR}/external/miniz)
@@ -599,6 +603,9 @@ if(APPLE)
     # Metal zero-copy bridge + CoreVideo CVPixelBuffer handle (frame_handle.mm),
     # and the CoreAudio output device.
     target_sources(minnotesapp PRIVATE WindowChrome_mac.mm)   # the chromeless window's AppKit half
+    # The preview pass's ImageIO + QuickLook backend (PSD / HEIC / RAW previews; 2026-10-21) — ARC for the QL request.
+    target_sources(minnotesapp PRIVATE core/PreviewRender_mac.mm)
+    set_source_files_properties(core/PreviewRender_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_sources(minnotesapp PRIVATE
         player/frame_handle.mm
         player/zero_copy_bridge_metal.h
@@ -612,7 +619,9 @@ if(APPLE)
         "-framework AudioToolbox"
         "-framework CoreAudio"
         "-framework AudioUnit"
-        "-framework AppKit")   # RtfConvert_mac.mm — NSAttributedString RTF→HTML
+        "-framework AppKit"    # RtfConvert_mac.mm — NSAttributedString RTF→HTML
+        "-framework ImageIO"   # PreviewRender_mac.mm — CGImageSource previews
+        "-framework QuickLookThumbnailing")   # …and QuickLook for what ImageIO declines
     # FFmpeg rpath is set in the .app bundle block above (BUILD_RPATH carries
     # both @executable_path/../Frameworks for Sparkle and the FFmpeg lib dir so
     # the dev .app resolves the @rpath/lib*.dylib install_names from the build

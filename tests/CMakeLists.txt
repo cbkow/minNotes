@@ -41,6 +41,8 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/Converter.cpp
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
+    ${CMAKE_SOURCE_DIR}/app/core/PreviewRender.cpp    # the preview pass (HDR via stb_image; MediaStore::importPreview)
+    $<$<PLATFORM_ID:Darwin>:${CMAKE_SOURCE_DIR}/app/core/PreviewRender_mac.mm>
     # PathMap.cpp defines mn::toRef / mn::resolveRef, referenced by BlockModel
     # and MediaStore (cross-OS path mapping). Link it or the test fails LNK2019.
     ${CMAKE_SOURCE_DIR}/app/core/PathMap.cpp
@@ -74,7 +76,8 @@ target_include_directories(mn_regression_test PRIVATE
     ${CMAKE_SOURCE_DIR}/app/core
     ${CMAKE_SOURCE_DIR}/app/notes
     ${CMAKE_SOURCE_DIR}/app/spell
-    ${CMAKE_SOURCE_DIR}/external/miniz)
+    ${CMAKE_SOURCE_DIR}/external/miniz
+    ${CMAKE_SOURCE_DIR}/external/stb)
 # The bundled app fonts: the harness registers Inter so sketch-text height
 # derivation matches the app (assertions stay font-relative regardless).
 target_compile_definitions(mn_regression_test PRIVATE
@@ -91,7 +94,8 @@ target_link_libraries(mn_regression_test PRIVATE
     minnotes::hunspell)            # the spell engine
 if(APPLE)
     # RtfConvert_mac.mm — NSAttributedString RTF→HTML
-    target_link_libraries(mn_regression_test PRIVATE "-framework AppKit")
+    target_link_libraries(mn_regression_test PRIVATE "-framework AppKit" "-framework ImageIO" "-framework QuickLookThumbnailing")
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/app/core/PreviewRender_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
 # FFmpeg DLLs next to the test exe so it launches on Windows.

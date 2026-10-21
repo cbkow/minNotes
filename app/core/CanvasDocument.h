@@ -188,6 +188,12 @@ public:
     // A media element's file on disk — BLOCKING (packaged media extracts inline; the explicit-action
     // cost, like BlockModel::mediaLocalPath). "" for non-media elements, remote urls, unresolvable refs.
     Q_INVOKABLE QString elementLocalPath(const QString& id) const;
+    // The preview pass (2026-10-21): the ORIGINAL behind a preview element (else elementLocalPath) — what reveal /
+    // open / Open in ufb / Copy path / search act on; the loadable file (the preview PNG) stays elementLocalPath.
+    Q_INVOKABLE QString elementSourcePath(const QString& id) const;
+    Q_INVOKABLE QString elementPreviewFormat(const QString& id) const;   // "" when not a preview
+    Q_INVOKABLE bool    elementPreviewStale(const QString& id) const;
+    Q_INVOKABLE bool    refreshElementPreview(const QString& id);       // re-render → one history row
     Q_INVOKABLE QString ufbLink(const QString& id) const;            // mn::ufbLinkFor(elementLocalPath)
     Q_INVOKABLE void openElement(const QString& id) const;           // the platform's default app
     Q_INVOKABLE void openElementInUfb(const QString& id) const;

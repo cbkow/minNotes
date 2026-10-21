@@ -50,6 +50,7 @@
 #include <QXmlStreamReader>
 #include <QTextStream>
 #include <QTemporaryDir>
+#include "PreviewRender.h"   // [146] the preview pass
 #include <QImage>
 #include <cstring>
 #include <QMimeData>
@@ -6693,6 +6694,89 @@ static void testLayerRows() {
     CHECK((!c.stepLayers({page}, -1)), "the bottom element can't step back");
 }
 
+// [146] The preview pass (2026-10-21, tier 1): a Radiance HDR renders through stb_image (clamp + 2.2) into a stored
+// preview PNG and lands as an IMAGE block / element whose descriptor carries the original under `preview`; reveal /
+// open / Copy path act on the original; a changed source reads stale; Refresh re-renders as one undo step; an .ai is a PDF.
+static void testPreviewPass() {
+    qInfo("[146] preview pass: HDR → stored preview PNG (stb, clamp + 2.2); page + canvas carry the original under `preview`; source path, stale, refresh (one undo row); .ai = PDF");
+    QTemporaryDir dir;
+    // A 2 × 2 flat (non-RLE) RGBE file: (1, 0, 0) · black / black · (0, 0, 1).
+    const auto writeHdr = [&](const QString& path, int w, int h) {
+        QByteArray b = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n";
+        b += QStringLiteral("-Y %1 +X %2\n").arg(h).arg(w).toLatin1();
+        const unsigned char red[4] = {128, 0, 0, 129}, black[4] = {0, 0, 0, 0}, blue[4] = {0, 0, 128, 129};
+        for (int i = 0; i < w * h; ++i) b.append(reinterpret_cast<const char*>(i == 0 ? red : (i == w * h - 1 ? blue : black)), 4);
+        QFile f(path); CHECK((f.open(QIODevice::WriteOnly)), "hdr fixture written"); f.write(b); f.close();
+    };
+    const QString hdr = dir.filePath(QStringLiteral("comp.hdr"));
+    writeHdr(hdr, 2, 2);
+    const QImage r = mn::preview::renderHdr(hdr, 2048);
+    CHECK((r.width() == 2 && r.height() == 2 && qRed(r.pixel(0, 0)) == 255 && qGreen(r.pixel(0, 0)) == 0 && r.pixel(1, 0) == qRgb(0, 0, 0) && qBlue(r.pixel(1, 1)) == 255),
+          "renderHdr: 2 × 2, linear 1.0 → 255, black stays black");
+    CHECK((mn::preview::supportsExt(QStringLiteral("hdr")) && mn::preview::formatLabel(QStringLiteral("hdr")) == QStringLiteral("HDR")
+           && mn::preview::formatLabel(QStringLiteral("psd")) == QStringLiteral("PSD") && mn::preview::formatLabel(QStringLiteral("cr3")) == QStringLiteral("RAW")
+           && !mn::preview::supportsExt(QStringLiteral("exr")) && mn::preview::render(dir.filePath(QStringLiteral("nope.hdr"))).isNull()),
+          "supportsExt / formatLabel: HDR everywhere, EXR never (ruling), a missing file renders null");
+#ifdef Q_OS_MACOS
+    CHECK((mn::preview::supportsExt(QStringLiteral("psd")) && mn::preview::supportsExt(QStringLiteral("heic")) && mn::preview::supportsExt(QStringLiteral("dng"))),
+          "macOS: PSD / HEIC / RAW through ImageIO + QuickLook");
+#else
+    CHECK((!mn::preview::supportsExt(QStringLiteral("psd"))), "not macOS: PSD waits for tier 2");
+#endif
+
+    // --- the store ---
+    MediaStore store(dir.filePath(QStringLiteral("doc.mnd")));
+    CHECK((MediaStore::isPreviewablePath(hdr) && !MediaStore::isPreviewablePath(dir.filePath(QStringLiteral("a.png")))), "isPreviewablePath by extension");
+    const MediaStore::PreviewRef ref = store.importPreview(hdr);
+    CHECK((ref.ok() && ref.img.src.startsWith(QLatin1String(".minnotes/")) && ref.img.src.endsWith(QLatin1String(".png")) && ref.img.w == 2 && ref.img.h == 2
+           && ref.format == QStringLiteral("HDR") && ref.sourcePath == QFileInfo(hdr).absoluteFilePath() && ref.size > 0 && ref.mtime > 0),
+          "importPreview: a stored PNG beside the doc, the original's path / mtime / size (" + ref.img.src.toUtf8() + ")");
+    const QJsonObject desc = QJsonDocument::fromJson(MediaStore::previewDescriptorJson(ref).toUtf8()).object();
+    CHECK((MediaStore::isPreviewDescriptor(desc) && desc.value(QStringLiteral("name")).toString() == QStringLiteral("comp.hdr") && !desc.contains(QStringLiteral("kind"))
+           && desc.value(QStringLiteral("preview")).toObject().value(QStringLiteral("format")).toString() == QStringLiteral("HDR")),
+          "the descriptor is an IMAGE (no kind) named after the original, with the preview record");
+    CHECK((store.previewSourcePath(desc) == QFileInfo(hdr).absoluteFilePath() && !store.previewStale(desc)), "previewSourcePath resolves the original; fresh = not stale");
+
+    // --- a page ---
+    BlockModel m; m.newDocument();
+    const int row = m.insertMediaFromUrl(m.rowCountQml() - 1, QUrl::fromLocalFile(hdr).toString());
+    CHECK((row >= 0 && m.mediaKind(row) == QLatin1String("image") && m.mediaPreviewFormat(row) == QStringLiteral("HDR") && m.mediaW(row) == 2 && m.mediaH(row) == 2
+           && m.mediaSourcePath(row) == QFileInfo(hdr).absoluteFilePath() && m.mediaLocalPath(row).endsWith(QLatin1String(".png")) && !m.mediaPreviewStale(row)),
+          "insertMediaFromUrl(.hdr): an image block with the HDR pill; source path = the original, local path = the preview PNG");
+    writeHdr(hdr, 2, 1);   // the source moves on (a different size, so no mtime-resolution luck)
+    CHECK((m.mediaPreviewStale(row)), "…the source changed → stale");
+    const int rows0 = m.undoHistory().size();
+    m.refreshMediaPreview(row);
+    CHECK((!m.mediaPreviewStale(row) && m.mediaH(row) == 1 && m.undoHistory().size() == rows0 + 1), "Refresh preview re-renders (2 × 1) as ONE undo row");
+    m.undo();
+    CHECK((m.mediaH(row) == 2 && m.mediaPreviewStale(row)), "…undo restores the old preview (stale again)");
+    m.redo();
+
+    // --- the canvas ---
+    CanvasDocument c; CHECK((c.newCanvas()), "canvas");
+    const QString id = c.addMediaElementFromUrl(QUrl::fromLocalFile(hdr).toString(), 1000, 0);
+    CHECK((id != "" && c.elementKind(id) == QLatin1String("media") && c.mediaElementKind(id) == QLatin1String("image") && c.elementPreviewFormat(id) == QStringLiteral("HDR")
+           && c.elementSourcePath(id) == QFileInfo(hdr).absoluteFilePath() && c.elementLocalPath(id).endsWith(QLatin1String(".png")) && c.mediaElementName(id) == QStringLiteral("comp.hdr")),
+          "the canvas drop: an image element with the pill; source path = the original, named after it");
+    const QVariantMap top = c.layerRows().first().toMap();
+    CHECK((top.value(QStringLiteral("kind")) == QLatin1String("image") && top.value(QStringLiteral("name")).toString() == QStringLiteral("comp.hdr")), "the Layers row names the original");
+    writeHdr(hdr, 2, 2);
+    const int crows = c.undoHistory().size();
+    CHECK((c.elementPreviewStale(id) && c.refreshElementPreview(id) && !c.elementPreviewStale(id) && c.undoHistory().size() == crows + 1), "stale → Refresh preview = one canvas history row");
+
+    // --- Illustrator = PDF ---
+    const QString ai = dir.filePath(QStringLiteral("logo.ai"));
+    { QPdfWriter w(ai); w.setPageSize(QPageSize(QPageSize::A5)); QPainter p(&w); p.drawText(40, 40, QStringLiteral("ai as pdf")); p.end(); }
+    CHECK((MediaStore::isPdfPath(ai) && store.importPdfFile(ai).ok()), "an .ai saved PDF-compatible is a PDF to the store");
+    const int airow = m.insertMediaFromUrl(m.rowCountQml() - 1, QUrl::fromLocalFile(ai).toString());
+    CHECK((airow >= 0 && m.mediaKind(airow) == QLatin1String("pdf")), "…and lands as a PDF block in a page");
+    const QString aiEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(ai).toString(), 1400, 0);
+    CHECK((aiEl != "" && c.mediaElementKind(aiEl) == QLatin1String("pdf")), "…and as a PDF element on the canvas");
+    QFile::remove(ai); { QFile f(ai); f.open(QIODevice::WriteOnly); f.write("%!PS-Adobe-3.0 not a pdf\n"); }   // a legacy (non-PDF) .ai
+    CHECK((!store.importPdfFile(ai).ok() && c.mediaElementKind(c.addMediaElementFromUrl(QUrl::fromLocalFile(ai).toString(), 1800, 0)) == QLatin1String("file")),
+          "an .ai that is NOT a PDF stream falls through to a file card");
+}
+
 // [143] Search (v2.0.1): ONE file — the current page's hits first, then the other pages, cards, PDF text (cached in the
 // file), video notes; folded matching; every hit carries what its jump needs.
 static void testSearch() {
@@ -9260,6 +9344,7 @@ int main(int argc, char** argv) {
     testCanvasHtml();
     testSearch();
     testLayerRows();
+    testPreviewPass();
     testPdfPageDrawing();
     testPageFixedHeight();
     testInkStyle();

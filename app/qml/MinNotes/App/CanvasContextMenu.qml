@@ -23,6 +23,7 @@ Popup {
     readonly property bool localMedia: n === 1 && kind1 === "media" && canvas.mediaElementKind(view.selectedId) !== "bookmark"
                                        && !/^https?:/.test(canvas.elementLocalPath(view.selectedId) === "" ? "https:" : "")
     readonly property bool isBookmark: n === 1 && kind1 === "media" && canvas.mediaElementKind(view.selectedId) === "bookmark"
+    readonly property bool isPreview: (canvas.elementsRevision, n === 1 && kind1 === "media" && canvas.elementPreviewFormat(view.selectedId) !== "")   // the preview pass (2026-10-21)
     readonly property bool onMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property int visibleRows: { let c = 0; for (let i = 0; i < rows.children.length; ++i) if (rows.children[i].visible && rows.children[i].isMenuRow === true) ++c; return c }   // probe: rows, not rules
     function popupAt(sx, sy) { x = sx; y = sy; open() }
@@ -55,7 +56,8 @@ Popup {
         // 2. The thing's own actions
         Row { label: menu.onMac ? qsTr("Reveal in Finder") : qsTr("Show in Explorer"); show: menu.localMedia; onTriggered: canvas.revealElement(menu.view.selectedId) }
         Row { label: qsTr("Open in ufb");    show: menu.localMedia;        onTriggered: canvas.openElementInUfb(menu.view.selectedId) }
-        Row { label: qsTr("Copy path");      show: menu.localMedia;        onTriggered: clipboard.writeText(canvas.elementLocalPath(menu.view.selectedId)) }
+        Row { label: qsTr("Copy path");      show: menu.localMedia;        onTriggered: clipboard.writeText(canvas.elementSourcePath(menu.view.selectedId)) }   // a preview's ORIGINAL
+        Row { label: qsTr("Refresh preview"); show: menu.isPreview;        onTriggered: canvas.refreshElementPreview(menu.view.selectedId) }   // re-render from the PSD / HEIC / RAW / HDR
         Row { label: qsTr("Copy link");      show: menu.isBookmark;        onTriggered: clipboard.writeText(menu.view.mediaOf(menu.view.selectedId).src || "") }
         Row { label: qsTr("Spread files here"); show: menu.view.selectedIsFolder; onTriggered: menu.view.spreadSelected() }
         Row { label: qsTr("Refresh");        show: menu.view.selectedIsFolder; onTriggered: canvas.rescanFolder(menu.view.selectedId) }

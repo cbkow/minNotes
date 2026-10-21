@@ -5462,8 +5462,25 @@ FocusScope {
                     check(r[0].kind === "ink" && r[0].count === 2 && r[1].id === sB && r[2].id === sA && done() === h0 + 1 && !lp.dragging,
                           "a row drag reorders: the run on top, the rect above the chip, ONE history row (" + r.slice(0, 3).map(x => x.kind).join(" ") + ", rows +" + (done() - h0) + ")")
                     check(String(canvas.undoHistory()[canvas.undoHistory().length - 1].label).indexOf("Reorder") === 0, "…labelled Reorder (" + canvas.undoHistory()[canvas.undoHistory().length - 1].label + ")")
+                    // Optional (dev): `--preview-file=<psd|hdr|heic>` drops a real previewable file for the shot — the preview pass.
+                    const pvArg = Qt.application.arguments.find(a => a.indexOf("--preview-file=") === 0)
+                    let pvId = ""
+                    if (pvArg) {
+                        const b2 = canvas.canvasBounds()
+                        pvId = canvas.addMediaElementFromUrl("file://" + pvArg.substring(15), b2.x + b2.width + 1200, b2.y + 1500)
+                        check(pvId !== "" && canvas.mediaElementKind(pvId) === "image" && canvas.elementPreviewFormat(pvId) !== "" && !canvas.elementPreviewStale(pvId),
+                              "the preview file drops as an image element with a format pill (" + canvas.elementPreviewFormat(pvId) + ")")
+                        cvw.cam.fitRect(canvas.elementRect(pvId), cvw.width, cvw.height, 120); cvw.select(pvId)   // frame it for the shot
+                    }
+                    textId = pvId   // (carried to the shot step)
+                    if (pvId === "") cvw.select(sB)
+                    step = 12; return
+                }
+                if (step < 30) { ++step; return }   // ~0.7 s for the dropped preview's async decode before the picture
+                if (step === 30) {
                     const shotArg = Qt.application.arguments.find(a => a.indexOf("--layers-shot=") === 0)
-                    if (shotArg) { cvw.select(sB); g.grab(root, shotArg.substring(14)) }
+                    if (shotArg) g.grab(root, shotArg.substring(14))
+                    if (textId !== "") { canvas.removeElement(textId); textId = "" }
                     for (const id of multiIds) canvas.removeElement(id)
                     cvw.clearSelection()
                     root.inspector.open = probeW === 1
@@ -7914,6 +7931,7 @@ FocusScope {
         readonly property bool bulkMode: tableSetHit !== null
         // The block column's sections (the menu grammar, 2026-10-21) — a rule only stands between two shown sections.
         readonly property bool isLocalMedia: isMedia && (blockModel.structureRevision, !/^https?:/.test(blockModel.mediaUrl(root.menuRow)))
+        readonly property bool isPreview: isMedia && (blockModel.structureRevision, blockModel.mediaPreviewFormat(root.menuRow) !== "")   // the preview pass (2026-10-21)
         readonly property bool laneRole: !inFrameTab && laneRecord >= 0 && (tableHead < 0 || !tableHeaderRow)
         readonly property bool secPrimary: (root.menuLinkUrl.length > 0 && !menuInSel) || (isPdf && !root.pdfTabOpen) || (isVideo && !root.videoTabOpen)
         readonly property bool secOwn: isMedia || tableOne
@@ -8016,6 +8034,7 @@ FocusScope {
                 // 2. The thing's own actions: a media block's file, a table's roles
                 MenuRow { visible: blockMenu.isImage; text: qsTr("Copy image")
                           onActivated: { clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow)); Toasts.show(qsTr("Image copied")) } }
+                MenuRow { visible: blockMenu.isPreview; text: qsTr("Refresh preview"); onActivated: blockModel.refreshMediaPreview(root.menuRow) }   // re-render from the PSD / HEIC / RAW / HDR
                 // Image size (the corner double-click's discoverable twin): fit the lane / the original.
                 MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: qsTr("Fit width")
                           onActivated: blockModel.setMediaWidth(root.menuRow, root.fitWidthForRow(root.menuRow)) }
@@ -8024,7 +8043,7 @@ FocusScope {
                 MenuRow { visible: blockMenu.isMedia; text: Qt.platform.os === "windows" ? qsTr("Show in Explorer") : qsTr("Reveal in Finder")
                           onActivated: blockModel.revealMedia(root.menuRow) }
                 MenuRow { visible: blockMenu.isMedia; text: qsTr("Open in ufb"); onActivated: blockModel.openMediaInUfb(root.menuRow) }
-                MenuRow { visible: blockMenu.isLocalMedia; text: qsTr("Copy path"); onActivated: clipboard.writeText(blockModel.mediaLocalPath(root.menuRow)) }
+                MenuRow { visible: blockMenu.isLocalMedia; text: qsTr("Copy path"); onActivated: clipboard.writeText(blockModel.mediaSourcePath(root.menuRow)) }   // a preview's ORIGINAL
                 // The table as a whole; its column and row get their own menu columns (tableColMenu / tableRowMenu).
                 MenuHeader { visible: blockMenu.tableOne; text: qsTr("Table") }
                 MenuRow { visible: blockMenu.tableOne && blockMenu.tableHeaders < blockMenu.tableRows - 1; scope: "table"

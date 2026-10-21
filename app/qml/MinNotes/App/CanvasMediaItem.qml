@@ -43,6 +43,8 @@ Item {
         function mediaDispWidth(row) { return mi.width }
         function mediaDisplayHeight(row) { return mi.height }
         function mediaPageInk(row, page) { return canvas.mediaElementInk(mi.elementId, page) }
+        function mediaPreviewFormat(row) { return (media.preview && media.preview.format) || "" }   // the preview pass (2026-10-21)
+        function mediaPreviewStale(row) { return mi.elementId !== "" && canvas.elementPreviewStale(mi.elementId) }
     }
     // The shown PDF page and the video poster frame follow the editor's path-keyed maps (phase A5):
     // page with the pager under the selection frame; the poster is the studio's banked playhead.

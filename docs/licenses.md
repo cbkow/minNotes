@@ -21,6 +21,7 @@ the `Licenses` folder beside the executable on Windows).
 | ink-stroke-modeler | stroke smoothing | Apache-2.0 |
 | SoundTouch | constant-pitch review speeds | LGPL-2.1 |
 | miniz | package (.mnpkg) zip backend | MIT |
+| stb_image | Radiance HDR previews | MIT |
 | SQLite | note storage | public domain |
 | Sparkle / WinSparkle | updates | MIT |
 | Phosphor Icons | icons | MIT |

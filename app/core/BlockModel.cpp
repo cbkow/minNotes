@@ -4397,6 +4397,48 @@ int BlockModel::insertPdfFromUrl(int afterRow, const QString& fileUrl) {
     return insertMedia(afterRow, pdfMediaJson(ref), aspectParam(ref.w, ref.h));
 }
 
+int BlockModel::insertPreviewFromUrl(int afterRow, const QString& fileUrl) {
+    if (!mediaStore()) return -1;
+    const MediaStore::PreviewRef ref = mediaStore()->importPreview(fileUrl);
+    if (!ref.ok()) return -1;
+    return insertMedia(afterRow, MediaStore::previewDescriptorJson(ref), aspectParam(ref.img));
+}
+QString BlockModel::mediaPreviewFormat(int row) const {
+    if (rows_.empty()) return {};
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QJsonObject o = QJsonDocument::fromJson(content_[row].toUtf8()).object();
+    return o.value(QStringLiteral("preview")).toObject().value(QStringLiteral("format")).toString();
+}
+bool BlockModel::mediaPreviewStale(int row) const {
+    if (rows_.empty() || !mediaStore()) return false;
+    row = clampRow(row);
+    if (rows_[row].type != Media) return false;
+    return mediaStore()->previewStale(QJsonDocument::fromJson(content_[row].toUtf8()).object());
+}
+QString BlockModel::mediaSourcePath(int row) const {
+    if (rows_.empty() || !mediaStore()) return {};
+    row = clampRow(row);
+    if (rows_[row].type != Media) return {};
+    const QString src = mediaStore()->previewSourcePath(QJsonDocument::fromJson(content_[row].toUtf8()).object());
+    return src.isEmpty() ? mediaLocalPath(row) : src;
+}
+void BlockModel::refreshMediaPreview(int row) {
+    if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[row].type != Media || !mediaStore()) return;
+    const QString json = mediaStore()->refreshedPreviewJson(QJsonDocument::fromJson(content_[row].toUtf8()).object());
+    if (json.isEmpty() || json == content_[row]) return;
+    beginTxn(row, row);
+    content_[row] = json;
+    fillMediaMeta(rows_[row], json);
+    rows_[row].measured = false;
+    setIndexHeight(static_cast<size_t>(row), estimatedHeight(rows_[row], contentWidthOfRow(row)));
+    persistContent(row);
+    emit dataChanged(index(row), index(row), {ContentRole});
+    bumpLayout();
+    contentSpike();
+    endTxn(tr("Refresh preview"));
+}
+
 int BlockModel::insertFileFromUrl(int afterRow, const QString& fileUrl) {
     const QString path = fileUrl.startsWith(QLatin1String("file:"))
                        ? QUrl(fileUrl).toLocalFile() : fileUrl;
@@ -4413,6 +4455,10 @@ int BlockModel::insertMediaFromUrl(int afterRow, const QString& fileUrl, bool fo
     }
     if (MediaStore::isPdfPath(fileUrl)) {
         const int r = insertPdfFromUrl(afterRow, fileUrl);
+        if (r >= 0) return r;
+    }
+    if (MediaStore::isPreviewablePath(fileUrl)) {   // the preview pass (2026-10-21): PSD / HEIC / RAW / HDR as a rendered image
+        const int r = insertPreviewFromUrl(afterRow, fileUrl);
         if (r >= 0) return r;
     }
     const int r = insertImageFromUrl(afterRow, fileUrl, forceCopy);
@@ -4540,7 +4586,7 @@ void BlockModel::refreshMedia() {
     noteStructure();
     contentSpike();
 }
-void BlockModel::revealMedia(int row) const { mn::revealInFileManager(mediaLocalPath(row)); }
+void BlockModel::revealMedia(int row) const { mn::revealInFileManager(mediaSourcePath(row)); }   // a preview reveals its ORIGINAL
 void BlockModel::revealMediaFolder() const {
     if (!mediaStore()) return;
     // Package views: the store anchors to the extraction scratch — show the
@@ -4713,7 +4759,7 @@ void BlockModel::pdfRemovePageText(int row, int page, int idx) {
     writePdfPageObject(row, page, pageObj);
 }
 // Open the media's file in the sibling ufb browser (the shared recipe in FileLinks.h).
-void BlockModel::openMediaInUfb(int row) const { mn::openInUfb(mediaLocalPath(row)); }
+void BlockModel::openMediaInUfb(int row) const { mn::openInUfb(mediaSourcePath(row)); }
 int BlockModel::mediaW(int row) const {
     row = clampRow(row);
     if (rowAt(row).type != Media) return 0;

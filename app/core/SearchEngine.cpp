@@ -139,7 +139,7 @@ QVariantList SearchEngine::search(const QString& queryIn, const QString& current
             if (kind == QLatin1String("bookmark")) {
                 fields << md.value(QStringLiteral("title")).toString() << md.value(QStringLiteral("host")).toString() << md.value(QStringLiteral("src")).toString();
             } else {
-                const QString path = c->elementLocalPath(e.id);
+                const QString path = c->elementSourcePath(e.id);   // a preview indexes its original
                 if (!path.isEmpty()) fields << path;
                 for (const QJsonValue& v : md.value(QStringLiteral("entries")).toArray()) fields << v.toString();
             }

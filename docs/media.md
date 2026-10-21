@@ -22,6 +22,16 @@ canvas**, as cards. Drag a file into a page, or paste from the clipboard:
 - **PDF** — paged inline with prev / next; open full-frame to read, zoom
   and draw on its pages (see [Drawing & Video](annotations.md)). The PDF
   file is never modified.
+- **Photoshop, HEIC, camera RAW and Radiance HDR** — a rendered preview
+  that behaves like an image, with a small pill naming the format. The
+  original stays where it is, untouched: Reveal, Open in ufb and Copy path
+  all point at it. When the source changes the pill reads "changed";
+  right-click for **Refresh preview**. On Windows, Photoshop, HEIC and RAW
+  previews are still to come; HDR works everywhere. EXR is deliberately a
+  plain attachment: a multi-layer, scene-referred file has no single
+  honest preview.
+- **Illustrator** — an `.ai` saved with PDF compatibility (Illustrator's
+  default) is a PDF to minNotes: it pages inline and opens full-frame.
 - **Other files** — an attachment chip; double-click to reveal in Finder /
   Explorer.
 

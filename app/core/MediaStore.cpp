@@ -1,4 +1,5 @@
 #include "MediaStore.h"
+#include "PreviewRender.h"
 #include <QJsonArray>
 #include <QDateTime>
 #include "BlockModel.h"
@@ -164,7 +165,72 @@ QString MediaStore::audioDescriptorJson(const AudioRef& ref) {
 bool MediaStore::isPdfPath(const QString& path) {
     QString p = path;
     if (p.startsWith(QLatin1String("file:"))) p = QUrl(p).toLocalFile();
-    return QFileInfo(p).suffix().toLower() == QLatin1String("pdf");
+    const QString ext = QFileInfo(p).suffix().toLower();
+    return ext == QLatin1String("pdf") || ext == QLatin1String("ai");
+}
+
+// ---- the preview pass (2026-10-21) ----
+bool MediaStore::isPreviewablePath(const QString& path) {
+    QString p = path;
+    if (p.startsWith(QLatin1String("file:"))) p = QUrl(p).toLocalFile();
+    return mn::preview::supportsExt(QFileInfo(p).suffix().toLower());
+}
+MediaStore::PreviewRef MediaStore::importPreview(const QString& fileUrlOrPath) const {
+    QString path = fileUrlOrPath;
+    if (path.startsWith(QLatin1String("file:"))) path = QUrl(path).toLocalFile();
+    const QFileInfo fi(path);
+    if (!fi.exists() || !isPreviewablePath(path)) return {};
+    const QImage img = mn::preview::render(path, mn::preview::kMaxEdge);
+    if (img.isNull()) return {};
+    PreviewRef ref;
+    ref.img = importImage(img);
+    ref.sourcePath = fi.absoluteFilePath();
+    ref.format = mn::preview::formatLabel(fi.suffix().toLower());
+    ref.mtime = fi.lastModified().toMSecsSinceEpoch();
+    ref.size = fi.size();
+    return ref;
+}
+QString MediaStore::previewDescriptorJson(const PreviewRef& ref) {
+    QJsonObject o;
+    o.insert(QStringLiteral("src"), mn::toRef(ref.img.src));
+    o.insert(QStringLiteral("w"), ref.img.w);
+    o.insert(QStringLiteral("h"), ref.img.h);
+    o.insert(QStringLiteral("name"), QFileInfo(ref.sourcePath).fileName());
+    QJsonObject pv;
+    pv.insert(QStringLiteral("src"), mn::toRef(ref.sourcePath));
+    pv.insert(QStringLiteral("format"), ref.format);
+    pv.insert(QStringLiteral("mtime"), static_cast<double>(ref.mtime));
+    pv.insert(QStringLiteral("size"), static_cast<double>(ref.size));
+    o.insert(QStringLiteral("preview"), pv);
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+bool MediaStore::isPreviewDescriptor(const QJsonObject& media) {
+    return media.value(QStringLiteral("preview")).isObject();
+}
+QString MediaStore::previewSourcePath(const QJsonObject& media) const {
+    if (!isPreviewDescriptor(media)) return {};
+    const QString url = resolveUrl(media.value(QStringLiteral("preview")).toObject().value(QStringLiteral("src")));
+    return url.isEmpty() ? QString() : QUrl(url).toLocalFile();
+}
+bool MediaStore::previewStale(const QJsonObject& media) const {
+    const QString path = previewSourcePath(media);
+    if (path.isEmpty()) return false;
+    const QFileInfo fi(path);
+    if (!fi.exists()) return false;   // a missing source is "unavailable", not stale — the preview stays
+    const QJsonObject pv = media.value(QStringLiteral("preview")).toObject();
+    return fi.lastModified().toMSecsSinceEpoch() != static_cast<qint64>(pv.value(QStringLiteral("mtime")).toDouble())
+        || fi.size() != static_cast<qint64>(pv.value(QStringLiteral("size")).toDouble());
+}
+QString MediaStore::refreshedPreviewJson(const QJsonObject& media) const {
+    const QString path = previewSourcePath(media);
+    if (path.isEmpty()) return {};
+    const PreviewRef ref = importPreview(path);
+    if (!ref.ok()) return {};
+    // The fresh descriptor keeps the block's own fields (dw, ink, …): only src / w / h / preview move.
+    QJsonObject fresh = QJsonDocument::fromJson(previewDescriptorJson(ref).toUtf8()).object();
+    QJsonObject o = media;
+    for (auto it = fresh.begin(); it != fresh.end(); ++it) o.insert(it.key(), it.value());
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
 QImage MediaStore::renderPdfPage(const QString& path, int page, int maxW) {

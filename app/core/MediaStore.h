@@ -33,8 +33,23 @@ public:
 
     // True if the path's extension is a recognized video container.
     static bool isVideoPath(const QString& path);
-    // True if the path's extension is .pdf.
+    // True if the path's extension is .pdf — or .ai: an Illustrator file saved PDF-compatible IS a PDF stream
+    // (the probe below rejects one that isn't, and the drop falls through to a file chip; 2026-10-21).
     static bool isPdfPath(const QString& path);
+
+    // THE PREVIEW PASS (2026-10-21): a file the app can't show as-is (Photoshop, HEIC, RAW, Radiance HDR) renders
+    // ONCE into a flat preview PNG in .minnotes/ and rides the IMAGE plumbing; the original is referenced in place
+    // (never copied, never modified) under `preview.src`, with the format and the source's mtime / size so a
+    // changed source reads as stale. Descriptor: {src:<png ref>, w, h, name, preview:{src:<original ref>, format, mtime, size}}.
+    struct PreviewRef { ImageRef img; QString sourcePath; QString format; qint64 mtime = 0; qint64 size = 0;
+        bool ok() const { return img.ok(); } };
+    static bool isPreviewablePath(const QString& path);          // a preview backend exists on this platform
+    PreviewRef importPreview(const QString& fileUrlOrPath) const;
+    static QString previewDescriptorJson(const PreviewRef& ref);
+    static bool isPreviewDescriptor(const QJsonObject& media);   // carries `preview`
+    QString previewSourcePath(const QJsonObject& media) const;   // the ORIGINAL's local path ("" when not a preview)
+    bool previewStale(const QJsonObject& media) const;           // the source's mtime / size moved since the render
+    QString refreshedPreviewJson(const QJsonObject& media) const;   // re-render → the new descriptor ("" on failure)
 
     // Reference an existing PDF: probe page count + page-0 size via QPdfDocument.
     PdfRef importPdfFile(const QString& fileUrlOrPath) const;

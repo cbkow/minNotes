@@ -31,6 +31,10 @@ Item {
     readonly property bool   isVideo: kind === "video"
     readonly property bool   isFile: kind === "file"
     readonly property bool   isPdf: kind === "pdf"
+    // The preview pass (2026-10-21): a rendered stand-in for a PSD / HEIC / RAW / HDR — the pill names the format;
+    // "changed" when the source moved on since the render (Refresh preview in the menu re-renders).
+    readonly property string previewFormat: active ? (mb._rev, blockModel.mediaPreviewFormat(logicalRow)) : ""
+    readonly property bool   previewStale: previewFormat !== "" && (mb._rev, blockModel.mediaPreviewStale(logicalRow))
     property int  pdfPage: 0          // current page (driven by the editor's nav)
     // Display paths use the NON-BLOCKING resolvers: packaged media not yet
     // extracted reads "" (loading window shows), a background pull lands, the
@@ -184,6 +188,21 @@ Item {
         onVisibleChanged: if (visible) imgFade.restart()
         NumberAnimation { id: imgFade; target: img; property: "opacity"
                           from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
+    }
+    Rectangle {   // the preview pass's format pill (top-right of the picture, like the code block's language pill)
+        visible: img.visible && mb.previewFormat !== "" && img.status === Image.Ready
+        anchors.top: img.top; anchors.right: img.right; anchors.margins: 6
+        width: pillText.implicitWidth + 12; height: 18
+        radius: Theme.dim.radiusSmall
+        color: Theme.colors.affordanceIdle; border.width: 1; border.color: Theme.colors.borderStrong
+        z: 3
+        Text {
+            id: pillText
+            anchors.centerIn: parent
+            text: mb.previewStale ? mb.previewFormat + " · " + qsTr("changed") : mb.previewFormat
+            color: mb.previewStale ? Theme.colors.textBright : Theme.colors.textMuted
+            font.family: Theme.font.mono; font.pixelSize: 10; font.bold: true
+        }
     }
     // The image's page-0 media ink (2.0 stage 1): a QCView note's strokes, or what used to be
     // frame-space margin ink — frame-normalized, drawn by the GPU ink item over the image.
