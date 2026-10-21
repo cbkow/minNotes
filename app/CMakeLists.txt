@@ -498,7 +498,6 @@ if(WIN32)
     set_target_properties(minnotesapp PROPERTIES
         OUTPUT_NAME "minNotes"
         WIN32_EXECUTABLE TRUE)
-    target_link_libraries(minnotesapp PRIVATE user32)   # WindowChrome.cpp: the caption strip (SetWindowLongPtrW)
 
     # ---- App icon + version resource (.rc) ----------------------------
     # The MSVC linker embeds the ICON (Explorer/taskbar/Alt-Tab + Qt's default

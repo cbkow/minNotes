@@ -3,9 +3,6 @@
 #include <QWindow>
 #include <QGuiApplication>
 
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
 
 WindowChrome::WindowChrome(bool chromeless, QObject* parent)
     : QObject(parent), chromeless_(chromeless) {}
@@ -33,23 +30,8 @@ void WindowChrome::attach(QWindow* w) {
 #ifdef Q_OS_MACOS
     if (platform == QLatin1String("cocoa")) attachMac(w);
 #endif
-#ifdef Q_OS_WIN
-    // QCView's compact-mode recipe (native_fullscreen_win.cpp), minus the box styles: the caption and system menu
-    // go; WS_THICKFRAME stays so the resize borders and Win+arrow snapping keep working, and WS_MINIMIZEBOX /
-    // WS_MAXIMIZEBOX stay (invisible without a caption) so snap-to-top / Win+Up and our own maximize ↔ restore
-    // keep their system behaviour (2026-10-21: the user's walk — maximize would not come back without them).
-    // No DWM call — Windows 11 rounds the corners itself.
-    if (platform != QLatin1String("windows")) return;
-    HWND hwnd = reinterpret_cast<HWND>(w->winId());
-    if (!hwnd) return;
-    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-    const LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    const LONG_PTR strip = WS_CAPTION | WS_SYSMENU | WS_DLGFRAME | WS_BORDER;
-    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~strip) | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle & ~(WS_EX_WINDOWEDGE | WS_EX_DLGMODALFRAME));
-    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-#endif
+    // Windows: nothing here — the window flags (Main.qml) create the caption-less window.
+    Q_UNUSED(platform);
 }
 
 bool WindowChrome::startMove(QWindow* w) {

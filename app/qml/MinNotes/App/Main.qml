@@ -8,9 +8,14 @@ ApplicationWindow {
     id: win
     minimumWidth: 640; minimumHeight: 480   // the toolbar row's budget (§2.14: 589 / 621 px with a stream chip) and the tallest flyout
     // The chromeless window (2026-10-21, WindowChrome.h): on macOS the content extends under a transparent title
-    // bar and the native traffic lights stay (TitleBar.qml insets past them); Windows strips its caption natively.
-    // BEFORE `visible` — the hints must be in place when the native window is created.
-    flags: windowChrome.nativeLights ? (Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint) : Qt.Window
+    // bar and the native traffic lights stay (TitleBar.qml insets past them); on Windows Qt creates the window
+    // WITHOUT a caption (CustomizeWindowHint minus WindowTitleHint — the min/max/close hints keep WS_MINIMIZEBOX /
+    // WS_MAXIMIZEBOX / WS_SYSMENU under the thick frame, so snap and maximize ↔ restore stay the system's, and Qt's
+    // frame margins are right from the start: stripping the caption after creation left them 30 px stale, which put
+    // the restored window's row above the screen). BEFORE `visible` — the hints must be in place at creation.
+    flags: windowChrome.nativeLights ? (Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint)
+         : windowChrome.customButtons ? (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+         : Qt.Window
     // ApplicationWindow pads its content by the safe area unless told otherwise (6.9) — the row goes UNDER the lights.
     topPadding: 0; leftPadding: 0; rightPadding: 0; bottomPadding: 0
     visible: true
