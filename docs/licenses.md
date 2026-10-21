@@ -22,6 +22,7 @@ the `Licenses` folder beside the executable on Windows).
 | SoundTouch | constant-pitch review speeds | LGPL-2.1 |
 | miniz | package (.mnpkg) zip backend | MIT |
 | stb_image | Radiance HDR previews | MIT |
+| psd_sdk | Photoshop PSD / PSB previews | BSD-2-Clause |
 | SQLite | note storage | public domain |
 | Sparkle / WinSparkle | updates | MIT |
 | Phosphor Icons | icons | MIT |

@@ -46,9 +46,9 @@ QImage capped(QImage img, int maxEdge) {
 }  // namespace
 
 bool supportsExt(const QString& ext) {
-    if (hdrExts().contains(ext)) return true;
+    if (hdrExts().contains(ext) || psdExts().contains(ext)) return true;   // stb_image / psd_sdk: every platform
 #ifdef Q_OS_MACOS
-    return psdExts().contains(ext) || heifExts().contains(ext) || rawExts().contains(ext);
+    return heifExts().contains(ext) || rawExts().contains(ext);           // ImageIO / QuickLook
 #else
     return false;
 #endif
@@ -67,7 +67,11 @@ QImage render(const QString& pathOrUrl, int maxEdge) {
     const QString ext = QFileInfo(path).suffix().toLower();
     if (!supportsExt(ext) || !QFileInfo::exists(path)) return {};
     if (hdrExts().contains(ext)) return renderHdr(path, maxEdge);
-    return renderNative(path, maxEdge);
+    if (psdExts().contains(ext)) {
+        const QImage psd = renderPsd(path, maxEdge);      // the composite, the same picture on every platform
+        if (!psd.isNull()) return psd;
+    }
+    return renderNative(path, maxEdge);                   // macOS: ImageIO → QuickLook; elsewhere null
 }
 
 QImage renderHdr(const QString& path, int maxEdge) {

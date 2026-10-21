@@ -121,6 +121,15 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
              into minNotes). The Radiance HDR decoder behind the preview pass
              (app/core/PreviewRender.cpp); every other image format is Qt's.
 
+11b. psd_sdk (MolecularMatters, commit bfa1173)
+    Copyright 2011-2020, Molecular Matters GmbH
+    License: BSD-2-Clause
+    File:    psd_sdk-BSD-2-Clause.txt
+    https://github.com/MolecularMatters/psd_sdk
+    Linkage: static (src/Psd vendored at external/psd_sdk, compiled into
+             minNotes). Reads a Photoshop PSD / PSB file's merged composite
+             for the preview pass (app/core/PreviewPsd.cpp).
+
 12. Hunspell 1.7.3
     Copyright (C) 2002-2022 Németh László and the Hunspell contributors
     License: LGPL v2.1 or later (the LGPL leg of the MPL 1.1 / GPL 2.0 /

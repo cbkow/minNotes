@@ -18,6 +18,8 @@ qt_add_executable(minnotesapp
     core/BlockModel.cpp
     core/PreviewRender.h
     core/PreviewRender.cpp
+    core/PreviewPsd.cpp          # psd_sdk: the PSD / PSB composite (tier 2 of the preview pass)
+    $<$<NOT:$<PLATFORM_ID:Windows>>:core/PsdSyncFile.cpp>
     core/InlineText.h
     core/InlineText.cpp
     core/ViewportSlots.h
@@ -272,6 +274,7 @@ qt_add_qml_module(minnotesapp
 
 # core/ is on the include path too so the generated QML type registration can
 # resolve `#include <InlineMarkdownHighlighter.h>` (it emits the basename only).
+target_link_libraries(minnotesapp PRIVATE Psd)   # psd_sdk (the preview pass's PSD / PSB reader)
 target_include_directories(minnotesapp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core

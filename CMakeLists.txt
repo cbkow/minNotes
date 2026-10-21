@@ -181,6 +181,13 @@ else()
         "— the video engine (app/player/) needs it. Vendor the prebuilt binaries there.")
 endif()
 
+# psd_sdk (BSD-2, vendored at external/psd_sdk, pinned in its VERSION file): the Photoshop PSD / PSB composite
+# reader behind the preview pass (app/core/PreviewRender.cpp). Its CMake floor is 3.2, below what this CMake accepts.
+set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "" FORCE)
+add_subdirectory(external/psd_sdk/Psd EXCLUDE_FROM_ALL)
+target_include_directories(Psd PUBLIC ${CMAKE_SOURCE_DIR}/external/psd_sdk/Psd)
+set_target_properties(Psd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_subdirectory(app)
 
 # Opt-in headless regression harness for the BlockModel document-state fixes.

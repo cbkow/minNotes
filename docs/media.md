@@ -26,8 +26,10 @@ canvas**, as cards. Drag a file into a page, or paste from the clipboard:
   that behaves like an image, with a small pill naming the format. The
   original stays where it is, untouched: Reveal, Open in ufb and Copy path
   all point at it. When the source changes the pill reads "changed";
-  right-click for **Refresh preview**. On Windows, Photoshop, HEIC and RAW
-  previews are still to come; HDR works everywhere. EXR is deliberately a
+  right-click for **Refresh preview**. Photoshop files need the composite
+  Photoshop saves with "Maximize Compatibility" (its default); without it
+  the file lands as an attachment. HEIC and RAW previews are macOS-only
+  for now; Photoshop and HDR work everywhere. EXR is deliberately a
   plain attachment: a multi-layer, scene-referred file has no single
   honest preview.
 - **Illustrator** — an `.ai` saved with PDF compatibility (Illustrator's

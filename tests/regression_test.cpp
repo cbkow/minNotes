@@ -51,6 +51,17 @@
 #include <QTextStream>
 #include <QTemporaryDir>
 #include "PreviewRender.h"   // [146] the preview pass
+#include "Psd.h"               // …its PSD fixture is written with psd_sdk's exporter
+#include "PsdExport.h"
+#include "PsdExportDocument.h"
+#include "PsdMallocAllocator.h"
+#ifdef Q_OS_WIN
+#  include "PsdNativeFile.h"
+   using PsdWriteFile = PSD_NAMESPACE::NativeFile;
+#else
+#  include "PsdSyncFile.h"   // (the SDK's Mac file is Objective-C; our POSIX file writes too, for this fixture)
+   using PsdWriteFile = mn::preview::PsdSyncFile;
+#endif
 #include <QImage>
 #include <cstring>
 #include <QMimeData>
@@ -6763,6 +6774,31 @@ static void testPreviewPass() {
     writeHdr(hdr, 2, 2);
     const int crows = c.undoHistory().size();
     CHECK((c.elementPreviewStale(id) && c.refreshElementPreview(id) && !c.elementPreviewStale(id) && c.undoHistory().size() == crows + 1), "stale → Refresh preview = one canvas history row");
+
+    // --- Photoshop (tier 2): a 4 × 3 RGB PSD written with psd_sdk's own exporter (merged composite included) ---
+    const QString psd = dir.filePath(QStringLiteral("comp.psd"));
+    {
+        namespace ps = PSD_NAMESPACE;
+        ps::MallocAllocator alloc;
+        ps::ExportDocument* ed = ps::CreateExportDocument(&alloc, 4, 3, 8, ps::exportColorMode::RGB);
+        uint8_t r[12], g[12], b[12];
+        for (int i = 0; i < 12; ++i) { r[i] = uint8_t(i * 20); g[i] = 100; b[i] = uint8_t(255 - i * 20); }
+        ps::UpdateMergedImage(ed, &alloc, r, g, b);
+        PsdWriteFile f(&alloc);
+        CHECK((f.OpenWrite(psd.toStdWString().c_str())), "psd fixture opened for write");
+        ps::WriteDocument(ed, &alloc, &f);
+        f.Close();
+        ps::DestroyExportDocument(ed, &alloc);
+    }
+    const QImage pr = mn::preview::renderPsd(psd, 2048);
+    CHECK((pr.width() == 4 && pr.height() == 3 && pr.pixel(0, 0) == qRgb(0, 100, 255) && pr.pixel(3, 2) == qRgb(220, 100, 35)),
+          "renderPsd: psd_sdk reads the merged composite (4 × 3, the planar channels interleaved)");
+    CHECK((MediaStore::isPreviewablePath(psd) && mn::preview::formatLabel(QStringLiteral("psb")) == QStringLiteral("PSB")), "PSD / PSB are previewable on every platform now");
+    const MediaStore::PreviewRef pref = store.importPreview(psd);
+    CHECK((pref.ok() && pref.format == QStringLiteral("PSD") && pref.img.w == 4), "importPreview on the PSD");
+    const int prow = m.insertMediaFromUrl(m.rowCountQml() - 1, QUrl::fromLocalFile(psd).toString());
+    CHECK((prow >= 0 && m.mediaKind(prow) == QLatin1String("image") && m.mediaPreviewFormat(prow) == QStringLiteral("PSD") && m.mediaSourcePath(prow) == QFileInfo(psd).absoluteFilePath()),
+          "…a page drop lands it as an image block with the PSD pill");
 
     // --- Illustrator = PDF ---
     const QString ai = dir.filePath(QStringLiteral("logo.ai"));

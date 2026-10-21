@@ -42,6 +42,8 @@ qt_add_executable(mn_regression_test
     ${CMAKE_SOURCE_DIR}/app/core/TableGrid.cpp
     ${CMAKE_SOURCE_DIR}/app/core/MediaStore.cpp
     ${CMAKE_SOURCE_DIR}/app/core/PreviewRender.cpp    # the preview pass (HDR via stb_image; MediaStore::importPreview)
+    ${CMAKE_SOURCE_DIR}/app/core/PreviewPsd.cpp        # …and its PSD / PSB reader (psd_sdk)
+    $<$<NOT:$<PLATFORM_ID:Windows>>:${CMAKE_SOURCE_DIR}/app/core/PsdSyncFile.cpp>
     $<$<PLATFORM_ID:Darwin>:${CMAKE_SOURCE_DIR}/app/core/PreviewRender_mac.mm>
     # PathMap.cpp defines mn::toRef / mn::resolveRef, referenced by BlockModel
     # and MediaStore (cross-OS path mapping). Link it or the test fails LNK2019.
@@ -91,7 +93,8 @@ target_link_libraries(mn_regression_test PRIVATE
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
     KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks
     minnotes::ffmpeg               # MediaStore.cpp probes media via FFmpeg
-    minnotes::hunspell)            # the spell engine
+    minnotes::hunspell             # the spell engine
+    Psd)                           # psd_sdk — the preview pass's PSD reader (and the test's PSD fixture writer)
 if(APPLE)
     # RtfConvert_mac.mm — NSAttributedString RTF→HTML
     target_link_libraries(mn_regression_test PRIVATE "-framework AppKit" "-framework ImageIO" "-framework QuickLookThumbnailing")
