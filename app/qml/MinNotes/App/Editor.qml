@@ -3094,6 +3094,17 @@ FocusScope {
     function copyBlock(row) {
         root.copyRange(row, 0, row, cursor.opaque(row) ? 0 : blockModel.contentForRow(row).length)
     }
+    // The block menu's Copy / Cut (2026-10-21): the text selection when the right-click landed inside one (a run,
+    // or a range inside the clicked block), otherwise the clicked block as a whole.
+    function menuSelHere() { return cursor.hasSel && root.menuRow >= cursor.loRow && root.menuRow <= cursor.hiRow }
+    function menuCopy() {
+        if (root.menuSelHere()) { var ce = cursor.effectiveRange(); root.copyRange(ce.lR, ce.lC, ce.hR, ce.hC) }
+        else root.copyBlock(root.menuRow)
+    }
+    function menuCut() {
+        if (root.menuSelHere()) { root.menuCopy(); cursor.deleteSelection() }
+        else { root.copyBlock(root.menuRow); root.deleteRun(root.menuRow, root.menuRow) }
+    }
     // Spell menu: the flagged word's text, and "replace with a suggestion" as
     // ONE undo step (replaceText keeps spans covering the word).
     function menuIssueWord() {
@@ -6551,25 +6562,10 @@ FocusScope {
         }
     }
 
-    // Lane-header right-click menu (board view). Self-contained rows — MenuRow
-    // is wired to blockMenu's close/sub-panel machinery, so it isn't reused here.
-    component LaneMenuRow: Rectangle {
-        property alias text: laneMenuRowLabel.text
+    // Lane-header right-click menu (board view): the shared row, closing this popup (MenuRow closes the block menu).
+    component LaneMenuRow: ContextMenuRow {
         signal activated()
-        width: 168; height: 24; radius: Theme.dim.radiusSmall
-        color: laneMenuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
-        Text {
-            id: laneMenuRowLabel
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: parent.left; anchors.leftMargin: 10
-            color: Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-        }
-        MouseArea {
-            id: laneMenuRowMA
-            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-            onClicked: { parent.activated(); laneMenu.close() }
-        }
+        onClicked: { activated(); laneMenu.close() }
     }
     Popup {
         id: laneMenu
@@ -6585,18 +6581,22 @@ FocusScope {
         onClosed: root.forceActiveFocus()
         background: Rectangle { color: Theme.colors.surfaceRaised; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
+        readonly property bool canMove: optionLane && (li > 0 || li < boardView.lanes.length - 2)
+        readonly property bool canEdit: lane !== null && root.boardCol >= 0 && (blockModel.structureRevision, root.boardKind()) === 1
         contentItem: Column {
+            width: 184
             spacing: 1
-            LaneMenuRow { text: "Add card"; onActivated: boardView.addCard(laneMenu.li) }
+            LaneMenuRow { text: qsTr("Add card"); onActivated: boardView.addCard(laneMenu.li) }
+            ContextMenuSep { visible: laneMenu.canMove }
             LaneMenuRow { visible: laneMenu.optionLane && laneMenu.li > 0
-                          text: "Move lane left"
+                          text: qsTr("Move lane left")
                           onActivated: root.moveBoardOption(laneMenu.lane.key, laneMenu.li - 1) }
             LaneMenuRow { visible: laneMenu.optionLane && laneMenu.li < boardView.lanes.length - 2
-                          text: "Move lane right"
+                          text: qsTr("Move lane right")
                           onActivated: root.moveBoardOption(laneMenu.lane.key, laneMenu.li + 1) }
-            LaneMenuRow { visible: laneMenu.lane !== null && root.boardCol >= 0
-                                   && (blockModel.structureRevision, root.boardKind()) === 1
-                          text: "Edit options…"
+            ContextMenuSep { visible: laneMenu.canEdit }
+            LaneMenuRow { visible: laneMenu.canEdit
+                          text: qsTr("Edit options…")
                           onActivated: root.openBoardOptions() }
         }
     }
@@ -7652,52 +7652,19 @@ FocusScope {
         }
     }
 
-    // One row of a hand-rolled menu (matches the app's flat dark style rather
-    // than the default Controls Menu chrome). `danger` tints destructive items.
-    // One context-menu row. `scope` (block|column|row) drives the live target
-    // highlight on hover; danger rows render in the error colour. Compact (small
-    // font, 24px) so the multi-column table menu stays tidy.
-    component MenuRow: Rectangle {
-        property alias text: menuRowLabel.text
-        property bool danger: false
-        property bool inert: false       // true = an informational row (dimmed, not clickable)
-        property string scope: "block"   // what this item targets: block | column | row
-        property color hoverColor: Theme.colors.surfaceHover   // the spell well hovers in its own tone
-        property bool menuRowLabelBright: false                // filled rows: bright bold label
+    // One context-menu row (the shared ContextMenuRow, 2026-10-21). `scope` (block|column|row|table|set) drives the
+    // live target highlight on hover; the click closes the block menu through `root` (a row instantiated by a
+    // Repeater — the spell suggestions — can't resolve the popup's id from inside this inline component).
+    component MenuRow: ContextMenuRow {
+        property string scope: "block"
         signal activated()
-        width: 168; height: 24
-        color: !inert && menuRowMA.containsMouse ? hoverColor : "transparent"
-        Text {
-            id: menuRowLabel
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: parent.left; anchors.leftMargin: 10
-            anchors.right: parent.right; anchors.rightMargin: 10
-            elide: Text.ElideRight                 // keep long labels (a URL) inside the menu
-            color: parent.inert ? Theme.colors.textMuted : parent.danger ? Theme.colors.error
-                 : parent.menuRowLabelBright ? Theme.colors.textBright : Theme.colors.text
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall; font.bold: parent.menuRowLabelBright
-        }
-        MouseArea {
-            id: menuRowMA
-            enabled: !parent.inert
-            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-            // Hovering an item highlights its target scope on the document/table.
-            onContainsMouseChanged: if (containsMouse) {
-                root.menuHiScope = parent.scope; root.menuHiDanger = parent.danger
-            }
-            // Close via root: a row instantiated by a Repeater (the spell
-            // suggestions) can't resolve the popup's id from inside this
-            // inline component, while `root` resolves everywhere.
-            onClicked: { parent.activated(); root.closeBlockMenu() }
-        }
+        onHoveredChanged: if (hovered) { root.menuHiScope = scope; root.menuHiDanger = danger }
+        onClicked: { activated(); root.closeBlockMenu() }
     }
+    component MenuSep: ContextMenuSep {}
 
     // Column header (Block / Column / Row) for the multi-column table menu.
-    component MenuHeader: Text {
-        color: Theme.colors.textMuted
-        font.family: Theme.font.family; font.pixelSize: 11; font.bold: true
-        leftPadding: 10; topPadding: 6; bottomPadding: 4
-    }
+    component MenuHeader: ContextMenuHeader {}
 
     // A labelled row of small icon buttons (used to compress Align L/C/R and
     // Sort asc/desc into one row each instead of five separate rows).
@@ -7734,12 +7701,12 @@ FocusScope {
     component MenuSegRow: Item {
         property string label: ""
         default property alias content: segRow.data
-        width: 168; height: 24
+        width: parent ? parent.width : 200; height: 26
         Text {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 10
             text: parent.label; color: Theme.colors.textMuted
-            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
+            font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
         }
         Row {
             id: segRow
@@ -7853,7 +7820,7 @@ FocusScope {
         readonly property int tableColKind: tableC >= 0 ? (blockModel.structureRevision, blockModel.tableColumnKind(tableHead, tableC)) : 0   // header rows too
         readonly property bool tableSetCols: tableSetHit !== null && tableSetHit.kind === "col"
         readonly property string tableSetNoun: tableSetHit === null ? ""
-            : tableSetHit.items.length + (tableSetHit.kind === "row" ? " rows" : " columns")
+            : (tableSetHit.kind === "row" ? qsTr("%1 rows") : qsTr("%1 columns")).arg(tableSetHit.items.length)
         // The right-clicked issue, re-read live: a background-pass issue has no
         // suggestions until the worker's follow-up lands (spell.revision bumps).
         readonly property var liveIssue: {
@@ -7865,6 +7832,14 @@ FocusScope {
         // A grip-picked set → ONE compact menu column (user ruling 2026-08-21: the full
         // three-column menu is noise when the target is the selection).
         readonly property bool bulkMode: tableSetHit !== null
+        // The block column's sections (the menu grammar, 2026-10-21) — a rule only stands between two shown sections.
+        readonly property bool isLocalMedia: isMedia && (blockModel.structureRevision, !/^https?:/.test(blockModel.mediaUrl(root.menuRow)))
+        readonly property bool laneRole: !inFrameTab && laneRecord >= 0 && (tableHead < 0 || !tableHeaderRow)
+        readonly property bool secPrimary: (root.menuLinkUrl.length > 0 && !menuInSel) || (isPdf && !root.pdfTabOpen) || (isVideo && !root.videoTabOpen)
+        readonly property bool secOwn: isMedia || tableOne
+        readonly property bool secInsert: !inFrameTab
+        readonly property bool secArrange: !inFrameTab
+        readonly property bool secConvert: (!isMedia && !menuInSel) || laneRole
         // Tallest of the visible columns — the inter-column dividers stretch to it.
         readonly property real bodyH: bulkMode ? bulkColMenu.implicitHeight
             : tableOne
@@ -7884,18 +7859,15 @@ FocusScope {
         contentItem: Row {
             spacing: 0
 
-            // --- Block column (the right-clicked block as a whole) ---
+            // --- Block column (the right-clicked block as a whole). The menu grammar (2026-10-21): the spell well
+            // and the link under the click · the block's own view · the thing's own actions · insert · arrange ·
+            // clipboard · convert · delete — a rule between sections, destructive rows red and last. ---
             Column {
                 id: blockColMenu
                 visible: !blockMenu.bulkMode
+                width: 212
                 spacing: 1
-                MenuHeader { visible: blockMenu.menuInSel; text: (blockMenu.runHi - blockMenu.runLo + 1) + " blocks" }
-                // Spell / grammar (0.5.0): the issue under the click as a
-                // tinted WELL in the underline's colour (red = spelling, the
-                // quote-bar blue = grammar) with a 2 px bar on the left — the
-                // menu section reads as the same object as the squiggle. Its
-                // message, up to five suggestions, then the escape hatches.
-                // Withheld in a run menu like every single-block row.
+                MenuHeader { visible: blockMenu.menuInSel; text: qsTr("%1 blocks").arg(blockMenu.runHi - blockMenu.runLo + 1) }
                 Item {
                     id: spellWell
                     readonly property var issue: (!blockMenu.menuInSel) ? blockMenu.liveIssue : null
@@ -7915,15 +7887,15 @@ FocusScope {
                     // neutral surfaceHover): the section stays one object.
                     readonly property color hover: Qt.rgba(tone.r, tone.g, tone.b, 0.30)
                     visible: !!issue || showFixAll
-                    width: 168; height: visible ? spellRows.implicitHeight : 0
+                    width: parent.width; height: visible ? spellRows.implicitHeight : 0
                     Rectangle { anchors.fill: parent; radius: Theme.dim.radiusSmall
                                 color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.12) }
                     Rectangle { width: 2; height: parent.height; color: spellWell.tone }
                     Column {
                         id: spellRows
                         width: parent.width
-                        MenuHeader { width: 168; elide: Text.ElideRight; color: spellWell.tone
-                                     text: spellWell.issue ? (spellWell.issue.kind === 1 ? spellWell.issue.message : "Spelling") : "" }
+                        MenuHeader { color: spellWell.tone
+                                     text: spellWell.issue ? (spellWell.issue.kind === 1 ? spellWell.issue.message : qsTr("Spelling")) : "" }
                         Repeater {
                             model: spellWell.issue ? Math.min(5, spellWell.issue.suggestions.length) : 0
                             MenuRow { required property int index; hoverColor: spellWell.hover
@@ -7932,109 +7904,105 @@ FocusScope {
                         }
                         MenuRow { visible: !!spellWell.issue && spellWell.issue.suggestions.length === 0
                                   inert: true
-                                  text: (spellWell.issue && !spellWell.issue.suggestionsComputed) ? "Looking up…" : "No suggestions" }
+                                  text: (spellWell.issue && !spellWell.issue.suggestionsComputed) ? qsTr("Looking up…") : qsTr("No suggestions") }
                         MenuRow { visible: !!spellWell.issue && spellWell.issue.kind === 0; hoverColor: spellWell.hover
-                                  text: "Add to dictionary"; onActivated: spell.addToDictionary(root.menuIssueWord()) }
+                                  text: qsTr("Add to dictionary"); onActivated: spell.addToDictionary(root.menuIssueWord()) }
                         MenuRow { visible: !!spellWell.issue && spellWell.issue.kind === 0; hoverColor: spellWell.hover
-                                  text: "Ignore"; onActivated: spell.ignoreWord(root.menuIssueWord()) }
+                                  text: qsTr("Ignore"); onActivated: spell.ignoreWord(root.menuIssueWord()) }
                         MenuRow { visible: !!spellWell.issue && spellWell.issue.kind === 1; hoverColor: spellWell.hover
-                                  text: "Ignore rule: " + (spellWell.issue ? spellWell.issue.ruleName : "")
+                                  text: qsTr("Ignore rule: %1").arg(spellWell.issue ? spellWell.issue.ruleName : "")
                                   onActivated: spell.ignoreRule(spellWell.issue.ruleId) }
                         // The section's one FILLED row: apply the top suggestion of
                         // every issue in the block / cell as ONE undo step.
-                        Rectangle { visible: spellWell.showFixAll; width: 168; height: 1
+                        Rectangle { visible: spellWell.showFixAll; width: parent.width; height: 1
                                     color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.45) }
                         MenuRow { visible: spellWell.showFixAll
                                   hoverColor: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.55)
-                                  text: "Fix all in block (" + spellWell.fixable + ")"
+                                  text: qsTr("Fix all (%1)").arg(spellWell.fixable)
                                   onActivated: root.applyAllSuggestions()
                                   Rectangle { anchors.fill: parent; z: -1; radius: Theme.dim.radiusSmall
                                               color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.28) }
-                                  Component.onCompleted: { menuRowLabelBright = true } }
+                                  bright: true }
                     }
                 }
-                Rectangle { visible: spellWell.visible; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSep { visible: spellWell.visible }
+                // 1. Primary: the link under the click, a PDF's tab, a video's studio
                 MenuRow { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel
-                          text: "Open " + root.truncUrl(root.menuLinkUrl)
+                          text: qsTr("Open %1").arg(root.truncUrl(root.menuLinkUrl))
                           onActivated: Qt.openUrlExternally(root.menuLinkUrl) }
-                Rectangle { visible: root.menuLinkUrl.length > 0 && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.isPdf && !root.pdfTabOpen; text: "Open in tab"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isVideo && !root.videoTabOpen; text: "Open in studio"; onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isVideo && !blockMenu.inFrameTab; text: "Insert notes below"; onActivated: root.insertVideoNotesBelow(root.menuRow) }   // the clip's QCView notes as a headered section (2026-10-18)
-                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.menuInSel
-                          text: "Insert choice chip"
-                          onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block above"; onActivated: root.addBlockAbove(blockMenu.runLo) }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Add block below"; onActivated: root.addBlockBelow(blockMenu.runHi) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canSplit && blockMenu.tableHead < 0; text: "Split into columns"
-                          onActivated: root.splitMenu(blockMenu.runLo, blockMenu.runHi) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canAlign && blockMenu.tableHead < 0; text: "Align lanes"
-                          onActivated: blockModel.alignLanes(blockMenu.laneRecord) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.mergeBelow >= 0 && blockMenu.tableHead < 0; text: "Merge with the row below"
-                          onActivated: blockModel.mergeRowsIntoLanes(blockMenu.laneRecord, blockMenu.mergeBelow) }
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0 && blockMenu.tableHead < 0; text: "Delete lane"; danger: true
-                          onActivated: root.deleteLane(root.menuRow) }
-                // Derived tables (SR-4 S7a). A split row takes the header role; a table cell gets the table's ops.
-                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0 && (blockMenu.tableHead < 0 || !blockMenu.tableHeaderRow)
-                          text: "Assign as header"
-                          onActivated: blockModel.setHeaderRole(blockMenu.laneRecord, 1) }
+                MenuRow { visible: blockMenu.isPdf && !root.pdfTabOpen; text: qsTr("Open in tab"); onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isVideo && !root.videoTabOpen; text: qsTr("Open in studio"); onActivated: root.setActiveTab(blockModel.idForRow(root.menuRow)) }
+                MenuSep { visible: blockMenu.secPrimary && (blockMenu.secOwn || blockMenu.secInsert || blockMenu.secArrange) }
+                // 2. The thing's own actions: a media block's file, a table's roles
+                MenuRow { visible: blockMenu.isImage; text: qsTr("Copy image")
+                          onActivated: { clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow)); Toasts.show(qsTr("Image copied")) } }
+                // Image size (the corner double-click's discoverable twin): fit the lane / the original.
+                MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: qsTr("Fit width")
+                          onActivated: blockModel.setMediaWidth(root.menuRow, root.fitWidthForRow(root.menuRow)) }
+                MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: qsTr("Original size")
+                          onActivated: blockModel.setMediaWidth(root.menuRow, 0) }
+                MenuRow { visible: blockMenu.isMedia; text: Qt.platform.os === "windows" ? qsTr("Show in Explorer") : qsTr("Reveal in Finder")
+                          onActivated: blockModel.revealMedia(root.menuRow) }
+                MenuRow { visible: blockMenu.isMedia; text: qsTr("Open in ufb"); onActivated: blockModel.openMediaInUfb(root.menuRow) }
+                MenuRow { visible: blockMenu.isLocalMedia; text: qsTr("Copy path"); onActivated: clipboard.writeText(blockModel.mediaLocalPath(root.menuRow)) }
                 // The table as a whole; its column and row get their own menu columns (tableColMenu / tableRowMenu).
-                MenuHeader { visible: blockMenu.tableOne; text: "Table" }
+                MenuHeader { visible: blockMenu.tableOne; text: qsTr("Table") }
                 MenuRow { visible: blockMenu.tableOne && blockMenu.tableHeaders < blockMenu.tableRows - 1; scope: "table"
-                          text: "Add a header row"
+                          text: qsTr("Add a header row")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) + 1); return null }) }
-                MenuRow { visible: blockMenu.tableOne && blockMenu.tableHeaders > 1; scope: "table"; text: "Remove a header row"
+                MenuRow { visible: blockMenu.tableOne && blockMenu.tableHeaders > 1; scope: "table"; text: qsTr("Remove a header row")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, blockModel.headerCount(h) - 1); return null }) }
-                MenuRow { visible: blockMenu.tableOne && blockMenu.tableHeaderRow; scope: "table"; text: "Unassign header"
+                MenuRow { visible: blockMenu.tableOne && blockMenu.tableHeaderRow; scope: "table"; text: qsTr("Unassign header")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.setHeaderRole(h, 0); return null }) }
-                MenuRow { visible: blockMenu.tableOne && (clipboard.hasBlocks() || clipboard.hasHtml() || clipboard.readText().length > 0)
-                          text: "Paste into cells"
-                          onActivated: root.pasteIntoCellsAt(root.menuRow) }
                 MenuRow { visible: blockMenu.tableOne && (blockModel.structureRevision, root.firstGroupColOf(blockMenu.tableHead)) >= 0
-                          scope: "table"; text: "View as board"
+                          scope: "table"; text: qsTr("View as board")
                           onActivated: root.openBoard(blockMenu.tableHead, (blockMenu.tableColKind === 1 || blockMenu.tableColKind === 2)
                                                                           ? blockMenu.tableC : root.firstGroupColOf(blockMenu.tableHead)) }
-                MenuRow { visible: blockMenu.tableOne; scope: "table"; text: "Delete table"; danger: true
-                          onActivated: root.tableMenuOp(function(h, r, c) { blockModel.deleteTable(h); return null }) }
-                Rectangle { visible: blockMenu.tableOne; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Duplicate blocks" : "Duplicate block"
-                          onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
+                MenuSep { visible: blockMenu.secOwn && (blockMenu.secInsert || blockMenu.secArrange) }
+                // 3. Insert
+                MenuRow { visible: blockMenu.isVideo && !blockMenu.inFrameTab; text: qsTr("Notes below"); onActivated: root.insertVideoNotesBelow(root.menuRow) }   // the clip's QCView notes as a headered section (2026-10-18)
+                MenuRow { visible: !blockMenu.inFrameTab; text: qsTr("Add block above"); onActivated: root.addBlockAbove(blockMenu.runLo) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: qsTr("Add block below"); onActivated: root.addBlockBelow(blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && !blockMenu.menuInSel
+                          text: qsTr("Insert choice chip")
+                          onActivated: { cursor.setCaret(root.menuRow, cursor.focusRow === root.menuRow ? cursor.focusCol : blockModel.contentForRow(root.menuRow).length); root.insertChoiceChip() } }
+                MenuRow { visible: !blockMenu.inFrameTab && !blockMenu.isMedia && blockMenu.tableHead < 0; text: qsTr("Insert table below"); onActivated: root.insertTableAt(blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && docs.count > 1 && blockMenu.tableHead < 0; text: qsTr("Merge a file here…"); onActivated: root.mergeFileRequested(blockMenu.runHi + 1) }
+                MenuSep { visible: blockMenu.secInsert && blockMenu.secArrange }
+                // 4. Arrange
                 MenuRow { visible: !blockMenu.inFrameTab && blockMenu.runLo > 0
-                          text: blockMenu.menuInSel ? "Move blocks up" : "Move up"; onActivated: root.moveMenuRow(-1) }
+                          text: blockMenu.menuInSel ? qsTr("Move blocks up") : qsTr("Move up"); onActivated: root.moveMenuRow(-1) }
                 MenuRow { visible: !blockMenu.inFrameTab && (blockModel.structureRevision, blockMenu.runHi < blockModel.count - 1)
-                          text: blockMenu.menuInSel ? "Move blocks down" : "Move down"; onActivated: root.moveMenuRow(1) }
-                MenuRow { visible: !blockMenu.inFrameTab
-                          text: blockMenu.menuInSel ? "Copy blocks" : "Copy"
-                          onActivated: { if (blockMenu.menuInSel) { var ce = cursor.effectiveRange(); root.copyRange(ce.lR, ce.lC, ce.hR, ce.hC) }
-                                         else root.copyBlock(root.menuRow) } }
-                MenuRow { visible: !blockMenu.inFrameTab; text: "Paste"
-                          onActivated: root.pasteAtBlock(root.menuRow) }
-                MenuRow { visible: blockMenu.isImage
-                          text: "Copy image"
-                          onActivated: { clipboard.writeImageFromFile(blockModel.mediaUrl(root.menuRow))
-                                         Toasts.show(qsTr("Image copied")) } }
-                // Image size (the corner double-click's discoverable twin): fit the lane / the original.
-                MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: "Fit width"
-                          onActivated: blockModel.setMediaWidth(root.menuRow, root.fitWidthForRow(root.menuRow)) }
-                MenuRow { visible: blockMenu.isImage && !blockMenu.inFrameTab; text: "Original size"
-                          onActivated: blockModel.setMediaWidth(root.menuRow, 0) }
-                MenuRow { visible: blockMenu.isMedia
-                          text: Qt.platform.os === "windows" ? "Show in Explorer" : "Reveal in Finder"
-                          onActivated: blockModel.revealMedia(root.menuRow) }
-                MenuRow { visible: blockMenu.isMedia; text: "Open in ufb"
-                          onActivated: blockModel.openMediaInUfb(root.menuRow) }
-                MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
-                MenuRow { visible: !blockMenu.inFrameTab && docs.count > 1; text: "Merge a file here…"; onActivated: root.mergeFileRequested(blockMenu.runHi + 1) }
-                // text-only transform (withheld for a run — the clicked row isn't apparent)
-                Rectangle { visible: !blockMenu.isMedia && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow {
-                    visible: !blockMenu.isMedia && !blockMenu.menuInSel
-                    text: blockMenu.isCode ? "Change language…" : "Make code block"
-                    onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow)
-                                                  : root.makeCodeAt(root.menuRow)
-                }
-                Rectangle { visible: !blockMenu.inFrameTab; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? "Delete blocks" : "Delete block"; danger: true
+                          text: blockMenu.menuInSel ? qsTr("Move blocks down") : qsTr("Move down"); onActivated: root.moveMenuRow(1) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? qsTr("Duplicate blocks") : qsTr("Duplicate block")
+                          onActivated: root.duplicateRun(blockMenu.runLo, blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canSplit && blockMenu.tableHead < 0; text: qsTr("Split into columns")
+                          onActivated: root.splitMenu(blockMenu.runLo, blockMenu.runHi) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.canAlign && blockMenu.tableHead < 0; text: qsTr("Align lanes")
+                          onActivated: blockModel.alignLanes(blockMenu.laneRecord) }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.mergeBelow >= 0 && blockMenu.tableHead < 0; text: qsTr("Merge with the row below")
+                          onActivated: blockModel.mergeRowsIntoLanes(blockMenu.laneRecord, blockMenu.mergeBelow) }
+                MenuSep { visible: blockMenu.secArrange }
+                // 5. Clipboard. Cut / Copy take the text selection when the click lands inside one, else the block.
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? qsTr("Cut blocks") : qsTr("Cut"); onActivated: root.menuCut() }
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? qsTr("Copy blocks") : qsTr("Copy"); onActivated: root.menuCopy() }
+                MenuRow { visible: !blockMenu.inFrameTab; text: qsTr("Paste"); onActivated: root.pasteAtBlock(root.menuRow) }
+                MenuRow { visible: blockMenu.tableOne && (clipboard.hasBlocks() || clipboard.hasHtml() || clipboard.readText().length > 0)
+                          text: qsTr("Paste into cells"); onActivated: root.pasteIntoCellsAt(root.menuRow) }
+                // 6. Convert (withheld for a run — the clicked row isn't apparent)
+                MenuSep { visible: blockMenu.secConvert }
+                MenuRow { visible: !blockMenu.isMedia && !blockMenu.menuInSel
+                          text: blockMenu.isCode ? qsTr("Change language…") : qsTr("Make code block")
+                          onActivated: blockMenu.isCode ? root.openLangPopupForRow(root.menuRow) : root.makeCodeAt(root.menuRow) }
+                // Derived tables (SR-4 S7a): a split row takes the header role.
+                MenuRow { visible: blockMenu.laneRole; text: qsTr("Assign as header"); onActivated: blockModel.setHeaderRole(blockMenu.laneRecord, 1) }
+                // 7. Delete
+                MenuSep { visible: !blockMenu.inFrameTab }
+                MenuRow { visible: !blockMenu.inFrameTab && blockMenu.laneRecord >= 0 && blockMenu.tableHead < 0; text: qsTr("Delete lane"); danger: true
+                          onActivated: root.deleteLane(root.menuRow) }
+                MenuRow { visible: blockMenu.tableOne; scope: "table"; text: qsTr("Delete table"); danger: true
+                          onActivated: root.tableMenuOp(function(h, r, c) { blockModel.deleteTable(h); return null }) }
+                MenuRow { visible: !blockMenu.inFrameTab; text: blockMenu.menuInSel ? qsTr("Delete blocks") : qsTr("Delete block"); danger: true
                           onActivated: root.deleteRun(blockMenu.runLo, blockMenu.runHi) }
             }
 
@@ -8043,23 +8011,24 @@ FocusScope {
             Column {
                 id: tableColMenu
                 visible: blockMenu.tableOne
+                width: 196
                 spacing: 1
-                MenuHeader { text: "Column" }
-                MenuRow { scope: "column"; text: "Select column"
+                MenuHeader { text: qsTr("Column") }
+                MenuRow { scope: "column"; text: qsTr("Select column")
                           onActivated: root.tableGripClick(blockMenu.tableHead, "col", blockMenu.tableC, 0) }
-                MenuRow { scope: "column"; text: "Insert column left"
+                MenuRow { scope: "column"; text: qsTr("Insert column left")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableInsertColumn(h, c); return [r, c] }) }
-                MenuRow { scope: "column"; text: "Insert column right"
+                MenuRow { scope: "column"; text: qsTr("Insert column right")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableInsertColumn(h, c + 1); return [r, c + 1] }) }
-                MenuRow { visible: blockMenu.tableC > 0; scope: "column"; text: "Move column left"
+                MenuRow { visible: blockMenu.tableC > 0; scope: "column"; text: qsTr("Move column left")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableMoveColumn(h, c, c - 1); return [r, c - 1] }) }
-                MenuRow { visible: blockMenu.tableC < blockMenu.tableCols - 1; scope: "column"; text: "Move column right"
+                MenuRow { visible: blockMenu.tableC < blockMenu.tableCols - 1; scope: "column"; text: qsTr("Move column right")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableMoveColumn(h, c, c + 1); return [r, c + 1] }) }
-                MenuRow { scope: "column"; text: "Duplicate column"
+                MenuRow { scope: "column"; text: qsTr("Duplicate column")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableDuplicateColumn(h, c); return [r, c + 1] }) }
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSep { }
                 MenuSegRow {
-                    label: "Align"
+                    label: qsTr("Align")
                     MenuIconBtn { icon: "text-align-left";   on: blockMenu.tableAlign === 0
                                   onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColAlign(h, c, 0); return null }) }
                     MenuIconBtn { icon: "text-align-center"; on: blockMenu.tableAlign === 1
@@ -8067,27 +8036,27 @@ FocusScope {
                     MenuIconBtn { icon: "text-align-right";  on: blockMenu.tableAlign === 2
                                   onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColAlign(h, c, 2); return null }) }
                 }
-                Rectangle { visible: blockMenu.tableSortable; width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSep { visible: blockMenu.tableSortable }
                 MenuSegRow {
                     visible: blockMenu.tableSortable
-                    label: "Sort"
+                    label: qsTr("Sort")
                     MenuIconBtn { icon: "sort-ascending"
                                   onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSortByColumn(h, c, true); return null }) }
                     MenuIconBtn { icon: "sort-descending"
                                   onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSortByColumn(h, c, false); return null }) }
                 }
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.tableColKind !== 1; scope: "column"; text: "Make choice column"
+                MenuSep { }
+                MenuRow { visible: blockMenu.tableColKind !== 1; scope: "column"; text: qsTr("Make choice column")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColumnKind(h, c, 1); return [r, c] }) }
-                MenuRow { visible: blockMenu.tableColKind !== 2; scope: "column"; text: "Make checkmark column"
+                MenuRow { visible: blockMenu.tableColKind !== 2; scope: "column"; text: qsTr("Make checkmark column")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColumnKind(h, c, 2); return [r, c] }) }
-                MenuRow { visible: blockMenu.tableColKind === 1; scope: "column"; text: "Edit options…"
+                MenuRow { visible: blockMenu.tableColKind === 1; scope: "column"; text: qsTr("Edit options…")
                           onActivated: choiceEditor.open2Grid(blockMenu.tableHead, blockMenu.tableC) }
-                MenuRow { visible: blockMenu.tableColKind !== 3; scope: "column"; text: "Make timecode column"
+                MenuRow { visible: blockMenu.tableColKind !== 3; scope: "column"; text: qsTr("Make timecode column")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColumnKind(h, c, 3); return [r, c] }) }
                 MenuSegRow {   // T6: the timecode column's frame rate
                     visible: blockMenu.tableColKind === 3
-                    label: "Frame rate"
+                    label: qsTr("Frame rate")
                     readonly property real fps: blockMenu.tableColKind === 3 ? (blockModel.structureRevision, blockModel.tableColumnFps(blockMenu.tableHead, blockMenu.tableC)) : 0
                     Repeater {
                         model: [23.976, 24, 25, 29.97, 30, 60]
@@ -8095,33 +8064,34 @@ FocusScope {
                                       onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColumnFps(h, c, modelData); return null }) }
                     }
                 }
-                MenuRow { visible: blockMenu.tableColKind !== 0; scope: "column"; text: "Make text column"; danger: true
+                MenuRow { visible: blockMenu.tableColKind !== 0; scope: "column"; text: qsTr("Make text column"); danger: true
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableSetColumnKind(h, c, 0); return [r, c] }) }
-                Rectangle { visible: blockMenu.tableCols > 1; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.tableCols > 1; scope: "column"; text: "Delete column"; danger: true
+                MenuSep { visible: blockMenu.tableCols > 1 }
+                MenuRow { visible: blockMenu.tableCols > 1; scope: "column"; text: qsTr("Delete column"); danger: true
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableDeleteColumn(h, c); return [r, Math.max(0, c - 1)] }) }
             }
             Rectangle { visible: blockMenu.tableOne; width: 1; height: blockMenu.bodyH; color: Theme.colors.divider }
             Column {
                 id: tableRowMenu
                 visible: blockMenu.tableOne
+                width: 176
                 spacing: 1
-                MenuHeader { text: "Row" }
-                MenuRow { scope: "row"; text: "Select row"
+                MenuHeader { text: qsTr("Row") }
+                MenuRow { scope: "row"; text: qsTr("Select row")
                           onActivated: root.tableGripClick(blockMenu.tableHead, "row", blockMenu.tableR, 0) }
-                MenuRow { scope: "row"; text: "Insert row above"
+                MenuRow { scope: "row"; text: qsTr("Insert row above")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableInsertRow(h, r); return [r, c] }) }
-                MenuRow { scope: "row"; text: "Insert row below"
+                MenuRow { scope: "row"; text: qsTr("Insert row below")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableInsertRow(h, r + 1); return [r + 1, c] }) }
                 // Reorder / duplicate / delete: body rows only (a header row's place is the table's; Delete table is under Table).
-                MenuRow { visible: blockMenu.tableR > blockMenu.tableHeaders; scope: "row"; text: "Move row up"
+                MenuRow { visible: blockMenu.tableR > blockMenu.tableHeaders; scope: "row"; text: qsTr("Move row up")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableMoveRow(h, r, r - 1); return [r - 1, c] }) }
-                MenuRow { visible: !blockMenu.tableHeaderRow && blockMenu.tableR < blockMenu.tableRows - 1; scope: "row"; text: "Move row down"
+                MenuRow { visible: !blockMenu.tableHeaderRow && blockMenu.tableR < blockMenu.tableRows - 1; scope: "row"; text: qsTr("Move row down")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableMoveRow(h, r, r + 1); return [r + 1, c] }) }
-                MenuRow { visible: !blockMenu.tableHeaderRow; scope: "row"; text: "Duplicate row"
+                MenuRow { visible: !blockMenu.tableHeaderRow; scope: "row"; text: qsTr("Duplicate row")
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableDuplicateRow(h, r); return [r + 1, c] }) }
-                Rectangle { visible: blockMenu.tableBodyDeletable; width: parent.width; height: 1; color: Theme.colors.divider }
-                MenuRow { visible: blockMenu.tableBodyDeletable; scope: "row"; text: "Delete row"; danger: true
+                MenuSep { visible: blockMenu.tableBodyDeletable }
+                MenuRow { visible: blockMenu.tableBodyDeletable; scope: "row"; text: qsTr("Delete row"); danger: true
                           onActivated: root.tableMenuOp(function(h, r, c) { blockModel.tableDeleteRow(h, r); return [r, c] }) }
             }
 
@@ -8130,14 +8100,15 @@ FocusScope {
             Column {
                 id: bulkColMenu
                 visible: blockMenu.bulkMode
+                width: 204
                 spacing: 1
                 MenuHeader { text: blockMenu.tableSetNoun }
                 // A derived table's grip-picked set (SR-4 S7b)
-                MenuRow { visible: blockMenu.tableSetHit !== null; scope: "set"; text: "Clear contents"
+                MenuRow { visible: blockMenu.tableSetHit !== null; scope: "set"; text: qsTr("Clear contents")
                           onActivated: root.clearGridSet() }
                 MenuSegRow {
                     visible: blockMenu.tableSetCols
-                    label: "Align"
+                    label: qsTr("Align")
                     MenuIconBtn { icon: "text-align-left"
                                   onActivated: root.tableSetMenuOp(function(h, items) { blockModel.tableSetColsAlign(h, items, 0) }) }
                     MenuIconBtn { icon: "text-align-center"
@@ -8145,17 +8116,17 @@ FocusScope {
                     MenuIconBtn { icon: "text-align-right"
                                   onActivated: root.tableSetMenuOp(function(h, items) { blockModel.tableSetColsAlign(h, items, 2) }) }
                 }
-                MenuRow { visible: blockMenu.tableSetCols; scope: "set"; text: "Make choice columns"
+                MenuRow { visible: blockMenu.tableSetCols; scope: "set"; text: qsTr("Make choice columns")
                           onActivated: root.tableSetMenuOp(function(h, items) { blockModel.tableSetColumnsKind(h, items, 1) }) }
-                MenuRow { visible: blockMenu.tableSetCols; scope: "set"; text: "Make checkmark columns"
+                MenuRow { visible: blockMenu.tableSetCols; scope: "set"; text: qsTr("Make checkmark columns")
                           onActivated: root.tableSetMenuOp(function(h, items) { blockModel.tableSetColumnsKind(h, items, 2) }) }
-                MenuRow { visible: blockMenu.tableSetCols; scope: "set"; text: "Make text columns"; danger: true
+                MenuRow { visible: blockMenu.tableSetCols; scope: "set"; text: qsTr("Make text columns"); danger: true
                           onActivated: root.tableSetMenuOp(function(h, items) { blockModel.tableSetColumnsKind(h, items, 0) }) }
                 // Destructive tail
-                Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
+                MenuSep { }
                 MenuRow { visible: blockMenu.tableSetHit !== null; scope: "set"; danger: true
                           text: blockMenu.tableSetHit !== null && blockMenu.tableSetHit.kind === "row"
-                                && blockMenu.tableSetHit.items[0] < blockMenu.tableHeaders ? "Delete table" : "Delete " + blockMenu.tableSetNoun
+                                && blockMenu.tableSetHit.items[0] < blockMenu.tableHeaders ? qsTr("Delete table") : qsTr("Delete %1").arg(blockMenu.tableSetNoun)
                           onActivated: root.tableSetMenuOp(function(h, items, kind) {
                               if (kind === "row") blockModel.tableDeleteRows(h, items)
                               else blockModel.tableDeleteColumns(h, items)

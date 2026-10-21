@@ -80,8 +80,8 @@ menu-only, on purpose.
 
 Tab-separated text pasted outside a table becomes a new one. Inside a
 table it fills cells from the caret, growing the table as needed. Cells
-copied with their header row paste by matching column names; **Paste
-Special ▸ Paste into cells** fills by position instead.
+copied with their header row paste by matching column names; the cell
+menu's **Paste into cells** fills by position instead.
 
 ## Tables full-window
 
