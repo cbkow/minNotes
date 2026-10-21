@@ -78,8 +78,9 @@ Rectangle {
         signal clicked()
         height: bar.height - 1
         width: segRow.implicitWidth + 20
-        radius: 0
+        radius: Theme.dim.radiusSmall
         color: menuOpen ? Theme.colors.divider : (segMA.containsMouse ? Theme.colors.affordanceHover : "transparent")   // the title bar's hover (2026-10-21)
+        Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
         Row {
             id: segRow
             anchors.centerIn: parent; spacing: 5
@@ -170,8 +171,9 @@ Rectangle {
         property string pageId: ""   // a page row: focus it, then the Document view
         property bool active: false
         signal picked()
-        width: parent ? parent.width : 300; height: 28; radius: 0
+        width: parent ? parent.width : 300; height: 28; radius: Theme.dim.radiusSmall
         color: itemMA.containsMouse ? Theme.colors.surfaceHover : (active ? Theme.colors.divider : "transparent")
+        Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
         Text {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 12
@@ -190,8 +192,9 @@ Rectangle {
         height: Math.min(380, contentItem.contentHeight + 2)
         x: 0; y: parent ? parent.height + 2 : 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
-        onClosed: if (bar.editor) bar.editor.forceActiveFocus()
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dim.popupMs } }
+            onClosed: if (bar.editor) bar.editor.forceActiveFocus()
     }
 
     // The FILE menu: the open files (the active one marked, a dirty dot, an × to close) and New file.
@@ -215,7 +218,7 @@ Rectangle {
                         onPicked: { win.switchToTab(index); fileMenu.close() }
                         Rectangle {   // close ×, on hover
                             anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter
-                            width: 18; height: 18; radius: 0
+                            width: 18; height: 18; radius: Theme.dim.radiusSmall
                             visible: closeMA.containsMouse || parent.children[1].containsMouse
                             color: closeMA.containsMouse ? Theme.colors.divider : "transparent"
                             Icon { anchors.centerIn: parent; name: "x"; size: 11; color: closeMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }

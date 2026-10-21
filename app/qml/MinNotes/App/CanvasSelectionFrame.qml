@@ -24,7 +24,7 @@ Item {
     opacity: shown ? 1 : 0
     enabled: shown
 
-    Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Theme.colors.accent; radius: 0 }
+    Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Theme.colors.accent; radius: Theme.dim.radiusSmall }
 
     // The OPEN glyph (2.0 phase A4): a 20-px square off the frame's top-right corner, screen space, no
     // accent (the frame carries it) — the "full window" rung of the gesture ladder for a single element.
@@ -59,7 +59,7 @@ Item {
         id: pager
         visible: frame.isPdf
         x: Math.round(frame.width / 2 - width / 2); y: frame.pictureH + 6
-        width: 118; height: 22; radius: 0
+        width: 118; height: 22; radius: Theme.dim.radiusSmall
         color: Theme.colors.surfaceRaised
         border.width: 1; border.color: Theme.colors.border
         Rectangle {
@@ -88,7 +88,7 @@ Item {
     Rectangle {
         id: glyph
         visible: frame.canOpen
-        x: frame.width + 4; y: -24; width: 20; height: 20; radius: 0
+        x: frame.width + 4; y: -24; width: 20; height: 20; radius: Theme.dim.radiusSmall
         color: glyphHover.hovered ? Theme.colors.surfaceHover : Theme.colors.surface
         border.width: 1; border.color: Theme.colors.border
         Icon { anchors.centerIn: parent; name: "arrow-square-out"; size: 14
@@ -104,7 +104,7 @@ Item {
         required property int dx     // -1 left edge, 1 right edge, 0 neither
         required property int dy
         visible: frame.single && !(frame.isText && dx === 0)   // handles resize ONE element; a set only moves (a page's height too — walk 7c: fixed-height pages); a text chip's height is its text's
-        width: 8; height: 8; radius: 0
+        width: 8; height: 8; radius: 2
         color: Theme.colors.accent
         z: 3   // above the bar (the bottom handles sit on the picture/bar seam, never on the bar's buttons)
         x: (dx < 0 ? 0 : dx > 0 ? frame.width : frame.width / 2) - 4

@@ -255,7 +255,7 @@ Item {
 
                 Rectangle {   // lane backdrop (lit while a card is dragged over it)
                     anchors.fill: parent
-                    radius: 0   // squared — family style has no rounded corners
+                    radius: Theme.dim.radius   // the lane (rounded, 2026-10-21)
                     color: (kb.dragRow >= 0 && kb.dropLane === laneItem.index)
                            ? Theme.colors.surfaceHover : "transparent"
                     border.width: 1
@@ -306,7 +306,7 @@ Item {
                             required property var modelData
                             width: parent.width
                             height: card.modelData.h
-                            radius: 0
+                            radius: Theme.dim.radius
                             color: Theme.colors.card
                             border.width: 1; border.color: Theme.colors.border
                             opacity: kb.dragRow === card.modelData.r ? 0.35 : 1
@@ -381,7 +381,7 @@ Item {
                                             width: 10; height: 10
                                             anchors.verticalCenter: parent.verticalCenter
                                             Rectangle {
-                                                anchors.fill: parent; radius: 0
+                                                anchors.fill: parent; radius: Theme.dim.radius
                                                 color: fieldRow.modelData.check === 2 ? Theme.colors.accent : "transparent"
                                                 border.width: fieldRow.modelData.check === 2 ? 0 : 1
                                                 border.color: fieldRow.modelData.check === 1
@@ -492,7 +492,7 @@ Item {
         visible: kb.dragRow >= 0
         x: kb.dragX + 10; y: kb.dragY + 8
         width: kb.laneW - 16; height: kb.cardH
-        radius: 0; z: 100
+        radius: Theme.dim.radius; z: 100
         color: Theme.colors.card   // matches the card it mirrors
         border.width: 1; border.color: Theme.colors.accent
         opacity: 0.92

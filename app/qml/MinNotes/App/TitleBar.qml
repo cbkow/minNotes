@@ -49,9 +49,10 @@ Rectangle {
             id: menuBtn
             visible: !win.nativeMenuBar
             width: visible ? 30 : 0; height: parent.height
-            radius: 0
+            radius: Theme.dim.radiusSmall
             readonly property bool menuOpen: !!win.appMenu && win.appMenu.visible
             color: menuOpen ? Theme.colors.divider : (menuMA.containsMouse ? Theme.colors.affordanceHover : "transparent")
+            Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             Icon { anchors.centerIn: parent; name: "list"; size: 16
                    color: menuBtn.menuOpen || menuMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
             MouseArea { id: menuMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor

@@ -262,9 +262,9 @@ Rectangle {
         width: 320; padding: 8; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: cv.editor.forceActiveFocus()
-        background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
         contentItem: Rectangle {
-            width: 304; height: 30; radius: 0
+            width: 304; height: 30; radius: Theme.dim.radiusSmall
             color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
             TextInput {
                 id: linkField

@@ -13,7 +13,8 @@ Popup {
     padding: 1
     width: 200
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dim.popupMs } }
+    background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
 
     readonly property int n: view.selectionCount
     readonly property string kind1: view.selectedId !== "" ? canvas.elementKind(view.selectedId) : ""

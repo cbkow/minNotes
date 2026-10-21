@@ -17,7 +17,7 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
     background: Rectangle {
-        color: Theme.colors.surface; radius: 0
+        color: Theme.colors.surface; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
     }
 
@@ -153,7 +153,7 @@ Popup {
                                 width: parent.width; spacing: 8
                                 Rectangle {   // enabled checkbox (squared)
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: 16; height: 16; radius: 0
+                                    width: 16; height: 16; radius: Theme.dim.radiusSmall
                                     color: card.venabled ? Theme.colors.divider : "transparent"
                                     border.width: 1
                                     border.color: card.venabled ? Theme.colors.textBright : Theme.colors.border

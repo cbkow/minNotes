@@ -23,7 +23,8 @@ Popup {
     }
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     modal: true; dim: false   // a press outside CLOSES the flyout and goes NO further — never through to the page beneath (user, 2026-10-18)
-    background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0; border.width: 1; border.color: Theme.colors.border }
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dim.popupMs } }
+    background: Rectangle { color: Theme.colors.surfaceRaised; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
     onClosed: if (editor) editor.forceActiveFocus()
     onAboutToShow: if (inspector) setPickerValue(inspector.targetColor())
 
@@ -84,12 +85,12 @@ Popup {
         property string label: ""
         property string t: ""
         readonly property bool sel: !!flyout.inspector && flyout.inspector.target === t
-        width: tabRow.implicitWidth + 20; height: 28; radius: 0
+        width: tabRow.implicitWidth + 20; height: 28; radius: Theme.dim.radiusSmall
         color: sel ? Theme.colors.divider : (tma.containsMouse ? Theme.colors.surfaceHover : "transparent")
         Row {
             id: tabRow
             anchors.centerIn: parent; spacing: 6
-            Rectangle { width: 12; height: 12; radius: 0; anchors.verticalCenter: parent.verticalCenter
+            Rectangle { width: 12; height: 12; radius: Theme.dim.radiusSmall; anchors.verticalCenter: parent.verticalCenter
                         color: !flyout.inspector ? "transparent" : parent.parent.t === "fg" ? flyout.inspector.fgColor
                              : parent.parent.t === "bg" ? flyout.inspector.bgColor : flyout.inspector.drawColor
                         border.width: 1; border.color: Theme.colors.border }
@@ -106,7 +107,7 @@ Popup {
         property bool userSlot: false
         readonly property string hex: userSlot ? flyout.userSlots[idx] : flyout.presets[idx]
         readonly property bool selected: userSlot ? flyout.selUser === idx : flyout.selPreset === idx
-        width: Math.floor((flyout.contentW - 4 * 4) / 5); height: 18; radius: 0   // WIDE clips, five across (user, 2026-10-18)
+        width: Math.floor((flyout.contentW - 4 * 4) / 5); height: 18; radius: Theme.dim.radiusSmall   // WIDE clips, five across (user, 2026-10-18)
         color: hex !== "" ? hex : "transparent"
         border.width: 1
         border.color: selected ? Theme.colors.textBright : Theme.colors.border
@@ -171,13 +172,13 @@ Popup {
         // picked BEFORE the selection existed needs this. Hidden for the pen (that colour feeds the armed tool).
         Rectangle {
             visible: !!flyout.inspector && flyout.inspector.target !== "draw"
-            width: flyout.contentW; height: 28; radius: 0
+            width: flyout.contentW; height: 28; radius: Theme.dim.radiusSmall
             readonly property bool canApply: !!flyout.editor && (flyout.editor.hasSelection || flyout.editor.caretInCell)
             opacity: canApply ? 1.0 : 0.4          // disabled chrome rule
             color: applyMA.containsMouse && canApply ? Theme.colors.divider : Theme.colors.surfaceHover
             Row {
                 anchors.centerIn: parent; spacing: 6
-                Rectangle { width: 12; height: 12; radius: 0; anchors.verticalCenter: parent.verticalCenter
+                Rectangle { width: 12; height: 12; radius: Theme.dim.radiusSmall; anchors.verticalCenter: parent.verticalCenter
                             color: !flyout.inspector ? "transparent" : flyout.inspector.target === "fg" ? flyout.inspector.fgColor : flyout.inspector.bgColor
                             border.width: 1; border.color: Theme.colors.border }
                 Text { text: qsTr("Apply to selection"); color: Theme.colors.text
@@ -193,7 +194,7 @@ Popup {
                         } }
         }
         Rectangle {   // Revert: soft grey (brighter than the page, not loud)
-            width: flyout.contentW; height: 28; radius: 0
+            width: flyout.contentW; height: 28; radius: Theme.dim.radiusSmall
             color: revertMA.containsMouse ? Theme.colors.divider : Theme.colors.surfaceHover
             Row {
                 anchors.centerIn: parent; spacing: 6
@@ -223,9 +224,9 @@ Popup {
             property int idx: -1
             padding: 4
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-            background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+            background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
             contentItem: Rectangle {
-                implicitWidth: 104; implicitHeight: 26; radius: 0
+                implicitWidth: 104; implicitHeight: 26; radius: Theme.dim.radiusSmall
                 color: clearMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
                 Text { anchors.verticalCenter: parent.verticalCenter; x: 8; text: qsTr("Clear slot"); color: Theme.colors.text
                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }

@@ -236,7 +236,7 @@ Item {
         Rectangle {   // duration badge
             visible: mb.durMs > 0
             anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8
-            width: durText.width + 12; height: durText.height + 6; radius: 0
+            width: durText.width + 12; height: durText.height + 6; radius: Theme.dim.radiusSmall
             color: Qt.rgba(0, 0, 0, 0.6)
             Text {
                 id: durText

@@ -16,7 +16,7 @@ ToolTip {
         color: Theme.colors.surfaceRecess
         border.color: Theme.colors.border
         border.width: 1
-        radius: 0
+        radius: Theme.dim.radiusSmall
     }
     contentItem: Text {
         text: root.text

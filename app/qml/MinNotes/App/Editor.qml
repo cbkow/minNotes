@@ -6556,7 +6556,7 @@ FocusScope {
     component LaneMenuRow: Rectangle {
         property alias text: laneMenuRowLabel.text
         signal activated()
-        width: 168; height: 24; radius: 0
+        width: 168; height: 24; radius: Theme.dim.radiusSmall
         color: laneMenuRowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
         Text {
             id: laneMenuRowLabel
@@ -6583,7 +6583,7 @@ FocusScope {
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: root.forceActiveFocus()
-        background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0
+        background: Rectangle { color: Theme.colors.surfaceRaised; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 1
@@ -6660,7 +6660,7 @@ FocusScope {
                 color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
             }
             Rectangle {
-                width: 180; height: 22; radius: 0
+                width: 180; height: 22; radius: Theme.dim.radiusSmall
                 anchors.verticalCenter: parent.verticalCenter
                 color: Theme.colors.codeBg; border.width: 1
                 border.color: tableFilterField.activeFocus ? Theme.colors.textMuted : Theme.colors.border
@@ -7461,7 +7461,7 @@ FocusScope {
                 Rectangle {
                     visible: !root.imageResizing
                     x: 5; y: 5   // (not centerIn: 18 − 9 halves to a half pixel and antialiases the edges)
-                    width: 9; height: 9; radius: 0
+                    width: 9; height: 9; radius: Theme.dim.radiusSmall
                     color: Theme.colors.accent   // accent, no hover state (user ruling 2026-09-16)
                     border.width: 1; border.color: Theme.colors.accent
                 }
@@ -7512,21 +7512,21 @@ FocusScope {
         height: root.imageResizeW * root.imageResizeAspect * root.viewZoom
         color: "transparent"
         border.width: 1; border.color: Theme.colors.accent
-        radius: 0
+        radius: Theme.dim.radiusSmall
         Repeater {   // the four corners travel with the ghost
             model: 4
             Rectangle {
                 required property int index
                 x: (index === 0 || index === 3 ? 0 : parent.width) - 4.5
                 y: (index < 2 ? 0 : parent.height) - 4.5
-                width: 9; height: 9; radius: 0
+                width: 9; height: 9; radius: Theme.dim.radiusSmall
                 color: Theme.colors.accent
                 border.width: 1; border.color: Theme.colors.accent
             }
         }
         Rectangle {
             anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 10
-            width: dimLabel.width + 10; height: dimLabel.height + 6; radius: 0
+            width: dimLabel.width + 10; height: dimLabel.height + 6; radius: Theme.dim.radiusSmall
             color: Qt.rgba(0, 0, 0, 0.7)
             Text {
                 id: dimLabel; anchors.centerIn: parent
@@ -7552,7 +7552,7 @@ FocusScope {
         readonly property color _c: root.menuHiDanger ? Theme.colors.error : Theme.colors.accent
         color: Qt.rgba(_c.r, _c.g, _c.b, 0.10)
         border.width: 1; border.color: Qt.rgba(_c.r, _c.g, _c.b, 0.55)
-        radius: Theme.dim.radius
+        radius: Theme.dim.radiusSmall
     }
 
     // A column grip drag's drop line (SR-4 S7b): the gap it would land at, down the whole table.
@@ -7590,7 +7590,7 @@ FocusScope {
         z: 40
         Rectangle {   // + row, under the last row
             x: tableAdd.xV; y: root.vy(tableAdd.bottomC) + 4
-            width: tableAdd.twV; height: 14; radius: 0
+            width: tableAdd.twV; height: 14; radius: Theme.dim.radiusSmall
             color: tableAddRowMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
@@ -7601,7 +7601,7 @@ FocusScope {
         }
         Rectangle {   // + column, right of the last column
             x: tableAdd.xV + tableAdd.twV + 4; y: root.vy(tableAdd.topC)
-            width: 14; height: Math.max(0, tableAdd.bottomC - tableAdd.topC) * root.viewZoom; radius: 0
+            width: 14; height: Math.max(0, tableAdd.bottomC - tableAdd.topC) * root.viewZoom; radius: Theme.dim.radiusSmall
             color: tableAddColMA.containsMouse ? Theme.colors.accentMuted : Theme.colors.surfaceHover
             border.width: 1; border.color: Theme.colors.border
             Text { anchors.centerIn: parent; text: "+"; color: Theme.colors.textMuted; font.pixelSize: Theme.font.sizeChrome }
@@ -7877,7 +7877,7 @@ FocusScope {
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
         onClosed: { root.menuHiScope = ""; root.forceActiveFocus() }
-        background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0
+        background: Rectangle { color: Theme.colors.surfaceRaised; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         // Columns side by side: Block always; Column + Row appear for tables (no
         // submenus). Inter-column dividers stretch to the tallest column (bodyH).
@@ -7916,7 +7916,7 @@ FocusScope {
                     readonly property color hover: Qt.rgba(tone.r, tone.g, tone.b, 0.30)
                     visible: !!issue || showFixAll
                     width: 168; height: visible ? spellRows.implicitHeight : 0
-                    Rectangle { anchors.fill: parent; radius: 0
+                    Rectangle { anchors.fill: parent; radius: Theme.dim.radiusSmall
                                 color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.12) }
                     Rectangle { width: 2; height: parent.height; color: spellWell.tone }
                     Column {
@@ -7948,7 +7948,7 @@ FocusScope {
                                   hoverColor: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.55)
                                   text: "Fix all in block (" + spellWell.fixable + ")"
                                   onActivated: root.applyAllSuggestions()
-                                  Rectangle { anchors.fill: parent; z: -1; radius: 0
+                                  Rectangle { anchors.fill: parent; z: -1; radius: Theme.dim.radiusSmall
                                               color: Qt.rgba(spellWell.tone.r, spellWell.tone.g, spellWell.tone.b, 0.28) }
                                   Component.onCompleted: { menuRowLabelBright = true } }
                     }
@@ -8188,7 +8188,7 @@ FocusScope {
         y: Math.max(8, Math.min(root.menuY, root.height - height - 8))
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: { targetRow = -1; root.forceActiveFocus() }
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         function apply(lang) {
             if (langPopup.targetRow >= 0)
@@ -8200,7 +8200,7 @@ FocusScope {
             // Plain TextInput (not a Controls TextField, which the native macOS
             // style refuses to theme) in a themed frame, with a placeholder overlay.
             Rectangle {
-                width: parent.width; height: 30; radius: 0
+                width: parent.width; height: 30; radius: Theme.dim.radiusSmall
                 color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
                 TextInput {
                     id: langField
@@ -8232,7 +8232,7 @@ FocusScope {
                     readonly property bool isPlain: modelData === ""
                     readonly property bool isCurrent: isPlain ? langPopup.current === ""
                                                               : modelData === langPopup.current
-                    width: ListView.view.width; height: 24; radius: 0
+                    width: ListView.view.width; height: 24; radius: Theme.dim.radiusSmall
                     color: langRowHover.hovered ? Theme.colors.surfaceHover : "transparent"
                     HoverHandler { id: langRowHover }
                     Text {
@@ -8272,7 +8272,7 @@ FocusScope {
         x: px; y: py
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: root.forceActiveFocus()
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         function openAtCaret() {
             var ax = root.width / 2 - width / 2, ay = 80
@@ -8291,7 +8291,7 @@ FocusScope {
         contentItem: Column {
             spacing: 6
             Rectangle {
-                width: parent.width; height: 30; radius: 0
+                width: parent.width; height: 30; radius: Theme.dim.radiusSmall
                 color: Theme.colors.codeBg; border.width: 1; border.color: Theme.colors.border
                 TextInput {
                     id: linkField

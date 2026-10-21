@@ -173,12 +173,12 @@ body.reading #mn-hud{display:none}
 #world{position:absolute;left:0;top:0;transform-origin:0 0}
 .el{position:absolute;box-sizing:border-box}
 .el[data-open]{cursor:pointer}
-.page{background:var(--bg);border:1px solid var(--border);overflow:hidden}
+.page{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
 #world .page main{max-width:none;margin:0;width:100%;box-sizing:border-box;padding:24px}
 #world .page main .cap{display:none}
 .page .more{position:absolute;left:0;right:0;bottom:0;height:72px;padding:0 24px 20px 0;display:flex;align-items:flex-end;justify-content:flex-end;
 background:linear-gradient(to bottom,rgba(24,24,23,0),var(--bg) 60%);color:var(--subtle);font-size:13px;pointer-events:none}
-figure.el{margin:0;background:var(--bg);border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column}
+figure.el{margin:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
 figure.el img{display:block;width:100%;height:auto;flex:0 0 auto}
 figure.el .poster{width:100%;flex:1 1 auto;object-fit:contain;background:#000;min-height:0}
 figure.el.pdf .poster{background:#fff}
@@ -190,7 +190,7 @@ figure.el figcaption,.card .cap{padding:8px 12px;font-size:13px;color:var(--mute
 .meta{color:var(--muted);font-size:13px;display:block}
 .path{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--subtle);word-break:break-all}
 a.ufblink{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--chiptext);word-break:break-all;text-decoration:none}
-.card{background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;gap:12px;padding:0 12px}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);display:flex;align-items:center;gap:12px;padding:0 12px}
 .card .glyph{flex:0 0 24px;width:24px;height:24px;color:var(--muted)}
 .card .cap{padding:0;min-width:0;flex:1 1 auto}
 .card .name,.card .path,.card .meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

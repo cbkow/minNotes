@@ -50,7 +50,7 @@ T.ScrollBar {
     contentItem: Rectangle {
         implicitWidth:  root.orientation === Qt.Vertical   ? Theme.dim.scrollBarWidth : 0
         implicitHeight: root.orientation === Qt.Horizontal ? Theme.dim.scrollBarWidth : 0
-        radius: 0   // flat, square thumb (matches the app's flat language)
+        radius: Theme.dim.radiusSmall   // a softly rounded thumb (2026-10-21)
         // Hover tracked on the thumb itself (the control's hover area covers the
         // full, often-transparent track) so only what's under the cursor brightens.
         // Pressed brightens a notch above hover — but not to full white.

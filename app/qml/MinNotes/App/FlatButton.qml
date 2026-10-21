@@ -42,7 +42,7 @@ Rectangle {
     /// Icon size. Defaults to Theme.icon.sizeToolbar.
     property int iconSize: Theme.icon.sizeToolbar
     /// Extra horizontal padding inside the row (text breathing room).
-    property int padding: 8
+    property int padding: 10
     /// Optional icon color override. Empty/transparent = use the
     /// variant's foreground color. Set this when you need to tint
     /// just the glyph (e.g. an accent-blue caret on a transparent
@@ -88,6 +88,13 @@ Rectangle {
         if (checked) return Qt.lighter(checkedColor.a > 0 ? checkedColor : Theme.colors.divider, 1.25)
         return Theme.colors.surfaceHover
     }
+    // Pressed: a step past hover (the humanist pass, 2026-10-21) — a button answers the finger, not just the cursor.
+    readonly property color _bgPressed: {
+        if (!enabled_) return _bgIdle
+        if (variant === "primary" || variant === "danger") return Qt.darker(_bgHover, 1.15)
+        if (checked) return Qt.lighter(checkedColor.a > 0 ? checkedColor : Theme.colors.divider, 1.4)
+        return Theme.colors.affordanceHover
+    }
     // Disabled is expressed by the content Row's OPACITY, not a color swap:
     // consumers routinely override iconColor/labelColor (the Inspector tool
     // grid), and a color-based disabled state silently loses to those
@@ -101,8 +108,9 @@ Rectangle {
     implicitWidth: Math.max(
         Theme.dim.toolStripHeight,
         rowContent.implicitWidth + padding * 2)
-    radius: 0   // perfectly square corners
-    color: ma.containsMouse ? _bgHover : _bgIdle
+    radius: Theme.dim.radiusSmall
+    color: ma.pressed && ma.containsMouse ? _bgPressed : (ma.containsMouse ? _bgHover : _bgIdle)
+    Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
 
     Row {
         id: rowContent

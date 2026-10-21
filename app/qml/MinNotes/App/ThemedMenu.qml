@@ -9,8 +9,9 @@ import QtQuick.Controls
 Menu {
     id: themedMenu
     popupType: Popup.Item
-    padding: 1
+    padding: 3
     overlap: 1
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dim.popupMs } }
 
     background: Rectangle {
         implicitWidth: 240
@@ -43,8 +44,9 @@ Menu {
             Icon { anchors.centerIn: parent; name: "caret-right"; size: 10; color: mi.fg; visible: !!mi.subMenu }
         }
         background: Rectangle {
-            radius: 0
+            radius: Theme.dim.radiusSmall
             color: mi.highlighted ? Theme.colors.surfaceHover : "transparent"
+            Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
         }
     }
 

@@ -31,7 +31,7 @@ Rectangle {
     clip: true
     color: Theme.colors.surface
     border.width: 1; border.color: Theme.colors.border
-    radius: 0
+    radius: Theme.dim.radius
 
     readonly property real inset: 24                        // == CanvasDocument::kPageInset
     readonly property real measure: Math.max(320, width - 2 * inset)

@@ -36,7 +36,7 @@ Rectangle {
         FlatButton {
             id: playBtn
             anchors.verticalCenter: parent.verticalCenter
-            implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: 0
+            implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: Theme.dim.radiusSmall
             iconName: (ct.live && ct.dec && ct.dec.isPlaying) ? "pause" : "play"
             iconColor: ct.live ? Theme.colors.textBright : "transparent"   // the live player reads through its tones (no opacity games)
             tooltip: (ct.live && ct.dec && ct.dec.isPlaying) ? qsTr("Pause (Space)") : qsTr("Play (Space)"); tooltipSide: "top"
@@ -115,7 +115,7 @@ Rectangle {
         }
         FlatButton {   // expand: the studio (the full transport, the notes panel)
             anchors.verticalCenter: parent.verticalCenter
-            implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: 0
+            implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: Theme.dim.radiusSmall
             iconName: "arrows-out-simple"
             tooltip: qsTr("Open in the studio"); tooltipSide: "top"
             onClicked: ct.expand()

@@ -61,7 +61,7 @@ ApplicationWindow {
     Dialog {
         id: quitConfirmDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 460; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -208,7 +208,7 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose
         anchors.centerIn: Overlay.overlay
         width: 460; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -241,7 +241,7 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose
         anchors.centerIn: Overlay.overlay
         width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -396,7 +396,7 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose   // cancel is the only way out
         anchors.centerIn: Overlay.overlay
         width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -434,7 +434,7 @@ ApplicationWindow {
     Dialog {
         id: exportOptionsDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -596,7 +596,7 @@ ApplicationWindow {
     Dialog {
         id: collectOptionsDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -667,7 +667,7 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose   // cancel is the only way out
         anchors.centerIn: Overlay.overlay
         width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -724,7 +724,7 @@ ApplicationWindow {
     Dialog {
         id: conflictDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -754,7 +754,7 @@ ApplicationWindow {
     Dialog {
         id: saveFailedDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -791,7 +791,7 @@ ApplicationWindow {
         modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
         readonly property var pendingModel: win._closePendingIndex >= 0
                                           ? docs.models[win._closePendingIndex] : null
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -900,7 +900,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
     Dialog {
         id: openFailedDialog
         modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -1060,7 +1060,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         closePolicy: Popup.NoAutoClose   // cancel is the only way out
         anchors.centerIn: Overlay.overlay
         width: 440; padding: 20
-        background: Rectangle { color: Theme.colors.surface; radius: 0
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
                                 border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             spacing: 14
@@ -1100,7 +1100,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
         width: 360; padding: 1
         modal: true; dim: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
         contentItem: Column {
             width: 358
             Text { text: qsTr("Merge into this page"); leftPadding: 12; topPadding: 10; bottomPadding: 6
@@ -1111,7 +1111,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                     required property int index
                     required property var modelData
                     readonly property bool self: index === docs.activeIndex
-                    width: 358; height: self ? 0 : 28; visible: !self; radius: 0
+                    width: 358; height: self ? 0 : 28; visible: !self; radius: Theme.dim.radiusSmall
                     color: mpMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
                     Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 12; anchors.right: parent.right; anchors.rightMargin: 10
                            text: modelData.documentName; elide: Text.ElideMiddle
@@ -1640,7 +1640,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                     delegate: Rectangle {
                         id: recentItem
                         required property var modelData
-                        width: 440; height: 40; radius: 0
+                        width: 440; height: 40; radius: Theme.dim.radiusSmall
                         color: recentMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.card
                         border.width: 1; border.color: Theme.colors.border
                         Row {
@@ -1684,7 +1684,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                   topMargin: chromeRows.height + 8; rightMargin: 12 }
         width: toastRow.implicitWidth + 24
         height: 32
-        radius: 0
+        radius: Theme.dim.radius
         color: Theme.colors.surfaceRaised
         border.width: 1; border.color: Theme.colors.divider
         Row {

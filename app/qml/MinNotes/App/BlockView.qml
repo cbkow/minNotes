@@ -377,7 +377,7 @@ Item {
             required property int index
             readonly property rect rr: cell.codeRects[index]
             color: Theme.colors.inlineCodeBg
-            radius: 0
+            radius: Theme.dim.radiusSmall
             z: 0
             x: te.x + rr.x - 2
             y: te.y + rr.y
@@ -414,7 +414,7 @@ Item {
             color: Qt.rgba(oc.r, oc.g, oc.b, 0.28)
             border.width: 1
             border.color: Qt.rgba(oc.r, oc.g, oc.b, 0.55)
-            radius: 0
+            radius: Theme.dim.radiusSmall
             z: 0
             // 4px pad each side (2026-08-21): the pill can't reserve
             // layout width, so this rides under any directly-adjacent
@@ -512,7 +512,7 @@ Item {
         y: te.y - 8 + 3
         width: langChipLbl.implicitWidth + 24
         height: 18
-        radius: 0
+        radius: Theme.dim.radiusSmall
         z: 2
         color: hot ? Theme.colors.surfaceHover : Theme.colors.surface
         border.width: 1; border.color: Theme.colors.border
@@ -724,7 +724,7 @@ Item {
         width: 14; height: 14
         Rectangle {
             anchors.fill: parent
-            radius: 0
+            radius: Theme.dim.radiusSmall
             color: te.taskState === 2 ? Theme.colors.accent : "transparent"
             border.width: te.taskState === 2 ? 0 : 1.5
             border.color: te.taskState === 1 ? Theme.colors.accent : Theme.colors.textMuted
@@ -749,7 +749,7 @@ Item {
         width: 14; height: 14
         Rectangle {
             anchors.fill: parent
-            radius: 0
+            radius: Theme.dim.radiusSmall
             color: cell.checkState === 2 ? Theme.colors.accent : "transparent"
             border.width: cell.checkState === 2 ? 0 : 1.5
             border.color: cell.checkState === 1 ? Theme.colors.accent : Theme.colors.textMuted

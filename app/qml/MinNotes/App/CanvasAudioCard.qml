@@ -15,7 +15,7 @@ Rectangle {
     readonly property bool mine: editor.audioPlayingKey !== "" && editor.audioPlayingKey === key
     color: Theme.colors.surface
     border.width: 1; border.color: Theme.colors.border
-    radius: 0
+    radius: Theme.dim.radius
 
     function fmtDur(ms) {
         if (!ms || ms <= 0) return "–:––"
@@ -27,7 +27,7 @@ Rectangle {
         anchors.fill: parent; anchors.margins: 10; anchors.leftMargin: 12; anchors.rightMargin: 10; spacing: 10
         FlatButton {
             anchors.verticalCenter: parent.verticalCenter
-            implicitWidth: 28; implicitHeight: 28; iconSize: 16; radius: 0
+            implicitWidth: 28; implicitHeight: 28; iconSize: 16; radius: Theme.dim.radiusSmall
             iconName: card.mine && card.editor.audioIsPlaying ? "pause" : "play"
             tooltip: card.mine && card.editor.audioIsPlaying ? qsTr("Pause") : qsTr("Play"); tooltipSide: "top"
             onClicked: card.editor.playAudioElement(card.elementId)
@@ -51,7 +51,7 @@ Rectangle {
         Rectangle {
             id: durChip
             anchors.verticalCenter: parent.verticalCenter
-            width: durLabel.implicitWidth + 12; height: 20; radius: 0
+            width: durLabel.implicitWidth + 12; height: 20; radius: Theme.dim.radiusSmall
             color: Theme.colors.surfaceRaised; border.width: 1; border.color: Theme.colors.border
             Text { id: durLabel; anchors.centerIn: parent; text: card.fmtDur(card.media.durMs)
                    color: Theme.colors.textMuted; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeMono }

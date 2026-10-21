@@ -23,7 +23,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 0
+        radius: Theme.dim.radiusSmall
         color: badgeMA.containsMouse || menu.visible ? Theme.colors.surfaceRaised : "transparent"
         border.width: 1
         border.color: badgeMA.containsMouse || menu.visible ? Theme.colors.divider : "transparent"
@@ -77,7 +77,7 @@ Item {
         padding: 4; z: 60
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: Rectangle {
-            color: Theme.colors.surfaceRaised; radius: 0
+            color: Theme.colors.surfaceRaised; radius: Theme.dim.radius
             border.width: 1; border.color: Theme.colors.border
         }
         contentItem: Column {

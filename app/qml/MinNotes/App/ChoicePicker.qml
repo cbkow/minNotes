@@ -66,7 +66,7 @@ Popup {
     signal editOptions()   // → the editor opens the modal option editor for this column
 
     background: Rectangle {
-        color: Theme.colors.surface; radius: 0
+        color: Theme.colors.surface; radius: Theme.dim.radius
         border.width: 1; border.color: Theme.colors.border
     }
 
@@ -79,7 +79,7 @@ Popup {
                 id: optRow
                 required property var modelData
                 required property int index
-                width: parent.width; height: 26; radius: 0
+                width: parent.width; height: 26; radius: Theme.dim.radiusSmall
                 color: rowHover.hovered || (picker.tableMode && index === picker.hi) ? Theme.colors.surfaceHover : "transparent"
                 HoverHandler { id: rowHover }
 
@@ -119,7 +119,7 @@ Popup {
         Rectangle { visible: picker.spanMode || picker.selectedId !== ""; width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // clear the cell's selection / remove the inline chip
             visible: picker.spanMode || picker.selectedId !== ""
-            width: parent.width; height: 24; radius: 0
+            width: parent.width; height: 24; radius: Theme.dim.radiusSmall
             color: clearMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {
                 anchors.verticalCenter: parent.verticalCenter; x: 24
@@ -143,7 +143,7 @@ Popup {
 
         Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // add a new option (stays open so several can be added)
-            width: parent.width; height: 26; radius: 0; color: "transparent"
+            width: parent.width; height: 26; radius: Theme.dim.radiusSmall; color: "transparent"
             TextInput {
                 id: addField
                 anchors.fill: parent
@@ -193,7 +193,7 @@ Popup {
         }
         Rectangle { width: parent.width; height: 1; color: Theme.colors.divider }
         Rectangle {   // open the full option editor (rename / colour / reorder / delete); grid mode too (S9)
-            width: parent.width; height: 24; radius: 0
+            width: parent.width; height: 24; radius: Theme.dim.radiusSmall
             color: editMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
             Text {
                 anchors.verticalCenter: parent.verticalCenter; x: 24

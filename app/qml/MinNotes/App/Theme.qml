@@ -66,7 +66,12 @@ QtObject {
     readonly property QtObject dim: QtObject {
         readonly property int padding:        8
         readonly property int paddingLoose:   16
-        readonly property int radius:         0    // squared corners everywhere (user ruling); was 4
+        // The humanist pass (user ruling 2026-10-21 — minNotes leaves the family's squared look on purpose): three radii.
+        readonly property int radiusSmall:    3    // buttons, segments, chips, inputs, menu rows, scrollbar thumbs, handles
+        readonly property int radius:         6    // popups, flyouts, menus, dialogs, toasts, cards, lanes, media frames
+        readonly property int radiusLarge:    10   // reserved (nothing yet) — so a fourth value is never invented ad hoc
+        readonly property int hoverMs:        100  // the hover / pressed colour ramp
+        readonly property int popupMs:        80   // a popup's fade-and-rise
         readonly property int scrollBarWidth: 14   // macOS always-on scrollbar width
         readonly property int columnWidth:    760    // the readable-measure CAP (2.0 stage 1C: the page follows the window under it)
         readonly property int docTopPad:      28     // breathing room above block 0

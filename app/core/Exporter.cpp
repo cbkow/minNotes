@@ -1306,7 +1306,7 @@ constexpr int kExportMargin  = 48;    // the app's pageMargin: main's side paddi
 const char* kHtmlCss = R"CSS(
 :root{--bg:#181817;--desk:#121211;
 --text:#e4e3e2;--bright:#f0f0f0;--muted:#8a8a8a;--subtle:#5e5e5e;
---border:#2a2a2a;--divider:#333333;--accent:#0189f1;--recess:#0e0e0e;
+--border:#2a2a2a;--divider:#333333;--accent:#0189f1;--recess:#0e0e0e;--r:6px;--rs:3px;
 --chipbg:#1d2733;--chiptext:#4aa8ff;--codetext:#d4d4e8;--violet:#b48ef0;--sel:#2a568c;--quote:#3a5e86}
 /* ONE field tone (2.0, 2026-10-18): the app's page is its window's width and its desk tint is gone,
    so the export paints one ground and lets main run fluid (see below). */
@@ -1335,7 +1335,7 @@ header.doctitle{display:flex;align-items:baseline;justify-content:space-between;
 font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
 color:var(--muted);padding-bottom:10px;margin-bottom:24px;border-bottom:1px solid var(--divider)}
 header.doctitle .cap{font:inherit;color:var(--muted);background:transparent;border:1px solid var(--border);
-padding:3px 8px;cursor:pointer;border-radius:0;white-space:nowrap}
+padding:3px 8px;cursor:pointer;border-radius:var(--rs);white-space:nowrap}
 header.doctitle .cap:hover{color:var(--bright);border-color:var(--divider)}
 html.cap header.doctitle .cap{background:var(--divider);color:var(--bright)}
 /* The BLOCK RULER: every block's number in the right margin (the app's
@@ -1370,7 +1370,7 @@ margin:0;padding:6px 0 6px 19px;color:var(--muted)}   /* text at 22 = the app's 
 blockquote p{padding:0}
 /* Code escapes the measure like tables do (user ruling: capping code is
    purely aesthetic): natural width, page-level scroll, no inner scrollbar. */
-pre{background:var(--recess);border:1px solid var(--border);padding:12px 8px;margin:0 -8px;
+pre{background:var(--recess);border:1px solid var(--border);border-radius:var(--r);padding:12px 8px;margin:0 -8px;
 width:max-content;min-width:calc(100% + 16px);color:var(--codetext);font-size:13px;line-height:18px}
 main .blkw{padding:0}   /* the pre carries the 12 px inset itself */
 /* The code block's LANGUAGE (2026-10-18): the app's top-right chip — mono 11, muted, a 1-px border, no radius. */
@@ -1411,7 +1411,7 @@ td,th{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-al
    app's 31 px pitch. */
 th{font-weight:700;background:#252525}
 td>p,th>p,td>li,th>li{padding:0}td>p+p,th>p+p{margin-top:12px}
-.chip{padding:1px 8px;font-size:13px;color:var(--bright)}
+.chip{padding:1px 8px;font-size:13px;color:var(--bright);border-radius:var(--rs)}
 .ref{background:transparent;border:1px solid var(--border)}
 .ref img{display:block;width:100%}
 .ref figcaption{padding:10px 14px}
@@ -1455,7 +1455,7 @@ animation:mnlb-in 160ms ease}   /* each staged photo reveals (rebuilt per show) 
 #mn-lb .stage>div>img:first-child{max-width:86vw;max-height:92vh;display:block}
 #mn-lb .nav{position:fixed;top:50%;transform:translateY(-50%);z-index:100;
 width:44px;height:64px;background:rgba(0,0,0,.55);color:var(--text);
-border:1px solid var(--border);border-radius:0;cursor:pointer;padding:0;
+border:1px solid var(--border);border-radius:var(--rs);cursor:pointer;padding:0;
 display:flex;align-items:center;justify-content:center}
 /* Inline SVG glyphs: centered by geometry, not font metrics — identical on
    every platform (text glyphs sat visibly low on some). currentColor keeps

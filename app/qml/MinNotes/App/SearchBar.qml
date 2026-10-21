@@ -109,7 +109,7 @@ Rectangle {
             id: closeBox
             anchors.verticalCenter: parent.verticalCenter
             width: 22; height: 22
-            Rectangle { anchors.fill: parent; radius: 0; color: closeMA.containsMouse ? Theme.colors.surfaceHover : "transparent" }
+            Rectangle { anchors.fill: parent; radius: Theme.dim.radiusSmall; color: closeMA.containsMouse ? Theme.colors.surfaceHover : "transparent" }
             Icon { anchors.centerIn: parent; name: "x"; size: 12; color: Theme.colors.textMuted }
             MouseArea { id: closeMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: bar.hide() }
         }
@@ -125,7 +125,7 @@ Rectangle {
         height: Math.min(440, resultList.contentHeight + 2)
         padding: 1; modal: false; focus: false
         closePolicy: Popup.NoAutoClose
-        background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
         contentItem: ListView {
             id: resultList
             clip: true
@@ -146,7 +146,7 @@ Rectangle {
                     color: Theme.colors.textSubtle; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall; font.bold: true
                 }
                 Rectangle {
-                    y: row.firstOfGroup ? 22 : 0; width: parent.width; height: 40; radius: 0
+                    y: row.firstOfGroup ? 22 : 0; width: parent.width; height: 40; radius: Theme.dim.radiusSmall
                     color: row.index === bar.current ? Theme.colors.divider : rowMA.containsMouse ? Theme.colors.surfaceHover : "transparent"
                     Text {
                         x: 12; y: 5; width: parent.width - 24; elide: Text.ElideRight

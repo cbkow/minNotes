@@ -16,7 +16,8 @@ Popup {
     y: parent ? parent.height + 4 : 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     modal: true; dim: false
-    background: Rectangle { color: Theme.colors.surfaceRaised; radius: 0; border.width: 1; border.color: Theme.colors.border }
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dim.popupMs } }
+    background: Rectangle { color: Theme.colors.surfaceRaised; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
     onClosed: if (editor) editor.forceActiveFocus()
 
     // The travel: 70 % of the slider covers 1–20, the rest 20–64.

@@ -41,7 +41,7 @@ Rectangle {
     component ToolBtn: FlatButton {
         anchors.verticalCenter: parent.verticalCenter
         implicitWidth: Theme.dim.chromeBtn; implicitHeight: Theme.dim.chromeBtn
-        iconSize: Theme.dim.chromeIcon; radius: 0; tooltipSide: "bottom"
+        iconSize: Theme.dim.chromeIcon; radius: Theme.dim.radiusSmall; tooltipSide: "bottom"
     }
     component Sep: Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 1; height: 18; color: Theme.colors.border }
     // A colour tool: the flat chassis with a colour underbar (the highlight's current colour).
@@ -69,7 +69,7 @@ Rectangle {
         id: orow
         property var item: ({})
         signal picked()
-        width: 168; height: 26; radius: 0
+        width: 168; height: 26; radius: Theme.dim.radiusSmall
         readonly property bool isChecked: {
             if (!bar.editor || !item.isChecked) return false
             const t = bar.editor.caretType, lv = bar.editor.caretLevel
@@ -107,7 +107,7 @@ Rectangle {
             padding: 4
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
             modal: true; dim: false   // a press outside CLOSES the flyout and goes no further (never through to the page)
-            background: Rectangle { color: Theme.colors.surface; radius: 0; border.width: 1; border.color: Theme.colors.border }
+            background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius; border.width: 1; border.color: Theme.colors.border }
             contentItem: Grid {
                 columns: fb.labelled ? 1 : 99
                 spacing: 2
@@ -245,7 +245,7 @@ Rectangle {
                     delegate: Rectangle {
                         required property var modelData
                         required property int index
-                        width: 24; height: 16; radius: 0   // WIDE clips (user, 2026-10-18: twice as wide at least)
+                        width: 24; height: 16; radius: Theme.dim.radiusSmall   // WIDE clips (user, 2026-10-18: twice as wide at least)
                         color: swatch.colorOf(modelData.key)
                         // No selection state on the clips (user, 2026-10-18): all three at full strength; the flyout's tabs show the target.
                         MouseArea { id: layerMA; anchors.fill: parent; anchors.margins: -1; hoverEnabled: true; cursorShape: Qt.PointingHandCursor

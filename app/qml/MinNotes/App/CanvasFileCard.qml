@@ -10,7 +10,7 @@ Rectangle {
     readonly property var pathText: pathLabel   // probe
     color: Theme.colors.surface
     border.width: 1; border.color: Theme.colors.border
-    radius: 0
+    radius: Theme.dim.radius
 
     Row {
         anchors.fill: parent; anchors.margins: 10; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 10

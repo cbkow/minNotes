@@ -102,7 +102,7 @@ Item {
     Component {   // connectors: a frame until their renderer lands
         id: placeholderComponent
         Rectangle {
-            color: "transparent"; border.width: 1; border.color: Theme.colors.border; radius: 0
+            color: "transparent"; border.width: 1; border.color: Theme.colors.border; radius: Theme.dim.radius
             Text { anchors.centerIn: parent; text: el.kind; color: Theme.colors.textSubtle
                    font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome }
         }
