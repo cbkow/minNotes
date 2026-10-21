@@ -16,7 +16,7 @@ Rectangle {
     signal clicked()
     width: parent ? parent.width : 200; height: 26
     radius: Theme.dim.radiusSmall
-    color: !inert && ma.containsMouse ? hoverColor : "transparent"
+    color: !inert && ma.containsMouse ? hoverColor : Qt.rgba(hoverColor.r, hoverColor.g, hoverColor.b, 0)   // ramp alpha only (the spell well's tone too)
     Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
     Text {
         anchors.verticalCenter: parent.verticalCenter

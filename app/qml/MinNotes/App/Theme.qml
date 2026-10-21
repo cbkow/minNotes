@@ -27,6 +27,11 @@ QtObject {
         // chrome — the title bar's dot, segments and caption buttons): a step up from surfaceHover on hover.
         readonly property color affordanceIdle:  "#262626"
         readonly property color affordanceHover: "#323232"
+        // The idle end of a hover RAMP: the hover grey at zero alpha. "transparent" is BLACK at zero alpha, so a
+        // ColorAnimation from it passes through a dark tint before the grey — "hover goes dark then light"
+        // (user, 2026-10-21). Ramp alpha only.
+        readonly property color hoverIdle:        Qt.rgba(0x25 / 255, 0x25 / 255, 0x25 / 255, 0)
+        readonly property color affordanceIdleClear: Qt.rgba(0x32 / 255, 0x32 / 255, 0x32 / 255, 0)
 
         readonly property color text:        "#E4E3E2"   // body (default type colour)
         readonly property color textBright:  "#f0f0f0"   // headings / selected chrome (sub-white: no glow on dark, matches the highlighter's light text)

@@ -75,11 +75,11 @@ Rectangle {
     // primary/danger variants keep their fills; anything needing a
     // different checked fill sets checkedColor explicitly.
     readonly property color _bgIdle: {
-        if (!enabled_) return "transparent"
+        if (!enabled_) return Theme.colors.hoverIdle
         if (variant === "primary") return Theme.colors.accent
         if (variant === "danger")  return Theme.colors.error
         if (checked) return checkedColor.a > 0 ? checkedColor : Theme.colors.divider
-        return "transparent"
+        return Theme.colors.hoverIdle   // the hover grey at zero alpha, so the ramp only fades in
     }
     readonly property color _bgHover: {
         if (!enabled_) return _bgIdle

@@ -79,7 +79,7 @@ Rectangle {
         height: bar.height - 1
         width: segRow.implicitWidth + 20
         radius: Theme.dim.radiusSmall
-        color: menuOpen ? Theme.colors.divider : (segMA.containsMouse ? Theme.colors.affordanceHover : "transparent")   // the title bar's hover (2026-10-21)
+        color: menuOpen ? Theme.colors.divider : (segMA.containsMouse ? Theme.colors.affordanceHover : Theme.colors.affordanceIdleClear)   // the title bar's hover (2026-10-21)
         Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
         Row {
             id: segRow
@@ -172,7 +172,7 @@ Rectangle {
         property bool active: false
         signal picked()
         width: parent ? parent.width : 300; height: 28; radius: Theme.dim.radiusSmall
-        color: itemMA.containsMouse ? Theme.colors.surfaceHover : (active ? Theme.colors.divider : "transparent")
+        color: itemMA.containsMouse ? Theme.colors.surfaceHover : (active ? Theme.colors.divider : Theme.colors.hoverIdle)
         Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
         Text {
             anchors.verticalCenter: parent.verticalCenter
