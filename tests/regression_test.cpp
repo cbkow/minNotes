@@ -6732,7 +6732,7 @@ static void testPreviewPass() {
     CHECK((mn::preview::supportsExt(QStringLiteral("psd")) && mn::preview::supportsExt(QStringLiteral("heic")) && mn::preview::supportsExt(QStringLiteral("dng"))),
           "macOS: PSD / HEIC / RAW through ImageIO + QuickLook");
 #else
-    CHECK((!mn::preview::supportsExt(QStringLiteral("psd"))), "not macOS: PSD waits for tier 2");
+    CHECK((mn::preview::supportsExt(QStringLiteral("psd")) && !mn::preview::supportsExt(QStringLiteral("heic"))), "not macOS: PSD through psd_sdk (tier 2); HEIC waits for tier 3");
 #endif
 
     // --- the store ---
