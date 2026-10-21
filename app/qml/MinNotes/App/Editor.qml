@@ -5473,12 +5473,6 @@ FocusScope {
                               "the preview file drops as an image element with a format pill (id '" + pvId + "' kind " + canvas.elementKind(pvId) + "/" + canvas.mediaElementKind(pvId) + " format '" + canvas.elementPreviewFormat(pvId) + "' json " + canvas.elementJson(pvId).substring(0, 160) + ")")
                         cvw.cam.fitRect(canvas.elementRect(pvId), cvw.width, cvw.height, 120); cvw.select(pvId)   // frame it for the shot
                     }
-                    textId = pvId   // (carried to the shot step)
-                    if (pvId === "") cvw.select(sB)
-                    step = 12; return
-                }
-                if (step < 30) { ++step; return }   // ~0.7 s for the dropped preview's async decode before the picture
-                if (step === 30) {
                     // Optional (dev): `--ref-file=<path>` adds the file as a {vol, rel} PORTABLE REF (what a network-share
                     // reference stores) by mapping its folder as a volume first — the 2026-10-21 "not collected" report.
                     const refArg = Qt.application.arguments.find(a => a.indexOf("--ref-file=") === 0)
@@ -5496,6 +5490,12 @@ FocusScope {
                         cvw.cam.fitRect(canvas.elementRect(refId), cvw.width, cvw.height, 120); cvw.select(refId)
                         multiIds.push(refId)
                     }
+                    textId = pvId   // (carried to the shot step)
+                    if (pvId === "") cvw.select(sB)
+                    step = 12; return
+                }
+                if (step < 30) { ++step; return }   // ~0.7 s for the dropped preview's async decode before the picture
+                if (step === 30) {
                     const shotArg = Qt.application.arguments.find(a => a.indexOf("--layers-shot=") === 0)
                     if (shotArg) g.grab(root, shotArg.substring(14))
                     if (textId !== "") { canvas.removeElement(textId); textId = "" }
