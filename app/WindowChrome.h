@@ -5,11 +5,9 @@
 //             (set in Main.qml): the content extends under a transparent title bar, the NATIVE traffic lights
 //             stay (native zoom / fullscreen / tiling keep working), and the row insets its content past them.
 //             The system menu bar stays native (QCView learned that hiding it empties the top-of-screen bar).
-//   Windows — Qt creates the window WITHOUT a caption (Main.qml: CustomizeWindowHint minus WindowTitleHint, the
-//             min / max / close hints kept): WS_THICKFRAME stays so the OS resize edges + Win+arrow snapping keep
-//             working, DWM rounds the corners, and the row draws its OWN minimize / maximize / close at the right
-//             end. (QCView's post-creation SetWindowLongPtr strip was tried first — Qt's cached frame margins then
-//             sat 30 px stale and the restored window's row landed above the screen.)
+//   Windows — Qt's expanded client area (Main.qml flags): no top border, the DWM frame's shadow and corners, and
+//             Qt draws + hit-tests the Windows 11 caption buttons at the row's right end (snap layouts included);
+//             the row only reserves their width. Unclaimed presses on the row are a native caption drag.
 //   Resizing is the OS's on both. `--native-frame` (dev) keeps the native frame; the row then draws no buttons.
 #pragma once
 
@@ -20,12 +18,12 @@ class QWindow;
 class WindowChrome : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool chromeless READ chromeless CONSTANT)
-    Q_PROPERTY(bool customButtons READ customButtons CONSTANT)   // the row draws minimize / maximize / close
+    Q_PROPERTY(bool captionButtons READ captionButtons CONSTANT) // Qt draws Windows' caption buttons over the row's right end
     Q_PROPERTY(bool nativeLights READ nativeLights CONSTANT)     // the native traffic lights sit in the row (macOS)
 public:
     explicit WindowChrome(bool chromeless, QObject* parent = nullptr);
     bool chromeless() const { return chromeless_; }
-    bool customButtons() const;
+    bool captionButtons() const;
     bool nativeLights() const;
     // Apply what the flags can't once the window exists (macOS: hide the title text). No-op elsewhere.
     void attach(QWindow* w);

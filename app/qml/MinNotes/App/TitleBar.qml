@@ -1,9 +1,9 @@
 // The TITLE BAR (cleanup 2026-10-21 — the chromeless window, see WindowChrome.h): the one row that is always
 // there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app MENU
 // button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
-// only while a document is open) · on Windows our own minimize / maximize / close. Every stretch of the row no
-// control claims DRAGS the window (ruling: all non-tab space), a double-click zooms. The drag starts after a
-// small movement, so clicks and double-clicks on the bare strip stay clicks.
+// only while a document is open) · on Windows the space Qt's caption buttons occupy. Every stretch of the row no
+// control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — on macOS through our own
+// handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively.
 import QtQuick
 import QtQuick.Controls
 
@@ -14,14 +14,17 @@ Rectangle {
     readonly property bool lightsInset: windowChrome.nativeLights && win.visibility !== Window.FullScreen
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
     readonly property var appMenuButton: menuBtn            // probe
-    height: Theme.dim.tabRowH
+    // Windows: Qt's title-bar height (32 at 100 %), so its caption glyphs centre on the row; elsewhere the house row.
+    height: windowChrome.captionButtons && win.SafeArea.margins.top > 0 ? win.SafeArea.margins.top : Theme.dim.tabRowH
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
 
-    // The move handle: under everything else in the row, so a press on a segment / button never reaches it.
+    // The move handle (macOS): under everything else in the row, so a press on a segment / button never reaches it.
+    // Windows needs none — a press no item accepts is the native caption (Qt's expanded-client-area hit test).
     MouseArea {
         id: drag
         anchors.fill: parent
+        enabled: windowChrome.nativeLights
         property real px: 0; property real py: 0
         property bool armed: false
         onPressed: (mouse) => { px = mouse.x; py = mouse.y; armed = windowChrome.chromeless }
@@ -66,31 +69,12 @@ Rectangle {
         sourceComponent: PathBar { editor: bar.editor; color: "transparent" }
     }
 
-    // Our own caption buttons (Windows): the OS's widths (46), the row's height, grey hover, the close in red.
-    Row {
+    // Windows: Qt draws and hit-tests the caption buttons here (three of titleBarHeight × 1.5 each, Qt's rule);
+    // the row just keeps clear of them.
+    Item {
         id: buttons
         anchors.right: parent.right; anchors.top: parent.top
-        height: bar.height - 1
-        visible: windowChrome.customButtons
-        width: visible ? implicitWidth : 0
-        component CaptionButton: Rectangle {
-            id: cb
-            property string icon: ""
-            property int iconSize: 14
-            property bool danger: false
-            property string tip: ""
-            signal clicked()
-            width: 46; height: parent.height; radius: 0
-            color: cbMA.containsMouse ? (danger ? Theme.colors.error : Theme.colors.affordanceHover) : "transparent"
-            Icon { anchors.centerIn: parent; name: cb.icon; size: cb.iconSize
-                   color: cbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-            MouseArea { id: cbMA; anchors.fill: parent; hoverEnabled: true; onClicked: cb.clicked() }
-            FlatToolTip { visible: cbMA.containsMouse; text: cb.tip; x: (cb.width - implicitWidth) / 2; y: cb.height + 6 }
-        }
-        CaptionButton { icon: "minus"; tip: qsTr("Minimize"); onClicked: win.showMinimized() }
-        CaptionButton { icon: win.visibility === Window.Maximized ? "browsers" : "square"; iconSize: 12
-                        tip: win.visibility === Window.Maximized ? qsTr("Restore") : qsTr("Maximize")
-                        onClicked: windowChrome.toggleZoom(win) }
-        CaptionButton { icon: "x"; danger: true; tip: qsTr("Close"); onClicked: win.close() }
+        height: parent.height
+        width: windowChrome.captionButtons ? Math.round(win.SafeArea.margins.top * 4.5) : 0
     }
 }

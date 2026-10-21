@@ -7,11 +7,11 @@
 WindowChrome::WindowChrome(bool chromeless, QObject* parent)
     : QObject(parent), chromeless_(chromeless) {}
 
-bool WindowChrome::customButtons() const {
-#ifdef Q_OS_MACOS
-    return false;                 // the native traffic lights stay
-#else
+bool WindowChrome::captionButtons() const {
+#ifdef Q_OS_WIN
     return chromeless_;
+#else
+    return false;
 #endif
 }
 
