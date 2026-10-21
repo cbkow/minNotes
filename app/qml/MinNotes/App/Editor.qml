@@ -68,7 +68,7 @@ FocusScope {
         const p = (n) => (n < 10 ? "0" : "") + n
         return p(Math.floor(secs / 3600)) + ":" + p(Math.floor(secs / 60) % 60) + ":" + p(secs % 60) + ":" + p(ff)
     }
-    readonly property real pageMargin: cardHosted ? 24 : 48   // the page's side margin (comment pins need ≥ 36, table grips 24 + a hair); in a live card = kPageInset, so the page sits where its preview drew it
+    readonly property real pageMargin: cardHosted ? 24 : 48   // the page's side margin (table grips 24 + a hair; 48 kept as-is when the comment pins left, 2026-10-21); in a live card = kPageInset, so the page sits where its preview drew it
     readonly property real minPageWidth: 320   // two lanes stay legal (2 · 120 + 24)
     // The width the page COULD take: the viewport at the SETTLED zoom (a slider drag never
     // touches layout) less the two margins; the target applies the cap unless Full width is on.
@@ -3142,14 +3142,6 @@ FocusScope {
         return true
     }
     function pasteGroupEnd(opened) { if (opened) blockModel.endGroup() }
-    // Comment the current single-row text selection: mint the thread, then
-    // open its card in the Inspector's comments view.
-    function addCommentOnSelection() {
-        if (!cursor.hasSel || cursor.loRow !== cursor.hiRow) return
-        var tid = blockModel.addComment(cursor.loRow, cursor.loCol, cursor.hiCol)
-        if (tid !== "" && inspector) inspector.showComments(tid)
-    }
-
     function deleteBlock(row) {
         // Deleting a DIFFERENT block (right-click menu) moves the caret off the
         // edited row → commit its inline md first. Skip when deleting the focused
@@ -5970,7 +5962,7 @@ FocusScope {
             // compact transport under EVERY video, a page-nav strip under every PDF. They live HERE, in the
             // page layer in CONTENT units — scaled with the page, clipped by the flick, scrolling with
             // their rows — above the document mouse layer (so they take clicks) and below every root
-            // overlay (popups, pins, thread cards, menus). They used to be root overlays positioned by
+            // overlay (popups, menus). They used to be root overlays positioned by
             // row→screen math and painted over everything; every video / PDF block reserves the strip's
             // height in layout space (kVideoBar / kPdfNav) so the chrome sits in real space. ---
             Item {
@@ -6177,9 +6169,6 @@ FocusScope {
 
             onPressed: (m) => {
                 root.forceActiveFocus()
-                // A press anywhere on the document closes an open margin
-                // thread card (the press then does its normal work).
-                if (root.openThreadId !== "") root.openThreadId = ""
                 // Right-click anywhere on a block → its context menu (capturing the
                 // cell when over a table, for the row/column ops).
                 if (m.button === Qt.RightButton) {
@@ -7191,214 +7180,6 @@ FocusScope {
     // reached as `canvasItem`. The Editor is the page view (and the key sink under the canvas); a live card
     // reparents this one Editor INTO the canvas (S4), which it could never do while the canvas was its child. ---
 
-    // --- Comment margin pins: one per row carrying comment spans, in the
-    // right margin. Root-level + model-driven (never per-delegate), gated to
-    // the visible window like the video toolbars — contentRevision dep, NOT
-    // layoutRevision (the 1946-1955 rule); y reads take the layout tuple.
-    // Clipped so half-scrolled rows' bubbles slide under the editor's top
-    // edge instead of painting over the tab rail.
-    Item {
-    anchors.fill: parent
-    clip: true
-    z: 56
-    Repeater {
-        model: (blockModel.structureRevision, blockModel.commentsRevision,
-                blockModel.commentPinRows())
-        delegate: Rectangle {
-            required property var modelData
-            readonly property int prow: modelData
-            visible: flick.visible && root.rowInView(prow)
-            z: 56
-            width: 24; height: 24
-            x: root.vx(root.leftEdge + root.pageWidth) + 12
-            y: root.vy((blockModel.layoutRevision, blockModel.yForRow(prow))) + 2
-            // The comment BUBBLE (user ruling 2026-07-12): the margin is real
-            // space now, and blue = "a conversation lives here" — one of the
-            // few semantic accent uses. A block whose threads are ALL
-            // resolved goes quiet grey (2026-08-21): the conversation ended.
-            readonly property bool allResolved: {
-                var dep = blockModel.commentsRevision + blockModel.structureRevision
-                var rs = blockModel.commentRangesForRow(prow)
-                if (rs.length === 0) return false
-                for (var i = 0; i < rs.length; ++i)
-                    if (!rs[i].resolved) return false
-                return true
-            }
-            color: allResolved
-                   ? (pinMA.containsMouse ? Theme.colors.surfaceHover : Theme.colors.divider)
-                   : (pinMA.containsMouse ? Theme.colors.accentHover : Theme.colors.accent)
-            Icon { anchors.centerIn: parent; name: "chat-circle-text"; weight: "fill"; size: 14
-                   color: parent.allResolved ? Theme.colors.textMuted : Theme.colors.textBright }
-            MouseArea {
-                id: pinMA
-                anchors.fill: parent; hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                // The bubble toggles its thread's MARGIN CARD (the Inspector
-                // stays the all-threads overview).
-                onClicked: {
-                    var rs = blockModel.commentRangesForRow(prow)
-                    if (rs.length === 0) return
-                    root.openThreadId = (root.openThreadId === rs[0].id) ? "" : rs[0].id
-                }
-            }
-        }
-    }
-    }
-
-    // --- Margin thread card: click a comment bubble → the conversation opens
-    // IN the margin, anchored to its block (it rides the scroll — a margin
-    // note, not a dialog). One card at a time; click-away or Esc-in-field
-    // closes; the Inspector remains the all-threads overview.
-    property string openThreadId: ""
-    function closeThreadCard() {
-        if (openThreadId !== "") { openThreadId = ""; forceActiveFocus() }
-    }
-    Item {
-        anchors.fill: parent
-        clip: true
-        z: 58
-        visible: root.openThreadId !== "" && flick.visible
-        Rectangle {
-            id: threadCard
-            // Arithmetic dep (elision-proof) — re-resolve the thread on any
-            // comment/content change; null when the thread vanished.
-            readonly property var info: {
-                var dep = blockModel.commentsRevision + blockModel.structureRevision
-                if (root.openThreadId === "") return null
-                var ts = blockModel.commentThreads()
-                for (var i = 0; i < ts.length; ++i)
-                    if (ts[i].id === root.openThreadId) return ts[i]
-                return null
-            }
-            readonly property int arow: info ? info.row : -1
-            visible: info !== null && arow >= 0
-            // Beside the bubble; clamped into the viewport when the window is
-            // narrower than the margin (the card may float over the page edge).
-            x: Math.min(root.vx(root.leftEdge + root.pageWidth) + 12,
-                        root.width - width - Theme.dim.scrollBarWidth - 40)
-            y: root.vy((blockModel.layoutRevision, arow >= 0 ? blockModel.yForRow(arow) : 0)) + 2
-            width: 300
-            height: cardCol.implicitHeight + 20
-            color: Theme.colors.surfaceRaised
-            border.width: 1; border.color: Theme.colors.border
-            MouseArea { anchors.fill: parent }   // swallow — clicks stay in the card
-
-            Column {
-                id: cardCol
-                x: 10; y: 10; width: parent.width - 20
-                spacing: 8
-                Item {   // header: anchored excerpt + the rail's block address
-                    width: parent.width; height: 16
-                    Text {
-                        width: parent.width - 64
-                        elide: Text.ElideRight
-                        text: threadCard.info
-                              ? "“" + threadCard.info.excerpt + "”" : ""
-                        color: Theme.colors.textMuted
-                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                        font.italic: true
-                    }
-                    Text {
-                        anchors.right: parent.right
-                        text: threadCard.arow >= 0 ? qsTr("block %1").arg(threadCard.arow + 1) : ""
-                        color: Theme.colors.textSubtle
-                        font.family: Theme.font.mono; font.pixelSize: 11
-                    }
-                }
-                Flickable {   // messages — own scroll when the thread runs long
-                    width: parent.width
-                    height: Math.min(msgCol.implicitHeight, 260)
-                    contentHeight: msgCol.implicitHeight
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    Column {
-                        id: msgCol
-                        width: parent.width
-                        spacing: 6
-                        Repeater {
-                            // Revision read is LOAD-BEARING (rule 1e).
-                            model: blockModel.commentsRevision >= 0 && root.openThreadId !== ""
-                                   ? blockModel.commentMessages(root.openThreadId) : []
-                            delegate: Column {
-                                required property var modelData
-                                width: msgCol.width
-                                Text {
-                                    width: parent.width; wrapMode: Text.Wrap
-                                    text: modelData.body
-                                    color: Theme.colors.text
-                                    font.family: Theme.font.family
-                                    font.pixelSize: Theme.font.sizeSmall
-                                }
-                                Text {
-                                    text: modelData.created > 0
-                                          ? new Date(modelData.created)
-                                                .toLocaleString(Qt.locale(), "yyyy-MM-dd hh:mm")
-                                          : ""
-                                    color: Theme.colors.textSubtle
-                                    font.family: Theme.font.family; font.pixelSize: 11
-                                }
-                            }
-                        }
-                    }
-                }
-                Rectangle {   // reply — input = recessed well, the family rule
-                    width: parent.width
-                    height: Math.max(34, replyEdit.implicitHeight + 12)
-                    color: Theme.colors.surfaceRecess
-                    TextEdit {
-                        id: replyEdit
-                        anchors.fill: parent; anchors.margins: 6
-                        wrapMode: TextEdit.Wrap
-                        color: Theme.colors.text
-                        selectionColor: Theme.colors.selectionBg
-                        selectByMouse: true
-                        font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
-                        Keys.onEscapePressed: root.closeThreadCard()
-                        // Enter submits; Shift+Enter = newline (user ruling
-                        // 2026-08-21 — the chat-composer convention).
-                        Keys.onPressed: (e) => {
-                            if ((e.key === Qt.Key_Return || e.key === Qt.Key_Enter)
-                                && !(e.modifiers & Qt.ShiftModifier)) {
-                                if (replyEdit.text.trim().length > 0) {
-                                    blockModel.addCommentMessage(root.openThreadId, replyEdit.text.trim())
-                                    replyEdit.text = ""
-                                }
-                                e.accepted = true
-                            }
-                        }
-                        Text {
-                            visible: replyEdit.text.length === 0 && !replyEdit.activeFocus
-                            text: qsTr("Reply…")
-                            color: Theme.colors.textSubtle
-                            font: replyEdit.font
-                        }
-                    }
-                }
-                Row {
-                    spacing: 6
-                    anchors.right: parent.right
-                    FlatButton {
-                        text: threadCard.info && threadCard.info.resolved
-                              ? qsTr("Reopen") : qsTr("Resolve")
-                        padding: 8; labelSize: Theme.font.sizeSmall
-                        onClicked: blockModel.setThreadResolved(
-                                       root.openThreadId,
-                                       !(threadCard.info && threadCard.info.resolved))
-                    }
-                    FlatButton {
-                        text: qsTr("Submit"); variant: "primary"
-                        padding: 8; labelSize: Theme.font.sizeSmall
-                        enabled_: replyEdit.text.trim().length > 0
-                        onClicked: {
-                            blockModel.addCommentMessage(root.openThreadId, replyEdit.text.trim())
-                            replyEdit.text = ""
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // --- Block-number ruler: a quiet instrument rail at the viewport's right
     // edge (inside the vertical scrollbar) — one mono number per visible
     // block, the margin's shared address system ("block 14"). Display-only.
@@ -8244,12 +8025,6 @@ FocusScope {
                           onActivated: blockModel.openMediaInUfb(root.menuRow) }
                 MenuRow { text: "Insert table below"; onActivated: root.insertTableAt(blockMenu.runHi) }
                 MenuRow { visible: !blockMenu.inFrameTab && docs.count > 1; text: "Merge a file here…"; onActivated: root.mergeFileRequested(blockMenu.runHi + 1) }
-                // comment on the current (single-row) text selection
-                MenuRow {
-                    visible: !blockMenu.inFrameTab && cursor.hasSel && cursor.loRow === cursor.hiRow
-                    text: "Add comment"
-                    onActivated: root.addCommentOnSelection()
-                }
                 // text-only transform (withheld for a run — the clicked row isn't apparent)
                 Rectangle { visible: !blockMenu.isMedia && !blockMenu.menuInSel; width: parent.width; height: 1; color: Theme.colors.divider }
                 MenuRow {

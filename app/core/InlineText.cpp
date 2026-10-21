@@ -17,7 +17,6 @@ uint8_t kindFromString(const QString& s) {
     if (s == QLatin1String("link"))      return Link;
     if (s == QLatin1String("color"))     return FgColor;
     if (s == QLatin1String("highlight")) return Highlight;
-    if (s == QLatin1String("comment"))   return Comment;
     if (s == QLatin1String("choice"))    return Choice;
     return 0;
 }
@@ -32,7 +31,6 @@ const char* kindToString(uint8_t k) {
     case Link:      return "link";
     case FgColor:   return "color";
     case Highlight: return "highlight";
-    case Comment:   return "comment";
     case Choice:    return "choice";
     default:        return "";
     }

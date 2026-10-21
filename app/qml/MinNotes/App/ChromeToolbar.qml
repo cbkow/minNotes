@@ -138,12 +138,6 @@ Rectangle {
             visible: bar.pageMode
             height: parent.height
             spacing: 2
-            ToolBtn {   // comment the current selection; opens the thread in the Inspector
-                iconName: "chat-circle-text"; tooltip: qsTr("Add comment")
-                enabled_: !!bar.editor && bar.editor.hasSelection
-                onClicked: if (bar.editor) bar.editor.addCommentOnSelection()
-            }
-            Sep {}
             ToolBtn { iconName: "paragraph"; tooltip: qsTr("Paragraph")
                       checked: !!bar.editor && bar.editor.caretType === 0
                       onClicked: bar.act(function() { bar.editor.setParagraph() }) }

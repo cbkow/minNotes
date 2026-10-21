@@ -211,7 +211,6 @@ Importer::FileSpecs Importer::buildFileSpecs(const QString& path, const QString&
         if (!res.ok) return out;
         out.specs = std::move(res.specs);
         BlockModel::promoteGridRuns(out.specs);   // no w:tblHeader → the first row heads the table (R-I4 4b)
-        out.comments = std::move(res.comments);
         out.ok = true;
     } else if (fmt == QLatin1String("rtf")) {
         const QString html = mn::rtfFileToHtml(path);
@@ -282,7 +281,7 @@ bool Importer::importOdtFile(const QString& path, BlockModel* m) {
     return applySpecs(m, buildFileSpecs(path, QStringLiteral("odt"), m->mediaStore()));
 }
 
-// GUI-thread half: land the specs + comments + async remote localize.
+// GUI-thread half: land the specs + async remote localize.
 QString Importer::inlineExcelPictures(const QString& html) {
     if (!html.contains(QLatin1String("v:imagedata"))) return html;
     static const QRegularExpression trRe(QStringLiteral("<tr\\b[^>]*>"), QRegularExpression::CaseInsensitiveOption);
@@ -368,15 +367,6 @@ bool Importer::applySpecs(BlockModel* m, const FileSpecs& fs) {
     const std::vector<BlockModel::BlockSpec>& specs = fs.specs;
     const auto [caretRow, caretCol] = m->insertSpecs(0, specs, true);
     Q_UNUSED(caretCol);
-    // Reuse folds spec 0 into row 0, the rest follow — spec i is row i (a table's records and cells
-    // are specs of their own, so a comment anchored by spec index lands on its block).
-    for (const DocxReader::CommentOut& co : fs.comments) {
-        if (co.specIndex < 0 || co.specIndex >= static_cast<int>(specs.size())) continue;
-        const QString threadId = m->addComment(co.specIndex, co.start, co.end);
-        if (threadId.isEmpty()) continue;
-        for (const QString& body : co.messages)
-            m->addCommentMessage(threadId, body);
-    }
     m->localizeRemoteMedia(0, caretRow);
     return true;
 }

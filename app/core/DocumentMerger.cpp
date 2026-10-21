@@ -45,43 +45,6 @@ DocumentMerger::MergeJob DocumentMerger::planMerge(BlockModel* src, BlockModel* 
         }
     }
 
-    // Comment harvest: threads referenced by snapshot spans get NEW ids with
-    // their history preserved; ghost anchors (spans whose thread row is gone)
-    // are stripped rather than exported dangling. The href rewrite happens
-    // right here — the specs are already our private copy.
-    QHash<QString, QVariantMap> srcThreads;
-    for (const QVariant& tv : src->commentThreads()) {
-        const QVariantMap m = tv.toMap();
-        srcThreads.insert(m.value(QStringLiteral("id")).toString(), m);
-    }
-    QHash<QString, QString> threadRemap;
-    for (BlockModel::BlockSpec& sp : job.specs) {
-        for (auto it = sp.spans.begin(); it != sp.spans.end();) {
-            if (it->kind != BlockModel::SpanComment) { ++it; continue; }
-            const auto th = srcThreads.constFind(it->href);
-            if (th == srcThreads.constEnd()) { it = sp.spans.erase(it); continue; }
-            QString newId = threadRemap.value(it->href);
-            if (newId.isEmpty()) {
-                newId = makeUlid();
-                threadRemap.insert(it->href, newId);
-                BlockModel::ThreadImport ti;
-                ti.id = newId;
-                ti.created = th->value(QStringLiteral("created")).toLongLong();
-                ti.resolved = th->value(QStringLiteral("resolved")).toBool();
-                for (const QVariant& mv : src->commentMessages(it->href)) {
-                    const QVariantMap mm = mv.toMap();
-                    ti.messages.push_back({makeUlid(),
-                                           mm.value(QStringLiteral("body")).toString(),
-                                           mm.value(QStringLiteral("created")).toLongLong(),
-                                           mm.value(QStringLiteral("modified")).toLongLong()});
-                }
-                job.threads.push_back(std::move(ti));
-            }
-            it->href = newId;
-            ++it;
-        }
-    }
-
     // Asset plan (AssetTransfer: the rules shared with the clipboard paster).
     job.assets = AssetTransfer::plan(job.specs,
                                      AssetTransfer::Source::fromStore(src->mediaStore()),
@@ -115,11 +78,6 @@ bool DocumentMerger::applyMerge(BlockModel* dest, MergeJob& job,
     // Rewrite descriptor srcs IN THE SPECS — pre-insert, so the splice is
     // the only undo-visible pass and undo/redo never see interim srcs.
     AssetTransfer::rewriteSpecs(job.specs, job.assets.srcRewrite);
-
-    // Mint the migrated threads FIRST so no anchor ever points at a missing
-    // thread, even transiently. Thread rows are outside undo by design.
-    for (const BlockModel::ThreadImport& ti : job.threads)
-        dest->importCommentThread(ti);
 
     // Re-derive the gap from the anchor id (the destination may have been
     // edited since plan time); a deleted anchor falls back to the planned

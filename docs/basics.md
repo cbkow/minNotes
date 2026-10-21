@@ -41,8 +41,8 @@ Closing a file or quitting with unsaved work prompts you first.
 `⌘F` (**Edit ▸ Find in File…**) opens a search field under the toolbar.
 It searches the **whole file**: every page's text, the cards on the canvas
 (file names and paths, link titles and addresses, folder entries, text
-chips), the text inside every PDF, each video's QCView notes, and comment
-threads. Hits group by source with the current page's first; a snippet
+chips), the text inside every PDF, and each video's QCView notes. Hits
+group by source with the current page's first; a snippet
 shows each match. `↑` / `↓` walk the list and `Return` jumps: a page hit
 opens the page with the match selected, a card hit selects it on the
 canvas, a PDF hit opens that page, a video note opens the studio at that
@@ -73,9 +73,8 @@ converted file opens **read-only** with a toast describing what moved;
 
 **File ▸ Merge File Into This Page…** copies another open file's pages
 into the page you are editing, at the end. The block menu's **Merge a
-file here…** does the same at a chosen spot. Text, tables, media and
-comment threads (with their history) all come along; one `⌘Z` undoes the
-merge. To bring in a file that is not open, drop its `.mnd` or `.mnpkg`
+file here…** does the same at a chosen spot. Text, tables and media all
+come along; one `⌘Z` undoes the merge. To bring in a file that is not open, drop its `.mnd` or `.mnpkg`
 on the canvas — its pages copy in as pages, arranged as they were.
 
 ## Save As & Media

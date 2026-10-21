@@ -44,7 +44,7 @@ trouble shared storage usually brings.
 - Blocks side by side: drag any block next to another to make lanes
 - A block rail down the right side — drag a block's handle to reorder
 - Full undo history: the page's timeline, click to time-travel
-- Search the whole file: pages, cards, PDF text, video notes, comments
+- Search the whole file: pages, cards, PDF text, video notes
 
 ### Tables
 - Cells hold blocks — text, formatting, images, video; choice, checkmark,
@@ -57,15 +57,14 @@ trouble shared storage usually brings.
 ### Media & Review
 - Inline images, video (scrub, skim audio, annotate — interchangeable with
   [QCView](https://qcview.com)), page-by-page PDFs, file attachments
-- Comment threads anchored to text, with margin bubbles and resolve state
 - Local files copy into the file's media folder automatically; network
   shares stay referenced in place, with cross-OS path mapping
 
 ### Files
 - Import: Markdown, text, CSV/TSV, HTML, Word, Excel, OpenDocument,
   source code, RTF (macOS), Evernote, Notion
-- Export a page as Markdown + assets, a self-contained HTML page, Word
-  with native review comments, or print-ready PDF; export the whole
+- Export a page as Markdown + assets, a self-contained HTML page, Word,
+  or print-ready PDF; export the whole
   canvas as an HTML canvas you can pan and zoom, or a PNG poster
 - Sealed `.mnpkg` packages — one file with every referenced asset inside,
   video plays straight from the archive

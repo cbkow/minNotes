@@ -420,71 +420,10 @@ static void testUndoHistory() {
     CHECK(m.rowCountQml() == 2, "off-path jump target is a no-op");
 }
 
-static void testComments() {
-    qInfo("[9] comments: span anchor, shift, orphan/undo, persistence");
-    const QString path = QDir::tempPath() + QStringLiteral("/mn_regression_comments.mnd");
-    QFile::remove(path);
-
-    BlockModel m;
-    m.newDocument();
-    while (m.rowCountQml() > 0) m.removeBlock(0);
-    m.insertBlock(0);
-    m.setContent(0, QStringLiteral("review this sentence please"));
-    m.noteCaret(0, 0, 0, 0);
-    QObject::connect(&m, &BlockModel::caretRestoreRequested, &m,
-                     [&m](int r, int c, int ar, int ac) { m.noteCaret(r, c, ar, ac); });
-
-    const QString tid = m.addComment(0, 7, 11);   // "this"
-    CHECK(!tid.isEmpty(), "addComment mints a thread id");
-    CHECK(m.commentAt(0, 8) == tid, "commentAt hits inside the range");
-    CHECK(m.commentAt(0, 3).isEmpty(), "commentAt misses outside it");
-    m.addCommentMessage(tid, QStringLiteral("First message"));
-    CHECK(m.commentMessages(tid).size() == 1, "thread message stored");
-    CHECK(m.commentPinRows().size() == 1, "one pin row");
-
-    // The span rides edits: insert before it shifts the range.
-    m.insertText(0, 0, QStringLiteral("XX"), 0, {}, {});
-    CHECK(m.commentAt(0, 10) == tid, "span shifted with the insert");
-
-    // Deleting the anchoring text ORPHANS the thread (body survives).
-    m.noteCaret(0, 9, 0, 9);
-    m.deleteRange(0, 9, 0, 13);
-    CHECK(m.threadAnchorRow(tid) == -1, "span deletion orphans the thread");
-    CHECK(m.commentMessages(tid).size() == 1, "orphaned thread keeps its body");
-    m.undo();
-    CHECK(m.threadAnchorRow(tid) == 0 && m.commentAt(0, 10) == tid,
-          "undo re-links the thread");
-
-    // Persistence round-trip (span in attrs as k:"comment", bodies in tables).
-    CHECK(m.saveAs(path), "saveAs() succeeded");
-    m.closeDocument();
-    BlockModel m2;
-    CHECK(m2.openDocument(path), "reopen succeeded");
-    CHECK(m2.commentAt(0, 10) == tid, "comment span round-trips");
-    CHECK(m2.commentMessages(tid).size() == 1, "thread body round-trips");
-    CHECK(m2.commentThreads().size() == 1, "thread listed");
-
-    // Panel ordering is DOCUMENT order, not creation order: a newer thread
-    // anchored ABOVE an older one lists first.
-    m2.insertBlock(0);
-    m2.setContent(0, QStringLiteral("prologue paragraph"));
-    const QString tid2 = m2.addComment(0, 0, 8);
-    const QVariantList ordered = m2.commentThreads();
-    CHECK(ordered.size() == 2
-              && ordered[0].toMap().value(QStringLiteral("id")).toString() == tid2,
-          "threads sort by document position (new-above lists first)");
-
-    // deleteThread: unlinks the span (undoable) and destroys the bodies (not).
-    m2.deleteThread(tid);
-    CHECK(m2.threadAnchorRow(tid) == -1, "deleteThread unlinked the span");
-    CHECK(m2.commentMessages(tid).isEmpty(), "deleteThread cascaded the messages");
-    QFile::remove(path);
-}
-
 // --- Test 10: Exporter — markdown emission over the model -------------------
 // Drives the export walker headless with a recording sink: block mapping,
-// overlapping-span nesting (whitespace-safe markers), links, comment
-// footnotes, list depth/blank-line policy, code fences, pipe tables.
+// overlapping-span nesting (whitespace-safe markers), links, list depth/blank-line policy,
+// code fences, pipe tables.
 namespace {
 class RecordingSink : public Exporter::AssetSink {
 public:
@@ -501,7 +440,7 @@ public:
 } // namespace
 
 static void testExportMarkdown() {
-    qInfo("[10] Exporter: markdown emission (blocks, spans, footnotes, table)");
+    qInfo("[10] Exporter: markdown emission (blocks, spans, table)");
     BlockModel m;
     m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
@@ -513,8 +452,6 @@ static void testExportMarkdown() {
     m.toggleFormat(1, 6, 21, QStringLiteral("bold"));      // "bold bolditalic"
     m.toggleFormat(1, 11, 28, QStringLiteral("italic"));   // "bolditalic italic"
     m.setLink(1, 29, 33, QStringLiteral("https://example.com"));
-    const QString tid = m.addComment(1, 0, 5);             // footnote on "plain"
-    m.addCommentMessage(tid, QStringLiteral("note body"));
 
     m.insertBlock(2); m.setContent(2, QStringLiteral("item one"));
     m.setBlockType(2, BlockModel::ListItem);
@@ -550,8 +487,8 @@ static void testExportMarkdown() {
                   && !range.contains(QStringLiteral("## Title"))
                   && range.contains(QStringLiteral("- item one")),
               "copyMarkdown range: no header, no out-of-range rows");
-        CHECK(ex.copyMarkdown(1, 1).contains(QStringLiteral("[^1]")),
-              "range copy still numbers its footnotes");
+        CHECK(ex.copyMarkdown(1, 1).contains(QStringLiteral("plain **bold")),
+              "range copy of one row emits that row alone");
     }
     // Absolute image destinations become encoded file:// URLs (2026-08-20,
     // user-caught: a bare "</Volumes/… with spaces>" is the least portable
@@ -570,15 +507,14 @@ static void testExportMarkdown() {
     }
     CHECK(md.contains(QStringLiteral("## Title")), "heading level maps to ##");
     CHECK(md.contains(QStringLiteral(
-              "plain[^1] **bold *bolditalic*** *italic* [link](https://example.com)")),
-          "overlapping spans nest with whitespace-safe markers + footnote ref");
+              "plain **bold *bolditalic*** *italic* [link](https://example.com)")),
+          "overlapping spans nest with whitespace-safe markers");
     CHECK(md.contains(QStringLiteral("- item one\n  - sub item")),
           "list run: single newline + 2-space depth indent");
     CHECK(md.contains(QStringLiteral("---")), "divider emits");
     CHECK(md.contains(QStringLiteral("```cpp\nint x = 1;\n```")), "code fence with language");
     CHECK(md.contains(QStringLiteral("| H1 | H2 |")), "table header row");
     CHECK(md.contains(QStringLiteral("| a | b\\|pipe |")), "table body row escapes pipes");
-    CHECK(md.contains(QStringLiteral("[^1]: note body")), "footnote body emitted");
     const QVariantMap scan = ex.scan();
     CHECK(scan.value(QStringLiteral("videos")).toInt() == 0
               && scan.value(QStringLiteral("videoNotes")).toInt() == 0,
@@ -611,21 +547,16 @@ static void testExportMarkdown() {
               "media ink exports as a z-layer stack");
         CHECK(ihtml.contains(QStringLiteral("id=\"mn-ink\"")),
               "ink layer arms the Annotations toggle");
-        CHECK(ihtml.contains(QStringLiteral("class=\"cmtcard\""))
-                  && ihtml.contains(QStringLiteral("note body")),
-              "comment hover card rides inside the tinted range");
 
-        // --- DOCX: real Word parts, native comments, embedded image. ---
+        // --- DOCX: real Word parts, embedded image. ---
         const QString docxPath = QDir::temp().filePath(QStringLiteral("mn_export_test.docx"));
         QFile::remove(docxPath);
         CHECK(ex.exportDocx(docxPath, true), "exportDocx wrote the file");
         QZipReader zr(docxPath);
         const QByteArray doc = zr.fileData(QStringLiteral("word/document.xml"));
-        const QByteArray cmts = zr.fileData(QStringLiteral("word/comments.xml"));
         const QByteArray nums = zr.fileData(QStringLiteral("word/numbering.xml"));
-        CHECK(doc.contains("Title") && doc.contains("w:commentRangeStart"),
-              "document.xml carries content + native comment ranges");
-        CHECK(cmts.contains("note body"), "comments.xml carries the thread body");
+        CHECK(doc.contains("Title") && !doc.contains("w:commentRangeStart") && zr.fileData(QStringLiteral("word/comments.xml")).isEmpty(),
+              "document.xml carries content; no comment parts (comments removed 2026-10-21)");
         CHECK(!nums.isEmpty() && doc.contains("w:numPr"),
               "numbering part present and lists reference it");
         // Code colors (2026-08-20): the cpp block emits COLORED runs that
@@ -669,9 +600,6 @@ static void testExportMarkdown() {
           "HTML nests overlapping bold/italic");
     CHECK(html.contains(QStringLiteral("<a href=\"https://example.com\">link</a>")),
           "HTML link tag");
-    CHECK(html.contains(QStringLiteral("class=\"cmt\""))
-              && html.contains(QStringLiteral("href=\"#c1\"")),
-          "commented range tints + links to the comments section");
     CHECK(html.contains(QStringLiteral("<ul>")) && html.contains(QStringLiteral("item one</li>")),
           "HTML list run opens a real <ul>");
     // Syntax colouring wraps tokens in inline-styled spans ("int" is a cpp
@@ -683,8 +611,6 @@ static void testExportMarkdown() {
     // A table's header rows are <th> in <thead> (SR-4 S8b: the header ROLE is authored, not sniffed).
     CHECK(html.contains(QStringLiteral("<th")) && html.contains(QStringLiteral("H1")) && html.contains(QStringLiteral("<td")),
           "HTML table: header cells as <th>, body cells as <td>");
-    CHECK(html.contains(QStringLiteral("id=\"c1\"")) && html.contains(QStringLiteral("note body")),
-          "comments section carries the thread body");
     CHECK(html.startsWith(QStringLiteral("<!doctype html>")), "self-contained document skeleton");
 }
 
@@ -1762,8 +1688,6 @@ static void testDocxRoundTrip() {
         // A table at the end ([100] covers the table emitter in depth).
         const int tableHead = m.insertTableRows(m.rowCountQml() - 1, 2, 2) - 1;
         m.setContent(m.tableCellAt(tableHead, 1, 0), QStringLiteral("cell A"));
-        const QString threadId = m.addComment(1, 0, 5);
-        m.addCommentMessage(threadId, QStringLiteral("check this wording"));
         m.insertImageFromUrl(m.rowCountQml() - 1,
             QUrl::fromLocalFile(dir.filePath(QStringLiteral("pic.png"))).toString());
 
@@ -1810,18 +1734,6 @@ static void testDocxRoundTrip() {
           "table cell text (a DOCX table imports as a derived table)");
     CHECK(mediaRow >= 0 && QFileInfo::exists(m2.mediaLocalPath(mediaRow)),
           "image re-imported into the sidecar");
-    // Comment thread → native thread with the body preserved.
-    bool commentOk = false;
-    const QVariantList threads = m2.commentThreads();
-    for (const QVariant& tv : threads) {
-        const QVariantMap t = tv.toMap();
-        const QVariantList msgs = m2.commentMessages(t.value(QStringLiteral("id")).toString());
-        for (const QVariant& mv : msgs)
-            if (mv.toMap().value(QStringLiteral("body")).toString()
-                    .contains(QStringLiteral("check this wording")))
-                commentOk = true;
-    }
-    CHECK(commentOk, "Word comment → native thread with body");
     m2.closeDocument();
     dir.removeRecursively();
 }
@@ -2782,12 +2694,12 @@ static void testNewImportFormats() {
     dir.removeRecursively();
 }
 
-// --- Test 40: tab-merge engine — fidelity, ONE undo entry, thread re-mint --
+// --- Test 40: tab-merge engine — fidelity, ONE undo entry ---------------------
 // Two live models, whole-document copy at a gap: every block type + spans
-// with payloads + margin ink + a comment thread with history must arrive
-// intact, as exactly one destination undo entry. Source untouched.
+// with payloads + margin ink must arrive intact, as exactly one destination
+// undo entry. Source untouched.
 static void testMergeEngine() {
-    qInfo("[40] merge engine: full fidelity, ONE undo entry, thread re-mint");
+    qInfo("[40] merge engine: full fidelity, ONE undo entry");
     const QString kChoice = QStringLiteral(
         "{\"o\":[{\"id\":\"a\",\"l\":\"To do\"},{\"id\":\"b\",\"l\":\"Doing\"}],\"v\":\"b\"}");
 
@@ -2813,12 +2725,9 @@ static void testMergeEngine() {
         src.insertSpecs(tEnd, {ch}, false);              // row 9
     }
     src.insertBlock(10); src.setContent(10, QStringLiteral("note me"));
-    const QString tid = src.addComment(10, 0, 4);
-    src.addCommentMessage(tid, QStringLiteral("first"));
-    src.addCommentMessage(tid, QStringLiteral("second"));
     src.insertBlock(11); src.setContent(11, QStringLiteral("inked"));
     const int srcN = src.rowCountQml();
-    CHECK(srcN == 12 && tHead == 3 && tEnd == 8 && !tid.isEmpty(), "source fixture: 12 rows + a thread (%d)", srcN);
+    CHECK(srcN == 12 && tHead == 3 && tEnd == 8, "source fixture: 12 rows (%d)", srcN);
 
     BlockModel dest;
     dest.newDocument();
@@ -2859,18 +2768,7 @@ static void testMergeEngine() {
         CHECK(choiceOk && dest.contentForRow(5 + grow) == QStringLiteral("Doing"),
               "choice chip payload rode along");
     }
-    const QString newTid = dest.commentAt(6 + grow, 1);
-    CHECK(!newTid.isEmpty() && newTid != tid,
-          "comment anchor arrived under a NEW thread id");
-    {
-        const QVariantList sm = src.commentMessages(tid);
-        const QVariantList dm = dest.commentMessages(newTid);
-        CHECK(dm.size() == 2
-                  && dm[0].toMap().value("body") == sm[0].toMap().value("body")
-                  && dm[1].toMap().value("body") == QStringLiteral("second")
-                  && dm[0].toMap().value("created") == sm[0].toMap().value("created"),
-              "thread history preserved (bodies + timestamps)");
-    }
+    CHECK(dest.contentForRow(6 + grow) == QStringLiteral("note me"), "the plain row rode along");
     CHECK(dest.contentForRow(7 + grow) == QStringLiteral("inked"), "the last source row rode along");
 
     // Exactly ONE undo entry; undo restores the destination wholesale.
@@ -2880,11 +2778,11 @@ static void testMergeEngine() {
               && dest.contentForRow(1) == QStringLiteral("bottom"),
           "one undo removes the whole merge");
     dest.redo();
-    CHECK(dest.rowCountQml() == 2 + srcN && dest.commentAt(6 + grow, 1) == newTid,
-          "redo brings it back with the comment anchor");
+    CHECK(dest.rowCountQml() == 2 + srcN && dest.contentForRow(6 + grow) == QStringLiteral("note me"),
+          "redo brings it back");
 
     // The source was never touched; refusals + the pristine no-op.
-    CHECK(src.rowCountQml() == srcN && src.commentAt(5 + grow, 1) == tid,
+    CHECK(src.rowCountQml() == srcN && src.contentForRow(5 + grow) == QStringLiteral("note me"),
           "source untouched (copy semantics)");
     CHECK(!DocumentMerger::mergeDocuments(&src, &src, 0, nullptr, nullptr, &err),
           "self-merge refused (%s)", qPrintable(err));
@@ -3142,7 +3040,6 @@ static void testBlockClipboardRoundTrip() {
                    {16, 22, BlockModel::SpanFgColor, QStringLiteral("#ff0000")},
                    {16, 22, BlockModel::SpanHighlight, QStringLiteral("#00ff00")},
                    {23, 27, BlockModel::SpanChoice, QStringLiteral("{\"o\":[{\"id\":\"a\",\"l\":\"chip\",\"c\":\"#123456\"}],\"v\":\"a\"}")},
-                   {28, 32, BlockModel::SpanComment, QStringLiteral("01THREAD")},
                    {0, 5, BlockModel::SpanItalic, {}}, {0, 5, BlockModel::SpanStrike, {}},
                    {0, 5, BlockModel::SpanUnderline, {}}, {0, 5, BlockModel::SpanCode, {}} };
     BlockModel::BlockSpec div; div.type = BlockModel::Divider;
@@ -3152,9 +3049,6 @@ static void testBlockClipboardRoundTrip() {
                 text(BlockModel::OrderedListItem, QStringLiteral("o")), para, div, media };
     p.ink.assign(p.specs.size(), QString());
     p.ink[0] = QStringLiteral("{\"strokes\":[{\"pts\":[1,2]}]}");
-    BlockModel::ThreadImport ti; ti.id = QStringLiteral("01THREAD"); ti.created = 42; ti.resolved = true;
-    ti.messages.push_back({QString(), QStringLiteral("hello"), 7, 9});
-    p.threads.push_back(ti);
     BlockClipboard::Asset a; a.rel = QStringLiteral(".minnotes/a.png"); a.abs = QStringLiteral("/tmp/a.png");
     a.entry = QStringLiteral("media/a.png"); a.bytes = 99; a.video = false;
     p.assets.push_back(a);
@@ -3176,10 +3070,6 @@ static void testBlockClipboardRoundTrip() {
     CHECK(QJsonDocument::fromJson(q.specs[8].mediaJson.toUtf8()).object().value(QStringLiteral("src")).toString()
               == QStringLiteral(".minnotes/a.png"), "media descriptor round-trips as JSON");
     CHECK(q.ink[0].contains(QStringLiteral("strokes")) && q.ink[1].isEmpty(), "ink present/absent per row");
-    CHECK(q.threads.size() == 1 && q.threads[0].id == QStringLiteral("01THREAD")
-              && q.threads[0].resolved && q.threads[0].messages.size() == 1
-              && q.threads[0].messages[0].body == QStringLiteral("hello")
-              && q.threads[0].messages[0].modified == 9, "thread bodies round-trip");
     CHECK(q.assets.size() == 1 && q.assets[0].entry == QStringLiteral("media/a.png")
               && q.assets[0].bytes == 99, "asset snapshot round-trips");
     CHECK(q.docPath == p.docPath && q.docDir == p.docDir,
@@ -3287,15 +3177,12 @@ static void testPasteAssets() {
     img.mediaJson = QStringLiteral("{\"src\":\".minnotes/%1\",\"w\":12,\"h\":10}").arg(picN);
     src.insertSpecs(0, {img}, false);                                       // row 1
     src.insertBlock(2); src.setContent(2, QStringLiteral("tail note"));
-    const QString tid = src.addComment(2, 0, 4);
-    src.addCommentMessage(tid, QStringLiteral("first!"));
 
     const QString payload = src.clipboardPayloadForRange(0, 0, 2, 9);
     CHECK(!payload.isEmpty(), "payload built");
     BlockClipboard::Payload dec; QString derr;
-    CHECK(BlockClipboard::decode(payload.toUtf8(), &dec, &derr) && dec.assets.size() == 1
-              && dec.threads.size() == 1 && dec.threads[0].messages.size() == 1,
-          "payload carries asset snapshot and thread bodies");
+    CHECK(BlockClipboard::decode(payload.toUtf8(), &dec, &derr) && dec.assets.size() == 1,
+          "payload carries the asset snapshot");
 
     // [52] same document: paste at the end.
     const int before = src.rowCountQml();
@@ -3309,15 +3196,12 @@ static void testPasteAssets() {
           "same-doc image src unchanged (same sidecar file)");
     CHECK(QDir(srcD + QStringLiteral("/.minnotes")).entryList(QDir::Files).size() == filesBefore,
           "no new sidecar file for a same-doc paste");
-    const QString tid2 = src.commentAt(before + 1, 1);
-    CHECK(!tid2.isEmpty() && tid2 != tid && src.commentMessages(tid2).size() == 1,
-          "same-doc copy duplicates the thread with its messages");
-    // Cut + paste back re-anchors the ORIGINAL thread.
+    // Cut + paste back lands the rows again.
     src.removeBlocks(2, 2);
-    CHECK(src.threadAnchorRow(tid) < 0, "thread orphaned by the cut");
+    const int afterCut = src.rowCountQml();
     const QString cutPayload = payload;   // the payload was copied before the cut
     CHECK(ClipboardPaster::pasteBlocks(&src, cutPayload, 0, 4, -1, 0, -1, 0, &cr, &cc, &perr), "paste after cut");
-    CHECK(src.threadAnchorRow(tid) >= 0, "orphaned thread re-anchored instead of duplicated");
+    CHECK(src.rowCountQml() == afterCut + 2, "the cut rows came back (%d → %d)", afterCut, src.rowCountQml());
 
     // [53] cross document.
     BlockModel dest;
@@ -3342,9 +3226,6 @@ static void testPasteAssets() {
         CHECK(a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly) && a.readAll() == b.readAll(),
               "copied image byte-exact");
     }
-    const QString dtid = dest.commentAt(2, 1);
-    CHECK(!dtid.isEmpty() && dtid != tid && dest.commentMessages(dtid).size() == 1,
-          "thread re-minted in the destination with its message");
     CHECK(dest.undoHistory().size() == dEntries + 1, "cross-doc paste = ONE undo entry");
     dest.undo();
     CHECK(dest.rowCountQml() == 1 && dest.contentForRow(0) == QStringLiteral("dest"), "undo removes the paste whole");
@@ -3541,7 +3422,6 @@ static void testOpaqueGuards() {
     m.setLink(1, 0, 1, QStringLiteral("https://x"));
     m.setTextColor(1, 0, 1, QStringLiteral("#ff0000"));
     m.clearFormat(1, 0, 1);
-    CHECK(m.addComment(1, 0, 1).isEmpty(), "addComment refuses an image row");
     CHECK(m.contentForRow(1) == imgJson && m.contentForRow(t) == tblJson, "descriptors untouched");
     CHECK(m.rowCountQml() == 4, "no split happened");
     CHECK(m.spansForRow(1).isEmpty(), "no spans on the image row");
@@ -3854,14 +3734,17 @@ static void testInlineEngine() {
     qInfo("[66] inline text engine: span interval + offset rules, kind names (SR-1)");
     using namespace mn::inl;
     CHECK((std::is_same_v<BlockModel::Span, Span>), "BlockModel::Span is the engine's span");
-    CHECK(BlockModel::SpanBold == Bold && BlockModel::SpanComment == Comment && BlockModel::SpanChoice == Choice,
+    CHECK(BlockModel::SpanBold == Bold && BlockModel::SpanHighlight == Highlight && BlockModel::SpanChoice == Choice,
           "SpanKind values mirror the engine");
     bool names = true;
-    for (uint8_t k = Bold; k <= Choice; ++k)
+    for (uint8_t k = Bold; k <= Choice; ++k) {
+        if (k == 9) continue;   // the retired Comment kind: reserved, nameless
         if (kindFromString(QString::fromLatin1(kindToString(k))) != k) names = false;
-    CHECK(names && kindFromString(QStringLiteral("nope")) == 0 && QByteArray(kindToString(0)).isEmpty(),
-          "kind names round-trip; unknown = 0");
-    CHECK(hasPayload(Link) && hasPayload(Choice) && hasPayload(Comment) && !hasPayload(Bold) && !hasPayload(Code),
+    }
+    CHECK(names && kindFromString(QStringLiteral("nope")) == 0 && QByteArray(kindToString(0)).isEmpty()
+              && kindFromString(QStringLiteral("comment")) == 0 && QByteArray(kindToString(9)).isEmpty(),
+          "kind names round-trip; unknown = 0; the retired \"comment\" kind is unknown (dropped on load)");
+    CHECK(hasPayload(Link) && hasPayload(Choice) && hasPayload(Highlight) && !hasPayload(Bold) && !hasPayload(Code),
           "payload kinds");
 
     Spans v;
@@ -3953,15 +3836,12 @@ static void testInlineFormatOps() {
           "toggle removes a covered kind");
     CHECK(toggleFormat(t, v, 0, 5, Bold) && hasFormat(t, v, 0, 11, Bold), "toggle adds an uncovered kind");
     v.push_back({0, 5, Choice, QStringLiteral("{\"v\":\"a\"}")});
-    v.push_back({6, 11, Comment, QStringLiteral("thread-1")});
     v.push_back({6, 11, Link, QStringLiteral("https://x")});
-    CHECK(clearFormat(t, v, 0, 11) && v.size() == 2, "clear formatting removes style + link spans…");
-    bool chip = false, comment = false;
-    for (const Span& sp : v) {
+    CHECK(clearFormat(t, v, 0, 11) && v.size() == 1, "clear formatting removes style + link spans…");
+    bool chip = false;
+    for (const Span& sp : v)
         if (sp.kind == Choice && sp.s == 0 && sp.e == 5) chip = true;
-        if (sp.kind == Comment && sp.s == 6 && sp.e == 11) comment = true;
-    }
-    CHECK(chip && comment, "…but chips and comments survive intact");
+    CHECK(chip, "…but chips survive intact");
     Spans p{{0, 4, FgColor, QStringLiteral("#f00")}, {4, 8, FgColor, QStringLiteral("#f00")}};
     CHECK(payloadCovers(t, p, 0, 8, FgColor, QStringLiteral("#f00")) && !payloadCovers(t, p, 0, 9, FgColor, QStringLiteral("#f00"))
               && !payloadCovers(t, p, 0, 4, FgColor, QStringLiteral("#00f")),
@@ -3972,7 +3852,7 @@ static void testInlineFormatOps() {
         const QVariantMap mp = it.toMap();
         if (hasPayload(uint8_t(mp.value(QStringLiteral("k")).toInt())) != mp.contains(QStringLiteral("u"))) uOk = false;
     }
-    CHECK(feed.size() == 2 && uOk, "the span feed carries u exactly for payload kinds");
+    CHECK(feed.size() == 1 && uOk, "the span feed carries u exactly for payload kinds");
 
     BlockModel m;
     m.newDocument();
@@ -5584,9 +5464,13 @@ static void testConverter() {
     CHECK(img >= 0 && QJsonDocument::fromJson(m.mediaPageInk(img, 0).toUtf8()).object().value(QStringLiteral("shapes")).toArray().size() == 1,
           "the image's frame ink lives in its descriptor");
     CHECK(!c->db().hasTable(QStringLiteral("block_ink")), "block_ink is dropped");
-    CHECK(m.commentThreads().size() == 2, "both comment threads survive, the orphan included (%d)", int(m.commentThreads().size()));
-    CHECK(c->orphanThreads().size() == 1 && c->orphanThreads()[0].toMap().value(QStringLiteral("row")).toInt() == -1,
-          "the file's unanchored threads: the orphan alone (%d)", int(c->orphanThreads().size()));
+    {   // Comments were removed (2026-10-21): the 1.0 file's "comment" spans are an unknown kind, dropped on load.
+        bool anyComment = false;
+        for (int r = 0; r < m.rowCountQml(); ++r)
+            for (const QVariant& sv : m.spansForRow(r))
+                if (sv.toMap().value(QStringLiteral("k")).toInt() == 9) anyComment = true;
+        CHECK(!anyComment, "the 1.0 file's comment spans are dropped on load");
+    }
     CHECK(c->readOnly() && m.readOnly() && m.untitled() && !m.save(), "read-only until Save As");
     CHECK(c->db().canvasMeta(QStringLiteral("convertedFrom")) == QLatin1String("mnd1") && c->db().canvasMeta(QStringLiteral("pageWidthDefault")) == QLatin1String("880"),
           "canvas_meta records the conversion and the 1.0 measure");
@@ -6755,9 +6639,9 @@ static void testPdfPageDrawing() {
 }
 
 // [143] Search (v2.0.1): ONE file — the current page's hits first, then the other pages, cards, PDF text (cached in the
-// file), video notes, comments; folded matching; every hit carries what its jump needs.
+// file), video notes; folded matching; every hit carries what its jump needs.
 static void testSearch() {
-    qInfo("[143] search (v2.0.1): the current page's hits first, then pages / cards / PDF text (cached in the .mnd) / video notes / comments; case + accent folding; hits carry their jump targets");
+    qInfo("[143] search (v2.0.1): the current page's hits first, then pages / cards / PDF text (cached in the .mnd) / video notes; case + accent folding; hits carry their jump targets");
     QTemporaryDir dir;
     CanvasDocument c; CHECK(c.newCanvas(), "canvas");
     const QString p1 = c.firstPageId();
@@ -6766,7 +6650,6 @@ static void testSearch() {
     const QString odd = dir.filePath(QStringLiteral("quartz-notes.xyz")); { QFile f(odd); f.open(QIODevice::WriteOnly); f.write("?"); }
     const QString fileEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(odd).toString(), 2000, 0);
     const QString chipEl = c.addShapeElement(QStringLiteral("{\"shape\":\"text\",\"text\":\"a quartz chip\",\"fontSize\":14,\"fill\":\"transparent\"}"), QRectF(2000, 100, 200, 40));
-    const QString tid = c.pageModel(p1)->addComment(0, 0, 6); c.pageModel(p1)->addCommentMessage(tid, QStringLiteral("quartz comment here"));
     const QString pdf = dir.filePath(QStringLiteral("spec.pdf"));
     { QPdfWriter w(pdf); w.setResolution(96); QPainter p(&w); p.drawText(100, 100, QStringLiteral("quartz inside the pdf")); w.newPage(); p.drawText(100, 100, QStringLiteral("page two text")); p.end(); }
     const QString pdfEl = c.addMediaElementFromUrl(QUrl::fromLocalFile(pdf).toString(), 2000, 200);
@@ -6774,35 +6657,34 @@ static void testSearch() {
     { std::vector<qcv::AnnotationNote> notes; qcv::AnnotationNote n; n.timecode = QStringLiteral("00:00:01:12"); n.frame = 36; n.text = QStringLiteral("the quartz shot"); notes.push_back(n);
       CHECK(qcv::annotation_io::saveNotes(notes, clip), "a QCView sidecar beside a (missing) clip"); }
     const QString vidEl = c.addMediaElement(QStringLiteral("{\"kind\":\"video\",\"src\":\"%1\",\"name\":\"clip.mov\",\"w\":1920,\"h\":1080,\"fps\":24,\"frames\":48,\"durMs\":2000}").arg(clip), QRectF(2000, 800, 480, 292));
-    CHECK(!fileEl.isEmpty() && !chipEl.isEmpty() && !tid.isEmpty() && !pdfEl.isEmpty() && !vidEl.isEmpty(), "fixtures placed");
+    CHECK(!fileEl.isEmpty() && !chipEl.isEmpty() && !pdfEl.isEmpty() && !vidEl.isEmpty(), "fixtures placed");
 
     SearchEngine se; se.setCanvas(&c);
     auto kinds = [](const QVariantList& l) { QStringList k; for (const QVariant& v : l) k << v.toMap().value(QStringLiteral("kind")).toString(); return k.join(QLatin1Char(',')); };
     QVariantList hits = se.search(QStringLiteral("quartz"), p2);
-    CHECK(hits.size() == 6, "six hits before the PDF is indexed: 2 pages, 2 cards, 1 note, 1 comment (%d: %s)", int(hits.size()), qPrintable(kinds(hits)));
+    CHECK(hits.size() == 5, "five hits before the PDF is indexed: 2 pages, 2 cards, 1 note (%d: %s)", int(hits.size()), qPrintable(kinds(hits)));
     CHECK(hits.size() >= 2 && hits.at(0).toMap().value(QStringLiteral("pageId")).toString() == p2 && hits.at(1).toMap().value(QStringLiteral("pageId")).toString() == p1,
           "the CURRENT page's hit comes first, the other page's next");
     CHECK(hits.size() >= 1 && hits.at(0).toMap().value(QStringLiteral("snippet")).toString() == QStringLiteral("Zebra <b>Quartz</b> on page two") && hits.at(0).toMap().value(QStringLiteral("col")).toInt() == 6 && hits.at(0).toMap().value(QStringLiteral("len")).toInt() == 6,
           "a page hit: the snippet keeps the original case with the match in <b>, col/len locate it (%s)", qPrintable(hits.at(0).toMap().value(QStringLiteral("snippet")).toString()));
-    CHECK(kinds(hits) == QStringLiteral("page,page,card,card,video,comment"), "group order: pages, cards, video notes, comments (%s)", qPrintable(kinds(hits)));
-    int cardFile = -1, cardChip = -1, vid = -1, com = -1;
+    CHECK(kinds(hits) == QStringLiteral("page,page,card,card,video"), "group order: pages, cards, video notes (%s)", qPrintable(kinds(hits)));
+    int cardFile = -1, cardChip = -1, vid = -1;
     for (int i = 0; i < hits.size(); ++i) { const QVariantMap h = hits.at(i).toMap(); const QString el = h.value(QStringLiteral("elementId")).toString();
-        if (el == fileEl) cardFile = i; if (el == chipEl) cardChip = i; if (el == vidEl) vid = i; if (h.value(QStringLiteral("threadId")).toString() == tid) com = i; }
+        if (el == fileEl) cardFile = i; if (el == chipEl) cardChip = i; if (el == vidEl) vid = i; }
     CHECK(cardFile >= 0 && hits.at(cardFile).toMap().value(QStringLiteral("title")).toString() == QStringLiteral("quartz-notes.xyz"), "the file card matched by its name");
     CHECK(cardChip >= 0 && hits.at(cardChip).toMap().value(QStringLiteral("snippet")).toString().contains(QStringLiteral("a <b>quartz</b> chip")), "the text chip matched by its text");
     CHECK(vid >= 0 && hits.at(vid).toMap().value(QStringLiteral("frame")).toInt() == 36 && hits.at(vid).toMap().value(QStringLiteral("timecode")).toString() == QStringLiteral("00:00:01:12") && !hits.at(vid).toMap().value(QStringLiteral("key")).toString().isEmpty(),
           "the video note: its frame, timecode and the player's anchor key");
-    CHECK(com >= 0 && hits.at(com).toMap().value(QStringLiteral("pageId")).toString() == p1 && !hits.at(com).toMap().value(QStringLiteral("blockId")).toString().isEmpty(), "the comment: the page and block anchoring its thread");
     // PDF text: queued on the first search (extraction on a worker), cached in the file; the test extracts now.
     se.indexPdfsNow();
     hits = se.search(QStringLiteral("quartz"), p2);
     int pdfi = -1; for (int i = 0; i < hits.size(); ++i) if (hits.at(i).toMap().value(QStringLiteral("kind")) == QLatin1String("pdf")) pdfi = i;
-    CHECK(pdfi >= 0 && hits.size() == 7 && hits.at(pdfi).toMap().value(QStringLiteral("page")).toInt() == 0 && hits.at(pdfi).toMap().value(QStringLiteral("viewPath")).toString() == pdf && hits.at(pdfi).toMap().value(QStringLiteral("elementId")).toString() == pdfEl,
+    CHECK(pdfi >= 0 && hits.size() == 6 && hits.at(pdfi).toMap().value(QStringLiteral("page")).toInt() == 0 && hits.at(pdfi).toMap().value(QStringLiteral("viewPath")).toString() == pdf && hits.at(pdfi).toMap().value(QStringLiteral("elementId")).toString() == pdfEl,
           "after indexing, the PDF's page 1 text hits with its page index and view path (%d hits: %s)", int(hits.size()), qPrintable(kinds(hits)));
     CHECK(se.search(QStringLiteral("page two text"), p1).size() == 1 && se.search(QStringLiteral("page two text"), p1).at(0).toMap().value(QStringLiteral("page")).toInt() == 1, "PDF page 2's text hits with page index 1");
-    CHECK(kinds(hits).endsWith(QStringLiteral("card,pdf,video,comment")), "PDF hits sit between cards and video notes (%s)", qPrintable(kinds(hits)));
+    CHECK(kinds(hits).endsWith(QStringLiteral("card,pdf,video")), "PDF hits sit between cards and video notes (%s)", qPrintable(kinds(hits)));
     // Folding: case and accents both ways.
-    CHECK(se.search(QStringLiteral("QUÉBEC"), p1).size() == 1 && se.search(QStringLiteral("quebec"), p1).size() == 1 && se.search(QStringLiteral("QUARTZ"), p1).size() == 7, "matching folds case and accents");
+    CHECK(se.search(QStringLiteral("QUÉBEC"), p1).size() == 1 && se.search(QStringLiteral("quebec"), p1).size() == 1 && se.search(QStringLiteral("QUARTZ"), p1).size() == 6, "matching folds case and accents");
     CHECK(se.search(QStringLiteral("  "), p1).isEmpty() && se.search(QStringLiteral("nothing-here"), p1).isEmpty(), "blank or unmatched queries return nothing");
     // The cache lives in the file: a fresh engine on the same canvas finds the PDF without extracting.
     { SearchEngine se2; se2.setCanvas(&c); const QVariantList h2 = se2.search(QStringLiteral("inside the pdf"), p1);
@@ -9030,7 +8912,7 @@ static void testSplitRowEditing() {
 }
 
 // Dev-only (2026-09-16, the export style audit): MN_STYLE_SAMPLE=<out.mnd> writes a document that
-// carries every style the app can produce — headings 1–6, every inline span, chips, comments, lists
+// carries every style the app can produce — headings 1–6, every inline span, chips, lists
 // (nested / numbered / all three task states), a quote, code with a language, a divider, an image at a
 // set width, and a table with header colours, cell colours, alignment, a choice column, a check column
 // and a two-block cell — for `--shot` / `--export-html` A/B renders. Exit 0 on success.
@@ -9054,13 +8936,6 @@ static int writeStyleSample(const QString& outPath) {
         s = m.contentForRow(p).indexOf(QLatin1String("colour")); m.setTextColor(p, s, s + 6, QStringLiteral("#FF6F68"));
         s = m.contentForRow(p).indexOf(QLatin1String("highlight")); m.setHighlight(p, s, s + 9, QStringLiteral("#FFEC59"));
         s = m.contentForRow(p).indexOf(QLatin1String("chip")); m.insertChoiceAt(p, s + 4);
-    }
-    {
-        const int p = add(QStringLiteral("A comment sits on this phrase, and a resolved one on that phrase."));
-        int s = m.contentForRow(p).indexOf(QLatin1String("this phrase"));
-        const QString t1 = m.addComment(p, s, s + 11); m.addCommentMessage(t1, QStringLiteral("An open thread."));
-        s = m.contentForRow(p).indexOf(QLatin1String("that phrase"));
-        const QString t2 = m.addComment(p, s, s + 11); m.addCommentMessage(t2, QStringLiteral("Settled.")); m.setThreadResolved(t2, true);
     }
     { const int q = add(QStringLiteral("A quotation with a bold word and an italic word in the serif face."), BlockModel::Quote);
       int s = m.contentForRow(q).indexOf(QLatin1String("bold")); m.setFormat(q, s, s + 4, QStringLiteral("bold"), true);
@@ -9126,7 +9001,7 @@ static int writeStyleSample(const QString& outPath) {
 // bumps ViewportSlots derives from them (one delegate per keystroke; every live slot on a
 // structure change; idle slots never).
 static void testRowsTouchedAndSlots() {
-    qInfo("[90] A1: rowsTouched ranges, structureRevision, per-slot bumps, comments follow edits");
+    qInfo("[90] A1: rowsTouched ranges, structureRevision, per-slot bumps");
     BlockModel m; m.newDocument();
     while (m.rowCountQml() > 0) m.removeBlock(0);
     for (int i = 0; i < 6; ++i) { m.insertBlock(i); m.setContent(i, QStringLiteral("paragraph %1 text body").arg(i)); }
@@ -9174,18 +9049,6 @@ static void testRowsTouchedAndSlots() {
     bool coversRow = false;
     for (const auto& t : touched) if (t.first <= rec && t.second >= cell) coversRow = true;
     CHECK(cell >= 0 && rec >= 0 && coversRow, "typing in a cell touches its record..cell range");
-    // 6. Comments: typing in a commented row bumps commentsRevision; typing elsewhere doesn't.
-    const int crow = 4;
-    const QString tid = m.addComment(crow, 0, 9);
-    const int c0 = m.commentsRevision();
-    m.insertText(0, 0, QStringLiteral("z"));
-    CHECK(!tid.isEmpty() && m.commentsRevision() == c0, "typing in an uncommented row leaves commentsRevision alone");
-    m.insertText(crow, 2, QStringLiteral("z"));
-    CHECK(m.commentsRevision() == c0 + 1, "typing in a commented row bumps commentsRevision");
-    // Deleting the commented text drops the span → the pin consumers must hear about it.
-    const int c1 = m.commentsRevision();
-    m.deleteRange(crow, 0, crow, m.contentForRow(crow).size());
-    CHECK(m.commentsRevision() > c1, "wiping a commented row's text bumps commentsRevision");
 }
 
 // Headless floor of the type probe (A0 speed programme): the model + SQLite cost of a
@@ -9251,7 +9114,6 @@ int main(int argc, char** argv) {
     testCanonicalizeAndStamp();
     testListsAndDepth();
     testUndoHistory();
-    testComments();
     testExportMarkdown();
     testConsumeEmptyAnchor();
     testInsertSpecs();

@@ -1505,7 +1505,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 property alias searchBar: searchBar
                 PathBar { id: pathBar; width: parent.width; editor: win.activeEditor }
                 ChromeToolbar { id: chromeToolbar; width: parent.width; editor: win.activeEditor; inspector: inspectorPanel }
-                SearchBar { id: searchBar; width: parent.width; editor: win.activeEditor; canvasView: win.activeCanvasView; inspector: inspectorPanel }   // ⌘F (v2.0.1)
+                SearchBar { id: searchBar; width: parent.width; editor: win.activeEditor; canvasView: win.activeCanvasView }   // ⌘F (v2.0.1)
             }
         }
 

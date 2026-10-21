@@ -1,7 +1,7 @@
 // Exporter — the document walker + per-format emitters (export arc, v1:
 // Markdown). Reads the LOADED BlockModel through its public seam (never the
 // raw DB — the model is canonical: markdown consumed to spans at load, media
-// resolved via MediaStore, comments in memory).
+// resolved via MediaStore).
 //
 // Shape: toMarkdown() is pure string generation over an AssetSink seam so the
 // regression suite can drive it headless with a recording sink; the
@@ -12,7 +12,6 @@
 //
 // Format notes (design chat 2026-07-11):
 //   - color/highlight spans DROP in markdown (HTML export carries fidelity).
-//   - comments → footnotes ([^n] at the span end, thread messages as body).
 //   - video/pdf/file → kind-labeled fenced REFERENCE blocks (filename +
 //     resolved absolute path + probe metadata), poster image above.
 //   - video notes (optional, detection-driven): QCView sidecar notes inline
@@ -49,8 +48,6 @@ public:
         // (video/pdf/file references). Off by default — they only mean
         // something to recipients who run ufb (user ruling 2026-08-21).
         bool ufbLinks = false;
-        // fragment mode keeps the comments section (a canvas page is the page export, chrome-less).
-        bool fragmentComments = false;
     };
 
     // Where emitted assets go. addFile/addImage return the path to write into
@@ -91,14 +88,13 @@ public:
     // explicit ranges omit it (a pasted fragment shouldn't restate it).
     Q_INVOKABLE QString copyMarkdown(int loRow = -1, int hiRow = -1) const;
     // Clipboard HTML (SR-4 S8c, R-I2): rows [loRow, hiRow] through the page walker in FRAGMENT mode
-    // (no page chrome, block numbers, ink or comments section; tables with <thead>, layout rows as
+    // (no page chrome, block numbers or ink; tables with <thead>, layout rows as
     // flex divs; images as data URIs), and a table's rows × cols sub-grid as one <table> (its header
     // rows, when included, in <thead> as <th>).
     Q_INVOKABLE QString htmlFragment(int loRow, int hiRow) const;
     Q_INVOKABLE QString tableCellsHtml(int head, const QVariantList& rows, const QVariantList& cols) const;
 
-    // The fidelity ceiling: color/highlight spans survive, comments render
-    // as tinted ranges + a linked comments section, tables keep their
+    // The fidelity ceiling: color/highlight spans survive, tables keep their
     // colors/chips, video notes become cards. Assets still route through
     // `sink` — exportHtml passes a data-URI sink so the file is
     // SELF-CONTAINED (one .html you can send anywhere).
@@ -119,7 +115,7 @@ public:
                                 bool includeVideoNotes,
                                 bool ufbLinks = false);
     // Write a `.docx` (hand-rolled OOXML via Qt's private QZipWriter — the
-    // QCView recipe). Comments become NATIVE Word review comments; media
+    // QCView recipe). Media
     // ink bakes into the images (no layer toggle in Word); white-paper
     // document styling, content-faithful rather than dark-theme-faithful.
     Q_INVOKABLE bool exportDocx(const QString& fileUrlOrPath,
@@ -131,7 +127,7 @@ public:
     // PDF as document resources. QTextDocument → QPdfWriter pipeline
     // (2026-08-20): white-paper print styling (the DOCX ruling), 96-dpi
     // layout units, A4/Letter by locale, media ink BAKED, per-page PDF ink
-    // as one image per annotated page, comments as footnotes + end section.
+    // as one image per annotated page.
     // v1 print lossiness (documented like markdown's): text-block px-space
     // page ink is skipped; no heading keep-with-next; wide tables/code wrap
     // inside the fixed measure instead of escaping it.

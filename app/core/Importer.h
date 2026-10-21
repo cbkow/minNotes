@@ -145,8 +145,8 @@ public:
     // HTML file → setHtml → walker (relative images resolve against the
     // file's directory; remote ones localize async post-insert).
     static bool importHtmlFile(const QString& path, BlockModel* m);
-    // Word .docx → DocxReader specs + native comment threads (the DOCX
-    // emitter's mirror; round-trips our own exports).
+    // Word .docx → DocxReader specs (the DOCX emitter's mirror; round-trips
+    // our own exports).
     static bool importDocxFile(const QString& path, BlockModel* m);
     // RTF via the OS-native converter (macOS; elsewhere the classifier
     // hides RTF entirely) → HTML → walker.
@@ -181,7 +181,6 @@ private:
     // One file's parsed output — built on the worker, applied on the GUI.
     struct FileSpecs {
         std::vector<BlockModel::BlockSpec> specs;
-        std::vector<DocxReader::CommentOut> comments;   // docx only
         bool ok = false;
     };
     static FileSpecs buildFileSpecs(const QString& path, const QString& fmt,

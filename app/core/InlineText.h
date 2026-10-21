@@ -17,7 +17,7 @@
 namespace mn::inl {
 
 // [s,e) over a block's text. `href` carries the payload for payload kinds (link URL,
-// colour hex, comment thread id, choice JSON); empty for every other kind.
+// colour hex, choice JSON); empty for every other kind.
 // Aggregate-init as {s,e,kind} leaves href empty.
 struct Span { int s; int e; uint8_t kind; QString href; };
 using Spans = std::vector<Span>;
@@ -28,7 +28,8 @@ enum Kind : uint8_t {
     Bold = 1, Italic = 2, Code = 3, Strike = 4, Underline = 5, Link = 6,
     FgColor = 7,     // href = colour hex
     Highlight = 8,   // href = colour hex
-    Comment = 9,     // href = thread id
+    // 9 was Comment (removed 2026-10-21) — RESERVED, never reuse: old files still carry "comment" spans,
+    // which the loader drops as an unknown kind.
     Choice = 10,     // href = {"o":[{"id","l","c"}...],"v":selectedId}; the span TEXT is the label
 };
 
@@ -39,7 +40,7 @@ const char* kindToString(uint8_t k);
 // Kinds whose href carries a payload — serialized as "u", pushed whole, never merged
 // by kind.
 inline bool hasPayload(uint8_t k) {
-    return k == Link || k == FgColor || k == Highlight || k == Comment || k == Choice;
+    return k == Link || k == FgColor || k == Highlight || k == Choice;
 }
 
 // --- Interval ops (same-kind) ---
@@ -84,8 +85,7 @@ bool setFormat(const QString& text, Spans& spans, int start, int end, uint8_t ki
 // Flip `kind` over [start,end): removed where it already covers the whole range, else added.
 bool toggleFormat(const QString& text, Spans& spans, int start, int end, uint8_t kind);
 // Clear formatting over [start,end): bold … underline, link, text colour, highlight.
-// Comment and choice spans survive — they carry meaning (a thread; a chip whose text is
-// its label), not styling.
+// Choice spans survive — they carry meaning (a chip whose text is its label), not styling.
 bool clearFormat(const QString& text, Spans& spans, int start, int end);
 // Do payload spans of `kind` carrying exactly `value` cover [start,end)?
 bool payloadCovers(const QString& text, const Spans& spans, int start, int end,

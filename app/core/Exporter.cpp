@@ -21,7 +21,6 @@
 #include "../notes/sketch_text.h"
 
 #include <QBuffer>
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -204,33 +203,17 @@ int maxBacktickRun(const QString& s) {
     return best;
 }
 
-// Footnote bookkeeping across the whole document.
-struct FootnoteCtx {
-    QStringList threadIds;                 // in first-marker order
-    int numberFor(const QString& id) {
-        int i = threadIds.indexOf(id);
-        if (i < 0) { threadIds.append(id); i = threadIds.size() - 1; }
-        return i + 1;
-    }
-};
-
-// Text + spans → markdown with markers, footnote refs recorded (spansForRow).
-QString emitInlineSpans(const QString& text, const QVariantList& spans,
-                        FootnoteCtx& fn) {
+// Text + spans → markdown with markers (spansForRow).
+QString emitInlineSpans(const QString& text, const QVariantList& spans) {
     const int len = text.size();
 
     std::vector<StyleRun> styles;
-    std::map<int, QList<int>> notesAt;   // char pos → footnote numbers
 
     for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
         int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
         int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
-        if (k == BlockModel::SpanComment) {
-            if (e >= s) notesAt[e].append(fn.numberFor(sp.value(QStringLiteral("u")).toString()));
-            continue;
-        }
         if (k == BlockModel::SpanFgColor || k == BlockModel::SpanHighlight)
             continue;   // dropped in markdown (ruling: HTML carries fidelity)
         if (k == BlockModel::SpanChoice)
@@ -254,7 +237,6 @@ QString emitInlineSpans(const QString& text, const QVariantList& spans,
 
     std::set<int> bounds{0, len};
     for (const StyleRun& r : styles) { bounds.insert(r.s); bounds.insert(r.e); }
-    for (const auto& kv : notesAt) bounds.insert(std::clamp(kv.first, 0, len));
 
     QString out;
     std::vector<StyleRun> stack;
@@ -290,8 +272,6 @@ QString emitInlineSpans(const QString& text, const QVariantList& spans,
         while (stack.size() > common) { out += closeMarker(stack.back()); stack.pop_back(); }
         out += deferredWs;
         deferredWs.clear();
-        if (const auto nf = notesAt.find(a); nf != notesAt.end())
-            for (int n : nf->second) out += QStringLiteral("[^%1]").arg(n);
 
         QString seg = text.mid(a, b - a);
         const bool inCode = std::any_of(desired.begin(), desired.end(), [](const StyleRun& r) {
@@ -313,13 +293,11 @@ QString emitInlineSpans(const QString& text, const QVariantList& spans,
     }
     while (!stack.empty()) { out += closeMarker(stack.back()); stack.pop_back(); }
     out += deferredWs;
-    if (const auto nf = notesAt.find(len); nf != notesAt.end())
-        for (int n : nf->second) out += QStringLiteral("[^%1]").arg(n);
     return out;
 }
 
-QString emitInline(const BlockModel* m, int row, FootnoteCtx& fn) {
-    return emitInlineSpans(m->contentForRow(row), m->spansForRow(row), fn);
+QString emitInline(const BlockModel* m, int row) {
+    return emitInlineSpans(m->contentForRow(row), m->spansForRow(row));
 }
 
 // ---------- media ----------
@@ -654,7 +632,7 @@ int tableTableLast(const BlockModel* m, int head) {
 // One pipe-table cell (R-I5 5b): the cell's blocks joined with <br>, list items as "• ", images as
 // ![](), a check cell as its box. Header cells stay text in every column kind.
 QString tableCellMd(const BlockModel* m, int head, int r, int c, const Exporter::Options& opt,
-                   Exporter::AssetSink& sink, FootnoteCtx& fn) {
+                   Exporter::AssetSink& sink) {
     const int kind = r < m->headerCount(head) ? 0 : m->tableColumnKind(head, c);
     QString out;
     if (kind == 2) {
@@ -671,8 +649,8 @@ QString tableCellMd(const BlockModel* m, int head, int r, int c, const Exporter:
             if (t == BlockModel::Media) parts << emitMedia(m, b, opt, sink);
             else if (t == BlockModel::Divider) parts << QStringLiteral("---");
             else if (t == BlockModel::Code) parts << QStringLiteral("`%1`").arg(m->contentForRow(b));
-            else if (BlockModel::isListType(static_cast<uint8_t>(t))) parts << QStringLiteral("• ") + emitInline(m, b, fn);
-            else parts << emitInline(m, b, fn);
+            else if (BlockModel::isListType(static_cast<uint8_t>(t))) parts << QStringLiteral("• ") + emitInline(m, b);
+            else parts << emitInline(m, b);
         }
         while (!parts.isEmpty() && parts.last().isEmpty()) parts.removeLast();
         out = parts.join(QStringLiteral("<br>"));
@@ -685,12 +663,12 @@ QString tableCellMd(const BlockModel* m, int head, int r, int c, const Exporter:
 // A derived table as GFM (R-I5 5b): the first header row is the pipe table's header; further header
 // rows are body rows.
 QString emitGridTable(const BlockModel* m, int head, const Exporter::Options& opt,
-                      Exporter::AssetSink& sink, FootnoteCtx& fn) {
+                      Exporter::AssetSink& sink) {
     const int rows = m->tableRowCount(head), cols = tableExportCols(m, head);
     if (rows <= 0 || cols <= 0) return {};
     QString out = QStringLiteral("|");
     for (int c = 0; c < cols; ++c)
-        out += QStringLiteral(" %1 |").arg(tableCellMd(m, head, 0, c, opt, sink, fn));
+        out += QStringLiteral(" %1 |").arg(tableCellMd(m, head, 0, c, opt, sink));
     out += QStringLiteral("\n|");
     for (int c = 0; c < cols; ++c) {
         switch (m->tableColAlign(head, c)) {
@@ -702,7 +680,7 @@ QString emitGridTable(const BlockModel* m, int head, const Exporter::Options& op
     for (int r = 1; r < rows; ++r) {
         out += QStringLiteral("\n|");
         for (int c = 0; c < cols; ++c)
-            out += QStringLiteral(" %1 |").arg(tableCellMd(m, head, r, c, opt, sink, fn));
+            out += QStringLiteral(" %1 |").arg(tableCellMd(m, head, r, c, opt, sink));
     }
     return out;
 }
@@ -712,7 +690,6 @@ QString emitGridTable(const BlockModel* m, int head, const Exporter::Options& op
 QString Exporter::markdownRange(int lo, int hi, const Options& opt,
                                 AssetSink& sink, bool withHeader) const {
     const BlockModel* m = model_;
-    FootnoteCtx fn;
     // Document header (rulings 2026-08-20/21): every export leads with the
     // document's name — as a QUIET code-formatted label, not a shouting
     // heading (backticks stripped: a code span can't contain its fence).
@@ -732,10 +709,10 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
         switch (type) {
         case BlockModel::Heading:
             block = QString(std::clamp(m->levelForRow(row), 1, 6), QLatin1Char('#'))
-                    + QLatin1Char(' ') + emitInline(m, row, fn);
+                    + QLatin1Char(' ') + emitInline(m, row);
             break;
         case BlockModel::Quote: {
-            QString inl = emitInline(m, row, fn);
+            QString inl = emitInline(m, row);
             block = QStringLiteral("> ") + inl.replace(QStringLiteral("\n"), QStringLiteral("\n> "));
             break;
         }
@@ -763,7 +740,7 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
             } else {
                 bullet = QStringLiteral("- ");
             }
-            QString inl = emitInline(m, row, fn);
+            QString inl = emitInline(m, row);
             inl.replace(QStringLiteral("\n"), QStringLiteral("  \n") + indent + QStringLiteral("  "));
             block = indent + bullet + inl;
             break;
@@ -772,14 +749,14 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
             block = QStringLiteral("---");
             break;
         case BlockModel::Split:
-            block = emitGridTable(m, row, opt, sink, fn);
+            block = emitGridTable(m, row, opt, sink);
             break;
         case BlockModel::Media:
             block = emitMedia(m, row, opt, sink);
             break;
         case BlockModel::Paragraph:
         default: {
-            QString inl = emitInline(m, row, fn);
+            QString inl = emitInline(m, row);
             block = inl.replace(QStringLiteral("\n"), QStringLiteral("  \n"));
             break;
         }
@@ -794,40 +771,6 @@ QString Exporter::markdownRange(int lo, int hi, const Options& opt,
         doc += block;
         prevWasList = isList;
         if (tableHead) row = std::max(row, tableTableLast(m, row));   // its rows and cells are in the table
-    }
-
-    // Footnote bodies (comment threads), in first-reference order.
-    if (!fn.threadIds.isEmpty()) {
-        doc += QStringLiteral("\n");
-        const QVariantList threads = m->commentThreads();
-        for (int i = 0; i < fn.threadIds.size(); ++i) {
-            const QString id = fn.threadIds.at(i);
-            bool resolved = false;
-            for (const QVariant& tv : threads) {
-                const QVariantMap t = tv.toMap();
-                if (t.value(QStringLiteral("id")).toString() == id) {
-                    resolved = t.value(QStringLiteral("resolved")).toBool();
-                    break;
-                }
-            }
-            QString body;
-            for (const QVariant& mv : m->commentMessages(id)) {
-                const QVariantMap msg = mv.toMap();
-                QString b = escapeMd(msg.value(QStringLiteral("body")).toString());
-                b.replace(QStringLiteral("\n"), QStringLiteral("\n    "));
-                const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
-                const QString stamp = created > 0
-                    ? QDateTime::fromMSecsSinceEpoch(created).toString(QStringLiteral("yyyy-MM-dd hh:mm"))
-                    : QString();
-                if (!body.isEmpty()) body += QStringLiteral("\n    ");
-                body += b;
-                if (!stamp.isEmpty()) body += QStringLiteral(" _(%1)_").arg(stamp);
-            }
-            if (body.isEmpty()) body = QStringLiteral("_(no messages)_");
-            doc += QStringLiteral("\n[^%1]: %2%3").arg(i + 1)
-                       .arg(resolved ? QStringLiteral("(resolved) ") : QString())
-                       .arg(body);
-        }
     }
 
     if (!doc.endsWith(QLatin1Char('\n'))) doc += QLatin1Char('\n');
@@ -936,11 +879,9 @@ QString contrastOn(const QString& hex) {
     return luma > 140.0 ? QStringLiteral("#111111") : QStringLiteral("#f0f0f0");
 }
 
-// Everything the HTML walk styles, comment ranges included (they render as a
-// tinted span closed by a superscript reference into the comments section).
+// Everything the HTML walk styles, outermost first.
 int htmlRankOf(uint8_t k) {
     switch (k) {
-    case BlockModel::SpanComment:   return 0;   // outermost
     case BlockModel::SpanLink:      return 1;
     case BlockModel::SpanFgColor:   return 2;
     case BlockModel::SpanHighlight: return 3;
@@ -955,13 +896,11 @@ int htmlRankOf(uint8_t k) {
 }
 
 // Text + spans → tagged HTML. Shared by body blocks and table cells
-// (2026-08-22); `m` stays for the comment-thread lookup, which cells
-// never hit (cell spans can't carry comments).
-QString emitInlineHtmlSpans(const BlockModel* m, const QString& text,
-                            const QVariantList& spans, FootnoteCtx& fn) {
+// (2026-08-22).
+QString emitInlineHtmlSpans(const QString& text, const QVariantList& spans) {
     const int len = text.size();
 
-    struct Run { int s, e; uint8_t kind; QString u; int note = 0;
+    struct Run { int s, e; uint8_t kind; QString u;
                  bool operator==(const Run& o) const {
                      return kind == o.kind && u == o.u && s == o.s && e == o.e; } };
     std::vector<Run> runs;
@@ -971,31 +910,14 @@ QString emitInlineHtmlSpans(const BlockModel* m, const QString& text,
         const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
         const int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
         if (s >= e) continue;
-        Run r{s, e, k, sp.value(QStringLiteral("u")).toString(), 0};
-        if (k == BlockModel::SpanComment)
-            r.note = fn.numberFor(r.u);
-        runs.push_back(r);
+        runs.push_back(Run{s, e, k, sp.value(QStringLiteral("u")).toString()});
     }
 
     std::set<int> bounds{0, len};
     for (const Run& r : runs) { bounds.insert(r.s); bounds.insert(r.e); }
 
-    auto openTag = [m](const Run& r) -> QString {
+    auto openTag = [](const Run& r) -> QString {
         switch (r.kind) {
-        case BlockModel::SpanComment: {
-            // Resolved conversations dim in the export too (the in-app rule,
-            // 2026-08-21): accent = a live conversation, grey = settled.
-            bool res = false;
-            for (const QVariant& tv : m->commentThreads()) {
-                const QVariantMap t = tv.toMap();
-                if (t.value(QStringLiteral("id")).toString() == r.u) {
-                    res = t.value(QStringLiteral("resolved")).toBool();
-                    break;
-                }
-            }
-            return res ? QStringLiteral("<span class=\"cmt resolved\">")
-                       : QStringLiteral("<span class=\"cmt\">");
-        }
         case BlockModel::SpanLink:
             return QStringLiteral("<a href=\"%1\">").arg(htmlEscape(r.u));
         case BlockModel::SpanFgColor:
@@ -1021,29 +943,8 @@ QString emitInlineHtmlSpans(const BlockModel* m, const QString& text,
         }
         return {};
     };
-    auto closeTag = [m](const Run& r) -> QString {
+    auto closeTag = [](const Run& r) -> QString {
         switch (r.kind) {
-        case BlockModel::SpanComment: {
-            // The thread rides INSIDE the tinted range as a hover card (the
-            // app's margin card, exported); the section at the end remains
-            // for print and the superscript link.
-            QString card = QStringLiteral("<span class=\"cmtcard\">");
-            for (const QVariant& mv : m->commentMessages(r.u)) {
-                const QVariantMap msg = mv.toMap();
-                QString b = htmlEscape(msg.value(QStringLiteral("body")).toString());
-                b.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
-                const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
-                card += QStringLiteral("<span class=\"cmsg\">%1%2</span>")
-                    .arg(b, created > 0
-                            ? QStringLiteral("<span class=\"stamp\">%1</span>")
-                                  .arg(QDateTime::fromMSecsSinceEpoch(created)
-                                           .toString(QStringLiteral("yyyy-MM-dd hh:mm")))
-                            : QString());
-            }
-            card += QStringLiteral("</span>");
-            return card + QStringLiteral("</span><sup class=\"cref\"><a href=\"#c%1\">%1</a></sup>")
-                .arg(r.note);
-        }
         case BlockModel::SpanLink:      return QStringLiteral("</a>");
         case BlockModel::SpanFgColor:
         case BlockModel::SpanHighlight:
@@ -1089,8 +990,8 @@ QString emitInlineHtmlSpans(const BlockModel* m, const QString& text,
     return out;
 }
 
-QString emitInlineHtml(const BlockModel* m, int row, FootnoteCtx& fn) {
-    return emitInlineHtmlSpans(m, m->contentForRow(row), m->spansForRow(row), fn);
+QString emitInlineHtml(const BlockModel* m, int row) {
+    return emitInlineHtmlSpans(m->contentForRow(row), m->spansForRow(row));
 }
 
 // Mirrors the app's tri-state checkbox exactly (Editor.qml task item):
@@ -1511,19 +1412,6 @@ td,th{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-al
 th{font-weight:700;background:#252525}
 td>p,th>p,td>li,th>li{padding:0}td>p+p,th>p+p{margin-top:12px}
 .chip{padding:1px 8px;font-size:13px;color:var(--bright)}
-.cmt{background:rgba(1,137,241,.13);position:relative}
-.cmt.resolved{background:rgba(140,140,140,.12)}   /* settled conversation */
-/* Hover thread card — the app's margin card, exported. Spans styled as
-   blocks (a real <p> inside a span would trip the parser). */
-.cmt .cmtcard{display:none;position:absolute;left:0;top:1.6em;z-index:30;
-width:300px;background:#202020;border:1px solid var(--border);
-padding:10px 12px;font-size:13px;font-style:normal;font-weight:400;
-line-height:1.5;color:var(--text)}
-.cmt:hover .cmtcard{display:block}
-.cmtcard .cmsg{display:block;margin-bottom:6px}
-.cmtcard .stamp{color:var(--subtle);font-size:11px;margin-left:8px}
-@media print{.cmt .cmtcard{display:none !important}}
-.cref a{font-size:.72em;color:var(--accent)}
 .ref{background:transparent;border:1px solid var(--border)}
 .ref img{display:block;width:100%}
 .ref figcaption{padding:10px 14px}
@@ -1585,11 +1473,6 @@ color:var(--subtle);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:
 .notecard p{margin:6px 0 0;font-size:14px}
 .notecard.addressed{opacity:.55}
 .notecard .ok{color:var(--muted);font-size:12px;margin-left:8px}
-.comments{margin-top:48px;border-top:1px solid var(--divider);padding-top:12px}
-.comments h2{font-size:18px}
-.comments li{margin-bottom:12px;font-size:14px}
-.comments .stamp{color:var(--subtle);font-size:12px;margin-left:8px}
-.comments li.resolved{opacity:.55}
 )CSS";
 
 } // namespace
@@ -1690,7 +1573,6 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     // The export's measure (2.0 stage 1C): the app's page follows its window, so the export wraps
     // at the readable cap and reflows below it — the model's page width is no longer consulted.
     const int pw = kExportMeasure;
-    FootnoteCtx fn;
     QString body;
     int inkLayers = 0;                // stacked ink layers emitted (gates the toggle)
     HtmlCodeEmitter codeEmitter;      // syntax colours, the app's engine + theme
@@ -1824,12 +1706,12 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
         case BlockModel::Heading: {
             const int lvl = std::clamp(m->levelForRow(row), 1, 6);
             body += QStringLiteral("<h%1>%2%3</h%1>\n")
-                        .arg(lvl).arg(bnum(row), emitInlineHtml(m, row, fn));
+                        .arg(lvl).arg(bnum(row), emitInlineHtml(m, row));
             break;
         }
         case BlockModel::Quote:
             body += QStringLiteral("<blockquote>%1<p>%2</p></blockquote>\n")
-                        .arg(bnum(row), emitInlineHtml(m, row, fn));
+                        .arg(bnum(row), emitInlineHtml(m, row));
             break;
         case BlockModel::Code: {
             const QString lang = m->languageForRow(row), lname = m->codeLanguageName(row);
@@ -1858,7 +1740,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 body += QStringLiteral("<%1>\n").arg(open);
                 listStack.push_back(tag);
             }
-            QString li = emitInlineHtml(m, row, fn);
+            QString li = emitInlineHtml(m, row);
             const bool task = type == BlockModel::TaskListItem;
             if (task) li = taskGlyphHtml(m->taskStateForRow(row), m->idForRow(row)) + li;
             // The li box starts at the app's text inset (bullets 22 + 24·depth, numbered 34 + 24·depth;
@@ -1889,7 +1771,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
                 body += taskGlyphHtml(m->tableCellCheck(tableHead, m->tableRowOf(row), lane), m->idForRow(row)) + QLatin1Char('\n');
                 break;
             }
-            const QString inl = emitInlineHtml(m, row, fn);
+            const QString inl = emitInlineHtml(m, row);
             body += QStringLiteral("<p>%1%2</p>\n")
                         .arg(bnum(row), inl.isEmpty() ? QStringLiteral("&nbsp;") : inl);
             break;
@@ -1898,43 +1780,7 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
     }
     closeLanes(-1, count);
     closeListsTo(0);
-    if (fragment && !opt.fragmentComments) return body;
-
-    // Comments section (linked from the superscript refs).
-    if (!fn.threadIds.isEmpty()) {
-        body += QStringLiteral("<section class=\"comments\"><h2>Comments</h2><ol>\n");
-        const QVariantList threads = m->commentThreads();
-        for (int i = 0; i < fn.threadIds.size(); ++i) {
-            const QString id = fn.threadIds.at(i);
-            bool resolved = false;
-            for (const QVariant& tv : threads) {
-                const QVariantMap t = tv.toMap();
-                if (t.value(QStringLiteral("id")).toString() == id) {
-                    resolved = t.value(QStringLiteral("resolved")).toBool();
-                    break;
-                }
-            }
-            body += QStringLiteral("<li id=\"c%1\"%2>")
-                        .arg(i + 1)
-                        .arg(resolved ? QStringLiteral(" class=\"resolved\"") : QString());
-            if (resolved) body += QStringLiteral("<em>(resolved)</em> ");
-            for (const QVariant& mv : m->commentMessages(id)) {
-                const QVariantMap msg = mv.toMap();
-                QString b = htmlEscape(msg.value(QStringLiteral("body")).toString());
-                b.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
-                const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
-                body += QStringLiteral("<p>%1%2</p>")
-                            .arg(b, created > 0
-                                     ? QStringLiteral("<span class=\"stamp\">%1</span>")
-                                           .arg(QDateTime::fromMSecsSinceEpoch(created)
-                                                    .toString(QStringLiteral("yyyy-MM-dd hh:mm")))
-                                     : QString());
-            }
-            body += QStringLiteral("</li>\n");
-        }
-        body += QStringLiteral("</ol></section>\n");
-    }
-    if (fragment) return body;   // (a canvas page: the body + its comments, no page chrome)
+    if (fragment) return body;   // (a canvas page: the body alone, no page chrome)
 
     // The Annotations toggle (the app's eye switch, CSS-only): present only
     // when ink layers were actually emitted. Checked = ink shown, matching
@@ -2006,7 +1852,6 @@ QString Exporter::tableCellsHtml(int head, const QVariantList& rows, const QVari
     if (!model_ || model_->headerCount(head) <= 0) return {};
     const BlockModel* m = model_;
     DataUriSink sink;
-    FootnoteCtx fn;
     const int hc = m->headerCount(head);
     QString out = QStringLiteral("<table>");
     bool inHead = false, inBody = false;
@@ -2045,7 +1890,7 @@ QString Exporter::tableCellsHtml(int head, const QVariantList& rows, const QVari
                     } else if (t == BlockModel::Divider) {
                         parts << QStringLiteral("<hr>");
                     } else {
-                        parts << emitInlineHtml(m, b, fn);
+                        parts << emitInlineHtml(m, b);
                     }
                 }
             }
@@ -2081,8 +1926,7 @@ bool Exporter::exportHtml(const QString& fileUrlOrPath, bool includeVideoNotes, 
 // ============================ DOCX emitter =============================
 //
 // Hand-rolled OOXML via Qt's private QZipWriter — the QCView recipe,
-// grown from a flat note list to the full block walker. Comments become
-// NATIVE Word review comments (commentRangeStart/End + comments.xml).
+// grown from a flat note list to the full block walker.
 // White-paper document: content-faithful, not dark-theme-faithful.
 
 #include <QXmlStreamWriter>
@@ -2098,7 +1942,6 @@ struct DocxCtx {
     Exporter::Options opt;
     QList<QPair<QByteArray, QString>> images;  // bytes + extension, rIdImg<n>
     QStringList links;                          // hyperlink targets, rIdLnk<n>
-    QStringList commentIds;                     // thread ids, w:id = index
     int picId = 1;
     int inkBaked = 0;
     double maxImgPx = 0;                        // > 0 inside a lane: images cap to its width
@@ -2371,60 +2214,26 @@ private:
 };
 
 // Text + spans → OOXML runs. Every run carries its FULL properties, so
-// overlapping spans need no nesting stack — only comment range markers and
-// hyperlink wrappers have element structure. Shared by body blocks and
-// table cells (2026-08-22; cell spans can't carry comments).
+// overlapping spans need no nesting stack — only hyperlink wrappers have
+// element structure. Shared by body blocks and table cells (2026-08-22).
 void docxSpanRuns(DocxCtx& c, QXmlStreamWriter& w, const QString& text,
                   const QVariantList& spans, const DocxRunProps& base) {
     const int len = text.size();
 
     struct Run { int s, e; uint8_t kind; QString u; };
     std::vector<Run> runs;
-    std::map<int, QStringList> cmtStart, cmtEnd;   // pos → thread ids
     for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
         const int s = std::clamp(sp.value(QStringLiteral("s")).toInt(), 0, len);
         const int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
         const QString u = sp.value(QStringLiteral("u")).toString();
-        if (k == BlockModel::SpanComment) {
-            if (e >= s) { cmtStart[s].append(u); cmtEnd[e].append(u); }
-            continue;
-        }
         if (s >= e) continue;
         runs.push_back({s, e, k, u});
     }
 
     std::set<int> bounds{0, len};
     for (const Run& r : runs) { bounds.insert(r.s); bounds.insert(r.e); }
-    for (const auto& kv : cmtStart) bounds.insert(kv.first);
-    for (const auto& kv : cmtEnd) bounds.insert(kv.first);
-
-    auto cmtNum = [&](const QString& id) {
-        int i = c.commentIds.indexOf(id);
-        if (i < 0) { c.commentIds.append(id); i = c.commentIds.size() - 1; }
-        return i;
-    };
-    auto markers = [&](int pos) {
-        if (const auto it = cmtEnd.find(pos); it != cmtEnd.end())
-            for (const QString& id : it->second) {
-                const int n = cmtNum(id);
-                w.writeStartElement(QStringLiteral("w:commentRangeEnd"));
-                w.writeAttribute(QStringLiteral("w:id"), QString::number(n));
-                w.writeEndElement();
-                w.writeStartElement(QStringLiteral("w:r"));
-                w.writeStartElement(QStringLiteral("w:commentReference"));
-                w.writeAttribute(QStringLiteral("w:id"), QString::number(n));
-                w.writeEndElement();
-                w.writeEndElement();
-            }
-        if (const auto it = cmtStart.find(pos); it != cmtStart.end())
-            for (const QString& id : it->second) {
-                w.writeStartElement(QStringLiteral("w:commentRangeStart"));
-                w.writeAttribute(QStringLiteral("w:id"), QString::number(cmtNum(id)));
-                w.writeEndElement();
-            }
-    };
 
     QString openLink;   // active hyperlink target ("" = none)
     auto setLink = [&](const QString& target) {
@@ -2445,7 +2254,6 @@ void docxSpanRuns(DocxCtx& c, QXmlStreamWriter& w, const QString& text,
         const int a = prev, b = *it;
         prev = *it;
         if (a >= b) continue;
-        markers(a);
         DocxRunProps rp = base;
         QString link;
         for (const Run& r : runs) {
@@ -2469,7 +2277,6 @@ void docxSpanRuns(DocxCtx& c, QXmlStreamWriter& w, const QString& text,
         docxTextRun(w, text.mid(a, b - a), rp);
     }
     setLink(QString());
-    markers(len);
 }
 
 void docxRuns(DocxCtx& c, QXmlStreamWriter& w, int row,
@@ -2958,44 +2765,6 @@ QByteArray docxDocumentXml(DocxCtx& c) {
     });
 }
 
-QByteArray docxCommentsXml(const DocxCtx& c) {
-    return docxXml([&](QXmlStreamWriter& w) {
-        w.writeStartElement(QStringLiteral("w:comments"));
-        w.writeAttribute(QStringLiteral("xmlns:w"),
-            QStringLiteral("http://schemas.openxmlformats.org/wordprocessingml/2006/main"));
-        const QString author =
-            qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME", "minNotes"));
-        const QVariantList threads = c.m->commentThreads();
-        for (int i = 0; i < c.commentIds.size(); ++i) {
-            const QString id = c.commentIds.at(i);
-            bool resolved = false;
-            for (const QVariant& tv : threads) {
-                const QVariantMap t = tv.toMap();
-                if (t.value(QStringLiteral("id")).toString() == id) {
-                    resolved = t.value(QStringLiteral("resolved")).toBool();
-                    break;
-                }
-            }
-            w.writeStartElement(QStringLiteral("w:comment"));
-            w.writeAttribute(QStringLiteral("w:id"), QString::number(i));
-            w.writeAttribute(QStringLiteral("w:author"), author);
-            const QVariantList msgs = c.m->commentMessages(id);
-            if (!msgs.isEmpty()) {
-                const qint64 created = msgs.first().toMap()
-                                           .value(QStringLiteral("created")).toLongLong();
-                if (created > 0)
-                    w.writeAttribute(QStringLiteral("w:date"),
-                        QDateTime::fromMSecsSinceEpoch(created).toString(Qt::ISODate));
-            }
-            if (resolved) docxPlainPara(w, QStringLiteral("(resolved)"), {});
-            for (const QVariant& mv : msgs)
-                docxPlainPara(w, mv.toMap().value(QStringLiteral("body")).toString(), {});
-            w.writeEndElement();
-        }
-        w.writeEndElement();
-    });
-}
-
 QByteArray docxNumberingXml() {
     return docxXml([](QXmlStreamWriter& w) {
         w.writeStartElement(QStringLiteral("w:numbering"));
@@ -3074,9 +2843,6 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes, 
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml");
         ovr("/word/numbering.xml",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml");
-        if (!c.commentIds.isEmpty())
-            ovr("/word/comments.xml",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml");
         w.writeEndElement();
     });
 
@@ -3110,8 +2876,6 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes, 
             w.writeEndElement();
         };
         rel(QStringLiteral("rIdNum"), "numbering", QStringLiteral("numbering.xml"));
-        if (!c.commentIds.isEmpty())
-            rel(QStringLiteral("rIdCmt"), "comments", QStringLiteral("comments.xml"));
         for (int i = 0; i < c.images.size(); ++i)
             rel(QStringLiteral("rIdImg%1").arg(i + 1), "image",
                 QStringLiteral("media/image%1.%2").arg(i + 1).arg(c.images.at(i).second));
@@ -3128,8 +2892,6 @@ bool Exporter::exportDocx(const QString& fileUrlOrPath, bool includeVideoNotes, 
     zip.addFile(QStringLiteral("word/document.xml"), documentXml);
     zip.addFile(QStringLiteral("word/_rels/document.xml.rels"), docRels);
     zip.addFile(QStringLiteral("word/numbering.xml"), docxNumberingXml());
-    if (!c.commentIds.isEmpty())
-        zip.addFile(QStringLiteral("word/comments.xml"), docxCommentsXml(c));
     for (int i = 0; i < c.images.size(); ++i)
         zip.addFile(QStringLiteral("word/media/image%1.%2")
                         .arg(i + 1).arg(c.images.at(i).second),
@@ -3166,7 +2928,6 @@ struct PdfCtx {
     Exporter::Options opt;
     QTextDocument* doc = nullptr;
     QTextCursor cur;
-    FootnoteCtx fn;
     int imgSeq = 0;
     qreal contentW = 0, contentH = 0;   // page paint rect, 96-dpi units
     // QTextDocumentLayout scales INLINE OBJECT sizes (images — not text) by
@@ -3266,16 +3027,14 @@ void pdfInsertTaskGlyph(PdfCtx& c, int state) {
 
 // Text + spans as merged char formats — per segment, every covering span's
 // attributes merge (no nesting order to manage, unlike the marker
-// emitters). Comment spans record footnote numbers and drop a superscript
-// [n] at the span end. Shared by body blocks (c.cur) and table cells (the
-// cell's own cursor, 2026-08-22; cell spans can't carry comments).
-void pdfSpanRuns(PdfCtx& c, QTextCursor& cur, const QString& text,
+// emitters). Shared by body blocks (c.cur) and table cells (the cell's own
+// cursor, 2026-08-22).
+void pdfSpanRuns(QTextCursor& cur, const QString& text,
                  const QVariantList& spans, const QTextCharFormat& base) {
     const int len = text.size();
     struct Run { int s, e; uint8_t kind; QString u; };
     std::vector<Run> runs;
     std::set<int> bounds{0, len};
-    std::vector<std::pair<int, int>> notes;   // (end pos, footnote number)
     for (const QVariant& v : spans) {
         const QVariantMap sp = v.toMap();
         const uint8_t k = static_cast<uint8_t>(sp.value(QStringLiteral("k")).toInt());
@@ -3283,21 +3042,9 @@ void pdfSpanRuns(PdfCtx& c, QTextCursor& cur, const QString& text,
         const int e = std::clamp(sp.value(QStringLiteral("e")).toInt(), 0, len);
         if (s >= e) continue;
         const QString u = sp.value(QStringLiteral("u")).toString();
-        if (k == BlockModel::SpanComment) notes.push_back({e, c.fn.numberFor(u)});
         runs.push_back({s, e, k, u});
         bounds.insert(s); bounds.insert(e);
     }
-    std::sort(notes.begin(), notes.end());
-    size_t ni = 0;
-    auto emitNotesAt = [&](int pos) {
-        for (; ni < notes.size() && notes[ni].first == pos; ++ni) {
-            QTextCharFormat nf = base;
-            nf.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
-            nf.setForeground(kPdfAccent);
-            cur.insertText(QStringLiteral("[%1]").arg(notes[ni].second), nf);
-        }
-    };
-    emitNotesAt(0);
     for (auto it = bounds.begin(); std::next(it) != bounds.end(); ++it) {
         const int s = *it, e = *std::next(it);
         QTextCharFormat f = base;
@@ -3325,21 +3072,17 @@ void pdfSpanRuns(PdfCtx& c, QTextCursor& cur, const QString& text,
                 f.setBackground(QColor(r.u));
                 f.setForeground(QColor(contrastOn(r.u)));
                 break;
-            case BlockModel::SpanComment:   // light tint — the print take on .cmt
-                f.setBackground(QColor(0xDC, 0xEA, 0xFB));
-                break;
             case BlockModel::SpanChoice:    // chip = shaded run on paper
                 f.setBackground(chipOnPaper(choiceSpanColor(r.u)));
                 break;
             }
         }
         cur.insertText(text.mid(s, e - s), f);
-        emitNotesAt(e);
     }
 }
 
 void pdfInline(PdfCtx& c, int row, const QTextCharFormat& base) {
-    pdfSpanRuns(c, c.cur, c.m->contentForRow(row), c.m->spansForRow(row), base);
+    pdfSpanRuns(c.cur, c.m->contentForRow(row), c.m->spansForRow(row), base);
 }
 
 // KSyntaxHighlighting → cursor runs, LightTheme (white paper).
@@ -3552,49 +3295,6 @@ void pdfMedia(PdfCtx& c, int row) {
     }
     if (kind == QLatin1String("video") && c.opt.includeVideoNotes)
         pdfVideoNotes(c, path);
-}
-
-void pdfComments(PdfCtx& c) {
-    if (c.fn.threadIds.isEmpty()) return;
-    QTextBlockFormat hb; hb.setTopMargin(20);
-    QTextCharFormat h; h.setFontWeight(QFont::Bold); h.setFontPointSize(14);
-    h.setForeground(kPdfText);
-    c.newBlock(hb, h);
-    c.cur.insertText(QStringLiteral("Comments"), h);
-    const QVariantList threads = c.m->commentThreads();
-    for (int i = 0; i < c.fn.threadIds.size(); ++i) {
-        const QString id = c.fn.threadIds.at(i);
-        bool resolved = false;
-        for (const QVariant& tv : threads) {
-            const QVariantMap t = tv.toMap();
-            if (t.value(QStringLiteral("id")).toString() == id) {
-                resolved = t.value(QStringLiteral("resolved")).toBool();
-                break;
-            }
-        }
-        QTextBlockFormat bf; bf.setTopMargin(6);
-        QTextCharFormat mk; mk.setForeground(kPdfAccent); mk.setFontWeight(QFont::Bold);
-        c.newBlock(bf, mk);
-        c.cur.insertText(QStringLiteral("[%1]").arg(i + 1), mk);
-        if (resolved) {
-            QTextCharFormat rz; rz.setForeground(kPdfMuted); rz.setFontItalic(true);
-            c.cur.insertText(QStringLiteral(" (resolved)"), rz);
-        }
-        for (const QVariant& mv : c.m->commentMessages(id)) {
-            const QVariantMap msg = mv.toMap();
-            QTextBlockFormat mb; mb.setLeftMargin(14); mb.setBottomMargin(1);
-            QTextCharFormat body; body.setForeground(resolved ? kPdfMuted : kPdfText);
-            c.newBlock(mb, body);
-            c.cur.insertText(msg.value(QStringLiteral("body")).toString(), body);
-            const qint64 created = msg.value(QStringLiteral("created")).toLongLong();
-            if (created > 0) {
-                QTextCharFormat st; st.setForeground(kPdfMuted); st.setFontPointSize(8.0);
-                c.cur.insertText(QStringLiteral("  ")
-                    + QDateTime::fromMSecsSinceEpoch(created)
-                          .toString(QStringLiteral("yyyy-MM-dd hh:mm")), st);
-            }
-        }
-    }
 }
 
 void buildPdfDoc(PdfCtx& c) {
@@ -4058,7 +3758,6 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
         c.cur.insertImage(rf);
     }
     buildPdfDoc(c);
-    pdfComments(c);
 
     // Manual page loop (2026-08-20): QTextDocument::print() force-adds its
     // own hardcoded 2cm root-frame margin to a non-paginated document — ON

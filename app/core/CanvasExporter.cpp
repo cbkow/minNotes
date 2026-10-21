@@ -269,7 +269,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
     QString body, store;
     int inkLayers = 0;                                          // stacked ink layers (note thumbs, PDF page ink) → the Annotations toggle
     body += QStringLiteral("<div id=\"mn-canvas\"><div id=\"world\" data-w=\"%1\" data-h=\"%2\" style=\"width:%3;height:%4\">\n").arg(num(W), num(H), px(W), px(H));
-    Exporter::Options popt; popt.includeVideoNotes = opt.includeVideoNotes; popt.ufbLinks = opt.ufbLinks; popt.fragmentComments = true;
+    Exporter::Options popt; popt.includeVideoNotes = opt.includeVideoNotes; popt.ufbLinks = opt.ufbLinks;
     auto pathLines = [&](const QString& path) {
         if (path.isEmpty()) return QString();
         QString s = QStringLiteral("<span class=\"path\">%1</span>").arg(esc(QDir::toNativeSeparators(path)));

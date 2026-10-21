@@ -20,7 +20,7 @@ you dropped it; dropped into a page it lands in that page.
 | Plain text (`.txt`) | Markdown-style prefixes convert on the way in |
 | CSV / TSV | Becomes a table; first row is the header |
 | HTML | Headings, lists, formatting, tables, images |
-| Word (`.docx`) | Round-trips minNotes' own exports, including comments |
+| Word (`.docx`) | Round-trips minNotes' own exports (Word review comments are not imported) |
 | Excel (`.xlsx`) | Sheets become tables — **including images in cells** (both the floating and place-in-cell kinds) |
 | OpenDocument (`.ods` / `.odt`) | Calc sheets → tables; Writer docs with styles, lists, images |
 | Source code | 37 languages → one syntax-highlighted code block |

@@ -118,24 +118,6 @@ QByteArray encode(const Payload& p) {
         blocks.push_back(specToJson(p.specs[i], i < p.ink.size() ? p.ink[i] : QString()));
     root.insert(QStringLiteral("blocks"), blocks);
     if (!p.grid.isEmpty()) root.insert(QStringLiteral("grid"), p.grid);
-    QJsonArray threads;
-    for (const BlockModel::ThreadImport& t : p.threads) {
-        QJsonObject to;
-        to.insert(QStringLiteral("id"), t.id);
-        to.insert(QStringLiteral("created"), double(t.created));
-        to.insert(QStringLiteral("resolved"), t.resolved);
-        QJsonArray msgs;
-        for (const BlockModel::ThreadMessage& m : t.messages) {
-            QJsonObject mo;
-            mo.insert(QStringLiteral("body"), m.body);
-            mo.insert(QStringLiteral("created"), double(m.created));
-            mo.insert(QStringLiteral("modified"), double(m.modified));
-            msgs.push_back(mo);
-        }
-        to.insert(QStringLiteral("messages"), msgs);
-        threads.push_back(to);
-    }
-    root.insert(QStringLiteral("threads"), threads);
     QJsonArray assets;
     for (const Asset& a : p.assets) {
         QJsonObject ao;
@@ -176,20 +158,6 @@ bool decode(const QByteArray& json, Payload* out, QString* error) {
         QString ink;
         p.specs.push_back(specFromJson(v.toObject(), &ink));
         p.ink.push_back(ink);
-    }
-    for (const QJsonValue& v : root.value(QStringLiteral("threads")).toArray()) {
-        const QJsonObject to = v.toObject();
-        BlockModel::ThreadImport t;
-        t.id = to.value(QStringLiteral("id")).toString();
-        t.created = qint64(to.value(QStringLiteral("created")).toDouble());
-        t.resolved = to.value(QStringLiteral("resolved")).toBool();
-        for (const QJsonValue& mv : to.value(QStringLiteral("messages")).toArray()) {
-            const QJsonObject mo = mv.toObject();
-            t.messages.push_back({QString(), mo.value(QStringLiteral("body")).toString(),
-                                  qint64(mo.value(QStringLiteral("created")).toDouble()),
-                                  qint64(mo.value(QStringLiteral("modified")).toDouble())});
-        }
-        if (!t.id.isEmpty()) p.threads.push_back(std::move(t));
     }
     for (const QJsonValue& v : root.value(QStringLiteral("assets")).toArray()) {
         const QJsonObject ao = v.toObject();

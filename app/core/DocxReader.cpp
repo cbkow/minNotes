@@ -60,12 +60,8 @@ struct Ctx {
     MediaStore* store = nullptr;
     QHash<QString, QString> rels;        // rId → target
     QHash<int, bool> numOrdered;         // numId → ordered?
-    QHash<QString, QStringList> comments;// comment id → bodies
     std::vector<BlockModel::BlockSpec>* specs = nullptr;
-    std::vector<DocxReader::CommentOut>* commentsOut = nullptr;
     int lastJc = 0;                      // the last paragraph's w:jc: 0 left, 1 center, 2 right (table cells read it)
-    struct OpenRange { int specIndex; int start; };
-    QHash<QString, OpenRange> openRanges;   // comment id → started at
 };
 
 void parseRels(Ctx& c) {
@@ -121,33 +117,6 @@ void parseNumbering(Ctx& c) {
         c.numOrdered.insert(it.key(), abstractOrdered.value(it.value(), false));
 }
 
-void parseComments(Ctx& c) {
-    const QByteArray bytes =
-        mnpkg::readEntry(c.zipPath, QStringLiteral("word/comments.xml"));
-    if (bytes.isEmpty()) return;
-    QXmlStreamReader xml(bytes);
-    QString id, author, text;
-    while (!xml.atEnd()) {
-        const auto t = xml.readNext();
-        if (t == QXmlStreamReader::StartElement) {
-            if (xml.name() == QLatin1String("comment")) {
-                id = xml.attributes().value(QLatin1String("w:id")).toString();
-                author = xml.attributes().value(QLatin1String("w:author")).toString();
-                text.clear();
-            } else if (xml.name() == QLatin1String("t")) {
-                if (!text.isEmpty()) text += QLatin1Char('\n');
-                text += xml.readElementText();
-            }
-        } else if (t == QXmlStreamReader::EndElement
-                   && xml.name() == QLatin1String("comment") && !id.isEmpty()) {
-            // The app's messages have no author field — prefix it.
-            c.comments[id] << (author.isEmpty() ? text
-                                                : author + QStringLiteral(" — ") + text);
-            id.clear();
-        }
-    }
-}
-
 RunProps parseRunProps(QXmlStreamReader& xml) {
     RunProps rp;
     while (!xml.atEnd()) {
@@ -192,7 +161,7 @@ void addSpanIfRange(std::vector<BlockModel::Span>& spans, int s, int e,
     if (e > s) spans.push_back({s, e, kind, payload});
 }
 
-// One <w:p>. Appends text/media specs to ctx.specs and comment ranges.
+// One <w:p>. Appends text/media specs to ctx.specs.
 // In `cellTextMode`, only the flattened text is produced (tables).
 QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
     QString text;
@@ -202,8 +171,6 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
     int linkStart = -1;
     int glyphTask = -1;        // painted task glyph (wp:docPr "mnTask<state>")
     std::vector<BlockModel::BlockSpec> mediaSpecs;
-    QHash<QString, int> rangeStarts;   // comment id → start offset (this para)
-    std::vector<std::tuple<QString, int, int>> closedRanges;
 
     auto noteRun = [&](const RunProps& rp, int s, int e) {
         if (e <= s) return;
@@ -263,13 +230,6 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
                                     .value(QLatin1String("r:id")).toString();
             linkHref = c.rels.value(rid);
             linkStart = text.size();
-        } else if (n == QLatin1String("commentRangeStart")) {
-            rangeStarts.insert(
-                xml.attributes().value(QLatin1String("w:id")).toString(), text.size());
-        } else if (n == QLatin1String("commentRangeEnd")) {
-            const QString id = xml.attributes().value(QLatin1String("w:id")).toString();
-            const int s = rangeStarts.take(id);
-            closedRanges.emplace_back(id, s, text.size());
         } else if (n == QLatin1String("r")) {
             // One run: props then t/br/tab/drawing children.
             RunProps rp;
@@ -368,7 +328,6 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
                 x.s = std::max(0, x.s - 2);
                 x.e = std::max(0, x.e - 2);
             }
-            for (auto& [id, s, e] : closedRanges) { s = std::max(0, s - 2); e = std::max(0, e - 2); }
         } else if (glyphTask >= 0 && (sp.type == BlockModel::ListItem
                                       || sp.type == BlockModel::Paragraph)) {
             // Painted-checkbox emit (2026-08-22): state rode the docPr name.
@@ -382,41 +341,16 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
                     x.s = std::max(0, x.s - 1);
                     x.e = std::max(0, x.e - 1);
                 }
-                for (auto& [id, s, e] : closedRanges) {
-                    s = std::max(0, s - 1);
-                    e = std::max(0, e - 1);
-                }
             }
         }
-        const int specIndex = static_cast<int>(c.specs->size());
         c.specs->push_back(sp);
-        for (const auto& [id, s, e] : closedRanges) {
-            DocxReader::CommentOut co;
-            co.specIndex = specIndex;
-            co.start = std::min<int>(s, int(sp.text.size()));
-            co.end = std::min<int>(e, int(sp.text.size()));
-            co.messages = c.comments.value(id);
-            if (!co.messages.isEmpty() && co.end > co.start)
-                c.commentsOut->push_back(std::move(co));
-        }
-        // A range that OPENED here but closes in a later paragraph clamps to
-        // this one (capability map).
-        for (auto it = rangeStarts.constBegin(); it != rangeStarts.constEnd(); ++it) {
-            DocxReader::CommentOut co;
-            co.specIndex = specIndex;
-            co.start = std::min<int>(it.value(), int(sp.text.size()));
-            co.end = int(sp.text.size());
-            co.messages = c.comments.value(it.key());
-            if (!co.messages.isEmpty() && co.end > co.start)
-                c.commentsOut->push_back(std::move(co));
-        }
     }
     for (auto& msp : mediaSpecs) c.specs->push_back(std::move(msp));
     return {};
 }
 
 // A w:tbl → a derived table (SR-4 S8e2, R-I4 4b/4c): each cell's paragraphs through
-// parseParagraph in full mode (spans, lists, images, comments) into the cell's own block list;
+// parseParagraph in full mode (spans, lists, images) into the cell's own block list;
 // w:tblHeader rows → the header count (0 when none: the importer promotes the first row);
 // tableSpan → the origin holds the content, covered cells stay empty; a vMerge continuation is an
 // empty cell (3b); a nested w:tbl flattens into one paragraph per inner row, cells joined by " · "
@@ -427,7 +361,6 @@ struct DocxCell {
     int span = 1;
     bool covered = false;       // a vMerge continuation
     int jc = 0;
-    size_t coBegin = 0, coEnd = 0;   // comment anchors made while parsing this cell (local spec indices)
 };
 struct DocxTable {
     std::vector<std::vector<DocxCell>> rows;
@@ -442,7 +375,6 @@ DocxCell readDocxCell(QXmlStreamReader& xml, Ctx& c, int depth) {
     std::vector<BlockModel::BlockSpec>* saved = c.specs;
     std::vector<BlockModel::BlockSpec> local;
     c.specs = &local;
-    cell.coBegin = c.commentsOut ? c.commentsOut->size() : 0;
     while (!xml.atEnd()) {
         const auto t = xml.readNext();
         if (t == QXmlStreamReader::EndElement && xml.name() == QLatin1String("tc")) break;
@@ -478,7 +410,6 @@ DocxCell readDocxCell(QXmlStreamReader& xml, Ctx& c, int depth) {
         }
     }
     c.specs = saved;
-    cell.coEnd = c.commentsOut ? c.commentsOut->size() : 0;
     cell.blocks = std::move(local);
     return cell;
 }
@@ -560,10 +491,6 @@ void parseTable(QXmlStreamReader& xml, Ctx& c) {
                    && blocks.back().mediaJson.isEmpty())
                 blocks.pop_back();                                  // a cell's trailing empty paragraphs
             if (blocks.empty()) { BlockModel::BlockSpec e; e.type = BlockModel::Paragraph; blocks.push_back(std::move(e)); }
-            const int base = static_cast<int>(c.specs->size());
-            if (cell && c.commentsOut)                              // the cell's comment anchors: local → final indices
-                for (size_t k2 = cell->coBegin; k2 < cell->coEnd && k2 < c.commentsOut->size(); ++k2)
-                    (*c.commentsOut)[k2].specIndex += base;
             for (BlockModel::BlockSpec& b : blocks) {
                 b.cell = static_cast<int8_t>(k);
                 c.specs->push_back(std::move(b));
@@ -584,10 +511,8 @@ DocxReader::Result DocxReader::read(const QString& docxPath, MediaStore* store) 
     c.zipPath = docxPath;
     c.store = store;
     c.specs = &out.specs;
-    c.commentsOut = &out.comments;
     parseRels(c);
     parseNumbering(c);
-    parseComments(c);
 
     QXmlStreamReader xml(docXml);
     while (!xml.atEnd()) {
@@ -605,10 +530,6 @@ DocxReader::Result DocxReader::read(const QString& docxPath, MediaStore* store) 
     for (auto& sp : out.specs) {
         if (sp.type == BlockModel::Code && !merged.empty()
             && merged.back().type == BlockModel::Code) {
-            // Comment indices past this point shift — code blocks don't carry
-            // comments in our emitter, so remap conservatively.
-            for (auto& co : out.comments)
-                if (co.specIndex >= static_cast<int>(merged.size())) co.specIndex -= 1;
             merged.back().text += QLatin1Char('\n') + sp.text;
         } else {
             merged.push_back(std::move(sp));

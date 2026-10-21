@@ -18,7 +18,7 @@ Shift, **⌥** is Alt/Option.
 | Save | ⌘S |
 | Save As… | ⌘⇧S |
 | Close file | ⌘W |
-| Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes, comments) | ⌘F |
+| Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes) | ⌘F |
 | Walk the hits · jump · close | ↑ / ↓ · Return · Esc |
 
 ## View
@@ -102,14 +102,6 @@ Shift, **⌥** is Alt/Option.
 | Copy a grip selection as a table | ⌘C |
 | Clear a grip selection's contents | Backspace / Delete |
 | A selected row → the whole table → the caret below it | Esc |
-
-## Comments
-
-| Action | Shortcut |
-|---|---|
-| Submit the comment | Enter |
-| New line in a comment | ⇧Enter |
-| Close the thread card | Esc |
 
 ## Video (the studio, an inline video with the caret, or a selected card)
 

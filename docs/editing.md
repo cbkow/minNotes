@@ -18,7 +18,7 @@ it will land.
 ## The Toolbar
 
 The toolbar changes with where you are. In a page it holds the inline
-actions — comment, paragraph, bold, italic, highlight, code, strikethrough,
+actions — paragraph, bold, italic, highlight, code, strikethrough,
 underline, link, clear formatting — and two flyouts: **Heading** (the icon
 shows the caret's level) and **Insert block** (quote, bullet, numbered and
 task lists, a choice chip, a code block, a table, a divider).

@@ -111,7 +111,7 @@ public:
     void dropBlockInkTable();
     bool hasTable(const QString& name) const;
 
-    // --- Canvas schema (2.0 stage 2). Additive over blocks/comments: `elements` (pages, media,
+    // --- Canvas schema (2.0 stage 2). Additive over blocks: `elements` (pages, media,
     // ink, shapes, connectors), `canvas_meta` (camera, focus page, defaults) and `blocks.page_id`
     // (FK → elements, ON DELETE CASCADE: removing a page element removes its blocks). Idempotent;
     // a file that already has the tables is left alone. Not called by open().
@@ -152,36 +152,14 @@ public:
     void restoreRawBlocks(const std::vector<RawBlock>& rows);
     // Re-home every block without a page (1.0 rows, converter) onto one page element.
     void assignOrphanBlocks(const QString& pageId);
-    // The distinct page ids whose blocks' attrs contain `needle` (a thread id: which pages anchor it).
-    QStringList pagesMentioning(const QString& needle) const;
     // Search (v2.0.1): a PDF's extracted page texts, cached in the file (`pdf_text`, created on first write) keyed by
     // the descriptor's src + the file's mtime + size, so a stale cache is simply missed. Empty = none / stale.
     QStringList pdfTextCache(const QString& key, qint64 mtime, qint64 size) const;
-    // Every comment message in the file as (threadId, body), oldest first (search).
-    QList<QPair<QString, QString>> allCommentMessages() const;
     void setPdfTextCache(const QString& key, qint64 mtime, qint64 size, const QStringList& pages);
 
     QString canvasMeta(const QString& key) const;        // "" when absent
     void setCanvasMeta(const QString& key, const QString& value);
 
-    // --- Comments (v2). Threads are anchored by SpanComment spans (payload =
-    // thread id) in block attrs; these tables hold the bodies. Thread rows
-    // are NOT in the undo stack — span edits are, and orphaned threads
-    // survive until explicitly deleted.
-    struct CommentThread { QString id; qint64 created = 0; bool resolved = false; };
-    struct CommentMessage { QString id, threadId, body; qint64 created = 0, modified = 0; };
-    std::vector<CommentThread> commentThreads() const;
-    std::vector<CommentMessage> commentMessages(const QString& threadId) const;
-    void createThread(const QString& id);
-    // Timestamp-preserving variants (merge migration, 2026-08-20).
-    void createThreadAt(const QString& id, qint64 created, bool resolved);
-    void insertMessageAt(const QString& id, const QString& threadId,
-                         const QString& body, qint64 created, qint64 modified);
-    void deleteThread(const QString& id);                      // cascades messages
-    void setThreadResolved(const QString& id, bool resolved);
-    void insertMessage(const QString& id, const QString& threadId, const QString& body);
-    void updateMessage(const QString& id, const QString& body);
-    void deleteMessage(const QString& id);
 
 private:
     // The shared connection. Closes (and removes the Qt connection) when the last handle drops.

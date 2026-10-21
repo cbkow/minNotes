@@ -76,59 +76,6 @@ ClipboardPaster::Job ClipboardPaster::planPaste(BlockModel* dest, const QString&
     const int destN = dest->rowCountQml();
     job.anchorId = (destN > 0) ? dest->idForRow(std::clamp(row, 0, destN - 1)) : QString();
 
-    // Comment threads. Same document + the anchor is gone (a cut pasted
-    // back) → re-anchor the original thread. Otherwise mint a new thread
-    // carrying the payload's history (or, same-document copy of a still-
-    // anchored thread, the live thread's history — a duplicate conversation,
-    // by ruling). No history anywhere → the anchor is dropped.
-    const bool sameDoc = !job.payload.docPath.isEmpty()
-        && job.payload.docPath == dest->documentPath();
-    QHash<QString, const BlockModel::ThreadImport*> carried;
-    for (const BlockModel::ThreadImport& t : job.payload.threads) carried.insert(t.id, &t);
-    QHash<QString, QVariantMap> live;
-    for (const QVariant& tv : dest->commentThreads()) {
-        const QVariantMap m = tv.toMap();
-        live.insert(m.value(QStringLiteral("id")).toString(), m);
-    }
-    QHash<QString, QString> remap;
-    for (BlockModel::BlockSpec& sp : job.payload.specs) {
-        for (auto it = sp.spans.begin(); it != sp.spans.end();) {
-            if (it->kind != BlockModel::SpanComment) { ++it; continue; }
-            const QString srcId = it->href;
-            const auto rm = remap.constFind(srcId);
-            if (rm != remap.constEnd()) { it->href = rm.value(); ++it; continue; }
-            const bool inLive = live.contains(srcId);
-            if (sameDoc && inLive && dest->threadAnchorRow(srcId) < 0) {
-                remap.insert(srcId, srcId);                 // re-anchor the cut
-                ++it; continue;
-            }
-            const auto cp = carried.constFind(srcId);
-            if (cp == carried.constEnd() && !inLive) { it = sp.spans.erase(it); continue; }
-            BlockModel::ThreadImport ti;
-            ti.id = makeUlid();
-            if (cp != carried.constEnd()) {
-                ti.created = (*cp)->created;
-                ti.resolved = (*cp)->resolved;
-                for (const BlockModel::ThreadMessage& m : (*cp)->messages)
-                    ti.messages.push_back({makeUlid(), m.body, m.created, m.modified});
-            } else {
-                const QVariantMap& lm = live.value(srcId);
-                ti.created = lm.value(QStringLiteral("created")).toLongLong();
-                ti.resolved = lm.value(QStringLiteral("resolved")).toBool();
-                for (const QVariant& mv : dest->commentMessages(srcId)) {
-                    const QVariantMap mm = mv.toMap();
-                    ti.messages.push_back({makeUlid(), mm.value(QStringLiteral("body")).toString(),
-                                           mm.value(QStringLiteral("created")).toLongLong(),
-                                           mm.value(QStringLiteral("modified")).toLongLong()});
-                }
-            }
-            remap.insert(srcId, ti.id);
-            it->href = ti.id;
-            job.threads.push_back(std::move(ti));
-            ++it;
-        }
-    }
-
     // Assets: same sidecar → the srcs are already right (the very same file,
     // no copy, no re-encode). Otherwise plan the copy off the payload's
     // snapshot, re-verified against the filesystem now.
@@ -162,10 +109,6 @@ bool ClipboardPaster::applyPaste(BlockModel* dest, Job& job, int* caretRow, int*
     }
 
     AssetTransfer::rewriteSpecs(job.payload.specs, job.assets.srcRewrite);
-
-    // Thread rows first (never a dangling anchor, even transiently); they sit
-    // outside the undo entry by existing design.
-    for (const BlockModel::ThreadImport& ti : job.threads) dest->importCommentThread(ti);
 
     // ONE undo entry: selection delete + splice + ink. Band in pre-mutation
     // coordinates covers the selection and the target row; the paste's

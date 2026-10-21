@@ -121,9 +121,6 @@ public:
     // answers from memory (the strip re-reads it per keystroke); an unloaded page's title comes
     // from the store once and is cached (it cannot change until the page loads).
     Q_INVOKABLE QString pageTitle(const QString& id) const;
-    // Comment threads anchored in NO page (the Inspector's list on the canvas): the page models'
-    // row shape {id, resolved, created, row: -1, excerpt: ""} so the same cards render them.
-    Q_INVOKABLE QVariantList orphanThreads() const;
     // The page's model, created on first use (owned by the canvas). nullptr for a non-page id.
     Q_INVOKABLE BlockModel* pageModel(const QString& id);
     BlockModel* pageModelIfLoaded(const QString& id) const { return pages_.value(id, nullptr); }
@@ -234,7 +231,7 @@ public:
     Q_INVOKABLE static QString bareRemoteImageSrc(const QString& html);
     // --- Phase A8: another minNotes file dropped on the canvas COPIES its pages (and its other elements) in,
     // keeping their relative layout, translated to (wx, wy); no link (standing ruling). Pages merge through
-    // DocumentMerger (ids re-minted, assets copied, threads replayed); sidecar media of other elements is
+    // DocumentMerger (ids re-minted, assets copied); sidecar media of other elements is
     // re-homed into this file's store. ONE history row. Returns the new element ids (pages first in z order).
     Q_INVOKABLE QStringList copyPagesFrom(const QString& fileUrl, qreal wx, qreal wy);
     Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString());

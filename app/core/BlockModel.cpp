@@ -68,7 +68,7 @@ constexpr double kFileChip = 56.0;   // fixed height of an unsupported-file atta
 constexpr double kPdfNav   = 40.0;   // page-nav strip reserved under an inline PDF page
 
 // Span kinds whose `href` field carries a payload (URL for links, color hex for
-// color/highlight, thread id for comments) — serialized as "u", and pushed
+// color/highlight, JSON for choice chips) — serialized as "u", and pushed
 // whole (never merged by kind).
 static inline bool spanHasPayload(uint8_t k) { return mn::inl::hasPayload(k); }
                                      // (keep in sync with Editor.qml videoTransportH)
@@ -3583,15 +3583,7 @@ void BlockModel::contentSpike() {
         ++structureRevision_;
         emit structureChangedSpike();
     }
-    if (commentsDirty_) { commentsDirty_ = false; ++commentsRevision_; emit commentsChanged(); }
     emit contentChangedSpike();
-}
-
-bool BlockModel::rowHasComment(int row) const {
-    if (row < 0 || row >= static_cast<int>(rows_.size())) return false;
-    for (const Span& sp : rows_[size_t(row)].spans)
-        if (sp.kind == SpanComment && sp.e > sp.s) return true;
-    return false;
 }
 
 void BlockModel::noteTouched(int lo, int hi) {
@@ -3612,7 +3604,6 @@ void BlockModel::noteTouchedTable(int row) {
 void BlockModel::noteTouchedRow(int row) {
     const int n = static_cast<int>(rows_.size());
     if (row < 0 || row >= n) return;
-    noteCommentsIfAny(row);
     int lo = row, hi = row;
     const Row& r = rows_[size_t(row)];
     if (r.cell >= 0) {                               // a lane block: its record paints the cell chrome
@@ -4008,7 +3999,7 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         return n == 1 ? tr("Delete block") : tr("Delete %1 blocks").arg(n);
     }
     bool contentDiff = false, spanDiff = false;
-    bool metaDiff = false, rankDiff = false, commentAdded = false, langDiff = false;
+    bool metaDiff = false, rankDiff = false, langDiff = false;
     bool mediaContent = false;
     int contentRows = 0;
     // Sparse entries carry pairs in `patches`; bands carry them in b/a
@@ -4028,14 +4019,6 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
             || x.taskState != y.taskState || x.depth != y.depth) metaDiff = true;
         if (x.spans.size() != y.spans.size()) {
             spanDiff = true;
-            // A comment span appearing is worth its own name.
-            for (const Span& sp : y.spans)
-                if (sp.kind == SpanComment) {
-                    bool had = false;
-                    for (const Span& sb : x.spans)
-                        if (sb.kind == SpanComment && sb.href == sp.href) { had = true; break; }
-                    if (!had) { commentAdded = true; break; }
-                }
         } else {
             for (size_t j = 0; j < x.spans.size(); ++j)
                 if (x.spans[j].s != y.spans[j].s || x.spans[j].e != y.spans[j].e
@@ -4044,7 +4027,6 @@ QString BlockModel::entryLabel(const UndoEntry& e) const {
         }
     }
     if (langDiff && !contentDiff && !spanDiff && !metaDiff) return tr("Code language");
-    if (commentAdded) return tr("Comment");
     if (spanDiff && !contentDiff && !metaDiff) return tr("Formatting");
     if (rankDiff && !contentDiff && !metaDiff) return tr("Move block");
     if (metaDiff && !contentDiff) return tr("Block type");
@@ -4768,7 +4750,7 @@ qreal BlockModel::mediaDurationMs(int row) const {
 void BlockModel::clearFormat(int row, int start, int end) {
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     std::vector<Span> spans = rows_[row].spans;
-    if (!mn::inl::clearFormat(content_[row], spans, start, end)) return;   // comments + chips survive
+    if (!mn::inl::clearFormat(content_[row], spans, start, end)) return;   // chips survive
     commitRowSpans(row, std::move(spans));
 }
 
@@ -4980,7 +4962,6 @@ int BlockModel::insertChoiceAt(int row, int col) {
 }
 
 void BlockModel::commitRowTextAndSpans(int row, QString&& text, std::vector<Span>&& spans) {
-    noteCommentsIfAny(row);   // the rewrite may drop a comment span
     beginTxn(row, row);
     content_[row] = std::move(text);
     rows_[row].spans = std::move(spans);
@@ -5067,188 +5048,6 @@ QString BlockModel::linkAt(int row, int col) const {
     for (const Span& sp : rowAt(row).spans)
         if (sp.kind == SpanLink && col >= sp.s && col < sp.e) return sp.href;
     return {};
-}
-
-// --- Comments (tier 3 annotations) -------------------------------------
-QString BlockModel::addComment(int row, int start, int end) {
-    if (row < 0 || row >= static_cast<int>(rows_.size()) || !doc_.isOpen()) return {};
-    if (isOpaqueRow(row)) return {};
-    const int len = content_[row].size();
-    start = std::clamp(start, 0, len); end = std::clamp(end, 0, len);
-    if (start >= end) return {};
-    const QString id = makeUlid();
-    doc_.createThread(id);                                 // NOT undoable, by design
-    setPayloadSpan(row, start, end, SpanComment, id);      // undoable txn (the link pattern)
-    ++commentsRevision_;
-    emit commentsChanged();
-    return id;
-}
-
-QString BlockModel::commentAt(int row, int col) const {
-    if (rows_.empty()) return {};
-    for (const Span& sp : rowAt(row).spans)
-        if (sp.kind == SpanComment && col >= sp.s && col < sp.e) return sp.href;
-    return {};
-}
-
-QVariantList BlockModel::commentRangesForRow(int row) const {
-    QVariantList out;
-    if (rows_.empty()) return out;
-    row = clampRow(row);
-    // Resolved-ness rides along (2026-08-21): the page chip dims for a
-    // settled conversation. One thread fetch per call — the callers are
-    // already gated on commentsRevision, and commented rows are few.
-    QHash<QString, bool> resolvedById;
-    if (doc_.isOpen())
-        for (const auto& t : doc_.commentThreads())
-            resolvedById.insert(t.id, t.resolved);
-    for (const Span& sp : rows_[row].spans) {
-        if (sp.kind != SpanComment || sp.e <= sp.s) continue;
-        QVariantMap m;
-        m.insert(QStringLiteral("s"), sp.s);
-        m.insert(QStringLiteral("e"), sp.e);
-        m.insert(QStringLiteral("id"), sp.href);
-        m.insert(QStringLiteral("resolved"), resolvedById.value(sp.href, false));
-        out.append(m);
-    }
-    return out;
-}
-
-QVariantList BlockModel::commentPinRows() const {
-    QVariantList out;
-    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
-        for (const Span& sp : rows_[i].spans)
-            if (sp.kind == SpanComment && sp.e > sp.s) { out.append(i); break; }
-    return out;
-}
-
-int BlockModel::threadAnchorRow(const QString& threadId) const {
-    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
-        for (const Span& sp : rows_[i].spans)
-            if (sp.kind == SpanComment && sp.href == threadId) return i;
-    return -1;
-}
-
-void BlockModel::unlinkThread(const QString& threadId) {
-    // Collect the rows carrying this thread's span(s), then remove them in
-    // one grouped, undoable step (undo re-links the thread).
-    std::vector<int> rows;
-    for (int i = 0; i < static_cast<int>(rows_.size()); ++i)
-        for (const Span& sp : rows_[i].spans)
-            if (sp.kind == SpanComment && sp.href == threadId) { rows.push_back(i); break; }
-    if (rows.empty()) return;
-    beginTxn(rows.front(), rows.back());
-    for (int r : rows) {
-        auto& spans = rows_[r].spans;
-        spans.erase(std::remove_if(spans.begin(), spans.end(),
-                                   [&](const Span& sp) {
-                                       return sp.kind == SpanComment && sp.href == threadId;
-                                   }),
-                    spans.end());
-        persistSpans(r);
-        emit dataChanged(index(r), index(r), {});
-    }
-    contentSpike();
-    endTxn();
-}
-
-QVariantList BlockModel::commentThreads() const {
-    QVariantList out;
-    if (!doc_.isOpen()) return out;
-    // DOCUMENT order, not creation order: anchored threads sort by (row, span
-    // start) — reading top to bottom matches the panel top to bottom — with
-    // orphaned ("Unanchored") threads grouped last, oldest first.
-    struct Entry { QVariantMap m; int row; int col; qint64 created; };
-    std::vector<Entry> entries;
-    const auto threads = doc_.commentThreads();
-    entries.reserve(threads.size());
-    for (const auto& t : threads) {
-        QVariantMap m;
-        m.insert(QStringLiteral("id"), t.id);
-        m.insert(QStringLiteral("resolved"), t.resolved);
-        m.insert(QStringLiteral("created"), t.created);
-        const int row = threadAnchorRow(t.id);
-        // Threads are global to the FILE (2.0): one anchored in ANOTHER page is not this page's
-        // orphan — leave it to that page. A thread anchored nowhere lists on every page.
-        if (row < 0 && canvas_) {
-            bool elsewhere = false;
-            for (const QString& pid : canvas_->db().pagesMentioning(t.id))
-                if (pid != pageId_) { elsewhere = true; break; }
-            if (elsewhere) continue;
-        }
-        m.insert(QStringLiteral("row"), row);              // -1 = orphaned ("Unanchored")
-        QString excerpt;
-        int col = 0;
-        if (row >= 0) {
-            for (const Span& sp : rows_[row].spans)
-                if (sp.kind == SpanComment && sp.href == t.id) {
-                    excerpt = content_[row].mid(sp.s, std::min(60, sp.e - sp.s));
-                    col = sp.s;
-                    break;
-                }
-        }
-        m.insert(QStringLiteral("excerpt"), excerpt);
-        entries.push_back({std::move(m), row, col, t.created});
-    }
-    std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
-        const bool ao = a.row < 0, bo = b.row < 0;
-        if (ao != bo) return bo;                     // anchored before orphaned
-        if (ao) return a.created < b.created;        // orphans: oldest first
-        if (a.row != b.row) return a.row < b.row;
-        return a.col < b.col;
-    });
-    for (auto& e : entries) out.append(std::move(e.m));
-    return out;
-}
-
-QVariantList BlockModel::commentMessages(const QString& threadId) const {
-    QVariantList out;
-    if (!doc_.isOpen()) return out;
-    for (const auto& msg : doc_.commentMessages(threadId)) {
-        QVariantMap m;
-        m.insert(QStringLiteral("id"), msg.id);
-        m.insert(QStringLiteral("body"), msg.body);
-        m.insert(QStringLiteral("created"), msg.created);
-        m.insert(QStringLiteral("modified"), msg.modified);
-        out.append(m);
-    }
-    return out;
-}
-
-void BlockModel::addCommentMessage(const QString& threadId, const QString& body) {
-    if (!doc_.isOpen() || body.isEmpty()) return;
-    doc_.insertMessage(makeUlid(), threadId, body);
-    ++commentsRevision_; emit commentsChanged();
-    markDirty();
-}
-
-void BlockModel::updateCommentMessage(const QString& msgId, const QString& body) {
-    if (!doc_.isOpen()) return;
-    doc_.updateMessage(msgId, body);
-    ++commentsRevision_; emit commentsChanged();
-    markDirty();
-}
-
-void BlockModel::removeCommentMessage(const QString& msgId) {
-    if (!doc_.isOpen()) return;
-    doc_.deleteMessage(msgId);
-    ++commentsRevision_; emit commentsChanged();
-    markDirty();
-}
-
-void BlockModel::setThreadResolved(const QString& threadId, bool resolved) {
-    if (!doc_.isOpen()) return;
-    doc_.setThreadResolved(threadId, resolved);
-    ++commentsRevision_; emit commentsChanged();
-    markDirty();
-}
-
-void BlockModel::deleteThread(const QString& threadId) {
-    if (!doc_.isOpen()) return;
-    unlinkThread(threadId);            // span removal is undoable...
-    doc_.deleteThread(threadId);       // ...the bodies are gone for good
-    ++commentsRevision_; emit commentsChanged();
-    markDirty();
 }
 
 QVariantList BlockModel::linkRangeAt(int row, int col) const {
@@ -5614,7 +5413,6 @@ void BlockModel::setContentWidth(qreal w) {
 }
 
 void BlockModel::setContent(int row, const QString& text) {
-    noteCommentsIfAny(row);   // the rewrite may drop a comment span
     if (row < 0 || row >= static_cast<int>(rows_.size())) return;
     beginTxn(row, row);
     const bool hadSpans = !rows_[row].spans.empty();
@@ -5643,7 +5441,6 @@ void BlockModel::deleteRange(int aRow, int aCol, int fRow, int fCol) {
     // Editing never merges across a lane edge (SR-0 P2): both ends must sit in the
     // same container. Two top-level ends take any split rows between them whole.
     if (rows_[loRow].cell != rows_[hiRow].cell || splitRowOf(loRow) != splitRowOf(hiRow)) return;
-    noteCommentsIfAny(loRow); noteCommentsIfAny(hiRow);   // the merge may drop a comment span
     // Type probe (A0): single-row deletes (Backspace/Delete) record the same splits as insertText.
     const bool probe = mn::perf::enabled() && hiRow == loRow;
     QElapsedTimer pt; qint64 t0 = 0, t1 = 0, t2 = 0, t3 = 0;
@@ -6146,18 +5943,6 @@ BlockModel::BlockSpec BlockModel::specForRow(int row) const {
     sp.text = content_[row];
     sp.spans = r.spans;
     return sp;
-}
-
-// Replay a migrated comment thread with its history intact. NOT undoable,
-// by the same design as createThread — thread rows are doc-local side
-// tables; the SpanComment anchors are what the undo stack tracks.
-void BlockModel::importCommentThread(const ThreadImport& t) {
-    if (!doc_.isOpen() || t.id.isEmpty()) return;
-    doc_.createThreadAt(t.id, t.created, t.resolved);
-    for (const ThreadMessage& m : t.messages)
-        doc_.insertMessageAt(m.id, t.id, m.body, m.created, m.modified);
-    ++commentsRevision_;
-    emit commentsChanged();
 }
 
 std::pair<int,int> BlockModel::insertSpecs(int row, const std::vector<BlockSpec>& specs,
@@ -6784,40 +6569,8 @@ QString BlockModel::clipboardPayloadForRange(int loRow, int loCol, int hiRow, in
     return finishClipboardPayload(*this, p);
 }
 
-// The payload's tail every copy grain shares: comment thread bodies for the specs' anchors and
-// the asset snapshot, then the encoding.
+// The payload's tail every copy grain shares: the asset snapshot, then the encoding.
 QString BlockModel::finishClipboardPayload(const BlockModel& m, BlockClipboard::Payload& p) {
-    // Comment threads: bodies ride with their anchors (SOURCE ids — the
-    // paste remints or re-anchors); ghost anchors are stripped.
-    QHash<QString, QVariantMap> threads;
-    for (const QVariant& tv : m.commentThreads()) {
-        const QVariantMap m = tv.toMap();
-        threads.insert(m.value(QStringLiteral("id")).toString(), m);
-    }
-    QSet<QString> harvested;
-    for (BlockSpec& sp : p.specs) {
-        for (auto it = sp.spans.begin(); it != sp.spans.end();) {
-            if (it->kind != SpanComment) { ++it; continue; }
-            const auto th = threads.constFind(it->href);
-            if (th == threads.constEnd()) { it = sp.spans.erase(it); continue; }
-            if (!harvested.contains(it->href)) {
-                harvested.insert(it->href);
-                ThreadImport ti;
-                ti.id = it->href;
-                ti.created = th->value(QStringLiteral("created")).toLongLong();
-                ti.resolved = th->value(QStringLiteral("resolved")).toBool();
-                for (const QVariant& mv : m.commentMessages(it->href)) {
-                    const QVariantMap mm = mv.toMap();
-                    ti.messages.push_back({QString(), mm.value(QStringLiteral("body")).toString(),
-                                           mm.value(QStringLiteral("created")).toLongLong(),
-                                           mm.value(QStringLiteral("modified")).toLongLong()});
-                }
-                p.threads.push_back(std::move(ti));
-            }
-            ++it;
-        }
-    }
-
     // Asset snapshot: where every collected src's bytes live right now, so a
     // paste after the source tab closes still finds them (no side effects).
     const AssetTransfer::Source src = AssetTransfer::Source::fromStore(m.mediaStore());
@@ -7082,7 +6835,6 @@ void BlockModel::duplicateBlocks(int loRow, int hiRow) {
 
 // === Spell menu: replace a range as ONE transaction ========================
 void BlockModel::replaceText(int row, int s, int e, const QString& text) {
-    noteCommentsIfAny(row);   // the rewrite may drop a comment span
     if (row < 0 || row >= static_cast<int>(rows_.size()) || isOpaqueRow(row)) return;
     // Engine edit on copies first: an empty no-op must not open a txn. A span
     // covering the replaced range keeps it; others shift or clip (InlineText.h).

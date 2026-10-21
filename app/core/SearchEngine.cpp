@@ -113,11 +113,9 @@ QVariantList SearchEngine::search(const QString& queryIn, const QString& current
     // are card-like but they live inline; videos/PDFs get their own sources below).
     QStringList pages = c->pageIds();
     if (!currentPage.isEmpty() && pages.removeAll(currentPage) > 0) pages.prepend(currentPage);
-    std::vector<Document::RawBlock> blockCache;   // every page's rows, for the comment anchors below
     for (const QString& pid : pages) {
         const QString title = c->pageTitle(pid);
         for (const Document::RawBlock& b : db.rawBlocksOfPage(pid)) {
-            blockCache.push_back(b);
             if (b.type == QLatin1String("media") || b.type == QLatin1String("divider")) continue;
             const int at = find(b.content);
             if (at < 0) continue;
@@ -192,17 +190,6 @@ QVariantList SearchEngine::search(const QString& queryIn, const QString& current
         }
     }
 
-    // Comments: the message text; the hit lands on the block anchoring the thread (the first page mentioning it).
-    for (const auto& [tid, body] : db.allCommentMessages()) {
-        const int at = find(body);
-        if (at < 0) continue;
-        QString pageId, blockId;
-        for (const Document::RawBlock& b : blockCache) if (b.attrs.contains(tid)) { pageId = b.pageId; blockId = b.id; break; }
-        if (pageId.isEmpty()) continue;   // an orphan thread (its text is gone)
-        QVariantMap h = hit("comment", c->pageTitle(pageId), snippetFor(body, at, needle.size()));
-        h.insert(QStringLiteral("threadId"), tid); h.insert(QStringLiteral("pageId"), pageId); h.insert(QStringLiteral("blockId"), blockId);
-        out << h;
-    }
     return out;
 }
 

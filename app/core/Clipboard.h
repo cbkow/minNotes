@@ -10,7 +10,7 @@ class QClipboard;
 // x-mnd-blocks, a BlockClipboard JSON payload that every document copy
 // writes ALONGSIDE the plain text (and a table's TSV + <table>, a lone image's
 // raster), so pasting into other apps keeps working while an in-app paste
-// gets the block run back with its types, spans, chips, ink and comments.
+// gets the block run back with its types, spans, chips and ink.
 // Tables copy a cell range as TSV + an HTML <table> (round-trips into
 // Excel/Sheets/Docs); paste reads the TSV plain-text form those apps write.
 class Clipboard : public QObject {

@@ -2,8 +2,6 @@
 // one open document into another at a chosen gap, with full fidelity. The
 // source is never modified; the destination gets the blocks as ONE undo
 // entry. Fidelity holes the plain spec path would leave are closed here:
-//   - comment threads are re-minted in the destination with their history
-//     (created/resolved/message timestamps) intact, span hrefs rewritten;
 //   - assets keep their DISPOSITION: collected (rel `.minnotes/`) sources —
 //     on disk or still inside a source .mnpkg — are copied into the
 //     destination's sidecar (they would dangle otherwise); linked sources
@@ -11,8 +9,8 @@
 //
 // Runs ASYNC in the MediaCollector shape: plan on the GUI thread, chunked
 // byte-weighted copy on a worker (cancel/failure rolls back every file
-// made), then the model apply lands queued on the GUI thread. Thread rows
-// and copied files sit OUTSIDE the undo entry by existing design.
+// made), then the model apply lands queued on the GUI thread. Copied files
+// sit OUTSIDE the undo entry by existing design.
 #pragma once
 
 #include "AssetTransfer.h"
@@ -67,7 +65,6 @@ private:
     // plans with the same rules).
     struct MergeJob {
         std::vector<BlockModel::BlockSpec> specs;
-        std::vector<BlockModel::ThreadImport> threads;   // NEW ids already minted
         AssetTransfer::Plan assets;
         QString anchorId;          // dest block id above the gap ("" = top)
         int gap = 0;
@@ -81,8 +78,7 @@ private:
     static bool copyAssets(const MergeJob& job, std::atomic<bool>* cancelFlag,
                            const std::function<void(qint64, qint64, QString)>& progress,
                            QString* error);
-    // GUI-thread apply: rewrite srcs in the specs, mint threads, splice as
-    // ONE undo entry.
+    // GUI-thread apply: rewrite srcs in the specs, splice as ONE undo entry.
     static bool applyMerge(BlockModel* dest, MergeJob& job,
                            int* destFirst, int* destLast);
     // Cleanup for an apply that never ran (dest closed mid-copy).

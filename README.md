@@ -14,12 +14,12 @@ editor is a virtualized Qt Quick surface that owns the page model directly.
 | Block types | paragraphs, headings, code (syntax-highlighted), quotes, bullet/numbered/task/choice lists, dividers; blocks sit side by side in lanes, and a run of lanes with a header row is a table (typed columns, grips, row filter, kanban board) whose cells hold any blocks |
 | Canvas | pages as drag-sized cards (edit in place at any zoom, or full-window), media elements (video with the full transport, PDF paging, images, audio, folders, files, bookmarks), ink and shapes with live restyling, marquee / multi-select / z order, a second undo log routed by focus, HTML export with pan/zoom + tabs and a PNG poster |
 | Media | inline images, video (decode + scrub/skim audio + annotate), inline PDF, file attachments — inline in pages and as canvas cards |
-| Ink & comments | canvas drawing tools on single keys, on-video annotations (QCView-interop), text-anchored comment threads with in-margin cards |
+| Ink | canvas drawing tools on single keys, on-video annotations (QCView-interop), drawing on PDF pages |
 | Page | responsive width (the window's, or a 640/760/880 measure), one path bar (`File › Canvas › Page › Frame`), a mode-switched toolbar, PT Serif body paragraphs |
 | Import | Markdown, txt, CSV/TSV, HTML, DOCX, Excel `.xlsx`, OpenDocument `.odt`/`.ods`, source-code files, RTF (macOS), Evernote `.enex`, Notion exports |
-| Export | Markdown (+`.assets/`), self-contained fluid HTML (readable-width toggle, checkable tasks, hover comment threads, lightbox), DOCX with native Word review comments, PDF (tables print in column bands like a spreadsheet, header rows repeated), the canvas as HTML (tab strip, video-note filmstrips) or a PNG poster, `.mnpkg` sealed packages (media inside, video streams from the archive) |
+| Export | Markdown (+`.assets/`), self-contained fluid HTML (readable-width toggle, checkable tasks, lightbox), DOCX, PDF (tables print in column bands like a spreadsheet, header rows repeated), the canvas as HTML (tab strip, video-note filmstrips) or a PNG poster, `.mnpkg` sealed packages (media inside, video streams from the archive) |
 | Cross-OS | OS-neutral path mappings for referenced media, multi-file switcher, `.mnd`/`.mnpkg` file associations |
-| Merge | File ▸ Merge File Into This Page, or drop a `.mnd`/`.mnpkg` on the canvas — pages copy in as one undo entry (assets follow, comments keep their history) |
+| Merge | File ▸ Merge File Into This Page, or drop a `.mnd`/`.mnpkg` on the canvas — pages copy in as one undo entry (assets follow) |
 | Updates | Sparkle (macOS) / WinSparkle (Windows), EdDSA-signed appcasts |
 
 ## Requirements

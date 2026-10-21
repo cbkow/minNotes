@@ -14,8 +14,8 @@ label.
 ## Page formats
 
 - **Markdown** — a portable `.md` plus a `.assets/` folder holding every
-  image and video-note thumbnail. Comments become footnotes; code blocks
-  keep their language on the fence.
+  image and video-note thumbnail. Code blocks keep their language on the
+  fence.
 - **HTML** — one self-contained file you can send anywhere. The page is
   the width of the browser window, like the app, with a **Readable width**
   button in the header that caps the measure (the browser remembers the
@@ -23,12 +23,10 @@ label.
   chip, and tables survive exactly; the app's own typefaces travel inside
   the file — PT Serif for paragraphs, the sans for everything else — so
   lines wrap where they wrap in the app. Task boxes are **checkable**, and
-  the browser remembers what you ticked. Comment threads pop up on hover;
-  click any image — table cells and video-note frames included — for the
-  built-in lightbox.
-- **Word (`.docx`)** — comments arrive as **native Word review
-  comments**; code blocks keep their syntax colours and carry their
-  language; paragraphs are set in PT Serif; media ink is baked into the
+  the browser remembers what you ticked. Click any image — table cells
+  and video-note frames included — for the built-in lightbox.
+- **Word (`.docx`)** — code blocks keep their syntax colours and carry
+  their language; paragraphs are set in PT Serif; media ink is baked into the
   images; table cells are set in 7pt with tight margins so more copy fits
   a page.
 - **PDF** — print-ready pages with images fitted, tables printed at

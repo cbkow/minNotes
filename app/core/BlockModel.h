@@ -78,9 +78,6 @@ class BlockModel : public QAbstractListModel {
     // save lifecycle (drives the title-bar status + conflict/failure UI).
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
     Q_PROPERTY(int saveState READ saveState NOTIFY saveStateChanged)
-    // Comments: bumped on any thread/message/resolve change (span-side changes
-    // ride contentRevision as usual).
-    Q_PROPERTY(int commentsRevision READ commentsRevision NOTIFY commentsChanged)
 public:
     // The explicit-save lifecycle for the active document's status indicator.
     enum SaveState { SaveClean = 0, SaveSaving = 1, SaveFailed = 2, SaveConflict = 3 };
@@ -617,25 +614,15 @@ public:
     Q_INVOKABLE int mergeGapFor(int gap) const;
     // Inverse of the spec sink: one row → a BlockSpec that insertSpecs /
     // spliceSpecsAt reproduces faithfully (spans carry ALL payloads —
-    // links, colors, choice chips, comment hrefs). The merge snapshot walker.
+    // links, colors, choice chips). The merge snapshot walker.
     BlockSpec specForRow(int row) const;
-    static QString finishClipboardPayload(const BlockModel& m, BlockClipboard::Payload& p);   // threads + assets + encode
-    // Replay a comment thread from another document with its history intact.
-    // NOT undoable, by the same design as createThread: thread rows are
-    // doc-local side tables; span edits are what the undo stack tracks.
-    struct ThreadMessage { QString id, body; qint64 created = 0, modified = 0; };
-    struct ThreadImport {
-        QString id; qint64 created = 0; bool resolved = false;
-        std::vector<ThreadMessage> messages;
-    };
-    void importCommentThread(const ThreadImport& t);
+    static QString finishClipboardPayload(const BlockModel& m, BlockClipboard::Payload& p);   // assets + encode
 
     // --- Rich clipboard (0.5.0). A selection is a contiguous row range with
     // char columns at its ends; opaque rows (media/table/divider) are always
     // whole. specsForRange slices the end rows (spans clipped + rebased,
     // partially-clipped chips dropped); clipboardPayloadForRange wraps that
-    // as the x-mnd-blocks JSON (comment thread
-    // bodies, asset snapshot); plainTextForRange is the plain flavour every
+    // as the x-mnd-blocks JSON (asset snapshot); plainTextForRange is the plain flavour every
     // copy also writes (text rows sliced, tables as TSV, dividers as "---",
     // media omitted — never descriptor JSON).
     std::vector<BlockSpec> specsForRange(int loRow, int loCol, int hiRow, int hiCol) const;
@@ -694,26 +681,6 @@ public:
     Q_INVOKABLE QVariantList choiceRangesForRow(int row) const;   // [{s,e,color}] overlay feed
     Q_INVOKABLE QString linkAt(int row, int col) const;
 
-    // --- Comments (tier 3 annotations). A SpanComment span (payload = thread
-    // id ULID) anchors a thread to a text range — it rides every span shift,
-    // split, and undo snapshot for free. Thread BODIES live in the
-    // comment_threads/comment_messages tables and are deliberately NOT in the
-    // undo stack (deleting the anchoring text orphans a thread, it never
-    // destroys it; only deleteThread does).
-    int commentsRevision() const { return commentsRevision_; }
-    Q_INVOKABLE QString addComment(int row, int start, int end);   // mints + returns the thread id
-    Q_INVOKABLE QString commentAt(int row, int col) const;         // thread id under the caret, or ""
-    Q_INVOKABLE QVariantList commentRangesForRow(int row) const;   // [{s,e,id}] for tint rects
-    Q_INVOKABLE QVariantList commentPinRows() const;               // distinct rows carrying comment spans
-    Q_INVOKABLE void unlinkThread(const QString& threadId);        // remove its span(s), undoable
-    Q_INVOKABLE int threadAnchorRow(const QString& threadId) const; // -1 = orphaned
-    Q_INVOKABLE QVariantList commentThreads() const;   // [{id,resolved,created,row,excerpt}]
-    Q_INVOKABLE QVariantList commentMessages(const QString& threadId) const;
-    Q_INVOKABLE void addCommentMessage(const QString& threadId, const QString& body);
-    Q_INVOKABLE void updateCommentMessage(const QString& msgId, const QString& body);
-    Q_INVOKABLE void removeCommentMessage(const QString& msgId);
-    Q_INVOKABLE void setThreadResolved(const QString& threadId, bool resolved);
-    Q_INVOKABLE void deleteThread(const QString& threadId);        // bodies + span unlink
     // Text color / highlight over [start,end): an empty color removes that kind.
     // (Both ride the same payload-span path as links.)
     // `coalesce` (non-empty) merges a live run of recolouring (picker drag) into
@@ -904,7 +871,6 @@ signals:
     void countChanged();   // wired (ctor) to rowsInserted/rowsRemoved/modelReset
     void heightSettled(int row, qreal delta);
     void undoStackChanged();
-    void commentsChanged();   // thread/message/resolve change
     void caretRestoreRequested(int row, int col, int anchorRow, int anchorCol);
     // The open document changed (new/open/save-as). QML resets per-doc UI state
     // (active table/PDF/video/sketch tabs, the studio's notes path, the cursor).
@@ -924,12 +890,10 @@ public:
                               SpanUnderline = mn::inl::Underline, SpanLink = mn::inl::Link,
                               SpanFgColor = mn::inl::FgColor,       // href holds the color hex
                               SpanHighlight = mn::inl::Highlight,   // href holds the color hex
-                              SpanComment = mn::inl::Comment,       // href holds the thread id
                               SpanChoice = mn::inl::Choice };
     static uint8_t spanKindFromString(const QString& s) { return mn::inl::kindFromString(s); }
     static const char* spanKindToString(uint8_t k) { return mn::inl::kindToString(k); }
-    // Kinds whose `href` carries a payload (URL / colour hex / thread id /
-    // choice JSON) — serialized as "u", pushed whole, never merged by kind.
+    // Kinds whose `href` carries a payload (URL / colour hex / choice JSON) — serialized as "u", pushed whole, never merged by kind.
     static bool spanHasPayloadKind(uint8_t k) { return mn::inl::hasPayload(k); }
     // Where this doc's sidecar media lives: the package extraction dir for
     // .mnpkg docs, else the original's folder. (Public since the clipboard
@@ -1132,7 +1096,6 @@ private:
     std::unique_ptr<CanvasDocument> ownCanvas_;   // set when THIS model opened the file (the forwarder path)
     QString pageId_;
     std::vector<QMetaObject::Connection> canvasConns_;   // canvas → page signal forwarding
-    int commentsRevision_ = 0;
     void markDirty();                  // → the canvas (idempotent)
     std::vector<Row> rows_;
     std::vector<QString> ids_;       // block id (ULID) per row, parallel to rows_
@@ -1208,16 +1171,11 @@ private:
     void noteTouchedTable(int row);                     // the row's whole table (column geometry moved), else the row
     void noteShift(int from) { noteTouched(from, INT_MAX); }
     void noteStructure() { structureDirty_ = true; }
-    // Comment pins / excerpts key on commentsRevision; a text edit in a commented row (or one that
-    // drops its comment span) must bump it too, now that typing no longer bumps a document counter.
-    void noteCommentsIfAny(int row) { if (rowHasComment(row)) commentsDirty_ = true; }
-    bool rowHasComment(int row) const;
-    bool commentsDirty_ = false;
     int touchedLo_ = INT_MAX, touchedHi_ = -1;
     bool structureDirty_ = false;
     int structureRevision_ = 0;
     // Row attrs → DB without a structure bump (span-only edits: typing with armed marks,
-    // bold/italic/link/comment/colour). persistMeta = the same write + noteStructure().
+    // bold/italic/link/colour). persistMeta = the same write + noteStructure().
     void persistSpans(int row);
     void persistAttrs(int row);                         // the shared write (both of the above)
     // Type probe samples (ns): one per instrumented keystroke; keyed marks from QML.

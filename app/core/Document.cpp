@@ -129,20 +129,9 @@ bool Document::open(const QString& path) {
               page_width INTEGER, format TEXT
           ))");
 
-    // Comments: threads + messages (cascade). The 1.0 `block_ink` table is NOT created any more:
-    // the converter drops it after moving its rows into elements / media descriptors.
-    exec(R"(CREATE TABLE IF NOT EXISTS comment_threads (
-              id       TEXT PRIMARY KEY,
-              created  INTEGER,
-              resolved INTEGER NOT NULL DEFAULT 0
-          ))");
-    exec(R"(CREATE TABLE IF NOT EXISTS comment_messages (
-              id        TEXT PRIMARY KEY,
-              thread_id TEXT NOT NULL REFERENCES comment_threads(id) ON DELETE CASCADE,
-              body      TEXT NOT NULL,
-              created   INTEGER,
-              modified  INTEGER
-          ))");
+    // The 1.0 `block_ink` table is NOT created any more: the converter drops it after moving its rows into
+    // elements / media descriptors. The 2.0 `comment_threads` / `comment_messages` tables (comments were removed
+    // 2026-10-21) are neither created nor read; an older file keeps them as inert leftovers.
 
     // Sentinel: confirm the connection is actually usable. A WAL-stamped DB on a
     // filesystem that can't back the -shm shared memory (smbfs/NFS) opens but then
@@ -643,17 +632,6 @@ void Document::assignOrphanBlocks(const QString& pageId) {
         qWarning() << "Document assignOrphanBlocks failed:" << q.lastError().text();
 }
 
-QStringList Document::pagesMentioning(const QString& needle) const {
-    QStringList out;
-    if (!isOpen() || needle.isEmpty()) return out;
-    QSqlQuery q(db());
-    q.prepare("SELECT DISTINCT page_id FROM blocks WHERE page_id IS NOT NULL AND attrs LIKE ?");
-    q.addBindValue(QLatin1Char('%') + needle + QLatin1Char('%'));
-    if (!q.exec()) return out;
-    while (q.next()) out << q.value(0).toString();
-    return out;
-}
-
 QStringList Document::pdfTextCache(const QString& key, qint64 mtime, qint64 size) const {
     QStringList out;
     if (!isOpen() || !hasTable(QStringLiteral("pdf_text"))) return out;
@@ -677,15 +655,6 @@ void Document::setPdfTextCache(const QString& key, qint64 mtime, qint64 size, co
     }
 }
 
-QList<QPair<QString, QString>> Document::allCommentMessages() const {
-    QList<QPair<QString, QString>> out;
-    if (!isOpen()) return out;
-    QSqlQuery q(db());
-    if (!q.exec("SELECT thread_id, body FROM comment_messages ORDER BY created")) return out;
-    while (q.next()) out.append({q.value(0).toString(), q.value(1).toString()});
-    return out;
-}
-
 QString Document::canvasMeta(const QString& key) const {
     if (!isOpen()) return {};
     QSqlQuery q(db());
@@ -705,136 +674,4 @@ void Document::setCanvasMeta(const QString& key, const QString& value) {
     ++mn::perf::counters().dbWrites;
     if (!q.exec())
         qWarning() << "Document setCanvasMeta failed:" << q.lastError().text();
-}
-
-// ---------------------------------------------------------------------------
-// Comments
-
-std::vector<Document::CommentThread> Document::commentThreads() const {
-    std::vector<CommentThread> out;
-    if (!isOpen()) return out;
-    QSqlQuery q(db());
-    if (!q.exec("SELECT id, created, resolved FROM comment_threads ORDER BY created"))
-        return out;
-    while (q.next()) {
-        CommentThread t;
-        t.id = q.value(0).toString();
-        t.created = q.value(1).toLongLong();
-        t.resolved = q.value(2).toInt() != 0;
-        out.push_back(std::move(t));
-    }
-    return out;
-}
-
-std::vector<Document::CommentMessage> Document::commentMessages(const QString& threadId) const {
-    std::vector<CommentMessage> out;
-    if (!isOpen()) return out;
-    QSqlQuery q(db());
-    q.prepare("SELECT id, body, created, modified FROM comment_messages "
-              "WHERE thread_id = ? ORDER BY created");
-    q.addBindValue(threadId);
-    if (!q.exec()) return out;
-    while (q.next()) {
-        CommentMessage m;
-        m.id = q.value(0).toString();
-        m.threadId = threadId;
-        m.body = q.value(1).toString();
-        m.created = q.value(2).toLongLong();
-        m.modified = q.value(3).toLongLong();
-        out.push_back(std::move(m));
-    }
-    return out;
-}
-
-void Document::createThread(const QString& id) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("INSERT OR IGNORE INTO comment_threads (id, created, resolved) VALUES (?, ?, 0)");
-    q.addBindValue(id);
-    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
-    if (!q.exec())
-        qWarning() << "Document createThread failed:" << q.lastError().text();
-}
-
-// Timestamp-preserving writers (2026-08-20, the tab-merge program): a
-// thread migrated from another document keeps its history honest.
-void Document::createThreadAt(const QString& id, qint64 created, bool resolved) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("INSERT OR IGNORE INTO comment_threads (id, created, resolved) VALUES (?, ?, ?)");
-    q.addBindValue(id);
-    q.addBindValue(created > 0 ? created : QDateTime::currentMSecsSinceEpoch());
-    q.addBindValue(resolved ? 1 : 0);
-    if (!q.exec())
-        qWarning() << "Document createThreadAt failed:" << q.lastError().text();
-}
-
-void Document::insertMessageAt(const QString& id, const QString& threadId,
-                               const QString& body, qint64 created, qint64 modified) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("INSERT INTO comment_messages (id, thread_id, body, created, modified) "
-              "VALUES (?, ?, ?, ?, ?)");
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    q.addBindValue(id);
-    q.addBindValue(threadId);
-    q.addBindValue(body);
-    q.addBindValue(created > 0 ? created : now);
-    q.addBindValue(modified > 0 ? modified : now);
-    if (!q.exec())
-        qWarning() << "Document insertMessageAt failed:" << q.lastError().text();
-}
-
-void Document::deleteThread(const QString& id) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("DELETE FROM comment_threads WHERE id = ?");   // messages cascade (FK)
-    q.addBindValue(id);
-    if (!q.exec())
-        qWarning() << "Document deleteThread failed:" << q.lastError().text();
-}
-
-void Document::setThreadResolved(const QString& id, bool resolved) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("UPDATE comment_threads SET resolved = ? WHERE id = ?");
-    q.addBindValue(resolved ? 1 : 0);
-    q.addBindValue(id);
-    if (!q.exec())
-        qWarning() << "Document setThreadResolved failed:" << q.lastError().text();
-}
-
-void Document::insertMessage(const QString& id, const QString& threadId, const QString& body) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("INSERT INTO comment_messages (id, thread_id, body, created, modified) "
-              "VALUES (?, ?, ?, ?, ?)");
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    q.addBindValue(id);
-    q.addBindValue(threadId);
-    q.addBindValue(body);
-    q.addBindValue(now);
-    q.addBindValue(now);
-    if (!q.exec())
-        qWarning() << "Document insertMessage failed:" << q.lastError().text();
-}
-
-void Document::updateMessage(const QString& id, const QString& body) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("UPDATE comment_messages SET body = ?, modified = ? WHERE id = ?");
-    q.addBindValue(body);
-    q.addBindValue(QDateTime::currentMSecsSinceEpoch());
-    q.addBindValue(id);
-    if (!q.exec())
-        qWarning() << "Document updateMessage failed:" << q.lastError().text();
-}
-
-void Document::deleteMessage(const QString& id) {
-    if (!isOpen()) return;
-    QSqlQuery q(db());
-    q.prepare("DELETE FROM comment_messages WHERE id = ?");
-    q.addBindValue(id);
-    if (!q.exec())
-        qWarning() << "Document deleteMessage failed:" << q.lastError().text();
 }

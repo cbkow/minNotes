@@ -1,5 +1,5 @@
 // Search (v2.0.1): ⌘F opens this strip under the toolbar — one field, the hit count, a close box — and the results
-// drop down beneath it as a list grouped by source (This page · Pages · Cards · PDFs · Video notes · Comments; the
+// drop down beneath it as a list grouped by source (This page · Pages · Cards · PDFs · Video notes; the
 // current page's hits first, the engine's order). Live as you type (a short debounce); ↑ / ↓ walk, Return jumps,
 // Escape closes and hands focus back to the editor — from the field AND from the page or canvas while the bar is open
 // (the Editor's key handler checks `searchItem.open` before its own Escape chain). Scope = the whole file, never other files. House style: 30 px,
@@ -11,7 +11,6 @@ Rectangle {
     id: bar
     required property var editor
     required property var canvasView
-    property var inspector: null
     property bool open: false
     property var hits: []
     property int current: 0
@@ -36,9 +35,9 @@ Rectangle {
     }
     function groupOf(h) {
         if (h.kind === "page") return h.pageId === canvas.focusedPageId() ? qsTr("This page") : qsTr("Pages")
-        return h.kind === "card" ? qsTr("Cards") : h.kind === "pdf" ? qsTr("PDFs") : h.kind === "video" ? qsTr("Video notes") : qsTr("Comments")
+        return h.kind === "card" ? qsTr("Cards") : h.kind === "pdf" ? qsTr("PDFs") : h.kind === "video" ? qsTr("Video notes") : qsTr("Other")
     }
-    // Jumping: a page or comment hit focuses the page and selects the match (the model re-points on the focus
+    // Jumping: a page hit focuses the page and selects the match (the model re-points on the focus
     // change, so the row lookup waits a tick); a card hit returns to the canvas, selects it and brings the camera to
     // it; a PDF hit sets the page on its view key and opens the PDF's frame; a video note sets the player's
     // remembered playhead on its anchor key and opens the studio there.
@@ -68,7 +67,6 @@ Rectangle {
             if (h.kind === "pdf" || h.kind === "video") { editor.setActiveTab(h.blockId); return }
             editor.setActiveTab("")
             editor.selectInRow(r, h.kind === "page" ? h.col : 0, h.kind === "page" ? h.len : 0)
-            if (h.kind === "comment" && inspector) inspector.showComments(h.threadId)
         })
     }
     function jumpCurrent() { if (hits.length > 0) jump(hits[Math.max(0, Math.min(current, hits.length - 1))]) }
@@ -97,7 +95,7 @@ Rectangle {
             Text {
                 anchors.fill: parent; verticalAlignment: Text.AlignVCenter
                 visible: searchField.text.length === 0
-                text: qsTr("Search this file — pages, cards, PDFs, video notes, comments")
+                text: qsTr("Search this file — pages, cards, PDFs, video notes")
                 color: Theme.colors.textSubtle; font: searchField.font; elide: Text.ElideRight
             }
         }

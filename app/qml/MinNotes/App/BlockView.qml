@@ -313,39 +313,6 @@ Item {
         }
     }
 
-    // Comment-anchor tint: a low-alpha accent wash over commented
-    // ranges (the margin pin is the interactive affordance; plain
-    // clicks here keep editing text). One rect per visual line.
-    property var commentRects: {
-        var dep = cell.rev + te.width + te.height + te.lineCount
-                + blockModel.commentsRevision
-        if (!cell.active || cell.isMedia || cell.isRecord) return []
-        var ranges = blockModel.commentRangesForRow(cell.logicalRow)
-        var out = []
-        for (var i = 0; i < ranges.length; ++i) {
-            var rs = editor.selectionRects(te, ranges[i].s, ranges[i].e)
-            for (var j = 0; j < rs.length; ++j)
-                out.push({ r: rs[j], res: ranges[i].resolved === true })
-        }
-        return out
-    }
-    Repeater {
-        model: cell.commentRects.length ? cell.commentRects : 0
-        delegate: Rectangle {
-            required property int index
-            readonly property var cr2: cell.commentRects[index]
-            // Resolved conversations go quiet: a faint grey wash
-            // instead of the semantic accent (2026-08-21).
-            color: cr2.res ? Qt.rgba(0.55, 0.55, 0.55, 0.10)
-                           : Qt.rgba(0.004, 0.537, 0.945, 0.14)
-            z: 0
-            x: te.x + cr2.r.x
-            y: te.y + cr2.r.y
-            width: cr2.r.width
-            height: cr2.r.height
-        }
-    }
-
     // Spell / grammar underlines (0.5.0): dotted tiles under the
     // baseline of every flagged range, the overlay pattern (one
     // QSyntaxHighlighter per document is already taken). The issue

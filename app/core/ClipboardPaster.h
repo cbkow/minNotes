@@ -1,8 +1,7 @@
 // ClipboardPaster — the in-app rich paste engine (0.5.0). Decodes an
 // application/x-mnd-blocks payload and lands it in a document with the
-// tab-merge fidelity rules: comment threads re-minted (or re-anchored when
-// a cut is pasted back into the same document), block ink laid per row
-// (width-migrated), collected assets copied into the destination sidecar
+// tab-merge fidelity rules: block ink laid per row (width-migrated),
+// collected assets copied into the destination sidecar
 // (same-document pastes reuse the very same file — no re-encode).
 //
 // Runs in the DocumentMerger shape: plan on the GUI thread (no side
@@ -84,7 +83,6 @@ signals:
 private:
     struct Job {
         BlockClipboard::Payload payload;
-        std::vector<BlockModel::ThreadImport> threads;   // NEW ids already minted
         AssetTransfer::Plan assets;
         int row = 0, col = 0;
         int selLo = -1, selLoCol = 0, selHi = -1, selHiCol = 0;

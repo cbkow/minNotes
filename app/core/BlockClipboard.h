@@ -1,8 +1,7 @@
 // BlockClipboard — the in-app rich clipboard flavour (0.5.0):
 // `application/x-mnd-blocks`, a JSON serialization of a BlockSpec list
-// plus what a faithful paste needs beyond the specs — per-block margin ink,
-// the bodies of every comment thread the spans anchor, and a copy-time
-// snapshot of where each collected (".minnotes/") asset's bytes live, so a
+// plus what a faithful paste needs beyond the specs — per-block margin ink
+// and a copy-time snapshot of where each collected (".minnotes/") asset's bytes live, so a
 // paste still works after the source tab is closed. Quick-free; the codec
 // links into the headless test target.
 //
@@ -43,7 +42,6 @@ struct Payload {
     QString package;          // the source .mnpkg ("" = none)
     std::vector<BlockModel::BlockSpec> specs;
     std::vector<QString> ink;                       // parallel to specs ("" = none)
-    std::vector<BlockModel::ThreadImport> threads;  // SOURCE ids — remapped at paste
     std::vector<Asset> assets;
     // A cell fragment copied from a table (SR-4 S8c): {cols: [column spec…], header: n} — the
     // specs are records (no header role) + cells; empty for every other copy.
