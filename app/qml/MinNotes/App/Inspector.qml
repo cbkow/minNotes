@@ -96,7 +96,7 @@ Rectangle {
             id: layerPanel
             objectName: "layerPanel"
             visible: panel.layersShown
-            x: 12; width: panel.contentW
+            width: panel.panelW   // full width like the history's scroller, so both scrollbars ride the panel's edge; the rows inset themselves
             anchors.top: layersLabel.bottom
             height: visible ? Math.round((parent.height - 40) * 0.6) : 0
             editor: panel.editor

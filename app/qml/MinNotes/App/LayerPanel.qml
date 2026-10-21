@@ -15,6 +15,7 @@ Item {
                                  canvas.documentOpen ? canvas.layerRows() : [])
     readonly property int rowH: 26
     readonly property int rowGap: 1
+    readonly property int inset: 12   // the rows' side margin (the list itself is full-width so its scrollbar sits where the history's does)
     property bool fromPanel: false   // a selection the panel itself made — no scroll-follow
     // Drag-to-reorder state: the rows being dragged and the gap (0..rows.length) the drop line sits in.
     property var dragIds: []
@@ -81,7 +82,7 @@ Item {
         model: lp.rows
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: MnScrollBar {}
-        delegate: Rectangle {
+        delegate: Item {   // full-width (a vertical ListView owns its delegates' x); the row itself is inset
             id: row
             required property var modelData
             required property int index
@@ -90,12 +91,14 @@ Item {
             readonly property bool partial: selN > 0 && !full
             readonly property bool isMenuRow: true
             width: list.width; height: lp.rowH
+            Rectangle {
+            x: lp.inset; width: parent.width - 2 * lp.inset; height: lp.rowH
             radius: Theme.dim.radiusSmall
-            color: full ? Theme.colors.divider
-                 : partial ? Qt.rgba(Theme.colors.divider.r, Theme.colors.divider.g, Theme.colors.divider.b, 0.5)
+            color: row.full ? Theme.colors.divider
+                 : row.partial ? Qt.rgba(Theme.colors.divider.r, Theme.colors.divider.g, Theme.colors.divider.b, 0.5)
                  : (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Theme.colors.hoverIdle)
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
-            opacity: lp.dragging && lp.dragIds.indexOf(modelData.id) >= 0 ? 0.4 : 1
+            opacity: lp.dragging && lp.dragIds.indexOf(row.modelData.id) >= 0 ? 0.4 : 1
             Icon {
                 id: glyph
                 x: 8; anchors.verticalCenter: parent.verticalCenter
@@ -150,11 +153,12 @@ Item {
                 onCanceled: { lp.dropIndex = -1; lp.dragIds = [] }
                 onDoubleClicked: (mouse) => { if (mouse.button === Qt.LeftButton && lp.view) { lp.selectRow(row.modelData.ids, false); lp.view.liveSelected() } }
             }
+            }
         }
         // The drop line: in the gap the pointer is nearest, above the first row through below the last.
         Rectangle {
             visible: lp.dragging
-            x: 4; width: list.width - 8; height: 2
+            x: lp.inset + 4; width: list.width - 2 * lp.inset - 8; height: 2
             y: lp.dropIndex * (lp.rowH + lp.rowGap) - 1 - list.contentY
             color: Theme.colors.textBright
             radius: 1
@@ -162,7 +166,7 @@ Item {
     }
     Text {   // an empty canvas
         visible: lp.rows.length === 0
-        x: 8; y: 4
+        x: lp.inset; y: 4
         text: qsTr("Nothing on the canvas yet.")
         color: Theme.colors.textMuted
         font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
