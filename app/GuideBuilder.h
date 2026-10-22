@@ -23,7 +23,9 @@ public:
     Q_INVOKABLE QVariantList sections() const;    // after unpack: [{file, title, path, images: [abs…]}] in reading order
     Q_INVOKABLE void cleanup();                   // the scratch folder
 private:
-    QString guideDir() const;
+    QString guideDir() const;   // …/Guide/<version>-<stamp>
+    QString stamp() const;      // a hash over the bundled sections + images + the layout format (cached)
+    mutable QString stamp_;
     std::unique_ptr<QTemporaryDir> scratch_;
     QVariantList sections_;
 };

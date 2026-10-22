@@ -1,4 +1,5 @@
 #include "GuideBuilder.h"
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -21,8 +22,28 @@ const Section kSections[] = {
 GuideBuilder::GuideBuilder(QObject* parent) : QObject(parent) {}
 GuideBuilder::~GuideBuilder() = default;
 
+// The guide folder is named by the app version AND a stamp over what it is built from (the sections' text, the images'
+// bytes, the layout's format number): a docs edit or a layout change in a build of the same version rebuilds the guide
+// instead of reopening a stale one (user 2026-10-22: "do we need to get rid of the old one first?" — no).
+namespace { constexpr int kGuideFormat = 2; }   // 1 = frames + cards (2026-10-22 am) · 2 = pages with inline images
+QString GuideBuilder::stamp() const {
+    if (!stamp_.isEmpty()) return stamp_;
+    QCryptographicHash h(QCryptographicHash::Sha1);
+    h.addData(QByteArrayLiteral("format:") + QByteArray::number(kGuideFormat));
+    for (const Section& s : kSections) {
+        QFile f(QStringLiteral(":/guide/") + QLatin1String(s.file) + QStringLiteral(".md"));
+        if (f.open(QIODevice::ReadOnly)) h.addData(f.readAll());
+    }
+    QDir imgs(QStringLiteral(":/guide/images"));
+    for (const QString& n : imgs.entryList(QDir::Files, QDir::Name)) {
+        QFile f(imgs.filePath(n));
+        if (f.open(QIODevice::ReadOnly)) { h.addData(n.toUtf8()); h.addData(f.readAll()); }
+    }
+    stamp_ = QString::fromLatin1(h.result().toHex().left(10));
+    return stamp_;
+}
 QString GuideBuilder::guideDir() const {
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/Guide/") + QStringLiteral(MINNOTES_APP_VERSION);
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/Guide/") + QStringLiteral(MINNOTES_APP_VERSION) + QLatin1Char('-') + stamp();
 }
 QString GuideBuilder::guidePath() const {
     QDir().mkpath(guideDir());
@@ -32,7 +53,7 @@ bool GuideBuilder::exists() const { return QFileInfo::exists(guideDir() + QStrin
 bool GuideBuilder::remove() { QDir d(guideDir()); return !d.exists() || d.removeRecursively(); }
 void GuideBuilder::sweepOldVersions() {
     QDir root(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/Guide"));
-    const QString keep = QStringLiteral(MINNOTES_APP_VERSION);
+    const QString keep = QStringLiteral(MINNOTES_APP_VERSION) + QLatin1Char('-') + stamp();
     for (const QString& v : root.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
         if (v != keep) QDir(root.filePath(v)).removeRecursively();
 }
