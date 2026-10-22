@@ -1,11 +1,12 @@
 // The TITLE BAR (cleanup 2026-10-21 — the chromeless window, see WindowChrome.h): the one row that is always
 // there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app MENU
 // button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
-// only while a document is open) · on Windows the space Qt's caption buttons occupy. Every stretch of the row no
-// control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — on macOS through our own
-// handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively. The PIN
-// (2026-10-22) sits at the row's right end — on Windows just left of the caption buttons — and is the same toggle
-// as View ▸ Always on Top (⌥⌘T / Ctrl+Alt+T): the window stays above every other app's.
+// only while a document is open) · the PIN · on Windows our own minimize / maximize / close. Every stretch of the
+// row no control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — on macOS through our
+// own handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively. The PIN
+// (2026-10-22) is the same toggle as View ▸ Always on Top (⌥⌘T / Ctrl+Alt+T): the window stays above every other
+// app's. The pin and the three window buttons are ONE component (ChromeButton: 34 × the row, 14-px glyph, grey
+// hover, the close in red) — the user's walk of Qt's own 32 × 48 caption buttons: too large, and the pin mismatched.
 import QtQuick
 import QtQuick.Controls
 
@@ -17,8 +18,7 @@ Rectangle {
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
     readonly property var appMenuButton: menuBtn            // probe
     readonly property var pinButton: pinBtn                 // probe
-    // Windows: Qt's title-bar height (32 at 100 %), so its caption glyphs centre on the row; elsewhere the house row.
-    height: windowChrome.captionButtons && win.SafeArea.margins.top > 0 ? win.SafeArea.margins.top : Theme.dim.tabRowH
+    height: Theme.dim.tabRowH
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
 
@@ -73,30 +73,49 @@ Rectangle {
         sourceComponent: PathBar { editor: bar.editor; color: "transparent" }
     }
 
-    // The pin: Always on Top. Filled glyph + the checked fill while pinned; hover like the hamburger.
-    Rectangle {
-        id: pinBtn
-        anchors.right: buttons.left; anchors.top: parent.top; anchors.rightMargin: windowChrome.captionButtons ? 2 : 6
-        width: 30; height: bar.height - 1
+    // The row's buttons: one look for the pin and the window buttons.
+    component ChromeButton: Rectangle {
+        id: cb
+        property string icon: ""
+        property int iconSize: 14
+        property string iconWeight: "regular"
+        property bool checked: false
+        property bool danger: false      // the close: hover in red
+        property string tip: ""
+        signal clicked()
+        width: 34; height: bar.height - 1
         radius: Theme.dim.radiusSmall
-        readonly property bool pinned: windowChrome.alwaysOnTop
-        color: pinned ? Theme.colors.divider : (pinMA.containsMouse ? Theme.colors.affordanceHover : Theme.colors.affordanceIdleClear)
+        color: checked ? Theme.colors.divider
+             : cbMA.containsMouse ? (danger ? Theme.colors.error : Theme.colors.affordanceHover) : Theme.colors.affordanceIdleClear
         Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
-        Icon { anchors.centerIn: parent; name: "push-pin"; size: 15; weight: pinBtn.pinned ? "fill" : "regular"
-               color: pinBtn.pinned || pinMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-        MouseArea { id: pinMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                    onClicked: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop }
-        FlatToolTip { visible: pinMA.containsMouse
-                      text: pinBtn.pinned ? qsTr("Always on Top — click to unpin") : qsTr("Always on Top")
-                      x: pinBtn.width - width; y: pinBtn.height + 6 }
+        Icon { anchors.centerIn: parent; name: cb.icon; size: cb.iconSize; weight: cb.iconWeight
+               color: cb.checked || cbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+        MouseArea { id: cbMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: cb.clicked() }
+        FlatToolTip { visible: cbMA.containsMouse; text: cb.tip; x: Math.min(0, cb.width - implicitWidth); y: cb.height + 6 }
     }
 
-    // Windows: Qt draws and hit-tests the caption buttons here (three of titleBarHeight × 1.5 each, Qt's rule);
-    // the row just keeps clear of them.
-    Item {
+    // The pin: Always on Top. Filled glyph + the checked fill while pinned.
+    ChromeButton {
+        id: pinBtn
+        anchors.right: buttons.left; anchors.top: parent.top; anchors.rightMargin: windowChrome.customButtons ? 4 : 6
+        icon: "push-pin"; iconWeight: checked ? "fill" : "regular"
+        checked: windowChrome.alwaysOnTop
+        tip: checked ? qsTr("Always on Top — click to unpin") : qsTr("Always on Top")
+        onClicked: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop
+    }
+
+    // Windows: our own minimize / maximize / close at the row's right end.
+    Row {
         id: buttons
-        anchors.right: parent.right; anchors.top: parent.top
-        height: parent.height
-        width: windowChrome.captionButtons ? Math.round(win.SafeArea.margins.top * 4.5) : 0
+        anchors.right: parent.right; anchors.top: parent.top; anchors.rightMargin: visible ? 4 : 0
+        height: bar.height - 1
+        visible: windowChrome.customButtons
+        width: visible ? implicitWidth : 0
+        readonly property var minimizeButton: minBtn   // probe
+        ChromeButton { id: minBtn; icon: "minus"; tip: qsTr("Minimize"); onClicked: win.showMinimized() }
+        ChromeButton { icon: win.visibility === Window.Maximized ? "browsers" : "square"; iconSize: 13
+                       tip: win.visibility === Window.Maximized ? qsTr("Restore") : qsTr("Maximize")
+                       onClicked: windowChrome.toggleZoom(win) }
+        ChromeButton { icon: "x"; danger: true; tip: qsTr("Close"); onClicked: win.close() }
     }
 }
