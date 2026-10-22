@@ -96,6 +96,7 @@ Item {
             readonly property bool full: selN > 0 && selN === modelData.ids.length
             readonly property bool partial: selN > 0 && !full
             readonly property bool isMenuRow: true
+            readonly property var caretItem: caret   // probe
             // A frame row carries its tint (2026-10-22): a bar at the left, the glyph and the name in it, the selected fill; its children a thread
             readonly property bool isFrame: modelData.kind === "frame"
             readonly property bool tinted: isFrame && !!modelData.tint
@@ -110,15 +111,6 @@ Item {
                  : row.isFrame ? (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Qt.rgba(row.tint.r, row.tint.g, row.tint.b, row.tinted ? 0.10 : 0.22))
                  : (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Theme.colors.hoverIdle)
             Rectangle { visible: row.isFrame; x: 0; y: 4; width: 3; height: parent.height - 8; radius: 1; color: row.tint }
-            Item {   // the frame's disclosure caret: click to collapse / expand its children
-                id: caret
-                visible: row.isFrame
-                x: 5; width: 14; height: parent.height
-                Icon { anchors.centerIn: parent; name: lp.isCollapsed(row.modelData.id) ? "caret-right" : "caret-down"; size: 10
-                       color: caretMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-                MouseArea { id: caretMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: { lp.toggleCollapsed(row.modelData.id); if (lp.editor) lp.editor.forceActiveFocus() } }
-            }
             Rectangle { visible: (row.modelData.depth || 0) > 0; x: -9; y: -lp.rowGap; width: 2; height: parent.height + lp.rowGap; color: row.childTint; opacity: 0.8 }
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             opacity: lp.dragging && lp.dragIds.indexOf(row.modelData.id) >= 0 ? 0.4 : 1
@@ -176,6 +168,15 @@ Item {
                 }
                 onCanceled: { lp.dropIndex = -1; lp.dragIds = [] }
                 onDoubleClicked: (mouse) => { if (mouse.button === Qt.LeftButton && lp.view) { lp.selectRow(row.modelData.ids, false); lp.view.liveSelected() } }
+            }
+            Item {   // the frame's disclosure caret: click to collapse / expand its children
+                id: caret
+                visible: row.isFrame
+                x: lp.inset + 14 * (row.modelData.depth || 0) + 5; width: 14; height: parent.height   // a SIBLING of the row's MouseArea, declared after it, so the press is the caret's (user 2026-10-22)
+                Icon { anchors.centerIn: parent; name: lp.isCollapsed(row.modelData.id) ? "caret-right" : "caret-down"; size: 10
+                       color: caretMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+                MouseArea { id: caretMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: { lp.toggleCollapsed(row.modelData.id); if (lp.editor) lp.editor.forceActiveFocus() } }
             }
             }
         }

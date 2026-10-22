@@ -5673,15 +5673,20 @@ FocusScope {
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
                     g.grab(cvw, g.tempDir() + "/mn-canvas-probe-frames-plain.png")   // the untinted look (the dark grey)
                     {   // the Layers panel collapses a frame's children
+                        root.inspector.open = true
                         const lp = root.inspector.layers, n0 = lp.rows.length
-                        lp.toggleCollapsed(probeFrameId)
-                        check(lp.isCollapsed(probeFrameId) && lp.rows.length === n0 - 2 && lp.rows.some(function(r) { return r.id === probeFrameId }), "collapsing a frame in Layers hides its two children's rows (" + lp.rows.length + " of " + n0 + ")")
+                        let fi = -1; for (let i = 0; i < lp.rows.length; ++i) if (lp.rows[i].id === probeFrameId) fi = i
+                        lp.list.positionViewAtIndex(Math.max(0, fi), ListView.Contain)
+                        const rowItem = fi >= 0 ? lp.list.itemAtIndex(fi) : null, car = rowItem ? rowItem.caretItem : null
+                        check(!!car && car.visible, "the frame's row carries a caret (row " + fi + ")")
+                        if (car) { const cp = car.mapToItem(root.inspector, car.width / 2, car.height / 2); g.click(root.inspector, cp.x, cp.y) }
+                        check(lp.isCollapsed(probeFrameId) && lp.rows.length === n0 - 2 && lp.rows.some(function(r) { return r.id === probeFrameId }), "a CLICK on the caret collapses the frame: its two children's rows hide (" + lp.rows.length + " of " + n0 + ")")
                         lp.toggleCollapsed(probeFrameId)
                         check(!lp.isCollapsed(probeFrameId) && lp.rows.length === n0, "…and expanding brings them back")
                     }
                     canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     const fs = root.inspector.frameSection
-                    check(root.inspector.open ? (!!fs && fs.visible && fs.frameId === probeFrameId && fs.titleFieldItem.text === "Shots") : true, "the Inspector's Frame section shows the selected frame's title (open " + root.inspector.open + ")")
+                    check(!!fs && fs.visible && fs.frameId === probeFrameId && fs.titleFieldItem.text === "Shots", "the Inspector's Frame section shows the selected frame's title (open " + root.inspector.open + ", visible " + (fs ? fs.visible : "?") + ", frame " + (fs ? (fs.frameId === probeFrameId) : "?") + ", title '" + (fs ? fs.titleFieldItem.text : "?") + "', selected '" + cvw.selectedId + "', height " + (fs ? fs.height : "?") + ")")
                     const path = g.tempDir() + "/mn-canvas-probe-frames.png"
                     g.grab(cvw, path); console.log("CANVAS-PROBE frames grab", path)
                     cvw.clearSelection()

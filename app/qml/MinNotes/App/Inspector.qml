@@ -81,6 +81,7 @@ Rectangle {
     // in a page, the history alone. ONE scroller over the history list.
     readonly property bool layersShown: !!editor && editor.canvasShown
     readonly property alias layers: layerPanel
+    readonly property alias frameSection: framePanel   // probe
     Item {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
@@ -91,7 +92,6 @@ Rectangle {
             editor: panel.editor
             visible: panel.layersShown && frameId !== ""
         }
-        readonly property var frameSection: framePanel   // probe
         Text {
             id: layersLabel
             visible: panel.layersShown
