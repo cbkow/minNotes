@@ -49,7 +49,7 @@ Drop a file, or paste, and it lands where you drop it:
 |---|---|
 | Video | A poster card. Select it for the transport bar; `K` plays and pauses it in place, `Space` previews it in the lightbox. Click it again to focus it (the canvas zooms to it); double-click, the open glyph or **Open in studio** opens the review studio. |
 | PDF | Its first page. Select it to page with the strip under the card or `PageUp` / `PageDown`; double-click or open it full-window to read, zoom and draw on its pages. |
-| Image | The image, at its size up to 480 wide. Drag a corner to resize. `Space` or a double-click shows it in the **lightbox** — the picture alone over the window; `Space` or `Esc` closes it, `←` / `→` step to the next image or video. |
+| Image | The image, at its size up to 480 wide. Drag a corner to resize. `Space` or a double-click shows it in the **lightbox** — the picture alone over the window, with ‹ › to step through the file's media, a PDF's pager, a video's transport and ×; `Space` or `Esc` closes it. Videos, PDFs and audio preview there too. |
 | Photoshop, HEIC, RAW, HDR | A rendered preview card with a format pill; the original stays in place and the card's Reveal / Open / Copy path point at it. **Refresh preview** re-renders after the source changes. (Illustrator files are PDFs; EXR stays a file card.) |
 | Audio | A card with its duration and a play button. |
 | Folder | A card with the folder's name, count, first entries and full path. **Spread files here** lays its files out as cards. A QCView stream folder offers **Open as stream**. |

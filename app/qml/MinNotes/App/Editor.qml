@@ -1266,14 +1266,14 @@ FocusScope {
     // The LIGHTBOX's page target: the caret parked on an image / video block (Space opens it there).
     readonly property int focusedMediaRow: (blockModel.structureRevision,
         cursor.focusRow >= 0 && !cursor.hasSel && activeFrameId === "" && blockModel.typeForRow(cursor.focusRow) === 3
-            && ["image", "video"].indexOf(blockModel.mediaKind(cursor.focusRow)) >= 0 ? cursor.focusRow : -1)
+            && ["image", "video", "pdf"].indexOf(blockModel.mediaKind(cursor.focusRow)) >= 0 ? cursor.focusRow : -1)
     // Space's lightbox: the selected canvas image / video, or the page block with the caret. (The canvas's Space is a
     // TAP — press and release without the hand having panned; held, it stays the hand.)
     function lightboxSelected() {
         if (!lightbox) return false
         if (activeCanvas && !cardHosted && canvasItem) {
             const id = canvasItem.selectedId
-            if (id === "" || canvas.elementKind(id) !== "media" || ["image", "video"].indexOf(canvas.mediaElementKind(id)) < 0) return false
+            if (id === "" || canvas.elementKind(id) !== "media" || ["image", "video", "pdf", "audio"].indexOf(canvas.mediaElementKind(id)) < 0) return false
             lightbox.showElement(id); return true
         }
         if (focusedMediaRow >= 0) { lightbox.showRow(focusedMediaRow); return true }
@@ -4340,6 +4340,7 @@ FocusScope {
                 const it = root.canvasItem.pageItemFor(elId)
                 check(!!root.lightbox && root.lightbox.showing && root.lightbox.kind === "video" && root.lightbox.elementId === elId && videoDec.isPlaying && !!it && !!it.mediaItem && !it.mediaItem.surfaceVisible,
                       "Space opens the LIGHTBOX on the selected element; it keeps playing; the element's surface yields (showing " + (root.lightbox ? root.lightbox.showing : "?") + ", id " + (root.lightbox ? root.lightbox.elementId : "?") + ")")
+                check(!!root.lightbox.transport && root.lightbox.transport.live && root.lightbox.transport.playButton.iconName === "pause", "…with the compact transport under the picture, live, showing pause")
                 gestures.key(root, Qt.Key_Escape); ++step; return
             }
             if (step === 137) {
@@ -5590,7 +5591,19 @@ FocusScope {
                 const cvw = canvasItem, nv = win.nav   // a new navigation truncates the forward tail, a file switch is a step, a closed file's entries drop
                 if (step % 2 === 1) { ++step; return }   // the odd ticks let the deferred commits land
                 if (step === 0) {
-                    root.setActiveTab("canvas"); cvw.clearSelection()
+                    root.setActiveTab("canvas")
+                    {   // the PDF lightbox (2026-10-22): Space on a selected PDF element, its pager pages the shared page map, × closes
+                        const lbx = root.lightbox
+                        cvw.select(pdfElId); root.lightboxSelected()
+                        check(lbx.showing && lbx.kind === "pdf" && lbx.elementId === pdfElId && lbx.pdfPages > 1 && lbx.pdfPage === cvw.pdfPageOfSelected, "a selected PDF element opens in the lightbox (kind " + lbx.kind + ", pages " + lbx.pdfPages + ", page " + lbx.pdfPage + ")")
+                        const p0 = lbx.pdfPage
+                        lbx.pdfStep(1)
+                        check(lbx.pdfPage === p0 + 1 && cvw.pdfPageOfSelected === p0 + 1 && lbx.siblingCount >= 2 && lbx.prevButton.can, "…PageDown pages it (the canvas's pager follows: " + cvw.pdfPageOfSelected + "); ‹ › enabled with " + lbx.siblingCount + " media items")
+                        lbx.pdfStep(-1)
+                        lbx.closeButton.clicked()
+                        check(!lbx.showing && cvw.selectedId === pdfElId, "× closes it, the element stays selected")
+                    }
+                    cvw.clearSelection()
                     probeN0 = nv.entries.length; probeTabs0 = docs.count; probeIdx0 = docs.activeIndex
                     check(nv.index === nv.entries.length - 1 && !nv.canForward, "on the canvas the history's index is at its end (" + nv.index + " of " + nv.entries.length + ")")
                     cvw.select(livePage); cvw.openSelected()
