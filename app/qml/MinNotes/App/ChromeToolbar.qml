@@ -27,7 +27,7 @@ Rectangle {
     readonly property var inspectorToggle: sideBtn
     readonly property var pinButton: pinBtn            // probe
     // "page" | "canvas" | "frame": a live card is a page (its keys and clicks belong to the editor).
-    readonly property string mode: !editor ? "" : (editor.cardHosted || canvasToolsSeg.view === "") ? "page" : canvasToolsSeg.view
+    readonly property string mode: !editor ? "" : canvasToolsSeg.view === "" ? "page" : canvasToolsSeg.view
     readonly property bool pageMode: mode === "page"
 
     function act(fn) { fn(); if (editor) editor.forceActiveFocus() }   // run an action, then the keys go back to the editor
@@ -131,7 +131,7 @@ Rectangle {
         CanvasToolbar {
             id: canvasToolsSeg
             editor: bar.editor
-            visible: view !== "" && !(editor && editor.cardHosted)
+            visible: view !== ""
             height: bar.height
         }
         Row {

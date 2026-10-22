@@ -1573,7 +1573,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                             // The validated passive-surface editor (model owns the cursor; blocks
                             // are passive; overlay-drawn caret/selection). Ported from spike Arm C.
                             Editor { id: editorInner; anchors.fill: parent
-                                     homeSlot: editorSlot; canvasItem: canvasView
+                                     canvasItem: canvasView
                                      inspector: inspectorPanel
                                      tabsItem: titleBar.pathBar
                                      toolbarItem: chromeRows.item ? chromeRows.item.toolbar.canvasTools : null

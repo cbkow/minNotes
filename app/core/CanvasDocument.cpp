@@ -308,7 +308,6 @@ bool CanvasDocument::newCanvas() {
     db_.commit();
     clearUndo();                     // a fresh canvas has no history
     focusPage_ = page;
-    livePage_.clear();
     dirty_ = false;                  // a pristine empty file isn't dirty (still untitled)
     setSaveState(SaveClean);
     ++pagesRevision_;
@@ -325,7 +324,6 @@ bool CanvasDocument::open(const QString& pathOrUrl) {
     // The persisted focus page (if it still exists); otherwise the canvas is in view.
     const QString f = db_.canvasMeta(QStringLiteral("focusPage"));
     focusPage_ = pageIds().contains(f) ? f : QString();
-    livePage_.clear();
     {
         const QJsonObject c = QJsonDocument::fromJson(db_.canvasMeta(QStringLiteral("camera")).toUtf8()).object();
         camValid_ = c.contains(QStringLiteral("z")) && c.value(QStringLiteral("z")).toDouble() > 0;
@@ -364,7 +362,6 @@ void CanvasDocument::closeCanvas() {
     readOnly_ = false;
     report_ = mn::ConversionReport{};
     focusPage_.clear();
-    if (!livePage_.isEmpty()) { livePage_.clear(); emit liveChanged(); }
     camValid_ = false;
     emit cameraChanged();
     dirty_ = false;
@@ -634,18 +631,9 @@ void CanvasDocument::forgetPageModel(BlockModel* m) {
 
 void CanvasDocument::setFocusPage(const QString& id) {
     const QString next = (id.isEmpty() || pageIds().contains(id)) ? id : focusPage_;
-    const bool wasLive = !livePage_.isEmpty();
-    if (next == focusPage_ && !wasLive) return;
-    livePage_.clear();                // a drill-in (or a return to the canvas) ends liveness
+    if (next == focusPage_) return;
     focusPage_ = next;
-    if (wasLive) emit liveChanged();
     emit focusChanged();
-}
-void CanvasDocument::setLivePage(const QString& id) {
-    const QString next = (id.isEmpty() || pageIds().contains(id)) ? id : livePage_;
-    if (next == livePage_) return;
-    livePage_ = next;
-    emit liveChanged();
 }
 
 QString CanvasDocument::focusedPageId() const {
@@ -653,7 +641,7 @@ QString CanvasDocument::focusedPageId() const {
 }
 
 BlockModel* CanvasDocument::focusedModel() {
-    return pageModel(livePage_.isEmpty() ? focusedPageId() : livePage_);
+    return pageModel(focusedPageId());
 }
 
 void CanvasDocument::refreshMedia() {
@@ -1917,7 +1905,6 @@ void CanvasDocument::applySnap(const QString& id, const ElementSnap& s) {
     }
     db_.commit();
     reloadElements();
-    if (!livePage_.isEmpty() && !indexById_.contains(livePage_)) { livePage_.clear(); emit liveChanged(); }
     if (!focusPage_.isEmpty() && !indexById_.contains(focusPage_)) {
         focusPage_ = firstPageId();
         emit focusChanged();

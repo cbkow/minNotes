@@ -316,7 +316,7 @@ Rectangle {
         ++opens
         if (id === "") return
         const k = canvas.elementKind(id)
-        if (k === "page") { if (canvas.livePage !== "") endLive(false); canvas.focusPage = id; return }   // (a double-click on a selected page may have armed / started the live form first)
+        if (k === "page") { canvas.focusPage = id; return }
         if (k === "shape") { editText(id); return }
         if (k === "group") { editFrameTitle(id); return }   // a frame's open rung = rename in place
         if (k !== "media") return
@@ -425,13 +425,10 @@ Rectangle {
     onHeightChanged: if (visible && !cam.userCam) fit()
     onVisibleChanged: { if (!visible) { endLive(false); clearSelection() } else if (!cam.userCam) fit() }
 
-    // --- LIVE CARD (2.0 SPIKE S4): a page edited IN PLACE. canvas.livePage makes the page the active model
-    // (the manager re-points blockModel); the ONE Editor is reparented from its home slot into the card's
-    // liveSlot and back. Keys and wheel go to it; the middle button and ⌥-drag pan the canvas; Escape ends it. ---
-    // ONE state machine for "live" (phase C3): a page (canvas.livePage, the Editor in its card) or a text chip
-    // (textEditor.editingId). `liveId` names whichever is live; `liveKind` which kind.
-    readonly property string liveId: canvas.livePage !== "" ? canvas.livePage : textEditor.editingId
-    readonly property string liveKind: canvas.livePage !== "" ? "page" : textEditor.editingId !== "" ? "shape" : ""
+    // "Live" = a text chip in its inline editor (textEditor.editingId). (The live PAGE CARD — the Editor reparented into a
+    // card — was removed 2026-10-22 with the in-place forms; pages open full-window.)
+    readonly property string liveId: textEditor.editingId
+    readonly property string liveKind: textEditor.editingId !== "" ? "shape" : ""
     // The camera animates to a readable zoom and brings the element into view before a page goes live (phase C2):
     // 180 ms, OutCubic, then `camThen` runs. Skipped when already ≥ 100 % and in view.
     property real camT: 0
@@ -472,28 +469,13 @@ Rectangle {
         const py = r.height * z <= availH ? pad + ch.top + (availH - r.height * z) / 2 - r.y * z : pad + ch.top - r.y * z
         return { x: px, y: py, z: z, moves: Math.abs(px - cam.panX) > 0.5 || Math.abs(py - cam.panY) > 0.5 || Math.abs(z - cam.zoom) > 0.001 }
     }
-    // Liveness can end from ANY path — a drill-in, a page removal, a close, a tab switch — not only Escape
-    // here: whenever it does, the Editor goes home (a stranded Editor inside a card swallows every gesture).
-    onLiveIdChanged: if (liveId === "" && editor && editor.homeSlot && editor.parent !== editor.homeSlot) {
-        editor.parent = editor.homeSlot
-        editor.commitPageWidth(0)
-        editor.forceActiveFocus()
-    }
     function pageItemFor(id) {
         for (let i = 0; i < elementRepeater.count; ++i) { const it = elementRepeater.itemAt(i); if (it && it.elementId === id) return it }
         return null
     }
-    function endLive(selectIt) {
+    function endLive(selectIt) {   // commits a chip's inline edit (and stops a camera animation)
         if (camAnim.running) { camAnim.stop(); camThen = null }
         if (textEditor.editingId !== "") textEditor.commit()
-        const id = canvas.livePage
-        if (id === "") { if (selectIt && selectedId === "") {} return }
-        editor.flushScrollSave()
-        if (editor.homeSlot) editor.parent = editor.homeSlot
-        canvas.livePage = ""
-        editor.commitPageWidth(0)
-        if (selectIt) select(id)
-        editor.forceActiveFocus()
     }
     function liveSelected() {   // RETURN: a media element → the lightbox; anything else → its open form (the in-place forms are gone — 2026-10-22)
         const id = selectedId
@@ -501,9 +483,6 @@ Rectangle {
         if (canvas.elementKind(id) === "media" && editor && editor.lightbox && ["image", "video", "pdf", "audio"].indexOf(canvas.mediaElementKind(id)) >= 0) { editor.lightbox.showElement(id); return }
         openSelected()
     }
-    // Below a readable zoom a live card is unusable: the camera dropping under 75 % ends liveness (phase C8).
-    Connections { target: cam; function onCameraChanged() { if (canvas.livePage !== "" && !camAnim.running && cam.zoom < 0.75) cv.endLive(true) } }
-    Connections { target: cv.editor; function onLiveExitRequested() { cv.endLive(true) } }
     Connections {   // elements come, go or grow under a camera the user hasn't taken yet
         target: canvas
         function onGeometryChanged() { if (cv.visible && !cam.userCam) cv.fit() }

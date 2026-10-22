@@ -111,13 +111,6 @@ CanvasDocument* DocumentManager::makeCanvas() {
         syncActiveModel();
         if (lastActive_ != before) emit activeFocusChanged();
     });
-    // A LIVE page (a card edited in place) is the active model too — the same re-point (2.0 SPIKE S2).
-    connect(c, &CanvasDocument::liveChanged, this, [this, c] {
-        if (activeCanvas() != c) return;
-        const BlockModel* before = lastActive_;
-        syncActiveModel();
-        if (lastActive_ != before) emit activeFocusChanged();
-    });
     // Pages added / removed can move the focused model too (a removed focus page falls back).
     connect(c, &CanvasDocument::pagesChanged, this, [this, c] { if (activeCanvas() == c) syncActiveModel(); });
     return c;

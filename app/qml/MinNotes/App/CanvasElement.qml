@@ -60,10 +60,9 @@ Item {
     // drag reads the SCENE delta (zoom-free) and rebases the world rect; a run coalesces into one
     // undo entry ("move:<id>"). Space held = hand: the view's pan handler takes over.
     readonly property var view: parent && parent.parent ? parent.parent : null   // canvasLayer → CanvasView
-    readonly property bool isLive: view && view.liveKind === "page" && view.liveId === elementId   // the Editor owns the pointer inside a live card
     TapHandler {
         id: tap
-        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.view.frameTool && !el.isLive
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.view.frameTool
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
         // (the signals' first argument is an eventPoint, which carries no modifiers — the handler's point does)
@@ -86,7 +85,7 @@ Item {
         }
     }
     DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row
-        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.view.frameTool && !el.isLive
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.view.frameTool
         acceptedButtons: Qt.LeftButton
         target: null
         onActiveChanged: {
