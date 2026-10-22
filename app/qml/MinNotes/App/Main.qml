@@ -853,6 +853,17 @@ ApplicationWindow {
         Component.onCompleted: {
 spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ignoredRulesJson = ignoredRules }
     }
+    // View preferences (2026-10-22): the pin. WindowChrome holds the live value and applies it to the OS window
+    // (restored here before the window is attached; attach applies it then).
+    Settings {
+        id: viewPrefs; category: "view"
+        property bool alwaysOnTop: false
+        Component.onCompleted: windowChrome.alwaysOnTop = alwaysOnTop
+    }
+    Connections {
+        target: windowChrome
+        function onAlwaysOnTopChanged() { viewPrefs.alwaysOnTop = windowChrome.alwaysOnTop }
+    }
     Connections {
         target: spell
         function onCheckSpellingChanged() { spellPrefs.checkSpelling = spell.checkSpelling }
@@ -1226,6 +1237,11 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Platform.MenuItem { text: qsTr("Measure 880"); role: Platform.MenuItem.NoRole; checkable: true; group: measureGroup
                                     enabled: blockModel.documentOpen; checked: !!win.activeEditor && win.activeEditor.measureCap === 880
                                     onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(880) } }
+                Platform.MenuSeparator {}
+                // The pin (2026-10-22): the window above every other app's — the title bar's pin button is the same toggle.
+                Platform.MenuItem { text: qsTr("Always on Top"); role: Platform.MenuItem.NoRole; checkable: true; shortcut: "Ctrl+Alt+T"
+                                    checked: windowChrome.alwaysOnTop
+                                    onTriggered: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop }
             }
             Platform.Menu {
                 title: qsTr("Help")
@@ -1351,6 +1367,10 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("Measure 880"); checkable: true; ActionGroup.group: measureActions; enabled: blockModel.documentOpen
                          checked: !!win.activeEditor && win.activeEditor.measureCap === 880
                          onTriggered: { var ed = win._editor(); if (ed) ed.setMeasureCap(880) } }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("Always on Top"); checkable: true; shortcut: "Ctrl+Alt+T"
+                         checked: windowChrome.alwaysOnTop
+                         onToggled: { if (windowChrome.alwaysOnTop !== checked) windowChrome.alwaysOnTop = checked } }
             }
             ThemedMenu {
                 title: qsTr("Help")

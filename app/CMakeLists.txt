@@ -630,6 +630,8 @@ if(APPLE)
     # the dev .app resolves the @rpath/lib*.dylib install_names from the build
     # tree; the DMG step copies them into Frameworks/).
 elseif(WIN32)
+    target_sources(minnotesapp PRIVATE WindowChrome_win.cpp)   # the pin (SetWindowPos HWND_TOPMOST)
+    target_link_libraries(minnotesapp PRIVATE user32)
     # Windows hwaccel: FFmpeg decodes ProRes into Vulkan VkImages (shared
     # VkDevice), a Vulkan compute YUV->RGB pass composites into a D3D11-shared
     # texture that Qt's QRhi (D3D11) samples. Plus the WASAPI audio device.

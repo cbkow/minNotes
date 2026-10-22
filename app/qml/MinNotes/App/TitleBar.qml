@@ -3,7 +3,9 @@
 // button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
 // only while a document is open) · on Windows the space Qt's caption buttons occupy. Every stretch of the row no
 // control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — on macOS through our own
-// handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively.
+// handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively. The PIN
+// (2026-10-22) sits at the row's right end — on Windows just left of the caption buttons — and is the same toggle
+// as View ▸ Always on Top (⌥⌘T / Ctrl+Alt+T): the window stays above every other app's.
 import QtQuick
 import QtQuick.Controls
 
@@ -14,6 +16,7 @@ Rectangle {
     readonly property bool lightsInset: windowChrome.nativeLights && win.visibility !== Window.FullScreen
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
     readonly property var appMenuButton: menuBtn            // probe
+    readonly property var pinButton: pinBtn                 // probe
     // Windows: Qt's title-bar height (32 at 100 %), so its caption glyphs centre on the row; elsewhere the house row.
     height: windowChrome.captionButtons && win.SafeArea.margins.top > 0 ? win.SafeArea.margins.top : Theme.dim.tabRowH
     color: Theme.colors.bgStrip
@@ -64,10 +67,28 @@ Rectangle {
     // The path: • File ▾ › Canvas › Page ▾ › Frame ▾ — the document's hierarchy, while there is one.
     Loader {
         id: pathLoader
-        anchors.left: left.right; anchors.right: buttons.left; anchors.top: parent.top
+        anchors.left: left.right; anchors.right: pinBtn.left; anchors.top: parent.top
         height: bar.height
         active: blockModel.documentOpen
         sourceComponent: PathBar { editor: bar.editor; color: "transparent" }
+    }
+
+    // The pin: Always on Top. Filled glyph + the checked fill while pinned; hover like the hamburger.
+    Rectangle {
+        id: pinBtn
+        anchors.right: buttons.left; anchors.top: parent.top; anchors.rightMargin: windowChrome.captionButtons ? 2 : 6
+        width: 30; height: bar.height - 1
+        radius: Theme.dim.radiusSmall
+        readonly property bool pinned: windowChrome.alwaysOnTop
+        color: pinned ? Theme.colors.divider : (pinMA.containsMouse ? Theme.colors.affordanceHover : Theme.colors.affordanceIdleClear)
+        Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
+        Icon { anchors.centerIn: parent; name: "push-pin"; size: 15; weight: pinBtn.pinned ? "fill" : "regular"
+               color: pinBtn.pinned || pinMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+        MouseArea { id: pinMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop }
+        FlatToolTip { visible: pinMA.containsMouse
+                      text: pinBtn.pinned ? qsTr("Always on Top — click to unpin") : qsTr("Always on Top")
+                      x: pinBtn.width - width; y: pinBtn.height + 6 }
     }
 
     // Windows: Qt draws and hit-tests the caption buttons here (three of titleBarHeight × 1.5 each, Qt's rule);

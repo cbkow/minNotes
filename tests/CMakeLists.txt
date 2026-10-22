@@ -47,6 +47,10 @@ qt_add_executable(mn_regression_test
     $<$<PLATFORM_ID:Darwin>:${CMAKE_SOURCE_DIR}/app/core/PreviewRender_mac.mm>
     # PathMap.cpp defines mn::toRef / mn::resolveRef, referenced by BlockModel
     # and MediaStore (cross-OS path mapping). Link it or the test fails LNK2019.
+    # The chromeless window's pin ([147]: the toggle state; the OS halves are linked but never reached — no window).
+    ${CMAKE_SOURCE_DIR}/app/WindowChrome.cpp
+    $<$<PLATFORM_ID:Darwin>:${CMAKE_SOURCE_DIR}/app/WindowChrome_mac.mm>
+    $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/app/WindowChrome_win.cpp>
     ${CMAKE_SOURCE_DIR}/app/core/PathMap.cpp
     ${CMAKE_SOURCE_DIR}/app/core/FileLinks.cpp
     # Exporter + the QCView-port annotation layer it walks (sidecar notes IO,
@@ -89,6 +93,7 @@ target_compile_definitions(mn_regression_test PRIVATE
     MN_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     MN_SPELL_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")
 target_link_libraries(mn_regression_test PRIVATE
+    $<$<PLATFORM_ID:Windows>:user32>   # WindowChrome_win.cpp (SetWindowPos)
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Sql Qt6::Network Qt6::Qml Qt6::Quick
     Qt6::Pdf                       # MediaStore.cpp probes PDFs via QPdfDocument
     KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks

@@ -18,6 +18,7 @@
 #include "../notes/annotation_io.h"
 #include "SearchEngine.h"
 #include "Importer.h"
+#include "../app/WindowChrome.h"
 #include "TableGrid.h"
 #include <QTextDocument>
 #include "../app/notes/sketch_text.h"
@@ -6705,6 +6706,29 @@ static void testLayerRows() {
     CHECK((!c.stepLayers({page}, -1)), "the bottom element can't step back");
 }
 
+// [147] The pin (2026-10-22): WindowChrome::alwaysOnTop is the one state behind View ▸ Always on Top and the title
+// bar's pin button — remembered before a window exists (the Settings restore runs first), one change signal per
+// flip, none for a repeat, and attach-less (the offscreen / no-window case) it never touches the OS.
+static void testAlwaysOnTop() {
+    qInfo("[147] always on top: the pin's state round-trips, signals once per flip, holds before attach");
+    WindowChrome chrome(true);
+    int changes = 0;
+    QObject::connect(&chrome, &WindowChrome::alwaysOnTopChanged, [&changes] { ++changes; });
+    CHECK(!chrome.alwaysOnTop(), "off by default");
+    chrome.setAlwaysOnTop(true);
+    CHECK(chrome.alwaysOnTop() && changes == 1, "on → one signal");
+    chrome.setAlwaysOnTop(true);
+    CHECK(changes == 1, "a repeat is silent");
+    chrome.setAlwaysOnTop(false);
+    CHECK(!chrome.alwaysOnTop() && changes == 2, "off → the second signal");
+    chrome.setAlwaysOnTop(true);
+    chrome.attach(nullptr);
+    CHECK(chrome.alwaysOnTop() && changes == 3, "the value survives a null attach (nothing to apply to yet)");
+    WindowChrome framed(false);   // --native-frame: the pin still works on a framed window
+    framed.setAlwaysOnTop(true);
+    CHECK(framed.alwaysOnTop(), "independent of the chromeless flag");
+}
+
 // [146] The preview pass (2026-10-21, tier 1): a Radiance HDR renders through stb_image (clamp + 2.2) into a stored
 // preview PNG and lands as an IMAGE block / element whose descriptor carries the original under `preview`; reveal /
 // open / Copy path act on the original; a changed source reads stale; Refresh re-renders as one undo step; an .ai is a PDF.
@@ -9424,6 +9448,7 @@ int main(int argc, char** argv) {
     testSearch();
     testLayerRows();
     testPreviewPass();
+    testAlwaysOnTop();
     testPdfPageDrawing();
     testPageFixedHeight();
     testInkStyle();

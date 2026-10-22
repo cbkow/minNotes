@@ -32,6 +32,11 @@ Frame**.
 - The **frame** segment appears while a table, video or PDF is open
   full-window; click it to switch between them.
 
+At the right end of the strip sits the **pin**. Click it (or **View ▸ Always
+on Top**, `⌥⌘T`) and the window stays above every other app's — handy for
+notes beside a player or a browser. Click again to unpin; the choice is
+remembered.
+
 Click any segment to the left to go up a level. **New** (`⌘N`), **Open**
 (`⌘O`), **Save As** (`⌘⇧S`), and **Close** (`⌘W`) live in the File menu.
 Closing a file or quitting with unsaved work prompts you first.

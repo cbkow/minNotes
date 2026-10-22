@@ -24,14 +24,37 @@ bool WindowChrome::nativeLights() const {
 }
 
 void WindowChrome::attach(QWindow* w) {
-    if (!chromeless_ || !w) return;
+    if (!w) return;
     // The probes / --shot run on the offscreen platform: its window ids are not native handles.
     const QString platform = QGuiApplication::platformName();
+    window_ = w;
+    nativeWindow_ = platform == QLatin1String("cocoa") || platform == QLatin1String("windows");
 #ifdef Q_OS_MACOS
-    if (platform == QLatin1String("cocoa")) attachMac(w);
+    if (chromeless_ && nativeWindow_) attachMac(w);
 #endif
-    // Windows: nothing here — the window flags (Main.qml) create the caption-less window.
-    Q_UNUSED(platform);
+    // Windows: nothing for the chrome — the window flags (Main.qml) create the caption-less window.
+    applyAlwaysOnTop();
+    // Leaving fullscreen / a maximize round trip: the platform plugin may have re-applied the level from the
+    // window flags (which never carry the pin) — assert ours again.
+    connect(w, &QWindow::windowStateChanged, this, [this] { applyAlwaysOnTop(); });
+}
+
+void WindowChrome::setAlwaysOnTop(bool on) {
+    if (alwaysOnTop_ == on) return;
+    alwaysOnTop_ = on;
+    applyAlwaysOnTop();
+    emit alwaysOnTopChanged();
+}
+
+void WindowChrome::applyAlwaysOnTop() {
+    if (!window_ || !nativeWindow_) return;
+    if (window_->visibility() == QWindow::FullScreen) return;   // the OS owns the space; the pin returns with the window
+#ifdef Q_OS_MACOS
+    setLevelMac(window_, alwaysOnTop_);
+#endif
+#ifdef Q_OS_WIN
+    setTopmostWin(window_, alwaysOnTop_);
+#endif
 }
 
 bool WindowChrome::startMove(QWindow* w) {

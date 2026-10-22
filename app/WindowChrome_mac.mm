@@ -15,3 +15,12 @@ void WindowChrome::attachMac(QWindow* w) {
     win.titleVisibility = NSWindowTitleHidden;
     win.titlebarAppearsTransparent = YES;
 }
+
+// The pin: NSFloatingWindowLevel keeps the window over every normal-level window of every app (and under
+// panels / the menu bar); NSNormalWindowLevel is the plain state. In place — the NSWindow is never re-created.
+void WindowChrome::setLevelMac(QWindow* w, bool floating) {
+    NSView* view = reinterpret_cast<NSView*>(w->winId());
+    NSWindow* win = view ? view.window : nil;
+    if (!win) return;
+    win.level = floating ? NSFloatingWindowLevel : NSNormalWindowLevel;
+}

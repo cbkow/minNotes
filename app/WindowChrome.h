@@ -9,6 +9,11 @@
 //             Qt draws + hit-tests the Windows 11 caption buttons at the row's right end (snap layouts included);
 //             the row only reserves their width. Unclaimed presses on the row are a native caption drag.
 //   Resizing is the OS's on both. `--native-frame` (dev) keeps the native frame; the row then draws no buttons.
+// ALWAYS ON TOP (2026-10-22, the pin): `alwaysOnTop` keeps the window above every other app's — View ▸ Always on
+// Top (⌥⌘T / Ctrl+Alt+T) and the title bar's pin button, remembered in Settings (Main.qml's viewPrefs). It is
+// applied at the OS level, never through Qt.WindowStaysOnTopHint: on macOS changing a QWindow's flags re-creates
+// the NSWindow (the hidden title + the lights' inset would need re-attaching) — NSWindow.level does it in place;
+// on Windows SetWindowPos(HWND_TOPMOST) alone, no SWP_FRAMECHANGED, so the expanded client area stays as created.
 #pragma once
 
 #include <QObject>
@@ -20,19 +25,34 @@ class WindowChrome : public QObject {
     Q_PROPERTY(bool chromeless READ chromeless CONSTANT)
     Q_PROPERTY(bool captionButtons READ captionButtons CONSTANT) // Qt draws Windows' caption buttons over the row's right end
     Q_PROPERTY(bool nativeLights READ nativeLights CONSTANT)     // the native traffic lights sit in the row (macOS)
+    Q_PROPERTY(bool alwaysOnTop READ alwaysOnTop WRITE setAlwaysOnTop NOTIFY alwaysOnTopChanged) // the pin
 public:
     explicit WindowChrome(bool chromeless, QObject* parent = nullptr);
     bool chromeless() const { return chromeless_; }
     bool captionButtons() const;
     bool nativeLights() const;
-    // Apply what the flags can't once the window exists (macOS: hide the title text). No-op elsewhere.
+    // Apply what the flags can't once the window exists (macOS: hide the title text) and the remembered pin.
     void attach(QWindow* w);
+    bool alwaysOnTop() const { return alwaysOnTop_; }
+    // Remembered before the window exists (Settings restore), applied on attach; re-asserted after the OS
+    // restores the window from fullscreen / a state change in case the platform plugin reset the level.
+    void setAlwaysOnTop(bool on);
     // The row's gestures: a drag past the threshold hands the press to the OS move loop; a double-click zooms.
     Q_INVOKABLE bool startMove(QWindow* w);
     Q_INVOKABLE void toggleZoom(QWindow* w);
+signals:
+    void alwaysOnTopChanged();
 private:
     bool chromeless_ = true;
+    bool alwaysOnTop_ = false;
+    QWindow* window_ = nullptr;
+    bool nativeWindow_ = false;   // the attached window is a real cocoa / win32 one (not the offscreen platform's)
+    void applyAlwaysOnTop();
 #ifdef Q_OS_MACOS
     void attachMac(QWindow* w);   // WindowChrome_mac.mm: hide the title text AppKit still draws
+    void setLevelMac(QWindow* w, bool floating);
+#endif
+#ifdef Q_OS_WIN
+    void setTopmostWin(QWindow* w, bool on);   // WindowChrome_win.cpp
 #endif
 };
