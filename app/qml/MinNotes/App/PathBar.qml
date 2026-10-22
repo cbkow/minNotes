@@ -41,14 +41,14 @@ Rectangle {
     function _pageLabel(id, index) {
         var t = canvas.pageTitle(id)
         if (t === "" || t === "Untitled page") return "Page " + (index + 1)
-        return t.length > 22 ? t.substring(0, 20) + "…" : t
+        return t   // full; the segment's Text elides to its cap, the menus size to their widest label (2026-10-22)
     }
     function _pageIndexOf(id) { const a = canvas.pageIds; for (let i = 0; i < a.length; ++i) if (a[i] === id) return i; return 0 }
     function _mediaLabel(id, fallback) {
         var r = blockModel.rowForId(id)
         var n = r >= 0 ? blockModel.mediaFileName(r) : ""
         if (n === "") return fallback
-        return n.length > 22 ? n.substring(0, 9) + "…" + n.substring(n.length - 12) : n
+        return n
     }
     function _fullName(id, fallback) {
         var r = blockModel.rowForId(id)
@@ -58,7 +58,7 @@ Rectangle {
     function _elementLabel(id) {
         var n = canvas.mediaElementName(id)
         if (n === "") return canvas.mediaElementKind(id) === "video" ? "Video" : "PDF"
-        return n.length > 22 ? n.substring(0, 9) + "…" + n.substring(n.length - 12) : n
+        return n
     }
     function _frameLabel(id) {   // a frame: "Table N" by position, a PDF / video by file name
         const t = ids.indexOf(id)
@@ -75,6 +75,8 @@ Rectangle {
         property bool dropdown: false       // shows a caret; a click opens its menu
         property bool current: false        // the last segment: bright
         property bool menuOpen: false
+        property real cap: 260              // the label's width cap; the FILE segment's is what the bar has left (2026-10-22)
+        readonly property real naturalWidth: Math.min(segText.implicitWidth, cap) + (dropdown ? 15 : 0) + 20
         signal clicked()
         height: bar.height - 1
         width: segRow.implicitWidth + 20
@@ -85,12 +87,13 @@ Rectangle {
             id: segRow
             anchors.centerIn: parent; spacing: 5
             Text {
+                id: segText
                 anchors.verticalCenter: parent.verticalCenter
                 text: seg.label
                 color: seg.current || segMA.containsMouse || seg.menuOpen ? Theme.colors.textBright : Theme.colors.textMuted
                 font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome   // the chrome tier (13): no reduced size any more
                 elide: Text.ElideMiddle
-                width: Math.min(implicitWidth, 220)
+                width: Math.min(implicitWidth, seg.cap)
             }
             Icon { visible: seg.dropdown; anchors.verticalCenter: parent.verticalCenter; name: "caret-down"; size: 10
                    color: seg.current || segMA.containsMouse ? Theme.colors.textMuted : Theme.colors.textSubtle }
@@ -114,6 +117,10 @@ Rectangle {
             label: (blockModel.untitled || blockModel.dirty ? "• " : "") + blockModel.documentName
             dropdown: true
             current: false
+            // The bar's width minus the other segments at their natural (capped) widths and the chevrons: a long file
+            // name gets the room there is, down to 140 px (the window's 640-px minimum keeps that honest).
+            cap: Math.max(140, bar.width - 12 - 16 - canvasSeg.naturalWidth
+                                - (pageSeg.visible ? pageSeg.naturalWidth + 16 : 0) - (lastSeg.visible ? lastSeg.naturalWidth + 16 : 0))
             menuOpen: fileMenu.visible
             onClicked: fileMenu.visible ? fileMenu.close() : fileMenu.open()
             FlatToolTip { parent: fileSeg; x: 0; y: fileSeg.height + 6
@@ -170,6 +177,7 @@ Rectangle {
         property string tabId: ""
         property string pageId: ""   // a page row: focus it, then the Document view
         property bool active: false
+        property int rightInset: 10  // the file rows keep clear of their close ×
         signal picked()
         width: parent ? parent.width : 300; height: 28; radius: Theme.dim.radiusSmall
         color: itemMA.containsMouse ? Theme.colors.surfaceHover : (active ? Theme.colors.divider : Theme.colors.hoverIdle)
@@ -177,7 +185,7 @@ Rectangle {
         Text {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: 12
-            anchors.right: parent.right; anchors.rightMargin: 10
+            anchors.right: parent.right; anchors.rightMargin: mi.rightInset
             text: mi.label
             elide: Text.ElideMiddle
             color: mi.active ? Theme.colors.textBright : Theme.colors.text
@@ -185,10 +193,13 @@ Rectangle {
         }
         MouseArea { id: itemMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: mi.picked() }
     }
+    function _widest(arr) { let w = ""; for (const t of arr) { const x = String(t || ""); if (x.length > w.length) w = x } return w }
     component DropMenu: Popup {
         id: dm
+        property var labels: []            // what the menu lists: it sizes to the widest (2026-10-22), 320–640
         padding: 1
-        width: 320
+        width: Math.max(320, Math.min(640, Math.ceil(dmMetrics.advanceWidth) + 76))
+        TextMetrics { id: dmMetrics; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome; text: bar._widest(dm.labels) }
         height: Math.min(380, contentItem.contentHeight + 2)
         x: 0; y: parent ? parent.height + 2 : 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -201,6 +212,7 @@ Rectangle {
     DropMenu {
         id: fileMenu
         parent: fileSeg
+        labels: docs.models.map(function(m) { return "• " + m.documentName })
         contentItem: Flickable {
             clip: true; contentWidth: width; contentHeight: fileCol.implicitHeight; boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: MnScrollBar {}
@@ -214,6 +226,7 @@ Rectangle {
                         required property int index
                         required property var modelData
                         label: ((modelData.untitled || modelData.dirty) ? "• " : "") + modelData.documentName
+                        rightInset: 32
                         active: index === docs.activeIndex
                         onPicked: { win.switchToTab(index); fileMenu.close() }
                         Rectangle {   // close ×, on hover
@@ -236,6 +249,10 @@ Rectangle {
     DropMenu {
         id: compMenu
         parent: bar.canvasMode ? canvasSeg : pageSeg
+        labels: (canvas.pagesRevision, canvas.elementsRevision, blockModel.structureRevision, blockModel.contentRevision,
+                 canvas.pageIds.map(function(id, i) { return bar._pageLabel(id, i) })
+                 .concat(bar.canvasMode ? bar.elementIds.map(function(id) { return canvas.mediaElementName(id) }) : [])
+                 .concat(bar.canvasMode ? [] : bar.videoIds.concat(bar.pdfIds).map(function(id) { return bar._fullName(id, "") })))
         contentItem: Flickable {
             clip: true; contentWidth: width; contentHeight: compCol.implicitHeight; boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: MnScrollBar {}
@@ -305,6 +322,10 @@ Rectangle {
     DropMenu {
         id: frameMenu
         parent: lastSeg
+        labels: (canvas.elementsRevision, blockModel.structureRevision,
+                 ["↑ " + bar.currentPageLabel]
+                 .concat(bar.elementOpen ? bar.elementIds.map(function(id) { return canvas.mediaElementName(id) }) : [])
+                 .concat(bar.frameOpen ? bar.videoIds.concat(bar.pdfIds).map(function(id) { return bar._fullName(id, "") }) : []))
         contentItem: Flickable {
             clip: true; contentWidth: width; contentHeight: frameCol.implicitHeight; boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: MnScrollBar {}
