@@ -30,7 +30,7 @@ Shortcuts (⌘/).
 | Zoom in / out (the page, a PDF, or the canvas — whichever is in front) | ⌘+ / ⌘− |
 | Zoom to 100% | ⌘0 |
 | In a page: toggle Full Width · on the canvas: fit everything | ⌘1 |
-| Always on Top — the window above every other app's (the title bar's pin) | ⌥⌘T |
+| Always on Top — the window above every other app's (the toolbar's pin) | ⌥⌘T |
 | Zoom about the pointer | ⌘-wheel, or pinch |
 | Pan the canvas with the hand | hold Space and drag |
 | Pan anywhere | middle-button drag |

@@ -7,7 +7,7 @@
 WindowChrome::WindowChrome(bool chromeless, QObject* parent)
     : QObject(parent), chromeless_(chromeless) {}
 
-bool WindowChrome::customButtons() const {
+bool WindowChrome::captionButtons() const {
 #ifdef Q_OS_WIN
     return chromeless_;
 #else
@@ -32,9 +32,7 @@ void WindowChrome::attach(QWindow* w) {
 #ifdef Q_OS_MACOS
     if (chromeless_ && nativeWindow_) attachMac(w);
 #endif
-#ifdef Q_OS_WIN
-    if (chromeless_ && nativeWindow_) attachWin(w);
-#endif
+    // Windows: nothing for the chrome — the window flags (Main.qml) create the caption-less window.
     applyAlwaysOnTop();
     // Leaving fullscreen / a maximize round trip: the platform plugin may have re-applied the level from the
     // window flags (which never carry the pin) — assert ours again.

@@ -5,16 +5,16 @@
 //             (set in Main.qml): the content extends under a transparent title bar, the NATIVE traffic lights
 //             stay (native zoom / fullscreen / tiling keep working), and the row insets its content past them.
 //             The system menu bar stays native (QCView learned that hiding it empties the top-of-screen bar).
-//   Windows — Qt's expanded client area (Main.qml flags): no top border, the DWM frame's shadow and corners.
-//             The row draws OUR OWN minimize / maximize / close (2026-10-22, after the user's walk: Qt's own
-//             32 × 48 caption buttons were too large for the row and did not match the pin) — the window flags
-//             carry CustomizeWindowHint WITHOUT the button hints, which is exactly what keeps Qt from painting
-//             its caption strip; attach() then puts WS_MINIMIZEBOX | WS_MAXIMIZEBOX back on the style so the
-//             taskbar, Win+↑/↓, Aero snap and the caption double-click keep working. Unclaimed presses on the
-//             row are a native caption drag (Qt's WM_NCHITTEST → HTCAPTION).
+//   Windows — Qt's expanded client area (Main.qml flags): no top border, the DWM frame's shadow and corners, and
+//             Qt draws + hit-tests the Windows 11 caption buttons at the row's right end (snap layouts included);
+//             the row only reserves their width. Unclaimed presses on the row are a native caption drag.
+//             (2026-10-22: our own buttons + our own drag handle were tried on Windows and REVERTED — Qt's hit test
+//             synthesizes presses into QML in the title zone, and anything we put there fought it; the pin lives in
+//             the toolbar instead.)
 //   Resizing is the OS's on both. `--native-frame` (dev) keeps the native frame; the row then draws no buttons.
 // ALWAYS ON TOP (2026-10-22, the pin): `alwaysOnTop` keeps the window above every other app's — View ▸ Always on
-// Top (⌥⌘T / Ctrl+Alt+T) and the title bar's pin button, remembered in Settings (Main.qml's viewPrefs). It is
+// Top (⌥⌘T / Ctrl+Alt+T) and the toolbar's pin button (right of the Inspector toggle), remembered in Settings
+// (Main.qml's viewPrefs). It is
 // applied at the OS level, never through Qt.WindowStaysOnTopHint: on macOS changing a QWindow's flags re-creates
 // the NSWindow (the hidden title + the lights' inset would need re-attaching) — NSWindow.level does it in place;
 // on Windows SetWindowPos(HWND_TOPMOST) alone, no SWP_FRAMECHANGED, so the expanded client area stays as created.
@@ -27,16 +27,15 @@ class QWindow;
 class WindowChrome : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool chromeless READ chromeless CONSTANT)
-    Q_PROPERTY(bool customButtons READ customButtons CONSTANT)   // the row draws minimize / maximize / close (Windows)
+    Q_PROPERTY(bool captionButtons READ captionButtons CONSTANT) // Qt draws Windows' caption buttons over the row's right end
     Q_PROPERTY(bool nativeLights READ nativeLights CONSTANT)     // the native traffic lights sit in the row (macOS)
     Q_PROPERTY(bool alwaysOnTop READ alwaysOnTop WRITE setAlwaysOnTop NOTIFY alwaysOnTopChanged) // the pin
 public:
     explicit WindowChrome(bool chromeless, QObject* parent = nullptr);
     bool chromeless() const { return chromeless_; }
-    bool customButtons() const;
+    bool captionButtons() const;
     bool nativeLights() const;
-    // Apply what the flags can't once the window exists (macOS: hide the title text; Windows: the min / max box
-    // styles) and the remembered pin.
+    // Apply what the flags can't once the window exists (macOS: hide the title text) and the remembered pin.
     void attach(QWindow* w);
     bool alwaysOnTop() const { return alwaysOnTop_; }
     // Remembered before the window exists (Settings restore), applied on attach; re-asserted after the OS
@@ -58,7 +57,6 @@ private:
     void setLevelMac(QWindow* w, bool floating);
 #endif
 #ifdef Q_OS_WIN
-    void attachWin(QWindow* w);                // WindowChrome_win.cpp: WS_MINIMIZEBOX | WS_MAXIMIZEBOX back on
     void setTopmostWin(QWindow* w, bool on);   // WindowChrome_win.cpp
 #endif
 };

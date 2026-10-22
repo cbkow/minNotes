@@ -25,6 +25,7 @@ Rectangle {
     readonly property var swatchStack: swatch
     readonly property var zoomBadge: zoom
     readonly property var inspectorToggle: sideBtn
+    readonly property var pinButton: pinBtn            // probe
     // "page" | "canvas" | "frame": a live card is a page (its keys and clicks belong to the editor).
     readonly property string mode: !editor ? "" : (editor.cardHosted || canvasToolsSeg.view === "") ? "page" : canvasToolsSeg.view
     readonly property bool pageMode: mode === "page"
@@ -280,6 +281,13 @@ Rectangle {
             checkedColor: Theme.colors.accent
             iconColor: checked ? Theme.colors.textBright : "transparent"
             onClicked: if (bar.inspector) bar.inspector.open = !bar.inspector.open
+        }
+        ToolBtn {   // the PIN (2026-10-22): Always on Top — the window above every other app's; View ▸ Always on Top is the same toggle
+            id: pinBtn
+            iconName: "push-pin"
+            tooltip: windowChrome.alwaysOnTop ? qsTr("Always on Top — click to unpin") : qsTr("Always on Top")
+            checked: windowChrome.alwaysOnTop
+            onClicked: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop
         }
     }
 }
