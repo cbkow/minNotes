@@ -23,6 +23,8 @@ QtObject {
         readonly property color border:      "#2a2a2a"
         readonly property color borderStrong: "#333333"  // a border that must read on its own (QCView token, 2026-10-21)
         readonly property color divider:     "#333333"   // hr / separators / the SELECTION fill
+        readonly property color menuHover:   "#3a3a3a"   // the app menu's highlighted row (user 2026-10-22: a LIGHTER grey — surfaceHover #252525 vanished on the raised #202020)
+        readonly property color frameNeutral: "#4a4a4a"  // an untinted frame's grey (user 2026-10-22: a dark grey, not the muted text tone)
         // Raised affordances (QCView's affordanceIdle / affordanceHover, adopted 2026-10-21 for the window's own
         // chrome — the title bar's dot, segments and caption buttons): a step up from surfaceHover on hover.
         readonly property color affordanceIdle:  "#262626"

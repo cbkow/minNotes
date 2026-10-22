@@ -45,7 +45,7 @@ Menu {
         }
         background: Rectangle {
             radius: Theme.dim.radiusSmall
-            color: mi.highlighted ? Theme.colors.surfaceHover : Theme.colors.hoverIdle
+            color: mi.highlighted ? Theme.colors.menuHover : Theme.colors.hoverIdle
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
         }
     }

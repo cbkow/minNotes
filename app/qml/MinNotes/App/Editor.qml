@@ -5669,9 +5669,10 @@ FocusScope {
                         check(dropped.length === 1 && joined === f && canvas.parentOf(dropped[0]) === f && canvas.childrenOf(f).length === n0 + 1, "a file dropped onto a frame joins it (children " + canvas.childrenOf(f).length + ")")
                         canvas.removeElement(dropped[0])
                     }
-                    canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     cvw.select(probeFrameId)
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
+                    g.grab(cvw, g.tempDir() + "/mn-canvas-probe-frames-plain.png")   // the untinted look (the dark grey)
+                    canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     const fs = root.inspector.frameSection
                     check(root.inspector.open ? (!!fs && fs.visible && fs.frameId === probeFrameId && fs.titleFieldItem.text === "Shots") : true, "the Inspector's Frame section shows the selected frame's title (open " + root.inspector.open + ")")
                     const path = g.tempDir() + "/mn-canvas-probe-frames.png"

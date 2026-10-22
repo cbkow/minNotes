@@ -94,7 +94,7 @@ Item {
             // A frame row carries its tint (2026-10-22): a bar at the left, the glyph and the name in it, the selected fill; its children a thread
             readonly property bool isFrame: modelData.kind === "frame"
             readonly property bool tinted: isFrame && !!modelData.tint
-            readonly property color tint: tinted ? modelData.tint : Theme.colors.textMuted
+            readonly property color tint: tinted ? modelData.tint : Theme.colors.frameNeutral   // untinted = the dark grey
             readonly property color childTint: modelData.parentTint ? modelData.parentTint : Theme.colors.border
             width: list.width; height: lp.rowH
             Rectangle {
@@ -102,7 +102,7 @@ Item {
             radius: Theme.dim.radiusSmall
             color: row.full ? (row.tinted ? Qt.rgba(row.tint.r, row.tint.g, row.tint.b, 0.35) : Theme.colors.divider)
                  : row.partial ? Qt.rgba(Theme.colors.divider.r, Theme.colors.divider.g, Theme.colors.divider.b, 0.5)
-                 : row.isFrame ? (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Qt.rgba(row.tint.r, row.tint.g, row.tint.b, row.tinted ? 0.10 : 0.06))
+                 : row.isFrame ? (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Qt.rgba(row.tint.r, row.tint.g, row.tint.b, row.tinted ? 0.10 : 0.22))
                  : (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Theme.colors.hoverIdle)
             Rectangle { visible: row.isFrame; x: 0; y: 4; width: 3; height: parent.height - 8; radius: 1; color: row.tint }
             Rectangle { visible: (row.modelData.depth || 0) > 0; x: -9; y: -lp.rowGap; width: 2; height: parent.height + lp.rowGap; color: row.childTint; opacity: 0.8 }

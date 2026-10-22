@@ -16,7 +16,7 @@ Item {
     }
     readonly property string title: spec.title || ""
     readonly property bool hasTint: !!spec.tint && spec.tint !== ""
-    readonly property color tint: hasTint ? spec.tint : Theme.colors.textMuted
+    readonly property color tint: hasTint ? spec.tint : Theme.colors.frameNeutral   // untinted = the dark grey (user 2026-10-22)
     readonly property bool elastic: spec.sizing !== "fixed"
     readonly property real titleH: 28
     readonly property bool editing: titleEdit.visible   // probe
@@ -25,13 +25,13 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: Theme.dim.radius
-        color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.10 : 0.05)
-        border.width: 1; border.color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.5 : 0.35)
+        color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.10 : 0.18)
+        border.width: 1; border.color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.5 : 0.9)
     }
     Rectangle {   // the title strip
         x: 1; y: 1; width: parent.width - 2; height: fr.titleH
         radius: Theme.dim.radius
-        color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.12 : 0.06)
+        color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.12 : 0.22)
         Rectangle { anchors.bottom: parent.bottom; anchors.top: parent.verticalCenter; width: parent.width; color: parent.color }   // square the lower corners
         Text {
             id: titleText

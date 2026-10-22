@@ -154,9 +154,10 @@ QString inkSvg(const std::vector<qcv::ActiveStroke>& strokes, double w, double h
 // darker than the field, the active tab in the selection grey.
 const char* kCanvasCss = R"CSS(
 html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)}
-.el.frame{--tint:#8a8a8a;box-sizing:border-box;border-radius:6px;border:1px solid color-mix(in srgb,var(--tint) 35%,transparent);background:color-mix(in srgb,var(--tint) 5%,transparent)}
+.el.frame{--tint:#4a4a4a;box-sizing:border-box;border-radius:6px;border:1px solid color-mix(in srgb,var(--tint) 90%,transparent);background:color-mix(in srgb,var(--tint) 18%,transparent)}
 .el.frame.tinted{border-color:color-mix(in srgb,var(--tint) 50%,transparent);background:color-mix(in srgb,var(--tint) 10%,transparent)}
-.el.frame .ftitle{height:28px;padding:0 10px;font:600 13px/28px Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--tint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--tint) 6%,transparent);border-radius:6px 6px 0 0}
+.el.frame .ftitle{height:28px;padding:0 10px;font:600 13px/28px Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#8a8a8a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--tint) 22%,transparent);border-radius:6px 6px 0 0}
+.el.frame.tinted .ftitle{color:var(--tint);background:color-mix(in srgb,var(--tint) 12%,transparent)}
 #mn-tabs{position:fixed;top:0;left:0;right:0;height:30px;z-index:5;display:flex;align-items:stretch;background:#151514;border-bottom:1px solid var(--border);
 font:13px/1 Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
 #mn-tabs .tabs{display:flex;align-items:stretch;flex:1 1 auto;min-width:0;overflow:hidden}
@@ -471,14 +472,15 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
         if (e.kind == QLatin1String("group")) {   // a frame (2026-10-22)
             const QJsonObject o = QJsonDocument::fromJson(e.json.toUtf8()).object();
             const QString tintS = o.value(QStringLiteral("tint")).toString();
-            QColor tint = tintS.isEmpty() ? muted : QColor(tintS);
-            if (!tint.isValid()) tint = muted;
-            QColor fill = tint; fill.setAlphaF(tintS.isEmpty() ? 0.05 : 0.10);
-            QColor line = tint; line.setAlphaF(tintS.isEmpty() ? 0.35 : 0.5);
+            const QColor neutral(0x4a, 0x4a, 0x4a);   // an untinted frame's dark grey (user 2026-10-22)
+            QColor tint = tintS.isEmpty() ? neutral : QColor(tintS);
+            if (!tint.isValid()) tint = neutral;
+            QColor fill = tint; fill.setAlphaF(tintS.isEmpty() ? 0.18 : 0.10);
+            QColor line = tint; line.setAlphaF(tintS.isEmpty() ? 0.9 : 0.5);
             p.fillRect(r, fill);
             p.setPen(QPen(line, 1)); p.setBrush(Qt::NoBrush); p.drawRect(r);
             QFont tf(QStringLiteral("Aspekta")); tf.setPixelSize(std::max(4, int(std::round(13 * s)))); tf.setBold(true);
-            p.setFont(tf); p.setPen(tint);
+            p.setFont(tf); p.setPen(tintS.isEmpty() ? muted : tint);
             p.drawText(QRectF(r.x() + 10 * s, r.y(), std::max(1.0, r.width() - 20 * s), 28 * s), Qt::AlignVCenter | Qt::AlignLeft, o.value(QStringLiteral("title")).toString());
             continue;
         }
