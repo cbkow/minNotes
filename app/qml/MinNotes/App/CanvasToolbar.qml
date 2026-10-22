@@ -13,7 +13,6 @@ Row {
                                   : editor.activeCanvas ? "canvas"
                                   : (editor.pdfTabOpen || editor.videoTabOpen) ? "frame" : ""
     visible: view !== ""
-    enabled: !(editor && editor.cardHosted)   // while a page is live its keys and clicks belong to the editor (phase C6)
     spacing: 2
     height: Theme.dim.toolbarH
     readonly property var canvasTools: [
