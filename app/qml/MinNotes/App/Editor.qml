@@ -3461,7 +3461,7 @@ FocusScope {
                 else if (root.inspector && canvasItem.drawing) root.inspector.drawTool = "select"   // disarm the pen first
                 else canvasItem.clearSelection()
             }
-            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasItem.liveSelected()   // Return = live / FOCUS in place for every kind (SPIKE S4, walk 7c); Open = Shift-dbl / glyph / menu
+            else if (k === Qt.Key_Return || k === Qt.Key_Enter) canvasItem.liveSelected()   // Return = OPEN the selected element (the page view, the studio, the PDF view, the lightbox) — 2026-10-22
             event.accepted = true
         }
         // Board mode: cards are mouse-driven; swallow everything else so typing
@@ -4803,19 +4803,15 @@ FocusScope {
                     g.key(root, Qt.Key_Escape)
                     ++step; return
                 }
-                if (step === 17) {   // click AGAIN on the selected page = the in-place form; over the page's text a double-click opens too
+                if (step === 17) {   // a click on the selected page does nothing more (no in-place form — 2026-10-22); over the page's text a double-click opens too
                     const r = canvas.elementRect(livePage), sm = cam.worldToScreen(r.x + 10, r.y + 10), s = cam.worldToScreen(r.x + 100, r.y + 100)
                     check(root.activeCanvas && cvw.selectedId === livePage, "Escape returns to the canvas with the page selected ('" + cvw.selectedId + "')")
                     g.click(cvw, sm.x, sm.y)
-                    check(cvw.clickAgainId === livePage && canvas.livePage === "", "a click on the SELECTED page arms the in-place form (armed '" + cvw.clickAgainId + "')")
-                    const l0 = cvw.clickAgains
-                    cvw.clickAgainNow()
-                    check(root.activeCanvas && canvas.focusPage === "" && cvw.clickAgains === l0 + 1 && (canvas.livePage === livePage || (cvw.camAnimating && cvw.selectedId === livePage)), "…and after the double-click interval it goes LIVE in place — after the camera animates to readable when zoomed out (live '" + canvas.livePage + "', animating " + cvw.camAnimating + ")")
-                    cvw.endLive(false)
+                    check(root.activeCanvas && cvw.selectedId === livePage && canvas.livePage === "" && canvas.focusPage === "", "a click on the SELECTED page keeps it selected and nothing else happens")
                     cvw.clearSelection()
                     const t0 = cvw.taps
                     g.click(cvw, s.x, s.y)
-                    check(cvw.selectedId === livePage && cvw.clickAgainId === "", "a single click OVER a page card's text selects it, nothing armed (selected '" + cvw.selectedId + "', taps +" + (cvw.taps - t0) + ")")
+                    check(cvw.selectedId === livePage, "a single click OVER a page card's text selects it (selected '" + cvw.selectedId + "', taps +" + (cvw.taps - t0) + ")")
                     const d0 = cvw.doubleTaps
                     g.doubleClick(cvw, s.x, s.y)
                     check(!root.activeCanvas && canvas.focusPage === livePage, "double-click over a page card's text opens it too (focus '" + canvas.focusPage + "', dbl +" + (cvw.doubleTaps - d0) + ")")
@@ -5076,7 +5072,7 @@ FocusScope {
                     const r = canvas.elementRect(vidElId), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2), z0 = cam.zoom
                     check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId, "Escape leaves the studio with the element selected ('" + cvw.selectedId + "')")
                     g.click(cvw, c.x, c.y)
-                    check(cvw.clickAgainId === "" && !cvw.selectionFrame.liveGlyphItem.visible, "a click on the selected video arms nothing, and the frame shows no in-place glyph")
+                    check(cvw.selectedId === vidElId && !cvw.camAnimating, "a click on the selected video changes nothing")
                     g.key(root, Qt.Key_Return)
                     check(root.lightbox.showing && root.lightbox.kind === "video" && root.lightbox.elementId === vidElId && !cvw.camAnimating && cam.zoom === z0, "Return on a selected video opens the LIGHTBOX — the camera does not move (zoom " + cam.zoom.toFixed(2) + ")")
                     g.key(root, Qt.Key_Escape)
@@ -5109,12 +5105,12 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 32) {
-                    check(root.activeCanvas && (canvas.livePage === livePage || (cvw.camAnimating && cvw.selectedId === livePage)), "Return on a selected page makes it LIVE in place — via the camera when zoomed out (live '" + canvas.livePage + "', animating " + cvw.camAnimating + ")")
-                    cvw.endLive(true)
+                    check(!root.activeCanvas && canvas.focusPage === livePage && canvas.livePage === "", "Return on a selected page OPENS it full-window (focus '" + canvas.focusPage + "')")
+                    root.setActiveTab("canvas")
                     ++step; return
                 }
                 if (step === 34) {
-                    cvw.fit()   // Return went LIVE at 100 % about the page — the other fixtures left the window; bring them back
+                    cvw.fit()
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
@@ -5127,7 +5123,7 @@ FocusScope {
                     cvw.select(livePage)
                     const c = cam.worldToScreen(canvas.elementRect(livePage).x + 20, canvas.elementRect(livePage).y + 20)
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 5, "a page's menu: Open page · Edit in place · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 4, "a page's menu: Open page · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5243,138 +5239,17 @@ FocusScope {
                 check(canvas.elementCount() === probeN0 && canvas.pageIds.length === probePages0, "undo takes the whole copy-in back")
                 nextPhase("drops"); return
             }
-            if (phase === 11) {   // P11 (SPIKE + phase C): the LIVE CARD — the camera animates to readable, double-click → live, type, wheel inside the cap, Escape out
-                const g = gestures, cvw = canvasItem
-                if (step === 0) {   // zoomed OUT: a double-click first animates the camera to ≥ 100 % with the card in view (C2)
-                    cvw.clearSelection()
-                    const r = canvas.elementRect(livePage)
-                    cvw.cam.zoomAboutPoint(0.5, 0, 0)
-                    const c0 = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
-                    cvw.cam.setPan(cvw.cam.panX - c0.x + cvw.width / 2, cvw.cam.panY - c0.y + 200)   // the card's top centre on screen
-                    const c = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
-                    probeLives = cvw.lives
-                    cvw.select(livePage)
-                    g.click(cvw, c.x, c.y)   // click AGAIN on the selected page (the ladder, 2026-10-22)
-                    check(cvw.clickAgainId === livePage, "a click on the selected page at 50 % arms the in-place form")
-                    cvw.clickAgainNow()
-                    check(cvw.camAnimating && canvas.livePage === "" && cvw.selectedId === livePage, "…the click-again starts the camera animation first (animating " + cvw.camAnimating + ")")
-                    ++step; return
-                }
-                if (step < 10) { ++step; return }   // 180 ms animation + the mount
-                if (step === 10) {
-                    check(!cvw.camAnimating && Math.abs(cvw.cam.zoom - 1) < 0.01 && canvas.livePage === livePage && cvw.lives === probeLives + 1, "…then the page goes live at 100 % (zoom " + cvw.cam.zoom.toFixed(3) + ", live '" + canvas.livePage + "')")
-                    const r = canvas.elementRect(livePage), tl = cvw.cam.worldToScreen(r.x, r.y)
-                    check(tl.x >= 0 && tl.y >= 0 && tl.x < cvw.width, "…with the card's top-left inside the viewport (" + Math.round(tl.x) + "," + Math.round(tl.y) + ")")
-                    cvw.endLive(false)
-                    ++step; return
-                }
-                if (step === 12) {   // at 100 % already: no animation, straight to live
-                    const r = canvas.elementRect(livePage), c2 = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
-                    check(!root.cardHosted && canvas.livePage === "" && c2.x > 0 && c2.x < cvw.width && c2.y > 0 && c2.y < cvw.height, "back at rest with the card in view (" + Math.round(c2.x) + "," + Math.round(c2.y) + ")")
-                    {   // walk 7 (user): single clicks over a LIVE-TIER card's text mostly fail to select — probe several spots over real delegates at 100 %
-                        const it = pageItem(livePage), pm = canvas.pageModel(livePage); let hits = 0, tries = 0, miss = ""
-                        for (let k = 0; k < 6; ++k) {
-                            const wx = r.x + 60 + k * 90, wy = r.y + 140 + k * 110, p = cvw.cam.worldToScreen(wx, wy)
-                            if (p.x < 0 || p.y < 0 || p.x > cvw.width || p.y > cvw.height) continue
-                            cvw.clearSelection(); ++tries
-                            g.click(cvw, p.x, p.y)
-                            if (cvw.selectedId === livePage) ++hits
-                            else miss += " [row " + pm.rowForY(wy - r.y - 24) + " under: " + g.itemsUnder(cvw, p.x, p.y) + "]"   // which item took the press
-                        }
-                        check(tries > 0 && hits === tries, "single clicks over the card's delegates select it every time (" + hits + "/" + tries + " at tier " + (it ? it.tier : -1) + "; misses:" + miss + ")")
-                        cvw.clearSelection()
-                    }
-                    probeLives = cvw.lives
-                    cvw.select(livePage)
-                    g.click(cvw, c2.x, c2.y)
-                    cvw.clickAgainNow()
-                    check(!cvw.camAnimating && canvas.livePage === livePage, "at a readable zoom the click-again goes live at once (no animation)")
-                    ++step; return
-                }
-                if (step === 15) {
-                    const it = pageItem(livePage)
-                    check(cvw.lives === probeLives + 1 && canvas.livePage === livePage && canvas.focusPage === "" && cvw.liveKind === "page", "click-again on a page makes it LIVE in place (lives +" + (cvw.lives - probeLives) + ", live '" + canvas.livePage + "', focus '" + canvas.focusPage + "')")
-                    check(root.cardHosted && !!it && !!it.page && root.parent === it.page.liveSlot && it.page.live, "the one Editor sits in the card's live slot (hosted " + root.cardHosted + ")")
-                    check(blockModel.pageId() === livePage && root.undoTarget === blockModel && root.activeCanvas && cvw.visible && flick.visible && root.activeFrameId === "",
-                          "blockModel IS the live page; ⌘Z targets its log; the canvas stays in view under the card; the page view's editing gates are live")
-                    check(Math.abs(blockModel.contentWidth() - (canvas.elementRect(livePage).width - 48)) < 1 && Math.abs(root.pageWidth - blockModel.contentWidth()) < 1,
-                          "the live page lays out at the CARD's measure (" + blockModel.contentWidth() + " vs card " + (canvas.elementRect(livePage).width - 48) + ", editor " + root.pageWidth + ")")
-                    check(!!it && !it.page.loaderActive, "the card's preview delegates are unloaded while live (one renderer per keystroke)")
-                    check(root.activeFocus, "the Editor has focus")
-                    const tb = win_toolbar()
-                    check(!!tb && !tb.enabled, "the canvas toolbar is disabled while a page is live (C6)")
-                    cursor.setCaret(0, 0)
-                    probeText = blockModel.contentForRow(0)
-                    g.type(root, "live card ")
-                    ++step; return
-                }
-                if (step === 17) {
-                    check(blockModel.contentForRow(0) === "live card " + probeText && blockModel.canUndo, "typing lands in the live page's first block ('" + blockModel.contentForRow(0).substring(0, 24) + "…')")
-                    const camRev = cvw.cam.rev, y0 = flick.contentY
-                    g.wheel(root, root.width / 2, root.height / 2, 0, -240)   // two notches down over the card
-                    probeW = camRev; probeScroll = y0
-                    ++step; return
-                }
-                if (step === 21) {
-                    check(flick.contentY > probeScroll && cvw.cam.rev === probeW, "the wheel scrolls INSIDE the card (" + probeScroll + " → " + Math.round(flick.contentY) + "), the canvas camera untouched")
-                    probeScroll = flick.contentY
-                    const z0 = cvw.cam.zoom
-                    g.key(root, Qt.Key_Plus, Qt.ControlModifier)
-                    check(cvw.cam.zoom > z0 && root.viewZoom === 1, "⌘+ in a live card zooms the CANVAS, not the page (C7: " + z0.toFixed(2) + " → " + cvw.cam.zoom.toFixed(2) + ")")
-                    g.key(root, Qt.Key_Minus, Qt.ControlModifier)
-                    ++step; return
-                }
-                if (step < 30) { ++step; return }   // let the scroll save settle (300 ms)
-                if (step === 30) {
-                    root.flushScrollSave()   // (the wheel's glide keeps restarting the 300 ms save; the flush is what Escape / a drill-in do)
-                    probeScroll = flick.contentY / root.zoom
-                    check(probeScroll > 0 && Math.abs(canvas.pageScrollY(livePage) - probeScroll) < 1.5, "the card's scroll is remembered on the page element (C5: " + canvas.pageScrollY(livePage) + " vs " + Math.round(probeScroll) + ")")
-                    g.key(root, Qt.Key_Escape)
-                    ++step; return
-                }
-                if (step < 33) { ++step; return }
-                if (step === 33) {
-                    const it = pageItem(livePage)
-                    check(!root.cardHosted && root.parent === root.homeSlot && canvas.livePage === "", "Escape ends liveness: the Editor is home again (live '" + canvas.livePage + "')")
-                    check(cvw.visible && cvw.selectedId === livePage && root.activeCanvas && !flick.visible && root.undoTarget === canvas, "…the canvas shows with the page SELECTED; ⌘Z targets the canvas log again")
-                    check(!!it && !it.page.live && it.page.loaderActive, "…the card's preview is back")
-                    check(Math.abs(blockModel.contentWidth() - (canvas.elementRect(livePage).width - 48)) < 1, "…the model keeps the CARD's measure on the canvas (no reflow on the round trip: " + blockModel.contentWidth() + ")")
-                    check(blockModel.contentForRow(0).indexOf("live card ") === 0, "…the typed text is in the page")
-                    blockModel.undo()
-                    check(blockModel.contentForRow(0) === probeText, "…and the page's own undo takes it back")
-                    canvas.focusPage = livePage   // drill in: the page view opens where the card was scrolled (C5)
-                    ++step; return
-                }
-                if (step < 36) { ++step; return }
-                check(!root.activeCanvas && canvas.pageScrollY(livePage) > 0 && Math.abs(flick.contentY / root.zoom - canvas.pageScrollY(livePage)) < 40, "the page view opens at the remembered scroll — within a few rows' re-measure at the view's width (" + Math.round(flick.contentY / root.zoom) + " vs " + canvas.pageScrollY(livePage) + ")")
-                root.setActiveTab("canvas")
-                nextPhase("live"); return
-            }
-            if (phase === 12) {   // P12 (SPIKE S5): 20 enter / exit cycles — synchronous cost per transition, resident memory drift
-                const cvw = canvasItem
-                if (step === 0) { probeRss0 = gestures.residentBytes(); probeCycleMs = []; ++step; return }
-                if (step <= 40) {
-                    const t0 = Date.now()
-                    if (step % 2 === 1) cvw.goLive(livePage); else cvw.endLive(false)
-                    probeCycleMs.push(Date.now() - t0)
-                    ++step; return
-                }
-                if (step < 44) { ++step; return }
-                const sorted = probeCycleMs.slice().sort((a, b) => a - b), p50 = sorted[Math.floor(sorted.length / 2)], p95 = sorted[Math.floor(sorted.length * 0.95)], mx = sorted[sorted.length - 1]
-                const rss1 = gestures.residentBytes(), drift = (rss1 - probeRss0) / 20
-                console.log("CANVAS-PROBE LIVE-CYCLES n", probeCycleMs.length, "ms p50", p50, "p95", p95, "max", mx, "rss/cycle KB", Math.round(drift / 1024), "rss MB", Math.round(rss1 / 1048576))
-                check(!root.cardHosted && canvas.livePage === "", "20 enter/exit cycles end at rest")
-                check(mx < 150, "no transition took ≥ 150 ms synchronously (max " + mx + " ms; K4)")
-                check(probeRss0 < 0 || drift < 1024 * 1024, "resident memory grows < 1 MB per cycle (" + Math.round(drift / 1024) + " KB; K5)")
-                nextPhase("live-cycles"); return
-            }
+            if (phase === 11) { nextPhase("live (the live card was removed 2026-10-22)"); return }        // P11 was the LIVE CARD
+            if (phase === 12) { nextPhase("live-cycles (removed 2026-10-22)"); return }                  // P12 was its enter / exit cycles
             if (phase === 13) {   // P13 (§2.14 chrome, 2026-10-18): the toolbar's mode switch, the components row, the colour flyout keeps the keys, the Heading flyout, downward popups
                 const c = root.chromeItem, t = root.tabsItem, g = gestures
                 if (step % 2 === 1) { ++step; return }   // the odd ticks let Rows / Popups lay out between gestures
-                if (step === 0) { root.setActiveTab("canvas"); ++step; return }
+                if (step === 0) { root.setActiveTab("canvas"); Toasts.dismiss(); ++step; return }   // (the drops phase's "Imported" toast would still cover the toolbar's right end)
                 if (step === 2) {
                     check(!!c && c.mode === "canvas" && c.canvasTools.visible && !c.pageTools.visible, "canvas mode: the canvas tools show, the page tools hide (mode '" + (c ? c.mode : "?") + "')")
-                    canvas.focusPage = livePage; ++step; return
+                    canvas.focusPage = livePage
+                    if (root.inspector) root.inspector.drawTool = "type"   // (the retired live-card phase used to leave the page typing)
+                    ++step; return
                 }
                 if (step === 4) {
                     check(c.mode === "page" && c.pageTools.visible && !c.canvasTools.visible, "page mode: the page tools show, the canvas tools hide (mode '" + c.mode + "')")
@@ -5388,7 +5263,7 @@ FocusScope {
                     g.click(c, p.x, p.y); ++step; return
                 }
                 if (step === 8) {
-                    check(c.colorFlyout.visible && root.inspector.target === "bg", "a click on the swatch's middle layer opens the colour flyout aimed at the highlight (visible " + c.colorFlyout.visible + ", target '" + root.inspector.target + "')")
+                    check(c.colorFlyout.visible && root.inspector.target === "bg", "a click on the swatch's middle layer opens the colour flyout aimed at the highlight (visible " + c.colorFlyout.visible + ", target '" + root.inspector.target + "'; under: " + g.itemsUnder(win.contentItem, c.mapToItem(null, c.swatchStack.layerAt(1).mapToItem(c, 12, 8).x, 15).x, 45) + ")")
                     check(c.colorFlyout.y > 0, "…and it opens downward (y " + c.colorFlyout.y.toFixed(0) + ")")
                     check(root.activeFocus, "…leaving the keys with the editor")
                     cursor.setCaret(0, 0); cursor.sync(); probeText = blockModel.contentForRow(0)

@@ -48,20 +48,17 @@ Item {
         gesturePolicy: TapHandler.DragThreshold
         // (the signals' first argument is an eventPoint, which carries no modifiers — the handler's point does)
         readonly property bool shift: (point.modifiers & Qt.ShiftModifier) !== 0
-        // THE LADDER (ruled 2026-10-22, CanvasView.armClickAgain): click = select · click AGAIN on the selected element =
-        // the in-place form (live card / focus) after the double-click interval · double-click = the FULL form (page
-        // view, studio, PDF view, lightbox; a text chip's full form is its editor).
+        // THE LADDER (ruled 2026-10-22, simplified the same day — no in-place form any more): click = select ·
+        // double-click (or Return) = OPEN — the page view, the studio, the PDF view, the lightbox; a text chip's
+        // open form is its editor.
         onSingleTapped: (ev) => {
             ++el.view.taps
-            if (el.view.liveKind === "page") el.view.endLive(false)   // a click on another element ends the live card
             if (tap.shift) el.view.toggleSelect(el.elementId)
             else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
-            else if (el.view.selectedId === el.elementId && el.view.liveId !== el.elementId && el.view.canLive(el.elementId)) el.view.armClickAgain(el.elementId)
             el.editor.forceActiveFocus()
         }
         onDoubleTapped: (ev) => {
             ++el.view.doubleTaps
-            el.view.cancelClickAgain()
             if (el.kind === "shape") { el.view.editText(el.elementId); return }
             el.view.select(el.elementId); el.view.openSelected()   // (Shift-double-click is the same rung — it stays for muscle memory)
         }

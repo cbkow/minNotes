@@ -17,19 +17,10 @@ toolbar shows the level and opens a slider.
 
 ## Pages
 
-**Double-click** a page to open it **full-window** — the page view, where
-most writing happens. `Esc` there returns to the canvas with the page
-selected. The open glyph at the card's top-right, **Open page** on its menu
-and the path bar do the same.
-
-To edit a page **in place**, select it and **click it again** (or press
-`Return`, or click the pencil glyph above the open glyph). The card becomes a
-live editor at whatever zoom you are at (the canvas zooms to at least 100%
-first). Type, paste, use every block feature; the wheel scrolls inside the
-card; `⌥`-drag pans the canvas around it. `Esc` hands you back the canvas
-with the page selected.
-
-![A live page card](images/mn031.png) 
+**Double-click** a page (or select it and press `Return`) to open it
+**full-window** — the page view, where writing happens. `Esc` there returns
+to the canvas with the page selected. The open glyph at the card's top-right,
+**Open page** on its menu and the path bar do the same.
 
 A page's **width** is its card's width — drag a side handle and the text
 reflows. Its height follows its content up to a square; drag a top or

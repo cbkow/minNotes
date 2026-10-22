@@ -75,10 +75,7 @@ Item {
     }
     function showImageFile(path) { _reset(); kind = "image"; title = _basename(path); source = _fileUrl(path); _show() }   // dev: --shot-lightbox=<image>
     function _reset() { kind = ""; source = ""; elementId = ""; row = -1; pdfKey = ""; pdfPath = ""; pdfPages = 0; audioKey = "" }
-    function _show() {
-        ++shows; visible = true; forceActiveFocus()
-        if (editor && editor.canvasItem) editor.canvasItem.cancelClickAgain()   // a click-again armed just before Space must not zoom the canvas behind the overlay (user 2026-10-22)
-    }
+    function _show() { ++shows; visible = true; forceActiveFocus() }
     function close() {
         if (!visible) return
         if (kind === "video" && editor && editor.videoDecoder && editor.videoDecoder.isPlaying) editor.toggleVideo()   // leaving the lightbox pauses the video (user 2026-10-22)

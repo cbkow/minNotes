@@ -107,7 +107,7 @@ Rectangle {
     function selectMany(ids) { selectedIds = ids.slice() }
     function toggleSelect(id) { const i = selectedIds.indexOf(id); const a = selectedIds.slice(); if (i >= 0) a.splice(i, 1); else a.push(id); selectedIds = a }
     function isSelected(id) { return selectedIds.indexOf(id) >= 0 }
-    function clearSelection() { cancelClickAgain(); if (selectedIds.length) selectedIds = [] }
+    function clearSelection() { if (selectedIds.length) selectedIds = [] }
     function selectionRect() {   // the union of the selected elements' world rects
         let r = null
         for (const id of selectedIds) {
@@ -310,7 +310,6 @@ Rectangle {
     function openSelected() {
         const id = selectedId
         ++opens
-        cancelClickAgain()
         if (id === "") return
         const k = canvas.elementKind(id)
         if (k === "page") { if (canvas.livePage !== "") endLive(false); canvas.focusPage = id; return }   // (a double-click on a selected page may have armed / started the live form first)
@@ -323,19 +322,9 @@ Rectangle {
         if (mk === "image" && editor && editor.lightbox) { editor.lightbox.showElement(id); return }   // the LIGHTBOX (2026-10-22); the default app stays on the menu
         canvas.openElement(id)
     }
-    // THE LADDER (ruled 2026-10-22): a DOUBLE-CLICK is the full form (openSelected — the page view, the studio, the PDF
-    // view, the lightbox); the in-place form (goLive — a live page card, a focused video / image) is CLICK AGAIN on the
-    // element that is already selected, Return, the frame's pencil / focus glyph, or the menu. The click-again waits
-    // out the double-click interval so the first tap of a double-click never mounts a live card that the second tap
-    // then pops out (TapHandler reports singleTapped at once, before it knows whether a second tap follows).
-    property string clickAgainId: ""
-    property int clickAgains: 0   // probe
-    Timer { id: clickAgainTimer; interval: 320; onTriggered: { const id = cv.clickAgainId; cv.clickAgainId = ""; if (id !== "" && cv.selectedId === id && cv.liveId !== id && !(editor && editor.lightbox && editor.lightbox.showing)) { ++cv.clickAgains; cv.goLive(id) } } }
-    function armClickAgain(id) { clickAgainId = id; clickAgainTimer.restart() }
-    function clickAgainNow() { clickAgainTimer.stop(); clickAgainTimer.triggered() }   // probe: the interval elapsed
-    function cancelClickAgain() { clickAgainId = ""; clickAgainTimer.stop() }
-    function liveLabel(id) { return canvas.elementKind(id) === "shape" ? qsTr("Edit text") : qsTr("Edit in place") }   // the in-place rung's name (the glyph's tooltip, the menu row)
-    function canLive(id) { return canvas.elementKind(id) === "page" }   // pages only: media's "in place" is the lightbox (2026-10-22)
+    // THE LADDER (ruled 2026-10-22, simplified the same day): a double-click, Return, the open glyph or the menu OPEN the
+    // element in full — the page view, the studio, the PDF view, the lightbox (a text chip's open form is its editor).
+    // The in-place forms (a live page card; a media focus) were removed as a complication once the lightbox existed.
     function duplicateSelected() {
         const made = []
         canvas.beginBatch(qsTr("Duplicate"))
@@ -471,35 +460,6 @@ Rectangle {
         for (let i = 0; i < elementRepeater.count; ++i) { const it = elementRepeater.itemAt(i); if (it && it.elementId === id) return it }
         return null
     }
-    property int lives: 0   // probe diagnostics
-    function goLive(id) {
-        const kind = canvas.elementKind(id)
-        if (kind === "shape") { if (liveId !== "" && liveId !== id) endLive(false); editText(id); return }   // a text chip's live form is its editor
-        if (kind === "media") {   // media has no in-place form since the lightbox (user 2026-10-22: "we don't need a play-in-place zoom"): Return = the lightbox
-            if (liveId !== "" && liveId !== id) endLive(false)
-            select(id)
-            if (editor && editor.lightbox) editor.lightbox.showElement(id)
-            return
-        }
-        if (kind !== "page" || !editor || !editor.homeSlot) return
-        if (liveId !== "" && liveId !== id) endLive(false)
-        select(id)
-        const target = readableCameraFor(canvas.elementRect(id), id)
-        const mount = function() {
-            if (selectedId !== id || canvas.livePage !== "") return   // the user moved on during the animation
-            canvas.livePage = id          // → blockModel is this page; the card's preview unloads
-            ++lives
-            Qt.callLater(function() {     // mount after the press that asked for it has fully released
-                const p = pageItemFor(id)
-                if (!p || !p.page || canvas.livePage !== id) { canvas.livePage = ""; return }
-                editor.parent = p.page.liveSlot
-                editor.commitPageWidth(0)   // the card's measure (== what the preview told the model)
-                editor.restoreScrollY(canvas.pageScrollY(id))
-                editor.forceActiveFocus()
-            })
-        }
-        if (target.moves) animateCameraTo(target.x, target.y, target.z, mount); else mount()
-    }
     function endLive(selectIt) {
         if (camAnim.running) { camAnim.stop(); camThen = null }
         if (textEditor.editingId !== "") textEditor.commit()
@@ -512,7 +472,12 @@ Rectangle {
         if (selectIt) select(id)
         editor.forceActiveFocus()
     }
-    function liveSelected() { cancelClickAgain(); if (selectedId !== "") goLive(selectedId) }
+    function liveSelected() {   // RETURN: a media element → the lightbox; anything else → its open form (the in-place forms are gone — 2026-10-22)
+        const id = selectedId
+        if (id === "") return
+        if (canvas.elementKind(id) === "media" && editor && editor.lightbox && ["image", "video", "pdf", "audio"].indexOf(canvas.mediaElementKind(id)) >= 0) { editor.lightbox.showElement(id); return }
+        openSelected()
+    }
     // Below a readable zoom a live card is unusable: the camera dropping under 75 % ends liveness (phase C8).
     Connections { target: cam; function onCameraChanged() { if (canvas.livePage !== "" && !camAnim.running && cam.zoom < 0.75) cv.endLive(true) } }
     Connections { target: cv.editor; function onLiveExitRequested() { cv.endLive(true) } }

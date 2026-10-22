@@ -23,7 +23,7 @@ trouble shared storage usually brings.
 
 ### The Canvas
 - Any number of pages per file, laid out however you like; double-click a
-  page to edit it in place at any zoom, or open it full-window
+  page to open it
 - Drop anything: video, PDF, images, audio, folders, files, links, other
   minNotes files, Evernote and Notion exports — each becomes a card
 - Video plays in place with the full transport keys; PDFs page in place;
