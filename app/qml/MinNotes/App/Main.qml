@@ -11,15 +11,19 @@ ApplicationWindow {
     // platforms (Qt 6.9+'s ExpandedClientAreaHint + NoTitleBarBackgroundHint). macOS keeps the native traffic lights
     // (TitleBar.qml insets past them). Windows: Qt's own expanded-client-area handling — the top border goes
     // (WM_NCCALCSIZE), the DWM frame gives the shadow + rounded corners, and any press on the row that no item
-    // accepts is a native caption drag (double-click zooms, edge snap works). CustomizeWindowHint WITHOUT the
-    // title / min / max / close hints: that is what keeps Qt from painting its own 32 × 48 caption buttons (2026-10-22,
-    // the user's walk — too large for the row); TitleBar.qml draws ours and WindowChrome::attach restores the
-    // WS_MINIMIZEBOX / WS_MAXIMIZEBOX styles the missing hints leave off. BEFORE `visible` — the hints must be in
-    // place at creation. (Tried and dropped 2026-10-21: a caption-less thick-frame window kept Windows' painted 8-px
-    // top border above the row; stripping the caption after creation left Qt's frame margins 30 px stale.)
+    // accepts is a native caption drag (double-click zooms, edge snap works). CustomizeWindowHint + WindowTitleHint
+    // and NO button hints (2026-10-22, the user's walks): the button hints are what make Qt paint its own 32 × 48
+    // caption buttons (too large for the row), and the title hint is what keeps Qt's WM_NCHITTEST on its TITLE-ROW
+    // branch — with CustomizeWindowHint alone Qt synthesizes a press into QML for every hit test ANYWHERE in the
+    // window, so each click arrived twice and nothing in the app worked. The title + icon Qt paints for the title
+    // hint go into a layered child window that WindowChrome::attach hides; attach also restores the WS_MINIMIZEBOX /
+    // WS_MAXIMIZEBOX styles the missing button hints leave off. TitleBar.qml draws the buttons. BEFORE `visible` —
+    // the hints must be in place at creation. (Tried and dropped 2026-10-21: a caption-less thick-frame window kept
+    // Windows' painted 8-px top border above the row; stripping the caption after creation left Qt's frame margins
+    // 30 px stale.)
     flags: !windowChrome.chromeless ? Qt.Window
          : windowChrome.nativeLights ? (Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint)
-         : (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowSystemMenuHint
+         : (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
             | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint)
     // ApplicationWindow pads its content by the safe area unless told otherwise (6.9) — the row goes UNDER the lights.
     topPadding: 0; leftPadding: 0; rightPadding: 0; bottomPadding: 0
