@@ -69,6 +69,7 @@ Item {
     // While THIS video plays on the shared player (and no studio is up), its surface paints inside the element over
     // the poster (walk 2026-10-18). The transport sits under the selection frame.
     readonly property bool surfaceVisible: surface.visible
+    readonly property bool cover: (canvas.elementsRevision, mi.elementId !== "" && canvas.inGridCell(mi.elementId))   // a board's cell crops (stage 2)
     PageContextLoader {
         anchors.fill: parent
         active: mi.elementId !== "" && !mi.ownCard
@@ -76,6 +77,7 @@ Item {
         sourceComponent: Component {
             MediaBlock {
                 active: true
+                cover: mi.cover
                 logicalRow: 0
                 maxWidth: mi.width
                 width: mi.width; height: mi.height

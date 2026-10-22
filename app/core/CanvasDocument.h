@@ -280,8 +280,21 @@ public:
     Q_INVOKABLE bool frameElastic(const QString& id) const;
     Q_INVOKABLE QString frameTitle(const QString& id) const;
     Q_INVOKABLE bool setFrameTitle(const QString& id, const QString& title);
-    Q_INVOKABLE bool setFrameField(const QString& id, const QString& key, const QVariant& value);   // tint · sizing · layout · cols · gap
+    Q_INVOKABLE bool setFrameField(const QString& id, const QString& key, const QVariant& value);   // tint · sizing · layout · cols · gap · cellAspect
+    // BOARDS (stage 2): layout "grid" = `cols` columns, `gap`, uniform cells of `cellAspect` (h / w), one child per
+    // slot in `order` (the frame's json; children not listed follow in z order); the frame's HEIGHT follows the rows
+    // (its width is the user's); a grid frame is always fixed. Children are laid out by setElementRect (one history
+    // row per relayout); the renderers crop media to the cell (inGridCell). Drops onto a frame join it (frameAt).
+    Q_INVOKABLE QString frameLayout(const QString& id) const;                    // "free" | "grid" ("" = not a frame)
+    Q_INVOKABLE QVariantMap frameGrid(const QString& id) const;                  // cols · gap · cellAspect · rows · cellW · cellH · n
+    Q_INVOKABLE bool inGridCell(const QString& id) const;                        // its parent is a grid frame
+    Q_INVOKABLE QStringList frameOrder(const QString& frameId) const;            // the slots, in order
+    Q_INVOKABLE int slotAt(const QString& frameId, qreal wx, qreal wy) const;    // the slot under a world point (clamped); -1 when not a grid
+    Q_INVOKABLE bool moveToSlot(const QString& childId, int slot);               // reorder + relayout, one row
+    Q_INVOKABLE QString frameAt(qreal wx, qreal wy) const;                       // the top-most frame under a world point
+    Q_INVOKABLE bool relayoutFrame(const QString& frameId);                      // (probe) lay a grid frame out now
     static constexpr double kFramePad = 24.0, kFrameTitleH = 28.0, kFrameMinW = 160.0, kFrameMinH = 120.0;
+    static constexpr int kGridColsDefault = 3; static constexpr double kGridGapDefault = 16.0, kCellAspectDefault = 9.0 / 16.0;
     Q_INVOKABLE bool setMediaElementInk(const QString& id, int page, const QString& envelope);   // "" clears
     // Re-style an INK element after the fact (walk 7d, 2026-10-18): every stroke's width / colour. A width change
     // grows the rect by the half-width delta and shifts the element-local points with it (an oval's radii point
@@ -367,6 +380,8 @@ private:
     bool setParent(const QString& id, const QString& parentId);         // one undo entry; no notify beyond the set revision
     bool hugFrame(const QString& frameId, const QString& coalesce);     // an elastic frame's rect follows its children
     bool packFrame(const QString& frameId);                             // z: the frame directly under its children, contiguous
+    bool layoutFrame(const QString& frameId);                           // a grid frame: children into their cells, the height to the rows
+    bool layingOut_ = false;                                            // (layoutFrame sets rects through setElementRect)
     bool applyOrder(const std::vector<QString>& order, const QString& label);   // z := index, the changed ones as one batch
     QString addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label, const QString& parentId = QString());
     void noteChanged(const QString& kind, bool set, bool geometry, bool ink);

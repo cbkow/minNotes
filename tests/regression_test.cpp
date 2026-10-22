@@ -6772,6 +6772,24 @@ static void testFrames() {
     CHECK(!board.isEmpty() && !c.frameElastic(board) && c.elementRect(board).width() == CanvasDocument::kFrameMinW, "a fixed frame (a board) keeps its own size, at least the minimum");
     CHECK(c.addToFrame({loose}, board) && c.parentOf(loose) == board && c.elementRect(board).width() == CanvasDocument::kFrameMinW, "addToFrame on a fixed frame never resizes it");
     CHECK(c.setFrameField(board, QStringLiteral("sizing"), QStringLiteral("elastic")) && c.elementRect(board).contains(QRectF(900, 900, 10, 10)), "loosening a board to elastic hugs its children at once");
+    // The GRID (stage 2): cols + gap, uniform cells, the height follows the rows, slots reorder, a drop point names a frame
+    CHECK(c.setFrameField(f, QStringLiteral("layout"), QStringLiteral("grid")) && c.frameLayout(f) == QLatin1String("grid") && !c.frameElastic(f) && c.inGridCell(a) && !c.inGridCell(loose), "layout grid: the frame is fixed now, its children sit in cells");
+    CHECK(c.setFrameField(f, QStringLiteral("cols"), 2), "two columns");
+    const QVariantMap g = c.frameGrid(f);
+    const QRectF ra = c.elementRect(a), rb = c.elementRect(b), rf = c.elementRect(f);
+    const double cw = g.value("cellW").toDouble(), ch = g.value("cellH").toDouble(), gap = g.value("gap").toDouble();
+    CHECK(g.value("cols").toInt() == 2 && g.value("rows").toInt() == 1 && std::abs(cw - (rf.width() - 2 * pad - gap) / 2) < 0.01 && std::abs(ch - cw * CanvasDocument::kCellAspectDefault) < 0.01,
+          "the cells divide the width minus the padding and the gap, 16:9 each (" + QByteArray::number(cw) + "x" + QByteArray::number(ch) + ")");
+    CHECK(ra == QRectF(rf.x() + pad, rf.y() + th + pad, cw, ch) && rb == QRectF(rf.x() + pad + cw + gap, rf.y() + th + pad, cw, ch), "the two children fill slots 0 and 1, side by side");
+    CHECK(std::abs(rf.height() - (th + pad + ch + pad)) < 0.01, "the frame's height follows its one row (" + QByteArray::number(rf.height()) + ")");
+    CHECK(c.slotAt(f, rb.center().x(), rb.center().y()) == 1 && c.slotAt(f, ra.center().x(), ra.center().y()) == 0 && c.slotAt(f, rf.x() - 500, rf.y() - 500) == 0, "slotAt maps a point to its cell, clamped");
+    CHECK(c.moveToSlot(b, 0) && c.frameOrder(f) == (QStringList{b, a}) && c.elementRect(b) == QRectF(rf.x() + pad, rf.y() + th + pad, cw, ch), "moveToSlot swaps the slots and re-lays out (one row)");
+    c.undo();
+    CHECK(c.frameOrder(f) == (QStringList{a, b}) && c.elementRect(a).x() == rf.x() + pad, "…undo restores the order and the cells");
+    CHECK(c.setFrameField(f, QStringLiteral("cols"), 1) && c.frameGrid(f).value("rows").toInt() == 2 && c.elementRect(b).y() > c.elementRect(a).y() && c.elementRect(f).height() > rf.height(), "one column stacks them and the frame grows to two rows");
+    CHECK(c.frameAt(ra.center().x(), ra.center().y()) == f && c.frameAt(-5000, -5000).isEmpty(), "frameAt names the frame under a point");
+    CHECK(c.addToFrame({loose}, f) && c.inGridCell(loose) && c.frameOrder(f).last() == loose && c.frameGrid(f).value("rows").toInt() == 3, "a drop joining a grid frame takes the next slot");
+    CHECK(c.setElementRect(f, QRectF(rf.x(), rf.y(), rf.width() * 2, rf.height())) && std::abs(c.frameGrid(f).value("cellW").toDouble() - (rf.width() * 2 - 2 * pad)) < 0.01 && std::abs(c.elementRect(a).width() - (rf.width() * 2 - 2 * pad)) < 0.01, "a wider board re-lays its cells wider");
     Q_UNUSED(page); Q_UNUSED(rows0);
 }
 

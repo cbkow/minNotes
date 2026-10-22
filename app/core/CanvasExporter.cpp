@@ -185,6 +185,7 @@ body.reading #mn-hud{display:none}
 background:linear-gradient(to bottom,rgba(24,24,23,0),var(--bg) 60%);color:var(--subtle);font-size:13px;pointer-events:none}
 figure.el{margin:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
 figure.el img{display:block;width:100%;height:auto;flex:0 0 auto}
+figure.el.cover img,figure.el.cover .poster{height:100%;object-fit:cover}
 figure.el .poster{width:100%;flex:1 1 auto;object-fit:contain;background:#000;min-height:0}
 figure.el.pdf .poster{background:#fff}
 figure.el .inkwrap{position:relative;flex:1 1 auto;min-height:0;display:flex}
@@ -330,7 +331,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                     const QString ovSrc = ov.isNull() ? QString() : sink.addImage(ov, (name.isEmpty() ? QStringLiteral("image") : name) + QStringLiteral("-ink"));
                     if (!ovSrc.isEmpty()) { ++inkLayers; inner = QStringLiteral("<div class=\"inkwrap\">%1<img class=\"ink\" src=\"%2\" alt=\"\" style=\"left:0;top:0;width:100%\"></div>").arg(inner, esc(ovSrc)); }
                 }
-                body += QStringLiteral("<figure class=\"el media image\" style=\"%1\">%2</figure>\n").arg(style(e), inner);
+                body += QStringLiteral("<figure class=\"el media image%1\" style=\"%2\">%3</figure>\n").arg(c->inGridCell(e.id) ? QStringLiteral(" cover") : QString(), style(e), inner);
             } else if (kind == QLatin1String("video") || kind == QLatin1String("pdf")) {
                 const bool video = kind == QLatin1String("video");
                 const QString base = name.isEmpty() ? kind : name;
@@ -504,7 +505,13 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
                 else if (kind == QLatin1String("pdf")) thumb = MediaStore::renderPdfPage(path, 0, int(r.width()) + 1);
             }
             p.fillRect(r, surface);
-            if (!thumb.isNull()) {
+            if (!thumb.isNull() && c->inGridCell(e.id)) {   // a board's cell: cover-crop the picture to the cell (stage 2)
+                const double ar = thumb.width() / double(std::max(1, thumb.height())), car = r.width() / std::max(1.0, r.height());
+                QRect src = thumb.rect();
+                if (ar > car) { const int w = int(std::round(thumb.height() * car)); src = QRect((thumb.width() - w) / 2, 0, w, thumb.height()); }
+                else { const int h = int(std::round(thumb.width() / car)); src = QRect(0, (thumb.height() - h) / 2, thumb.width(), h); }
+                p.drawImage(r, thumb, src);
+            } else if (!thumb.isNull()) {
                 QRectF dst = r;
                 const double ar = thumb.width() / double(std::max(1, thumb.height()));
                 if (dst.width() / dst.height() > ar) { const double nw = dst.height() * ar; dst = QRectF(dst.x() + (dst.width() - nw) / 2, dst.y(), nw, dst.height()); }

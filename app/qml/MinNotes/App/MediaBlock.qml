@@ -42,6 +42,7 @@ Item {
     readonly property string pdfPath: (active && isPdf) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
     readonly property string fileName: (active && isFile) ? (mb._rev, blockModel.mediaFileName(logicalRow)) : ""
     readonly property string filePath: (active && isFile) ? (mb._rev, blockModel.mediaViewPath(logicalRow)) : ""
+    property bool cover: false   // a board's cell (stage 2, 2026-10-22): the picture / poster / page fills the rect, cropped
     readonly property string url: active ? (mb._rev, blockModel.mediaUrl(logicalRow)) : ""
     // Playback source: a local path, or a subfile spec streaming the frame
     // straight out of a package (posters decode without any extraction).
@@ -154,7 +155,7 @@ Item {
             anchors.fill: parent
             source: (mb.isPdf && mb.pdfPath !== "") ? mb._pdfSrc(mb.pdfPath, mb.pdfPage) : ""
             asynchronous: true; cache: true
-            fillMode: Image.PreserveAspectFit
+            fillMode: mb.cover ? Image.PreserveAspectCrop : Image.PreserveAspectFit; clip: mb.cover
             sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
             smooth: true
         }
@@ -181,7 +182,7 @@ Item {
         // its bytes; without it every delegate recycle re-decoded the image on the reader thread.
         asynchronous: true; cache: true
         onStatusChanged: if (status === Image.Ready) mb.imageReady()   // the frame monitor counts decodes (perfLog)
-        fillMode: Image.PreserveAspectFit
+        fillMode: mb.cover ? Image.PreserveAspectCrop : Image.PreserveAspectFit; clip: mb.cover
         sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
         smooth: true
         // Reveal fades; hide stays INSTANT (visible:false — the glitch never shows).
@@ -248,7 +249,7 @@ Item {
             // (a new playhead = new URL) AND avoids re-decoding on scroll recycle.
             source: (mb.isVideo && !mb.isActivePlayer) ? mb._vframeSrc(mb.localPath, mb.posterFrame) : ""
             asynchronous: true; cache: true
-            fillMode: Image.PreserveAspectFit
+            fillMode: mb.cover ? Image.PreserveAspectCrop : Image.PreserveAspectFit; clip: mb.cover
             sourceSize.width: Math.round(mb.dispW * Screen.devicePixelRatio)
             smooth: true
         }

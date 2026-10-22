@@ -144,7 +144,20 @@ Rectangle {
     function dragSelectionTo(dx, dy) {
         for (const id in dragStarts) { const r = dragStarts[id]; canvas.setElementRect(id, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + id) }
     }
-    function endSelectionDrag() { canvas.endBatch(); dragStarts = {} }
+    function endSelectionDrag() {
+        canvas.endBatch()
+        // A child of a GRID frame dragged (while its frame was not): it lands in the slot under its centre (stage 2)
+        for (const id in dragStarts) {
+            const p = canvas.parentOf(id)
+            if (p === "" || dragStarts.hasOwnProperty(p) || canvas.frameLayout(p) !== "grid") continue
+            const r = canvas.elementRect(id)
+            canvas.moveToSlot(id, canvas.slotAt(p, r.x + r.width / 2, r.y + r.height / 2))
+        }
+        dragStarts = {}
+    }
+    // A drop onto a frame JOINS it (explicit by the act of dropping there — stage 2): the ids go to the top-most frame
+    // under the drop point; a grid frame gives them its next slots.
+    function joinFrameAt(ids, wx, wy) { const f = canvas.frameAt(wx, wy); if (f !== "" && ids.length) canvas.addToFrame(ids.filter(function(id) { return !canvas.isFrame(id) }), f); return f }
     function resizeSelected(rect) { if (selectedId !== "") canvas.setElementRect(selectedId, rect, "resize:" + selectedId) }
     function edgeResize(start, dx, dy, ddx, ddy, lockAspect) {   // a handle's drag → the new world rect (min 8 px)
         let x = start.x, y = start.y, w = start.width, h = start.height
@@ -572,13 +585,14 @@ Rectangle {
                 const local = urls.filter(u => !/^https?:/i.test(u)), remote = urls.filter(u => /^https?:/i.test(u))
                 const ids = local.length ? canvas.addElementsFromUrls(local, w.x, w.y) : []   // one → in place; many → a grid, ONE history row (phase A6)
                 for (const u of remote) { const id = cv.dropUrl(u, w.x, w.y); if (id !== "") ids.push(id) }
+                cv.joinFrameAt(ids, w.x, w.y)
                 if (ids.length) cv.selectMany(ids)
             } else if (drop.hasHtml && canvas.bareRemoteImageSrc(drop.html) !== "") {
                 const id = canvas.addRemoteImageElement(canvas.bareRemoteImageSrc(drop.html), w.x, w.y)
-                if (id !== "") cv.select(id)
+                if (id !== "") { cv.joinFrameAt([id], w.x, w.y); cv.select(id) }
             } else if (drop.hasText) {
                 const id = cv.dropText(drop.text, drop.x, drop.y)
-                if (id !== "") cv.select(id)
+                if (id !== "") { cv.joinFrameAt([id], w.x, w.y); cv.select(id) }
             }
             drop.accept()
             cv.editor.forceActiveFocus()

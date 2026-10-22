@@ -15,6 +15,24 @@ Item {
     readonly property string shownTitle: spec.title || ""
     onShownTitleChanged: if (!titleField.activeFocus) titleField.text = shownTitle
     readonly property var tints: ["", "#c04040", "#d08a2e", "#c7b24a", "#4a9a6a", "#3f7fc0", "#8a5ac0"]
+    readonly property bool grid: spec.layout === "grid"
+    readonly property var cellAspects: [["16:9", 9 / 16], ["4:3", 3 / 4], ["1:1", 1], ["9:16", 16 / 9], ["2.39", 1 / 2.39]]
+    readonly property var boardPresets: [["16:9", 960, 540], ["4:3", 960, 720], ["9:16", 540, 960], ["2.39", 960, 402], ["A4", 960, 679], ["A4 ↕", 679, 960], ["Letter", 960, 742], ["Letter ↕", 742, 960]]
+    function setField(key, value) { canvas.setFrameField(frameId, key, value); if (editor) editor.forceActiveFocus() }
+    function preset(w, h) { const r = canvas.elementRect(frameId); canvas.setFrameField(frameId, "sizing", "fixed"); canvas.setElementRect(frameId, Qt.rect(r.x, r.y, w, h)); if (editor) editor.forceActiveFocus() }
+    component Stepper: Row {   // − n +
+        property string label: ""
+        property int value: 0
+        property int min: 1
+        property int max: 12
+        property int stepBy: 1
+        signal changed(int v)
+        spacing: 4
+        Text { anchors.verticalCenter: parent.verticalCenter; text: label; width: 58; color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
+        FlatButton { iconName: "minus"; implicitWidth: 22; implicitHeight: 22; iconSize: 11; enabled_: value > min; onClicked: changed(Math.max(min, value - stepBy)) }
+        Text { anchors.verticalCenter: parent.verticalCenter; width: 26; horizontalAlignment: Text.AlignHCenter; text: value; color: Theme.colors.textBright; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall }
+        FlatButton { iconName: "plus"; implicitWidth: 22; implicitHeight: 22; iconSize: 11; enabled_: value < max; onClicked: changed(Math.min(max, value + stepBy)) }
+    }
     readonly property var titleFieldItem: titleField   // probe
     visible: frameId !== ""
     height: visible ? col.implicitHeight + 16 : 0
@@ -66,10 +84,40 @@ Item {
         }
         Row {   // the sizing
             spacing: 2
-            FlatButton { text: qsTr("Group"); implicitHeight: 24; checked: fp.spec.sizing !== "fixed"; tooltip: qsTr("Elastic — the frame hugs its contents"); tooltipSide: "bottom"
-                         onClicked: { canvas.setFrameField(fp.frameId, "sizing", "elastic"); if (fp.editor) fp.editor.forceActiveFocus() } }
-            FlatButton { text: qsTr("Board"); implicitHeight: 24; checked: fp.spec.sizing === "fixed"; tooltip: qsTr("Fixed — sized by its handles"); tooltipSide: "bottom"
-                         onClicked: { canvas.setFrameField(fp.frameId, "sizing", "fixed"); if (fp.editor) fp.editor.forceActiveFocus() } }
+            FlatButton { text: qsTr("Group"); implicitHeight: 24; checked: fp.spec.sizing !== "fixed"; enabled_: !fp.grid; tooltip: fp.grid ? qsTr("A grid frame is fixed") : qsTr("Elastic — the frame hugs its contents"); tooltipSide: "bottom"
+                         onClicked: fp.setField("sizing", "elastic") }
+            FlatButton { text: qsTr("Board"); implicitHeight: 24; checked: fp.spec.sizing === "fixed"; tooltip: qsTr("Fixed — sized by its handles, or a preset below"); tooltipSide: "bottom"
+                         onClicked: fp.setField("sizing", "fixed") }
+        }
+        Flow {   // board size presets (fixed only)
+            visible: fp.spec.sizing === "fixed"
+            width: parent.width; spacing: 2
+            Repeater {
+                model: fp.boardPresets
+                delegate: FlatButton { required property var modelData; text: modelData[0]; implicitHeight: 22; tooltip: modelData[1] + " × " + modelData[2]; tooltipSide: "bottom"
+                                       onClicked: fp.preset(modelData[1], modelData[2]) }
+            }
+        }
+        Row {   // the layout
+            spacing: 2
+            FlatButton { text: qsTr("Free"); implicitHeight: 24; checked: !fp.grid; tooltip: qsTr("Children sit where you put them"); tooltipSide: "bottom"; onClicked: fp.setField("layout", "free") }
+            FlatButton { text: qsTr("Grid"); implicitHeight: 24; checked: fp.grid; tooltip: qsTr("Children fill uniform cells in reading order; the board's height follows"); tooltipSide: "bottom"; onClicked: fp.setField("layout", "grid") }
+        }
+        Column {   // the grid's rows
+            visible: fp.grid
+            spacing: 6
+            Stepper { label: qsTr("Columns"); value: fp.spec.cols || 3; min: 1; max: 12; onChanged: (v) => fp.setField("cols", v) }
+            Stepper { label: qsTr("Gap"); value: fp.spec.gap !== undefined ? fp.spec.gap : 16; min: 0; max: 96; stepBy: 4; onChanged: (v) => fp.setField("gap", v) }
+            Flow {   // the cells' aspect (wraps: five buttons do not fit beside the label)
+                width: col.width; spacing: 2
+                Text { height: 22; verticalAlignment: Text.AlignVCenter; text: qsTr("Cells"); width: 58; color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall }
+                Repeater {
+                    model: fp.cellAspects
+                    delegate: FlatButton { required property var modelData; text: modelData[0]; implicitHeight: 22
+                                           checked: Math.abs((fp.spec.cellAspect !== undefined ? fp.spec.cellAspect : 9 / 16) - modelData[1]) < 0.001
+                                           onClicked: fp.setField("cellAspect", modelData[1]) }
+                }
+            }
         }
     }
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border }
