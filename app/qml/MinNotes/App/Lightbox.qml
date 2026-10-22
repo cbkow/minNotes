@@ -6,7 +6,9 @@
 // scrim close too). A video plays on the SHARED player with the compact transport under the picture (the element's /
 // block's own surface hides while this one shows) and takes the transport keys through the editor (K / W / S,
 // Q / E, J / L …) with the studio's full transport bar under the picture; Space is NOT play here — ufb's ruling: play/pause lives on K / W / S so Space can be the one open /
-// close key. A PDF pages with PageUp / PageDown and its pager. Any navigation (a frame opening, Back) closes it.
+// close key. A PDF pages with PageUp / PageDown and a pager bar at the bottom (where the studio's transport sits). Any
+// navigation (a frame opening, Back) closes it. Media has NO in-place form on the canvas any more (user 2026-10-22):
+// Return on a selected image / video / PDF / audio opens it here.
 import QtQuick
 import QtQuick.Window
 
@@ -129,7 +131,7 @@ Item {
     Item {   // the picture, under the bar (and above a video's transport)
         id: content
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: barRow.bottom; anchors.bottom: parent.bottom
-        anchors.margins: 40; anchors.topMargin: 12; anchors.bottomMargin: lb.kind === "video" ? 40 + 40 + 8 : 40
+        anchors.margins: 40; anchors.topMargin: 12; anchors.bottomMargin: (lb.kind === "video" || lb.kind === "pdf") ? 40 + 40 + 8 : 40
         TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds }   // a click on the picture stays
         Image {
             id: img
@@ -183,26 +185,42 @@ Item {
             live: lb.elementId !== "" ? lb.editor.canvasHostPlaying : (lb.row >= 0 && lb.editor.videoPlayingRow === lb.row && lb.editor.videoPlayingKey !== "")
         }
     }
-    Item {   // THE BAR, along the top (user 2026-10-22): ‹ › · the name · a PDF's pager · ×
+    Rectangle {   // a PDF's control bar at the bottom, where the studio's transport sits: ‹ page n / N ›
+        id: pdfBar
+        visible: lb.kind === "pdf"
+        anchors.left: content.left; anchors.right: content.right; anchors.bottom: parent.bottom; anchors.bottomMargin: 40
+        height: 40
+        color: Theme.colors.surfaceRaised
+        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 1; color: Theme.colors.border }
+        TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds }
+        Row {
+            anchors.centerIn: parent; spacing: 6
+            BarBtn { id: pagePrev; icon: "caret-left"; can: lb.pdfPage > 0; tip: qsTr("Previous page (PageUp)"); onClicked: lb.pdfStep(-1) }
+            Text { anchors.verticalCenter: parent.verticalCenter; text: (lb.pdfPage + 1) + " / " + Math.max(1, lb.pdfPages)
+                   color: Theme.colors.textMuted; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall; leftPadding: 6; rightPadding: 6 }
+            BarBtn { id: pageNext; icon: "caret-right"; can: lb.pdfPage < lb.pdfPages - 1; tip: qsTr("Next page (PageDown)"); onClicked: lb.pdfStep(1) }
+        }
+    }
+    component BarBtn: Rectangle {
+        id: bb
+        property string icon: ""
+        property int iconSize: 14
+        property bool can: true
+        property string tip: ""
+        signal clicked()
+        width: 30; height: 30; radius: Theme.dim.radiusSmall
+        color: can && bbMA.containsMouse ? Theme.colors.affordanceHover : Theme.colors.affordanceIdleClear
+        Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
+        Icon { anchors.centerIn: parent; name: bb.icon; size: bb.iconSize; color: !bb.can ? Theme.colors.textSubtle : bbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+        MouseArea { id: bbMA; anchors.fill: parent; hoverEnabled: true; enabled: bb.can; cursorShape: Qt.PointingHandCursor; onClicked: { bb.clicked(); lb.forceActiveFocus() } }
+        FlatToolTip { visible: bbMA.containsMouse && bb.can && bb.tip !== ""; text: bb.tip; x: 0; y: bb.height + 6 }
+    }
+    Item {   // THE BAR, along the top (user 2026-10-22), below the window's own controls: ‹ › · the name · ×
         id: barRow
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-        anchors.margins: 16; anchors.bottomMargin: 0
+        anchors.margins: 16; anchors.topMargin: 48; anchors.bottomMargin: 0
         height: 32
         TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds }   // clicks on the bar stay
-        component BarBtn: Rectangle {
-            id: bb
-            property string icon: ""
-            property int iconSize: 14
-            property bool can: true
-            property string tip: ""
-            signal clicked()
-            width: 30; height: 30; radius: Theme.dim.radiusSmall
-            color: can && bbMA.containsMouse ? Theme.colors.affordanceHover : Theme.colors.affordanceIdleClear
-            Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
-            Icon { anchors.centerIn: parent; name: bb.icon; size: bb.iconSize; color: !bb.can ? Theme.colors.textSubtle : bbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-            MouseArea { id: bbMA; anchors.fill: parent; hoverEnabled: true; enabled: bb.can; cursorShape: Qt.PointingHandCursor; onClicked: { bb.clicked(); lb.forceActiveFocus() } }
-            FlatToolTip { visible: bbMA.containsMouse && bb.can && bb.tip !== ""; text: bb.tip; x: 0; y: bb.height + 6 }
-        }
         Row {
             anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 2
             BarBtn { id: prevBtn; icon: "caret-left"; can: lb.siblingCount > 1; tip: qsTr("Previous (←)"); onClicked: lb.step(-1) }
@@ -216,19 +234,7 @@ Item {
             elide: Text.ElideMiddle
             color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
         }
-        Row {   // a PDF's pager, then ×
-            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 2
-            Row {
-                visible: lb.kind === "pdf" && lb.pdfPages > 1
-                anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                BarBtn { id: pagePrev; icon: "caret-left"; iconSize: 12; can: lb.pdfPage > 0; tip: qsTr("Previous page (PageUp)"); onClicked: lb.pdfStep(-1) }
-                Text { anchors.verticalCenter: parent.verticalCenter; text: (lb.pdfPage + 1) + " / " + lb.pdfPages
-                       color: Theme.colors.textMuted; font.family: Theme.font.mono; font.pixelSize: Theme.font.sizeSmall; leftPadding: 4; rightPadding: 4 }
-                BarBtn { id: pageNext; icon: "caret-right"; iconSize: 12; can: lb.pdfPage < lb.pdfPages - 1; tip: qsTr("Next page (PageDown)"); onClicked: lb.pdfStep(1) }
-                Item { width: 10; height: 1 }
-            }
-            BarBtn { id: closeBtn; icon: "x"; tip: qsTr("Close (Esc)"); onClicked: lb.close() }
-        }
+        BarBtn { id: closeBtn; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; icon: "x"; tip: qsTr("Close (Esc)"); onClicked: lb.close() }
     }
     readonly property var prevButton: prevBtn   // probe
     readonly property var closeButton: closeBtn

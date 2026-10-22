@@ -4301,10 +4301,10 @@ FocusScope {
             if (step === 71) { check(root._vidIntendedFrame() === probeFrame, "Q steps back"); gestures.keyPress(root, Qt.Key_D); ++step; return }
             if (step === 72) { check(root._vidFastSeekDir === 1, "D held = forward shuttle on the canvas"); gestures.keyRelease(root, Qt.Key_D); gestures.key(root, Qt.Key_R); ++step; return }
             if (step === 73) { check(root._vidFastSeekDir === 0 && Math.abs(root.videoSpeed - 1.25) < 0.01, "…released; R cycles the review speed (" + root.videoSpeed + ")"); gestures.key(root, Qt.Key_R, Qt.ShiftModifier); ++step; return }
-            if (step === 74) { check(Math.abs(root.videoSpeed - 1) < 0.01 && root.inspector && root.inspector.drawTool !== "rect" && root.inspector.drawTool !== "eraser", "Shift+R resets; no tool letter changed the tool (" + (root.inspector ? root.inspector.drawTool : "?") + ")"); root.canvasItem.goLive(elId); ++step; return }   // FOCUS = fit the element
-            if (step === 80) {   // 240 ms later: the camera animation is done
-                const cvw = root.canvasItem, sf = cvw.selectionFrame, bar = sf.videoBar, z = cvw.fitZoomFor(elId)
-                check(!cvw.camAnimating && Math.abs(cvw.cam.zoom - z) < 0.01 && cvw.selectedId === elId, "double-click / goLive on a video FITS it (zoom " + cvw.cam.zoom.toFixed(3) + " vs fit " + z.toFixed(3) + ")")
+            if (step === 74) { check(Math.abs(root.videoSpeed - 1) < 0.01 && root.inspector && root.inspector.drawTool !== "rect" && root.inspector.drawTool !== "eraser", "Shift+R resets; no tool letter changed the tool (" + (root.inspector ? root.inspector.drawTool : "?") + ")"); root.canvasItem.select(elId); ++step; return }   // (the media FOCUS rung is gone — 2026-10-22; the studio next)
+            if (step === 80) {
+                const cvw = root.canvasItem, sf = cvw.selectionFrame, bar = sf.videoBar
+                check(!cvw.camAnimating && cvw.selectedId === elId, "the element is selected, the camera at rest")
                 check(sf.x >= 24 && sf.y >= 24 && sf.x + sf.width + 24 <= cvw.width && bar.y + bar.height <= cvw.height - 24 && sf.y + sf.height + 24 + 2 <= cvw.height,
                       "…nothing is pushed out of frame: the glyph above/right and the bar below stay inside the view (frame " + sf.x.toFixed(0) + "," + sf.y.toFixed(0) + " " + sf.width.toFixed(0) + "×" + sf.height.toFixed(0) + ", bar bottom " + (bar.y + bar.height).toFixed(0) + ", view " + cvw.width + "×" + cvw.height + ")")
                 check(Math.min(cvw.width - (sf.x + sf.width + 24), cvw.height - (sf.y + bar.y + bar.height)) <= 40 || Math.min(sf.x, sf.y - 24) <= 40, "…and it is tight: one axis is within 40 px of the padding (right " + (cvw.width - (sf.x + sf.width + 24)).toFixed(0) + ", bottom " + (cvw.height - (sf.y + bar.y + bar.height)).toFixed(0) + ")")
@@ -5067,21 +5067,22 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 24) {
-                    check(studioFrame.visible && root.videoTabOpen && root.activeElementId === vidElId && cvw.opens === probeOpens + 1 && cvw.mediaFocuses === 0,
-                          "double-click on a video element OPENS its studio — the full form (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ", focuses " + cvw.mediaFocuses + ")")
+                    check(studioFrame.visible && root.videoTabOpen && root.activeElementId === vidElId && cvw.opens === probeOpens + 1,
+                          "double-click on a video element OPENS its studio — the full form (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ")")
                     g.key(root, Qt.Key_Escape)
                     ++step; return
                 }
-                if (step === 25) {   // click AGAIN on the selected video = FOCUS in place
-                    const r = canvas.elementRect(vidElId), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)
+                if (step === 25) {   // media has NO in-place form (2026-10-22): a click on the selected video arms nothing; Return = the lightbox
+                    const r = canvas.elementRect(vidElId), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2), z0 = cam.zoom
                     check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId, "Escape leaves the studio with the element selected ('" + cvw.selectedId + "')")
                     g.click(cvw, c.x, c.y)
-                    check(cvw.clickAgainId === vidElId, "a click on the selected video arms the in-place form")
-                    cvw.clickAgainNow()
-                    check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId && cvw.mediaFocuses === 1
-                          && (cvw.camAnimating || cam.zoom >= 1) && cvw.selectionFrame.videoBar.visible && Math.abs(cvw.selectionFrame.videoBar.y - (cvw.selectionFrame.pictureH + 2)) < 0.5,
-                          "…click-again on a video element = FOCUS in place: selected, the camera heads to readable, its bar under the selection box (focuses " + cvw.mediaFocuses + ", animating " + cvw.camAnimating + ", zoom " + cam.zoom.toFixed(2) + ", bar y " + cvw.selectionFrame.videoBar.y.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
-                    cvw.endLive(false); cvw.fit()   // (stops the camera animation; the other fixtures back in the window)
+                    check(cvw.clickAgainId === "" && !cvw.selectionFrame.liveGlyphItem.visible, "a click on the selected video arms nothing, and the frame shows no in-place glyph")
+                    g.key(root, Qt.Key_Return)
+                    check(root.lightbox.showing && root.lightbox.kind === "video" && root.lightbox.elementId === vidElId && !cvw.camAnimating && cam.zoom === z0, "Return on a selected video opens the LIGHTBOX — the camera does not move (zoom " + cam.zoom.toFixed(2) + ")")
+                    g.key(root, Qt.Key_Escape)
+                    check(!root.lightbox.showing && cvw.selectedId === vidElId && cvw.selectionFrame.videoBar.visible && Math.abs(cvw.selectionFrame.videoBar.y - (cvw.selectionFrame.pictureH + 2)) < 0.5,
+                          "Escape closes it: the element stays selected with its bar under the selection box (bar y " + cvw.selectionFrame.videoBar.y.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
+                    cvw.fit()   // (the other fixtures back in the window)
                     const same = (a, b) => Math.abs(a - b) < 0.01
                     let rr = cvw.edgeResize(Qt.rect(100, 100, 320, 240), 1, 0, 80, 0, true)
                     check(same(rr.width, 400) && same(rr.height, 300) && same(rr.x, 100) && same(rr.y, 100), "aspect lock: the right edge drives the height (" + rr.width + "×" + rr.height + ")")
@@ -5117,8 +5118,8 @@ FocusScope {
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 11,
-                          "a PDF element's menu: Open PDF · Focus · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
+                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 10,
+                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
                     cvw.contextMenu.close()
                     ++step; return
                 }

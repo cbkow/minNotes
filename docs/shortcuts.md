@@ -44,8 +44,8 @@ Shortcuts (⌘/).
 | Text box · plain text | T · ⇧T |
 | Pen / Rectangle / Oval / Line / Arrow / Eraser | P / R / O / L / A / E |
 | Open the selected element in full — the page view, the studio, the PDF view, an image's lightbox | double-click, or the open glyph |
-| Edit a page in place · focus a card (the in-place form) | click it again · Return · the pencil / focus glyph |
-| Preview the selected image, video, PDF or audio in the lightbox (‹ › or ← / → step through them; PageUp / PageDown page a PDF) | Space (Space or Esc closes) |
+| Edit a page in place (the in-place form) | click it again · Return · the pencil glyph |
+| Preview the selected image, video, PDF or audio in the lightbox (‹ › or ← / → step through them; PageUp / PageDown page a PDF) | Space or Return (Space or Esc closes) |
 | Cancel a stroke → drop the tool → clear the selection | Esc (repeat) |
 | Leave a live page, back to the canvas | Esc |
 | Pan while a page is live | ⌥-drag, or middle-button drag |

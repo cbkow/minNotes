@@ -334,14 +334,8 @@ Rectangle {
     function armClickAgain(id) { clickAgainId = id; clickAgainTimer.restart() }
     function clickAgainNow() { clickAgainTimer.stop(); clickAgainTimer.triggered() }   // probe: the interval elapsed
     function cancelClickAgain() { clickAgainId = ""; clickAgainTimer.stop() }
-    function liveLabel(id) {   // the in-place rung's name (the glyph's tooltip, the menu row)
-        const k = canvas.elementKind(id)
-        if (k === "page") return qsTr("Edit in place")
-        if (k === "shape") return qsTr("Edit text")
-        const mk = canvas.mediaElementKind(id)
-        return mk === "video" ? qsTr("Play in place") : qsTr("Focus")
-    }
-    function canLive(id) { const k = canvas.elementKind(id); return k === "page" || (k === "media" && ["image", "video", "pdf"].indexOf(canvas.mediaElementKind(id)) >= 0) }
+    function liveLabel(id) { return canvas.elementKind(id) === "shape" ? qsTr("Edit text") : qsTr("Edit in place") }   // the in-place rung's name (the glyph's tooltip, the menu row)
+    function canLive(id) { return canvas.elementKind(id) === "page" }   // pages only: media's "in place" is the lightbox (2026-10-22)
     function duplicateSelected() {
         const made = []
         canvas.beginBatch(qsTr("Duplicate"))
@@ -478,21 +472,13 @@ Rectangle {
         return null
     }
     property int lives: 0   // probe diagnostics
-    property int mediaFocuses: 0   // probe
     function goLive(id) {
         const kind = canvas.elementKind(id)
         if (kind === "shape") { if (liveId !== "" && liveId !== id) endLive(false); editText(id); return }   // a text chip's live form is its editor
-        if (kind === "media") {   // FOCUS (walk 7c, the ladder's rung for media): the camera to readable, selected; a video plays with its bar
+        if (kind === "media") {   // media has no in-place form since the lightbox (user 2026-10-22: "we don't need a play-in-place zoom"): Return = the lightbox
             if (liveId !== "" && liveId !== id) endLive(false)
-            select(id); ++mediaFocuses
-            const target = readableCameraFor(canvas.elementRect(id), id)
-            const then = function() {
-                if (selectedId !== id || !editor) return
-                const h = editor.canvasVideoHost
-                if (canvas.mediaElementKind(id) === "video" && h && h.valid && !editor.canvasHostPlaying) editor.playFromHost(h)
-            }
-            if (target.moves) animateCameraTo(target.x, target.y, target.z, then); else then()
-            if (editor) editor.forceActiveFocus()
+            select(id)
+            if (editor && editor.lightbox) editor.lightbox.showElement(id)
             return
         }
         if (kind !== "page" || !editor || !editor.homeSlot) return

@@ -55,6 +55,7 @@ Item {
     // The PDF pager (phase A5): ‹ n / N › under a selected PDF element — screen space, chrome tone.
     readonly property bool isPdf: single && canvas.mediaElementKind(id_) === "pdf"
     readonly property var pagerPrev: prevBtn   // probe
+    readonly property var liveGlyphItem: liveGlyph
     readonly property var pagerNext: nextBtn
     Rectangle {
         id: pager
