@@ -1425,6 +1425,14 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             if (a[i].indexOf("--type-probe=") === 0) return a[i].substring(13)
         return ""
     }
+    // Dev-only (2026-10-22): --shot-lightbox=<image> opens the lightbox on that file for a --shot (the overlay's look).
+    readonly property string _shotLightbox: {
+        var a = Qt.application.arguments
+        for (var i = 0; i < a.length; ++i)
+            if (a[i].indexOf("--shot-lightbox=") === 0) return a[i].substring(16)
+        return ""
+    }
+    Timer { interval: 1800; running: win._shotLightbox !== ""; onTriggered: lightboxItem.showImageFile(win._shotLightbox) }
     // Dev-only (canvas B10): --canvas-probe=<md> imports the fixture and runs the canvas probe (Editor.qml).
     readonly property string _videoProbeClip: {
         var a = Qt.application.arguments
@@ -1575,6 +1583,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                                      toolbarItem: chromeRows.item ? chromeRows.item.toolbar.canvasTools : null
                                      chromeItem: chromeRows.item ? chromeRows.item.toolbar : null
                                      searchItem: chromeRows.item ? chromeRows.item.searchBar : null
+                                     lightbox: lightboxItem
                                      onMergeFileRequested: (gap) => win.openMergePicker(gap) }
                         }
                         CanvasView { id: canvasView; anchors.fill: parent; visible: editorInner.canvasShown; editor: editorInner
@@ -1589,6 +1598,10 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
     // FLOAT it over the editor (opening the palette then can't push the locked
     // 760 column); when not floating, the Row's width subtraction above makes
     // it behave exactly like the old push layout.
+    // The LIGHTBOX (2026-10-22): over the content and the chrome, under the welcome overlay (z 100) and popups.
+    Lightbox { id: lightboxItem; anchors.fill: parent; z: 50; editor: win.activeEditor }
+    readonly property var lightbox: lightboxItem   // probe
+
     Inspector {
         id: inspectorPanel
         anchors.right: parent.right

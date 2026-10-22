@@ -85,6 +85,18 @@ Item {
             TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: frame.view.pdfStepSelected(1) }
         }
     }
+    Rectangle {   // the IN-PLACE glyph (2026-10-22): a pencil on a page (edit here), a focus mark on media; hidden while live
+        id: liveGlyph
+        visible: frame.canOpen && frame.single && frame.view.canLive(frame.id_) && frame.view.liveId !== frame.id_
+        x: frame.width + 4; y: -48; width: 20; height: 20; radius: Theme.dim.radiusSmall
+        color: liveGlyphHover.hovered ? Theme.colors.surfaceHover : Theme.colors.surface
+        border.width: 1; border.color: Theme.colors.border
+        Icon { anchors.centerIn: parent; name: frame.isPage ? "pencil-simple" : "arrows-in-simple"; size: 14
+               color: liveGlyphHover.hovered ? Theme.colors.textBright : Theme.colors.textMuted }
+        HoverHandler { id: liveGlyphHover; cursorShape: Qt.PointingHandCursor }
+        TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: frame.view.liveSelected() }
+        FlatToolTip { parent: liveGlyph; x: -implicitWidth + liveGlyph.width; y: liveGlyph.height + 6; visible: liveGlyphHover.hovered; text: frame.view.liveLabel(frame.id_) }
+    }
     Rectangle {
         id: glyph
         visible: frame.canOpen

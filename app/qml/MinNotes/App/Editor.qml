@@ -346,6 +346,7 @@ FocusScope {
     property var tabsItem: null   // the bottom strip (set from Main.qml; the canvas probe counts its tabs)
     property var toolbarItem: null
     property var searchItem: null     // the search bar (Main.qml; the probe drives it)
+    property var lightbox: null       // the LIGHTBOX overlay (Main.qml, 2026-10-22): Space on a selected image / video
     property var chromeItem: null     // the toolbar ROW (ChromeToolbar) — the chrome probe phase   // the top strip's view toolbar (set from Main.qml; the probe)
 
     // A derived table's tab (SR-4 S9): its head record's id. Until S9b lands the grid frame the
@@ -1262,6 +1263,25 @@ FocusScope {
     readonly property int focusedVideoRow: (blockModel.structureRevision,
         cursor.focusRow >= 0 && !cursor.hasSel && activeFrameId === "" && blockModel.typeForRow(cursor.focusRow) === 3
             && blockModel.mediaKind(cursor.focusRow) === "video" ? cursor.focusRow : -1)
+    // The LIGHTBOX's page target: the caret parked on an image / video block (Space opens it there).
+    readonly property int focusedMediaRow: (blockModel.structureRevision,
+        cursor.focusRow >= 0 && !cursor.hasSel && activeFrameId === "" && blockModel.typeForRow(cursor.focusRow) === 3
+            && ["image", "video"].indexOf(blockModel.mediaKind(cursor.focusRow)) >= 0 ? cursor.focusRow : -1)
+    // Space's lightbox: the selected canvas image / video, or the page block with the caret. (The canvas's Space is a
+    // TAP — press and release without the hand having panned; held, it stays the hand.)
+    function lightboxSelected() {
+        if (!lightbox) return false
+        if (activeCanvas && !cardHosted && canvasItem) {
+            const id = canvasItem.selectedId
+            if (id === "" || canvas.elementKind(id) !== "media" || ["image", "video"].indexOf(canvas.mediaElementKind(id)) < 0) return false
+            lightbox.showElement(id); return true
+        }
+        if (focusedMediaRow >= 0) { lightbox.showRow(focusedMediaRow); return true }
+        return false
+    }
+    property string _spaceTapId: ""   // the canvas Space press that may become a tap
+    property real _spaceTapPanX: 0
+    property real _spaceTapPanY: 0
     readonly property string videoKeyContext: videoTabOpen ? "studio"
                                             : (canvasShown && !cardHosted && canvasHost.valid) ? "canvas"
                                             : focusedVideoRow >= 0 ? "page" : ""
@@ -1281,7 +1301,9 @@ FocusScope {
         if (plain && (k === Qt.Key_Left  || k === Qt.Key_Q)) { if (_videoKeyActivate()) stepVideoFrames(-1); return true }   // auto-repeat = hold to step
         if (plain && (k === Qt.Key_Right || k === Qt.Key_E)) { if (_videoKeyActivate()) stepVideoFrames(1); return true }
         if (event.isAutoRepeat) return false
-        if (plain && (k === Qt.Key_Space || k === Qt.Key_K || k === Qt.Key_W || k === Qt.Key_S)) { if (_videoKeyActivate()) toggleVideo(); return true }
+        // Space plays only in the STUDIO (QCView's key); on the canvas and in a page Space is the LIGHTBOX (2026-10-22,
+        // ufb's ruling) — play / pause there is K / W / S.
+        if (plain && ((k === Qt.Key_Space && ctx === "studio") || k === Qt.Key_K || k === Qt.Key_W || k === Qt.Key_S)) { if (_videoKeyActivate()) toggleVideo(); return true }
         if (plain && k === Qt.Key_Home) { if (_videoKeyActivate()) seekVideoStart(); return true }
         if (plain && k === Qt.Key_End)  { if (_videoKeyActivate()) seekVideoEnd(); return true }
         if (plain && k === Qt.Key_M)    { if (_videoKeyActivate()) toggleVideoMute(); return true }
@@ -3243,6 +3265,9 @@ FocusScope {
         }
         else if (root.activeCanvas && event.key === Qt.Key_Space && !event.isAutoRepeat) {
             canvasItem.spaceHeld = false
+            const tapId = root._spaceTapId; root._spaceTapId = ""
+            if (tapId !== "" && tapId === canvasItem.selectedId && canvasItem.cam.panX === root._spaceTapPanX && canvasItem.cam.panY === root._spaceTapPanY)
+                root.lightboxSelected()   // a Space TAP on a selected image / video = the lightbox (2026-10-22)
             event.accepted = true
         }
     }
@@ -3421,7 +3446,10 @@ FocusScope {
             const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
             const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
                                [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" }
-            if (k === Qt.Key_Space && !event.isAutoRepeat) canvasItem.spaceHeld = true
+            if (k === Qt.Key_Space && !event.isAutoRepeat) {
+                canvasItem.spaceHeld = true
+                root._spaceTapId = canvasItem.selectedId; root._spaceTapPanX = canvasItem.cam.panX; root._spaceTapPanY = canvasItem.cam.panY
+            }
             else if (plain && shift && k === Qt.Key_T && root.inspector) root.inspector.drawTool = "plaintext"      // ⇧T: plain text (no box)
             else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
             else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasItem.deleteSelected()
@@ -3446,6 +3474,10 @@ FocusScope {
         else if (cmd && k === Qt.Key_A) { root.selectAllLadder(); event.accepted = true }
         else if (cmd && (k === Qt.Key_Return || k === Qt.Key_Enter) && blockModel.tableHeadOf(cursor.focusRow) >= 0) {
             if (!event.isAutoRepeat) root.tableInsertRowBelow()   // ⌘Enter: a row below, caret in the same column
+            event.accepted = true
+        }
+        else if (k === Qt.Key_Space && !cmd && root.focusedMediaRow >= 0) {   // Space on an image / video block = the lightbox (2026-10-22)
+            if (!event.isAutoRepeat) root.lightboxSelected()
             event.accepted = true
         }
         else if (k === Qt.Key_Space && !cmd && root.typedCellHere() === 2) {   // §4.14: Space cycles a check cell
@@ -4215,8 +4247,12 @@ FocusScope {
                 check(videoSurfaceOverlay.parent === pageLayer && videoSurfaceOverlay.visible && Math.abs(videoSurfaceOverlay.y - (blockModel.yForRow(row) + 6)) < 1, "…and so is the live surface, over the picture")
                 gestures.key(root, Qt.Key_Space); ++step; return
             }
-            if (step === 7) { check(!videoDec.isPlaying, "Space right after the bar click pauses (the keys followed the bar's block)"); gestures.key(root, Qt.Key_K); ++step; return }
-            if (step === 8) { check(videoDec.isPlaying, "K plays"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 7) {   // Space on an inline video = the LIGHTBOX (2026-10-22); play / pause moved to K / W / S
+                check(!!root.lightbox && root.lightbox.showing && root.lightbox.kind === "video" && root.lightbox.row === cursor.focusRow && videoDec.isPlaying && !videoSurfaceOverlay.visible,
+                      "Space right after the bar click opens the LIGHTBOX on the block (showing " + (root.lightbox ? root.lightbox.showing : "?") + ", kind " + (root.lightbox ? root.lightbox.kind : "?") + ", row " + (root.lightbox ? root.lightbox.row : "?") + " vs " + cursor.focusRow + "); it keeps playing; the page's surface yields")
+                gestures.key(root, Qt.Key_Space); ++step; return   // (to the lightbox, which holds the keys)
+            }
+            if (step === 8) { check(!root.lightbox.showing && videoDec.isPlaying && root.activeFocus && videoSurfaceOverlay.visible, "…Space again closes it, the keys return to the editor, the surface is back"); gestures.key(root, Qt.Key_K); ++step; return }
             if (step === 9) { const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
             if (step === 11) { check(root._vidIntendedFrame() === probeFrame + 1, "→ → ← steps one frame net (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
             if (step === 12) { check(root._vidFastSeekDir === -1 && videoAudio.shuttleActive() === videoAudio.hasAudio, "J held = rewind shuttle"); gestures.keyRelease(root, Qt.Key_J); ++step; return }
@@ -4242,12 +4278,12 @@ FocusScope {
                 if (c) gestures.drag(cvw, c.x, c.y, c.x + 14, c.y + 14, 3)   // … and the click jitters past the drag threshold (remote desktop): the DragHandler selects
                 check(!!c && cvw.selectedId === elId && root.videoKeyContext === "canvas" && root.activeFocus,
                       "a cold (jittery) click selects the element and the editor holds the keys (ctx '" + root.videoKeyContext + "', focus " + root.activeFocus + ", under: " + (c ? gestures.itemsUnder(cvw, c.x, c.y) : "?") + ")")
-                gestures.key(root, Qt.Key_Space); ++step; return
+                gestures.key(root, Qt.Key_K); ++step; return   // (Space on the canvas is the lightbox since 2026-10-22)
             }
-            if (step === 63) { check(videoDec.isPlaying && root.canvasHostPlaying, "Space on the cold-selected element plays (playing " + videoDec.isPlaying + ", key " + (root.videoPlayingKey !== "") + ")"); probeFrame = root._vidIntendedFrame(); gestures.key(root, Qt.Key_Right); ++step; return }
+            if (step === 63) { check(videoDec.isPlaying && root.canvasHostPlaying, "K on the cold-selected element plays (playing " + videoDec.isPlaying + ", key " + (root.videoPlayingKey !== "") + ")"); probeFrame = root._vidIntendedFrame(); gestures.key(root, Qt.Key_Right); ++step; return }
             if (step === 64) { check(!videoDec.isPlaying && root._vidIntendedFrame() === probeFrame + 1, "→ pauses and steps one frame (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
-            if (step === 65) { check(root._vidFastSeekDir === -1, "J held = reverse shuttle on the canvas"); gestures.keyRelease(root, Qt.Key_J); gestures.key(root, Qt.Key_Space); ++step; return }
-            if (step === 66) { check(root._vidFastSeekDir === 0 && videoDec.isPlaying, "…released; Space plays again"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 65) { check(root._vidFastSeekDir === -1, "J held = reverse shuttle on the canvas"); gestures.keyRelease(root, Qt.Key_J); gestures.key(root, Qt.Key_W); ++step; return }
+            if (step === 66) { check(root._vidFastSeekDir === 0 && videoDec.isPlaying, "…released; W plays again"); gestures.key(root, Qt.Key_K); ++step; return }
             if (step === 67) { check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_W); ++step; return }
             if (step === 68) { check(videoDec.isPlaying, "W plays on the canvas (the tool letters yield to a selected video)"); gestures.key(root, Qt.Key_S); ++step; return }
             if (step === 69) { check(!videoDec.isPlaying, "S pauses"); probeFrame = root._vidIntendedFrame(); gestures.key(root, Qt.Key_E); ++step; return }
@@ -4278,8 +4314,8 @@ FocusScope {
                 const bar = cvw.selectionFrame.videoBar, btn = bar.playButton, pb = btn.mapToItem(cvw, btn.width / 2, btn.height / 2)
                 gestures.click(cvw, pb.x, pb.y)   // the bar's play button (it lies OUTSIDE the element's rect)
                 check(cvw.selectedId === elId && videoDec.isPlaying && root.activeFocus, "the bar's play button plays and the element STAYS selected with the editor focused (selected '" + cvw.selectedId + "', playing " + videoDec.isPlaying + ", focus " + root.activeFocus + ")")
-                gestures.key(root, Qt.Key_Space)
-                check(!videoDec.isPlaying, "…Space right after the button click pauses (the keys stayed with the editor)")
+                gestures.key(root, Qt.Key_K)
+                check(!videoDec.isPlaying, "…K right after the button click pauses (the keys stayed with the editor)")
                 // The counter: timecode by default; a click flips EVERY player to frames and back (2026-10-18)
                 viewPrefs.frameCounter = false   // (the dev settings domain may hold a previous run's flip)
                 const ctr = bar.counterItem, cp = ctr.mapToItem(cvw, ctr.width / 2, ctr.height / 2)
@@ -4292,12 +4328,23 @@ FocusScope {
                 const tr = bar.scrubTrack, a = tr.mapToItem(cvw, tr.width * 0.2, tr.height / 2), b = tr.mapToItem(cvw, tr.width * 0.6, tr.height / 2)
                 gestures.drag(cvw, a.x, a.y, b.x, b.y, 6)
                 check(cvw.selectedId === elId && root._vidIntendedFrame() > videoDec.frameCount * 0.5 && root._vidIntendedFrame() < videoDec.frameCount * 0.7, "dragging the scrub line scrubs (frame " + root._vidIntendedFrame() + " of " + videoDec.frameCount + ") and keeps the selection")
-                gestures.key(root, Qt.Key_Space); ++step; return
+                gestures.key(root, Qt.Key_K); ++step; return
             }
             if (step === 135) {
                 const it = root.canvasItem.pageItemFor(elId)
                 state("canvas element playing?")
                 check(videoDec.isPlaying && root.canvasHostPlaying && !!it && !!it.mediaItem && it.mediaItem.surfaceVisible, "the element plays IN PLACE with its surface (frame " + videoDec.currentFrame + ", surface " + (it && it.mediaItem ? it.mediaItem.surfaceVisible : "?") + ")")
+                gestures.key(root, Qt.Key_Space); ++step; return   // a Space TAP on the selected element = the lightbox (2026-10-22)
+            }
+            if (step === 136) {
+                const it = root.canvasItem.pageItemFor(elId)
+                check(!!root.lightbox && root.lightbox.showing && root.lightbox.kind === "video" && root.lightbox.elementId === elId && videoDec.isPlaying && !!it && !!it.mediaItem && !it.mediaItem.surfaceVisible,
+                      "Space opens the LIGHTBOX on the selected element; it keeps playing; the element's surface yields (showing " + (root.lightbox ? root.lightbox.showing : "?") + ", id " + (root.lightbox ? root.lightbox.elementId : "?") + ")")
+                gestures.key(root, Qt.Key_Escape); ++step; return
+            }
+            if (step === 137) {
+                const it = root.canvasItem.pageItemFor(elId)
+                check(!root.lightbox.showing && root.canvasItem.selectedId === elId && videoDec.isPlaying && !!it && !!it.mediaItem && it.mediaItem.surfaceVisible, "Escape closes it: the element stays selected, playing, its surface back")
                 root.canvasItem.clearSelection(); ++step; return
             }
             if (step === 140) { check(!videoDec.isPlaying && root.videoPlayingKey === "", "deselecting the element stops playback"); console.log("VIDEO-PROBE DONE fails", fails); Qt.exit(Math.min(fails, 100)) }
@@ -4745,21 +4792,28 @@ FocusScope {
                     g.click(cvw, s.x, s.y)
                     check(cvw.selectedId === livePage, "a click on a page card's margin selects it (selected '" + cvw.selectedId + "', empty " + cvw.emptyAt(s.x, s.y) + ", under " + canvas.visibleElements(w.x, w.y, w.x + 0.01, w.y + 0.01).length + ", item " + (cvw.childAt ? "" : "") + ")")
                     const d0 = cvw.doubleTaps
-                    g.doubleClick(cvw, s.x, s.y)
-                    check(root.activeCanvas && canvas.focusPage === "" && (canvas.livePage === livePage || (cvw.camAnimating && cvw.selectedId === livePage)), "double-click on a page card's margin makes it LIVE in place — after the camera animates to readable when zoomed out (live '" + canvas.livePage + "', animating " + cvw.camAnimating + ", dbl +" + (cvw.doubleTaps - d0) + ")")
-                    cvw.endLive(false)
+                    g.doubleClick(cvw, s.x, s.y)   // THE LADDER (2026-10-22): a double-click is the FULL form
+                    check(!root.activeCanvas && canvas.focusPage === livePage && canvas.livePage === "", "double-click on a page card's margin OPENS it full-window (focus '" + canvas.focusPage + "', live '" + canvas.livePage + "', dbl +" + (cvw.doubleTaps - d0) + ")")
+                    g.key(root, Qt.Key_Escape)
                     ++step; return
                 }
-                if (step === 17) {   // over the page's text (a block delegate under the pointer)
-                    const r = canvas.elementRect(livePage), s = cam.worldToScreen(r.x + 100, r.y + 100)
+                if (step === 17) {   // click AGAIN on the selected page = the in-place form; over the page's text a double-click opens too
+                    const r = canvas.elementRect(livePage), sm = cam.worldToScreen(r.x + 10, r.y + 10), s = cam.worldToScreen(r.x + 100, r.y + 100)
+                    check(root.activeCanvas && cvw.selectedId === livePage, "Escape returns to the canvas with the page selected ('" + cvw.selectedId + "')")
+                    g.click(cvw, sm.x, sm.y)
+                    check(cvw.clickAgainId === livePage && canvas.livePage === "", "a click on the SELECTED page arms the in-place form (armed '" + cvw.clickAgainId + "')")
+                    const l0 = cvw.clickAgains
+                    cvw.clickAgainNow()
+                    check(root.activeCanvas && canvas.focusPage === "" && cvw.clickAgains === l0 + 1 && (canvas.livePage === livePage || (cvw.camAnimating && cvw.selectedId === livePage)), "…and after the double-click interval it goes LIVE in place — after the camera animates to readable when zoomed out (live '" + canvas.livePage + "', animating " + cvw.camAnimating + ")")
+                    cvw.endLive(false)
                     cvw.clearSelection()
                     const t0 = cvw.taps
                     g.click(cvw, s.x, s.y)
-                    check(cvw.selectedId === livePage, "a single click OVER a page card's text selects it (selected '" + cvw.selectedId + "', taps +" + (cvw.taps - t0) + ")")
+                    check(cvw.selectedId === livePage && cvw.clickAgainId === "", "a single click OVER a page card's text selects it, nothing armed (selected '" + cvw.selectedId + "', taps +" + (cvw.taps - t0) + ")")
                     const d0 = cvw.doubleTaps
                     g.doubleClick(cvw, s.x, s.y)
-                    check(root.activeCanvas && (canvas.livePage === livePage || (cvw.camAnimating && cvw.selectedId === livePage)), "double-click over a page card's text makes it LIVE too (live '" + canvas.livePage + "', animating " + cvw.camAnimating + ", dbl +" + (cvw.doubleTaps - d0) + ")")
-                    cvw.endLive(false)
+                    check(!root.activeCanvas && canvas.focusPage === livePage, "double-click over a page card's text opens it too (focus '" + canvas.focusPage + "', dbl +" + (cvw.doubleTaps - d0) + ")")
+                    g.key(root, Qt.Key_Escape)
                     ++step; return
                 }
                 if (step === 19) {   // the footer's "open the page" link: pan the card's bottom edge into view
@@ -5007,9 +5061,20 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 24) {
-                    check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId && cvw.opens === probeOpens && cvw.mediaFocuses === 1
+                    check(studioFrame.visible && root.videoTabOpen && root.activeElementId === vidElId && cvw.opens === probeOpens + 1 && cvw.mediaFocuses === 0,
+                          "double-click on a video element OPENS its studio — the full form (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ", focuses " + cvw.mediaFocuses + ")")
+                    g.key(root, Qt.Key_Escape)
+                    ++step; return
+                }
+                if (step === 25) {   // click AGAIN on the selected video = FOCUS in place
+                    const r = canvas.elementRect(vidElId), c = cam.worldToScreen(r.x + r.width / 2, r.y + r.height / 2)
+                    check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId, "Escape leaves the studio with the element selected ('" + cvw.selectedId + "')")
+                    g.click(cvw, c.x, c.y)
+                    check(cvw.clickAgainId === vidElId, "a click on the selected video arms the in-place form")
+                    cvw.clickAgainNow()
+                    check(root.canvasShown && !studioFrame.visible && cvw.selectedId === vidElId && cvw.mediaFocuses === 1
                           && (cvw.camAnimating || cam.zoom >= 1) && cvw.selectionFrame.videoBar.visible && Math.abs(cvw.selectionFrame.videoBar.y - (cvw.selectionFrame.pictureH + 2)) < 0.5,
-                          "double-click on a video element = FOCUS in place: selected, the camera heads to readable, its bar under the selection box (studio " + studioFrame.visible + ", opens +" + (cvw.opens - probeOpens) + ", focuses " + cvw.mediaFocuses + ", animating " + cvw.camAnimating + ", zoom " + cam.zoom.toFixed(2) + ", bar y " + cvw.selectionFrame.videoBar.y.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
+                          "…click-again on a video element = FOCUS in place: selected, the camera heads to readable, its bar under the selection box (focuses " + cvw.mediaFocuses + ", animating " + cvw.camAnimating + ", zoom " + cam.zoom.toFixed(2) + ", bar y " + cvw.selectionFrame.videoBar.y.toFixed(0) + " vs picture " + cvw.selectionFrame.pictureH.toFixed(0) + ")")
                     cvw.endLive(false); cvw.fit()   // (stops the camera animation; the other fixtures back in the window)
                     const same = (a, b) => Math.abs(a - b) < 0.01
                     let rr = cvw.edgeResize(Qt.rect(100, 100, 320, 240), 1, 0, 80, 0, true)
@@ -5046,8 +5111,8 @@ FocusScope {
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 10,
-                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
+                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 11,
+                          "a PDF element's menu: Open PDF · Focus · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5055,7 +5120,7 @@ FocusScope {
                     cvw.select(livePage)
                     const c = cam.worldToScreen(canvas.elementRect(livePage).x + 20, canvas.elementRect(livePage).y + 20)
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 4, "a page's menu: Open page · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 5, "a page's menu: Open page · Edit in place · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5181,8 +5246,11 @@ FocusScope {
                     cvw.cam.setPan(cvw.cam.panX - c0.x + cvw.width / 2, cvw.cam.panY - c0.y + 200)   // the card's top centre on screen
                     const c = cvw.cam.worldToScreen(r.x + r.width / 2, r.y + 100)
                     probeLives = cvw.lives
-                    g.doubleClick(cvw, c.x, c.y)
-                    check(cvw.camAnimating && canvas.livePage === "" && cvw.selectedId === livePage, "a double-click at 50 % selects and starts the camera animation first (animating " + cvw.camAnimating + ")")
+                    cvw.select(livePage)
+                    g.click(cvw, c.x, c.y)   // click AGAIN on the selected page (the ladder, 2026-10-22)
+                    check(cvw.clickAgainId === livePage, "a click on the selected page at 50 % arms the in-place form")
+                    cvw.clickAgainNow()
+                    check(cvw.camAnimating && canvas.livePage === "" && cvw.selectedId === livePage, "…the click-again starts the camera animation first (animating " + cvw.camAnimating + ")")
                     ++step; return
                 }
                 if (step < 10) { ++step; return }   // 180 ms animation + the mount
@@ -5210,13 +5278,15 @@ FocusScope {
                         cvw.clearSelection()
                     }
                     probeLives = cvw.lives
-                    g.doubleClick(cvw, c2.x, c2.y)
-                    check(!cvw.camAnimating && canvas.livePage === livePage, "at a readable zoom the double-click goes live at once (no animation)")
+                    cvw.select(livePage)
+                    g.click(cvw, c2.x, c2.y)
+                    cvw.clickAgainNow()
+                    check(!cvw.camAnimating && canvas.livePage === livePage, "at a readable zoom the click-again goes live at once (no animation)")
                     ++step; return
                 }
                 if (step === 15) {
                     const it = pageItem(livePage)
-                    check(cvw.lives === probeLives + 1 && canvas.livePage === livePage && canvas.focusPage === "" && cvw.liveKind === "page", "double-click on a page makes it LIVE in place (lives +" + (cvw.lives - probeLives) + ", live '" + canvas.livePage + "', focus '" + canvas.focusPage + "')")
+                    check(cvw.lives === probeLives + 1 && canvas.livePage === livePage && canvas.focusPage === "" && cvw.liveKind === "page", "click-again on a page makes it LIVE in place (lives +" + (cvw.lives - probeLives) + ", live '" + canvas.livePage + "', focus '" + canvas.focusPage + "')")
                     check(root.cardHosted && !!it && !!it.page && root.parent === it.page.liveSlot && it.page.live, "the one Editor sits in the card's live slot (hosted " + root.cardHosted + ")")
                     check(blockModel.pageId() === livePage && root.undoTarget === blockModel && root.activeCanvas && cvw.visible && flick.visible && root.activeFrameId === "",
                           "blockModel IS the live page; ⌘Z targets its log; the canvas stays in view under the card; the page view's editing gates are live")
@@ -6102,7 +6172,7 @@ FocusScope {
             // height in layout space (kVideoBar / kPdfNav) so the chrome sits in real space. ---
             Item {
             id: videoSurfaceOverlay
-            visible: root.videoVisible && root._videoSurfaceReady
+            visible: root.videoVisible && root._videoSurfaceReady && !(root.lightbox && root.lightbox.showing)
             z: 1
             readonly property int r: root.videoPlayingRow
             readonly property real measure: r >= 0 ? root.measureForRow(r) : root.pageWidth

@@ -48,19 +48,22 @@ Item {
         gesturePolicy: TapHandler.DragThreshold
         // (the signals' first argument is an eventPoint, which carries no modifiers — the handler's point does)
         readonly property bool shift: (point.modifiers & Qt.ShiftModifier) !== 0
+        // THE LADDER (ruled 2026-10-22, CanvasView.armClickAgain): click = select · click AGAIN on the selected element =
+        // the in-place form (live card / focus) after the double-click interval · double-click = the FULL form (page
+        // view, studio, PDF view, lightbox; a text chip's full form is its editor).
         onSingleTapped: (ev) => {
             ++el.view.taps
             if (el.view.liveKind === "page") el.view.endLive(false)   // a click on another element ends the live card
             if (tap.shift) el.view.toggleSelect(el.elementId)
             else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
+            else if (el.view.selectedId === el.elementId && el.view.liveId !== el.elementId && el.view.canLive(el.elementId)) el.view.armClickAgain(el.elementId)
             el.editor.forceActiveFocus()
         }
         onDoubleTapped: (ev) => {
             ++el.view.doubleTaps
-            if (tap.shift) { el.view.select(el.elementId); el.view.openSelected(); return }   // the "full window" rung
-            if (el.kind === "page") el.view.goLive(el.elementId)   // live IN PLACE (SPIKE S4); the glyph / Shift pops out
-            else if (el.kind === "shape") el.view.editText(el.elementId)
-            else if (el.kind === "media") el.view.goLive(el.elementId)   // FOCUS in place (walk 7c): camera to readable, a video plays; Open stays on the glyph / Shift / the menu
+            el.view.cancelClickAgain()
+            if (el.kind === "shape") { el.view.editText(el.elementId); return }
+            el.view.select(el.elementId); el.view.openSelected()   // (Shift-double-click is the same rung — it stays for muscle memory)
         }
     }
     DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row

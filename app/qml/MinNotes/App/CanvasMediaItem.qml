@@ -90,7 +90,7 @@ Item {
         z: 2
         videoDecoder: mi.editor ? mi.editor.videoDecoder : null
         visible: mi.mediaKind === "video" && !!mi.editor && mi.editor.videoPlayingKey !== "" && mi.editor.videoPlayingKey === standIn.mediaAnchorPath(0)
-                 && mi.editor._videoSurfaceReady && !mi.editor.videoTabOpen
+                 && mi.editor._videoSurfaceReady && !mi.editor.videoTabOpen && !(mi.editor.lightbox && mi.editor.lightbox.showing)
         fillColor: Qt.rgba(Theme.colors.bgAlt.r, Theme.colors.bgAlt.g, Theme.colors.bgAlt.b, 1.0)
     }
 }

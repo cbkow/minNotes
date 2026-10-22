@@ -107,7 +107,7 @@ Rectangle {
     function selectMany(ids) { selectedIds = ids.slice() }
     function toggleSelect(id) { const i = selectedIds.indexOf(id); const a = selectedIds.slice(); if (i >= 0) a.splice(i, 1); else a.push(id); selectedIds = a }
     function isSelected(id) { return selectedIds.indexOf(id) >= 0 }
-    function clearSelection() { if (selectedIds.length) selectedIds = [] }
+    function clearSelection() { cancelClickAgain(); if (selectedIds.length) selectedIds = [] }
     function selectionRect() {   // the union of the selected elements' world rects
         let r = null
         for (const id of selectedIds) {
@@ -310,17 +310,38 @@ Rectangle {
     function openSelected() {
         const id = selectedId
         ++opens
+        cancelClickAgain()
         if (id === "") return
         const k = canvas.elementKind(id)
-        if (k === "page") { canvas.focusPage = id; return }
+        if (k === "page") { if (canvas.livePage !== "") endLive(false); canvas.focusPage = id; return }   // (a double-click on a selected page may have armed / started the live form first)
         if (k === "shape") { editText(id); return }
         if (k !== "media") return
         const mk = canvas.mediaElementKind(id)
         if (mk === "video" || mk === "pdf") { editor.setActiveTab(id); return }
         if (mk === "audio") { editor.playAudioElement(id); return }
         if (mk === "bookmark") { try { Qt.openUrlExternally(JSON.parse(canvas.elementJson(id)).media.src) } catch (e) {} return }
+        if (mk === "image" && editor && editor.lightbox) { editor.lightbox.showElement(id); return }   // the LIGHTBOX (2026-10-22); the default app stays on the menu
         canvas.openElement(id)
     }
+    // THE LADDER (ruled 2026-10-22): a DOUBLE-CLICK is the full form (openSelected — the page view, the studio, the PDF
+    // view, the lightbox); the in-place form (goLive — a live page card, a focused video / image) is CLICK AGAIN on the
+    // element that is already selected, Return, the frame's pencil / focus glyph, or the menu. The click-again waits
+    // out the double-click interval so the first tap of a double-click never mounts a live card that the second tap
+    // then pops out (TapHandler reports singleTapped at once, before it knows whether a second tap follows).
+    property string clickAgainId: ""
+    property int clickAgains: 0   // probe
+    Timer { id: clickAgainTimer; interval: 320; onTriggered: { const id = cv.clickAgainId; cv.clickAgainId = ""; if (id !== "" && cv.selectedId === id && cv.liveId !== id) { ++cv.clickAgains; cv.goLive(id) } } }
+    function armClickAgain(id) { clickAgainId = id; clickAgainTimer.restart() }
+    function clickAgainNow() { clickAgainTimer.stop(); clickAgainTimer.triggered() }   // probe: the interval elapsed
+    function cancelClickAgain() { clickAgainId = ""; clickAgainTimer.stop() }
+    function liveLabel(id) {   // the in-place rung's name (the glyph's tooltip, the menu row)
+        const k = canvas.elementKind(id)
+        if (k === "page") return qsTr("Edit in place")
+        if (k === "shape") return qsTr("Edit text")
+        const mk = canvas.mediaElementKind(id)
+        return mk === "video" ? qsTr("Play in place") : qsTr("Focus")
+    }
+    function canLive(id) { const k = canvas.elementKind(id); return k === "page" || (k === "media" && ["image", "video", "pdf"].indexOf(canvas.mediaElementKind(id)) >= 0) }
     function duplicateSelected() {
         const made = []
         canvas.beginBatch(qsTr("Duplicate"))
@@ -505,7 +526,7 @@ Rectangle {
         if (selectIt) select(id)
         editor.forceActiveFocus()
     }
-    function liveSelected() { if (selectedId !== "") goLive(selectedId) }
+    function liveSelected() { cancelClickAgain(); if (selectedId !== "") goLive(selectedId) }
     // Below a readable zoom a live card is unusable: the camera dropping under 75 % ends liveness (phase C8).
     Connections { target: cam; function onCameraChanged() { if (canvas.livePage !== "" && !camAnim.running && cam.zoom < 0.75) cv.endLive(true) } }
     Connections { target: cv.editor; function onLiveExitRequested() { cv.endLive(true) } }

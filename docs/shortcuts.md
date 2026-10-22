@@ -42,8 +42,9 @@ Shortcuts (⌘/).
 | Select / Hand / Page tools | V / H / N |
 | Text box · plain text | T · ⇧T |
 | Pen / Rectangle / Oval / Line / Arrow / Eraser | P / R / O / L / A / E |
-| Edit the selected page in place (or focus a card) | Return |
-| Open full-window | the open glyph, or ⇧-double-click |
+| Open the selected element in full — the page view, the studio, the PDF view, an image's lightbox | double-click, or the open glyph |
+| Edit a page in place · focus a card (the in-place form) | click it again · Return · the pencil / focus glyph |
+| Preview the selected image or video in the lightbox (← / → step through them) | Space (Space or Esc closes) |
 | Cancel a stroke → drop the tool → clear the selection | Esc (repeat) |
 | Leave a live page, back to the canvas | Esc |
 | Pan while a page is live | ⌥-drag, or middle-button drag |
@@ -112,7 +113,8 @@ Shortcuts (⌘/).
 
 | Action | Shortcut |
 |---|---|
-| Play / pause | Space, K, W or S |
+| Play / pause (Space too, in the studio — elsewhere Space is the lightbox) | K, W or S |
+| Preview an inline video or image in the lightbox | Space (with the caret on it) |
 | Step a frame back / forward | ← / → (or Q / E) |
 | Rewind / fast-forward (hold) | J / L (or A / D) |
 | Jump to start / end | Home / End |

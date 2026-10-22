@@ -17,17 +17,19 @@ toolbar shows the level and opens a slider.
 
 ## Pages
 
-**Double-click** a page to edit it **in place** — the card becomes a live
-editor at whatever zoom you are at (the canvas zooms to at least 100%
-first). Type, paste, use every block feature; the wheel scrolls inside
-the card; `⌥`-drag pans the canvas around it. `Esc` hands you back the
-canvas with the page selected.
+**Double-click** a page to open it **full-window** — the page view, where
+most writing happens. `Esc` there returns to the canvas with the page
+selected. The open glyph at the card's top-right, **Open page** on its menu
+and the path bar do the same.
+
+To edit a page **in place**, select it and **click it again** (or press
+`Return`, or click the pencil glyph above the open glyph). The card becomes a
+live editor at whatever zoom you are at (the canvas zooms to at least 100%
+first). Type, paste, use every block feature; the wheel scrolls inside the
+card; `⌥`-drag pans the canvas around it. `Esc` hands you back the canvas
+with the page selected.
 
 ![A live page card](images/mn031.png) 
-
-To open a page **full-window**, click the open glyph at the card's
-top-right, `Shift`-double-click it, pick **Open page** from its menu, or
-choose it from the path bar. `Esc` in the page view returns to the canvas.
 
 A page's **width** is its card's width — drag a side handle and the text
 reflows. Its height follows its content up to a square; drag a top or
@@ -45,9 +47,9 @@ Drop a file, or paste, and it lands where you drop it:
 
 | Dropped | Becomes |
 |---|---|
-| Video | A poster card. Select it for the transport bar; it plays in place. Double-click to focus it; the open glyph or **Open in studio** opens the review studio. |
-| PDF | Its first page. Select it to page with the strip under the card or `PageUp` / `PageDown`; open it full-window to read, zoom and draw on its pages. |
-| Image | The image, at its size up to 480 wide. Drag a corner to resize. |
+| Video | A poster card. Select it for the transport bar; `K` plays and pauses it in place, `Space` previews it in the lightbox. Click it again to focus it (the canvas zooms to it); double-click, the open glyph or **Open in studio** opens the review studio. |
+| PDF | Its first page. Select it to page with the strip under the card or `PageUp` / `PageDown`; double-click or open it full-window to read, zoom and draw on its pages. |
+| Image | The image, at its size up to 480 wide. Drag a corner to resize. `Space` or a double-click shows it in the **lightbox** — the picture alone over the window; `Space` or `Esc` closes it, `←` / `→` step to the next image or video. |
 | Photoshop, HEIC, RAW, HDR | A rendered preview card with a format pill; the original stays in place and the card's Reveal / Open / Copy path point at it. **Refresh preview** re-renders after the source changes. (Illustrator files are PDFs; EXR stays a file card.) |
 | Audio | A card with its duration and a play button. |
 | Folder | A card with the folder's name, count, first entries and full path. **Spread files here** lays its files out as cards. A QCView stream folder offers **Open as stream**. |

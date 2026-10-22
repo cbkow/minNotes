@@ -52,6 +52,8 @@ Popup {
         spacing: 1
         // 1. Primary
         Row { label: menu.n === 1 ? menu.view.openLabel(menu.view.selectedId) : ""; show: menu.primary; onTriggered: menu.view.openSelected() }
+        Row { label: menu.n === 1 ? menu.view.liveLabel(menu.view.selectedId) : ""; show: menu.primary && menu.view.canLive(menu.view.selectedId) && menu.view.liveId !== menu.view.selectedId
+              onTriggered: menu.view.liveSelected() }   // the in-place rung (2026-10-22)
         Sep { visible: menu.primary && (menu.own || menu.arrange) }
         // 2. The thing's own actions
         Row { label: menu.onMac ? qsTr("Reveal in Finder") : qsTr("Show in Explorer"); show: menu.localMedia; onTriggered: canvas.revealElement(menu.view.selectedId) }
