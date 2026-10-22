@@ -108,7 +108,7 @@ file open) offers the same list, plus drag-and-drop import.
 ## The User Guide
 
 **Help ▸ User Guide** opens this manual inside minNotes as a canvas: one
-frame per section, the section's page beside its screenshots. It is built
-from the same text as this site and kept with the app's data, so it is yours
-to annotate; a new version of minNotes builds it afresh. `⌘/` opens it on the
+page per section, screenshots and all, laid out in a grid. It is built from
+the same text as this site and kept with the app's data, so it is yours to
+annotate; a new version of minNotes builds it afresh. `⌘/` opens it on the
 Keyboard Shortcuts page.

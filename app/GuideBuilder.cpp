@@ -7,14 +7,14 @@
 #include <QTemporaryDir>
 
 namespace {
-struct Section { const char* file; const char* tint; };
-// Reading order + an area tint (the Frame panel's chips): files & the canvas · writing · media · in / out · the keys.
+struct Section { const char* file; };
+// Reading order: files & the canvas · writing · media · in / out · the keys.
 const Section kSections[] = {
-    { "basics",      "#3f7fc0" }, { "canvas",   "#3f7fc0" },
-    { "editing",     "#4a9a6a" }, { "tables",   "#4a9a6a" }, { "spelling", "#4a9a6a" },
-    { "media",       "#d08a2e" }, { "annotations", "#d08a2e" },
-    { "import",      "#8a5ac0" }, { "export",   "#8a5ac0" }, { "packages", "#8a5ac0" },
-    { "shortcuts",   "#c7b24a" },
+    { "basics" }, { "canvas" },
+    { "editing" }, { "tables" }, { "spelling" },
+    { "media" }, { "annotations" },
+    { "import" }, { "export" }, { "packages" },
+    { "shortcuts" },
 };
 }
 
@@ -46,7 +46,7 @@ QString GuideBuilder::unpack() {
     static const QRegularExpression frontMatter(QStringLiteral("\\A---\\n.*?\\n---\\n"), QRegularExpression::DotMatchesEverythingOption);
     static const QRegularExpression comment(QStringLiteral("<!--.*?-->"), QRegularExpression::DotMatchesEverythingOption);
     static const QRegularExpression image(QStringLiteral("!\\[[^\\]]*\\]\\(([^)\\s]+)\\)[ \\t]*"));
-    static const QRegularExpression localLink(QStringLiteral("\\[([^\\]]+)\\]\\((?!https?://)[^)]*\\)"));
+    static const QRegularExpression localLink(QStringLiteral("(?<!!)\\[([^\\]]+)\\]\\((?!https?://)[^)]*\\)"));   // (not an image's ![alt](src))
     static const QRegularExpression h1(QStringLiteral("^# +(.+?)\\s*$"), QRegularExpression::MultilineOption);
     for (const Section& s : kSections) {
         QFile in(QStringLiteral(":/guide/") + QLatin1String(s.file) + QStringLiteral(".md"));
@@ -65,7 +65,6 @@ QString GuideBuilder::unpack() {
                 images << out;
             }
         }
-        md.remove(image);
         md.replace(localLink, QStringLiteral("\\1"));
         const QString title = h1.match(md).captured(1).trimmed();
         const QString path = dir + QStringLiteral("/") + QLatin1String(s.file) + QStringLiteral(".md");
@@ -76,7 +75,6 @@ QString GuideBuilder::unpack() {
         QVariantMap m;
         m.insert(QStringLiteral("file"), QLatin1String(s.file));
         m.insert(QStringLiteral("title"), title.isEmpty() ? QString::fromLatin1(s.file) : title);
-        m.insert(QStringLiteral("tint"), QLatin1String(s.tint));
         m.insert(QStringLiteral("path"), path);
         m.insert(QStringLiteral("images"), images);
         sections_ << m;

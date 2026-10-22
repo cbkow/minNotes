@@ -5818,14 +5818,14 @@ FocusScope {
                 if (step === 0) {
                     guide.remove()
                     const tabs0 = docs.count, ok = win.openGuide("")
-                    const ids = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8), frames = ids.filter(function(id) { return canvas.isFrame(id) })
-                    const pages = ids.filter(function(id) { return canvas.elementKind(id) === "page" }), images = ids.filter(function(id) { return canvas.mediaElementKind(id) === "image" })
-                    const titles = frames.map(function(id) { return canvas.frameTitle(id) })
+                    const ids = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8)
+                    const pages = ids.filter(function(id) { return canvas.elementKind(id) === "page" }), titles = pages.map(function(id) { return canvas.pageTitle(id) })
                     check(ok && guide.exists() && docs.count === tabs0 + 1, "Help ▸ User Guide builds the guide and opens it as a new tab (built " + ok + ", exists " + guide.exists() + ", tabs " + tabs0 + " → " + docs.count + ")")
-                    check(frames.length === 11 && pages.length === 11 && titles.indexOf("Keyboard Shortcuts") >= 0 && titles.indexOf("The Canvas") >= 0,
-                          "eleven sections, a frame + a page each (" + frames.length + " frames, " + pages.length + " pages: " + titles.join(" · ") + ")")
-                    check(images.length >= 20 && images.every(function(id) { return canvas.parentOf(id) !== "" }) && pages.every(function(id) { return canvas.parentOf(id) !== "" }),
-                          "the screenshots are image cards inside their section's frame (" + images.length + " cards)")
+                    check(ids.length === 11 && pages.length === 11 && titles.indexOf("Keyboard Shortcuts") >= 0 && titles.indexOf("The Canvas") >= 0,
+                          "eleven sections, a page each and nothing else (" + ids.length + " elements, " + pages.length + " pages: " + titles.join(" · ") + ")")
+                    const cp = pages.filter(function(id) { return canvas.pageTitle(id) === "The Canvas" }), cm = cp.length ? canvas.pageModel(cp[0]) : null
+                    let media = 0; if (cm) for (let r = 0; r < cm.count; ++r) if (cm.typeForRow(r) === 3) ++media
+                    check(media >= 4, "the screenshots are INLINE media blocks where the docs have them (BlockModel.Media = 3; The Canvas: " + media + " of " + (cm ? cm.count : 0) + " blocks)")
                     const sc = pages.filter(function(id) { return canvas.pageTitle(id) === "Keyboard Shortcuts" })
                     check(sc.length === 1 && canvas.pageModel(sc[0]) && canvas.pageModel(sc[0]).count > 60, "the Keyboard Shortcuts page carries the catalogue (" + (sc.length ? canvas.pageModel(sc[0]).count : 0) + " blocks)")
                     check(!blockModel.untitled && !canvas.dirty, "the guide is a saved, clean document (untitled " + blockModel.untitled + ", dirty " + canvas.dirty + ")")
