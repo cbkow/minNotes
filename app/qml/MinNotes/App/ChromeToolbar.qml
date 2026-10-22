@@ -273,6 +273,15 @@ Rectangle {
             onFitRequested: bar.act(function() { bar.editor.zoomFit() })
             onHundredRequested: bar.act(function() { bar.editor.zoom100() })
         }
+        ToolBtn {   // the PIN (2026-10-22): Always on Top — the window above every other app's; View ▸ Always on Top is
+            id: pinBtn   // the same toggle. Left of the Inspector toggle, accent when pinned like it (ruling 2026-10-22).
+            iconName: "push-pin"
+            tooltip: windowChrome.alwaysOnTop ? qsTr("Always on Top — click to unpin") : qsTr("Always on Top")
+            checked: windowChrome.alwaysOnTop
+            checkedColor: Theme.colors.accent
+            iconColor: checked ? Theme.colors.textBright : "transparent"
+            onClicked: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop
+        }
         ToolBtn {   // the Inspector toggle: the arrow points where the panel will go; accent when open (ruling 2026-07-05)
             id: sideBtn
             iconName: bar.inspector && bar.inspector.open ? "arrow-line-right" : "arrow-line-left"
@@ -281,13 +290,6 @@ Rectangle {
             checkedColor: Theme.colors.accent
             iconColor: checked ? Theme.colors.textBright : "transparent"
             onClicked: if (bar.inspector) bar.inspector.open = !bar.inspector.open
-        }
-        ToolBtn {   // the PIN (2026-10-22): Always on Top — the window above every other app's; View ▸ Always on Top is the same toggle
-            id: pinBtn
-            iconName: "push-pin"
-            tooltip: windowChrome.alwaysOnTop ? qsTr("Always on Top — click to unpin") : qsTr("Always on Top")
-            checked: windowChrome.alwaysOnTop
-            onClicked: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop
         }
     }
 }
