@@ -91,20 +91,28 @@ Item {
             readonly property bool full: selN > 0 && selN === modelData.ids.length
             readonly property bool partial: selN > 0 && !full
             readonly property bool isMenuRow: true
+            // A frame row carries its tint (2026-10-22): a bar at the left, the glyph and the name in it, the selected fill; its children a thread
+            readonly property bool isFrame: modelData.kind === "frame"
+            readonly property bool tinted: isFrame && !!modelData.tint
+            readonly property color tint: tinted ? modelData.tint : Theme.colors.textMuted
+            readonly property color childTint: modelData.parentTint ? modelData.parentTint : Theme.colors.border
             width: list.width; height: lp.rowH
             Rectangle {
             x: lp.inset + 14 * (row.modelData.depth || 0); width: parent.width - 2 * lp.inset - 14 * (row.modelData.depth || 0); height: lp.rowH   // a frame's children indent (2026-10-22)
             radius: Theme.dim.radiusSmall
-            color: row.full ? Theme.colors.divider
+            color: row.full ? (row.tinted ? Qt.rgba(row.tint.r, row.tint.g, row.tint.b, 0.35) : Theme.colors.divider)
                  : row.partial ? Qt.rgba(Theme.colors.divider.r, Theme.colors.divider.g, Theme.colors.divider.b, 0.5)
+                 : row.isFrame ? (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Qt.rgba(row.tint.r, row.tint.g, row.tint.b, row.tinted ? 0.10 : 0.06))
                  : (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Theme.colors.hoverIdle)
+            Rectangle { visible: row.isFrame; x: 0; y: 4; width: 3; height: parent.height - 8; radius: 1; color: row.tint }
+            Rectangle { visible: (row.modelData.depth || 0) > 0; x: -9; y: -lp.rowGap; width: 2; height: parent.height + lp.rowGap; color: row.childTint; opacity: 0.8 }
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             opacity: lp.dragging && lp.dragIds.indexOf(row.modelData.id) >= 0 ? 0.4 : 1
             Icon {
                 id: glyph
                 x: 8; anchors.verticalCenter: parent.verticalCenter
                 name: lp.iconFor(row.modelData.kind); size: 13
-                color: row.full ? Theme.colors.textBright : Theme.colors.textMuted
+                color: row.full ? Theme.colors.textBright : row.tinted ? row.tint : Theme.colors.textMuted
             }
             Text {
                 anchors.left: glyph.right; anchors.leftMargin: 7
@@ -112,8 +120,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: row.modelData.name
                 elide: Text.ElideRight
-                color: row.full ? Theme.colors.textBright : Theme.colors.text
-                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome
+                color: row.full ? Theme.colors.textBright : row.tinted ? row.tint : Theme.colors.text
+                font.family: Theme.font.family; font.pixelSize: Theme.font.sizeChrome; font.bold: row.isFrame
             }
             Text {
                 id: meta

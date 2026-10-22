@@ -1485,6 +1485,8 @@ QVariantList CanvasDocument::layerRows() const {
         }
         r.insert(QStringLiteral("parent"), e.parentId);
         r.insert(QStringLiteral("depth"), e.parentId.isEmpty() ? 0 : 1);
+        if (e.kind == QLatin1String("group")) r.insert(QStringLiteral("tint"), QJsonDocument::fromJson(e.json.toUtf8()).object().value(QStringLiteral("tint")).toString());
+        if (!e.parentId.isEmpty()) { const auto p = element(e.parentId); r.insert(QStringLiteral("parentTint"), p ? QJsonDocument::fromJson(p->json.toUtf8()).object().value(QStringLiteral("tint")).toString() : QString()); }
         rows.push_back(r);
     }
     // The tree (frames, 2026-10-22): a frame's children sit ABOVE it in z, so front-most-first lists them before their

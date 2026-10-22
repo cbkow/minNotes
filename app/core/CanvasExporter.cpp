@@ -291,7 +291,12 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
         return s + QStringLiteral("<div class=\"fmeta\">%1</div></figcaption>").arg(meta);
     };
     auto style = [&](const Document::Element& e) {
-        return QStringLiteral("left:%1;top:%2;width:%3;height:%4").arg(px(e.x + ox), px(e.y + oy), px(e.w), px(e.h));
+        QString st = QStringLiteral("left:%1;top:%2;width:%3;height:%4").arg(px(e.x + ox), px(e.y + oy), px(e.w), px(e.h));
+        if (!e.parentId.isEmpty() && !c->frameElastic(e.parentId)) {   // a board's child is clipped to the board (2026-10-22)
+            const QRectF f = c->elementRect(e.parentId);
+            st += QStringLiteral(";clip-path:inset(%1 %2 %3 %4)").arg(px(std::max(0.0, f.y() - e.y)), px(std::max(0.0, (e.x + e.w) - f.right())), px(std::max(0.0, (e.y + e.h) - f.bottom())), px(std::max(0.0, f.x() - e.x)));
+        }
+        return st;
     };
     for (const Document::Element& e : c->elements()) {   // z order
         if (e.kind == QLatin1String("page")) {
@@ -458,6 +463,11 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
     auto rectOf = [&](const Document::Element& e) { return QRectF((e.x - b.x() + 24) * s, (e.y - b.y() + 24) * s, e.w * s, e.h * s); };
     for (const Document::Element& e : c->elements()) {
         const QRectF r = rectOf(e);
+        struct ClipGuard { QPainter& p; bool on; ~ClipGuard() { if (on) p.restore(); } } clipGuard{p, false};
+        if (!e.parentId.isEmpty() && !c->frameElastic(e.parentId)) {   // a board's child is clipped to the board (2026-10-22)
+            const auto pf = c->element(e.parentId);
+            if (pf) { p.save(); p.setClipRect(rectOf(*pf)); clipGuard.on = true; }
+        }
         if (e.kind == QLatin1String("group")) {   // a frame (2026-10-22)
             const QJsonObject o = QJsonDocument::fromJson(e.json.toUtf8()).object();
             const QString tintS = o.value(QStringLiteral("tint")).toString();

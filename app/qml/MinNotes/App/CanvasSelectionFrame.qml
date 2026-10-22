@@ -15,6 +15,7 @@ Item {
     readonly property bool isPage: single && canvas.elementKind(id_) === "page"
     readonly property bool isText: single && canvas.elementKind(id_) === "shape" && view.textSpec(id_).shape === "text"
     readonly property bool isElasticFrame: (canvas.elementsRevision, single && canvas.isFrame(id_) && canvas.frameElastic(id_))   // its rect hugs its children: no handles
+    readonly property bool aspectBoard: (canvas.elementsRevision, single && canvas.isFrame(id_) && view.textSpec(id_).aspect !== undefined)   // a board with an aspect keeps it (2026-10-22)
     readonly property rect world: shown ? (canvas.geometryRevision, view.selectedIds, view.selectionRect()) : Qt.rect(0, 0, 0, 0)
     readonly property point tl: (view.cam.rev, view.cam.worldToScreen(world.x, world.y))
     x: tl.x; y: tl.y
@@ -118,19 +119,23 @@ Item {
         }
         DragHandler {
             target: null
+            // No takeover (2026-10-22): a handle sits on the element's edge, often over a LARGER element behind it (a group,
+            // a page); that element's DragHandler used to take the grab mid-drag — it got selected and the resize went to it.
+            grabPermissions: PointerHandler.TakeOverForbidden
             property rect start
-            onActiveChanged: if (active) start = frame.world
+            onActiveChanged: if (active) { start = frame.world; ++frame.resizes }
             onCentroidChanged: {
                 if (!active) return
                 const ddx = (centroid.scenePosition.x - centroid.scenePressPosition.x) / frame.view.cam.zoom
                 const ddy = (centroid.scenePosition.y - centroid.scenePressPosition.y) / frame.view.cam.zoom
                 if (frame.isText) frame.view.resizeTextSelected(start, parent.dx, ddx)   // width only; the text's height follows
-                else frame.view.resizeSelected(frame.view.edgeResize(start, parent.dx, parent.dy, ddx, ddy, frame.isVideo))   // a video keeps its aspect: nothing to letterbox or crop
+                else frame.view.resizeSelected(frame.view.edgeResize(start, parent.dx, parent.dy, ddx, ddy, frame.isVideo || frame.aspectBoard))   // a video keeps its aspect: nothing to letterbox or crop; so does a board with one
             }
         }
     }
-    readonly property var handles: [hTL]   // probe
+    readonly property var handles: [hTL, hBR]   // probe
+    property int resizes: 0   // probe: handle drags that activated
     Handle { id: hTL; dx: -1; dy: -1 } Handle { dx: 0; dy: -1 } Handle { dx: 1; dy: -1 }
     Handle { dx: -1; dy: 0 }                         Handle { dx: 1; dy: 0 }
-    Handle { dx: -1; dy: 1 }  Handle { dx: 0; dy: 1 }  Handle { dx: 1; dy: 1 }
+    Handle { dx: -1; dy: 1 }  Handle { dx: 0; dy: 1 }  Handle { id: hBR; dx: 1; dy: 1 }
 }

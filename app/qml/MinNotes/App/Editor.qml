@@ -5633,6 +5633,35 @@ FocusScope {
                     check(f2 !== "" && f2 !== f1 && canvas.isFrame(f2) && !canvas.frameElastic(f2) && Math.abs(canvas.elementRect(f2).width - Math.max(probeFrameMinW(), 90 / cam.zoom)) < 1, "a drag makes a FIXED frame (a board) of that size (" + canvas.elementRect(f2).width.toFixed(0) + " wide)")
                     cvw.selectMany([f1, f2]); cvw.deleteSelected()
                     root.inspector.drawTool = "select"
+                    {   // a tap over a frame's child selects the CHILD, not the frame (2026-10-22: both handlers saw the press, the frame's fired last)
+                        const rv = canvas.elementRect(vidElId), cvp = cam.worldToScreen(rv.x + rv.width / 2, rv.y + rv.height / 2)
+                        cvw.clearSelection()
+                        g.click(cvw, cvp.x, cvp.y)
+                        check(cvw.selectedId === vidElId, "a click on a child inside a frame selects the child (selected '" + cvw.selectedId + "')")
+                    }
+                    {   // a BOARD clips its children; a board with an aspect keeps it under the handles
+                        const rv = canvas.elementRect(vidElId)
+                        const bf = canvas.addFrame(Qt.rect(rv.x - 20, rv.y - 40, rv.width / 2 + 20, rv.height + 60), true)
+                        canvas.addToFrame([vidElId], bf)
+                        const it = cvw.pageItemFor(vidElId)
+                        check(!!it && it.clipped && Math.abs(it.width - rv.width / 2) < 1 && it.clip, "a child half outside a fixed board is clipped to the board (item " + (it ? it.width.toFixed(0) : "?") + " of " + rv.width.toFixed(0) + ")")
+                        cvw.select(vidElId)
+                        const sq = cam.worldToScreen(rv.x + rv.width * 0.75, rv.y + rv.height / 2)   // the clipped-away half: nothing to hit
+                        cvw.clearSelection(); g.click(cvw, sq.x, sq.y)
+                        check(cvw.selectedId !== vidElId, "…and its clipped-away part is not hit (selected '" + cvw.selectedId + "')")
+                        canvas.setFrameField(bf, "aspect", 1)
+                        const r0 = canvas.elementRect(bf)
+                        canvas.setElementRect(bf, Qt.rect(r0.x, r0.y, 300, 300))
+                        cvw.select(bf)
+                        cam.fitRect(canvas.elementRect(bf), 600, cvw.height, 150)   // in the LEFT of the view: the open Inspector covers the right edge for input
+                        const h = cvw.selectionFrame.handles[1], hp = h.mapToItem(cvw, h.width / 2, h.height / 2)
+                        const rz0 = cvw.selectionFrame.resizes, sel0 = cvw.selectedId, ed0 = cvw.elementDrags, under0 = g.itemsUnder(cvw, hp.x, hp.y)
+                        g.drag(cvw, hp.x, hp.y, hp.x + 60, hp.y + 10, 6)
+                        const r1 = canvas.elementRect(bf)
+                        check(Math.abs(r1.width - r1.height) < 1 && r1.width > 300, "dragging a corner of a 1:1 board keeps it square (" + r1.width.toFixed(0) + "×" + r1.height.toFixed(0) + "; resizes +" + (cvw.selectionFrame.resizes - rz0) + ", element drags +" + (cvw.elementDrags - ed0) + ", selected before '" + sel0 + "' after '" + cvw.selectedId + "' (" + canvas.elementKind(cvw.selectedId) + " " + canvas.mediaElementKind(cvw.selectedId) + " parent '" + canvas.parentOf(cvw.selectedId) + "'), handle at " + hp.x.toFixed(0) + "," + hp.y.toFixed(0) + " under before [" + under0 + "])")
+                        canvas.ungroup(bf)
+                        canvas.addToFrame([vidElId], probeFrameId)
+                    }
                     {   // a drop onto the frame JOINS it (the view's helper the DropArea calls)
                         const f = probeFrameId, n0 = canvas.childrenOf(f).length, hf = canvas.elementRect(f)
                         const dropped = canvas.addElementsFromUrls(["file:///" + canvasProbe.fixtureDir().replace(/^\//, "") + "/sticky.png"], hf.x + 40, hf.y + 60)
@@ -5640,6 +5669,7 @@ FocusScope {
                         check(dropped.length === 1 && joined === f && canvas.parentOf(dropped[0]) === f && canvas.childrenOf(f).length === n0 + 1, "a file dropped onto a frame joins it (children " + canvas.childrenOf(f).length + ")")
                         canvas.removeElement(dropped[0])
                     }
+                    canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     cvw.select(probeFrameId)
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
                     const fs = root.inspector.frameSection

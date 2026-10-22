@@ -20,9 +20,29 @@ Item {
     property string shownKind: ""
     onKindChanged: if (kind !== "") shownKind = kind
     readonly property rect r: active ? (canvas.geometryRevision, canvas.elementRect(elementId)) : Qt.rect(0, 0, 0, 0)
-    x: r.x; y: r.y; width: Math.max(1, r.width); height: Math.max(kind === "page" ? 49 : 1, r.height)   // == CanvasDocument::cullRect
-    opacity: active ? 1 : 0
+    // A child of a FIXED frame (a board) is CLIPPED to the board (2026-10-22, user: "boards aren't cropping"): the item is
+    // the visible part (hit-testing follows), the content sits inside it at the element's full rect.
+    readonly property string parentId: active ? (canvas.elementsRevision, canvas.parentOf(elementId)) : ""
+    readonly property bool clipped: parentId !== "" && (canvas.elementsRevision, !canvas.frameElastic(parentId))
+    readonly property rect clipR: {
+        if (!clipped) return r
+        const f = (canvas.geometryRevision, canvas.elementRect(parentId))
+        const x0 = Math.max(r.x, f.x), y0 = Math.max(r.y, f.y), x1 = Math.min(r.x + r.width, f.x + f.width), y1 = Math.min(r.y + r.height, f.y + f.height)
+        return Qt.rect(x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0))
+    }
+    readonly property real fullH: Math.max(kind === "page" ? 49 : 1, r.height)   // == CanvasDocument::cullRect
+    x: clipR.x; y: clipR.y; width: Math.max(1, clipR.width); height: clipped ? Math.max(1, clipR.height) : fullH
+    clip: clipped
+    opacity: active && (!clipped || (clipR.width > 0 && clipR.height > 0)) ? 1 : 0
     enabled: active
+    // The element handles a tap only when nothing of its own stands under it: a tap over a frame's CHILD belongs to the
+    // child (both items' TapHandlers see the press; the frame's used to fire last and win the selection).
+    function overOwnChild(p) {
+        if (kind !== "group") return false
+        const wx = x + p.x, wy = y + p.y
+        for (const cid of canvas.childrenOf(elementId)) { const c = canvas.elementRect(cid); if (wx >= c.x && wx <= c.x + c.width && wy >= c.y && wy <= c.y + c.height) return true }
+        return false
+    }
 
     // Forwards for the view's per-frame row budget and the probe (pages only).
     readonly property var page: shownKind === "page" ? content.item : null
@@ -52,12 +72,14 @@ Item {
         // double-click (or Return) = OPEN — the page view, the studio, the PDF view, the lightbox; a text chip's
         // open form is its editor.
         onSingleTapped: (ev) => {
+            if (el.overOwnChild(ev.position)) return
             ++el.view.taps
             if (tap.shift) el.view.toggleSelect(el.elementId)
             else if (!el.view.isSelected(el.elementId)) el.view.select(el.elementId)
             el.editor.forceActiveFocus()
         }
         onDoubleTapped: (ev) => {
+            if (el.overOwnChild(ev.position)) return
             ++el.view.doubleTaps
             if (el.kind === "shape") { el.view.editText(el.elementId); return }
             el.view.select(el.elementId); el.view.openSelected()   // (Shift-double-click is the same rung — it stays for muscle memory)
@@ -83,7 +105,7 @@ Item {
     }
     Loader {
         id: content
-        anchors.fill: parent
+        x: el.r.x - el.clipR.x; y: el.r.y - el.clipR.y; width: Math.max(1, el.r.width); height: el.fullH   // the full element inside the (possibly clipped) item
         sourceComponent: el.shownKind === "page" ? pageComponent
                        : el.shownKind === "ink" ? inkComponent
                        : el.shownKind === "media" ? mediaComponent
