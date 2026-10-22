@@ -56,6 +56,7 @@ Rectangle {
     readonly property int panelW: 248
     readonly property int contentW: panelW - 24   // inside the x:12 margins
     width: open ? panelW : 0
+    visible: open || width > 0   // a closed panel is not in the scene at all (nothing to render, hit or clip; the slide keeps it until it reaches 0)
     Behavior on width { enabled: panel._ready; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
     // A step LIGHTER than the page so the panel reads as its own raised layer.
     // (The QCView darker-well recipe was tried in the product pass and vetoed

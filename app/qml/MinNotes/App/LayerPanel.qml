@@ -118,9 +118,10 @@ Item {
             readonly property bool tinted: isFrame && !!modelData.tint
             readonly property color tint: tinted ? modelData.tint : Theme.colors.frameNeutral   // untinted = the dark grey
             readonly property color childTint: modelData.parentTint ? modelData.parentTint : Theme.colors.border
+            readonly property real indent: lp.inset + 14 * (modelData.depth || 0)   // the row's inset for its depth
             width: list.width; height: lp.rowH
             Rectangle {
-            x: lp.inset + 14 * (row.modelData.depth || 0); width: parent.width - 2 * lp.inset - 14 * (row.modelData.depth || 0); height: lp.rowH   // a frame's children indent (2026-10-22)
+            x: row.indent; width: parent.width - lp.inset - row.indent; height: lp.rowH   // a frame's children indent (2026-10-22)
             radius: Theme.dim.radiusSmall
             color: row.full ? (row.tinted ? Qt.rgba(row.tint.r, row.tint.g, row.tint.b, 0.35) : Theme.colors.divider)
                  : row.partial ? Qt.rgba(Theme.colors.divider.r, Theme.colors.divider.g, Theme.colors.divider.b, 0.5)
@@ -188,11 +189,11 @@ Item {
             Item {   // the frame's disclosure caret: click to collapse / expand its children
                 id: caret
                 visible: row.isFrame
-                x: lp.inset + 14 * (row.modelData.depth || 0) + 5; width: 14; height: parent.height   // a SIBLING of the row's MouseArea, declared after it, so the press is the caret's (user 2026-10-22)
+                x: row.indent + 5; width: 14; height: parent.height   // a SIBLING of the row's MouseArea, declared after it, so the press is the caret's (user 2026-10-22)
                 Icon { anchors.centerIn: parent; name: lp.isCollapsed(row.modelData.id) ? "caret-right" : "caret-down"; size: 10
                        color: caretMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
                 MouseArea { id: caretMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: { lp.toggleCollapsed(row.modelData.id); if (lp.editor) lp.editor.forceActiveFocus() } }
+                            onClicked: { const ed = lp.editor; lp.toggleCollapsed(row.modelData.id); if (ed) ed.forceActiveFocus() } }   // the toggle rebuilds the rows and destroys THIS delegate: nothing after it may resolve an id
             }
             }
         }
