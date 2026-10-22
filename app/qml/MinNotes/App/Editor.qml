@@ -5547,6 +5547,7 @@ FocusScope {
                 if (step % 2 === 1) { ++step; return }
                 if (step === 0) {
                     root.setActiveTab("canvas"); cvw.clearSelection(); cvw.fit()
+                    root.inspector.open = true   // the Layers / Frame checks at step 8 click INTO the panel: let its slide settle first (the box runs it closed here)
                     probeN0 = canvas.elementCount()
                     cvw.selectMany([vidElId, pdfElId])
                     g.key(root, Qt.Key_G, Qt.ControlModifier)
@@ -5673,7 +5674,6 @@ FocusScope {
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
                     g.grab(cvw, g.tempDir() + "/mn-canvas-probe-frames-plain.png")   // the untinted look (the dark grey)
                     {   // the Layers panel collapses a frame's children
-                        root.inspector.open = true
                         const lp = root.inspector.layers, n0 = lp.rows.length
                         let fi = -1; for (let i = 0; i < lp.rows.length; ++i) if (lp.rows[i].id === probeFrameId) fi = i
                         lp.list.positionViewAtIndex(Math.max(0, fi), ListView.Contain)
