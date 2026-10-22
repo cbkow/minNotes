@@ -1382,7 +1382,6 @@ bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, con
     pushEntry(std::move(u), coalesce);
     noteChanged(cur->kind, false, true, false);
     if (!cur->parentId.isEmpty()) hugFrame(cur->parentId, coalesce.isEmpty() ? QString() : QStringLiteral("hug:") + cur->parentId);
-    if (cur->kind == QLatin1String("group") && !layingOut_ && frameLayout(id) == QLatin1String("grid") && std::abs(rect.width() - cur->w) > 0.01) layoutFrame(id);   // a wider board: wider cells
     return true;
 }
 
@@ -1611,11 +1610,9 @@ bool CanvasDocument::removeElement(const QString& id) {
     u.id = id;
     u.before = snapshot(id, false);
     u.label = tr("Remove %1").arg(kindLabel(cur->kind));
-    const QString parent = cur->parentId;
     applySnap(id, ElementSnap{});
     pushEntry(std::move(u), QString());
     noteChanged(cur->kind, true, true, cur->kind == QLatin1String("ink"));
-    if (!parent.isEmpty() && !layingOut_ && frameLayout(parent) == QLatin1String("grid")) layoutFrame(parent);   // the slots close up
     return true;
 }
 
@@ -1674,103 +1671,15 @@ bool CanvasDocument::setFrameField(const QString& id, const QString& key, const 
     if (!e || e->kind != QLatin1String("group")) return false;
     QJsonObject o = frameSpec(*e);
     o.insert(key, QJsonValue::fromVariant(value));
-    if (key == QLatin1String("layout") && value.toString() == QLatin1String("grid")) o.insert(QStringLiteral("sizing"), QStringLiteral("fixed"));   // a grid frame is always fixed
-    beginBatch(tr("Edit frame"));
-    const bool ok = setElementJson(id, frameJson(o), QString());
-    if (ok) {
-        if (frameLayout(id) == QLatin1String("grid")) layoutFrame(id);
-        else if (key == QLatin1String("sizing") || key == QLatin1String("layout")) hugFrame(id, QString());   // loosening to elastic snaps to the children at once
-    }
-    endBatch();
-    return ok;
+    if (!setElementJson(id, frameJson(o), QString())) return false;
+    if (key == QLatin1String("sizing")) hugFrame(id, QString());   // loosening to elastic snaps to the children at once
+    return true;
 }
 
-QString CanvasDocument::frameLayout(const QString& id) const {
-    const auto e = element(id);
-    if (!e || e->kind != QLatin1String("group")) return QString();
-    return frameSpec(*e).value(QStringLiteral("layout")).toString() == QLatin1String("grid") ? QStringLiteral("grid") : QStringLiteral("free");
-}
-bool CanvasDocument::inGridCell(const QString& id) const { const QString p = parentOf(id); return !p.isEmpty() && frameLayout(p) == QLatin1String("grid"); }
-QStringList CanvasDocument::frameOrder(const QString& frameId) const {
-    const auto f = element(frameId);
-    if (!f) return {};
-    const QStringList kids = childrenOf(frameId);
-    QStringList out;
-    for (const QJsonValue& v : frameSpec(*f).value(QStringLiteral("order")).toArray()) { const QString id = v.toString(); if (kids.contains(id) && !out.contains(id)) out << id; }
-    for (const QString& id : kids) if (!out.contains(id)) out << id;
-    return out;
-}
-QVariantMap CanvasDocument::frameGrid(const QString& id) const {
-    QVariantMap m;
-    const auto f = element(id);
-    if (!f || f->kind != QLatin1String("group")) return m;
-    const QJsonObject o = frameSpec(*f);
-    const int cols = std::max(1, o.value(QStringLiteral("cols")).toInt(kGridColsDefault));
-    const double gap = std::max(0.0, o.value(QStringLiteral("gap")).toDouble(kGridGapDefault));
-    const double aspect = std::clamp(o.value(QStringLiteral("cellAspect")).toDouble(kCellAspectDefault), 0.1, 10.0);
-    const int n = childrenOf(id).size();
-    const int rows = std::max(1, (n + cols - 1) / cols);
-    const double cellW = std::max(8.0, (f->w - 2 * kFramePad - (cols - 1) * gap) / cols);
-    const double cellH = std::max(8.0, cellW * aspect);
-    m.insert(QStringLiteral("cols"), cols); m.insert(QStringLiteral("gap"), gap); m.insert(QStringLiteral("cellAspect"), aspect);
-    m.insert(QStringLiteral("rows"), rows); m.insert(QStringLiteral("cellW"), cellW); m.insert(QStringLiteral("cellH"), cellH); m.insert(QStringLiteral("n"), n);
-    m.insert(QStringLiteral("x0"), f->x + kFramePad); m.insert(QStringLiteral("y0"), f->y + kFrameTitleH + kFramePad);
-    return m;
-}
-int CanvasDocument::slotAt(const QString& frameId, qreal wx, qreal wy) const {
-    if (frameLayout(frameId) != QLatin1String("grid")) return -1;
-    const QVariantMap g = frameGrid(frameId);
-    const int cols = g.value(QStringLiteral("cols")).toInt(), n = g.value(QStringLiteral("n")).toInt();
-    const double gap = g.value(QStringLiteral("gap")).toDouble(), cw = g.value(QStringLiteral("cellW")).toDouble(), ch = g.value(QStringLiteral("cellH")).toDouble();
-    const int col = std::clamp(int(std::floor((wx - g.value(QStringLiteral("x0")).toDouble() + gap / 2) / (cw + gap))), 0, cols - 1);
-    const int row = std::max(0, int(std::floor((wy - g.value(QStringLiteral("y0")).toDouble() + gap / 2) / (ch + gap))));
-    return std::clamp(row * cols + col, 0, std::max(0, n - 1));
-}
 QString CanvasDocument::frameAt(qreal wx, qreal wy) const {
     for (auto it = elements_.rbegin(); it != elements_.rend(); ++it)   // top-most first
         if (it->kind == QLatin1String("group") && QRectF(it->x, it->y, it->w, it->h).contains(QPointF(wx, wy))) return it->id;
     return QString();
-}
-bool CanvasDocument::relayoutFrame(const QString& frameId) { return layoutFrame(frameId); }
-
-bool CanvasDocument::layoutFrame(const QString& frameId) {
-    const auto f = element(frameId);
-    if (!f || f->kind != QLatin1String("group") || frameLayout(frameId) != QLatin1String("grid") || layingOut_) return false;
-    const QVariantMap g = frameGrid(frameId);
-    const int cols = g.value(QStringLiteral("cols")).toInt(), rows = g.value(QStringLiteral("rows")).toInt();
-    const double gap = g.value(QStringLiteral("gap")).toDouble(), cw = g.value(QStringLiteral("cellW")).toDouble(), ch = g.value(QStringLiteral("cellH")).toDouble();
-    const double x0 = g.value(QStringLiteral("x0")).toDouble(), y0 = g.value(QStringLiteral("y0")).toDouble();
-    layingOut_ = true;
-    beginBatch(tr("Lay out"));
-    int i = 0;
-    for (const QString& cid : frameOrder(frameId)) {
-        const int col = i % cols, row = i / cols;
-        setElementRect(cid, QRectF(x0 + col * (cw + gap), y0 + row * (ch + gap), cw, ch), QStringLiteral("grid:") + cid);
-        ++i;
-    }
-    const double h = kFrameTitleH + kFramePad + rows * ch + (rows - 1) * gap + kFramePad;
-    if (std::abs(h - f->h) > 0.01) setElementRect(frameId, QRectF(f->x, f->y, f->w, h), QStringLiteral("gridh:") + frameId);
-    endBatch();
-    layingOut_ = false;
-    return true;
-}
-
-bool CanvasDocument::moveToSlot(const QString& childId, int slot) {
-    const QString fid = parentOf(childId);
-    if (fid.isEmpty() || frameLayout(fid) != QLatin1String("grid")) return false;
-    QStringList ord = frameOrder(fid);
-    const int from = ord.indexOf(childId);
-    if (from < 0) return false;
-    ord.removeAt(from);
-    ord.insert(std::clamp(slot, 0, int(ord.size())), childId);
-    const auto f = element(fid);
-    QJsonObject o = frameSpec(*f);
-    o.insert(QStringLiteral("order"), QJsonArray::fromStringList(ord));
-    beginBatch(tr("Reorder"));
-    const bool ok = setElementJson(fid, frameJson(o), QString());
-    if (ok) layoutFrame(fid);
-    endBatch();
-    return ok;
 }
 
 bool CanvasDocument::setParent(const QString& id, const QString& parentId) {
@@ -1790,7 +1699,7 @@ bool CanvasDocument::setParent(const QString& id, const QString& parentId) {
 
 bool CanvasDocument::hugFrame(const QString& frameId, const QString& coalesce) {
     const auto f = element(frameId);
-    if (!f || f->kind != QLatin1String("group") || !frameElastic(frameId) || frameLayout(frameId) == QLatin1String("grid")) return false;
+    if (!f || f->kind != QLatin1String("group") || !frameElastic(frameId)) return false;
     QRectF u;
     for (const Document::Element& e : elements_) {
         if (e.parentId != frameId) continue;
@@ -1875,7 +1784,7 @@ bool CanvasDocument::addToFrame(const QStringList& ids, const QString& frameId) 
         if (!e || id == frameId || e->kind == QLatin1String("group")) continue;
         if (setParent(id, frameId)) any = true;
     }
-    if (any) { packFrame(frameId); if (frameLayout(frameId) == QLatin1String("grid")) layoutFrame(frameId); else hugFrame(frameId, QString()); }
+    if (any) { packFrame(frameId); hugFrame(frameId, QString()); }
     endBatch();
     return any;
 }
@@ -1889,7 +1798,7 @@ bool CanvasDocument::removeFromFrame(const QStringList& ids) {
         if (!frames.contains(p)) frames << p;
         setParent(id, QString());
     }
-    for (const QString& fid : frames) { if (frameLayout(fid) == QLatin1String("grid")) layoutFrame(fid); else hugFrame(fid, QString()); }
+    for (const QString& fid : frames) hugFrame(fid, QString());
     endBatch();
     return !frames.isEmpty();
 }

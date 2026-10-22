@@ -35,17 +35,11 @@ contents.
 
 The frame tool (`F`) places frames by hand: click for an empty group, drag
 for a **board** — a frame with a fixed size you resize with its handles or
-set from a preset (16:9, 4:3, 9:16, 2.39, A4, Letter). Double-click a frame
-(or press `Return` on it) to rename it in place; the Inspector's **Frame**
-section holds the title, a tint, the group / board choice and the layout. In
-the Layers panel a frame's children sit indented under it.
-
-A board can lay its contents out as a **grid**: pick Grid, set the columns,
-the gap and the cells' aspect, and the children fill uniform cells in reading
-order while the board's height follows the rows. Media is cropped to its cell,
-so a storyboard, a mood board or a shot list keeps a hard edge on a busy
-canvas. Drag a child onto another's cell to swap them; drop a file onto any
-frame and it joins, taking the next slot of a grid.
+snap to an aspect (16:9, 1:1, 9:16, 4:3). Double-click a frame (or press
+`Return` on it) to rename it in place; the Inspector's **Frame** section
+holds the title, a tint, the group / board choice and the aspect. Drop a file
+onto any frame and it joins. In the Layers panel a frame's children sit
+indented under it.
 
 A page's **width** is its card's width — drag a side handle and the text
 reflows. Its height follows its content up to a square; drag a top or

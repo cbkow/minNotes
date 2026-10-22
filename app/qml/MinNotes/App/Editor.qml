@@ -5544,7 +5544,7 @@ FocusScope {
             }
             if (phase === 17) {   // P17 (2026-10-22): FRAMES — ⌘G groups (the frame hugs, sits under its children), a drag moves the block,
                 const g = gestures, cvw = canvasItem   // ⌘⇧G ungroups, Delete takes the children, undo, the frame tool, the title edit, the Layers tree
-                if (step % 2 === 1 && step !== 7) { ++step; return }
+                if (step % 2 === 1) { ++step; return }
                 if (step === 0) {
                     root.setActiveTab("canvas"); cvw.clearSelection(); cvw.fit()
                     probeN0 = canvas.elementCount()
@@ -5618,37 +5618,6 @@ FocusScope {
                     check(canvas.isFrame(f) && canvas.elementKind(vidElId) === "media" && canvas.parentOf(vidElId) === f && canvas.elementCount() === probeN0 + 1, "…one undo brings all three back")
                     ++step; return
                 }
-                if (step === 7) {   // STAGE 2: the grid — cells, the height follows, a dragged child lands in the slot under it, a drop joins
-                    const f = probeFrameId
-                    cvw.select(f)
-                    canvas.setFrameField(f, "layout", "grid"); canvas.setFrameField(f, "cols", 2)
-                    const gr = canvas.frameGrid(f), ra = canvas.elementRect(vidElId), rb = canvas.elementRect(pdfElId), rf = canvas.elementRect(f)
-                    const first = canvas.frameOrder(f)[0], second = canvas.frameOrder(f)[1], r1 = canvas.elementRect(first), r2 = canvas.elementRect(second)
-                    check(canvas.frameLayout(f) === "grid" && !canvas.frameElastic(f) && gr.cols === 2 && gr.rows === 1 && Math.abs(r1.width - r2.width) < 0.01 && Math.abs(r1.y - r2.y) < 0.01 && Math.abs(r2.x - (r1.x + r1.width + gr.gap)) < 0.01,
-                          "Grid, 2 columns: both children sit in uniform cells on one row (cells " + r1.width.toFixed(0) + "×" + r1.height.toFixed(0) + ", gap " + gr.gap + ")")
-                    check(Math.abs(rf.height - (28 + 24 + r1.height + 24)) < 0.01 && !cvw.selectionFrame.handles[0].visible === false, "…the board's height follows its one row; a fixed frame shows its handles")
-                    const it1 = cvw.pageItemFor(first)
-                    check(canvas.inGridCell(first) && !!it1 && !!it1.mediaItem && it1.mediaItem.cover, "the children render cover-cropped in their cells")
-                    // drag the second child onto the first's cell: the slots swap on release
-                    cvw.select(second)
-                    const c2 = cam.worldToScreen(r2.x + r2.width / 2, r2.y + r2.height / 2), c1 = cam.worldToScreen(r1.x + r1.width / 2, r1.y + r1.height / 2)
-                    g.drag(cvw, c2.x, c2.y, c1.x, c1.y, 8)
-                    check(canvas.frameOrder(f)[0] === second && Math.abs(canvas.elementRect(second).x - r1.x) < 0.01 && Math.abs(canvas.elementRect(first).x - r2.x) < 0.01, "dragging a child onto another's cell swaps their slots and snaps both into place")
-                    canvas.undo()
-                    check(canvas.frameOrder(f)[0] === first && Math.abs(canvas.elementRect(first).x - r1.x) < 0.01, "…one undo restores the order")
-                    // a drop onto the frame joins it (through the view's helper the DropArea calls)
-                    const n0 = canvas.childrenOf(f).length, hf = canvas.elementRect(f)
-                    const dropped = canvas.addElementsFromUrls([Qt.resolvedUrl("file:///" + canvasProbe.fixtureDir().replace(/^\//, "") + "/sticky.png").toString()], hf.x + 40, hf.y + 60)
-                    const joined = cvw.joinFrameAt(dropped, hf.x + 40, hf.y + 60)
-                    check(dropped.length === 1 && joined === f && canvas.parentOf(dropped[0]) === f && canvas.childrenOf(f).length === n0 + 1 && canvas.frameOrder(f)[n0] === dropped[0] && canvas.frameGrid(f).rows === 2,
-                          "a file dropped onto the board joins it in the next slot; the board grows a row (children " + canvas.childrenOf(f).length + ", rows " + canvas.frameGrid(f).rows + ")")
-                    cvw.select(f); cam.fitRect(canvas.elementRect(f), cvw.width, cvw.height, 120)
-                    g.grab(cvw, g.tempDir() + "/mn-canvas-probe-grid.png")   // the board with three cells, for a look
-                    canvas.removeElement(dropped[0])
-                    canvas.setFrameField(f, "layout", "free")
-                    cvw.clearSelection()
-                    ++step; return
-                }
                 if (step === 8) {   // the frame tool: a click = an elastic frame, a drag = a fixed board; the Inspector-less title; the grab
                     const b = canvas.canvasBounds()
                     cvw.clearSelection(); cvw.fit()
@@ -5664,6 +5633,13 @@ FocusScope {
                     check(f2 !== "" && f2 !== f1 && canvas.isFrame(f2) && !canvas.frameElastic(f2) && Math.abs(canvas.elementRect(f2).width - Math.max(probeFrameMinW(), 90 / cam.zoom)) < 1, "a drag makes a FIXED frame (a board) of that size (" + canvas.elementRect(f2).width.toFixed(0) + " wide)")
                     cvw.selectMany([f1, f2]); cvw.deleteSelected()
                     root.inspector.drawTool = "select"
+                    {   // a drop onto the frame JOINS it (the view's helper the DropArea calls)
+                        const f = probeFrameId, n0 = canvas.childrenOf(f).length, hf = canvas.elementRect(f)
+                        const dropped = canvas.addElementsFromUrls(["file:///" + canvasProbe.fixtureDir().replace(/^\//, "") + "/sticky.png"], hf.x + 40, hf.y + 60)
+                        const joined = cvw.joinFrameAt(dropped, hf.x + 40, hf.y + 60)
+                        check(dropped.length === 1 && joined === f && canvas.parentOf(dropped[0]) === f && canvas.childrenOf(f).length === n0 + 1, "a file dropped onto a frame joins it (children " + canvas.childrenOf(f).length + ")")
+                        canvas.removeElement(dropped[0])
+                    }
                     cvw.select(probeFrameId)
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
                     const fs = root.inspector.frameSection
