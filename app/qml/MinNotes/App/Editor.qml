@@ -5840,6 +5840,14 @@ FocusScope {
                 if (step === 2) {
                     check(canvas.focusPage !== "" && canvas.pageTitle(canvas.focusPage) === "Keyboard Shortcuts" && !root.canvasShown, "⌘/ (Help ▸ Keyboard Shortcuts) opens the guide on its Keyboard Shortcuts page ('" + canvas.pageTitle(canvas.focusPage) + "', canvas shown " + root.canvasShown + ")")
                     canvas.focusPage = ""
+                    // Help ▸ Rebuild User Guide…: a mangled, SAVED guide comes back pristine (the tab closes, the folder goes, a fresh build opens)
+                    const before = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8)
+                    for (let i = 1; i < before.length; ++i) canvas.removeElement(before[i])
+                    const saved = blockModel.save(), left = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8).length
+                    const ok = win.rebuildGuide()
+                    const after = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8)
+                    check(saved && left === 1 && ok && after.length === 11 && !canvas.dirty && canvas.documentPath === guide.guidePath(),
+                          "Rebuild User Guide restores a mangled, saved guide (saved " + saved + ", " + left + " page left, rebuilt " + ok + " → " + after.length + " pages, dirty " + canvas.dirty + ")")
                     docs.closeTab(docs.activeIndex)
                     nextPhase("guide")
                     console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)

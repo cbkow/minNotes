@@ -841,6 +841,33 @@ ApplicationWindow {
     // section with its screenshots inline where the docs have them ("mirror our current docs more literally"), a grid —
     // saved under Application Support per app version and opened as an ordinary tab (the user's copy: annotate it; a new
     // version builds afresh). ⌘/ opens it on the Keyboard Shortcuts page (the in-app sheet is gone).
+    // Help ▸ Rebuild User Guide… (user 2026-10-22: the guide is an ordinary document, so it CAN be mangled and saved; the
+    // stamp only follows the bundled content): confirm, close its tab if open (discarding edits), remove, build afresh.
+    function rebuildGuide() {
+        for (let i = docs.count - 1; i >= 0; --i) { const c = docs.canvasAt(i); if (c && c.documentPath === guide.guidePath()) docs.closeTab(i) }
+        guide.remove()
+        return win.openGuide("")
+    }
+    Dialog {
+        id: rebuildGuideDialog
+        modal: true; anchors.centerIn: Overlay.overlay; width: 440; padding: 20
+        background: Rectangle { color: Theme.colors.surface; radius: Theme.dim.radius
+                                border.width: 1; border.color: Theme.colors.border }
+        contentItem: Column {
+            spacing: 14
+            Text { width: 400; wrapMode: Text.Wrap; text: qsTr("Rebuild the User Guide?")
+                   color: Theme.colors.textBright; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody; font.bold: true }
+            Text { width: 400; wrapMode: Text.Wrap
+                   text: qsTr("The guide is rebuilt from the app’s own copy. Anything you added to it or changed in it is discarded.")
+                   color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeBody }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                FlatButton { text: qsTr("Cancel"); padding: 12; onClicked: rebuildGuideDialog.close() }
+                FlatButton { text: qsTr("Rebuild"); variant: "primary"; padding: 12
+                             onClicked: { rebuildGuideDialog.close(); win.rebuildGuide() } }
+            }
+        }
+    }
     function openGuide(pageTitle) {
         const path = guide.guidePath()
         if (!guide.exists() && !win.buildGuide(path)) { Toasts.show(qsTr("Could not build the User Guide"), 2); return false }
@@ -1302,6 +1329,11 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                     onTriggered: win.openGuide("Keyboard Shortcuts")
                 }
                 Platform.MenuItem {
+                    text: qsTr("Rebuild User Guide…")
+                    role: Platform.MenuItem.NoRole
+                    onTriggered: rebuildGuideDialog.open()
+                }
+                Platform.MenuItem {
                     text: qsTr("Third-Party Notices")
                     role: Platform.MenuItem.NoRole
                     onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/")
@@ -1420,6 +1452,7 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("Check for Updates…"); onTriggered: appUpdater.checkForUpdates() }
                 Action { text: qsTr("User Guide"); onTriggered: win.openGuide("") }
                 Action { text: qsTr("Keyboard Shortcuts"); shortcut: "Ctrl+/"; onTriggered: win.openGuide("Keyboard Shortcuts") }
+                Action { text: qsTr("Rebuild User Guide…"); onTriggered: rebuildGuideDialog.open() }
                 Action { text: qsTr("Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
             }
         }
