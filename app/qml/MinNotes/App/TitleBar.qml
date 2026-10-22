@@ -2,8 +2,9 @@
 // there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app MENU
 // button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
 // only while a document is open) · the PIN · on Windows our own minimize / maximize / close. Every stretch of the
-// row no control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — on macOS through our
-// own handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively. The PIN
+// row no control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — through our own
+// handle on BOTH platforms (the drag starts after a small movement, so clicks stay clicks; QWindow::startSystemMove
+// is AppKit's performWindowDrag / Windows' SC_DRAGMOVE loop, so edge snap and the OS motion stay native). The PIN
 // (2026-10-22) is the same toggle as View ▸ Always on Top (⌥⌘T / Ctrl+Alt+T): the window stays above every other
 // app's. The pin and the three window buttons are ONE component (ChromeButton: 34 × the row, 14-px glyph, grey
 // hover, the close in red) — the user's walk of Qt's own 32 × 48 caption buttons: too large, and the pin mismatched.
@@ -22,12 +23,16 @@ Rectangle {
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
 
-    // The move handle (macOS): under everything else in the row, so a press on a segment / button never reaches it.
-    // Windows needs none — a press no item accepts is the native caption (Qt's expanded-client-area hit test).
+    // The move handle: under everything else in the row, so a press on a segment / button never reaches it. Windows
+    // too (2026-10-22): leaving the bare strip to Qt's expanded-client-area hit test (an unaccepted press → HTCAPTION)
+    // was unreliable — Qt detects the press through GetAsyncKeyState's "pressed since last call" bit, so a hover hit
+    // test after a click eats the next press and the drag needs a second try. Accepting every press here makes the
+    // hit test HTCLIENT consistently; the drag then goes through startSystemMove (SC_DRAGMOVE), and Qt's
+    // WM_EXITSIZEMOVE handler syncs the release the move loop swallowed.
     MouseArea {
         id: drag
         anchors.fill: parent
-        enabled: windowChrome.nativeLights
+        enabled: windowChrome.chromeless
         property real px: 0; property real py: 0
         property bool armed: false
         onPressed: (mouse) => { px = mouse.x; py = mouse.y; armed = windowChrome.chromeless }
