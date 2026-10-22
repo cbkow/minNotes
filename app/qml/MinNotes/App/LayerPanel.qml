@@ -11,8 +11,12 @@ Item {
     id: lp
     property var editor: null
     readonly property var view: editor ? editor.canvasItem : null
-    readonly property var rows: (canvas.elementsRevision, canvas.pagesRevision, blockModel.contentRevision,
-                                 canvas.documentOpen ? canvas.layerRows() : [])
+    // Frames COLLAPSE (2026-10-22): the caret on a frame row hides its children's rows (this session's state, per frame id)
+    property var collapsedIds: ({})
+    function isCollapsed(id) { return !!collapsedIds[id] }
+    function toggleCollapsed(id) { const c = Object.assign({}, collapsedIds); if (c[id]) delete c[id]; else c[id] = true; collapsedIds = c }
+    readonly property var rows: (canvas.elementsRevision, canvas.pagesRevision, blockModel.contentRevision, collapsedIds,
+                                 canvas.documentOpen ? canvas.layerRows().filter(function(r) { return !(r.parent && collapsedIds[r.parent]) }) : [])
     readonly property int rowH: 26
     readonly property int rowGap: 1
     readonly property int inset: 12   // the rows' side margin (the list itself is full-width so its scrollbar sits where the history's does)
@@ -60,9 +64,10 @@ Item {
         const gap = dropIndex, ids = dragIds
         dropIndex = -1; dragIds = []
         if (gap < 0 || !ids.length) return
+        const block = canvas.withChildren(ids)   // a frame row moves with its children (collapsed or not)
         const anchor = gap < rows.length ? rows[gap].id : ""
-        if (ids.indexOf(anchor) >= 0) return   // dropped onto itself
-        canvas.placeAbove(ids, anchor)
+        if (block.indexOf(anchor) >= 0) return   // dropped onto itself
+        canvas.placeAbove(block, anchor)
     }
     // Scroll-follow: a selection made on the canvas brings its row into view.
     Connections {
@@ -105,12 +110,21 @@ Item {
                  : row.isFrame ? (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Qt.rgba(row.tint.r, row.tint.g, row.tint.b, row.tinted ? 0.10 : 0.22))
                  : (ma.containsMouse && !lp.dragging ? Theme.colors.surfaceHover : Theme.colors.hoverIdle)
             Rectangle { visible: row.isFrame; x: 0; y: 4; width: 3; height: parent.height - 8; radius: 1; color: row.tint }
+            Item {   // the frame's disclosure caret: click to collapse / expand its children
+                id: caret
+                visible: row.isFrame
+                x: 5; width: 14; height: parent.height
+                Icon { anchors.centerIn: parent; name: lp.isCollapsed(row.modelData.id) ? "caret-right" : "caret-down"; size: 10
+                       color: caretMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+                MouseArea { id: caretMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: { lp.toggleCollapsed(row.modelData.id); if (lp.editor) lp.editor.forceActiveFocus() } }
+            }
             Rectangle { visible: (row.modelData.depth || 0) > 0; x: -9; y: -lp.rowGap; width: 2; height: parent.height + lp.rowGap; color: row.childTint; opacity: 0.8 }
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             opacity: lp.dragging && lp.dragIds.indexOf(row.modelData.id) >= 0 ? 0.4 : 1
             Icon {
                 id: glyph
-                x: 8; anchors.verticalCenter: parent.verticalCenter
+                x: row.isFrame ? 20 : 8; anchors.verticalCenter: parent.verticalCenter
                 name: lp.iconFor(row.modelData.kind); size: 13
                 color: row.full ? Theme.colors.textBright : row.tinted ? row.tint : Theme.colors.textMuted
             }
@@ -127,7 +141,8 @@ Item {
                 id: meta
                 anchors.right: parent.right; anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
-                text: row.modelData.kind === "ink" ? row.modelData.count : ""
+                text: row.modelData.kind === "ink" ? row.modelData.count
+                    : row.isFrame && lp.isCollapsed(row.modelData.id) ? (canvas.elementsRevision, canvas.childrenOf(row.modelData.id).length) : ""
                 color: Theme.colors.textSubtle
                 font.family: Theme.font.mono; font.pixelSize: 10
             }

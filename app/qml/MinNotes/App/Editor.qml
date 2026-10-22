@@ -5672,6 +5672,13 @@ FocusScope {
                     cvw.select(probeFrameId)
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
                     g.grab(cvw, g.tempDir() + "/mn-canvas-probe-frames-plain.png")   // the untinted look (the dark grey)
+                    {   // the Layers panel collapses a frame's children
+                        const lp = root.inspector.layers, n0 = lp.rows.length
+                        lp.toggleCollapsed(probeFrameId)
+                        check(lp.isCollapsed(probeFrameId) && lp.rows.length === n0 - 2 && lp.rows.some(function(r) { return r.id === probeFrameId }), "collapsing a frame in Layers hides its two children's rows (" + lp.rows.length + " of " + n0 + ")")
+                        lp.toggleCollapsed(probeFrameId)
+                        check(!lp.isCollapsed(probeFrameId) && lp.rows.length === n0, "…and expanding brings them back")
+                    }
                     canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     const fs = root.inspector.frameSection
                     check(root.inspector.open ? (!!fs && fs.visible && fs.frameId === probeFrameId && fs.titleFieldItem.text === "Shots") : true, "the Inspector's Frame section shows the selected frame's title (open " + root.inspector.open + ")")
