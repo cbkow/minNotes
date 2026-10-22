@@ -5683,6 +5683,18 @@ FocusScope {
                         check(lp.isCollapsed(probeFrameId) && lp.rows.length === n0 - 2 && lp.rows.some(function(r) { return r.id === probeFrameId }), "a CLICK on the caret collapses the frame: its two children's rows hide (" + lp.rows.length + " of " + n0 + ")")
                         lp.toggleCollapsed(probeFrameId)
                         check(!lp.isCollapsed(probeFrameId) && lp.rows.length === n0, "…and expanding brings them back")
+                        // a row dragged OUT of the frame's block leaves the frame; dragged back INTO it, joins (the list is structural)
+                        let fr = -1; for (let i = 0; i < lp.rows.length; ++i) if (lp.rows[i].id === probeFrameId) fr = i
+                        check(fr >= 0 && lp.dropTargetAt(fr + 1) === probeFrameId && lp.dropTargetAt(0) === "", "the gap right under a frame row is inside its block; the top gap is not")
+                        lp.dragIds = [pdfElId]; lp.dropIndex = 0; lp.drop()
+                        check(canvas.parentOf(pdfElId) === "" && canvas.childrenOf(probeFrameId).length === 1 && canvas.visibleElements(-1e9, -1e9, 1e9, 1e9).indexOf(pdfElId) === canvas.elementCount() - 1,
+                              "dropping a child row at the top of the list takes it OUT of the frame and to the front (parent '" + canvas.parentOf(pdfElId) + "')")
+                        fr = -1; for (let i = 0; i < lp.rows.length; ++i) if (lp.rows[i].id === probeFrameId) fr = i
+                        lp.dragIds = [pdfElId]; lp.dropIndex = fr + 1; lp.drop()
+                        check(canvas.parentOf(pdfElId) === probeFrameId && canvas.childrenOf(probeFrameId).length === 2, "dropping it into the frame's block joins the frame again (parent '" + canvas.parentOf(pdfElId) + "')")
+                        canvas.undo()
+                        check(canvas.parentOf(pdfElId) === "", "…one undo row per drop")
+                        canvas.redo()
                     }
                     canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     const fs = root.inspector.frameSection

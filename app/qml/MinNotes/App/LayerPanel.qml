@@ -60,6 +60,16 @@ Item {
     function gapAt(y) {   // the drop gap nearest a y in list-content coordinates
         return Math.max(0, Math.min(rows.length, Math.round(y / (rowH + rowGap))))
     }
+    // A gap INSIDE a frame's block (between its row and its children, or between two of its children) names that frame:
+    // a row dropped there JOINS it, a member dropped anywhere else LEAVES — the list is the structural view, so a drag in
+    // it is the explicit act (2026-10-22). The drop line indents to say so.
+    function dropTargetAt(gap) {
+        if (gap <= 0 || gap >= rows.length) return ""
+        const above = rows[gap - 1], below = rows[gap]
+        if (!below.parent) return ""
+        return (above.id === below.parent || above.parent === below.parent) ? below.parent : ""
+    }
+    readonly property string dropTarget: dropIndex >= 0 ? dropTargetAt(dropIndex) : ""
     function drop() {
         const gap = dropIndex, ids = dragIds
         dropIndex = -1; dragIds = []
@@ -67,7 +77,13 @@ Item {
         const block = canvas.withChildren(ids)   // a frame row moves with its children (collapsed or not)
         const anchor = gap < rows.length ? rows[gap].id : ""
         if (block.indexOf(anchor) >= 0) return   // dropped onto itself
-        canvas.placeAbove(block, anchor)
+        const target = dropTargetAt(gap)
+        const members = ids.filter(function(id) { return !canvas.isFrame(id) })   // frames never nest: a frame row only reorders
+        canvas.beginBatch(qsTr("Reorder"))
+        if (target !== "" && members.length) canvas.addToFrame(members.filter(function(id) { return canvas.parentOf(id) !== target }), target)
+        else if (members.some(function(id) { return canvas.parentOf(id) !== "" })) canvas.removeFromFrame(members)
+        canvas.placeAbove(canvas.withChildren(ids), anchor)
+        canvas.endBatch()
     }
     // Scroll-follow: a selection made on the canvas brings its row into view.
     Connections {
@@ -183,7 +199,7 @@ Item {
         // The drop line: in the gap the pointer is nearest, above the first row through below the last.
         Rectangle {
             visible: lp.dragging
-            x: lp.inset + 4; width: list.width - 2 * lp.inset - 8; height: 2
+            x: lp.inset + 4 + (lp.dropTarget !== "" ? 14 : 0); width: list.width - 2 * lp.inset - 8 - (lp.dropTarget !== "" ? 14 : 0); height: 2   // indented inside a frame's block
             y: lp.dropIndex * (lp.rowH + lp.rowGap) - 1 - list.contentY
             color: Theme.colors.textBright
             radius: 1
