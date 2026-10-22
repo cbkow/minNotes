@@ -14,6 +14,7 @@ Item {
     readonly property bool single: view.selectionCount === 1 && canvas.elementKind(id_) !== ""
     readonly property bool isPage: single && canvas.elementKind(id_) === "page"
     readonly property bool isText: single && canvas.elementKind(id_) === "shape" && view.textSpec(id_).shape === "text"
+    readonly property bool isElasticFrame: (canvas.elementsRevision, single && canvas.isFrame(id_) && canvas.frameElastic(id_))   // its rect hugs its children: no handles
     readonly property rect world: shown ? (canvas.geometryRevision, view.selectedIds, view.selectionRect()) : Qt.rect(0, 0, 0, 0)
     readonly property point tl: (view.cam.rev, view.cam.worldToScreen(world.x, world.y))
     x: tl.x; y: tl.y
@@ -104,7 +105,7 @@ Item {
     component Handle: Rectangle {
         required property int dx     // -1 left edge, 1 right edge, 0 neither
         required property int dy
-        visible: frame.single && !(frame.isText && dx === 0)   // handles resize ONE element; a set only moves (a page's height too — walk 7c: fixed-height pages); a text chip's height is its text's
+        visible: frame.single && !(frame.isText && dx === 0) && !frame.isElasticFrame   // handles resize ONE element; a set only moves (a page's height too — walk 7c: fixed-height pages); a text chip's height is its text's; an elastic frame hugs
         width: 8; height: 8; radius: 2
         color: Theme.colors.accent
         z: 3   // above the bar (the bottom handles sit on the picture/bar seam, never on the bar's buttons)
@@ -128,7 +129,8 @@ Item {
             }
         }
     }
-    Handle { dx: -1; dy: -1 } Handle { dx: 0; dy: -1 } Handle { dx: 1; dy: -1 }
+    readonly property var handles: [hTL]   // probe
+    Handle { id: hTL; dx: -1; dy: -1 } Handle { dx: 0; dy: -1 } Handle { dx: 1; dy: -1 }
     Handle { dx: -1; dy: 0 }                         Handle { dx: 1; dy: 0 }
     Handle { dx: -1; dy: 1 }  Handle { dx: 0; dy: 1 }  Handle { dx: 1; dy: 1 }
 }

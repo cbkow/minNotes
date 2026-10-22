@@ -258,8 +258,30 @@ public:
     // panel's row); an ink block steps one element (merging into a neighbouring run). False at the end of the stack.
     Q_INVOKABLE bool stepLayers(const QStringList& ids, int dir);
     // A copy beside the original (+24, +24), on top. Pages are not duplicated (their blocks would need new ids).
+    // A frame duplicates WITH its children (one history row).
     Q_INVOKABLE QString duplicateElement(const QString& id);
-    Q_INVOKABLE bool removeElement(const QString& id);            // a page follows removePage's rules
+    Q_INVOKABLE bool removeElement(const QString& id);            // a page follows removePage's rules; a frame takes its children (one row)
+    // FRAMES (2026-10-22 — groups and boards, one element kind: the schema's `group`, honouring parentId). json:
+    // title · tint ("" = none) · sizing "elastic" (a GROUP: its rect hugs its children + kFramePad, kFrameTitleH above)
+    // | "fixed" (a BOARD: sized by hand) · layout "free" | "grid" (cols, gap — stage 2). Membership is EXPLICIT:
+    // groupElements (⌘G), addToFrame, a drop onto a frame; ungroup (⌘⇧G) / removeFromFrame leave. No nesting: a
+    // frame never has a parent, a frame among `ids` is skipped. Children keep ABSOLUTE coordinates. Z: a frame sits
+    // directly UNDER its children and the block is contiguous (packFrame) — so moving / deleting / z-stepping
+    // `withChildren(ids)` keeps it whole. A child's move (setElementRect) re-hugs an elastic parent in the same batch.
+    Q_INVOKABLE QString addFrame(const QRectF& rect, bool fixed);               // an empty frame (the frame tool)
+    Q_INVOKABLE QString groupElements(const QStringList& ids);                 // a group around them; "" when nothing to group
+    Q_INVOKABLE bool ungroup(const QString& frameId);                           // the children stay, the frame goes
+    Q_INVOKABLE bool addToFrame(const QStringList& ids, const QString& frameId);
+    Q_INVOKABLE bool removeFromFrame(const QStringList& ids);
+    Q_INVOKABLE QStringList childrenOf(const QString& frameId) const;          // z order
+    Q_INVOKABLE QString parentOf(const QString& id) const;
+    Q_INVOKABLE QStringList withChildren(const QStringList& ids) const;        // ids + every frame's children among them, in z order
+    Q_INVOKABLE bool isFrame(const QString& id) const { return elementKind(id) == QLatin1String("group"); }
+    Q_INVOKABLE bool frameElastic(const QString& id) const;
+    Q_INVOKABLE QString frameTitle(const QString& id) const;
+    Q_INVOKABLE bool setFrameTitle(const QString& id, const QString& title);
+    Q_INVOKABLE bool setFrameField(const QString& id, const QString& key, const QVariant& value);   // tint · sizing · layout · cols · gap
+    static constexpr double kFramePad = 24.0, kFrameTitleH = 28.0, kFrameMinW = 160.0, kFrameMinH = 120.0;
     Q_INVOKABLE bool setMediaElementInk(const QString& id, int page, const QString& envelope);   // "" clears
     // Re-style an INK element after the fact (walk 7d, 2026-10-18): every stroke's width / colour. A width change
     // grows the rect by the half-width delta and shifts the element-local points with it (an oval's radii point
@@ -342,8 +364,11 @@ private:
     ElementSnap snapshot(const QString& id, bool withBlocks) const;
     void applySnap(const QString& id, const ElementSnap& s);   // the db + loaded models follow the snapshot
     void pushEntry(UndoEntry e, const QString& coalesce);
+    bool setParent(const QString& id, const QString& parentId);         // one undo entry; no notify beyond the set revision
+    bool hugFrame(const QString& frameId, const QString& coalesce);     // an elastic frame's rect follows its children
+    bool packFrame(const QString& frameId);                             // z: the frame directly under its children, contiguous
     bool applyOrder(const std::vector<QString>& order, const QString& label);   // z := index, the changed ones as one batch
-    QString addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label);
+    QString addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label, const QString& parentId = QString());
     void noteChanged(const QString& kind, bool set, bool geometry, bool ink);
     void detachPageModel(const QString& id);
     int nextZ() const;

@@ -25,7 +25,8 @@ Popup {
     readonly property bool isBookmark: n === 1 && kind1 === "media" && canvas.mediaElementKind(view.selectedId) === "bookmark"
     readonly property bool isPreview: (canvas.elementsRevision, n === 1 && kind1 === "media" && canvas.elementPreviewFormat(view.selectedId) !== "")   // the preview pass (2026-10-21)
     readonly property bool onMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
-    readonly property int visibleRows: { let c = 0; for (let i = 0; i < rows.children.length; ++i) if (rows.children[i].visible && rows.children[i].isMenuRow === true) ++c; return c }   // probe: rows, not rules
+    readonly property int visibleRows: { let c = 0; for (let i = 0; i < rows.children.length; ++i) if (rows.children[i].visible && rows.children[i].isMenuRow === true) ++c; return c }   // probe: rows
+    readonly property string visibleLabels: { const a = []; for (let i = 0; i < rows.children.length; ++i) if (rows.children[i].visible && rows.children[i].isMenuRow === true) a.push(rows.children[i].text); return a.join(" · ") }   // probe, not rules
     function popupAt(sx, sy) { x = sx; y = sy; open() }
 
     component Row: ContextMenuRow {
@@ -41,7 +42,9 @@ Popup {
 
     // The sections' visibility, so a rule never stands alone.
     readonly property bool primary: n === 1 && view.canOpen(view.selectedId)
+    readonly property bool isFrame: n === 1 && kind1 === "group"
     readonly property bool own: localMedia || isBookmark || view.selectedIsFolder || view.selectedIsVideo || view.selectedIsPdf
+                                || isFrame || view.canGroup || view.canAddToFrame || view.canUngroup || view.canLeaveFrame
                                 || (n === 1 && kind1 === "page" && canvas.pageHeightFixed(view.selectedId))
                                 || (canvas.elementsRevision, n === 1 && kind1 === "shape" && view.textFixed(view.selectedId))
     readonly property bool arrange: n > 0
@@ -53,7 +56,12 @@ Popup {
         // 1. Primary
         Row { label: menu.n === 1 ? menu.view.openLabel(menu.view.selectedId) : ""; show: menu.primary; onTriggered: menu.view.openSelected() }
         Sep { visible: menu.primary && (menu.own || menu.arrange) }
-        // 2. The thing's own actions
+        // 2. The thing's own actions — frames first (2026-10-22)
+        Row { label: qsTr("Rename frame");       show: menu.isFrame;             onTriggered: menu.view.editFrameTitle(menu.view.selectedId) }
+        Row { label: qsTr("Group");              show: menu.view.canGroup;       onTriggered: menu.view.groupSelected() }
+        Row { label: qsTr("Add to frame");       show: menu.view.canAddToFrame;  onTriggered: menu.view.groupSelected() }
+        Row { label: qsTr("Ungroup");            show: menu.view.canUngroup;     onTriggered: menu.view.ungroupSelected() }
+        Row { label: qsTr("Remove from frame");  show: menu.view.canLeaveFrame;  onTriggered: menu.view.leaveFrame() }
         Row { label: menu.onMac ? qsTr("Reveal in Finder") : qsTr("Show in Explorer"); show: menu.localMedia; onTriggered: canvas.revealElement(menu.view.selectedId) }
         Row { label: qsTr("Open in ufb");    show: menu.localMedia;        onTriggered: canvas.openElementInUfb(menu.view.selectedId) }
         Row { label: qsTr("Copy path");      show: menu.localMedia;        onTriggered: clipboard.writeText(canvas.elementSourcePath(menu.view.selectedId)) }   // a preview's ORIGINAL

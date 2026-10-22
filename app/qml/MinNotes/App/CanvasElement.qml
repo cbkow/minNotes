@@ -43,7 +43,7 @@ Item {
     readonly property bool isLive: view && view.liveKind === "page" && view.liveId === elementId   // the Editor owns the pointer inside a live card
     TapHandler {
         id: tap
-        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.isLive
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.view.frameTool && !el.isLive
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
         // (the signals' first argument is an eventPoint, which carries no modifiers — the handler's point does)
@@ -64,7 +64,7 @@ Item {
         }
     }
     DragHandler {   // moves the whole SELECTION (this element joins it if it wasn't in it) as one history row
-        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.isLive
+        enabled: el.active && el.view && !el.view.drawing && !el.view.handTool && !el.view.pageTool && !el.view.frameTool && !el.isLive
         acceptedButtons: Qt.LeftButton
         target: null
         onActiveChanged: {
@@ -88,6 +88,7 @@ Item {
                        : el.shownKind === "ink" ? inkComponent
                        : el.shownKind === "media" ? mediaComponent
                        : el.shownKind === "shape" ? shapeComponent
+                       : el.shownKind === "group" ? frameComponent
                        : el.shownKind === "" ? null : placeholderComponent
     }
     Component {
@@ -97,6 +98,8 @@ Item {
     Component { id: inkComponent;   CanvasInkItem   { editor: el.editor; cam: el.cam; elementId: el.elementId } }
     Component { id: mediaComponent; CanvasMediaItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }
     Component { id: shapeComponent; CanvasShapeItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }
+    Component { id: frameComponent; CanvasFrameItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }   // a group / a board (2026-10-22)
+    readonly property var frameItem: shownKind === "group" ? content.item : null   // probe + the title edit
     readonly property var inkItem: shownKind === "ink" ? content.item : null   // probe: strokeCount / vertexCount
     readonly property var mediaItem: shownKind === "media" ? content.item : null   // probe: pdfPage / posterFrame
     Component {   // connectors: a frame until their renderer lands

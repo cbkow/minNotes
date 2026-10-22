@@ -23,6 +23,7 @@ Rectangle {
     readonly property bool textTool: !spaceHeld && (tool === "text" || tool === "plaintext")   // a boxed chip, or plain text (no fill — 2026-10-18)
     readonly property bool plainTextTool: !spaceHeld && tool === "plaintext"
     readonly property bool pageTool: !spaceHeld && tool === "page"
+    readonly property bool frameTool: !spaceHeld && tool === "frame"   // click = an elastic frame (a group), drag = a fixed one (a board) — 2026-10-22
     readonly property bool handTool: spaceHeld || tool === "hand"
     readonly property bool pointerTool: !spaceHeld && (tool === "select" || tool === "type")
 
@@ -137,7 +138,7 @@ Rectangle {
     property var dragStarts: ({})
     function beginSelectionDrag() {
         dragStarts = {}
-        for (const id of selectedIds) dragStarts[id] = canvas.elementRect(id)
+        for (const id of canvas.withChildren(selectedIds)) dragStarts[id] = canvas.elementRect(id)   // a frame moves with its children (2026-10-22)
         canvas.beginBatch(qsTr("Move"))
     }
     function dragSelectionTo(dx, dy) {
@@ -190,7 +191,7 @@ Rectangle {
     // text, an open hand for the hand, the arrow for the pointer. Chrome with its own cursor (the bar) still wins.
     HoverHandler {
         cursorShape: cv.drawing ? Qt.CrossCursor : cv.textTool ? Qt.IBeamCursor : cv.handTool ? Qt.OpenHandCursor
-                   : cv.pageTool ? Qt.CrossCursor : Qt.ArrowCursor
+                   : cv.pageTool || cv.frameTool ? Qt.CrossCursor : Qt.ArrowCursor
     }
     // A video element's QCView notes as a PAGE below it (2026-10-18): "Notes — <clip>" heading, the notes as blocks
     // (image + vector ink + caption, VideoNotesModel's recipe), between dividers.
@@ -314,6 +315,7 @@ Rectangle {
         const k = canvas.elementKind(id)
         if (k === "page") { if (canvas.livePage !== "") endLive(false); canvas.focusPage = id; return }   // (a double-click on a selected page may have armed / started the live form first)
         if (k === "shape") { editText(id); return }
+        if (k === "group") { editFrameTitle(id); return }   // a frame's open rung = rename in place
         if (k !== "media") return
         const mk = canvas.mediaElementKind(id)
         if (mk === "video" || mk === "pdf") { editor.setActiveTab(id); return }
@@ -328,7 +330,10 @@ Rectangle {
     function duplicateSelected() {
         const made = []
         canvas.beginBatch(qsTr("Duplicate"))
-        for (const id of selectedIds) { const n = canvas.duplicateElement(id); if (n !== "") made.push(n) }
+        for (const id of selectedIds) {
+            if (selectedIds.indexOf(canvas.parentOf(id)) >= 0) continue   // its frame is selected: the frame's duplicate carries it
+            const n = canvas.duplicateElement(id); if (n !== "") made.push(n)
+        }
         canvas.endBatch()
         if (made.length) selectedIds = made
     }
@@ -340,10 +345,25 @@ Rectangle {
     function endPenStyle() { if (penStyleBatch) { canvas.endBatch(); penStyleBatch = false } }
     function applyPenWidth(w) { for (const id of selectedInkIds) canvas.setInkWidth(id, w, "inkw:" + id) }
     function applyPenColor(hex) { for (const id of selectedInkIds) canvas.setInkColor(id, hex, "inkc:" + id) }
-    function stepSelected(dir) { if (selectedIds.length) canvas.stepLayers(selectedIds, dir) }   // ⌘] / ⌘[ — one layer (an ink run counts as one), 2026-10-21
+    function stepSelected(dir) { if (selectedIds.length) canvas.stepLayers(canvas.withChildren(selectedIds), dir) }   // ⌘] / ⌘[ — one layer (an ink run counts as one), 2026-10-21; a frame steps with its children
     function contextMenuAt(sx, sy) { const w = cam.screenToWorld(sx, sy); ctxMenu.worldX = w.x; ctxMenu.worldY = w.y; ctxMenu.popupAt(sx, sy) }   // the Layers panel's right-click
-    function frontSelected() { canvas.beginBatch(qsTr("Bring to front")); for (const id of selectedIds) canvas.bringToFront(id); canvas.endBatch() }
-    function backSelected() { canvas.beginBatch(qsTr("Send to back")); for (const id of selectedIds.slice().reverse()) canvas.sendToBack(id); canvas.endBatch() }
+    function frontSelected() { canvas.beginBatch(qsTr("Bring to front")); for (const id of canvas.withChildren(selectedIds)) canvas.bringToFront(id); canvas.endBatch() }
+    function backSelected() { canvas.beginBatch(qsTr("Send to back")); for (const id of canvas.withChildren(selectedIds).reverse()) canvas.sendToBack(id); canvas.endBatch() }
+    // FRAMES (2026-10-22): groups and boards. Membership is explicit — ⌘G groups the selection (with ONE frame among it:
+    // adds the rest to that frame), ⌘⇧G ungroups, the menu removes members. A frame's open rung is its title edit.
+    readonly property var selectedFrames: (canvas.elementsRevision, selectedIds.filter(function(id) { return canvas.isFrame(id) }))
+    readonly property bool canGroup: selectedIds.length > 0 && selectedFrames.length === 0
+    readonly property bool canAddToFrame: selectedFrames.length === 1 && selectedIds.length > 1
+    readonly property bool canUngroup: selectedIds.length === 1 && selectedFrames.length === 1
+    readonly property bool canLeaveFrame: (canvas.elementsRevision, selectedIds.length > 0 && selectedIds.every(function(id) { return canvas.parentOf(id) !== "" }))
+    property int groups: 0   // probe
+    function groupSelected() {
+        if (canAddToFrame) { const f = selectedFrames[0]; if (canvas.addToFrame(selectedIds.filter(function(id) { return id !== f }), f)) { ++groups; select(f) } }
+        else if (canGroup) { const f = canvas.groupElements(selectedIds); if (f !== "") { ++groups; select(f) } }
+    }
+    function ungroupSelected() { if (canUngroup) { const kids = canvas.childrenOf(selectedId); if (canvas.ungroup(selectedId)) selectMany(kids) } }
+    function leaveFrame() { if (canLeaveFrame) canvas.removeFromFrame(selectedIds) }
+    function editFrameTitle(id) { const it = pageItemFor(id); if (it && it.frameItem) it.frameItem.editTitle() }
     // The topmost ink element under a world point (the eraser).
     function inkAt(wx, wy) {
         const ids = canvas.visibleElements(wx, wy, wx + 0.01, wy + 0.01)
@@ -577,6 +597,7 @@ Rectangle {
             cv.endLive(false)   // a click elsewhere ends a live card (and commits a chip's edit)
             if (cv.textTool) cv.newTextAt(ev.position.x, ev.position.y, cv.plainTextTool)
             else if (cv.pageTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addPageAt(w.x, w.y); if (id !== "") cv.select(id) }
+            else if (cv.frameTool) { const w = cam.screenToWorld(ev.position.x, ev.position.y); const id = canvas.addFrame(Qt.rect(w.x, w.y, 320, 240), false); if (id !== "") cv.select(id) }   // a group-sized empty frame
             else { cv.clearSelection(); cv.editor.forceActiveFocus() }
         }
         onDoubleTapped: (ev) => { ++cv.doubleTaps; if (cv.pointerTool && !cv.frameHit(ev.position) && cv.emptyAt(ev.position.x, ev.position.y)) cv.newPageAt(ev.position.x, ev.position.y) }
@@ -638,6 +659,28 @@ Rectangle {
     // The page tool's drag: a box whose width becomes the new page's measure.
     property rect pageDragRect: Qt.rect(0, 0, 0, 0)
     property bool pageDragActive: false
+    DragHandler {   // the FRAME tool's drag: a fixed frame (a board) of that size (2026-10-22)
+        target: null
+        acceptedButtons: Qt.LeftButton
+        enabled: cv.frameTool
+        onActiveChanged: {
+            if (active) { cv.pageDragActive = true; cv.pageDragRect = Qt.rect(centroid.pressPosition.x, centroid.pressPosition.y, 0, 0) }
+            else if (cv.pageDragActive) {
+                cv.pageDragActive = false
+                const r = cv.pageDragRect
+                if (r.width > 8 && r.height > 8) {
+                    const w = cam.screenToWorld(r.x, r.y)
+                    const id = canvas.addFrame(Qt.rect(w.x, w.y, r.width / cam.zoom, r.height / cam.zoom), true)
+                    if (id !== "") cv.select(id)
+                }
+            }
+        }
+        onCentroidChanged: {
+            if (!active) return
+            const p0 = centroid.pressPosition, p1 = centroid.position
+            cv.pageDragRect = Qt.rect(Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), Math.abs(p1.x - p0.x), Math.abs(p1.y - p0.y))
+        }
+    }
     DragHandler {
         target: null
         acceptedButtons: Qt.LeftButton
@@ -662,7 +705,7 @@ Rectangle {
     }
     Rectangle {
         visible: cv.pageDragActive
-        x: cv.pageDragRect.x; y: cv.pageDragRect.y; width: cv.pageDragRect.width; height: Math.max(cv.pageDragRect.height, 400 * cam.zoom)
+        x: cv.pageDragRect.x; y: cv.pageDragRect.y; width: cv.pageDragRect.width; height: cv.frameTool ? cv.pageDragRect.height : Math.max(cv.pageDragRect.height, 400 * cam.zoom)
         z: 9
         color: Qt.rgba(Theme.colors.surface.r, Theme.colors.surface.g, Theme.colors.surface.b, 0.5)
         border.width: 1; border.color: Theme.colors.accent

@@ -29,7 +29,8 @@ var sections = [
     ["Pan anywhere", "middle-button drag"]
   ]},
   { "title": "Canvas", "rows": [
-    ["Select / Hand / Page tools", "V / H / N"],
+    ["Select / Hand / Page / Frame tools", "V / H / N / F"],
+    ["Group the selection in a frame (with one frame selected: add the rest to it) · Ungroup", "⌘G · ⌘⇧G"],
     ["Text box · plain text", "T · ⇧T"],
     ["Pen / Rectangle / Oval / Line / Arrow / Eraser", "P / R / O / L / A / E"],
     ["Open the selected element — the page view, the studio, the PDF view, an image's lightbox", "double-click · Return · the open glyph"],

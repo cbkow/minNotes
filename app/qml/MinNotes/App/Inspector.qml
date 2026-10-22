@@ -84,10 +84,18 @@ Rectangle {
     Item {
         width: panel.panelW
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+        FramePanel {   // the FRAME section (2026-10-22): the one selected frame's title / tint / sizing
+            id: framePanel
+            width: panel.panelW
+            anchors.top: parent.top
+            editor: panel.editor
+            visible: panel.layersShown && frameId !== ""
+        }
+        readonly property var frameSection: framePanel   // probe
         Text {
             id: layersLabel
             visible: panel.layersShown
-            x: 12; y: 8; height: visible ? 18 : 0
+            x: 12; anchors.top: framePanel.bottom; anchors.topMargin: 8; height: visible ? 18 : 0
             text: qsTr("Layers")
             color: Theme.colors.textMuted
             font.family: Theme.font.family; font.pixelSize: 11; font.bold: true
@@ -98,7 +106,7 @@ Rectangle {
             visible: panel.layersShown
             width: panel.panelW   // full width like the history's scroller, so both scrollbars ride the panel's edge; the rows inset themselves
             anchors.top: layersLabel.bottom
-            height: visible ? Math.round((parent.height - 40) * 0.6) : 0
+            height: visible ? Math.round((parent.height - 40 - framePanel.height) * 0.6) : 0
             editor: panel.editor
         }
         Rectangle {

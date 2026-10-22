@@ -35,6 +35,7 @@ Item {
         case "shape": return "polygon"
         case "ink": return "scribble"
         case "connector": return "flow-arrow"
+        case "frame": return "frame-corners"
         default: return "file"
         }
     }
@@ -92,7 +93,7 @@ Item {
             readonly property bool isMenuRow: true
             width: list.width; height: lp.rowH
             Rectangle {
-            x: lp.inset; width: parent.width - 2 * lp.inset; height: lp.rowH
+            x: lp.inset + 14 * (row.modelData.depth || 0); width: parent.width - 2 * lp.inset - 14 * (row.modelData.depth || 0); height: lp.rowH   // a frame's children indent (2026-10-22)
             radius: Theme.dim.radiusSmall
             color: row.full ? Theme.colors.divider
                  : row.partial ? Qt.rgba(Theme.colors.divider.r, Theme.colors.divider.g, Theme.colors.divider.b, 0.5)

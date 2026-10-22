@@ -6729,6 +6729,52 @@ static void testAlwaysOnTop() {
     CHECK(framed.alwaysOnTop(), "independent of the chromeless flag");
 }
 
+// [148] FRAMES (2026-10-22): groups and boards. groupElements hugs its members (+ pad, the title strip above) and puts
+// the frame directly under them in z (a contiguous block); a child's move re-hugs; withChildren names the block; a frame
+// removal takes the children, ungroup keeps them; duplicate copies the block; undo walks every step back; no nesting.
+static void testFrames() {
+    qInfo("[148] frames: group hugs + packs under its children; a child's move re-hugs; remove takes the children, ungroup keeps them; duplicate copies the block; undo");
+    CanvasDocument c;
+    CHECK(c.newCanvas(), "a new canvas");
+    const QString page = c.firstPageId();
+    const QString a = c.addShapeElement(QStringLiteral("{\"shape\":\"rect\"}"), QRectF(100, 100, 50, 40));
+    const QString b = c.addShapeElement(QStringLiteral("{\"shape\":\"rect\"}"), QRectF(300, 200, 60, 30));
+    const QString loose = c.addShapeElement(QStringLiteral("{\"shape\":\"rect\"}"), QRectF(900, 900, 10, 10));
+    const int rows0 = c.undoHistory().size();
+    const QString f = c.groupElements({a, b, loose});
+    c.removeFromFrame({loose});
+    CHECK(!f.isEmpty() && c.isFrame(f) && c.frameElastic(f) && c.parentOf(a) == f && c.parentOf(b) == f && c.parentOf(loose).isEmpty(), "⌘G makes an elastic frame; the members carry its id (" + f.toUtf8() + ")");
+    const QRectF fr = c.elementRect(f);
+    const double pad = CanvasDocument::kFramePad, th = CanvasDocument::kFrameTitleH;
+    CHECK(fr == QRectF(100 - pad, 100 - pad - th, 260 + 2 * pad, 130 + 2 * pad + th), "…hugging the members with the padding and the title strip (" + QByteArray::number(fr.x()) + "," + QByteArray::number(fr.y()) + " " + QByteArray::number(fr.width()) + "x" + QByteArray::number(fr.height()) + ")");
+    auto order = [&] { QStringList o; for (const auto& e : c.elements()) o << e.id; return o; };
+    const QStringList o1 = order();
+    CHECK(o1.indexOf(f) >= 0 && o1.indexOf(a) == o1.indexOf(f) + 1 && o1.indexOf(b) == o1.indexOf(f) + 2, "…the frame sits directly under its children, the block contiguous (" + o1.join(' ').toUtf8() + ")");
+    CHECK(c.withChildren({f}) == (QStringList{f, a, b}) && c.withChildren({a}) == (QStringList{a}), "withChildren names the block in z order");
+    CHECK(c.setElementRect(b, QRectF(500, 200, 60, 30), QStringLiteral("move:b")) && c.elementRect(f).right() == 560 + pad, "a child's move re-hugs the frame (right " + QByteArray::number(c.elementRect(f).right()) + ")");
+    CHECK(c.groupElements({f}).isEmpty() && c.parentOf(a) == f, "grouping a frame alone makes nothing (no nesting)");
+    const QVariantList rows = c.layerRows();
+    int fi = -1, ai = -1, bi = -1;
+    for (int i = 0; i < rows.size(); ++i) { const QString id = rows[i].toMap().value("id").toString(); if (id == f) fi = i; else if (id == a) ai = i; else if (id == b) bi = i; }
+    CHECK(fi >= 0 && ai > fi && bi > fi && rows[ai].toMap().value("depth").toInt() == 1 && rows[fi].toMap().value("kind").toString() == QLatin1String("frame") && rows[fi].toMap().value("name").toString() == QLatin1String("Group"),
+          "the layer rows read as a tree: the frame row first, its children indented under it (frame " + QByteArray::number(fi) + ", a " + QByteArray::number(ai) + ", b " + QByteArray::number(bi) + ")");
+    CHECK(c.setFrameTitle(f, QStringLiteral("Look-dev")) && c.frameTitle(f) == QLatin1String("Look-dev"), "the title edits");
+    const QString nf = c.duplicateElement(f);
+    CHECK(!nf.isEmpty() && c.childrenOf(nf).size() == 2 && c.childrenOf(f).size() == 2, "duplicate copies the frame with its children (" + QByteArray::number(c.childrenOf(nf).size()) + ")");
+    CHECK(c.removeElement(nf) && c.elementKind(nf).isEmpty() && c.elementCount() == 5, "removing a frame takes its children (" + QByteArray::number(c.elementCount()) + " elements)");
+    c.undo();
+    CHECK(c.elementCount() == 8 && c.childrenOf(nf).size() == 2, "…one undo brings the frame and both children back (" + QByteArray::number(c.elementCount()) + ")");
+    c.redo();
+    CHECK(c.ungroup(f) && c.elementKind(f).isEmpty() && c.parentOf(a).isEmpty() && c.parentOf(b).isEmpty() && c.elementKind(a) == QLatin1String("shape"), "ungroup keeps the children, drops the frame");
+    c.undo();
+    CHECK(c.isFrame(f) && c.parentOf(a) == f && c.parentOf(b) == f, "…undo restores the frame and the membership");
+    const QString board = c.addFrame(QRectF(0, 0, 10, 10), true);
+    CHECK(!board.isEmpty() && !c.frameElastic(board) && c.elementRect(board).width() == CanvasDocument::kFrameMinW, "a fixed frame (a board) keeps its own size, at least the minimum");
+    CHECK(c.addToFrame({loose}, board) && c.parentOf(loose) == board && c.elementRect(board).width() == CanvasDocument::kFrameMinW, "addToFrame on a fixed frame never resizes it");
+    CHECK(c.setFrameField(board, QStringLiteral("sizing"), QStringLiteral("elastic")) && c.elementRect(board).contains(QRectF(900, 900, 10, 10)), "loosening a board to elastic hugs its children at once");
+    Q_UNUSED(page); Q_UNUSED(rows0);
+}
+
 // [146] The preview pass (2026-10-21, tier 1): a Radiance HDR renders through stb_image (clamp + 2.2) into a stored
 // preview PNG and lands as an IMAGE block / element whose descriptor carries the original under `preview`; reveal /
 // open / Copy path act on the original; a changed source reads stale; Refresh re-renders as one undo step; an .ai is a PDF.
@@ -9449,6 +9495,7 @@ int main(int argc, char** argv) {
     testLayerRows();
     testPreviewPass();
     testAlwaysOnTop();
+    testFrames();
     testPdfPageDrawing();
     testPageFixedHeight();
     testInkStyle();

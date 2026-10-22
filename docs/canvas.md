@@ -22,6 +22,23 @@ toolbar shows the level and opens a slider.
 to the canvas with the page selected. The open glyph at the card's top-right,
 **Open page** on its menu and the path bar do the same.
 
+## Frames
+
+A **frame** groups things on the canvas. Select some elements and press
+`⌘G` (or pick **Group** from the menu): a titled, tinted rectangle wraps them
+and from then on moves, duplicates, deletes and reorders with them as one.
+Membership is explicit — `⌘G` with one frame among the selection adds the
+rest to it, **Remove from frame** on an element's menu takes it out, `⌘⇧G`
+dissolves the frame and leaves its contents where they are. Dragging a
+child outward just stretches the frame: a **group** is elastic and hugs its
+contents.
+
+The frame tool (`F`) places frames by hand: click for an empty group, drag
+for a **board** — a frame with a fixed size you resize with its handles.
+Double-click a frame (or press `Return` on it) to rename it in place; the
+Inspector's **Frame** section holds the title, a tint and the group / board
+choice. In the Layers panel a frame's children sit indented under it.
+
 A page's **width** is its card's width — drag a side handle and the text
 reflows. Its height follows its content up to a square; drag a top or
 bottom handle to pin a height (the card scrolls), double-click the handle

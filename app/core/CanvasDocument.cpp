@@ -954,6 +954,7 @@ QString kindLabel(const QString& kind) {
     if (kind == QLatin1String("ink")) return CanvasDocument::tr("ink");
     if (kind == QLatin1String("shape")) return CanvasDocument::tr("shape");
     if (kind == QLatin1String("connector")) return CanvasDocument::tr("connector");
+    if (kind == QLatin1String("group")) return CanvasDocument::tr("frame");
     return kind;
 }
 }
@@ -966,13 +967,14 @@ void CanvasDocument::noteChanged(const QString& kind, bool set, bool geometry, b
     if (kind == QLatin1String("page") && set) { ++pagesRevision_; emit pagesChanged(); }
 }
 
-QString CanvasDocument::addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label) {
+QString CanvasDocument::addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label, const QString& parentId) {
     if (!db_.isOpen()) return QString();
     Document::Element e;
     e.id = makeUlid();
     e.kind = kind;
     e.x = r.x(); e.y = r.y(); e.w = r.width(); e.h = r.height();
     e.z = nextZ();
+    e.parentId = parentId;
     e.json = json.isEmpty() ? QStringLiteral("{}") : json;
     db_.begin();
     db_.insertElement(e);
@@ -1379,6 +1381,7 @@ bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, con
     u.after = snapshot(id, false);
     pushEntry(std::move(u), coalesce);
     noteChanged(cur->kind, false, true, false);
+    if (!cur->parentId.isEmpty()) hugFrame(cur->parentId, coalesce.isEmpty() ? QString() : QStringLiteral("hug:") + cur->parentId);
     return true;
 }
 
@@ -1443,7 +1446,7 @@ QVariantList CanvasDocument::layerRows() const {
         if (e.kind == QLatin1String("ink")) {
             QStringList ids;
             int j = i;
-            while (j >= 0 && elements_[size_t(j)].kind == QLatin1String("ink")) { ids.prepend(elements_[size_t(j)].id); --j; }
+            while (j >= 0 && elements_[size_t(j)].kind == QLatin1String("ink") && elements_[size_t(j)].parentId == e.parentId) { ids.prepend(elements_[size_t(j)].id); --j; }
             r.insert(QStringLiteral("kind"), QStringLiteral("ink"));
             r.insert(QStringLiteral("name"), tr("Ink"));
             r.insert(QStringLiteral("ids"), ids);
@@ -1471,6 +1474,7 @@ QVariantList CanvasDocument::layerRows() const {
                          : shape == QLatin1String("line") ? tr("Line") : shape == QLatin1String("arrow") ? tr("Arrow") : shape;
                 }
             } else if (e.kind == QLatin1String("connector")) { name = tr("Connector"); }
+            else if (e.kind == QLatin1String("group")) { kind = QStringLiteral("frame"); name = frameTitle(e.id); if (name.isEmpty()) name = tr("Frame"); }
             else { name = e.kind; }
             r.insert(QStringLiteral("kind"), kind);
             r.insert(QStringLiteral("name"), name);
@@ -1479,7 +1483,22 @@ QVariantList CanvasDocument::layerRows() const {
             r.insert(QStringLiteral("id"), e.id);
             --i;
         }
+        r.insert(QStringLiteral("parent"), e.parentId);
+        r.insert(QStringLiteral("depth"), e.parentId.isEmpty() ? 0 : 1);
         rows.push_back(r);
+    }
+    // The tree (frames, 2026-10-22): a frame's children sit ABOVE it in z, so front-most-first lists them before their
+    // frame — move each frame row up to just before its first child, where a tree reads naturally.
+    for (int fi = 0; fi < rows.size(); ++fi) {
+        const QVariantMap fr = rows[fi].toMap();
+        if (fr.value(QStringLiteral("kind")).toString() != QLatin1String("frame")) continue;
+        const QString fid = fr.value(QStringLiteral("id")).toString();
+        int first = -1;
+        for (int ci = 0; ci < fi; ++ci) if (rows[ci].toMap().value(QStringLiteral("parent")).toString() == fid) { first = ci; break; }
+        if (first < 0) continue;
+        const QVariant row = rows[fi];
+        rows.removeAt(fi);
+        rows.insert(first, row);
     }
     return rows;
 }
@@ -1559,6 +1578,17 @@ bool CanvasDocument::stepLayers(const QStringList& ids, int dir) {
 QString CanvasDocument::duplicateElement(const QString& id) {
     const auto cur = element(id);
     if (!cur || cur->kind == QLatin1String("page")) return QString();
+    if (cur->kind == QLatin1String("group")) {   // the frame and its children, as one row; the copies land above in the same order
+        beginBatch(tr("Duplicate frame"));
+        const QString nf = addElement(cur->kind, QRectF(cur->x + 24, cur->y + 24, cur->w, cur->h), cur->json, tr("Duplicate frame"));
+        for (const QString& cid : childrenOf(id)) {
+            const auto c = element(cid);
+            if (!c || c->kind == QLatin1String("page")) continue;
+            addElement(c->kind, QRectF(c->x + 24, c->y + 24, c->w, c->h), c->json, tr("Duplicate %1").arg(kindLabel(c->kind)), nf);
+        }
+        endBatch();
+        return nf;
+    }
     return addElement(cur->kind, QRectF(cur->x + 24, cur->y + 24, cur->w, cur->h), cur->json, tr("Duplicate %1").arg(kindLabel(cur->kind)));
 }
 
@@ -1566,6 +1596,16 @@ bool CanvasDocument::removeElement(const QString& id) {
     const auto cur = element(id);
     if (!cur) return false;
     if (cur->kind == QLatin1String("page")) return removePage(id);
+    if (cur->kind == QLatin1String("group")) {   // a frame takes its children (ungroup is the way to keep them)
+        const QStringList kids = childrenOf(id);
+        if (!kids.isEmpty()) {
+            beginBatch(tr("Remove frame"));
+            for (const QString& cid : kids) removeElement(cid);
+            const bool ok = removeElement(id);   // (now childless)
+            endBatch();
+            return ok;
+        }
+    }
     UndoEntry u;
     u.id = id;
     u.before = snapshot(id, false);
@@ -1587,6 +1627,174 @@ bool CanvasDocument::setMediaElementInk(const QString& id, int page, const QStri
     if (empty) ink.remove(key); else ink.insert(key, env);
     if (ink.isEmpty()) root.remove(QStringLiteral("ink")); else root.insert(QStringLiteral("ink"), ink);
     return setElementJson(id, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)), QString());
+}
+
+// ---- FRAMES (2026-10-22): groups and boards ----
+static QJsonObject frameSpec(const Document::Element& e) { return QJsonDocument::fromJson(e.json.toUtf8()).object(); }
+static QString frameJson(const QJsonObject& o) { return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)); }
+
+QString CanvasDocument::addFrame(const QRectF& rect, bool fixed) {
+    QJsonObject o;
+    o.insert(QStringLiteral("title"), tr("Frame"));
+    o.insert(QStringLiteral("sizing"), fixed ? QStringLiteral("fixed") : QStringLiteral("elastic"));
+    o.insert(QStringLiteral("layout"), QStringLiteral("free"));
+    QRectF r = rect;
+    r.setWidth(std::max(r.width(), kFrameMinW)); r.setHeight(std::max(r.height(), kFrameMinH));
+    return addElement(QStringLiteral("group"), r, frameJson(o), fixed ? tr("Add board") : tr("Add frame"));
+}
+
+QStringList CanvasDocument::childrenOf(const QString& frameId) const {
+    QStringList out;
+    if (frameId.isEmpty()) return out;
+    for (const Document::Element& e : elements_) if (e.parentId == frameId) out << e.id;
+    return out;
+}
+QString CanvasDocument::parentOf(const QString& id) const { const auto e = element(id); return e ? e->parentId : QString(); }
+QStringList CanvasDocument::withChildren(const QStringList& ids) const {
+    const QSet<QString> set(ids.begin(), ids.end());
+    QStringList out;
+    for (const Document::Element& e : elements_)
+        if (set.contains(e.id) || (!e.parentId.isEmpty() && set.contains(e.parentId))) out << e.id;
+    return out;
+}
+bool CanvasDocument::frameElastic(const QString& id) const {
+    const auto e = element(id);
+    return e && e->kind == QLatin1String("group") && frameSpec(*e).value(QStringLiteral("sizing")).toString() != QLatin1String("fixed");
+}
+QString CanvasDocument::frameTitle(const QString& id) const {
+    const auto e = element(id);
+    return e && e->kind == QLatin1String("group") ? frameSpec(*e).value(QStringLiteral("title")).toString() : QString();
+}
+bool CanvasDocument::setFrameTitle(const QString& id, const QString& title) { return setFrameField(id, QStringLiteral("title"), title); }
+bool CanvasDocument::setFrameField(const QString& id, const QString& key, const QVariant& value) {
+    const auto e = element(id);
+    if (!e || e->kind != QLatin1String("group")) return false;
+    QJsonObject o = frameSpec(*e);
+    o.insert(key, QJsonValue::fromVariant(value));
+    if (!setElementJson(id, frameJson(o), QString())) return false;
+    if (key == QLatin1String("sizing")) hugFrame(id, QString());   // loosening to elastic snaps to the children at once
+    return true;
+}
+
+bool CanvasDocument::setParent(const QString& id, const QString& parentId) {
+    const auto cur = element(id);
+    if (!cur || cur->parentId == parentId) return !!cur;
+    UndoEntry u;
+    u.id = id;
+    u.before = snapshot(id, false);
+    u.label = parentId.isEmpty() ? tr("Remove from frame") : tr("Add to frame");
+    db_.begin(); db_.updateElementParent(id, parentId); db_.commit();
+    reloadElements();
+    u.after = snapshot(id, false);
+    pushEntry(std::move(u), QString());
+    noteChanged(cur->kind, true, false, false);
+    return true;
+}
+
+bool CanvasDocument::hugFrame(const QString& frameId, const QString& coalesce) {
+    const auto f = element(frameId);
+    if (!f || f->kind != QLatin1String("group") || !frameElastic(frameId)) return false;
+    QRectF u;
+    for (const Document::Element& e : elements_) {
+        if (e.parentId != frameId) continue;
+        const QRectF r = cullRect(e);
+        u = u.isNull() ? r : u.united(r);
+    }
+    if (u.isNull()) return true;   // an empty elastic frame keeps the rect it was given
+    const QRectF want(u.x() - kFramePad, u.y() - kFramePad - kFrameTitleH, u.width() + 2 * kFramePad, u.height() + 2 * kFramePad + kFrameTitleH);
+    if (QRectF(f->x, f->y, f->w, f->h) == want) return true;
+    UndoEntry e;
+    e.id = frameId;
+    e.before = snapshot(frameId, false);
+    e.label = tr("Move frame");
+    db_.updateElementRect(frameId, want.x(), want.y(), want.width(), want.height());
+    reloadElements();
+    e.after = snapshot(frameId, false);
+    pushEntry(std::move(e), coalesce);
+    noteChanged(QStringLiteral("group"), false, true, false);
+    return true;
+}
+
+bool CanvasDocument::packFrame(const QString& frameId) {
+    const auto f = element(frameId);
+    if (!f) return false;
+    std::vector<QString> rest, kids;
+    int at = -1;   // where the block goes in `rest`: the first position any member held
+    for (const Document::Element& e : elements_) {
+        if (e.id == frameId || e.parentId == frameId) {
+            if (at < 0) at = static_cast<int>(rest.size());
+            if (e.id != frameId) kids.push_back(e.id);
+        } else rest.push_back(e.id);
+    }
+    if (at < 0) return false;
+    std::vector<QString> order(rest.begin(), rest.begin() + at);
+    order.push_back(frameId);
+    order.insert(order.end(), kids.begin(), kids.end());
+    order.insert(order.end(), rest.begin() + at, rest.end());
+    return applyOrder(order, tr("Reorder"));
+}
+
+QString CanvasDocument::groupElements(const QStringList& ids) {
+    QStringList members;
+    QRectF u;
+    for (const QString& id : ids) {
+        const auto e = element(id);
+        if (!e || e->kind == QLatin1String("group") || members.contains(id)) continue;   // no nesting; a frame among them is skipped
+        members << id;
+        const QRectF r = cullRect(*e);
+        u = u.isNull() ? r : u.united(r);
+    }
+    if (members.isEmpty()) return QString();
+    beginBatch(tr("Group"));
+    QJsonObject o;
+    o.insert(QStringLiteral("title"), tr("Group"));
+    o.insert(QStringLiteral("sizing"), QStringLiteral("elastic"));
+    o.insert(QStringLiteral("layout"), QStringLiteral("free"));
+    const QRectF want(u.x() - kFramePad, u.y() - kFramePad - kFrameTitleH, u.width() + 2 * kFramePad, u.height() + 2 * kFramePad + kFrameTitleH);
+    const QString fid = addElement(QStringLiteral("group"), want, frameJson(o), tr("Group"));
+    for (const QString& id : members) setParent(id, fid);   // (a member leaves any frame it was in)
+    packFrame(fid);
+    endBatch();
+    return fid;
+}
+
+bool CanvasDocument::ungroup(const QString& frameId) {
+    const auto f = element(frameId);
+    if (!f || f->kind != QLatin1String("group")) return false;
+    beginBatch(tr("Ungroup"));
+    for (const QString& cid : childrenOf(frameId)) setParent(cid, QString());
+    const bool ok = removeElement(frameId);
+    endBatch();
+    return ok;
+}
+
+bool CanvasDocument::addToFrame(const QStringList& ids, const QString& frameId) {
+    const auto f = element(frameId);
+    if (!f || f->kind != QLatin1String("group")) return false;
+    beginBatch(tr("Add to frame"));
+    bool any = false;
+    for (const QString& id : ids) {
+        const auto e = element(id);
+        if (!e || id == frameId || e->kind == QLatin1String("group")) continue;
+        if (setParent(id, frameId)) any = true;
+    }
+    if (any) { packFrame(frameId); hugFrame(frameId, QString()); }
+    endBatch();
+    return any;
+}
+
+bool CanvasDocument::removeFromFrame(const QStringList& ids) {
+    beginBatch(tr("Remove from frame"));
+    QStringList frames;
+    for (const QString& id : ids) {
+        const QString p = parentOf(id);
+        if (p.isEmpty()) continue;
+        if (!frames.contains(p)) frames << p;
+        setParent(id, QString());
+    }
+    for (const QString& fid : frames) hugFrame(fid, QString());
+    endBatch();
+    return !frames.isEmpty();
 }
 
 qreal CanvasDocument::inkWidth(const QString& id) const {

@@ -3444,7 +3444,7 @@ FocusScope {
         // takes the transport set first (videoKeyPressed above) — the tool letters yield until it is deselected.
         else if (root.activeCanvas && !root.cardHosted) {
             const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
-            const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
+            const toolKeys = { [Qt.Key_V]: "select", [Qt.Key_H]: "hand", [Qt.Key_N]: "page", [Qt.Key_F]: "frame", [Qt.Key_T]: "text", [Qt.Key_P]: "freehand",
                                [Qt.Key_R]: "rect", [Qt.Key_O]: "oval", [Qt.Key_L]: "line", [Qt.Key_A]: "arrow", [Qt.Key_E]: "eraser" }
             if (k === Qt.Key_Space && !event.isAutoRepeat) {
                 canvasItem.spaceHeld = true
@@ -3452,6 +3452,8 @@ FocusScope {
             }
             else if (plain && shift && k === Qt.Key_T && root.inspector) root.inspector.drawTool = "plaintext"      // ⇧T: plain text (no box)
             else if (plain && toolKeys[k] !== undefined && root.inspector) root.inspector.drawTool = toolKeys[k]   // the canvas's single-key tools
+            else if (cmd && shift && k === Qt.Key_G) canvasItem.ungroupSelected()   // ⌘⇧G (frames, 2026-10-22)
+            else if (cmd && k === Qt.Key_G) canvasItem.groupSelected()            // ⌘G: a group around the selection, or into the one frame among it
             else if (k === Qt.Key_Backspace || k === Qt.Key_Delete) canvasItem.deleteSelected()
             else if (cmd && k === Qt.Key_V) canvasItem.pasteAt(canvasItem.width / 2, canvasItem.height / 2)   // ⌘V → elements at the viewport's centre (phase A7)
             else if (k === Qt.Key_PageDown) canvasItem.pdfStepSelected(1)      // a selected PDF element pages (phase A5)
@@ -4364,6 +4366,9 @@ FocusScope {
     // CANVAS-PROBE PHASE/FAIL/DONE, exits with the fail count. The shell runner greps the log for
     // TypeError/ReferenceError (facade / context gaps).
     property int probeTabs0: 0   // P16 nav
+    property string probeFrameId: ""   // P17 frames
+    function probeFramePad() { return 24 }
+    function probeFrameMinW() { return 160 }
     property int probeIdx0: 0
     Timer {
         id: canvasProbe
@@ -4905,7 +4910,7 @@ FocusScope {
                     const rc0 = cvw.rightClicks
                     g.rightClick(cvw, c.x, c.y)
                     check(cvw.contextMenu.visible && cvw.selectedId === id, "a right-click on an element selects it and opens the context menu (taps +" + (cvw.rightClicks - rc0) + ", menu visible " + cvw.contextMenu.visible + " opened " + cvw.contextMenu.opened + ", selected '" + cvw.selectedId + "')")
-                    check(cvw.contextMenu.visibleRows === 4, "an ink element's menu shows only Duplicate / Bring to front / Send to back / Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visibleRows === 5, "an ink element's menu shows only Duplicate / Bring to front / Send to back / Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     g.rightClick(cvw, 8, cvw.height - 8)
                     check(cvw.contextMenu.visible && cvw.selectionCount === 0 && cvw.contextMenu.visibleRows === 2, "empty canvas: New page here · Add link… (" + cvw.contextMenu.visibleRows + " rows)")
@@ -5114,8 +5119,8 @@ FocusScope {
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 10,
-                          "a PDF element's menu: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
+                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 11,
+                          "a PDF element's menu [" + cvw.contextMenu.visibleLabels + "]: Open PDF · Group · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5123,7 +5128,7 @@ FocusScope {
                     cvw.select(livePage)
                     const c = cam.worldToScreen(canvas.elementRect(livePage).x + 20, canvas.elementRect(livePage).y + 20)
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 4, "a page's menu: Open page · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 5, "a page's menu: Open page · Group · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5186,7 +5191,7 @@ FocusScope {
                     check(Math.abs(rf.y - rd.y) < 0.5 && rd.x >= rf.x + rf.width, "…the two cards sit side by side in the grid")
                     cvw.select(folderElId)
                     g.rightClick(cvw, cam.worldToScreen(rd.x + 20, rd.y + 20).x, cam.worldToScreen(rd.x + 20, rd.y + 20).y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 10, "a folder's menu: Open folder · Reveal · Open in ufb · Copy path · Spread files here · Refresh · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 11, "a folder's menu [" + cvw.contextMenu.visibleLabels + "]: Open folder · Group · Reveal · Open in ufb · Copy path · Spread files here · Refresh · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5536,7 +5541,108 @@ FocusScope {
                     nextPhase("nav"); return
                 }
             }
-            if (phase === 17) {   // P17 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
+            if (phase === 17) {   // P17 (2026-10-22): FRAMES — ⌘G groups (the frame hugs, sits under its children), a drag moves the block,
+                const g = gestures, cvw = canvasItem   // ⌘⇧G ungroups, Delete takes the children, undo, the frame tool, the title edit, the Layers tree
+                if (step % 2 === 1) { ++step; return }
+                if (step === 0) {
+                    root.setActiveTab("canvas"); cvw.clearSelection(); cvw.fit()
+                    probeN0 = canvas.elementCount()
+                    cvw.selectMany([vidElId, pdfElId])
+                    g.key(root, Qt.Key_G, Qt.ControlModifier)
+                    const f = cvw.selectedId
+                    probeFrameId = f
+                    const r = canvas.elementRect(f), rv = canvas.elementRect(vidElId), rp = canvas.elementRect(pdfElId)
+                    check(f !== "" && canvas.isFrame(f) && canvas.parentOf(vidElId) === f && canvas.parentOf(pdfElId) === f && canvas.elementCount() === probeN0 + 1,
+                          "⌘G on two elements makes a frame around them and selects it (frame '" + f + "', +" + (canvas.elementCount() - probeN0) + ")")
+                    check(canvas.frameElastic(f) && r.x <= Math.min(rv.x, rp.x) - 20 && r.y <= Math.min(rv.y, rp.y) - 40 && r.x + r.width >= Math.max(rv.x + rv.width, rp.x + rp.width) + 20,
+                          "…elastic: it hugs both with the padding and the title strip (" + r.x.toFixed(0) + "," + r.y.toFixed(0) + " " + r.width.toFixed(0) + "×" + r.height.toFixed(0) + ")")
+                    const ids = canvas.visibleElements(-1e9, -1e9, 1e9, 1e9), fi = ids.indexOf(f)
+                    check(fi >= 0 && ids[fi + 1] !== undefined && canvas.parentOf(ids[fi + 1]) === f && canvas.parentOf(ids[fi + 2]) === f, "…and sits directly under its children in z (a contiguous block)")
+                    const it = cvw.pageItemFor(f)
+                    check(!!it && !!it.frameItem && it.frameItem.title === "Group" && !cvw.selectionFrame.handles[0].visible, "the frame renders with its title; an elastic frame shows no resize handles")
+                    const rows = canvas.layerRows(); let fr = -1, kids = 0
+                    for (let i = 0; i < rows.length; ++i) { if (rows[i].id === f) fr = i; else if (rows[i].parent === f && rows[i].depth === 1) ++kids }
+                    check(fr >= 0 && kids === 2 && rows[fr].kind === "frame" && rows[fr + 1].parent === f, "the Layers rows read as a tree: the frame row, its two children indented under it")
+                    ++step; return
+                }
+                if (step === 2) {   // a drag on the frame's title strip moves the block
+                    const f = probeFrameId, r = canvas.elementRect(f), rv0 = canvas.elementRect(vidElId)
+                    const a = cam.worldToScreen(r.x + r.width / 2, r.y + 14)
+                    g.drag(cvw, a.x, a.y, a.x + 60, a.y + 40, 6)
+                    const r2 = canvas.elementRect(f), rv = canvas.elementRect(vidElId), dx = 60 / cam.zoom, dy = 40 / cam.zoom
+                    check(Math.abs(r2.x - r.x - dx) < 1 && Math.abs(r2.y - r.y - dy) < 1 && Math.abs(rv.x - rv0.x - dx) < 1 && Math.abs(rv.y - rv0.y - dy) < 1,
+                          "dragging the frame moves its children by the same delta (frame +" + (r2.x - r.x).toFixed(1) + "," + (r2.y - r.y).toFixed(1) + " child +" + (rv.x - rv0.x).toFixed(1) + "," + (rv.y - rv0.y).toFixed(1) + ")")
+                    const rows0 = canvas.undoHistory().length
+                    canvas.undo()
+                    check(Math.abs(canvas.elementRect(vidElId).x - rv0.x) < 0.01 && Math.abs(canvas.elementRect(f).x - r.x) < 0.01, "…one undo takes the whole move back (history " + rows0 + ")")
+                    canvas.redo()
+                    ++step; return
+                }
+                if (step === 4) {   // a child dragged outward re-hugs the frame
+                    const f = probeFrameId, r0 = canvas.elementRect(f), rv = canvas.elementRect(vidElId)
+                    cvw.select(vidElId)
+                    const c = cam.worldToScreen(rv.x + rv.width / 2, rv.y + rv.height / 2)
+                    g.drag(cvw, c.x, c.y, c.x + 120, c.y, 6)
+                    const r1 = canvas.elementRect(f), rv1 = canvas.elementRect(vidElId)
+                    check(rv1.x > rv.x && Math.abs((r1.x + r1.width) - (Math.max(rv1.x + rv1.width, canvas.elementRect(pdfElId).x + canvas.elementRect(pdfElId).width) + probeFramePad())) < 1 && canvas.parentOf(vidElId) === f,
+                          "a child dragged outward: the frame grows to keep hugging, membership unchanged (right " + (r1.x + r1.width).toFixed(0) + " vs " + r0.x + r0.width + ")")
+                    cvw.select(f)
+                    g.key(root, Qt.Key_Return)
+                    const it = cvw.pageItemFor(f)
+                    check(!!it && !!it.frameItem && it.frameItem.editing, "Return on a frame opens its title edit in place")
+                    g.type(root, "Shots")
+                    g.key(root, Qt.Key_Return)
+                    check(!it.frameItem.editing && canvas.frameTitle(f) === "Shots" && root.activeFocus, "…typing + Return renames it and hands the keys back ('" + canvas.frameTitle(f) + "')")
+                    ++step; return
+                }
+                if (step === 6) {   // the menu, ungroup, delete with children, undo
+                    const f = probeFrameId, r = canvas.elementRect(f), c = cam.worldToScreen(r.x + 10, r.y + 10)
+                    cvw.select(f)
+                    g.rightClick(cvw, c.x, c.y)
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 6, "a frame's menu: Rename frame · Ungroup · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    cvw.contextMenu.close()
+                    cvw.select(vidElId)
+                    g.rightClick(cvw, cam.worldToScreen(canvas.elementRect(vidElId).x + 10, canvas.elementRect(vidElId).y + 10).x, cam.worldToScreen(canvas.elementRect(vidElId).x + 10, canvas.elementRect(vidElId).y + 10).y)
+                    check(cvw.contextMenu.visible && cvw.canGroup && cvw.canLeaveFrame, "a child's menu offers Group and Remove from frame")
+                    cvw.contextMenu.close()
+                    cvw.select(f)
+                    g.key(root, Qt.Key_G, Qt.ControlModifier | Qt.ShiftModifier)
+                    check(canvas.elementKind(f) === "" && canvas.parentOf(vidElId) === "" && canvas.parentOf(pdfElId) === "" && cvw.selectedIds.length === 2, "⌘⇧G ungroups: the children stay, selected; the frame is gone")
+                    canvas.undo()
+                    check(canvas.isFrame(f) && canvas.parentOf(vidElId) === f, "undo restores the frame and its members")
+                    cvw.select(f)
+                    g.key(root, Qt.Key_Backspace)
+                    check(canvas.elementKind(f) === "" && canvas.elementKind(vidElId) === "" && canvas.elementKind(pdfElId) === "" && canvas.elementCount() === probeN0 - 2, "Delete on a frame takes its children (" + canvas.elementCount() + ")")
+                    canvas.undo()
+                    check(canvas.isFrame(f) && canvas.elementKind(vidElId) === "media" && canvas.parentOf(vidElId) === f && canvas.elementCount() === probeN0 + 1, "…one undo brings all three back")
+                    ++step; return
+                }
+                if (step === 8) {   // the frame tool: a click = an elastic frame, a drag = a fixed board; the Inspector-less title; the grab
+                    const b = canvas.canvasBounds()
+                    cvw.clearSelection(); cvw.fit()
+                    g.key(root, Qt.Key_F)
+                    check(cvw.frameTool, "F arms the frame tool")
+                    const p = cam.worldToScreen(b.x + b.width + 200, b.y)
+                    g.click(cvw, p.x, p.y)
+                    const f1 = cvw.selectedId
+                    check(f1 !== "" && canvas.isFrame(f1) && canvas.frameElastic(f1) && canvas.childrenOf(f1).length === 0, "a click on empty canvas drops an elastic frame there, selected")
+                    const q = cam.worldToScreen(b.x + b.width + 200, b.y + 400)
+                    g.drag(cvw, q.x, q.y, q.x + 90, q.y + 60, 6)
+                    const f2 = cvw.selectedId
+                    check(f2 !== "" && f2 !== f1 && canvas.isFrame(f2) && !canvas.frameElastic(f2) && Math.abs(canvas.elementRect(f2).width - Math.max(probeFrameMinW(), 90 / cam.zoom)) < 1, "a drag makes a FIXED frame (a board) of that size (" + canvas.elementRect(f2).width.toFixed(0) + " wide)")
+                    cvw.selectMany([f1, f2]); cvw.deleteSelected()
+                    root.inspector.drawTool = "select"
+                    cvw.select(probeFrameId)
+                    cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)
+                    const fs = root.inspector.frameSection
+                    check(root.inspector.open ? (!!fs && fs.visible && fs.frameId === probeFrameId && fs.titleFieldItem.text === "Shots") : true, "the Inspector's Frame section shows the selected frame's title (open " + root.inspector.open + ")")
+                    const path = g.tempDir() + "/mn-canvas-probe-frames.png"
+                    g.grab(cvw, path); console.log("CANVAS-PROBE frames grab", path)
+                    cvw.clearSelection()
+                    nextPhase("frames"); return
+                }
+            }
+            if (phase === 18) {   // P18 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
                                   // with real gestures: strokes land in THAT page's ink (normalized, widths in source px), one owner-log
                                   // row each, the eraser removes the stroke under the pointer, Space-hand parks the pen, Escape drops it
                 const g = gestures, cvw = canvasItem

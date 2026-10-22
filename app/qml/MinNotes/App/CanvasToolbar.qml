@@ -20,6 +20,7 @@ Row {
         { tool: "select",   icon: "cursor",         tip: qsTr("Select  (V)") },
         { tool: "hand",     icon: "hand",           tip: qsTr("Hand — pan  (H)") },
         { tool: "page",     icon: "file-text",      tip: qsTr("Page — click to place, drag to size  (N)") },
+        { tool: "frame",    icon: "frame-corners",  tip: qsTr("Frame — click for a group, drag for a board  (F)") },
         { tool: "text",     icon: "textbox",        tip: qsTr("Text box  (T)") },
         { tool: "plaintext", icon: "text-t",        tip: qsTr("Text — plain, no box  (⇧T)") },
         { tool: "freehand", icon: "scribble",       tip: qsTr("Pen  (P)") },
