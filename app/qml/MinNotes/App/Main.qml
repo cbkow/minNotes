@@ -869,7 +869,7 @@ ApplicationWindow {
             importer.importFile("file:///" + ("" + s.path).replace(/^\//, ""))   // its images come inline, like the docs
             canvas.focusPage = ""
             const r = canvas.elementRect(pageId)
-            pitch = Math.max(pitch, r.width + gap); rowH = Math.max(rowH, r.height)
+            pitch = Math.max(pitch, r.width + gap); rowH = Math.max(rowH, r.width)   // a page's auto height caps at a SQUARE: pitch by that, not by the height measured before its images laid out (they overlapped on the desktop)
             if (i % cols === cols - 1) { rowY += rowH + gap; rowH = 0 }
         }
         for (const id of starter) canvas.removeElement(id)

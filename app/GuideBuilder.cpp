@@ -25,7 +25,7 @@ GuideBuilder::~GuideBuilder() = default;
 // The guide folder is named by the app version AND a stamp over what it is built from (the sections' text, the images'
 // bytes, the layout's format number): a docs edit or a layout change in a build of the same version rebuilds the guide
 // instead of reopening a stale one (user 2026-10-22: "do we need to get rid of the old one first?" — no).
-namespace { constexpr int kGuideFormat = 2; }   // 1 = frames + cards (2026-10-22 am) · 2 = pages with inline images
+namespace { constexpr int kGuideFormat = 3; }   // 1 = frames + cards (2026-10-22 am) · 2 = pages with inline images · 3 = rows pitched by the square cap
 QString GuideBuilder::stamp() const {
     if (!stamp_.isEmpty()) return stamp_;
     QCryptographicHash h(QCryptographicHash::Sha1);

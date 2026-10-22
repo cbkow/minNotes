@@ -5828,6 +5828,10 @@ FocusScope {
                     check(media >= 4, "the screenshots are INLINE media blocks where the docs have them (BlockModel.Media = 3; The Canvas: " + media + " of " + (cm ? cm.count : 0) + " blocks)")
                     const sc = pages.filter(function(id) { return canvas.pageTitle(id) === "Keyboard Shortcuts" })
                     check(sc.length === 1 && canvas.pageModel(sc[0]) && canvas.pageModel(sc[0]).count > 60, "the Keyboard Shortcuts page carries the catalogue (" + (sc.length ? canvas.pageModel(sc[0]).count : 0) + " blocks)")
+                    let overlap = 0   // no page may reach into another's cell even at its square cap (the desktop walk saw grown pages overlap)
+                    for (const a of pages) for (const b of pages) { if (a === b) continue; const ra = canvas.elementRect(a), rb = canvas.elementRect(b)
+                        if (ra.x < rb.x + rb.width && rb.x < ra.x + ra.width && ra.y < rb.y + rb.width && rb.y < ra.y + ra.width) ++overlap }
+                    check(overlap === 0, "the pages' cells do not overlap even at a page's square cap (" + overlap + " pairs)")
                     check(!blockModel.untitled && !canvas.dirty, "the guide is a saved, clean document (untitled " + blockModel.untitled + ", dirty " + canvas.dirty + ")")
                     gestures.grab(root, gestures.tempDir() + "/mn-canvas-probe-guide.png")
                     ++step; return
