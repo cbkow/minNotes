@@ -1,5 +1,5 @@
-// The shortcut catalogue (2026-10-21): ONE list that the in-app sheet (ShortcutsSheet.qml, Help ▸ Keyboard
-// Shortcuts… / ⌘/) renders and that scripts/shortcuts-doc.py turns into docs/shortcuts.md — edit HERE, then run the
+// The shortcut catalogue (2026-10-21): ONE list that scripts/shortcuts-doc.py turns into docs/shortcuts.md — the page
+// the User Guide (Help ▸ User Guide, ⌘/) builds its Keyboard Shortcuts section from (the in-app sheet went 2026-10-22) — edit HERE, then run the
 // script; never edit the docs page by hand. Keys are written in macOS glyphs (⌘ ⇧ ⌥); `display()` rewrites them for
 // Windows. The literal between the CATALOG markers is strict JSON (the script json-parses it). A row is
 // [action, keys] — the markdown-trigger section's rows carry a third entry, the docs' code-formatted action (the
@@ -16,7 +16,7 @@ var sections = [
     ["Close file", "⌘W"],
     ["Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes)", "⌘F"],
     ["Walk the hits · jump · close", "↑ / ↓ · Return · Esc"],
-    ["Keyboard shortcuts (this sheet)", "⌘/"]
+    ["The User Guide (Help ▸ User Guide: the manual as a canvas, a frame per section) — on its Keyboard Shortcuts page", "⌘/"]
   ]},
   { "title": "View", "rows": [
     ["Zoom in / out (the page, a PDF, or the canvas — whichever is in front)", "⌘+ / ⌘−"],

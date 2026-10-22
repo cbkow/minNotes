@@ -5810,7 +5810,34 @@ FocusScope {
                     check(root.activeCanvas && !root.pdfTabOpen && cvw.selectedId === pdfInkElId, "the next Escape returns to the canvas with the PDF selected")
                     const inkJson = JSON.parse(canvas.elementJson(pdfInkElId) || "{}")
                     check(!!inkJson.ink && shapes(JSON.stringify(inkJson.ink["0"])) === 1 && Object.keys(inkJson.ink).length === 1, "the element's json carries the page-0 envelope only")
-                    nextPhase("pdfink")
+                    nextPhase("pdfink"); return
+                }
+            }
+            if (phase === 19) {   // P19 (2026-10-22): the USER GUIDE — built on demand from the bundled docs into a canvas (a frame per section:
+                                  // the page beside its screenshot cards), saved per version, opened as a tab; ⌘/ lands on the Keyboard Shortcuts page
+                if (step === 0) {
+                    guide.remove()
+                    const tabs0 = docs.count, ok = win.openGuide("")
+                    const ids = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8), frames = ids.filter(function(id) { return canvas.isFrame(id) })
+                    const pages = ids.filter(function(id) { return canvas.elementKind(id) === "page" }), images = ids.filter(function(id) { return canvas.mediaElementKind(id) === "image" })
+                    const titles = frames.map(function(id) { return canvas.frameTitle(id) })
+                    check(ok && guide.exists() && docs.count === tabs0 + 1, "Help ▸ User Guide builds the guide and opens it as a new tab (built " + ok + ", exists " + guide.exists() + ", tabs " + tabs0 + " → " + docs.count + ")")
+                    check(frames.length === 11 && pages.length === 11 && titles.indexOf("Keyboard Shortcuts") >= 0 && titles.indexOf("The Canvas") >= 0,
+                          "eleven sections, a frame + a page each (" + frames.length + " frames, " + pages.length + " pages: " + titles.join(" · ") + ")")
+                    check(images.length >= 20 && images.every(function(id) { return canvas.parentOf(id) !== "" }) && pages.every(function(id) { return canvas.parentOf(id) !== "" }),
+                          "the screenshots are image cards inside their section's frame (" + images.length + " cards)")
+                    const sc = pages.filter(function(id) { return canvas.pageTitle(id) === "Keyboard Shortcuts" })
+                    check(sc.length === 1 && canvas.pageModel(sc[0]) && canvas.pageModel(sc[0]).count > 60, "the Keyboard Shortcuts page carries the catalogue (" + (sc.length ? canvas.pageModel(sc[0]).count : 0) + " blocks)")
+                    check(!blockModel.untitled && !canvas.dirty, "the guide is a saved, clean document (untitled " + blockModel.untitled + ", dirty " + canvas.dirty + ")")
+                    gestures.grab(root, gestures.tempDir() + "/mn-canvas-probe-guide.png")
+                    ++step; return
+                }
+                if (step === 1) { win.openGuide("Keyboard Shortcuts"); ++step; return }   // the page view opens on the next tick
+                if (step === 2) {
+                    check(canvas.focusPage !== "" && canvas.pageTitle(canvas.focusPage) === "Keyboard Shortcuts" && !root.canvasShown, "⌘/ (Help ▸ Keyboard Shortcuts) opens the guide on its Keyboard Shortcuts page ('" + canvas.pageTitle(canvas.focusPage) + "', canvas shown " + root.canvasShown + ")")
+                    canvas.focusPage = ""
+                    docs.closeTab(docs.activeIndex)
+                    nextPhase("guide")
                     console.log("CANVAS-PROBE DONE fails", fails, "checks", checks, "elements", canvas.elementCount(), "blocks", blockModel.count)
                     Qt.exit(Math.min(fails, 100))
                 }

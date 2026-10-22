@@ -11,6 +11,7 @@ qt_add_executable(minnotesapp
     MinNotesApplication.cpp
     WindowChrome.h
     WindowChrome.cpp
+    GuideBuilder.cpp
     AppUpdater.h                 # Q_OBJECT — Sparkle "Check for Updates" bridge
     sparkle_updater_macos.h
     core/FenwickTree.h
@@ -250,7 +251,6 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/CanvasContextMenu.qml
         qml/MinNotes/App/SearchBar.qml
         qml/MinNotes/App/CanvasEditorFacade.qml
-        qml/MinNotes/App/ShortcutsSheet.qml
         qml/MinNotes/App/LayerPanel.qml
     RESOURCES
         qml/MinNotes/App/PhosphorIcons.js
@@ -315,6 +315,17 @@ qt_add_shaders(minnotesapp "minnotes_player_shaders"
 # Spell + grammar data: the merged US+UK Hunspell dictionary and the parse-free
 # LanguageTool rule subset (see app/spell/en/README-data.md). Read at
 # ":/spell/en/…"; the dictionary is copied to AppData once (Hunspell wants paths).
+# The User Guide (2026-10-22): the docs' sections + their screenshots (scripts/guide-images.sh keeps the downscaled
+# copies under guide/images in step with docs/images) → :/guide/<section>.md and :/guide/images/<name>.png.
+set(MN_GUIDE_SECTIONS basics canvas editing tables spelling media annotations import export packages shortcuts)
+set(MN_GUIDE_MD)
+foreach(sec ${MN_GUIDE_SECTIONS})
+    list(APPEND MN_GUIDE_MD "${CMAKE_SOURCE_DIR}/docs/${sec}.md")
+endforeach()
+qt_add_resources(minnotesapp "minnotes_guide_md" PREFIX "/guide" BASE "${CMAKE_SOURCE_DIR}/docs" FILES ${MN_GUIDE_MD})
+file(GLOB MN_GUIDE_IMAGES "${CMAKE_CURRENT_SOURCE_DIR}/guide/images/*.png")
+qt_add_resources(minnotesapp "minnotes_guide_images" PREFIX "/guide" BASE "${CMAKE_CURRENT_SOURCE_DIR}/guide" FILES ${MN_GUIDE_IMAGES})
+
 qt_add_resources(minnotesapp "minnotes_spell"
     PREFIX "/spell"
     BASE spell

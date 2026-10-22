@@ -836,7 +836,54 @@ ApplicationWindow {
     // Cross-OS path mappings editor (opened from the File menu). Edits a draft +
     // commits through the `pathMap` bridge, which re-resolves open media.
     PathMappingsDialog { id: pathMappingsDialog; anchors.centerIn: Overlay.overlay }
-    ShortcutsSheet { id: shortcutsSheet }   // Help ▸ Keyboard Shortcuts… / ⌘/ (2026-10-21)
+    // THE USER GUIDE (2026-10-22, user: "move our shortcuts cheatsheet out of the UI and into a note … a Canvas with
+    // different notes for different sections"): the docs' markdown, bundled, built ON DEMAND into a canvas — one tinted
+    // frame per section holding the page beside its screenshots as cards — saved under Application Support per app
+    // version and opened as an ordinary tab (the user's copy: annotate it; a new version builds afresh). ⌘/ opens it
+    // on the Keyboard Shortcuts page (the in-app sheet is gone).
+    function openGuide(pageTitle) {
+        const path = guide.guidePath()
+        if (!guide.exists() && !win.buildGuide(path)) { Toasts.show(qsTr("Could not build the User Guide"), 2); return false }
+        if (!docs.openTab(path)) { Toasts.show(qsTr("Could not open the User Guide"), 2); return false }
+        if (pageTitle) {
+            for (const id of canvas.visibleElements(-1e8, -1e8, 1e8, 1e8))
+                if (canvas.elementKind(id) === "page" && canvas.pageTitle(id) === pageTitle) { canvas.focusPage = id; return true }
+        }
+        canvas.focusPage = ""
+        if (win.activeCanvasView) win.activeCanvasView.fit()
+        return true
+    }
+    function buildGuide(path) {
+        const dir = guide.unpack()
+        if (dir === "") return false
+        docs.newTab()
+        canvas.focusPage = ""
+        const starter = canvas.visibleElements(-1e8, -1e8, 1e8, 1e8)   // the fresh tab's one page: removed once the sections exist (a document keeps its last page)
+        const secs = guide.sections(), cols = 3, pitch = 1440, gap = 24, measure = 760
+        let rowY = 0, rowH = 0
+        for (let i = 0; i < secs.length; ++i) {
+            const s = secs[i], x = (i % cols) * pitch + 60, y = rowY + 60
+            const pageId = canvas.addPageAt(x, y, measure)
+            if (pageId === "") continue
+            canvas.focusPage = pageId
+            importer.importFile("file:///" + ("" + s.path).replace(/^\//, ""))
+            canvas.focusPage = ""
+            const ids = [pageId]
+            let iy = y
+            for (const img of s.images) {   // the screenshots as cards down the page's right
+                const added = canvas.addElementsFromUrls(["file:///" + ("" + img).replace(/^\//, "")], x + measure + gap, iy)
+                if (!added.length) continue
+                ids.push(added[0]); iy += canvas.elementRect(added[0]).height + gap
+            }
+            const f = canvas.groupElements(ids)
+            if (f !== "") { canvas.setFrameTitle(f, s.title); canvas.setFrameField(f, "tint", s.tint); rowH = Math.max(rowH, canvas.elementRect(f).height) }
+            if (i % cols === cols - 1) { rowY += rowH + 120; rowH = 0 }
+        }
+        for (const id of starter) canvas.removeElement(id)
+        const ok = blockModel.saveAs(path)
+        guide.cleanup(); guide.sweepOldVersions()
+        return ok
+    }
 
     // --- Recent documents (persisted JSON list, most-recent first, cap 10) ---
     Settings { id: recentsStore; category: "recents"; property string paths: "[]" }
@@ -1251,10 +1298,15 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                     onTriggered: appUpdater.checkForUpdates()
                 }
                 Platform.MenuItem {
-                    text: qsTr("Keyboard Shortcuts…")
+                    text: qsTr("User Guide")
+                    role: Platform.MenuItem.NoRole
+                    onTriggered: win.openGuide("")
+                }
+                Platform.MenuItem {
+                    text: qsTr("Keyboard Shortcuts")
                     role: Platform.MenuItem.NoRole
                     shortcut: "Ctrl+/"
-                    onTriggered: shortcutsSheet.toggle()
+                    onTriggered: win.openGuide("Keyboard Shortcuts")
                 }
                 Platform.MenuItem {
                     text: qsTr("Third-Party Notices")
@@ -1373,7 +1425,8 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
             ThemedMenu {
                 title: qsTr("Help")
                 Action { text: qsTr("Check for Updates…"); onTriggered: appUpdater.checkForUpdates() }
-                Action { text: qsTr("Keyboard Shortcuts…"); shortcut: "Ctrl+/"; onTriggered: shortcutsSheet.toggle() }
+                Action { text: qsTr("User Guide"); onTriggered: win.openGuide("") }
+                Action { text: qsTr("Keyboard Shortcuts"); shortcut: "Ctrl+/"; onTriggered: win.openGuide("Keyboard Shortcuts") }
                 Action { text: qsTr("Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
             }
         }

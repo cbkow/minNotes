@@ -20,6 +20,7 @@
 #include <QWindow>           // raise the existing window on a secondary launch
 #include "MinNotesApplication.h"
 #include "WindowChrome.h"
+#include "GuideBuilder.h"
 #include "AppUpdater.h"
 #include "sparkle_updater_macos.h"
 #include "core/BlockModel.h"
@@ -300,6 +301,8 @@ int main(int argc, char *argv[])
     // unsaved-changes guard and calls minApp.forceQuit() when it's safe.
     engine.rootContext()->setContextProperty("minApp", &app);
     engine.rootContext()->setContextProperty("windowChrome", &windowChrome);
+    GuideBuilder guide;   // Help ▸ User Guide: the bundled docs, built into a canvas on demand (2026-10-22)
+    engine.rootContext()->setContextProperty("guide", &guide);
     // A mapping edit must re-resolve media in every open tab.
     QObject::connect(&pathMap, &PathMapController::mappingsChanged, &docs,
                      [&docs] { docs.refreshMedia(); });

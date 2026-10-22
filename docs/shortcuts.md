@@ -21,7 +21,7 @@ Shortcuts (⌘/).
 | Close file | ⌘W |
 | Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes) | ⌘F |
 | Walk the hits · jump · close | ↑ / ↓ · Return · Esc |
-| Keyboard shortcuts (this sheet) | ⌘/ |
+| The User Guide (Help ▸ User Guide: the manual as a canvas, a frame per section) — on its Keyboard Shortcuts page | ⌘/ |
 
 ## View
 
