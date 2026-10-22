@@ -141,10 +141,35 @@ Rectangle {
         for (const id of canvas.withChildren(selectedIds)) dragStarts[id] = canvas.elementRect(id)   // a frame moves with its children (2026-10-22)
         canvas.beginBatch(qsTr("Move"))
     }
-    function dragSelectionTo(dx, dy) {
-        for (const id in dragStarts) { const r = dragStarts[id]; canvas.setElementRect(id, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + id) }
+    // ⌘ (Ctrl) held during a drag makes it STRUCTURAL (ruled 2026-10-22): the frame under the pointer lights up and the
+    // release joins it; released over no frame, a member leaves its frame. While ⌘ is down the elastic frame does not
+    // stretch after a member (it re-hugs at the release). Frames never nest, and a child carried by its dragged frame stays.
+    property string dropFrame: ""   // the lit frame (the one a ⌘-release would join)
+    function joinableMembers() {   // the dragged elements membership applies to (a function: dragStarts is filled by mutation)
+        const out = []
+        for (const id in dragStarts) if (!canvas.isFrame(id) && !(canvas.parentOf(id) in dragStarts)) out.push(id)
+        return out
     }
-    function endSelectionDrag() { canvas.endBatch(); dragStarts = {} }
+    function dropTargetAt(wx, wy) {   // the top-most frame under a world point that is not itself being dragged
+        const ids = canvas.visibleElements(wx, wy, wx + 0.01, wy + 0.01)
+        for (let i = ids.length - 1; i >= 0; --i) if (canvas.isFrame(ids[i]) && !(ids[i] in dragStarts)) return ids[i]
+        return ""
+    }
+    function dragSelectionTo(dx, dy, join, wx, wy) {
+        const structural = !!join && joinableMembers().length > 0
+        for (const id in dragStarts) { const r = dragStarts[id]; canvas.setElementRect(id, Qt.rect(r.x + dx, r.y + dy, r.width, r.height), "move:" + id, !structural) }
+        dropFrame = structural ? dropTargetAt(wx, wy) : ""
+    }
+    function endSelectionDrag(join, wx, wy) {
+        const members = !!join ? joinableMembers() : []
+        if (members.length) {
+            const f = dropTargetAt(wx, wy)
+            if (f !== "") { if (canvas.addToFrame(members.filter(function(id) { return canvas.parentOf(id) !== f }), f)) canvas.relabelBatch(qsTr("Add to frame")) }
+            else if (canvas.removeFromFrame(members.filter(function(id) { return canvas.parentOf(id) !== "" }))) canvas.relabelBatch(qsTr("Remove from frame"))
+        }
+        for (const id in dragStarts) { const p = canvas.parentOf(id); if (p !== "" && !(p in dragStarts)) canvas.hugFrame(p) }   // a ⌘-drag moved without hugging
+        canvas.endBatch(); dragStarts = {}; dropFrame = ""
+    }
     // A drop onto a frame JOINS it (explicit by the act of dropping there): the ids go to the top-most frame under the point.
     function joinFrameAt(ids, wx, wy) { const f = canvas.frameAt(wx, wy); if (f !== "" && ids.length) canvas.addToFrame(ids.filter(function(id) { return !canvas.isFrame(id) }), f); return f }
     function resizeSelected(rect) { if (selectedId !== "") canvas.setElementRect(selectedId, rect, "resize:" + selectedId) }

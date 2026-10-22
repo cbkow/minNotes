@@ -19,6 +19,7 @@ Item {
     readonly property color tint: hasTint ? spec.tint : Theme.colors.frameNeutral   // untinted = the dark grey (user 2026-10-22)
     readonly property bool elastic: spec.sizing !== "fixed"
     readonly property real titleH: 28
+    property bool dropTarget: false   // lit while a ⌘-drag hovers it: the release joins this frame
     readonly property bool editing: titleEdit.visible   // probe
     readonly property var titleItem: titleText
 
@@ -26,7 +27,7 @@ Item {
         anchors.fill: parent
         radius: Theme.dim.radius
         color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.10 : 0.18)
-        border.width: 1; border.color: Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.5 : 0.9)
+        border.width: fr.dropTarget ? 2 : 1; border.color: fr.dropTarget ? Theme.colors.accent : Qt.rgba(fr.tint.r, fr.tint.g, fr.tint.b, fr.hasTint ? 0.5 : 0.9)
     }
     Rectangle {   // the title strip
         x: 1; y: 1; width: parent.width - 2; height: fr.titleH

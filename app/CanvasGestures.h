@@ -12,9 +12,9 @@ class CanvasGestures : public QObject {
     Q_OBJECT
 public:
     explicit CanvasGestures(QObject* parent = nullptr) : QObject(parent) {}
-    Q_INVOKABLE void press(QQuickItem* item, qreal x, qreal y);
-    Q_INVOKABLE void move(QQuickItem* item, qreal x, qreal y);
-    Q_INVOKABLE void release(QQuickItem* item, qreal x, qreal y);
+    Q_INVOKABLE void press(QQuickItem* item, qreal x, qreal y, int modifiers = 0);
+    Q_INVOKABLE void move(QQuickItem* item, qreal x, qreal y, int modifiers = 0);
+    Q_INVOKABLE void release(QQuickItem* item, qreal x, qreal y, int modifiers = 0);
     Q_INVOKABLE void click(QQuickItem* item, qreal x, qreal y, int modifiers = 0);   // Qt.ShiftModifier etc. (the Layers panel's ⇧-click)
     Q_INVOKABLE void doubleClick(QQuickItem* item, qreal x, qreal y, int modifiers = 0);   // Qt.ShiftModifier etc.
     // A drag in `steps` moves (each a real move event with advancing timestamps).

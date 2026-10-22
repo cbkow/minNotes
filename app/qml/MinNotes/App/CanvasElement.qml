@@ -94,12 +94,14 @@ Item {
                 el.editor.forceActiveFocus()   // a jittery click past the drag threshold is a SELECTION too: the keys must land in the editor (walk 7c)
                 el.view.beginSelectionDrag()
                 ++el.view.elementDrags
-            } else el.view.endSelectionDrag()
+            } else el.view.endSelectionDrag(cmd, worldAt().x, worldAt().y)   // ⌘ at the release: join the frame under the pointer / leave (2026-10-22)
         }
+        readonly property bool cmd: (centroid.modifiers & Qt.ControlModifier) !== 0   // ⌘ on macOS, Ctrl on Windows (a DragHandler has a centroid, not a point)
+        function worldAt() { const p = el.view.mapFromItem(null, centroid.scenePosition.x, centroid.scenePosition.y); return el.view.cam.screenToWorld(p.x, p.y) }
         onCentroidChanged: {
             if (!active) return
-            const z = el.view.cam.zoom
-            el.view.dragSelectionTo((centroid.scenePosition.x - centroid.scenePressPosition.x) / z, (centroid.scenePosition.y - centroid.scenePressPosition.y) / z)
+            const z = el.view.cam.zoom, w = worldAt()
+            el.view.dragSelectionTo((centroid.scenePosition.x - centroid.scenePressPosition.x) / z, (centroid.scenePosition.y - centroid.scenePressPosition.y) / z, cmd, w.x, w.y)
         }
     }
     Loader {
@@ -119,7 +121,7 @@ Item {
     Component { id: inkComponent;   CanvasInkItem   { editor: el.editor; cam: el.cam; elementId: el.elementId } }
     Component { id: mediaComponent; CanvasMediaItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }
     Component { id: shapeComponent; CanvasShapeItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }
-    Component { id: frameComponent; CanvasFrameItem { editor: el.editor; cam: el.cam; elementId: el.elementId } }   // a group / a board (2026-10-22)
+    Component { id: frameComponent; CanvasFrameItem { editor: el.editor; cam: el.cam; elementId: el.elementId; dropTarget: !!el.view && el.view.dropFrame === el.elementId } }   // a group / a board (2026-10-22)
     readonly property var frameItem: shownKind === "group" ? content.item : null   // probe + the title edit
     readonly property var inkItem: shownKind === "ink" ? content.item : null   // probe: strokeCount / vertexCount
     readonly property var mediaItem: shownKind === "media" ? content.item : null   // probe: pdfPage / posterFrame

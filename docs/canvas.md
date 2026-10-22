@@ -40,8 +40,14 @@ under the handles. A board **clips** its contents to its edges, so it reads
 as a bounded sheet on the open canvas; a group never clips. Double-click a
 frame (or press `Return` on it) to rename it in place; the Inspector's
 **Frame** section holds the title, a tint, the group / board choice and the
-aspect. Drop a file onto any frame and it joins. In the Layers panel a frame
-stands out in its tint, with its children threaded under it.
+aspect. Drop a file onto any frame and it joins; so does a paste inside one.
+To move something that is already on the canvas into a frame, drag it there
+**holding `⌘`** (`Ctrl` on Windows): the frame lights up under the pointer and
+the release joins it. The same `⌘`-drag released clear of any frame takes a
+member out. A plain drag never changes membership — dragging a child outward
+just stretches its group. In the Layers panel a frame stands out in its tint,
+with its children threaded under it, and dragging a row into or out of a
+frame's block moves it in or out.
 
 A page's **width** is its card's width — drag a side handle and the text
 reflows. Its height follows its content up to a square; drag a top or

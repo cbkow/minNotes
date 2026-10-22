@@ -31,6 +31,7 @@ var sections = [
   { "title": "Canvas", "rows": [
     ["Select / Hand / Page / Frame tools", "V / H / N / F"],
     ["Group the selection in a frame (with one frame selected: add the rest to it) · Ungroup", "⌘G · ⌘⇧G"],
+    ["Drag an element INTO a frame (it lights) or OUT of its frame — the plain drag only moves", "⌘ held at the release"],
     ["Text box · plain text", "T · ⇧T"],
     ["Pen / Rectangle / Oval / Line / Arrow / Eraser", "P / R / O / L / A / E"],
     ["Open the selected element — the page view, the studio, the PDF view, an image's lightbox", "double-click · Return · the open glyph"],

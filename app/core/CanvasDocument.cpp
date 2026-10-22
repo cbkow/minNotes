@@ -1340,7 +1340,7 @@ QString CanvasDocument::addConnector(const QString& connectorJson) {
     return addElement(QStringLiteral("connector"), QRectF(), connectorJson, tr("Connect"));
 }
 
-bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, const QString& coalesce) {
+bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, const QString& coalesce, bool hug) {
     const auto cur = element(id);
     if (!cur) return false;
     QRectF rect = rectIn;
@@ -1369,7 +1369,7 @@ bool CanvasDocument::setElementRect(const QString& id, const QRectF& rectIn, con
     u.after = snapshot(id, false);
     pushEntry(std::move(u), coalesce);
     noteChanged(cur->kind, false, true, false);
-    if (!cur->parentId.isEmpty()) hugFrame(cur->parentId, coalesce.isEmpty() ? QString() : QStringLiteral("hug:") + cur->parentId);
+    if (hug && !cur->parentId.isEmpty()) hugFrame(cur->parentId, coalesce.isEmpty() ? QString() : QStringLiteral("hug:") + cur->parentId);
     return true;
 }
 
@@ -1781,12 +1781,15 @@ bool CanvasDocument::addToFrame(const QStringList& ids, const QString& frameId) 
     if (!f || f->kind != QLatin1String("group")) return false;
     beginBatch(tr("Add to frame"));
     bool any = false;
+    QStringList from;   // the frames the members leave: they re-hug too
     for (const QString& id : ids) {
         const auto e = element(id);
         if (!e || id == frameId || e->kind == QLatin1String("group")) continue;
-        if (setParent(id, frameId)) any = true;
+        const QString p = e->parentId;
+        if (setParent(id, frameId)) { any = true; if (!p.isEmpty() && p != frameId && !from.contains(p)) from << p; }
     }
     if (any) { packFrame(frameId); hugFrame(frameId, QString()); }
+    for (const QString& fid : from) hugFrame(fid, QString());
     endBatch();
     return any;
 }
@@ -1913,6 +1916,10 @@ void CanvasDocument::applySnap(const QString& id, const ElementSnap& s) {
 
 void CanvasDocument::beginBatch(const QString& label) {
     if (batchDepth_++ == 0) { batch_ = UndoEntry{}; batch_.label = label; }
+}
+
+void CanvasDocument::relabelBatch(const QString& label) {
+    if (batchDepth_ > 0) batch_.label = label;
 }
 
 void CanvasDocument::discardBatch() {

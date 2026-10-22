@@ -5689,6 +5689,42 @@ FocusScope {
                         check(canvas.parentOf(pdfElId) === "", "…one undo row per drop")
                         canvas.redo()
                     }
+                    {   // a ⌘-DRAG is structural (ruled 2026-10-22): over a frame it lights, the release joins; released clear of any frame a member leaves; a plain drag never changes membership
+                        const f = probeFrameId, a = audioElId
+                        const lastLabel = function() { const h = canvas.undoHistory(); return h.length ? String(h[h.length - 1].label) : "" }
+                        cvw.clearSelection()
+                        const r = canvas.elementRect(f), ra = canvas.elementRect(a)
+                        const u = Qt.rect(Math.min(r.x, ra.x), Math.min(r.y, ra.y), Math.max(r.x + r.width, ra.x + ra.width) - Math.min(r.x, ra.x), Math.max(r.y + r.height, ra.y + ra.height) - Math.min(r.y, ra.y))
+                        cam.fitRect(u, 600, cvw.height, 60)   // both in the LEFT of the view, clear of the open Inspector
+                        const a0 = cam.worldToScreen(ra.x + ra.width / 2, ra.y + ra.height / 2), t0 = cam.worldToScreen(r.x + r.width / 2, r.y + 14)
+                        const parent0 = canvas.parentOf(a), rows0 = canvas.undoHistory().length
+                        g.press(cvw, a0.x, a0.y, Qt.ControlModifier)
+                        for (let k = 1; k <= 6; ++k) g.move(cvw, a0.x + (t0.x - a0.x) * k / 6, a0.y + (t0.y - a0.y) * k / 6, Qt.ControlModifier)
+                        const lit = cvw.dropFrame, fi = cvw.pageItemFor(f), litItem = !!fi && !!fi.frameItem && fi.frameItem.dropTarget
+                        g.release(cvw, t0.x, t0.y, Qt.ControlModifier)
+                        check(parent0 === "" && lit === f && litItem && canvas.parentOf(a) === f && cvw.dropFrame === "" && canvas.undoHistory().length === rows0 + 1 && lastLabel() === "Add to frame",
+                              "a ⌘-drag over a frame lights it and the release JOINS it, one history row 'Add to frame' (lit '" + lit + "', item " + litItem + ", parent '" + canvas.parentOf(a) + "', rows +" + (canvas.undoHistory().length - rows0) + ", label '" + lastLabel() + "')")
+                        const r1 = canvas.elementRect(f), ra1 = canvas.elementRect(a)
+                        check(ra1.x >= r1.x && ra1.y >= r1.y && ra1.x + ra1.width <= r1.x + r1.width && ra1.y + ra1.height <= r1.y + r1.height, "…and the elastic frame hugs its new member")
+                        // ⌘-drag it back out: the frame must NOT stretch after it while ⌘ is down; released clear of any frame it leaves
+                        const b0 = cam.worldToScreen(ra1.x + ra1.width / 2, ra1.y + ra1.height / 2), b1 = Qt.point(b0.x, cam.worldToScreen(0, r1.y + r1.height).y + 160)
+                        g.press(cvw, b0.x, b0.y, Qt.ControlModifier)
+                        for (let k = 1; k <= 6; ++k) g.move(cvw, b0.x + (b1.x - b0.x) * k / 6, b0.y + (b1.y - b0.y) * k / 6, Qt.ControlModifier)
+                        const rMid = canvas.elementRect(f), litMid = cvw.dropFrame
+                        g.release(cvw, b1.x, b1.y, Qt.ControlModifier)
+                        const r2 = canvas.elementRect(f), ra2 = canvas.elementRect(a)
+                        check(Math.abs(rMid.height - r1.height) < 0.5 && litMid === "" && canvas.parentOf(a) === "" && Math.abs(r2.height - r.height) < 0.5 && ra2.y > r2.y + r2.height && lastLabel() === "Remove from frame",
+                              "a ⌘-drag out of the frame does not stretch it (mid " + rMid.height.toFixed(0) + " vs " + r1.height.toFixed(0) + "), nothing lit, the release LEAVES and the frame re-hugs (" + r2.height.toFixed(0) + " vs " + r.height.toFixed(0) + "; parent '" + canvas.parentOf(a) + "', label '" + lastLabel() + "')")
+                        canvas.undo(); const pU = canvas.parentOf(a); canvas.undo()
+                        check(pU === f && canvas.parentOf(a) === "" && Math.abs(canvas.elementRect(a).y - ra.y) < 0.5, "…undo twice: back in, then back out where it started (" + pU + " / '" + canvas.parentOf(a) + "')")
+                        canvas.redo(); canvas.redo()
+                        // a PLAIN drag onto the frame only moves
+                        const ra3 = canvas.elementRect(a), c0 = cam.worldToScreen(ra3.x + ra3.width / 2, ra3.y + ra3.height / 2), rNow = canvas.elementRect(f), c1 = cam.worldToScreen(rNow.x + rNow.width / 2, rNow.y + 14)
+                        g.drag(cvw, c0.x, c0.y, c1.x, c1.y, 6)
+                        check(canvas.parentOf(a) === "" && cvw.dropFrame === "" && lastLabel() !== "Add to frame", "a plain drag onto the frame only moves it (parent '" + canvas.parentOf(a) + "', label '" + lastLabel() + "')")
+                        canvas.undo()
+                        cvw.select(f)   // the Frame-section check below reads the selected frame
+                    }
                     canvas.setFrameField(probeFrameId, "tint", "#3f7fc0")   // a tinted frame for the grab (the Layers rows carry it)
                     const fs = root.inspector.frameSection
                     check(!!fs && fs.visible && fs.frameId === probeFrameId && fs.titleFieldItem.text === "Shots", "the Inspector's Frame section shows the selected frame's title (open " + root.inspector.open + ", visible " + (fs ? fs.visible : "?") + ", frame " + (fs ? (fs.frameId === probeFrameId) : "?") + ", title '" + (fs ? fs.titleFieldItem.text : "?") + "', selected '" + cvw.selectedId + "', height " + (fs ? fs.height : "?") + ")")

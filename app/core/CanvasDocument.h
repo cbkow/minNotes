@@ -237,7 +237,7 @@ public:
     // DocumentMerger (ids re-minted, assets copied); sidecar media of other elements is
     // re-homed into this file's store. ONE history row. Returns the new element ids (pages first in z order).
     Q_INVOKABLE QStringList copyPagesFrom(const QString& fileUrl, qreal wx, qreal wy);
-    Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString());
+    Q_INVOKABLE bool setElementRect(const QString& id, const QRectF& rect, const QString& coalesce = QString(), bool hug = true);   // hug = false: a ⌘-drag moves a member without stretching its elastic frame (the view re-hugs at the release)
     Q_INVOKABLE bool setElementJson(const QString& id, const QString& json, const QString& coalesce = QString());
     Q_INVOKABLE bool setElementZ(const QString& id, int z);
     Q_INVOKABLE bool bringToFront(const QString& id);
@@ -270,6 +270,7 @@ public:
     Q_INVOKABLE bool ungroup(const QString& frameId);                           // the children stay, the frame goes
     Q_INVOKABLE bool addToFrame(const QStringList& ids, const QString& frameId);
     Q_INVOKABLE bool removeFromFrame(const QStringList& ids);
+    Q_INVOKABLE bool hugFrame(const QString& frameId, const QString& coalesce = QString());   // an elastic frame's rect follows its children (the view calls it after a ⌘-drag that moved without hugging)
     Q_INVOKABLE QStringList childrenOf(const QString& frameId) const;          // z order
     Q_INVOKABLE QString parentOf(const QString& id) const;
     Q_INVOKABLE QStringList withChildren(const QStringList& ids) const;        // ids + every frame's children among them, in z order
@@ -309,6 +310,7 @@ public:
     // a selection's delete). Nested begins fold into the outer batch; a batch of one part is that part.
     Q_INVOKABLE void beginBatch(const QString& label);
     Q_INVOKABLE void endBatch();
+    Q_INVOKABLE void relabelBatch(const QString& label);   // the open batch's history label (a drag that ended as a join reads "Add to frame", not "Move")
     Q_INVOKABLE void discardBatch();   // end the batch WITHOUT a history row — for a run whose parts net to nothing (a chip added, sized and removed empty)
 
     Document& db() { return db_; }
@@ -362,7 +364,6 @@ private:
     void applySnap(const QString& id, const ElementSnap& s);   // the db + loaded models follow the snapshot
     void pushEntry(UndoEntry e, const QString& coalesce);
     bool setParent(const QString& id, const QString& parentId);         // one undo entry; no notify beyond the set revision
-    bool hugFrame(const QString& frameId, const QString& coalesce);     // an elastic frame's rect follows its children
     bool packFrame(const QString& frameId);                             // z: the frame directly under its children, contiguous
     bool applyOrder(const std::vector<QString>& order, const QString& label);   // z := index, the changed ones as one batch
     QString addElement(const QString& kind, const QRectF& r, const QString& json, const QString& label, const QString& parentId = QString());

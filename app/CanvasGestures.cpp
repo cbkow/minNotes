@@ -24,9 +24,9 @@ void CanvasGestures::mouse(QQuickItem* item, int type, qreal x, qreal y, Qt::Mou
     QCoreApplication::sendEvent(w, &ev);
 }
 
-void CanvasGestures::press(QQuickItem* item, qreal x, qreal y)   { mouse(item, QEvent::MouseButtonPress, x, y, Qt::LeftButton, Qt::LeftButton); }
-void CanvasGestures::move(QQuickItem* item, qreal x, qreal y)    { mouse(item, QEvent::MouseMove, x, y, Qt::NoButton, Qt::LeftButton); }
-void CanvasGestures::release(QQuickItem* item, qreal x, qreal y) { mouse(item, QEvent::MouseButtonRelease, x, y, Qt::LeftButton, Qt::NoButton); }
+void CanvasGestures::press(QQuickItem* item, qreal x, qreal y, int modifiers)   { mouse(item, QEvent::MouseButtonPress, x, y, Qt::LeftButton, Qt::LeftButton, Qt::KeyboardModifiers(modifiers)); }
+void CanvasGestures::move(QQuickItem* item, qreal x, qreal y, int modifiers)    { mouse(item, QEvent::MouseMove, x, y, Qt::NoButton, Qt::LeftButton, Qt::KeyboardModifiers(modifiers)); }
+void CanvasGestures::release(QQuickItem* item, qreal x, qreal y, int modifiers) { mouse(item, QEvent::MouseButtonRelease, x, y, Qt::LeftButton, Qt::NoButton, Qt::KeyboardModifiers(modifiers)); }
 
 void CanvasGestures::click(QQuickItem* item, qreal x, qreal y, int modifiers) {
     nextStamp(1000);   // never within a double-click window of the previous tap
