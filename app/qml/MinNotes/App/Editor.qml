@@ -4262,8 +4262,8 @@ FocusScope {
                       "Space right after the bar click opens the LIGHTBOX on the block (showing " + (root.lightbox ? root.lightbox.showing : "?") + ", kind " + (root.lightbox ? root.lightbox.kind : "?") + ", row " + (root.lightbox ? root.lightbox.row : "?") + " vs " + cursor.focusRow + "); it keeps playing; the page's surface yields")
                 gestures.key(root, Qt.Key_Space); ++step; return   // (to the lightbox, which holds the keys)
             }
-            if (step === 8) { check(!root.lightbox.showing && videoDec.isPlaying && root.activeFocus && videoSurfaceOverlay.visible, "…Space again closes it, the keys return to the editor, the surface is back"); gestures.key(root, Qt.Key_K); ++step; return }
-            if (step === 9) { const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
+            if (step === 8) { check(!root.lightbox.showing && !videoDec.isPlaying && root.videoPlayingKey !== "" && root.activeFocus && videoSurfaceOverlay.visible, "…Space again closes it and PAUSES the video (playhead kept), the keys return to the editor, the surface is back"); gestures.key(root, Qt.Key_K); ++step; return }
+            if (step === 9) { check(videoDec.isPlaying, "K plays"); gestures.key(root, Qt.Key_K); const f = videoDec.currentFrame; check(!videoDec.isPlaying, "K pauses"); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Right); gestures.key(root, Qt.Key_Left); probeFrame = f; ++step; return }
             if (step === 11) { check(root._vidIntendedFrame() === probeFrame + 1, "→ → ← steps one frame net (" + probeFrame + " → " + root._vidIntendedFrame() + ")"); gestures.keyPress(root, Qt.Key_J); ++step; return }
             if (step === 12) { check(root._vidFastSeekDir === -1 && videoAudio.shuttleActive() === videoAudio.hasAudio, "J held = rewind shuttle"); gestures.keyRelease(root, Qt.Key_J); ++step; return }
             if (step === 13) { check(root._vidFastSeekDir === 0, "…released = shuttle ends"); gestures.key(root, Qt.Key_Home); ++step; return }
@@ -4348,7 +4348,7 @@ FocusScope {
             }
             if (step === 137) {
                 const it = root.canvasItem.pageItemFor(elId)
-                check(!root.lightbox.showing && root.canvasItem.selectedId === elId && videoDec.isPlaying && !!it && !!it.mediaItem && it.mediaItem.surfaceVisible, "Escape closes it: the element stays selected, playing, its surface back")
+                check(!root.lightbox.showing && root.canvasItem.selectedId === elId && !videoDec.isPlaying && root.videoPlayingKey !== "" && !!it && !!it.mediaItem && it.mediaItem.surfaceVisible, "Escape closes it: the element stays selected, the video PAUSED on its surface")
                 root.canvasItem.clearSelection(); ++step; return
             }
             if (step === 140) { check(!videoDec.isPlaying && root.videoPlayingKey === "", "deselecting the element stops playback"); console.log("VIDEO-PROBE DONE fails", fails); Qt.exit(Math.min(fails, 100)) }

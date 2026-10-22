@@ -43,7 +43,7 @@ Item {
         id: transport
         visible: frame.isVideo && !!frame.view.editor && !!frame.view.editor.canvasVideoHost
         x: 0; y: frame.pictureH + 2   // just under the box: the bottom accent shows between picture and bar
-        width: Math.max(140, frame.width)
+        width: frame.width   // no minimum (user 2026-10-22): the strip is the element's width, the scrub line takes what is left
         minimal: true   // play + the scrub line (the counter and the studio glyph live in the lightbox / studio — user 2026-10-22)
         editor: frame.view.editor
         dec: frame.view.editor ? frame.view.editor.videoDecoder : null

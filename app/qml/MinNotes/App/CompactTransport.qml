@@ -65,7 +65,7 @@ Rectangle {
         Item {   // the scrub line: played part, playhead, note markers; press / drag scrubs (the slider's gesture, deck audio)
             id: track
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 22 - 6 - 6 - (ct.minimal ? 0 : counterMetrics.width + 6 + 22 + 6)
+            width: Math.max(0, parent.width - 22 - 6 - 6 - (ct.minimal ? 0 : counterMetrics.width + 6 + 22 + 6))
             height: 22
             readonly property real fraction: ct.totalFrames > 1 ? Math.max(0, Math.min(1, ct.frame / (ct.totalFrames - 1))) : 0
             function xToFrame(x) { return Math.round(Math.max(0, Math.min(1, x / Math.max(1, width))) * Math.max(0, ct.totalFrames - 1)) }

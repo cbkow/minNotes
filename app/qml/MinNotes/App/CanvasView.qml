@@ -330,7 +330,7 @@ Rectangle {
     // then pops out (TapHandler reports singleTapped at once, before it knows whether a second tap follows).
     property string clickAgainId: ""
     property int clickAgains: 0   // probe
-    Timer { id: clickAgainTimer; interval: 320; onTriggered: { const id = cv.clickAgainId; cv.clickAgainId = ""; if (id !== "" && cv.selectedId === id && cv.liveId !== id) { ++cv.clickAgains; cv.goLive(id) } } }
+    Timer { id: clickAgainTimer; interval: 320; onTriggered: { const id = cv.clickAgainId; cv.clickAgainId = ""; if (id !== "" && cv.selectedId === id && cv.liveId !== id && !(editor && editor.lightbox && editor.lightbox.showing)) { ++cv.clickAgains; cv.goLive(id) } } }
     function armClickAgain(id) { clickAgainId = id; clickAgainTimer.restart() }
     function clickAgainNow() { clickAgainTimer.stop(); clickAgainTimer.triggered() }   // probe: the interval elapsed
     function cancelClickAgain() { clickAgainId = ""; clickAgainTimer.stop() }
