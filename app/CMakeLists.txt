@@ -213,6 +213,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/PathBar.qml
         qml/MinNotes/App/TitleBar.qml
         qml/MinNotes/App/Lightbox.qml
+        qml/MinNotes/App/NavHistory.qml
         qml/MinNotes/App/ContextMenuRow.qml
         qml/MinNotes/App/ContextMenuSep.qml
         qml/MinNotes/App/ContextMenuHeader.qml

@@ -4359,6 +4359,8 @@ FocusScope {
     // (heights identical to the page pool; the page view lays the page out at the view's width). Prints
     // CANVAS-PROBE PHASE/FAIL/DONE, exits with the fail count. The shell runner greps the log for
     // TypeError/ReferenceError (facade / context gaps).
+    property int probeTabs0: 0   // P16 nav
+    property int probeIdx0: 0
     Timer {
         id: canvasProbe
         readonly property bool armed: Qt.application.arguments.some(function(a) { return a.indexOf("--canvas-probe=") === 0 })
@@ -5584,7 +5586,65 @@ FocusScope {
                     nextPhase("layers")
                 }
             }
-            if (phase === 16) {   // P16 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
+            if (phase === 16) {   // P16 (2026-10-22): BACK / FORWARD — the visited views push, Back / Forward restore without pushing,
+                const cvw = canvasItem, nv = win.nav   // a new navigation truncates the forward tail, a file switch is a step, a closed file's entries drop
+                if (step % 2 === 1) { ++step; return }   // the odd ticks let the deferred commits land
+                if (step === 0) {
+                    root.setActiveTab("canvas"); cvw.clearSelection()
+                    probeN0 = nv.entries.length; probeTabs0 = docs.count; probeIdx0 = docs.activeIndex
+                    check(nv.index === nv.entries.length - 1 && !nv.canForward, "on the canvas the history's index is at its end (" + nv.index + " of " + nv.entries.length + ")")
+                    cvw.select(livePage); cvw.openSelected()
+                    ++step; return
+                }
+                if (step === 2) {
+                    check(!root.activeCanvas && canvas.focusPage === livePage && nv.entries.length === probeN0 + 1 && nv.canBack && !nv.canForward, "opening a page pushes one entry (" + nv.entries.length + " vs " + (probeN0 + 1) + ")")
+                    check(canvas.elementKind(pdfElId) === "media", "(the PDF element from P9 is still there)")
+                    root.setActiveTab(pdfElId)
+                    ++step; return
+                }
+                if (step === 4) {
+                    check(root.activeElementId === pdfElId && nv.entries.length === probeN0 + 2, "opening the element's frame pushes another (" + nv.entries.length + ")")
+                    nv.back()
+                    ++step; return
+                }
+                if (step === 6) {
+                    check(root.activeElementId === "" && canvas.focusPage === livePage && !root.activeCanvas && nv.entries.length === probeN0 + 2 && nv.canForward, "Back closes the frame and lands on the page view, pushing nothing (len " + nv.entries.length + ", forward " + nv.canForward + ")")
+                    nv.back()
+                    ++step; return
+                }
+                if (step === 8) {
+                    check(root.activeCanvas && canvas.focusPage === "" && nv.index === probeN0 - 1 && nv.entries.length === probeN0 + 2, "…Back again: the canvas (index " + nv.index + ")")
+                    nv.forward()
+                    ++step; return
+                }
+                if (step === 10) {
+                    check(!root.activeCanvas && canvas.focusPage === livePage && root.activeElementId === "" && nv.index === probeN0, "Forward: the page view (index " + nv.index + ")")
+                    root.setActiveTab("canvas")   // a NEW navigation from the middle
+                    ++step; return
+                }
+                if (step === 12) {
+                    check(root.activeCanvas && !nv.canForward && nv.entries.length === probeN0 + 2 && nv.index === probeN0 + 1, "a new navigation truncates the forward tail and pushes (len " + nv.entries.length + ", index " + nv.index + ")")
+                    docs.newTab()
+                    ++step; return
+                }
+                if (step === 14) {
+                    check(docs.count === probeTabs0 + 1 && docs.activeIndex !== probeIdx0 && nv.entries.length === probeN0 + 3, "a new file is a step (tabs " + docs.count + ", len " + nv.entries.length + ")")
+                    nv.back()
+                    ++step; return
+                }
+                if (step === 16) {
+                    check(docs.activeIndex === probeIdx0 && root.activeCanvas && nv.canForward, "Back returns to the previous FILE's canvas (active " + docs.activeIndex + " vs " + probeIdx0 + ")")
+                    let ni = -1; for (let i = 0; i < docs.count; ++i) if (i !== probeIdx0 && docs.tabIdAt(i) === nv.entries[nv.entries.length - 1].tab) ni = i
+                    check(ni >= 0, "…the new file's tab is the forward entry")
+                    if (ni >= 0) docs.closeTab(ni)
+                    ++step; return
+                }
+                if (step === 18) {
+                    check(docs.count === probeTabs0 && docs.activeIndex === probeIdx0 && !nv.canForward && nv.entries.length === probeN0 + 2 && root.activeCanvas, "closing the file drops its entry: nothing to go forward to (len " + nv.entries.length + ")")
+                    nextPhase("nav"); return
+                }
+            }
+            if (phase === 17) {   // P17 (2026-10-19): the pen INSIDE the PDF view — a real one-page PDF (the fixture page exported), drawn on
                                   // with real gestures: strokes land in THAT page's ink (normalized, widths in source px), one owner-log
                                   // row each, the eraser removes the stroke under the pointer, Space-hand parks the pen, Escape drops it
                 const g = gestures, cvw = canvasItem

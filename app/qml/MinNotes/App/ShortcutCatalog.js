@@ -23,6 +23,7 @@ var sections = [
     ["Zoom to 100%", "⌘0"],
     ["In a page: toggle Full Width · on the canvas: fit everything", "⌘1"],
     ["Always on Top — the window above every other app's (the toolbar's pin)", "⌥⌘T"],
+    ["Back / Forward through the views you visited (canvas, page, frame, file) — also the chevrons left of the path and the mouse's back / forward buttons", "⌥⌘← / ⌥⌘→"],
     ["Zoom about the pointer", "⌘-wheel, or pinch"],
     ["Pan the canvas with the hand", "hold Space and drag"],
     ["Pan anywhere", "middle-button drag"]

@@ -1242,6 +1242,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Platform.MenuItem { text: qsTr("Always on Top"); role: Platform.MenuItem.NoRole; checkable: true; shortcut: "Ctrl+Alt+T"
                                     checked: windowChrome.alwaysOnTop
                                     onTriggered: windowChrome.alwaysOnTop = !windowChrome.alwaysOnTop }
+                Platform.MenuSeparator {}
+                Platform.MenuItem { text: qsTr("Back");    role: Platform.MenuItem.NoRole; shortcut: "Ctrl+Alt+Left";  enabled: navHistory.canBack;    onTriggered: navHistory.back() }
+                Platform.MenuItem { text: qsTr("Forward"); role: Platform.MenuItem.NoRole; shortcut: "Ctrl+Alt+Right"; enabled: navHistory.canForward; onTriggered: navHistory.forward() }
             }
             Platform.Menu {
                 title: qsTr("Help")
@@ -1371,6 +1374,9 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("Always on Top"); checkable: true; shortcut: "Ctrl+Alt+T"
                          checked: windowChrome.alwaysOnTop
                          onToggled: { if (windowChrome.alwaysOnTop !== checked) windowChrome.alwaysOnTop = checked } }
+                ThemedMenuSeparator {}
+                Action { text: qsTr("Back");    shortcut: "Ctrl+Alt+Left";  enabled: navHistory.canBack;    onTriggered: navHistory.back() }
+                Action { text: qsTr("Forward"); shortcut: "Ctrl+Alt+Right"; enabled: navHistory.canForward; onTriggered: navHistory.forward() }
             }
             ThemedMenu {
                 title: qsTr("Help")
@@ -1601,6 +1607,12 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
     // The LIGHTBOX (2026-10-22): over the content and the chrome, under the welcome overlay (z 100) and popups.
     Lightbox { id: lightboxItem; anchors.fill: parent; z: 50; editor: win.activeEditor }
     readonly property var lightbox: lightboxItem   // probe
+    // BACK / FORWARD (2026-10-22): the visited views; the title bar's chevrons, View ▸ Back / Forward (⌥⌘← / ⌥⌘→),
+    // and the mouse's back / forward buttons anywhere in the window.
+    NavHistory { id: navHistory }
+    readonly property var nav: navHistory   // probe
+    TapHandler { acceptedButtons: Qt.BackButton | Qt.ForwardButton; gesturePolicy: TapHandler.ReleaseWithinBounds
+                 onTapped: (ev, button) => navHistory.go(button === Qt.BackButton ? -1 : 1) }
 
     Inspector {
         id: inspectorPanel

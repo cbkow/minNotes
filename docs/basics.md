@@ -37,6 +37,11 @@ At the right end of the toolbar, just left of the Inspector toggle, sits the
 above every other app's — handy for notes beside a player or a browser. Click
 again to unpin; the choice is remembered.
 
+The two chevrons left of the path are **Back** and **Forward** (`⌥⌘←` /
+`⌥⌘→`, or the mouse's back and forward buttons): they walk the views you
+visited — canvas, page, frame, file — the way a browser does. Hover for
+where they lead.
+
 Click any segment to the left to go up a level. **New** (`⌘N`), **Open**
 (`⌘O`), **Save As** (`⌘⇧S`), and **Close** (`⌘W`) live in the File menu.
 Closing a file or quitting with unsaved work prompts you first.

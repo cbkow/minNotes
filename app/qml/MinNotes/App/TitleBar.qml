@@ -11,6 +11,8 @@ Rectangle {
     id: bar
     property var editor: null
     readonly property var pathBar: pathLoader.item          // the PathBar's probe hooks (null while no document is open)
+    readonly property var backButton: backBtn               // probe
+    readonly property var forwardButton: forwardBtn
     readonly property bool lightsInset: windowChrome.nativeLights && win.visibility !== Window.FullScreen
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
     readonly property var appMenuButton: menuBtn            // probe
@@ -61,6 +63,26 @@ Rectangle {
                         onClicked: { if (!win.appMenu) return; if (win.appMenu.visible) win.appMenu.close(); else win.appMenu.popup(menuBtn, 0, menuBtn.height + 1) } }
             FlatToolTip { visible: menuMA.containsMouse && !menuBtn.menuOpen; text: qsTr("Menu"); x: 0; y: menuBtn.height + 6 }
         }
+        // BACK / FORWARD (2026-10-22): the visited views, browser-like — dimmed when there is nowhere to go.
+        component NavBtn: Rectangle {
+            id: nb
+            required property int dir
+            readonly property bool can: dir < 0 ? win.nav.canBack : win.nav.canForward
+            width: 24; height: parent.height
+            radius: Theme.dim.radiusSmall
+            color: can && nbMA.containsMouse ? Theme.colors.affordanceHover : Theme.colors.affordanceIdleClear
+            Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
+            Icon { anchors.centerIn: parent; name: nb.dir < 0 ? "caret-left" : "caret-right"; size: 12
+                   color: !nb.can ? Theme.colors.textSubtle : nbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
+            MouseArea { id: nbMA; anchors.fill: parent; hoverEnabled: true; enabled: nb.can; cursorShape: Qt.PointingHandCursor
+                        onClicked: win.nav.go(nb.dir) }
+            FlatToolTip { visible: nbMA.containsMouse && nb.can; x: 0; y: nb.height + 6
+                          text: (nb.dir < 0 ? qsTr("Back to ") : qsTr("Forward to ")) + (nb.dir < 0 ? win.nav.backLabel : win.nav.forwardLabel) }
+        }
+        Item { width: 2; height: 1 }
+        NavBtn { id: backBtn; dir: -1 }
+        NavBtn { id: forwardBtn; dir: 1 }
+        Item { width: 4; height: 1 }
     }
 
     // The path: • File ▾ › Canvas › Page ▾ › Frame ▾ — the document's hierarchy, while there is one.
