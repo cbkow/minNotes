@@ -13,6 +13,7 @@ Rectangle {
     property int row: -1
     property var host: null
     property bool live: false
+    property bool minimal: false   // the canvas's form (user 2026-10-22): play + the scrub line only — no counter, no expand glyph
     readonly property int totalFrames: live && dec ? dec.frameCount : host ? host.frames : (row >= 0 ? (blockModel.structureRevision, blockModel.mediaFrames(row)) : 0)
     height: 22
     color: Theme.colors.surfaceRaised
@@ -49,6 +50,7 @@ Rectangle {
                       text: strip.counterText(Math.max(0, ct.totalFrames - 1)) }   // the widest value: the last frame (no total — user, 2026-10-18)
         Text {   // the counter: timecode (default) or frames; a CLICK flips every player (user, 2026-10-18). Width reserved at the widest string (no reflow while playing)
             id: counterText
+            visible: !ct.minimal
             anchors.verticalCenter: parent.verticalCenter
             width: counterMetrics.width
             text: strip.counterText(ct.frame)
@@ -63,7 +65,7 @@ Rectangle {
         Item {   // the scrub line: played part, playhead, note markers; press / drag scrubs (the slider's gesture, deck audio)
             id: track
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 22 - counterMetrics.width - 22 - 3 * 6 - 6
+            width: parent.width - 22 - 6 - 6 - (ct.minimal ? 0 : counterMetrics.width + 6 + 22 + 6)
             height: 22
             readonly property real fraction: ct.totalFrames > 1 ? Math.max(0, Math.min(1, ct.frame / (ct.totalFrames - 1))) : 0
             function xToFrame(x) { return Math.round(Math.max(0, Math.min(1, x / Math.max(1, width))) * Math.max(0, ct.totalFrames - 1)) }
@@ -114,6 +116,7 @@ Rectangle {
             }
         }
         FlatButton {   // expand: the studio (the full transport, the notes panel)
+            visible: !ct.minimal
             anchors.verticalCenter: parent.verticalCenter
             implicitWidth: 22; implicitHeight: 22; iconSize: 13; radius: Theme.dim.radiusSmall
             iconName: "arrows-out-simple"

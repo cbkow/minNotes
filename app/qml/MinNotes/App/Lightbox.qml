@@ -1,11 +1,11 @@
 // The LIGHTBOX (2026-10-22, ported from ufb's PreviewLightbox): a Quick-Look-style overlay for ONE media item — an
 // image, a video, a PDF (paged) or an audio file — Space on a selected canvas element, Space with the caret on a
 // page's image / video / PDF block, a double-click on a canvas image. A scrim over the whole window, the picture fit
-// inside a margin, and a BAR along the bottom: ‹ › step to the neighbouring media item (canvas: the file's media
+// inside a margin, and a BAR along the top: ‹ › step to the neighbouring media item (canvas: the file's media
 // elements in z order; page: its media blocks), the file's name, a PDF's pager, and × (Space / Esc / a click on the
 // scrim close too). A video plays on the SHARED player with the compact transport under the picture (the element's /
 // block's own surface hides while this one shows) and takes the transport keys through the editor (K / W / S,
-// Q / E, J / L …); Space is NOT play here — ufb's ruling: play/pause lives on K / W / S so Space can be the one open /
+// Q / E, J / L …) with the studio's full transport bar under the picture; Space is NOT play here — ufb's ruling: play/pause lives on K / W / S so Space can be the one open /
 // close key. A PDF pages with PageUp / PageDown and its pager. Any navigation (a frame opening, Back) closes it.
 import QtQuick
 import QtQuick.Window
@@ -122,10 +122,10 @@ Item {
         TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: lb.close() }
         WheelHandler { }   // (swallowed: the canvas under the scrim must not zoom)
     }
-    Item {   // the picture, above the bar (and above a video's transport)
+    Item {   // the picture, under the bar (and above a video's transport)
         id: content
-        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: barRow.top
-        anchors.margins: 40; anchors.bottomMargin: lb.kind === "video" ? 12 + 22 + 8 : 12
+        anchors.left: parent.left; anchors.right: parent.right; anchors.top: barRow.bottom; anchors.bottom: parent.bottom
+        anchors.margins: 40; anchors.topMargin: 12; anchors.bottomMargin: lb.kind === "video" ? 40 + 40 + 8 : 40
         TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds }   // a click on the picture stays
         Image {
             id: img
@@ -165,12 +165,12 @@ Item {
             color: Theme.colors.textMuted; font.family: Theme.font.family; font.pixelSize: Theme.font.sizeSmall
         }
     }
-    Loader {   // VIDEO: the compact transport under the picture, the page's or the element's
+    Loader {   // VIDEO: the FULL family transport under the picture (the studio's bar — user 2026-10-22), the page's or the element's
         id: ctLoader
         active: lb.kind === "video" && !!lb.editor
-        anchors.left: content.left; anchors.right: content.right; anchors.top: content.bottom; anchors.topMargin: 8
-        height: 22
-        sourceComponent: CompactTransport {
+        anchors.left: content.left; anchors.right: content.right; anchors.bottom: parent.bottom; anchors.bottomMargin: 40
+        height: 40
+        sourceComponent: VideoTransport {
             editor: lb.editor
             dec: lb.editor.videoDecoder
             audio: lb.editor.audioPlayer
@@ -179,10 +179,10 @@ Item {
             live: lb.elementId !== "" ? lb.editor.canvasHostPlaying : (lb.row >= 0 && lb.editor.videoPlayingRow === lb.row && lb.editor.videoPlayingKey !== "")
         }
     }
-    Item {   // THE BAR: ‹ › · the name · a PDF's pager · ×
+    Item {   // THE BAR, along the top (user 2026-10-22): ‹ › · the name · a PDF's pager · ×
         id: barRow
-        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        anchors.margins: 16; anchors.topMargin: 0
+        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+        anchors.margins: 16; anchors.bottomMargin: 0
         height: 32
         TapHandler { acceptedButtons: Qt.LeftButton; gesturePolicy: TapHandler.ReleaseWithinBounds }   // clicks on the bar stay
         component BarBtn: Rectangle {
@@ -197,7 +197,7 @@ Item {
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             Icon { anchors.centerIn: parent; name: bb.icon; size: bb.iconSize; color: !bb.can ? Theme.colors.textSubtle : bbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
             MouseArea { id: bbMA; anchors.fill: parent; hoverEnabled: true; enabled: bb.can; cursorShape: Qt.PointingHandCursor; onClicked: { bb.clicked(); lb.forceActiveFocus() } }
-            FlatToolTip { visible: bbMA.containsMouse && bb.can && bb.tip !== ""; text: bb.tip; x: 0; y: -implicitHeight - 6 }
+            FlatToolTip { visible: bbMA.containsMouse && bb.can && bb.tip !== ""; text: bb.tip; x: 0; y: bb.height + 6 }
         }
         Row {
             anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 2

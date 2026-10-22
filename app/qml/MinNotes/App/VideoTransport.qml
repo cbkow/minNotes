@@ -19,6 +19,7 @@ Rectangle {
 
     readonly property real fpsVal: live && dec ? dec.fps : host ? host.fps : (row >= 0 ? blockModel.mediaFps(row) : 0)
     readonly property bool timecode: !!editor && editor.videoTimecode
+    readonly property var playButton: vtPlay   // probe
     function counterText(f) { return timecode && editor ? editor.videoTimecodeFor(f, fpsVal) : "" + Math.max(0, f) }
     readonly property int totalFrames: live ? dec.frameCount
                                             : host ? host.frames
@@ -45,7 +46,7 @@ Rectangle {
             onReleased: vt.editor.stopVideoFastSeek() }
         FlatButton { iconName: "caret-left"; tooltip: qsTr("Step back"); tooltipSide: "top"
             onClicked: { vt.activate(); vt.editor.stepVideoFrames(-1) } }
-        FlatButton { iconName: (vt.live && vt.dec.isPlaying) ? "pause" : "play"
+        FlatButton { id: vtPlay; iconName: (vt.live && vt.dec.isPlaying) ? "pause" : "play"
             tooltip: qsTr("Play / Pause"); tooltipSide: "top"; onClicked: vt.play() }
         FlatButton { iconName: "caret-right"; tooltip: qsTr("Step forward"); tooltipSide: "top"
             onClicked: { vt.activate(); vt.editor.stepVideoFrames(1) } }

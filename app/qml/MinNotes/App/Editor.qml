@@ -4245,6 +4245,16 @@ FocusScope {
                 check(videoBars.count === 1 && !!bar && bar.parent === pageLayer && bar.visible && Math.abs(bar.y - ((blockModel.yForRow(row) + 6 + bar.dispH))) < 1 && Math.abs(bar.width - bar.dispW) < 1,
                       "the inline bar is page-layer content under its row (parent " + (bar ? bar.parent : "?") + ", y " + (bar ? bar.y.toFixed(0) : "?") + " vs " + (blockModel.yForRow(row) + 6 + (bar ? bar.dispH : 0)).toFixed(0) + ")")
                 check(videoSurfaceOverlay.parent === pageLayer && videoSurfaceOverlay.visible && Math.abs(videoSurfaceOverlay.y - (blockModel.yForRow(row) + 6)) < 1, "…and so is the live surface, over the picture")
+                {   // The counter: timecode by default; a click flips EVERY player to frames and back (2026-10-18) — on the page's bar (the canvas's is minimal)
+                    viewPrefs.frameCounter = false   // (the dev settings domain may hold a previous run's flip)
+                    const ct = bar.children[0], ctr = ct.counterItem, cp = ctr.mapToItem(root, ctr.width / 2, ctr.height / 2)
+                    check(ctr.visible && root.videoTimecode && /^\d\d:\d\d:\d\d:\d\d$/.test(ctr.text), "the inline bar's counter shows timecode by default ('" + ctr.text + "')")
+                    gestures.click(root, cp.x, cp.y)
+                    check(!root.videoTimecode && /^\d+$/.test(ctr.text) && root.activeFocus, "a click on the counter flips it to frames ('" + ctr.text + "'), the keys stay with the editor")
+                    const cp2 = ctr.mapToItem(root, ctr.width / 2, ctr.height / 2)   // (the counter is narrower in frames mode)
+                    gestures.click(root, cp2.x, cp2.y)
+                    check(root.videoTimecode, "…and back to timecode")
+                }
                 gestures.key(root, Qt.Key_Space); ++step; return
             }
             if (step === 7) {   // Space on an inline video = the LIGHTBOX (2026-10-22); play / pause moved to K / W / S
@@ -4317,14 +4327,7 @@ FocusScope {
                 gestures.key(root, Qt.Key_K)
                 check(!videoDec.isPlaying, "…K right after the button click pauses (the keys stayed with the editor)")
                 // The counter: timecode by default; a click flips EVERY player to frames and back (2026-10-18)
-                viewPrefs.frameCounter = false   // (the dev settings domain may hold a previous run's flip)
-                const ctr = bar.counterItem, cp = ctr.mapToItem(cvw, ctr.width / 2, ctr.height / 2)
-                check(root.videoTimecode && /^\d\d:\d\d:\d\d:\d\d$/.test(ctr.text), "the counter shows timecode by default ('" + ctr.text + "')")
-                gestures.click(cvw, cp.x, cp.y)
-                check(!root.videoTimecode && /^\d+$/.test(ctr.text) && root.activeFocus, "a click on the counter flips it to frames ('" + ctr.text + "'), the keys stay with the editor")
-                const cp2 = ctr.mapToItem(cvw, ctr.width / 2, ctr.height / 2)   // (the counter is narrower in frames mode)
-                gestures.click(cvw, cp2.x, cp2.y)
-                check(root.videoTimecode, "…and back to timecode")
+                check(bar.minimal && !bar.counterItem.visible && bar.scrubTrack.width > bar.width - 60, "the canvas bar is the MINIMAL form: play + the scrub line, no counter, no expand glyph (track " + bar.scrubTrack.width.toFixed(0) + " of " + bar.width.toFixed(0) + ")")
                 const tr = bar.scrubTrack, a = tr.mapToItem(cvw, tr.width * 0.2, tr.height / 2), b = tr.mapToItem(cvw, tr.width * 0.6, tr.height / 2)
                 gestures.drag(cvw, a.x, a.y, b.x, b.y, 6)
                 check(cvw.selectedId === elId && root._vidIntendedFrame() > videoDec.frameCount * 0.5 && root._vidIntendedFrame() < videoDec.frameCount * 0.7, "dragging the scrub line scrubs (frame " + root._vidIntendedFrame() + " of " + videoDec.frameCount + ") and keeps the selection")
@@ -4340,7 +4343,7 @@ FocusScope {
                 const it = root.canvasItem.pageItemFor(elId)
                 check(!!root.lightbox && root.lightbox.showing && root.lightbox.kind === "video" && root.lightbox.elementId === elId && videoDec.isPlaying && !!it && !!it.mediaItem && !it.mediaItem.surfaceVisible,
                       "Space opens the LIGHTBOX on the selected element; it keeps playing; the element's surface yields (showing " + (root.lightbox ? root.lightbox.showing : "?") + ", id " + (root.lightbox ? root.lightbox.elementId : "?") + ")")
-                check(!!root.lightbox.transport && root.lightbox.transport.live && root.lightbox.transport.playButton.iconName === "pause", "…with the compact transport under the picture, live, showing pause")
+                check(!!root.lightbox.transport && root.lightbox.transport.live && root.lightbox.transport.height === 40 && root.lightbox.transport.playButton.iconName === "pause", "…with the FULL transport (the studio's 40-px bar) under the picture, live, showing pause")
                 gestures.key(root, Qt.Key_Escape); ++step; return
             }
             if (step === 137) {
