@@ -1635,9 +1635,21 @@ bool CanvasDocument::setMediaElementInk(const QString& id, int page, const QStri
 static QJsonObject frameSpec(const Document::Element& e) { return QJsonDocument::fromJson(e.json.toUtf8()).object(); }
 static QString frameJson(const QJsonObject& o) { return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)); }
 
+// "Group", then "Group 2", "Group 3" … (the Layers list stays readable without renaming — user 2026-10-22)
+static QString nextFrameTitle(const CanvasDocument* c, const QString& stem) {
+    int n = 0;
+    for (const Document::Element& e : c->elements()) {
+        if (e.kind != QLatin1String("group")) continue;
+        const QString t = QJsonDocument::fromJson(e.json.toUtf8()).object().value(QStringLiteral("title")).toString();
+        if (t == stem) n = std::max(n, 1);
+        else if (t.startsWith(stem + QLatin1Char(' '))) { bool ok = false; const int k = t.mid(stem.size() + 1).toInt(&ok); if (ok) n = std::max(n, k); }
+    }
+    return n == 0 ? stem : QStringLiteral("%1 %2").arg(stem).arg(n + 1);
+}
+
 QString CanvasDocument::addFrame(const QRectF& rect, bool fixed) {
     QJsonObject o;
-    o.insert(QStringLiteral("title"), tr("Frame"));
+    o.insert(QStringLiteral("title"), nextFrameTitle(this, tr("Frame")));
     o.insert(QStringLiteral("sizing"), fixed ? QStringLiteral("fixed") : QStringLiteral("elastic"));
     o.insert(QStringLiteral("layout"), QStringLiteral("free"));
     QRectF r = rect;
@@ -1755,7 +1767,7 @@ QString CanvasDocument::groupElements(const QStringList& ids) {
     if (members.isEmpty()) return QString();
     beginBatch(tr("Group"));
     QJsonObject o;
-    o.insert(QStringLiteral("title"), tr("Group"));
+    o.insert(QStringLiteral("title"), nextFrameTitle(this, tr("Group")));
     o.insert(QStringLiteral("sizing"), QStringLiteral("elastic"));
     o.insert(QStringLiteral("layout"), QStringLiteral("free"));
     const QRectF want(u.x() - kFramePad, u.y() - kFramePad - kFrameTitleH, u.width() + 2 * kFramePad, u.height() + 2 * kFramePad + kFrameTitleH);

@@ -44,7 +44,7 @@ Popup {
     readonly property bool primary: n === 1 && view.canOpen(view.selectedId)
     readonly property bool isFrame: n === 1 && kind1 === "group"
     readonly property bool own: localMedia || isBookmark || view.selectedIsFolder || view.selectedIsVideo || view.selectedIsPdf
-                                || isFrame || view.canGroup || view.canAddToFrame || view.canUngroup || view.canLeaveFrame
+                                || isFrame || (view.canGroup && n >= 2) || view.canAddToFrame || view.canUngroup || view.canLeaveFrame
                                 || (n === 1 && kind1 === "page" && canvas.pageHeightFixed(view.selectedId))
                                 || (canvas.elementsRevision, n === 1 && kind1 === "shape" && view.textFixed(view.selectedId))
     readonly property bool arrange: n > 0
@@ -58,7 +58,7 @@ Popup {
         Sep { visible: menu.primary && (menu.own || menu.arrange) }
         // 2. The thing's own actions — frames first (2026-10-22)
         Row { label: qsTr("Rename frame");       show: menu.isFrame;             onTriggered: menu.view.editFrameTitle(menu.view.selectedId) }
-        Row { label: qsTr("Group");              show: menu.view.canGroup;       onTriggered: menu.view.groupSelected() }
+        Row { label: qsTr("Group");              show: menu.view.canGroup && menu.n >= 2; onTriggered: menu.view.groupSelected() }   // the row for two or more (⌘G groups one too)
         Row { label: qsTr("Add to frame");       show: menu.view.canAddToFrame;  onTriggered: menu.view.groupSelected() }
         Row { label: qsTr("Ungroup");            show: menu.view.canUngroup;     onTriggered: menu.view.ungroupSelected() }
         Row { label: qsTr("Remove from frame");  show: menu.view.canLeaveFrame;  onTriggered: menu.view.leaveFrame() }

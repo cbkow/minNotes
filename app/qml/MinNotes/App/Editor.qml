@@ -4911,7 +4911,7 @@ FocusScope {
                     const rc0 = cvw.rightClicks
                     g.rightClick(cvw, c.x, c.y)
                     check(cvw.contextMenu.visible && cvw.selectedId === id, "a right-click on an element selects it and opens the context menu (taps +" + (cvw.rightClicks - rc0) + ", menu visible " + cvw.contextMenu.visible + " opened " + cvw.contextMenu.opened + ", selected '" + cvw.selectedId + "')")
-                    check(cvw.contextMenu.visibleRows === 5, "an ink element's menu shows only Duplicate / Bring to front / Send to back / Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visibleRows === 4, "an ink element's menu shows only Duplicate / Bring to front / Send to back / Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     g.rightClick(cvw, 8, cvw.height - 8)
                     check(cvw.contextMenu.visible && cvw.selectionCount === 0 && cvw.contextMenu.visibleRows === 2, "empty canvas: New page here · Add link… (" + cvw.contextMenu.visibleRows + " rows)")
@@ -5120,8 +5120,8 @@ FocusScope {
                     const r = canvas.elementRect(pdfElId), c = cam.worldToScreen(r.x + 20, r.y + 20)
                     cvw.clearSelection()
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 11,
-                          "a PDF element's menu [" + cvw.contextMenu.visibleLabels + "]: Open PDF · Group · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
+                    check(cvw.contextMenu.visible && cvw.selectedId === pdfElId && cvw.contextMenu.visibleRows === 10,
+                          "a PDF element's menu [" + cvw.contextMenu.visibleLabels + "]: Open PDF · Reveal · Open in ufb · Copy path · Next page · Previous page · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows; hosted " + root.cardHosted + ", live '" + canvas.livePage + "', home " + (root.parent === root.homeSlot) + ", selected '" + cvw.selectedId + "', menu " + cvw.contextMenu.visible + ")")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5129,7 +5129,7 @@ FocusScope {
                     cvw.select(livePage)
                     const c = cam.worldToScreen(canvas.elementRect(livePage).x + 20, canvas.elementRect(livePage).y + 20)
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 5, "a page's menu: Open page · Group · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 4, "a page's menu: Open page · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5192,7 +5192,7 @@ FocusScope {
                     check(Math.abs(rf.y - rd.y) < 0.5 && rd.x >= rf.x + rf.width, "…the two cards sit side by side in the grid")
                     cvw.select(folderElId)
                     g.rightClick(cvw, cam.worldToScreen(rd.x + 20, rd.y + 20).x, cam.worldToScreen(rd.x + 20, rd.y + 20).y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 11, "a folder's menu [" + cvw.contextMenu.visibleLabels + "]: Open folder · Group · Reveal · Open in ufb · Copy path · Spread files here · Refresh · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 10, "a folder's menu [" + cvw.contextMenu.visibleLabels + "]: Open folder · Reveal · Open in ufb · Copy path · Spread files here · Refresh · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
                     cvw.contextMenu.close()
                     ++step; return
                 }
@@ -5598,14 +5598,20 @@ FocusScope {
                     ++step; return
                 }
                 if (step === 6) {   // the menu, ungroup, delete with children, undo
-                    const f = probeFrameId, r = canvas.elementRect(f), c = cam.worldToScreen(r.x + 10, r.y + 10)
+                    const f = probeFrameId, r = canvas.elementRect(f)
+                    cam.fitRect(r, cvw.width - 280, cvw.height, 100)   // the whole frame in the visible canvas, clear of the open Inspector
+                    let c = cam.worldToScreen(r.x + 10, r.y + 10)   // a title-strip point where the frame is top-most (an unrelated fixture element may cover a corner)
+                    for (let k = 24; k >= 0; --k) {   // from the right end (the fixture's big poster covers the left), but inside the visible canvas, clear of the open Inspector
+                        const wx = r.x + 10 + k * (r.width - 20) / 24, wy = r.y + 12, sp = cam.worldToScreen(wx, wy), ids = canvas.visibleElements(wx, wy, wx + 0.01, wy + 0.01)
+                        if (sp.x > 20 && sp.x < cvw.width - 280 && sp.y > 20 && sp.y < cvw.height - 20 && ids.length && ids[ids.length - 1] === f) { c = sp; break }
+                    }
                     cvw.select(f)
                     g.rightClick(cvw, c.x, c.y)
-                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 6, "a frame's menu: Rename frame · Ungroup · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows)")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleRows === 6, "a frame's menu: Rename frame · Ungroup · Duplicate · Bring to front · Send to back · Delete (" + cvw.contextMenu.visibleRows + " rows: " + cvw.contextMenu.visibleLabels + ")")
                     cvw.contextMenu.close()
                     cvw.select(vidElId)
                     g.rightClick(cvw, cam.worldToScreen(canvas.elementRect(vidElId).x + 10, canvas.elementRect(vidElId).y + 10).x, cam.worldToScreen(canvas.elementRect(vidElId).x + 10, canvas.elementRect(vidElId).y + 10).y)
-                    check(cvw.contextMenu.visible && cvw.canGroup && cvw.canLeaveFrame, "a child's menu offers Group and Remove from frame")
+                    check(cvw.contextMenu.visible && cvw.contextMenu.visibleLabels.indexOf("Remove from frame") >= 0 && cvw.contextMenu.visibleLabels.indexOf("Group") < 0, "a child's menu offers Remove from frame — and no Group row for a single element (" + cvw.contextMenu.visibleLabels + ")")
                     cvw.contextMenu.close()
                     cvw.select(f)
                     g.key(root, Qt.Key_G, Qt.ControlModifier | Qt.ShiftModifier)
@@ -5627,11 +5633,11 @@ FocusScope {
                     const p = cam.worldToScreen(b.x + b.width + 200, b.y)
                     g.click(cvw, p.x, p.y)
                     const f1 = cvw.selectedId
-                    check(f1 !== "" && canvas.isFrame(f1) && canvas.frameElastic(f1) && canvas.childrenOf(f1).length === 0, "a click on empty canvas drops an elastic frame there, selected")
+                    check(f1 !== "" && canvas.isFrame(f1) && canvas.frameElastic(f1) && canvas.childrenOf(f1).length === 0 && canvas.frameTitle(f1) === "Frame", "a click on empty canvas drops an elastic frame there, selected, named 'Frame'")
                     const q = cam.worldToScreen(b.x + b.width + 200, b.y + 400)
                     g.drag(cvw, q.x, q.y, q.x + 90, q.y + 60, 6)
                     const f2 = cvw.selectedId
-                    check(f2 !== "" && f2 !== f1 && canvas.isFrame(f2) && !canvas.frameElastic(f2) && Math.abs(canvas.elementRect(f2).width - Math.max(probeFrameMinW(), 90 / cam.zoom)) < 1, "a drag makes a FIXED frame (a board) of that size (" + canvas.elementRect(f2).width.toFixed(0) + " wide)")
+                    check(f2 !== "" && f2 !== f1 && canvas.isFrame(f2) && !canvas.frameElastic(f2) && Math.abs(canvas.elementRect(f2).width - Math.max(probeFrameMinW(), 90 / cam.zoom)) < 1 && canvas.frameTitle(f2) === "Frame 2", "a drag makes a FIXED frame (a board) of that size, named 'Frame 2' (" + canvas.elementRect(f2).width.toFixed(0) + " wide, '" + canvas.frameTitle(f2) + "')")
                     cvw.selectMany([f1, f2]); cvw.deleteSelected()
                     root.inspector.drawTool = "select"
                     {   // a tap over a frame's child selects the CHILD, not the frame (2026-10-22: both handlers saw the press, the frame's fired last)
@@ -5669,6 +5675,12 @@ FocusScope {
                         const joined = cvw.joinFrameAt(dropped, hf.x + 40, hf.y + 60)
                         check(dropped.length === 1 && joined === f && canvas.parentOf(dropped[0]) === f && canvas.childrenOf(f).length === n0 + 1, "a file dropped onto a frame joins it (children " + canvas.childrenOf(f).length + ")")
                         canvas.removeElement(dropped[0])
+                        clipboard.writeText("pasted into the frame")   // a PASTE inside a frame joins it too
+                        const pc = cam.worldToScreen(hf.x + 60, hf.y + 80)
+                        cvw.pasteAt(pc.x, pc.y)
+                        const pid = cvw.selectedId
+                        check(pid !== "" && canvas.elementKind(pid) === "shape" && canvas.parentOf(pid) === f, "a paste inside a frame joins it (parent '" + canvas.parentOf(pid) + "')")
+                        if (pid !== "") canvas.removeElement(pid)
                     }
                     cvw.select(probeFrameId)
                     cam.fitRect(canvas.elementRect(probeFrameId), cvw.width, cvw.height, 120)

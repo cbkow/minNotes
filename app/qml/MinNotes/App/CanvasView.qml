@@ -305,6 +305,7 @@ Rectangle {
         } else {
             const id = dropText(clipboard.readText(), sx, sy); if (id !== "") ids = [id]
         }
+        joinFrameAt(ids, w.x, w.y)   // a paste inside a frame joins it, like a drop (2026-10-22)
         if (ids.length) selectMany(ids)
     }
     readonly property bool selectedIsFolder: selectedId !== "" && canvas.mediaElementKind(selectedId) === "folder"
