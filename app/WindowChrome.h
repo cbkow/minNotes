@@ -30,6 +30,12 @@ class WindowChrome : public QObject {
     Q_PROPERTY(bool captionButtons READ captionButtons CONSTANT) // Qt draws Windows' caption buttons over the row's right end
     Q_PROPERTY(bool nativeLights READ nativeLights CONSTANT)     // the native traffic lights sit in the row (macOS)
     Q_PROPERTY(bool alwaysOnTop READ alwaysOnTop WRITE setAlwaysOnTop NOTIFY alwaysOnTopChanged) // the pin
+    // Windows: Qt's caption strip measured at the WINDOW'S dpi, in logical px — the row's height and the width of
+    // the three buttons it must keep clear of. (QML's SafeArea.margins.top is Qt's title-bar height computed at 96
+    // dpi and then divided by the device pixel ratio: 24.8 on a 125 % screen where the buttons are really 31.2 tall
+    // and 139 wide — the row came out short and the spacer narrow. 2026-10-22.) 0 elsewhere.
+    Q_PROPERTY(qreal captionHeight READ captionHeight NOTIFY captionMetricsChanged)
+    Q_PROPERTY(qreal captionWidth READ captionWidth NOTIFY captionMetricsChanged)
 public:
     explicit WindowChrome(bool chromeless, QObject* parent = nullptr);
     bool chromeless() const { return chromeless_; }
@@ -38,6 +44,8 @@ public:
     // Apply what the flags can't once the window exists (macOS: hide the title text) and the remembered pin.
     void attach(QWindow* w);
     bool alwaysOnTop() const { return alwaysOnTop_; }
+    qreal captionHeight() const { return captionHeight_; }
+    qreal captionWidth() const { return captionWidth_; }
     // Remembered before the window exists (Settings restore), applied on attach; re-asserted after the OS
     // restores the window from fullscreen / a state change in case the platform plugin reset the level.
     void setAlwaysOnTop(bool on);
@@ -46,9 +54,13 @@ public:
     Q_INVOKABLE void toggleZoom(QWindow* w);
 signals:
     void alwaysOnTopChanged();
+    void captionMetricsChanged();
 private:
     bool chromeless_ = true;
     bool alwaysOnTop_ = false;
+    qreal captionHeight_ = 0;
+    qreal captionWidth_ = 0;
+    void updateCaptionMetrics();   // on attach, a screen change (dpi), a state change
     QWindow* window_ = nullptr;
     bool nativeWindow_ = false;   // the attached window is a real cocoa / win32 one (not the offscreen platform's)
     void applyAlwaysOnTop();
@@ -58,5 +70,6 @@ private:
 #endif
 #ifdef Q_OS_WIN
     void setTopmostWin(QWindow* w, bool on);   // WindowChrome_win.cpp
+    void captionMetricsWin(QWindow* w, qreal& height, qreal& width) const;
 #endif
 };

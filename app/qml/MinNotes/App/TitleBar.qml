@@ -14,8 +14,10 @@ Rectangle {
     readonly property bool lightsInset: windowChrome.nativeLights && win.visibility !== Window.FullScreen
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
     readonly property var appMenuButton: menuBtn            // probe
-    // Windows: Qt's title-bar height (32 at 100 %), so its caption glyphs centre on the row; elsewhere the house row.
-    height: windowChrome.captionButtons && win.SafeArea.margins.top > 0 ? win.SafeArea.margins.top : Theme.dim.tabRowH
+    // Windows: Qt's title-bar height at the window's dpi (32 at 100 %, 31.2 → 32 at 125 %), so its caption buttons
+    // sit inside the row (WindowChrome.captionHeight — NOT win.SafeArea.margins.top, which Qt computes at 96 dpi
+    // and then divides by the pixel ratio: 24.8 at 125 %, a row too short by a quarter); elsewhere the house row.
+    height: windowChrome.captionButtons && windowChrome.captionHeight > 0 ? Math.ceil(windowChrome.captionHeight) : Theme.dim.tabRowH
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
 
@@ -70,12 +72,12 @@ Rectangle {
         sourceComponent: PathBar { editor: bar.editor; color: "transparent" }
     }
 
-    // Windows: Qt draws and hit-tests the caption buttons here (three of titleBarHeight × 1.5 each, Qt's rule);
-    // the row just keeps clear of them.
+    // Windows: Qt draws and hit-tests the caption buttons here (three of titleBarHeight × 1.5 each, Qt's rule, at
+    // the window's dpi — WindowChrome.captionWidth); the row just keeps clear of them.
     Item {
         id: buttons
         anchors.right: parent.right; anchors.top: parent.top
         height: parent.height
-        width: windowChrome.captionButtons ? Math.round(win.SafeArea.margins.top * 4.5) : 0
+        width: windowChrome.captionButtons ? Math.ceil(windowChrome.captionWidth) : 0
     }
 }
