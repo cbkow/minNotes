@@ -21,6 +21,7 @@ public:
 
     bool enabled = true;
     bool hlOverlay = false;   // highlight spans drawn by the view, not as char bg
+    bool ignoreBold = false;  // a heading row: bold spans are not applied (the block's weight rules)
     QColor baseColor;         // a table cell's text colour (invalid = none)
     QColor markerColor         = QColor(0x01, 0x89, 0xf1);   // Theme.colors.accent
     QColor selectedMarkerColor = QColor(0xff, 0xff, 0xff);   // Theme.colors.textBright
@@ -96,6 +97,7 @@ protected:
         std::vector<QColor> fg(n), bg(n);  // per-char text colour / highlight (invalid = none)
         bool any = false;
         for (const SpanFmt& sp : spans) {
+            if (sp.k == 1 && ignoreBold) continue;
             const int ls = std::max(0, sp.s - pos), le = std::min(n, sp.e - pos);
             if (sp.k == 7) { for (int x = ls; x < le; ++x) { fg[x] = sp.color; any = true; } continue; }
             if (sp.k == 8) { for (int x = ls; x < le; ++x) { bg[x] = sp.color; any = true; } continue; }
@@ -188,6 +190,11 @@ bool InlineMarkdownHighlighter::highlightAsOverlay() const { return hl_->hlOverl
 void InlineMarkdownHighlighter::setHighlightAsOverlay(bool on) {
     if (hl_->hlOverlay == on) return;
     hl_->hlOverlay = on; emit highlightAsOverlayChanged(); hl_->rehighlight();
+}
+bool InlineMarkdownHighlighter::ignoreBold() const { return hl_->ignoreBold; }
+void InlineMarkdownHighlighter::setIgnoreBold(bool on) {
+    if (hl_->ignoreBold == on) return;
+    hl_->ignoreBold = on; emit ignoreBoldChanged(); hl_->rehighlight();
 }
 QString InlineMarkdownHighlighter::codeFontFamily() const { return hl_->codeFont; }
 void InlineMarkdownHighlighter::setCodeFontFamily(const QString& f) {

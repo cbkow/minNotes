@@ -178,6 +178,6 @@ Rectangle {
         text: page.active && page.tier < 2 ? (canvas.pagesRevision, page.pageModel ? page.pageModel.contentRevision : 0, canvas.pageTitle(page.elementId)) : ""
         elide: Text.ElideRight; maximumLineCount: 1
         color: Theme.colors.text
-        font.family: Theme.font.body; font.pixelSize: page.tier === 1 ? 28 : 20; font.bold: true
+        font.family: Theme.font.body; font.pixelSize: page.tier === 1 ? 28 : 20; font.weight: Theme.font.headingWeight   // the weight trial: the card title is a heading
     }
 }

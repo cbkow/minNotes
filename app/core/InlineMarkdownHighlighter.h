@@ -50,6 +50,9 @@ class InlineMarkdownHighlighter : public QObject {
     // highlighted runs — the colours those would pick for themselves defer to the cell's (walk 2:
     // "some text doesn't change colour" in a coloured row). Explicit text-colour spans still win.
     Q_PROPERTY(QString baseColor READ baseColor WRITE setBaseColor NOTIFY baseColorChanged)
+    // A HEADING row: its weight is the block's (the thin cut of the weight trial, 2026-10-23), so a bold span
+    // over its text — imports stamp one over every heading (QTextDocument headings are bold) — is not applied.
+    Q_PROPERTY(bool ignoreBold READ ignoreBold WRITE setIgnoreBold NOTIFY ignoreBoldChanged)
 public:
     explicit InlineMarkdownHighlighter(QObject* parent = nullptr);
 
@@ -84,6 +87,9 @@ public:
     QString baseColor() const;
     void setBaseColor(const QString& hex);
 
+    bool ignoreBold() const;
+    void setIgnoreBold(bool on);
+
 signals:
     void baseColorChanged();
     void documentChanged();
@@ -97,6 +103,7 @@ signals:
     void spansChanged();
     void linkColorChanged();
     void highlightAsOverlayChanged();
+    void ignoreBoldChanged();
 
 private:
     class Impl;                       // the actual QSyntaxHighlighter (in the .cpp)

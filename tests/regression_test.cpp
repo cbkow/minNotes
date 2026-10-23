@@ -8217,13 +8217,12 @@ static void testGridTableExports() {
     qputenv("MN_FONTS_DIR", QFileInfo(QStringLiteral(__FILE__)).dir().filePath(QStringLiteral("../app/qml/MinNotes/App/fonts")).toLocal8Bit());
     RecordingSink fs;
     html = ex.toHtml(Exporter::Options{}, fs);
-    CHECK(html.count(QStringLiteral("@font-face{font-family:'Aspekta'")) == 2
-              && html.count(QStringLiteral("@font-face{font-family:'PT Serif'")) == 4
-              && html.contains(QStringLiteral("@font-face{font-family:'JetBrains Mono'"))
-              && html.contains(QStringLiteral("main p{font:15px/20px 'PT Serif'"))
+    CHECK(html.count(QStringLiteral("@font-face{font-family:'Geist'")) == 7
+              && html.count(QStringLiteral("@font-face{font-family:'Geist Mono'")) == 2
+              && html.contains(QStringLiteral("main p{font:500 14px/19px Geist,"))
               && html.contains(QStringLiteral("format('truetype')")),
-          "HTML: Aspekta ×2, PT Serif ×4 and JetBrains Mono embed as @font-face data; paragraphs are PT Serif 15/20");
-    CHECK(html.contains(QStringLiteral("font:14px/19px Aspekta,")) && html.contains(QStringLiteral("h1{font-size:30px;line-height:41px}"))
+          "HTML: Geist ×7 and Geist Mono ×2 embed as @font-face data; paragraphs are Geist Medium 14/19 (the 2026-10-23 type pass)");
+    CHECK(html.contains(QStringLiteral("font:500 14px/19px Geist,")) && html.contains(QStringLiteral("h1{font-size:33px;line-height:45px}"))
               && html.contains(QStringLiteral("main .blkw{margin:0;padding:6px 0}")) && html.contains(QStringLiteral("ul{margin:0;padding-left:22px}ol{margin:0;padding-left:34px}")),
           "HTML: the app's sizes, pinned line heights, block inset and list insets");
     for (int c = 0; c < 3; ++c) m.setTableColumnWidth(head, c, 400);   // 1200 wide: 440 past the page

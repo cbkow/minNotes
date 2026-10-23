@@ -718,7 +718,9 @@ std::vector<BlockModel::BlockSpec> Importer::specsFromTextDocument(
             if (cf.isAnchor() && !cf.anchorHref().isEmpty()) {
                 spans.push_back({s, e, BlockModel::SpanLink, cf.anchorHref()});
             } else {
-                if (cf.fontWeight() >= QFont::Bold) spans.push_back({s, e, BlockModel::SpanBold, {}});
+                // A heading is bold by style in a QTextDocument; that is the block's weight, not a span (2026-10-23 —
+                // the stamped spans defeated the thin heading cut; older documents still carry them, the view ignores them).
+                if (cf.fontWeight() >= QFont::Bold && btype != BlockModel::Heading) spans.push_back({s, e, BlockModel::SpanBold, {}});
                 if (cf.fontItalic())                spans.push_back({s, e, BlockModel::SpanItalic, {}});
                 if (cf.fontUnderline())             spans.push_back({s, e, BlockModel::SpanUnderline, {}});
                 if (cf.fontFixedPitch())            spans.push_back({s, e, BlockModel::SpanCode, {}});

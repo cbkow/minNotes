@@ -30,6 +30,7 @@ the `Licenses` folder beside the executable on Windows).
 | PT Serif | typeface (body paragraphs) | SIL OFL 1.1 |
 | Inter | typeface (window chrome) | SIL OFL 1.1 |
 | JetBrains Mono | typeface (code) | SIL OFL 1.1 |
+| Geist / Geist Mono | typeface (sans + code) | SIL OFL 1.1 |
 | Lora | typeface (bundled alternative serif) | SIL OFL 1.1 |
 | Hunspell 1.7.3 | spelling engine | LGPL-2.1 (of its MPL 1.1 / GPL 2.0 / LGPL 2.1 tri-license) |
 | SCOWL word lists (2026.02.25) | the US + UK dictionary | SCOWL notice (below) |

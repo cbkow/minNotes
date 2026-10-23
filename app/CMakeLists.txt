@@ -274,6 +274,19 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/fonts/PTSerif-Bold.ttf
         qml/MinNotes/App/fonts/PTSerif-Italic.ttf
         qml/MinNotes/App/fonts/PTSerif-BoldItalic.ttf
+        qml/MinNotes/App/fonts/Geist-Regular.ttf
+        qml/MinNotes/App/fonts/Geist-Bold.ttf
+        qml/MinNotes/App/fonts/Geist-Italic.ttf
+        qml/MinNotes/App/fonts/Geist-BoldItalic.ttf
+        qml/MinNotes/App/fonts/Geist-Light.ttf
+        qml/MinNotes/App/fonts/Geist-LightItalic.ttf
+        qml/MinNotes/App/fonts/Geist-Medium.ttf
+        qml/MinNotes/App/fonts/Geist-MediumItalic.ttf
+        qml/MinNotes/App/fonts/Geist-SemiBold.ttf
+        qml/MinNotes/App/fonts/GeistMono-Regular.ttf
+        qml/MinNotes/App/fonts/GeistMono-Bold.ttf
+        qml/MinNotes/App/fonts/GeistMono-Italic.ttf
+        qml/MinNotes/App/fonts/GeistMono-BoldItalic.ttf
 )
 
 # core/ is on the include path too so the generated QML type registration can

@@ -15,7 +15,7 @@ editor is a virtualized Qt Quick surface that owns the page model directly.
 | Canvas | pages as drag-sized cards (edit in place at any zoom, or full-window), media elements (video with the full transport, PDF paging, images, audio, folders, files, bookmarks), ink and shapes with live restyling, marquee / multi-select / z order, a second undo log routed by focus, HTML export with pan/zoom + tabs and a PNG poster |
 | Media | inline images, video (decode + scrub/skim audio + annotate), inline PDF, file attachments — inline in pages and as canvas cards |
 | Ink | canvas drawing tools on single keys, on-video annotations (QCView-interop), drawing on PDF pages |
-| Page | responsive width (the window's, or a 640/760/880 measure), one path bar (`File › Canvas › Page › Frame`), a mode-switched toolbar, PT Serif body paragraphs |
+| Page | responsive width (the window's, or a 640/760/880 measure), one path bar (`File › Canvas › Page › Frame`), a mode-switched toolbar, Geist type (Light headings over Medium body copy, Geist Mono code) |
 | Import | Markdown, txt, CSV/TSV, HTML, DOCX, Excel `.xlsx`, OpenDocument `.odt`/`.ods`, source-code files, RTF (macOS), Evernote `.enex`, Notion exports |
 | Export | Markdown (+`.assets/`), self-contained fluid HTML (readable-width toggle, checkable tasks, lightbox), DOCX, PDF (tables print in column bands like a spreadsheet, header rows repeated), the canvas as HTML (tab strip, video-note filmstrips) or a PNG poster, `.mnpkg` sealed packages (media inside, video streams from the archive) |
 | Cross-OS | OS-neutral path mappings for referenced media, multi-file switcher, `.mnd`/`.mnpkg` file associations |
@@ -85,8 +85,8 @@ redistributes (Qt LGPL-3.0, FFmpeg LGPL-2.1+, KSyntaxHighlighting MIT,
 ink-stroke-modeler Apache-2.0, SoundTouch LGPL-2.1, Hunspell LGPL-2.1 (of its
 MPL/GPL/LGPL tri-license), SCOWL word lists (permissive SCOWL notice),
 LanguageTool rule data LGPL-2.1, miniz MIT, psd_sdk BSD-2-Clause, stb_image MIT,
-Sparkle / WinSparkle MIT, Phosphor MIT, the Aspekta / PT Serif / Inter / Lora /
-JetBrains Mono typefaces SIL OFL 1.1, SQLite public domain). The same texts ship inside the app
+Sparkle / WinSparkle MIT, Phosphor MIT, the Geist / Geist Mono / Aspekta / PT Serif / Inter /
+Lora / JetBrains Mono typefaces SIL OFL 1.1, SQLite public domain). The same texts ship inside the app
 (`Contents/Resources/Licenses` on macOS, `Licenses\` beside the exe on
 Windows) and are reproduced at <https://minnotes.app/licenses/>.
 [`LICENSES/THIRD_PARTY_NOTICES.txt`](LICENSES/THIRD_PARTY_NOTICES.txt) is the

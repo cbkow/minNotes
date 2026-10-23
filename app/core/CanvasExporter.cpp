@@ -156,10 +156,10 @@ const char* kCanvasCss = R"CSS(
 html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)}
 .el.frame{--tint:#4a4a4a;box-sizing:border-box;border-radius:6px;border:1px solid color-mix(in srgb,var(--tint) 90%,transparent);background:color-mix(in srgb,var(--tint) 18%,transparent)}
 .el.frame.tinted{border-color:color-mix(in srgb,var(--tint) 50%,transparent);background:color-mix(in srgb,var(--tint) 10%,transparent)}
-.el.frame .ftitle{height:28px;padding:0 10px;font:600 13px/28px Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#8a8a8a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--tint) 22%,transparent);border-radius:6px 6px 0 0}
+.el.frame .ftitle{height:28px;padding:0 10px;font:600 13px/28px Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#8a8a8a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--tint) 22%,transparent);border-radius:6px 6px 0 0}
 .el.frame.tinted .ftitle{color:var(--tint);background:color-mix(in srgb,var(--tint) 12%,transparent)}
 #mn-tabs{position:fixed;top:0;left:0;right:0;height:30px;z-index:5;display:flex;align-items:stretch;background:#151514;border-bottom:1px solid var(--border);
-font:13px/1 Inter,Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
+font:13px/1 Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
 #mn-tabs .tabs{display:flex;align-items:stretch;flex:1 1 auto;min-width:0;overflow:hidden}
 #mn-tabs .tab{display:flex;align-items:center;gap:8px;max-width:260px;padding:0 12px;border:0;border-right:1px solid var(--border);background:transparent;color:var(--muted);font:inherit;cursor:pointer;white-space:nowrap}
 #mn-tabs .tab span{overflow:hidden;text-overflow:ellipsis}
@@ -202,7 +202,7 @@ a.ufblink{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
 .card .name,.card .path,.card .meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 a.bookmark{color:inherit;text-decoration:none}
 svg.el{overflow:visible}
-.text{white-space:pre-wrap;color:var(--text);font-family:'Aspekta',system-ui,sans-serif;line-height:1.4}
+.text{white-space:pre-wrap;color:var(--text);font-family:'Geist',system-ui,sans-serif;line-height:1.4}
 .text.auto{white-space:pre}
 #mn-reader{position:fixed;left:0;right:0;top:30px;bottom:0;overflow:auto;background:var(--bg)}
 #mn-reader[hidden],#mn-store{display:none}
@@ -479,7 +479,7 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
             QColor line = tint; line.setAlphaF(tintS.isEmpty() ? 0.9 : 0.5);
             p.fillRect(r, fill);
             p.setPen(QPen(line, 1)); p.setBrush(Qt::NoBrush); p.drawRect(r);
-            QFont tf(QStringLiteral("Aspekta")); tf.setPixelSize(std::max(4, int(std::round(13 * s)))); tf.setBold(true);
+            QFont tf(QStringLiteral("Geist")); tf.setPixelSize(std::max(4, int(std::round(13 * s)))); tf.setBold(true);
             p.setFont(tf); p.setPen(tintS.isEmpty() ? muted : tint);
             p.drawText(QRectF(r.x() + 10 * s, r.y(), std::max(1.0, r.width() - 20 * s), 28 * s), Qt::AlignVCenter | Qt::AlignLeft, o.value(QStringLiteral("title")).toString());
             continue;
@@ -489,7 +489,7 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
             p.setPen(QPen(border, 1)); p.setBrush(Qt::NoBrush); p.drawRect(r);
             BlockModel* m = c->pageModel(e.id);
             const double inset = 24 * s;
-            QFont tf(QStringLiteral("Aspekta")); tf.setPixelSize(std::max(4, int(std::round(28 * s)))); tf.setBold(true);
+            QFont tf(QStringLiteral("Geist")); tf.setPixelSize(std::max(4, int(std::round(28 * s)))); tf.setWeight(QFont::Light);   // the weight trial: a page title is a heading
             p.setFont(tf); p.setPen(text);
             const QString title = c->pageTitle(e.id);
             const QRectF tr(r.x() + inset, r.y() + inset, r.width() - 2 * inset, 40 * s);
@@ -523,7 +523,7 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
                 else { const double nh = dst.width() / ar; dst = QRectF(dst.x(), dst.y() + (dst.height() - nh) / 2, dst.width(), nh); }
                 p.drawImage(dst, thumb);
             } else {
-                QFont f(QStringLiteral("Aspekta")); f.setPixelSize(std::max(4, int(std::round(14 * s))));
+                QFont f(QStringLiteral("Geist")); f.setPixelSize(std::max(4, int(std::round(14 * s))));
                 p.setFont(f); p.setPen(text);
                 if (f.pixelSize() >= 6) p.drawText(r.adjusted(12 * s, 0, -12 * s, 0), Qt::AlignLeft | Qt::AlignVCenter, QFontMetricsF(f).elidedText(nameOf(md), Qt::ElideMiddle, r.width() - 24 * s));
             }
@@ -536,7 +536,7 @@ QImage CanvasExporter::toPoster(const Options& opt) const {
             const QJsonObject o = QJsonDocument::fromJson(e.json.toUtf8()).object();
             if (o.value(QStringLiteral("shape")).toString() == QLatin1String("text")) {
                 const double size = o.value(QStringLiteral("fontSize")).toDouble(14);
-                QFont f(QStringLiteral("Aspekta")); f.setPixelSize(std::max(2, int(std::round(size * s))));
+                QFont f(QStringLiteral("Geist")); f.setPixelSize(std::max(2, int(std::round(size * s))));
                 const TextChipLook look = textChipLook(o);
                 if (!look.plain) p.fillRect(r, look.fill);
                 p.setFont(f); p.setPen(look.text.isValid() ? look.text : text);

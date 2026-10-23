@@ -294,9 +294,12 @@ QString parseParagraph(QXmlStreamReader& xml, Ctx& c, bool cellTextMode) {
         sp.spans = spans;
         int level = pp.headingLevel;
         if (level == 0 && pp.anyText && pp.uniformBold && pp.uniformHalfPt > 0) {
-            static const int half[6] = {36, 32, 28, 26, 24, 22};
-            for (int i = 0; i < 6; ++i)
-                if (pp.uniformHalfPt == half[i]) { level = i + 1; break; }
+            // The exporter's heading sizes — the current table first, then the pre-2026-10-23 one (older exports).
+            static const int half[6] = {40, 34, 29, 24, 22, 20}, legacy[6] = {36, 32, 28, 26, 24, 22};
+            for (int i = 0; i < 6 && level == 0; ++i)
+                if (pp.uniformHalfPt == half[i]) level = i + 1;
+            for (int i = 0; i < 6 && level == 0; ++i)
+                if (pp.uniformHalfPt == legacy[i]) level = i + 1;
         }
         if (level > 0) {
             sp.type = BlockModel::Heading;

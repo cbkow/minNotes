@@ -599,7 +599,7 @@ Item {
         // isMedia/maxWidth bindings document.
         readonly property int btype: (cell.rev,
                                       cell.active ? blockModel.typeForRow(cell.logicalRow) : 0)
-        readonly property var headingSizes: [26, 30, 26, 22, 19, 17, 16]   // index by level (1–6)
+        readonly property var headingSizes: [26, 33, 28, 24, 20, 18, 16]   // index by level (1–6); a notch up for the thin cut (2026-10-23; was 30/26/22/19/17/16)
         color: cell.cellFg !== "" ? cell.cellFg
              : btype === 1 ? Theme.colors.textBright
              : btype === 2 ? Theme.colors.codeText
@@ -616,7 +616,10 @@ Item {
             if (btype !== 1 || !cell.active) return Theme.font.sizeBody
             return headingSizes[Math.max(1, Math.min(6, blockModel.levelForRow(cell.logicalRow)))]
         }
-        font.bold: btype === 1 || cell.headerCell
+        font.weight: btype === 1 ? Theme.font.headingWeight            // headings: the trial's thin cut
+                   : cell.headerCell ? Font.Bold
+                   : btype === 2 ? Font.Normal                           // code: the mono's Regular
+                   : Theme.font.bodyWeight                               // body copy (paragraphs, lists, tasks, quotes, cells): Medium
         font.strikeout: btype === 8 && taskState === 2   // done task
         // Deterministic line height: TextEdit's natural single-line
         // implicitHeight rounds to 19 OR 20px for the same body text (a Qt
@@ -658,6 +661,7 @@ Item {
         codeColor: Theme.colors.inlineCodeText
         linkColor: Theme.colors.accent
         codeFontFamily: Theme.font.mono
+        ignoreBold: te.btype === 1   // a heading's weight is the block's; imported bold spans over it do not apply
         // NOTE: selection does NOT drive marker recolouring here.
         // Binding selStart/selEnd to the selection re-highlights the
         // block on every selection change, which re-lays-out it mid-

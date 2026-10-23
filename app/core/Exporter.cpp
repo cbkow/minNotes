@@ -1268,13 +1268,16 @@ private:
 static QString embeddedFontCss() {
     struct Face { const char* family; int weight; const char* style; const char* file; };
     static const Face faces[] = {
-        { "Aspekta",        400, "normal", "Aspekta-400.ttf" },
-        { "Aspekta",        700, "normal", "Aspekta-700.ttf" },
-        { "JetBrains Mono", 400, "normal", "JetBrainsMono-Regular.ttf" },
-        { "PT Serif",       400, "normal", "PTSerif-Regular.ttf" },      // body paragraphs (the 2026-10-18 type pass)
-        { "PT Serif",       400, "italic", "PTSerif-Italic.ttf" },
-        { "PT Serif",       700, "normal", "PTSerif-Bold.ttf" },
-        { "PT Serif",       700, "italic", "PTSerif-BoldItalic.ttf" },
+        // GEIST TRIAL (2026-10-23): one sans + one mono (Geist 1.8.2, OFL) — the app's faces
+        { "Geist",          400, "normal", "Geist-Regular.ttf" },
+        { "Geist",          400, "italic", "Geist-Italic.ttf" },
+        { "Geist",          700, "normal", "Geist-Bold.ttf" },
+        { "Geist",          700, "italic", "Geist-BoldItalic.ttf" },
+        { "Geist",          300, "normal", "Geist-Light.ttf" },          // headings (the weight trial, 2026-10-23)
+        { "Geist",          500, "normal", "Geist-Medium.ttf" },         // body copy
+        { "Geist",          500, "italic", "Geist-MediumItalic.ttf" },
+        { "Geist Mono",     400, "normal", "GeistMono-Regular.ttf" },
+        { "Geist Mono",     700, "normal", "GeistMono-Bold.ttf" },
     };
     QString out;
     for (const Face& f : faces) {
@@ -1314,12 +1317,12 @@ html{background:var(--bg)}
    round(size × 1.35), and every block carries the app's 6 px top/bottom inset (code 12) —
    so Qt and the browser wrap at the same words and page ink lands on the same glyphs. */
 body{background:transparent;color:var(--text);margin:0;
-font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+font:500 14px/19px Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 main p,main h1,main h2,main h3,main h4,main h5,main h6,main li,main figure,main .blkw{margin:0;padding:6px 0}
 /* The type pass (2026-10-18): body PARAGRAPHS in PT Serif at 15/20 (the app's serif size and its pinned
    round(15 × 1.35) line height); headings, lists, quotes, table cells, notes and cards keep the sans. */
-main p{font:15px/20px 'PT Serif',Georgia,'Times New Roman',serif}
-main :is(td,th,blockquote,figure,figcaption,header,.notes,.note,.vnotes,.vn,.card,.chip) p{font:14px/19px Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+main p{font:500 14px/19px Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}   /* GEIST TRIAL: paragraphs in the sans, the body size, Medium */
+main :is(td,th,blockquote,figure,figcaption,header,.notes,.note,.vnotes,.vn,.card,.chip) p{font:500 14px/19px Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
 /* FLUID page (2026-10-18): the app's page is its window's width, so the export's is too — the app's
    48 px margins, no centred sheet. The readable-measure CAP (the app's 760 + margins) is the reader's
    toggle in the header (html.cap; remembered per browser), mirroring View ▸ Full width in the app.
@@ -1356,12 +1359,13 @@ img.ink{pointer-events:none}
 .inkwrap img{display:block;max-width:100%}
 .inkwrap .ink{position:absolute;inset:0;width:100%;z-index:1;background:transparent}
 ::selection{background:var(--sel);color:var(--bright)}
-h1,h2,h3,h4,h5,h6{color:var(--bright);font-weight:700}
-h1{font-size:30px;line-height:41px}h2{font-size:26px;line-height:35px}h3{font-size:22px;line-height:30px}
-h4{font-size:19px;line-height:26px}h5{font-size:17px;line-height:23px}h6{font-size:16px;line-height:22px}
+h1,h2,h3,h4,h5,h6{color:var(--bright);font-weight:300}   /* the weight trial: thin headings */
+:is(h1,h2,h3,h4,h5,h6) strong{font-weight:inherit}   /* older documents carry a bold span over every imported heading */
+h1{font-size:33px;line-height:45px}h2{font-size:28px;line-height:38px}h3{font-size:24px;line-height:32px}
+h4{font-size:20px;line-height:27px}h5{font-size:18px;line-height:24px}h6{font-size:16px;line-height:22px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 hr{border:0;border-top:1px solid var(--divider);margin:14px 0 15px}   /* the app's 30 px divider row */
-blockquote{font-family:Aspekta,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;border-left:3px solid var(--quote);
+blockquote{font-family:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;border-left:3px solid var(--quote);
 margin:0;padding:6px 0 6px 19px;color:var(--muted)}   /* text at 22 = the app's quote inset */
 blockquote p{padding:0}
 /* Code escapes the measure like tables do (user ruling: capping code is
@@ -1372,8 +1376,8 @@ main .blkw{padding:0}   /* the pre carries the 12 px inset itself */
 /* The code block's LANGUAGE (2026-10-18): the app's top-right chip — mono 11, muted, a 1-px border, no radius. */
 pre{position:relative}
 pre[data-lang]::before{content:attr(data-lang);position:absolute;top:-5px;right:8px;height:18px;padding:0 7px;
-font:11px/16px 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border)}
-code{font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+font:11px/16px 'Geist Mono',ui-monospace,Menlo,Consolas,monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border)}
+code{font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;font-weight:400}
 :not(pre)>code{background:var(--chipbg);color:var(--chiptext);padding:1px 5px}
 img{max-width:100%}
 /* Lists: the app's text insets — bullets and tasks at 22 + 24 per depth, numbered at 34 + 24
@@ -2093,7 +2097,7 @@ void docxRunProps(QXmlStreamWriter& w, const DocxRunProps& rp) {
         return;
     w.writeStartElement(QStringLiteral("w:rPr"));
     if (rp.code || rp.serif) {
-        const QString fam = rp.code ? QStringLiteral("Courier New") : QStringLiteral("PT Serif");
+        const QString fam = rp.code ? QStringLiteral("Courier New") : QStringLiteral("Geist");   // GEIST TRIAL (was PT Serif)
         w.writeStartElement(QStringLiteral("w:rFonts"));
         w.writeAttribute(QStringLiteral("w:ascii"), fam);
         w.writeAttribute(QStringLiteral("w:hAnsi"), fam);
@@ -2300,7 +2304,7 @@ namespace {
 // ---- Whole-document writers ----
 
 void docxHeading(DocxCtx& c, QXmlStreamWriter& w, int row, int level) {
-    static const int half[7] = {0, 36, 32, 28, 26, 24, 22};
+    static const int half[7] = {0, 40, 34, 29, 24, 22, 20};   // the 2026-10-23 bump (was 36/32/28/26/24/22)
     DocxRunProps rp;
     rp.b = true;
     rp.halfPtSize = half[std::clamp(level, 1, 6)];
@@ -2910,7 +2914,7 @@ constexpr qreal kPdfBodyPt = 10.5;     // the app's 14px body at 96 dpi (doc def
 constexpr qreal kPdfCellPt = 6.0;      // table cells: smaller, so more copy fits (2026-09-15, "even smaller on both")
 
 QStringList pdfMonoFamilies() {
-    return {QStringLiteral("JetBrains Mono"), QStringLiteral("Menlo"),
+    return {QStringLiteral("Geist Mono"), QStringLiteral("Menlo"),
             QStringLiteral("Consolas"), QStringLiteral("Courier New")};
 }
 
@@ -3371,13 +3375,13 @@ void buildPdfDoc(PdfCtx& c) {
         case BlockModel::Heading: {
             endList();
             const int lvl = std::clamp(m->levelForRow(row), 1, 6);
-            static const qreal pts[6] = {20, 16, 13.5, 12, 11, 10.5};
+            static const qreal pts[6] = {22, 17.5, 15, 13, 12, 11};   // the 2026-10-23 bump (was 20/16/13.5/12/11/10.5)
             const bool inCell = c.cellPt > 0;
             QTextBlockFormat bf;
             bf.setTopMargin(inCell ? 4 : (lvl <= 2 ? 16 : 12));
             bf.setBottomMargin(inCell ? 1 : 4);
             QTextCharFormat f;
-            f.setFontWeight(QFont::Bold);
+            f.setFontWeight(QFont::Light);   // the weight trial (2026-10-23): thin headings, as the app
             f.setFontPointSize(inCell ? pts[lvl - 1] * c.cellPt / kPdfBodyPt : pts[lvl - 1]);
             f.setForeground(QColor(0x10, 0x10, 0x10));
             c.newBlock(bf, f);
@@ -3453,8 +3457,8 @@ void buildPdfDoc(PdfCtx& c) {
             if (cellFg.isValid()) f.setForeground(cellFg);
             if (c.cellPt > 0) f.setFontPointSize(c.cellPt);
             else {   // a body paragraph (not a table cell): the serif at the app's 15 px (the type pass, 2026-10-18)
-                f.setFontFamilies({ QStringLiteral("PT Serif"), QStringLiteral("Georgia"), QStringLiteral("Times New Roman") });
-                f.setFontPointSize(11.25);
+                f.setFontFamilies({ QStringLiteral("Geist"), QStringLiteral("Helvetica"), QStringLiteral("Arial") });   // GEIST TRIAL: the sans at the body size (was PT Serif 15 px)
+                f.setFontPointSize(10.5);
             }
             c.newBlock(bf, f);
             if (tableHead >= 0 && lane >= 0 && tableR >= m->headerCount(tableHead)
@@ -3496,7 +3500,7 @@ void buildPdfDoc(PdfCtx& c) {
         // kPdfWordCapW: a token longer than this (a URL, a file name) wraps mid-word rather than
         // widening its column.
         constexpr qreal kPdfMaxColW = 260, kPdfImgColW = 140, kPdfImgMinW = 72, kPdfWordCapW = 120;
-        const QFontMetricsF fm([] { QFont f(QStringLiteral("Aspekta")); f.setPixelSize(qRound(kPdfCellPt * 96.0 / 72.0)); return f; }());
+        const QFontMetricsF fm([] { QFont f(QStringLiteral("Geist")); f.setPixelSize(qRound(kPdfCellPt * 96.0 / 72.0)); return f; }());
         const qreal inner = 2 * kPad + 2;                // padding + a hair, both sides
         std::vector<qreal> w(static_cast<size_t>(cols), 0.0), ideal(static_cast<size_t>(cols), 0.0), lo(static_cast<size_t>(cols), 0.0);
         std::vector<char> mediaCol(static_cast<size_t>(cols), 0);
@@ -3713,7 +3717,7 @@ bool Exporter::toPdf(const Options& opt, QIODevice& out) const {
 
     QTextDocument doc;
     doc.setDocumentMargin(0);   // margins live on the WRITER only (double-apply risk)
-    QFont body(QStringLiteral("Aspekta"));
+    QFont body(QStringLiteral("Geist"));
     body.setPointSizeF(10.5);   // the app's 14px body at 96 dpi
     doc.setDefaultFont(body);
 

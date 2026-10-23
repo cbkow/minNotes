@@ -368,7 +368,7 @@ const BlockModel::TableInfo* BlockModel::tableInfo(int head) const {
 // body font, the head row reserving the sort-glyph slot, + padding, clamped [48, 360].
 static double tableTextWidth(const QString& text) {
     static const QFontMetricsF fm = [] {
-        QFont f(QStringLiteral("Aspekta"));
+        QFont f(QStringLiteral("Geist"));
         f.setPixelSize(14);
         return QFontMetricsF(f);
     }();
@@ -5408,7 +5408,7 @@ double BlockModel::textHeightEstimate(std::size_t i, double w) const {
     const Row& r = rows_[i];
     double avgChar = 7.2, lineH = kLine, indent = 0.0;
     if (r.type == Heading) {
-        static const double sz[6] = { 30, 26, 22, 19, 17, 16 }, lh[6] = { 41, 35, 30, 26, 23, 22 };
+        static const double sz[6] = { 33, 28, 24, 20, 18, 16 }, lh[6] = { 45, 38, 32, 27, 24, 22 };   // BlockView.headingSizes × 1.35 (the 2026-10-23 bump)
         const int l = std::clamp(int(r.level), 1, 6) - 1;
         avgChar = 0.52 * sz[l]; lineH = lh[l];
     } else if (r.type == ListItem || r.type == TaskListItem) indent = 22.0 + 24.0 * r.depth;

@@ -99,6 +99,28 @@ QtObject {
     readonly property FontLoader interItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-Italic.ttf") }
     readonly property FontLoader interBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Inter_18pt-BoldItalic.ttf") }  // so bold+italic has a real face
     readonly property FontLoader monoFontLoader:  FontLoader { source: Qt.resolvedUrl("fonts/JetBrainsMono-Regular.ttf") }
+    // GEIST TRIAL (2026-10-23): one sans + one mono for EVERY role — chrome, document body, paragraphs
+    // (the serif trial yields), code. Geist 1.8.2 (Vercel, OFL), static faces so bold / italic / bold-italic
+    // resolve to real cuts. Flip `geist` to false to get Inter / Aspekta / PT Serif / JetBrains Mono back.
+    readonly property bool geist: true
+    readonly property FontLoader geistFont:           FontLoader { source: Qt.resolvedUrl("fonts/Geist-Regular.ttf") }
+    readonly property FontLoader geistBoldFont:       FontLoader { source: Qt.resolvedUrl("fonts/Geist-Bold.ttf") }
+    readonly property FontLoader geistItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/Geist-Italic.ttf") }
+    readonly property FontLoader geistBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Geist-BoldItalic.ttf") }
+    // The weight trial (2026-10-23): Light for headings, Medium for body copy — the cuts in between.
+    readonly property FontLoader geistLightFont:        FontLoader { source: Qt.resolvedUrl("fonts/Geist-Light.ttf") }
+    readonly property FontLoader geistLightItalicFont:  FontLoader { source: Qt.resolvedUrl("fonts/Geist-LightItalic.ttf") }
+    readonly property FontLoader geistMediumFont:       FontLoader { source: Qt.resolvedUrl("fonts/Geist-Medium.ttf") }
+    readonly property FontLoader geistMediumItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/Geist-MediumItalic.ttf") }
+    readonly property FontLoader geistSemiBoldFont:     FontLoader { source: Qt.resolvedUrl("fonts/Geist-SemiBold.ttf") }
+    // Qt files every cut under the one family "Geist" (verified 2026-10-23), so a weight number picks the cut.
+    // `--heading-weight=N` / `--body-weight=N` (300 … 700) override the trial's picks without a rebuild.
+    readonly property string headingWeightArg: { const a = Qt.application.arguments.find(function(x) { return x.indexOf("--heading-weight=") === 0 }); return a ? a.substring(17) : "" }
+    readonly property string bodyWeightArg:    { const a = Qt.application.arguments.find(function(x) { return x.indexOf("--body-weight=") === 0 }); return a ? a.substring(14) : "" }
+    readonly property FontLoader geistMonoFont:           FontLoader { source: Qt.resolvedUrl("fonts/GeistMono-Regular.ttf") }
+    readonly property FontLoader geistMonoBoldFont:       FontLoader { source: Qt.resolvedUrl("fonts/GeistMono-Bold.ttf") }
+    readonly property FontLoader geistMonoItalicFont:     FontLoader { source: Qt.resolvedUrl("fonts/GeistMono-Italic.ttf") }
+    readonly property FontLoader geistMonoBoldItalicFont: FontLoader { source: Qt.resolvedUrl("fonts/GeistMono-BoldItalic.ttf") }
     // Aspekta (document body). The static 400/700 faces share the legacy family
     // "Aspekta 400" (Regular + Bold), so font.bold resolves the 700 face — needed
     // for headings. No italic face: italic body text synthesizes (oblique).
@@ -138,13 +160,17 @@ QtObject {
     }
 
     readonly property QtObject font: QtObject {
-        readonly property string family: theme.interFont.name        // Inter (chrome)
-        readonly property string body:   theme.aspektaFont.name      // Aspekta (document body)
-        readonly property string mono:   theme.monoFontLoader.name   // JetBrains Mono (bundled)
+        readonly property string family: theme.geist ? theme.geistFont.name : theme.interFont.name        // Inter (chrome) — Geist in the trial
+        readonly property string body:   theme.geist ? theme.geistFont.name : theme.aspektaFont.name      // Aspekta (document body) — Geist in the trial
+        readonly property string mono:   theme.geist ? theme.geistMonoFont.name : theme.monoFontLoader.name   // JetBrains Mono (bundled) — Geist Mono in the trial
         readonly property string serif:  theme.serifArg !== "" && !theme.serifArgIsFile ? theme.serifArg
                                        : theme.serifArg === "lora" ? theme.serifFont.name : theme.ptSerifFont.name   // PT Serif (the 2026-10-18 pick) — Lora via --serif-font=lora, or the trial's --serif-font
         readonly property int sizeSerif: theme.serifSizeArg !== "" ? parseInt(theme.serifSizeArg) : 15   // body paragraphs in the serif (PT Serif's x-height wants a point over the sans's 14)
-        readonly property bool bodySerif: true                       // TRIAL 2026-10-18: body copy (paragraphs, lists, tasks) in the serif; headings / quotes / cells / chrome stay sans
+        readonly property bool bodySerif: !theme.geist               // TRIAL 2026-10-18: body copy (paragraphs, lists, tasks) in the serif; headings / quotes / cells / chrome stay sans. OFF in the Geist trial (one sans everywhere)
+        // The weight trial (2026-10-23): headings THIN (Light 300), body copy MEDIUM (500); chrome stays Regular,
+        // code stays Regular (Geist Mono ships only its Regular / Bold cuts here), table header cells stay Bold.
+        readonly property int headingWeight: theme.headingWeightArg !== "" ? parseInt(theme.headingWeightArg) : (theme.geist ? Font.Light : Font.Bold)
+        readonly property int bodyWeight:    theme.bodyWeightArg !== "" ? parseInt(theme.bodyWeightArg) : (theme.geist ? Font.Medium : Font.Normal)
         readonly property int sizeSmall: 12  // captions
         readonly property int sizeChrome: 13 // panel/toolbar labels (was a bare literal ~20 places)
         readonly property int sizeBody: 14   // a notch above the 13px kanban/tab tier
