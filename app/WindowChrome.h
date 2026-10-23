@@ -1,6 +1,7 @@
 // WindowChrome — the chromeless window (cleanup, 2026-10-21). The native title bar is gone; the path-bar row
-// (TitleBar.qml) is the title bar: every stretch of it no control claims drags the window, a double-click
-// zooms. "As native as possible" (user ruling):
+// (TitleBar.qml) is the title bar: every stretch of it drags the window — the bare stretches through the row's
+// handle / the native caption, the controls through DragMouseArea.qml (2026-10-23, the ufb model: a press that
+// moves a few px becomes the move) — and a double-click on a bare stretch zooms. "As native as possible" (user ruling):
 //   macOS   — the window keeps its titled style with Qt's ExpandedClientAreaHint + NoTitleBarBackgroundHint
 //             (set in Main.qml): the content extends under a transparent title bar, the NATIVE traffic lights
 //             stay (native zoom / fullscreen / tiling keep working), and the row insets its content past them.

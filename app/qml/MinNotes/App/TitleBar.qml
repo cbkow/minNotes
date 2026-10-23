@@ -1,9 +1,10 @@
 // The TITLE BAR (cleanup 2026-10-21 — the chromeless window, see WindowChrome.h): the one row that is always
 // there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app MENU
 // button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
-// only while a document is open) · on Windows the space Qt's caption buttons occupy. Every stretch of the row no
-// control claims DRAGS the window (ruling: all non-tab space), a double-click zooms — on macOS through our own
-// handle (the drag starts after a small movement, so clicks stay clicks), on Windows natively.
+// only while a document is open) · on Windows the space Qt's caption buttons occupy. The WHOLE row drags the window
+// (2026-10-23, the ufb model): the bare stretches through the handle below (macOS; Windows natively) and the controls
+// through DragMouseArea — a press that moves a few px is handed to the OS move loop, so clicks stay clicks and the
+// path's long file name is drag surface too. A double-click on a bare stretch zooms.
 import QtQuick
 import QtQuick.Controls
 
@@ -23,7 +24,8 @@ Rectangle {
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
 
-    // The move handle (macOS): under everything else in the row, so a press on a segment / button never reaches it.
+    // The move handle (macOS): under everything else in the row — the controls above it are DragMouseAreas, so a
+    // press on a segment / button drags through them instead.
     // Windows needs none — a press no item accepts is the native caption (Qt's expanded-client-area hit test).
     MouseArea {
         id: drag
@@ -59,7 +61,7 @@ Rectangle {
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             Icon { anchors.centerIn: parent; name: "list"; size: 16
                    color: menuBtn.menuOpen || menuMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-            MouseArea { id: menuMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            DragMouseArea { id: menuMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: { if (!win.appMenu) return; if (win.appMenu.visible) win.appMenu.close(); else win.appMenu.popup(menuBtn, 0, menuBtn.height + 1) } }
             FlatToolTip { visible: menuMA.containsMouse && !menuBtn.menuOpen; text: qsTr("Menu"); x: 0; y: menuBtn.height + 6 }
         }
@@ -74,7 +76,7 @@ Rectangle {
             Behavior on color { ColorAnimation { duration: Theme.dim.hoverMs } }
             Icon { anchors.centerIn: parent; name: nb.dir < 0 ? "caret-left" : "caret-right"; size: 12
                    color: !nb.can ? Theme.colors.textSubtle : nbMA.containsMouse ? Theme.colors.textBright : Theme.colors.textMuted }
-            MouseArea { id: nbMA; anchors.fill: parent; hoverEnabled: true; enabled: nb.can; cursorShape: Qt.PointingHandCursor
+            DragMouseArea { id: nbMA; anchors.fill: parent; hoverEnabled: true; enabled: nb.can; cursorShape: Qt.PointingHandCursor
                         onClicked: win.nav.go(nb.dir) }
             FlatToolTip { visible: nbMA.containsMouse && nb.can; x: 0; y: nb.height + 6
                           text: (nb.dir < 0 ? qsTr("Back to ") : qsTr("Forward to ")) + (nb.dir < 0 ? win.nav.backLabel : win.nav.forwardLabel) }

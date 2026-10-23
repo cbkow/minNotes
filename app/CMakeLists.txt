@@ -210,6 +210,7 @@ qt_add_qml_module(minnotesapp
         qml/MinNotes/App/Icon.qml
         qml/MinNotes/App/FlatButton.qml
         qml/MinNotes/App/FlatToolTip.qml
+        qml/MinNotes/App/DragMouseArea.qml
         qml/MinNotes/App/BlockView.qml
         qml/MinNotes/App/PathBar.qml
         qml/MinNotes/App/TitleBar.qml

@@ -98,7 +98,7 @@ Rectangle {
             Icon { visible: seg.dropdown; anchors.verticalCenter: parent.verticalCenter; name: "caret-down"; size: 10
                    color: seg.current || segMA.containsMouse ? Theme.colors.textMuted : Theme.colors.textSubtle }
         }
-        MouseArea { id: segMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: seg.clicked() }
+        DragMouseArea { id: segMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: seg.clicked() }   // a click; a drag moves the window
     }
     component Chevron: Text {
         anchors.verticalCenter: parent.verticalCenter
