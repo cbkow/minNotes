@@ -8,6 +8,22 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 2.0.4</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>2.0.4</sparkle:version>
+      <sparkle:shortVersionString>2.0.4</sparkle:shortVersionString>
+      <sparkle:os>windows</sparkle:os>
+      <description><![CDATA[
+      <ul><li>See the release notes at https://github.com/cbkow/minNotes/releases/tag/v2.0.4</li></ul>
+      ]]></description>
+      <pubDate>Fri, 23 Oct 2026 16:15:37 -0400</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v2.0.4/minNotes-2.0.4-x64.exe"
+        sparkle:edSignature="WrG0AyTd4VOEEZN0xn0mWBTwGM5U5eXrTWm2iWQxFYEQ15I2v+ikQzxaqEd/2Zb82P6OzaLt/KVXipNzG1lCAw=="
+        length="95512164"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 2.0.3</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>2.0.3</sparkle:version>
