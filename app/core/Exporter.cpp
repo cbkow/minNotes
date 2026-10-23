@@ -1265,6 +1265,8 @@ private:
 // export renders with the glyph metrics the editor laid out with. All four families are SIL OFL
 // 1.1 (embedding in documents is permitted; the notices ship in LICENSES/). Missing resources
 // degrade to the system stacks silently — the CSS names them as fallbacks.
+// The code blocks' Copy icon (2026-10-23; the button's script is kCodeScript below).
+static const char kCopyIcon[] = R"MNCI(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></svg>)MNCI";
 static QString embeddedFontCss() {
     struct Face { const char* family; int weight; const char* style; const char* file; };
     static const Face faces[] = {
@@ -1368,15 +1370,21 @@ hr{border:0;border-top:1px solid var(--divider);margin:14px 0 15px}   /* the app
 blockquote{font-family:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;border-left:3px solid var(--quote);
 margin:0;padding:6px 0 6px 19px;color:var(--muted)}   /* text at 22 = the app's quote inset */
 blockquote p{padding:0}
-/* Code escapes the measure like tables do (user ruling: capping code is
-   purely aesthetic): natural width, page-level scroll, no inner scrollbar. */
-pre{background:var(--recess);border:1px solid var(--border);border-radius:var(--r);padding:12px 8px;margin:0 -8px;
-width:max-content;min-width:calc(100% + 16px);color:var(--codetext);font-size:13px;line-height:18px}
+/* Code WRAPS at the measure like the app (user 2026-10-23; the uncapped ruling is retired):
+   at a word, else anywhere — a long path still breaks. */
+pre{background:var(--recess);border:1px solid var(--border);border-radius:var(--r);padding:12px 84px 12px 8px;margin:0 -8px;
+white-space:pre-wrap;overflow-wrap:anywhere;color:var(--codetext);font-size:13px;line-height:18px}   /* the right pad = the chips' slot */
 main .blkw{padding:0}   /* the pre carries the 12 px inset itself */
-/* The code block's LANGUAGE (2026-10-18): the app's top-right chip — mono 11, muted, a 1-px border, no radius. */
+/* The code block's tools (2026-10-23): the app's top-right chips — COPY (an icon button; the script swaps it for a
+   check while it says "Copied") then the LANGUAGE — mono 11, muted, a 1-px border, the 3-px radius. */
 pre{position:relative}
-pre[data-lang]::before{content:attr(data-lang);position:absolute;top:-5px;right:8px;height:18px;padding:0 7px;
+pre .tools{position:absolute;top:-5px;right:8px;display:flex;gap:6px;height:18px}
+pre .lang{height:18px;padding:0 7px;box-sizing:border-box;border-radius:3px;
 font:11px/16px 'Geist Mono',ui-monospace,Menlo,Consolas,monospace;color:var(--muted);background:var(--bg);border:1px solid var(--border)}
+pre .cpy{width:22px;height:18px;padding:0;margin:0;box-sizing:border-box;border-radius:3px;display:flex;align-items:center;justify-content:center;
+color:var(--muted);background:var(--bg);border:1px solid var(--border);cursor:pointer;font:inherit}
+pre .cpy:hover,pre .cpy.ok{color:var(--bright)}
+pre .cpy svg{width:11px;height:11px;display:block}
 code{font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;font-weight:400}
 :not(pre)>code{background:var(--chipbg);color:var(--chiptext);padding:1px 5px}
 img{max-width:100%}
@@ -1567,6 +1575,20 @@ if(dirty)try{localStorage.setItem(k,JSON.stringify(st))}catch(x){}
 )MNTK";
 QString Exporter::lightboxHtml() { return QLatin1String(kLightbox); }
 QString Exporter::taskScript() { return QLatin1String(kTaskScript); }
+
+// The code blocks' Copy button (2026-10-23): the <code>'s text to the clipboard (the async API, a hidden-textarea
+// fallback for a file:// page the browser treats as insecure); the icon turns into a check for a beat. The click
+// stops at the button — on a canvas page card it must not open the page.
+static const char kCodeScript[] = R"MNCS(<script>
+(function(){var ok='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
+[].forEach.call(document.querySelectorAll('pre .cpy'),function(b){var ic=b.innerHTML;
+b.addEventListener('click',function(e){e.stopPropagation();e.preventDefault();var c=b.closest('pre').querySelector('code'),t=c?c.textContent:'';
+function done(){b.classList.add('ok');b.innerHTML=ok;b.title='Copied';setTimeout(function(){b.classList.remove('ok');b.innerHTML=ic;b.title='Copy'},1200)}
+function fb(){var ta=document.createElement('textarea');ta.value=t;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{if(document.execCommand('copy'))done()}catch(x){}document.body.removeChild(ta)}
+if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done,fb);else fb();});});})();
+</script>
+)MNCS";
+QString Exporter::codeScript() { return QLatin1String(kCodeScript); }
 QString Exporter::videoNotesHtml(const QString& mediaPath, AssetSink& sink, int& inkLayers) { return emitVideoNotesHtml(mediaPath, sink, inkLayers); }
 QImage Exporter::inkOverlay(const QString& envelope, int srcW, int srcH, QSize size) { return renderEnvelopeOverlay(envelope, srcW, srcH, size); }
 QString Exporter::durationText(qreal ms) { return humanDuration(ms); }
@@ -1723,10 +1745,14 @@ QString Exporter::toHtml(const Options& opt, AssetSink& sink, int loRow, int hiR
             break;
         case BlockModel::Code: {
             const QString lang = m->languageForRow(row), lname = m->codeLanguageName(row);
-            body += QStringLiteral("<div class=\"blkw\">%1<pre%4><code class=\"language-%2\">%3</code></pre></div>\n")
+            // The tools ride INSIDE the <pre> (absolutely placed, so the pre-wrap flow never sees them): the Copy
+            // button, then the language chip. No whitespace before <code>: a pre renders it.
+            body += QStringLiteral("<div class=\"blkw\">%1<pre%4><span class=\"tools\"><button class=\"cpy\" type=\"button\" title=\"Copy\" aria-label=\"Copy code\">%5</button>%6</span><code class=\"language-%2\">%3</code></pre></div>\n")
                         .arg(bnum(row), htmlEscape(lang),
                              codeEmitter.colorize(lang, m->contentForRow(row)),
-                             lname.isEmpty() ? QString() : QStringLiteral(" data-lang=\"%1\"").arg(htmlEscape(lname)));
+                             lname.isEmpty() ? QString() : QStringLiteral(" data-lang=\"%1\"").arg(htmlEscape(lname)),
+                             QLatin1String(kCopyIcon),
+                             lname.isEmpty() ? QString() : QStringLiteral("<span class=\"lang\">%1</span>").arg(htmlEscape(lname)));
             break;
         }
         case BlockModel::ListItem:
@@ -1831,7 +1857,7 @@ b.addEventListener('click',function(){var on=document.documentElement.classList.
                "<header class=\"doctitle\"><span>%1</span><button class=\"cap\" type=\"button\" title=\"Readable width — the app's 760 measure\">Readable width</button></header>\n%3</main>\n"
                "%4%5%6</body>\n</html>\n")
         .arg(htmlEscape(m->documentName()), css, body,
-             QLatin1String(kLightbox), QLatin1String(kCapScript), QLatin1String(kTaskScript));
+             QLatin1String(kLightbox), QLatin1String(kCapScript), QString(QLatin1String(kTaskScript)) + QLatin1String(kCodeScript));
 }
 
 QString Exporter::htmlFragment(int loRow, int hiRow) const {

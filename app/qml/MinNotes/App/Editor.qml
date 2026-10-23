@@ -1963,6 +1963,19 @@ FocusScope {
             && p.y >= -pad && p.y <= cell.langChip.height + pad) return row
         return -1
     }
+    // The code block's COPY chip (2026-10-23), left of the language chip: the same hit-test.
+    property int codeCopyHoverRow: -1
+    function codeCopyChipAt(cx, cy) {
+        var row = blockModel.blockAt(root.pageXAt(cx, cy), Math.max(0, cy))
+        if (blockModel.typeForRow(row) !== 2) return -1
+        var cell = cellForRow(row)
+        if (!cell || !cell.copyChip || !cell.copyChip.shown) return -1
+        var p = cell.copyChip.mapFromItem(mouse, cx, cy)
+        var pad = 2
+        if (p.x >= -pad && p.x <= cell.copyChip.width + pad
+            && p.y >= -pad && p.y <= cell.copyChip.height + pad) return row
+        return -1
+    }
     // --- Central navigation. Uses the focus block's text layout for vertical
     // moves; crosses boundaries at the text edges. Single focus holder → the
     // caret the user sees and the row the keys act on can never diverge.
@@ -6606,6 +6619,9 @@ FocusScope {
                 // Click a task-item checkbox → cycle its status (todo→doing→done).
                 var tcb = root.taskCheckboxAt(m.x, m.y)
                 if (tcb >= 0) { blockModel.toggleTask(tcb); return }
+                // Click a code block's copy chip → the block's text to the clipboard (2026-10-23).
+                var ccRow = root.codeCopyChipAt(m.x, m.y)
+                if (ccRow >= 0) { clipboard.writeText(blockModel.contentForRow(ccRow)); Toasts.show(qsTr("Copied")); return }
                 // Click a code block's language chip → the language picker,
                 // anchored under the chip.
                 var lcRow = root.codeLangChipAt(m.x, m.y)
@@ -6726,7 +6742,8 @@ FocusScope {
                 // pointing-hand cursor instead of the I-beam.
                 var clk = root.taskCheckboxAt(m.x, m.y) >= 0
                 root.codeChipHoverRow = root.codeLangChipAt(m.x, m.y)
-                clk = clk || root.codeChipHoverRow >= 0
+                root.codeCopyHoverRow = root.codeCopyChipAt(m.x, m.y)
+                clk = clk || root.codeChipHoverRow >= 0 || root.codeCopyHoverRow >= 0
                 if (!clk) {
                     var chh = root.hitTest(m.x, m.y)
                     clk = blockModel.choiceAt(chh.row, chh.col) !== ""
@@ -6770,7 +6787,7 @@ FocusScope {
             onExited: { root.hoverRow = -1
                         root.dividerHoverRecord = -1; root.dividerHoverIndex = -1; root.pullHoverRow = -1
                         root.tableGripKind = ""; root.tableGripHead = -1; root.tableGripIndex = -1
-                        root.codeChipHoverRow = -1
+                        root.codeChipHoverRow = -1; root.codeCopyHoverRow = -1
                         if (root.hoverLinkUrl.length > 0) linkTipHide.restart() }
             onReleased: {
                 if (root.pullArmed) {   // a click on the pull strip: the caret goes there

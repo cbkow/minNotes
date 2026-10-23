@@ -74,6 +74,7 @@ public:
     // transparent image, and the human duration text.
     static QString lightboxHtml();
     static QString taskScript();    // checkable task boxes, remembered per browser
+    static QString codeScript();    // the code blocks' Copy button (2026-10-23)
     static QString videoNotesHtml(const QString& mediaPath, AssetSink& sink, int& inkLayers);
     static QImage inkOverlay(const QString& envelope, int srcW, int srcH, QSize size);
     static QString durationText(qreal ms);

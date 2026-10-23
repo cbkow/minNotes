@@ -444,7 +444,7 @@ QString CanvasExporter::toHtml(const Options& opt, Exporter::AssetSink& sink) co
                                          "<div class=\"end\"><span id=\"mn-hud\">100% <b title=\"Fit (0)\">fit</b></span></div></nav>\n");
     return QStringLiteral("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
                           "<meta name=\"generator\" content=\"minNotes\">\n<title>%1</title>\n<style>%2%3</style>\n</head>\n<body class=\"canvas\">\n%4%5%6%7%8%9</body>\n</html>\n")
-        .arg(esc(c->documentName()), Exporter::pageCss(), QString::fromUtf8(kCanvasCss), toggle, strip, body, Exporter::lightboxHtml(), QString::fromUtf8(kCanvasScript), Exporter::taskScript());
+        .arg(esc(c->documentName()), Exporter::pageCss(), QString::fromUtf8(kCanvasCss), toggle, strip, body, Exporter::lightboxHtml(), QString::fromUtf8(kCanvasScript), Exporter::taskScript() + Exporter::codeScript());
 }
 
 QImage CanvasExporter::toPoster(const Options& opt) const {

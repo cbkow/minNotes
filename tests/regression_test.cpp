@@ -618,7 +618,7 @@ static void testExportMarkdown() {
     // Syntax colouring wraps tokens in inline-styled spans ("int" is a cpp
     // keyword; "=", "1", ";" get their own spans too), so assert the
     // structure + a coloured keyword + the identifier left plain between them.
-    CHECK(html.contains(QStringLiteral("<pre data-lang=\"C++\"><code class=\"language-cpp\">")) && html.contains(QStringLiteral("pre[data-lang]::before{content:attr(data-lang)"))
+    CHECK(html.contains(QStringLiteral("<pre data-lang=\"C++\"><span class=\"tools\"><button class=\"cpy\"")) && html.contains(QStringLiteral("<span class=\"lang\">C++</span></span><code class=\"language-cpp\">")) && html.contains(QStringLiteral("white-space:pre-wrap;overflow-wrap:anywhere"))
               && html.contains(QStringLiteral(">int</span> x ")),
           "HTML code block with language class + syntax-coloured spans");
     // A table's header rows are <th> in <thead> (SR-4 S8b: the header ROLE is authored, not sniffed).

@@ -44,21 +44,24 @@ Type these at the **start** of a block and it converts as you go:
 
 List items nest with `Tab` / `Shift+Tab`.
 
-Every code block carries a small **language chip** in its top-right corner —
+Every code block carries two small chips in its top-right corner: **Copy**,
+which puts the block's text on the clipboard, and the **language chip** —
 click it to pick the syntax highlighting from the full language list (type to
 filter). The ```` ```lang ```` fence tag still works if you prefer typing it.
+Long lines wrap at the page like any other text, so a command is never cut
+off; exported HTML pages wrap the same way and carry the same Copy button.
 
 ## The Page
 
-A page is as wide as its window and reflows as the window changes. Body
-paragraphs are set in a serif; headings, lists, quotes, tables and chrome
-stay in the sans. For a reading measure instead, turn off **View ▸ Full
+A page is as wide as its window and reflows as the window changes. Headings
+are set light, body copy a little heavier, all in one sans. For a reading
+measure instead, turn off **View ▸ Full
 Width** (`⌘1` toggles it) and the text caps at the measure you pick there
 — 640, 760 or 880 — centred in the window. These are view settings; they
 change nothing in the file.
 
-A table or a code block wider than the page runs past its right edge and
-the page scrolls sideways; text never squeezes.
+A table wider than the page runs past its right edge and the page scrolls
+sideways; text never squeezes.
 
 **Zoom** the view with `⌘+` / `⌘−`, `⌘0` for 100%, `⌘`-wheel or a
 trackpad pinch to zoom about the pointer, or the zoom badge's slider. The

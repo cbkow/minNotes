@@ -42,6 +42,7 @@ Item {
     readonly property bool inSel: active && logicalRow >= cursor.loRow && logicalRow <= cursor.hiRow
     readonly property Item teItem: te    // layout oracle, for hit-testing
     readonly property Item langChip: codeLangChip // code language chip, for hit-testing
+    readonly property Item copyChip: codeCopyChip // code COPY chip (2026-10-23), for hit-testing
     // Lane geometry (SR-3): {x, w} page-relative — the page for a top-level block, its
     // lane otherwise. The slot's rev covers structure changes, pageWidth the measure.
     // NOT the layout revision: the measure drives the height, whose settle bumps it.
@@ -488,9 +489,10 @@ Item {
     // membership shows through the row fill + dimmed media bars.
 
 
+    readonly property int codeToolsW: 76   // the Copy + language chips' slot at a code block's right (2026-10-23)
     Rectangle {  // code background — matches the syntax theme's fill
         opacity: cell.active && !cell.isMedia && te.btype === 2 ? 1 : 0
-        anchors.fill: te; anchors.margins: -8
+        anchors.fill: te; anchors.margins: -8; anchors.rightMargin: -8 - cell.codeToolsW   // the fill spans the measure; the text stops short of the chips
         z: -1   // behind the selection highlight (else it hides the selection)
         color: codeHl.backgroundColor.a > 0 ? codeHl.backgroundColor : Theme.colors.codeBg
         radius: Theme.dim.radius
@@ -531,6 +533,23 @@ Item {
         }
     }
 
+    Rectangle {  // code COPY chip (user 2026-10-23): left of the language chip, the same chrome; a click
+        // (routed by the central mouse layer via cell.copyChip, like the language chip) copies the
+        // block's text and says so in a toast.
+        id: codeCopyChip
+        readonly property bool shown: codeLangChip.shown
+        opacity: shown ? 1 : 0
+        readonly property bool hot: editor.codeCopyHoverRow === cell.logicalRow
+        x: codeLangChip.x - width - 6
+        y: codeLangChip.y
+        width: 22; height: 18
+        radius: Theme.dim.radiusSmall
+        z: 2
+        color: hot ? Theme.colors.surfaceHover : Theme.colors.surface
+        border.width: 1; border.color: Theme.colors.border
+        Icon { anchors.centerIn: parent; name: "copy"; size: 11; color: codeCopyChip.hot ? Theme.colors.text : Theme.colors.textMuted }
+    }
+
     readonly property real colLeft: editor.leftEdge + lane.x + cellInset   // the page's left edge, plus the lane's offset
 
     TextEdit {
@@ -560,32 +579,26 @@ Item {
         readonly property int taskState: (cell.rev,
                                           cell.active && btype === 8 ? blockModel.taskStateForRow(cell.logicalRow) : 0)
         x: cell.colLeft + deco
-        // Code is UNCAPPED like tables (user ruling: capping code
-        // is purely aesthetic and wrapping breaks it): no wrap,
-        // natural width — at least the page measure so the themed
-        // fill still spans the column for short snippets — and the
-        // widest line joins the model's width cache below so the
-        // page scrolls horizontally to hold it.
-        width: btype === 2 ? Math.max(cell.measure, implicitWidth)
-                           : cell.measure - deco
+        // Code WRAPS like every text block (user 2026-10-23; the earlier uncapped / no-wrap ruling
+        // is retired — the HTML export wraps the same way), short of the chips' slot at the right
+        // (codeToolsW) so no line ever runs under the Copy / language chips.
+        width: cell.measure - deco - (btype === 2 ? cell.codeToolsW : 0)
         y: btype === 2 ? 12 : 6   // code: centered in the taller (doubled-margin) cell
         // Quotes are upright Lora (serif + bar + muted colour
         // mark them); italic/bold come from spans so all four faces
         // are reachable, rather than forcing the whole block italic.
         text: (cell.rev, cell.active ? blockModel.contentForRow(cell.logicalRow) : "")
-        wrapMode: btype === 2 ? TextEdit.NoWrap : TextEdit.Wrap
+        wrapMode: TextEdit.Wrap   // code too (2026-10-23): at a word, else anywhere
         horizontalAlignment: cell.colAlign === 1 ? TextEdit.AlignHCenter
                            : cell.colAlign === 2 ? TextEdit.AlignRight : TextEdit.AlignLeft
         textFormat: TextEdit.PlainText
-        // Width joins the measure-once cache (the tables' contract):
-        // code reports its natural line width (+ the fill's 8px
-        // overhang); every OTHER text type reports 0 so a block
-        // leaving code releases the width its cached lines held.
-        // Tables/media report via their own components.
+        // Width joins the measure-once cache (the tables' contract): text blocks report 0 —
+        // code did report its natural line width until it wrapped (2026-10-23); a block that
+        // was code releases any width its cached lines held. Tables/media report via their own
+        // components.
         function reportW() {
             if (!cell.active || !cell.measures || cell.isMedia) return
-            blockModel.setMeasuredWidth(cell.logicalRow,
-                btype === 2 ? implicitWidth + 16 : 0)
+            blockModel.setMeasuredWidth(cell.logicalRow, 0)
         }
         onImplicitWidthChanged: reportW()
         onBtypeChanged: reportW()

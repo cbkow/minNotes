@@ -5406,8 +5406,9 @@ void BlockModel::setMediaWidth(int row, int w) {
 // independently. Cheap: one size() and one '\n' scan per block (≈ 0.2 ms per 1000 blocks).
 double BlockModel::textHeightEstimate(std::size_t i, double w) const {
     const Row& r = rows_[i];
-    double avgChar = 7.2, lineH = kLine, indent = 0.0;
-    if (r.type == Heading) {
+    double avgChar = 7.2, lineH = kLine, indent = 0.0, pad = kPadV;
+    if (r.type == Code) { avgChar = 7.8; lineH = 18.0; pad = 24.0; indent = 76.0; }   // mono 13 wraps too (2026-10-23): 18-px lines in the doubled inset, short of the chips' 76-px slot
+    else if (r.type == Heading) {
         static const double sz[6] = { 33, 28, 24, 20, 18, 16 }, lh[6] = { 45, 38, 32, 27, 24, 22 };   // BlockView.headingSizes × 1.35 (the 2026-10-23 bump)
         const int l = std::clamp(int(r.level), 1, 6) - 1;
         avgChar = 0.52 * sz[l]; lineH = lh[l];
@@ -5424,7 +5425,7 @@ double BlockModel::textHeightEstimate(std::size_t i, double w) const {
         if (nl < 0) break;
         start = nl + 1;
     }
-    return lines * lineH + kPadV;
+    return lines * lineH + pad;
 }
 
 void BlockModel::setContentWidth(qreal w) {
@@ -5436,8 +5437,8 @@ void BlockModel::setContentWidth(qreal w) {
     // height). Text rows that WRAP at the page (or their lane) are re-seeded with the width-aware
     // estimate and marked unmeasured — a responsive width (2.0 stage 1C) changes them every time
     // the window settles; the live delegates then measure the truth. Table cells wrap at their
-    // COLUMN's px width (width-independent → their measured heights stay); code never wraps;
-    // records derive from their lanes. A sub-wrap change (< 8 px) re-derives media only.
+    // COLUMN's px width (width-independent → their measured heights stay); code wraps like text
+    // (2026-10-23); records derive from their lanes. A sub-wrap change (< 8 px) re-derives media only.
     const bool reflowText = std::abs(w - old) >= 8.0;
     const std::vector<double> lw = laneWidths();
     std::vector<double> heights = layout().heights();
@@ -5446,7 +5447,7 @@ void BlockModel::setContentWidth(qreal w) {
         const Row& r = rows_[i];
         double h;
         if (r.type == Media) h = estimatedHeight(r, lw[i]);
-        else if (reflowText && (r.type == Paragraph || r.type == Heading || r.type == Quote
+        else if (reflowText && (r.type == Paragraph || r.type == Heading || r.type == Quote || r.type == Code
                                 || r.type == ListItem || r.type == TaskListItem || r.type == OrderedListItem)
                  && tableHeadOf(static_cast<int>(i)) < 0) {
             h = textHeightEstimate(i, lw[i]);
