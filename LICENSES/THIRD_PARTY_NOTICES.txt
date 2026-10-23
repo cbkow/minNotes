@@ -78,7 +78,8 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
    License: SIL Open Font License, Version 1.1
    File:    Aspekta-OFL-1.1.txt
    https://github.com/ivodolenc/aspekta
-   Asset:   bundled UI font (external/aspekta).
+   Asset:   bundled (app/qml/MinNotes/App/fonts/Aspekta-*.ttf) — the previous document sans, kept behind the
+            Theme.geist switch; Geist is the app's type since 2.0.4.
 
 9. SQLite
    Public Domain
@@ -204,14 +205,16 @@ the source tree (or the copy installed alongside the application).
     License: SIL Open Font License, Version 1.1
     File:    PTSerif-OFL-1.1.txt
     https://www.paratype.com/public
-    Asset:   bundled document font — body paragraphs (app/qml/MinNotes/App/fonts/PTSerif-*.ttf).
+    Asset:   bundled (app/qml/MinNotes/App/fonts/PTSerif-*.ttf) — the previous body-paragraph serif, kept behind the
+             Theme.geist switch.
 
 16. Inter (typeface)
     Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
     License: SIL Open Font License, Version 1.1
     File:    Inter-OFL-1.1.txt
     https://rsms.me/inter/
-    Asset:   bundled chrome font (app/qml/MinNotes/App/fonts/Inter_18pt-*.ttf).
+    Asset:   bundled (app/qml/MinNotes/App/fonts/Inter_18pt-*.ttf) — the previous chrome sans, kept behind the
+             Theme.geist switch.
 
 17. Lora (typeface)
     Copyright 2011 The Lora Project Authors (https://github.com/cyrealtype/Lora-Cyrillic), with Reserved Font Name "Lora"
@@ -225,11 +228,13 @@ the source tree (or the copy installed alongside the application).
     License: SIL Open Font License, Version 1.1
     File:    JetBrainsMono-OFL-1.1.txt
     https://www.jetbrains.com/lp/mono/
-    Asset:   bundled code font (app/qml/MinNotes/App/fonts/JetBrainsMono-Regular.ttf).
+    Asset:   bundled (app/qml/MinNotes/App/fonts/JetBrainsMono-Regular.ttf) — the previous code mono, kept behind
+             the Theme.geist switch.
 
 19. Geist / Geist Mono (typefaces)
     Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
     License: SIL Open Font License, Version 1.1
     File:    Geist-OFL-1.1.txt
     https://vercel.com/font
-    Asset:   bundled sans + mono (app/qml/MinNotes/App/fonts/Geist-*.ttf, GeistMono-*.ttf).
+    Asset:   the app's type since 2.0.4 — chrome, document body and headings (Geist), code (Geist Mono)
+             (app/qml/MinNotes/App/fonts/Geist-*.ttf, GeistMono-*.ttf).

@@ -68,7 +68,7 @@ app/core/    C++ model: CanvasDocument (the file), BlockModel (a page), Document
              Exporter (md/HTML/DOCX/PDF), CanvasExporter (HTML + poster), providers
 app/notes/   ink stroke engine (canvas ink, media ink, video annotations), MediaHost
 app/qml/     QML UI tree (Main, Editor, MediaBlock, tables, dialogs, …)
-external/    vendored deps (ffmpeg, kf6, Sparkle, miniz, psd_sdk, stb, aspekta font) + build-ksyntax.sh
+external/    vendored deps (ffmpeg, kf6, Sparkle, miniz, psd_sdk, stb) + build-ksyntax.sh
 packaging/   macOS bundle (Info.plist, entitlements, icon) + Windows installer
 scripts/     sign / notarize / appcast tooling
 LICENSES/    third-party license texts (see below)

@@ -20,14 +20,15 @@ label.
   the width of the browser window, like the app, with a **Readable width**
   button in the header that caps the measure (the browser remembers the
   choice). Colours, highlights, syntax-coloured code with its language
-  chip, and tables survive exactly; the app's own typefaces travel inside
-  the file — PT Serif for paragraphs, the sans for everything else — so
-  lines wrap where they wrap in the app. Task boxes are **checkable**, and
-  the browser remembers what you ticked. Click any image — table cells
-  and video-note frames included — for the built-in lightbox.
+  chip and Copy button, and tables survive exactly; the app's own typefaces
+  travel inside the file — Geist, with its light headings and medium body
+  copy, and Geist Mono for code — so lines wrap where they wrap in the app,
+  code included. Task boxes are **checkable**, and the browser remembers
+  what you ticked. Click any image — table cells and video-note frames
+  included — for the built-in lightbox.
 - **Word (`.docx`)** — code blocks keep their syntax colours and carry
-  their language; paragraphs are set in PT Serif; media ink is baked into the
-  images; table cells are set in 7pt with tight margins so more copy fits
+  their language; headings and body use the app's sizes in Geist where it is
+  installed (Word substitutes otherwise); media ink is baked into the images; table cells are set in 7pt with tight margins so more copy fits
   a page.
 - **PDF** — print-ready pages with images fitted, tables printed at
   their column widths in smaller type on a hairline grid (a table wider
