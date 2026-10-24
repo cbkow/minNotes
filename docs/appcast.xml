@@ -8,6 +8,26 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 2.0.6</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>2.0.6</sparkle:version>
+      <sparkle:shortVersionString>2.0.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+      <ul>
+        <li>macOS: no changes beyond the version number.</li>
+        <li>Windows: minNotes now ships through the Microsoft Store, with the standard Windows title bar back.</li>
+      </ul>
+      <p>Full notes: https://github.com/cbkow/minNotes/releases/tag/v2.0.6</p>
+      ]]></description>
+      <pubDate>Sat, 24 Oct 2026 15:46:54 -0400</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v2.0.6/minNotes-2.0.6-macOS.dmg"
+        sparkle:edSignature="PstBkRrdRtnHRGzuUJNCoTSVWKQcntl+2xKDsDM+FRVG+LSdAaqsTHuoMK+kumHRjoffuX8+/mzbgGeVyfZkAA=="
+        length="149262136"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 2.0.5</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>2.0.5</sparkle:version>
