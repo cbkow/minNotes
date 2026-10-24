@@ -1,10 +1,10 @@
 // A MouseArea that is ALSO a window-drag handle (2026-10-23, the ufb model — ufb's DragTabMouseArea): the title
-// row's controls (the path segments, back / forward, the Windows menu button) would otherwise swallow the press
+// row's controls (the path segments, back / forward) would otherwise swallow the press
 // and shrink the row's drag surface to the gaps between them. The press is recorded; a plain click (press +
 // release without movement) reaches onClicked as before; once the pointer has moved a few px the press is handed
-// to the OS move loop instead (WindowChrome::startMove → QWindow::startSystemMove — a caption drag on Windows
-// too), which cancels this area's grab so no click fires. Right-button presses, fullscreen and the
-// `--native-frame` dev mode are untouched (startMove declines, the press stays an ordinary one).
+// to the OS move loop instead (WindowChrome::startMove → QWindow::startSystemMove), which cancels this area's grab
+// so no click fires. Right-button presses, fullscreen, Windows (native title bar since 2026-10-24) and the
+// `--native-frame` dev mode are untouched (not chromeless: the press stays an ordinary one).
 import QtQuick
 
 MouseArea {

@@ -7,19 +7,11 @@ import Qt.labs.platform as Platform
 ApplicationWindow {
     id: win
     minimumWidth: 640; minimumHeight: 480   // the toolbar row's budget (§2.14: 589 / 621 px with a stream chip) and the tallest flyout
-    // The chromeless window (2026-10-21, WindowChrome.h): the content extends under a transparent title bar on both
-    // platforms (Qt 6.9+'s ExpandedClientAreaHint + NoTitleBarBackgroundHint). macOS keeps the native traffic lights
-    // (TitleBar.qml insets past them). Windows: Qt's own expanded-client-area handling — the top border goes
-    // (WM_NCCALCSIZE), the DWM frame gives the shadow + rounded corners, Qt DRAWS AND HIT-TESTS the Windows 11
-    // caption buttons itself (CustomizeWindowHint + the min / max / close hints, no WindowTitleHint: Segoe Fluent
-    // glyphs, the snap-layouts flyout on the maximize button) and any press on the row that no item accepts is a
-    // native caption drag (double-click zooms, edge snap works). BEFORE `visible` — the hints must be in place at
-    // creation. (Tried and dropped the same day: a caption-less thick-frame window kept Windows' painted 8-px top
-    // border above the row; stripping the caption after creation left Qt's frame margins 30 px stale.)
-    flags: !windowChrome.chromeless ? Qt.Window
-         : windowChrome.nativeLights ? (Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint)
-         : (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
-            | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint)
+    // The chromeless window (macOS only, WindowChrome.h): the content extends under a transparent title bar (Qt
+    // 6.9+'s ExpandedClientAreaHint + NoTitleBarBackgroundHint) and the native traffic lights stay (TitleBar.qml
+    // insets past them). Windows keeps its native frame and title bar since 2026-10-24 (Qt's painted caption
+    // buttons misdrew); the row is a toolbar under it. BEFORE `visible` — the hints must be in place at creation.
+    flags: windowChrome.chromeless ? (Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint) : Qt.Window
     // ApplicationWindow pads its content by the safe area unless told otherwise (6.9) — the row goes UNDER the lights.
     topPadding: 0; leftPadding: 0; rightPadding: 0; bottomPadding: 0
     visible: true

@@ -1,10 +1,10 @@
 // The TITLE BAR (cleanup 2026-10-21 — the chromeless window, see WindowChrome.h): the one row that is always
 // there, document or not. Left to right — on macOS the inset where the NATIVE traffic lights sit · the app MENU
 // button (Windows only — macOS has its native menu bar; ruling 2026-10-21) · the PathBar (• File ▾ › Canvas › …,
-// only while a document is open) · on Windows the space Qt's caption buttons occupy. The WHOLE row drags the window
-// (2026-10-23, the ufb model): the bare stretches through the handle below (macOS; Windows natively) and the controls
-// through DragMouseArea — a press that moves a few px is handed to the OS move loop, so clicks stay clicks and the
-// path's long file name is drag surface too. A double-click on a bare stretch zooms.
+// only while a document is open). On macOS the WHOLE row drags the window (2026-10-23, the ufb model): the bare
+// stretches through the handle below and the controls through DragMouseArea — a press that moves a few px is handed
+// to the OS move loop, so clicks stay clicks and the path's long file name is drag surface too. A double-click on a
+// bare stretch zooms. On Windows the row is a toolbar under the native title bar (2026-10-24) and drags nothing.
 import QtQuick
 import QtQuick.Controls
 
@@ -17,16 +17,12 @@ Rectangle {
     readonly property bool lightsInset: windowChrome.nativeLights && win.visibility !== Window.FullScreen
     readonly property int lightsWidth: 70                   // close · minimize · zoom end at x ≈ 59 on a standard title bar
     readonly property var appMenuButton: menuBtn            // probe
-    // Windows: Qt's title-bar height at the window's dpi (32 at 100 %, 31.2 → 32 at 125 %), so its caption buttons
-    // sit inside the row (WindowChrome.captionHeight — NOT win.SafeArea.margins.top, which Qt computes at 96 dpi
-    // and then divides by the pixel ratio: 24.8 at 125 %, a row too short by a quarter); elsewhere the house row.
-    height: windowChrome.captionButtons && windowChrome.captionHeight > 0 ? Math.ceil(windowChrome.captionHeight) : Theme.dim.tabRowH
+    height: Theme.dim.tabRowH
     color: Theme.colors.bgStrip
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.colors.border; z: 2 }
 
     // The move handle (macOS): under everything else in the row — the controls above it are DragMouseAreas, so a
     // press on a segment / button drags through them instead.
-    // Windows needs none — a press no item accepts is the native caption (Qt's expanded-client-area hit test).
     MouseArea {
         id: drag
         anchors.fill: parent
@@ -90,18 +86,9 @@ Rectangle {
     // The path: • File ▾ › Canvas › Page ▾ › Frame ▾ — the document's hierarchy, while there is one.
     Loader {
         id: pathLoader
-        anchors.left: left.right; anchors.right: buttons.left; anchors.top: parent.top
+        anchors.left: left.right; anchors.right: parent.right; anchors.top: parent.top
         height: bar.height
         active: blockModel.documentOpen
         sourceComponent: PathBar { editor: bar.editor; color: "transparent" }
-    }
-
-    // Windows: Qt draws and hit-tests the caption buttons here (three of titleBarHeight × 1.5 each, Qt's rule, at
-    // the window's dpi — WindowChrome.captionWidth); the row just keeps clear of them.
-    Item {
-        id: buttons
-        anchors.right: parent.right; anchors.top: parent.top
-        height: parent.height
-        width: windowChrome.captionButtons ? Math.ceil(windowChrome.captionWidth) : 0
     }
 }

@@ -4,16 +4,13 @@
 #include <QGuiApplication>
 
 
+// Chromeless is macOS-only: Windows keeps its native frame (see the header).
 WindowChrome::WindowChrome(bool chromeless, QObject* parent)
+#ifdef Q_OS_MACOS
     : QObject(parent), chromeless_(chromeless) {}
-
-bool WindowChrome::captionButtons() const {
-#ifdef Q_OS_WIN
-    return chromeless_;
 #else
-    return false;
+    : QObject(parent), chromeless_(false) { (void)chromeless; }
 #endif
-}
 
 bool WindowChrome::nativeLights() const {
 #ifdef Q_OS_MACOS
@@ -32,23 +29,10 @@ void WindowChrome::attach(QWindow* w) {
 #ifdef Q_OS_MACOS
     if (chromeless_ && nativeWindow_) attachMac(w);
 #endif
-    // Windows: nothing for the chrome — the window flags (Main.qml) create the caption-less window.
     applyAlwaysOnTop();
-    updateCaptionMetrics();
     // Leaving fullscreen / a maximize round trip: the platform plugin may have re-applied the level from the
-    // window flags (which never carry the pin) — assert ours again. The caption metrics follow the dpi.
-    connect(w, &QWindow::windowStateChanged, this, [this] { applyAlwaysOnTop(); updateCaptionMetrics(); });
-    connect(w, &QWindow::screenChanged, this, [this] { updateCaptionMetrics(); });
-}
-
-void WindowChrome::updateCaptionMetrics() {
-    qreal h = 0, wd = 0;
-#ifdef Q_OS_WIN
-    if (captionButtons() && window_ && nativeWindow_) captionMetricsWin(window_, h, wd);
-#endif
-    if (h == captionHeight_ && wd == captionWidth_) return;
-    captionHeight_ = h; captionWidth_ = wd;
-    emit captionMetricsChanged();
+    // window flags (which never carry the pin) — assert ours again.
+    connect(w, &QWindow::windowStateChanged, this, [this] { applyAlwaysOnTop(); });
 }
 
 void WindowChrome::setAlwaysOnTop(bool on) {

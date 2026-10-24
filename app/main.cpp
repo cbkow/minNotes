@@ -184,7 +184,8 @@ int main(int argc, char *argv[])
 
     // Non-mac: use Fusion (the sister-app standard) so the in-window menu themes
     // via `palette`, and force a dark color scheme so the window title bar
-    // matches the dark UI. Scrollbars are MnScrollBar (a T.ScrollBar component),
+    // matches the dark UI (Qt re-applies it to every window it creates and on
+    // OS theme changes — the native title bar on Windows depends on it). Scrollbars are MnScrollBar (a T.ScrollBar component),
     // so they're unaffected by the style. macOS keeps its native style + the
     // Qt.labs.platform system menu bar.
 #ifndef Q_OS_MACOS
@@ -196,7 +197,7 @@ int main(int argc, char *argv[])
     // state, backed by the manager's empty fallback model); the File menu / a
     // passed file open or create one.
     DocumentManager docs;
-    // The chromeless window (2026-10-21): `--native-frame` (dev) keeps the OS title bar.
+    // The chromeless window (2026-10-21, macOS only since 2026-10-24): `--native-frame` (dev) keeps the OS title bar.
     WindowChrome windowChrome(!app.arguments().contains(QStringLiteral("--native-frame")));
     Clipboard clipboard;
     AppUpdater appUpdater;   // "Check for Updates…" → Sparkle (no-op off-macOS)
