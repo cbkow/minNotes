@@ -24,7 +24,8 @@ the `Licenses` folder beside the executable on Windows).
 | stb_image | Radiance HDR previews | MIT |
 | psd_sdk | Photoshop PSD / PSB previews | BSD-2-Clause |
 | SQLite | note storage | public domain |
-| Sparkle / WinSparkle | updates | MIT |
+| Sparkle | updates (macOS) | MIT |
+| WinSparkle | updates (Windows installer builds up to 2.0.5) | MIT |
 | Phosphor Icons | icons | MIT |
 | Geist / Geist Mono | the app's typefaces: chrome, body and headings (Geist), code (Geist Mono) | SIL OFL 1.1 |
 | Aspekta | typeface, bundled (the previous document sans) | SIL OFL 1.1 |

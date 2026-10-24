@@ -63,8 +63,9 @@ Direct runtime dependencies (shipped as binary alongside minNotes)
    License: MIT
    File:    WinSparkle-MIT.txt
    https://github.com/vslavik/winsparkle
-   Distribution: WinSparkle.dll shipped with the Windows build. The Windows
-                 counterpart to Sparkle (verifies the same EdDSA key).
+   Distribution: WinSparkle.dll shipped with the Windows installer builds up
+                 to 2.0.5 (the counterpart to Sparkle, verifying the same
+                 EdDSA key). The Microsoft Store build carries no updater.
 
 7. Phosphor Icons
    Copyright (c) 2020-2023 Phosphor Icons (Helena Zhang, Tobias Fried)
