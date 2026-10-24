@@ -20,7 +20,7 @@ editor is a virtualized Qt Quick surface that owns the page model directly.
 | Export | Markdown (+`.assets/`), self-contained fluid HTML (readable-width toggle, checkable tasks, lightbox), DOCX, PDF (tables print in column bands like a spreadsheet, header rows repeated), the canvas as HTML (tab strip, video-note filmstrips) or a PNG poster, `.mnpkg` sealed packages (media inside, video streams from the archive) |
 | Cross-OS | OS-neutral path mappings for referenced media, multi-file switcher, `.mnd`/`.mnpkg` file associations |
 | Merge | File ▸ Merge File Into This Page, or drop a `.mnd`/`.mnpkg` on the canvas — pages copy in as one undo entry (assets follow) |
-| Updates | Sparkle (macOS) / WinSparkle (Windows), EdDSA-signed appcasts |
+| Updates | Sparkle (macOS, EdDSA-signed appcast) / the Microsoft Store (Windows) |
 
 ## Requirements
 
@@ -69,7 +69,7 @@ app/core/    C++ model: CanvasDocument (the file), BlockModel (a page), Document
 app/notes/   ink stroke engine (canvas ink, media ink, video annotations), MediaHost
 app/qml/     QML UI tree (Main, Editor, MediaBlock, tables, dialogs, …)
 external/    vendored deps (ffmpeg, kf6, Sparkle, miniz, psd_sdk, stb) + build-ksyntax.sh
-packaging/   macOS bundle (Info.plist, entitlements, icon) + Windows installer
+packaging/   macOS bundle (Info.plist, entitlements, icon) + the Windows Store package (windows/msix)
 scripts/     sign / notarize / appcast tooling
 LICENSES/    third-party license texts (see below)
 ```

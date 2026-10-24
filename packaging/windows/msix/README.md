@@ -74,7 +74,8 @@ once, then double-click the `-sideload.msix`.
 2. Partner Center → minNotes → new submission: upload the `.msix`, choose **Publish this submission manually**.
    Only one submission can be in flight per app.
 3. Certification typically takes 1–3 business days. A denied package gets a version bump before resubmitting.
-4. Listing basics: privacy policy <https://minnotes.app/privacy/>, website <https://minnotes.app>, support
+4. Store ID **9P2S2W9TLL9D** — <https://apps.microsoft.com/detail/9P2S2W9TLL9D>.
+5. Listing basics: privacy policy <https://minnotes.app/privacy/>, website <https://minnotes.app>, support
    <https://github.com/cbkow/minNotes/issues>; `runFullTrust` justification: "minNotes is a desktop notes editor
    (Qt/C++) that opens and saves user-chosen documents and media anywhere on disk or on network shares; full trust
    is the standard Desktop Bridge entry point for a Win32 application."

@@ -73,8 +73,10 @@ trouble shared storage usually brings.
 
 ## Get Going
 
-1. **Download** the latest `.dmg` (macOS) or `.exe` (Windows) from the
-   [releases page](https://github.com/cbkow/minNotes/releases/latest) —
+1. **Download** the latest `.dmg` from the
+   [releases page](https://github.com/cbkow/minNotes/releases/latest) (macOS)
+   or get minNotes from the
+   [Microsoft Store](https://apps.microsoft.com/detail/9P2S2W9TLL9D) (Windows) —
    see [Installation](installation.md).
 2. Open or create a file, then start with [Files & Pages](basics.md), the
    [Canvas](canvas.md) tour and the [Editing](editing.md) primer.

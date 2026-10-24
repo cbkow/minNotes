@@ -9,7 +9,7 @@ nav_order: 2
 | Platform | Where |
 |---|---|
 | macOS 13+ (Apple Silicon) | `minNotes-<version>-macOS.dmg` from the [releases page](https://github.com/cbkow/minNotes/releases/latest) |
-| Windows 10/11 (x64) | The [Microsoft Store](https://apps.microsoft.com/search?query=minNotes) |
+| Windows 10/11 (x64) | The [Microsoft Store](https://apps.microsoft.com/detail/9P2S2W9TLL9D) |
 
 ## macOS
 
