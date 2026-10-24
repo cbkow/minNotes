@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AppxManifest.xml.in — the Microsoft Store package manifest (CMake configure_file @ONLY, see CMakeLists.txt here).
+    @MN_MSIX_IDENTITY@      Partner Center Package/Identity/Name           (cbkow.minNotes)
+    @MN_MSIX_PUBLISHER@     Partner Center Package/Identity/Publisher      (the account's CN)
+    @MN_MSIX_PUBLISHER_DISPLAY_NAME@  Package/Properties/PublisherDisplayName
+    @MN_MSIX_VERSION@       PROJECT_VERSION padded to four parts           (2.0.6 → 2.0.6.0)
+  runFullTrust is the ONLY capability: everything minNotes writes under AppData (scratch working copies, the guide,
+  the spelling dictionary, the single-instance lock) is private to the app, so the default MSIX virtualization is
+  fine and no unvirtualizedResources is needed (minRender 0.5.6.0 was denied for it). The file types and the
+  protocol are the ones the Inno installer registered.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="@MN_MSIX_IDENTITY@"
+    Version="@MN_MSIX_VERSION@"
+    Publisher="@MN_MSIX_PUBLISHER@"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>minNotes</DisplayName>
+    <PublisherDisplayName>@MN_MSIX_PUBLISHER_DISPLAY_NAME@</PublisherDisplayName>
+    <Logo>images\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="minNotes" Executable="minNotes.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="minNotes"
+        Description="Notes on a canvas: pages, media, tables and ink"
+        BackgroundColor="transparent"
+        Square150x150Logo="images\Square150x150Logo.png"
+        Square44x44Logo="images\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="images\Wide310x150Logo.png" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="minnotesdocument">
+            <uap:DisplayName>minNotes Document</uap:DisplayName>
+            <uap:Logo>images\Square44x44Logo.png</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.mnd</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="minnotespackage">
+            <uap:DisplayName>minNotes Package</uap:DisplayName>
+            <uap:Logo>images\Square44x44Logo.png</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.mnpkg</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="minnotes">
+            <uap:DisplayName>minNotes Link</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+</Package>

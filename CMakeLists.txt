@@ -188,7 +188,12 @@ add_subdirectory(external/psd_sdk/Psd EXCLUDE_FROM_ALL)
 target_include_directories(Psd PUBLIC ${CMAKE_SOURCE_DIR}/external/psd_sdk/Psd)
 set_target_properties(Psd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# The Microsoft Store build (Windows): no WinSparkle — the Store delivers updates — and the app hides Check for
+# Updates. Configure it with the `store` preset; packaging/windows/msix packs it (the minnotes_msix target).
+option(MINNOTES_STORE_BUILD "Build for the Microsoft Store (no self-updater)" OFF)
+
 add_subdirectory(app)
+add_subdirectory(packaging/windows/msix)
 
 # Opt-in headless regression harness for the BlockModel document-state fixes.
 # Off by default so normal/release builds stay lean; enable with

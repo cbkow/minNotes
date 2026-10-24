@@ -562,8 +562,12 @@ if(WIN32)
     # the app version (the updater's compare value) + the shared Ed25519 public
     # key, link the import lib, and copy WinSparkle.dll next to the exe. When
     # absent the bridge stays a no-op (header) and the build still succeeds.
+    # A Store build never carries it (MINNOTES_STORE_BUILD, the `store` preset): the Store owns updates.
     set(_mn_winsparkle "${CMAKE_SOURCE_DIR}/external/winsparkle")
-    if(EXISTS "${_mn_winsparkle}/include/winsparkle.h")
+    if(MINNOTES_STORE_BUILD)
+        target_compile_definitions(minnotesapp PRIVATE MINNOTES_STORE_BUILD)
+        message(STATUS "minNotes: Store build — no WinSparkle, no Check for Updates")
+    elseif(EXISTS "${_mn_winsparkle}/include/winsparkle.h")
         target_sources(minnotesapp PRIVATE winsparkle_updater_windows.cpp)
         target_compile_definitions(minnotesapp PRIVATE
             MINNOTES_HAVE_WINSPARKLE

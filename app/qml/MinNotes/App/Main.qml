@@ -1440,12 +1440,15 @@ spell.checkSpelling = checkSpelling; spell.checkGrammar = checkGrammar; spell.ig
                 Action { text: qsTr("Forward"); shortcut: "Ctrl+Alt+Right"; enabled: navHistory.canForward; onTriggered: navHistory.forward() }
             }
             ThemedMenu {
+                id: helpMenu
                 title: qsTr("Help")
-                Action { text: qsTr("Check for Updates…"); onTriggered: appUpdater.checkForUpdates() }
+                // A Store build has no updater (the Store delivers updates): the item goes (hide, don't grey).
+                Action { id: checkUpdatesAction; text: qsTr("Check for Updates…"); onTriggered: appUpdater.checkForUpdates() }
                 Action { text: qsTr("User Guide"); onTriggered: win.openGuide("") }
                 Action { text: qsTr("Keyboard Shortcuts"); shortcut: "Ctrl+/"; onTriggered: win.openGuide("Keyboard Shortcuts") }
                 Action { text: qsTr("Rebuild User Guide…"); onTriggered: rebuildGuideDialog.open() }
                 Action { text: qsTr("Third-Party Notices"); onTriggered: Qt.openUrlExternally("https://minnotes.app/licenses/") }
+                Component.onCompleted: if (!appUpdater.available) helpMenu.removeAction(checkUpdatesAction)
             }
         }
     }

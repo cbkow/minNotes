@@ -21,10 +21,21 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
+        },
+        {
+            "name": "store",
+            "displayName": "Release (Microsoft Store: no WinSparkle)",
+            "binaryDir": "${sourceDir}/build/store",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "MINNOTES_STORE_BUILD": "ON"
+            }
         }
     ],
     "buildPresets": [
         { "name": "debug", "configurePreset": "debug" },
-        { "name": "release", "configurePreset": "release" }
+        { "name": "release", "configurePreset": "release" },
+        { "name": "store", "configurePreset": "store" }
     ]
 }
