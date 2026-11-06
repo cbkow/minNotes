@@ -99,7 +99,8 @@ target_link_libraries(mn_regression_test PRIVATE
     KF6::SyntaxHighlighting        # Exporter's syntax-coloured code blocks
     minnotes::ffmpeg               # MediaStore.cpp probes media via FFmpeg
     minnotes::hunspell             # the spell engine
-    Psd)                           # psd_sdk — the preview pass's PSD reader (and the test's PSD fixture writer)
+    Psd                            # psd_sdk — the preview pass's PSD reader (and the test's PSD fixture writer)
+    minnotes::minpaths)            # min-paths — PathMap.cpp / MediaStore.cpp / FileLinks.cpp call its C ABI
 if(APPLE)
     # RtfConvert_mac.mm — NSAttributedString RTF→HTML
     target_link_libraries(mn_regression_test PRIVATE "-framework AppKit" "-framework ImageIO" "-framework QuickLookThumbnailing")

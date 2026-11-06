@@ -186,6 +186,10 @@ endif()
 set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "" FORCE)
 add_subdirectory(external/psd_sdk/Psd EXCLUDE_FROM_ALL)
 target_include_directories(Psd PUBLIC ${CMAKE_SOURCE_DIR}/external/psd_sdk/Psd)
+
+# min-paths (minplatform, canon §22): the family's path kit — {vol,rel} refs, the source classifiers, file URLs,
+# the ufb link — as a Rust static library built by cargo from the sibling checkout. See cmake/MinPaths.cmake.
+include(cmake/MinPaths.cmake)
 set_target_properties(Psd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The Microsoft Store build (Windows): no WinSparkle — the Store delivers updates — and the app hides Check for

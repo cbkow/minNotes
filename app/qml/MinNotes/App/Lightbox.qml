@@ -30,7 +30,7 @@ Item {
     readonly property var bar: barRow        // probe
     readonly property var transport: ctLoader.item
 
-    function _fileUrl(path) { return path === "" ? "" : (path.indexOf("file:") === 0 ? path : "file:///" + path.replace(/^\/+/, "")) }
+    function _fileUrl(path) { return pathMap.fileUrl(path) }   // min-paths: percent-encoded, right on both OSes
     function _basename(path) { return path.substring(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1) }
     function _b64url(s) {   // the PDF page provider's key (MediaBlock's scheme): base64url of the UTF-8 path
         var enc = encodeURIComponent(s), bytes = []

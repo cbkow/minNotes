@@ -1,4 +1,5 @@
 #include "MediaStore.h"
+#include "MinPaths.h"
 #include "PreviewRender.h"
 #include <QJsonArray>
 #include <QDateTime>
@@ -302,85 +303,16 @@ QString MediaStore::assetsDir() const {
     return dir;
 }
 
-// True when `path` lives somewhere that routinely deletes its own
-// contents — system temp dirs, ~/Library (CleanShot's media store,
-// Mail/Messages attachment caches), Windows temp. An image referenced
-// in place from one of these rots within days: the block keeps
-// rendering from the app's image cache while it's open, and the HTML
-// export then finds nothing and emits a dead file:// link (the
-// "unreachable source" fallback — bit a real export 2026-08-13).
+// The source classifiers live in min-paths `classify` (minplatform canon §22, row 122 — minNotes' rules are the
+// reference): volatile = the temp dirs, ~/Library, /var/folders, %TEMP% / %LOCALAPPDATA% / %APPDATA%, plus the app's own
+// scratch root, tested on both the absolute and the canonical path (/tmp is a symlink); network = UNC / DRIVE_REMOTE /
+// an smb-afp-nfs-cifs-dav-sshfs-ftp mount via statfs; when the probe can't tell it says "not a share" — the safe side
+// is copying (ruling 2026-08-19: shares are the only sources still referenced in place).
 static bool isVolatileSource(const QString& path) {
-    const QFileInfo fi(path);
-    const QString abs = QDir::cleanPath(fi.absoluteFilePath());
-    // Match the canonical form too: /tmp is a symlink to /private/tmp on
-    // macOS, and absoluteFilePath() does NOT resolve symlinks — a capture
-    // app handing file:///tmp/… would otherwise sail past every root.
-    const QString canon = QDir::cleanPath(fi.canonicalFilePath());   // "" if gone
-    QStringList roots;
-    roots << QDir::tempPath()
-          << QStringLiteral("/tmp") << QStringLiteral("/var/tmp");
-    // The app's own scratch root (staged imports, working copies) is
-    // reclaimed across sessions — always volatile, on every platform.
-    // On macOS it happens to sit under ~/Library; on Windows it's under
-    // AppData/Roaming, which the env roots below also cover.
-    roots << QDir::cleanPath(BlockModel::scratchDir());
-#if defined(Q_OS_MACOS)
-    roots << QDir::homePath() + QStringLiteral("/Library")
-          << QStringLiteral("/private/var/folders")
-          << QStringLiteral("/var/folders")
-          << QStringLiteral("/private/tmp")
-          << QStringLiteral("/private/var/tmp");
-#elif defined(Q_OS_WIN)
-    // TEMP/TMP catch the classic temp dirs; LOCALAPPDATA/APPDATA catch
-    // capture apps' own media caches (the CleanShot-class rot, Windows
-    // edition).
-    for (const char* var : { "TEMP", "TMP", "LOCALAPPDATA", "APPDATA" }) {
-        const QString v = qEnvironmentVariable(var);
-        if (!v.isEmpty()) roots << QDir::cleanPath(v);
-    }
-#endif
-    const Qt::CaseSensitivity cs =
-#if defined(Q_OS_WIN)
-        Qt::CaseInsensitive;
-#else
-        Qt::CaseSensitive;
-#endif
-    for (const QString& root : roots) {
-        if (root.isEmpty()) continue;
-        for (const QString& p : { abs, canon }) {
-            if (p.isEmpty()) continue;
-            if (p.startsWith(root + QLatin1Char('/'), cs) || p.compare(root, cs) == 0)
-                return true;
-        }
-    }
-    return false;
+    return mp_is_volatile_source(mn::mp::u8(path).constData(), mn::mp::u8(QDir::cleanPath(BlockModel::scratchDir())).constData()) != 0;
 }
-
-// True when `path` lives on a network share (SMB/AFP/NFS/WebDAV mount, or a
-// Windows UNC path / mapped network drive). Those are the ONLY sources still
-// referenced in place (ruling 2026-08-19): shares are the shared source of
-// truth, can be huge, and travel cross-OS via {vol,rel} path mapping. When
-// the probe can't tell (unmounted, vanished file), it says "not a share" —
-// the safe side is copying.
 static bool isNetworkSource(const QString& path) {
-    const QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-#if defined(Q_OS_WIN)
-    if (p.startsWith(QLatin1String("//")) || p.startsWith(QLatin1String("\\\\")))
-        return true;                                       // UNC
-    if (p.length() >= 2 && p.at(1) == QLatin1Char(':')) {  // mapped drive letter
-        const QString root = p.left(2) + QLatin1Char('\\');
-        return GetDriveTypeW(reinterpret_cast<const wchar_t*>(root.utf16()))
-               == DRIVE_REMOTE;
-    }
-    return false;
-#else
-    const QStorageInfo si(QFileInfo(p).absolutePath());
-    if (!si.isValid()) return false;
-    const QByteArray fs = si.fileSystemType().toLower();
-    for (const char* t : { "smb", "afp", "nfs", "cifs", "dav", "sshfs", "ftp" })
-        if (fs.contains(t)) return true;
-    return false;
-#endif
+    return mp_is_network_source(mn::mp::u8(path).constData()) != 0;
 }
 
 MediaStore::ImageRef MediaStore::importFile(const QString& fileUrlOrPath, bool forceCopy) const {

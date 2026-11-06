@@ -1,4 +1,5 @@
 #include "PathMapController.h"
+#include "MinPaths.h"
 #include "Document.h"          // makeUlid()
 #include <QSettings>
 #include <QJsonDocument>
@@ -69,3 +70,11 @@ void PathMapController::setMappingsJson(const QString& json) {
 }
 
 QString PathMapController::newId() const { return makeUlid(); }
+
+QString PathMapController::fileUrl(const QString& path) const {
+    if (path.isEmpty() || path.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) return path;
+    return mn::mp::take(mp_path_to_file_url(mn::mp::u8(path).constData()));
+}
+QString PathMapController::localPath(const QString& fileUrl) const {
+    return mn::mp::take(mp_file_url_to_path(mn::mp::u8(fileUrl).constData()));
+}

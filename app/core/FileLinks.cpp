@@ -1,16 +1,10 @@
 #include "FileLinks.h"
+#include "MinPaths.h"
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
 #include <QUrl>
-#if defined(Q_OS_WIN)
-#include <iterator>
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace mn {
 
@@ -21,35 +15,12 @@ namespace {
 // or the default app as a path that does not exist for them. The opened handle knows the real location; outside a
 // package (or for anything not redirected) it is the same path.
 QString pathForOtherApps(const QString& path) {
-#if defined(Q_OS_WIN)
-    const HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(path).utf16()), 0,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                                 FILE_FLAG_BACKUP_SEMANTICS, nullptr);   // BACKUP_SEMANTICS: directories open too
-    if (h == INVALID_HANDLE_VALUE) return path;
-    wchar_t buf[MAX_PATH * 4];
-    const DWORD n = GetFinalPathNameByHandleW(h, buf, DWORD(std::size(buf)), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
-    CloseHandle(h);
-    if (n == 0 || n >= std::size(buf)) return path;
-    QString real = QString::fromWCharArray(buf, int(n));
-    if (real.startsWith(QLatin1String("\\\\?\\UNC\\"))) real = QLatin1String("\\\\") + real.mid(8);
-    else if (real.startsWith(QLatin1String("\\\\?\\"))) real = real.mid(4);
-    return QDir::fromNativeSeparators(real);
-#else
-    return path;
-#endif
+    return QDir::fromNativeSeparators(mp::take(mp_external_path(mp::u8(path).constData())));   // min-paths `volume::external_path`
 }
 } // namespace
 
 QString ufbLinkFor(const QString& path) {
-    if (path.isEmpty()) return {};
-#if defined(Q_OS_WIN)
-    const QString os = QStringLiteral("win");
-#else
-    const QString os = QStringLiteral("mac");
-#endif
-    const QString norm = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
-    return QStringLiteral("ufb:///") + os + QLatin1Char('/')
-         + QString::fromLatin1(QUrl::toPercentEncoding(norm, "/"));
+    return mp::take(mp_ufb_link(mp::u8(path).constData()));   // min-paths `links::ufb_link` (slashes literal, the rest percent-encoded)
 }
 
 void revealInFileManager(const QString& p) {

@@ -7478,8 +7478,7 @@ FocusScope {
                                 // bare "file://" + "C:/…" parses C: as a host and
                                 // drops the colon); a POSIX path (/…) needs file://.
                                 source: modelData.image !== ""
-                                    ? (modelData.image.charAt(0) === "/" ? "file://" : "file:///")
-                                      + modelData.image + "?v=" + vnotes.revision
+                                    ? pathMap.fileUrl(modelData.image) + "?v=" + vnotes.revision   // min-paths: encoded, both OSes
                                     : ""
                                 asynchronous: true; cache: false
                                 fillMode: Image.PreserveAspectFit

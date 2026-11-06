@@ -13,6 +13,11 @@ public:
     explicit PathMapController(QObject* parent = nullptr);
 
     // JSON array of {id,label,win,mac,lin,enabled} — what the dialog binds to.
+    // File URLs for QML (min-paths, canon §22 row 124): percent-encoded, `file:///C:/…` on Windows and `file:///…` on
+    // POSIX, "" for a path that cannot be expressed. The QML image sources and the lightbox built these by hand with no
+    // encoding — a '#', '%' or '?' in a path broke them.
+    Q_INVOKABLE QString fileUrl(const QString& path) const;
+    Q_INVOKABLE QString localPath(const QString& fileUrl) const;
     Q_INVOKABLE QString mappingsJson() const;
     // Replace the whole list (the dialog's Done): parse, persist, publish, notify.
     Q_INVOKABLE void setMappingsJson(const QString& json);
