@@ -64,3 +64,6 @@ sparkle_private_key*.txt
 /spike/
 /packaging/windows/PORTING-NOTES.md
 /scripts/RELEASE.md
+
+# Private working notes (port discussions, research) — local only, never public.
+/private/
