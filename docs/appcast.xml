@@ -8,6 +8,30 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 3.0.0</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>3.0.0</sparkle:version>
+      <sparkle:shortVersionString>3.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+<ul>
+  <li><b>minNotes 3 is a new application under the same name.</b> A document is now a collection of notes, folders
+      and canvases. A minNotes 2 document is imported, not opened in place: open it and choose Import. The old file
+      is not changed; things placed directly on its canvas, outside a page, are not imported.</li>
+  <li>Folders, a merging save for shared storage, video notes and drawings in the note, a large view for PDFs and
+      pictures, tables as boards, Web Folder export with an optional password, packages, and a wider import.</li>
+  <li>Windows: minNotes comes from the Microsoft Store only, which also delivers its updates.</li>
+</ul>
+<p>Read "Coming from minNotes 2" first: https://minnotes.app/from-2/</p>
+      ]]></description>
+      <pubDate>Sat, 14 Nov 2026 14:14:53 -0500</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v3.0.0/minNotes-3.0.0-macOS.dmg"
+        sparkle:edSignature="eaZTFxld7fL7YwCD1K46f8/JVDsDrte+ijzWmPd8T1r/yK/nXM3gmqzDKd4iBAiNvd0RQ8Z2v+SUePNTy7xDAA=="
+        length="40195252"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 2.0.6</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>2.0.6</sparkle:version>
