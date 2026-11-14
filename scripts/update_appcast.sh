@@ -1,45 +1,37 @@
 #!/usr/bin/env bash
 # Add a release to the Sparkle appcast (docs/appcast.xml).
 #
-# Everything except the EdDSA signature and the release notes is derived:
-#   version  → CMakeLists.txt project(VERSION)  (or arg 1)
-#   tag      → v<version>
-#   DMG      → build/release/minNotes-<version>-macOS.dmg (or arg 2)
-#   URL      → github.com/<repo>/releases/download/v<version>/minNotes-<version>-macOS.dmg
-#   sig+len  → external/Sparkle/bin/sign_update <dmg>  (uses the Keychain key)
-#   date     → date -R
+# docs/ IS the minnotes.app site (GitHub Pages, CNAME in docs/CNAME), so the appcast is published by committing this
+# file's change and pushing main. Sparkle fetches https://minnotes.app/appcast.xml and verifies each download against
+# SUPublicEDKey in the application's Info.plist, so the signature must come from the matching private key - the one in
+# the login keychain, which sign_update uses by default.
 #
-# Run AFTER sign-and-notarize.sh has produced the notarized DMG and you've
-# created the GitHub release tag v<version> with that DMG uploaded. Then review
-# + commit docs/appcast.xml to publish at minnotes.app/appcast.xml.
+# Run it AFTER the notarized DMG is attached to the GitHub release v<version>: the enclosure's address points at the
+# release asset. The DMG argument is the local file: its bytes are what is signed and measured.
+#
+# sign_update is Sparkle's tool. minNotes 3 is built in the minplatform repository, whose tools/sparkle/fetch.sh puts it
+# in external/sparkle/bin; this script looks for a minplatform checkout beside this one, or takes the path in SIGN_UPDATE.
 #
 # Usage:
-#   scripts/update_appcast.sh [VERSION] [DMG_PATH] [NOTES_HTML_FILE]
+#   scripts/update_appcast.sh <version> <path/to/minNotes-<version>-macOS.dmg> [NOTES_HTML_FILE]
+#   SIGN_UPDATE=/path/to/sign_update scripts/update_appcast.sh 3.0.0 minNotes-3.0.0-macOS.dmg
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="cbkow/minNotes"
 APPCAST="$REPO_ROOT/docs/appcast.xml"
-SIGN_UPDATE="$REPO_ROOT/external/Sparkle/bin/sign_update"
+SIGN_UPDATE="${SIGN_UPDATE:-$REPO_ROOT/../minplatform/external/sparkle/bin/sign_update}"
 SENTINEL="<!-- @@APPCAST_INSERT@@ -->"
 
 VERSION="${1:-}"
 DMG="${2:-}"
 NOTES_FILE="${3:-}"
-
-# --- Derive the version from CMakeLists if not given -----------------------
-if [ -z "$VERSION" ]; then
-    VERSION="$(awk '/^project\(MinNotes/{f=1} f&&/VERSION/{print $2; exit}' \
-                   "$REPO_ROOT/CMakeLists.txt")"
-fi
-[ -n "$VERSION" ] || { echo "ERROR: could not determine version" >&2; exit 1; }
+[ -n "$VERSION" ] && [ -n "$DMG" ] || { echo "usage: $0 <version> <path/to/minNotes-<version>-macOS.dmg> [NOTES_HTML_FILE]" >&2; exit 1; }
 TAG="v$VERSION"
-# Default DMG path depends on VERSION (versioned asset name).
-DMG="${DMG:-$REPO_ROOT/build/release/minNotes-$VERSION-macOS.dmg}"
 
 # --- Sanity checks ---------------------------------------------------------
 [ -f "$DMG" ]        || { echo "ERROR: DMG not found: $DMG" >&2; exit 1; }
-[ -x "$SIGN_UPDATE" ] || { echo "ERROR: $SIGN_UPDATE missing — run scripts/fetch_sparkle.sh" >&2; exit 1; }
+[ -x "$SIGN_UPDATE" ] || { echo "ERROR: no sign_update at $SIGN_UPDATE (minplatform: tools/sparkle/fetch.sh, or set SIGN_UPDATE)" >&2; exit 1; }
 grep -q "$SENTINEL" "$APPCAST" || { echo "ERROR: insertion marker missing in $APPCAST" >&2; exit 1; }
 
 if grep -q "<sparkle:version>$VERSION</sparkle:version>" "$APPCAST"; then

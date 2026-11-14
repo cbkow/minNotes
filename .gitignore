@@ -1,66 +1,7 @@
-# Build output
-/build/
-
-# clangd / IDE index caches
-.cache/
-compile_commands.json
-
-# macOS / editor cruft
+# macOS
 .DS_Store
-*.user
-*.swp
 
-# Spike harness build dir (throwaway; sources kept for reference)
-/spike/build/
-
-# icontool helper build dir (the .ico/.png it renders ARE committed; build isn't)
-/packaging/windows/icontool/build/
-
-# KSyntaxHighlighting built from source (run external/build-ksyntax.sh)
-/external/kf6/
-/external/src/
-# Vendored prebuilt FFmpeg for the video engine (app/player/) — per-platform
-# binaries (macOS dylibs / Windows lib+dll), not built from this tree.
-/external/ffmpeg/
-/external/ffmpeg
-
-# Vendored WinSparkle (Windows auto-update). Binary lib+dll copied from ufb's
-# external/winsparkle; not built here. The CMake WIN32 block guards on its
-# presence, so the build works without it (no-op updater shim).
-/external/winsparkle/
-
-# Aspekta font upstream package (only the used .ttf are vendored in app/.../fonts/)
-/external/aspekta/
-
-# Vendored Sparkle.framework + tools (macOS auto-update). Copied from QCView /
-# fetched from the Sparkle GitHub release; not committed (binary framework).
-# The CMake bundle block guards on its presence, so the build works without it.
-/external/Sparkle/
-/external/Sparkle
-
-# Sparkle EdDSA PRIVATE key. `generate_keys -x` exports it to a plaintext file —
-# it must NEVER be committed (the private key signs every future auto-update).
-# It belongs in the login Keychain + an out-of-repo backup. The PUBLIC key is in
-# packaging/macos/Info.plist.in, which is fine to commit.
-sparkle_private_key*.txt
-
-# Release artifacts dragged to the repo root (the canonical ones live in build/,
-# already ignored above — this is a safety net for stray copies before upload).
-/*.dmg
-/*.zip
-
-# Windows installer output (Inno Setup writes it next to the .iss). Built by
-# packaging/windows/build-release.ps1; uploaded to the release host, not committed.
-/packaging/windows/minNotes-*-x64.exe
-# The Microsoft Store package (packaging/windows/msix/build_msix.ps1): output + scratch staging.
-/packaging/windows/msix/dist/
-/packaging/windows/msix/staging/
-
-# Internal planning / spike / status / design docs — kept locally, not public.
-/DESIGN.md
-/SPIKE.md
-/STATUS.md
-/PLAN-*.md
-/spike/
-/packaging/windows/PORTING-NOTES.md
-/scripts/RELEASE.md
+# Jekyll (the site in docs/)
+docs/_site/
+docs/.jekyll-cache/
+docs/.sass-cache/
