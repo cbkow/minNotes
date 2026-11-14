@@ -1,159 +1,281 @@
 ---
 title: The Canvas
 permalink: /canvas/
-nav_order: 4
+nav_order: 9
 ---
 
 # The Canvas
 
-Every file is a canvas. Pages are cards on it, and so is everything you
-drop: video, PDFs, images, audio, folders, files, links. Pan by dragging
-with the middle button, by holding `Space`, or with the **hand** tool;
-zoom with `⌘+` / `⌘−`, `⌘`-wheel, or a pinch; `⌘1` fits everything in the
-window and `⌘0` returns to 100%. The zoom badge at the right end of the
-toolbar shows the level and opens a slider.
+A canvas is a boundless sheet for laying things out: pictures, videos,
+PDFs, files, links, notes and drawings, placed where you want them. Use it
+for a moodboard, a wall of references, a review board.
 
-![A canvas with pages, media and ink](images/mn030.png) 
+A canvas is an entry of the collection's tree, beside the notes and
+folders. A collection can have as many as you like, or none.
 
-## Pages
+![A canvas of reference pictures](images/mn3-canvas-overview.png)
 
-**Double-click** a page (or select it and press `Return`) to open it
-**full-window** — the page view, where writing happens. `Esc` there returns
-to the canvas with the page selected. The open glyph at the card's top-right,
-**Open page** on its menu and the path bar do the same.
+## Making and Opening a Canvas
 
-## Frames
+Click **New canvas** in the sidebar's header. The canvas appears in the
+tree; rename, move and delete it there like a note.
 
-A **frame** groups things on the canvas. Select some elements and press
-`⌘G` (or pick **Group** from the menu): a titled, tinted rectangle wraps them
-and from then on moves, duplicates, deletes and reorders with them as one.
-Membership is explicit — `⌘G` with one frame among the selection adds the
-rest to it, **Remove from frame** on an element's menu takes it out, `⌘⇧G`
-dissolves the frame and leaves its contents where they are. Dragging a
-child outward just stretches the frame: a **group** is elastic and hugs its
-contents.
+Click a canvas's row to open it in the page's place. Each canvas remembers
+where you were looking. Until you move the view yourself, it follows the
+content and keeps everything in sight.
 
-The frame tool (`F`) places frames by hand: click for an empty group, drag
-for a **board** — a frame with a fixed size you resize with its handles or
-snap to an aspect (16:9, 1:1, 9:16, 4:3); a board with an aspect keeps it
-under the handles. A board **clips** its contents to its edges, so it reads
-as a bounded sheet on the open canvas; a group never clips. Double-click a
-frame (or press `Return` on it) to rename it in place; the Inspector's
-**Frame** section holds the title, a tint, the group / board choice and the
-aspect. Drop a file onto any frame and it joins; so does a paste inside one.
-To move something that is already on the canvas into a frame, drag it there
-**holding `⌘`** (`Ctrl` on Windows): the frame lights up under the pointer and
-the release joins it. The same `⌘`-drag released clear of any frame takes a
-member out. A plain drag never changes membership — dragging a child outward
-just stretches its group. In the Layers panel a frame stands out in its tint,
-with its children threaded under it, and dragging a row into or out of a
-frame's block moves it in or out.
+A canvas has its own undo history: `Cmd+Z` / `Ctrl+Z` and `Shift+Cmd+Z` /
+`Ctrl+Shift+Z` step through what was done on this canvas.
 
-A page's **width** is its card's width — drag a side handle and the text
-reflows. Its height follows its content up to a square; drag a top or
-bottom handle to pin a height (the card scrolls), double-click the handle
-or choose **Fit height to content** to let it grow again. A long page shows
-its first stretch with a note of how many blocks are below; open the page
-to read on.
+## The Toolbar
 
-The **page tool** (`N`) places a new page where you click, or drag to size
-it; **New page here** on the empty-canvas menu does the same.
+While a canvas is open the toolbar shows the canvas's tools:
 
-## Media on the canvas
+| Tool | Key | What it does |
+|---|---|---|
+| Select | `V` or `Esc` | Selects and moves things |
+| Pen | `P` | Draws freehand. A tablet's pressure varies the line |
+| Line | `L` | A straight line |
+| Arrow | `A` | An arrow |
+| Rectangle | `R` | A rectangle |
+| Oval | `O` | An oval |
+| Eraser | `E` | Rubs out what it passes over |
+| Pen colour | | The colour of new ink, or of the selected ink |
+| Thinner line / Thicker line | | The width of new ink, or of the selected ink |
+| Frame | `F` | Click for a frame that hugs what is put in it, drag for one with a size of its own |
+| Add pictures, videos or PDFs | | Opens the system's dialog |
+| Add files | | Opens the system's dialog |
 
-Drop a file, or paste, and it lands where you drop it:
+Press a tool's key again to put it down.
 
-| Dropped | Becomes |
-|---|---|
-| Video | A poster card. Select it for the play button and scrub line; `K` plays and pauses it in place, `Space` or `Return` previews it in the lightbox with the full transport. Double-click, the open glyph or **Open in studio** opens the review studio. |
-| PDF | Its first page. Select it to page with the strip under the card or `PageUp` / `PageDown`; `Space` previews it in the lightbox with a pager; double-click or open it full-window to read, zoom and draw on its pages. |
-| Image | The image, at its size up to 480 wide. Drag a corner to resize. `Space` or a double-click shows it in the **lightbox** — the picture alone over the window, with ‹ › to step through the file's media, a PDF's pager, a video's transport and ×; `Space` or `Esc` closes it. Videos, PDFs and audio preview there too. |
-| Photoshop, HEIC, RAW, HDR | A rendered preview card with a format pill; the original stays in place and the card's Reveal / Open / Copy path point at it. **Refresh preview** re-renders after the source changes. (Illustrator files are PDFs; EXR stays a file card.) |
-| Audio | A card with its duration and a play button. |
-| Folder | A card with the folder's name, count, first entries and full path. **Spread files here** lays its files out as cards. A QCView stream folder offers **Open as stream**. |
-| Any other file | A card with its name and full path. |
-| A URL | A bookmark card: favicon, the page's title, the link. Right-click empty canvas for **Add link…** to type one. |
-| `.mnd` / `.mnpkg` | Its pages copy in as pages, arranged as they were. |
-| Markdown, text, code, HTML, Word, spreadsheets | A new page holding the import. |
-| Evernote `.enex`, Notion export | One page per note, in a grid. |
+## Moving Around
 
-Several files at once land in a grid. Every card that stands for a file
-shows its **full path**, and its menu offers **Reveal in Finder /
-Explorer**, **Open in ufb**, and **Copy path** — see
-[Media](media.md) for where files live.
+**Pan**
 
-![Folder, file, link and audio cards](images/mn034.png) 
+- Scroll with the wheel or two fingers. `Shift` + wheel goes sideways.
+- Hold `Space` and drag.
+- Drag with the middle button.
+- Turn on the hand in the zoom box, then drag.
 
-## Selecting and arranging
+**Zoom**, from 5 % to 400 %
 
-Click selects; drag on empty canvas draws a marquee; `Shift`-click adds
-or removes. Drag a selection to move it, the handles to resize (videos keep
-their aspect), `Delete` to delete. Right-click for the menu: Open,
-Duplicate, Bring to front, Send to back, Delete, and the rows that fit the
-card. Every gesture is one undo step on the canvas's own history; inside a
-live page, `⌘Z` works on the page.
+- Pinch.
+- `Cmd` + wheel / `Ctrl` + wheel zooms about the pointer.
+- The keys in the table below.
+- The zoom box.
 
-![The canvas context menu](images/mn033.png) 
+The **zoom box** stands at the canvas's lower right. It needs no modifier
+key and no pinch, which helps over a remote desktop. From left to right:
+the hand (**Pan**), minus (**Zoom out**), the percentage (click it for
+100 %), plus (**Zoom in**) and **Fit everything**.
 
-**Layers.** Open the Inspector while the canvas is up and its top section
-lists the stack, front-most first: pages by their title, cards by their
-file name, text chips by their first line. Ink reads as one row per run of
-strokes ("Ink · 12"), so a card that sits between two runs shows between
-them — the list is exactly what the canvas paints. Click a row to select
-its element (a run selects all of its strokes; a run with only some
-strokes selected shows a dimmer fill), `Shift`-click to add, double-click
-to go live, right-click for the same menu. Drag a row to reorder, or use
-`⌘]` / `⌘[` to step the selection one layer forward or back and `⌥⌘]` /
-`⌥⌘[` for front and back. Each move is one undo step. History sits below
-the layers.
+![The zoom box](images/mn3-canvas-zoom-box.png)
 
-With a **video** selected the keyboard is its transport: `Space` (or
-`K`, `W`, `S`) plays and pauses, `←` / `→` (or `Q` / `E`) step frames,
-`J` / `L` (or `A` / `D`) hold to shuttle, `Home` / `End` jump, `R` cycles
-the review speed, `V` loops, `M` mutes. The tool letters wait until the
-video is deselected. The counter shows timecode; click it to flip every
-player to frames.
+| Action | macOS | Windows |
+|---|---|---|
+| Zoom in / out | `Cmd+=` / `Cmd+-` | `Ctrl+=` / `Ctrl+-` |
+| Fit everything | `Cmd+0` | `Ctrl+0` |
+| 100 % | `Shift+Cmd+1` | `Ctrl+Shift+1` |
 
-![A selected video with its transport](images/mn032.png) 
+Seen from far out, a card is drawn as its bare box.
+
+## Putting Things on the Canvas
+
+**Files.** Drop them from the Finder or Explorer, paste them, or use the
+toolbar's two add buttons. They become cards of the same kinds as the
+blocks of a note, and are linked or kept by the same rules: see
+[Media & Drawing](media.md). An empty canvas says so: "Drop pictures,
+videos, PDFs or files here — or double-click to type".
+
+**A picture from the clipboard.** `Cmd+V` / `Ctrl+V` makes a picture card.
+
+**Text.** Double-click the empty sheet and type, or paste text. This makes
+a note that belongs to the canvas.
+
+**A link.** Paste a web address. It becomes a link card.
+
+**A note of the collection.** Drag the note's row from the sidebar onto
+the canvas, or right-click the sheet and choose **Add Note…**.
+
+## The Cards
+
+### Pictures
+
+Double-click a picture, or select it and press `Return` / `Enter`, to look
+at it larger: the view goes to the card. `Esc` steps back to where you
+were (after a double-click, the first `Esc` leaves the card and the second
+returns the view).
+
+### Videos
+
+Select a video card and a strip appears under it: play, the timecode, and
+the line to scrub on. Press `Space` to play and pause, in the card, at any
+zoom. While one video card is selected, the keyboard is the same transport
+as in a note (the table is on [Media & Drawing](media.md#video)), and the
+drawing tools' letters wait until you deselect it.
+
+One video plays at a time across the whole window. A video that leaves the
+view, or is seen from far out, stops.
+
+When the clip has review notes, the selected card shows the row of their
+small pictures under the strip. Click one to go to its frame; click it
+again to edit its words. The notes' marks are on the scrub line, and the
+note's drawing and words show over the picture on its frame.
+
+While you watch, scrub or draw, the card's outline and corners stay out of
+the way. Click the card's picture to bring them back and resize it.
+
+### PDFs
+
+A PDF card shows one page. With the card selected, turn the page with
+`Option+Left` / `Option+Right` (`Alt+Left` / `Alt+Right` on Windows), or
+**Previous Page** / **Next Page** in the menu.
+
+### Files and Links
+
+A file's card is the same chip as in a note: icon, name, size. Double-click
+it to open the file in its own application. Double-click a link card to
+open the address.
+
+### Notes
+
+There are two kinds of note card, and they work the same way:
+
+- **A note of the canvas's own**, made by double-clicking the sheet or
+  pasting text. It lives with the canvas and has no row in the tree. To
+  make it an ordinary note of the collection, right-click it and choose
+  **Promote to Note**.
+- **A note of the collection**, dragged in from the sidebar. The card is
+  the note itself, live: edit it in either place. One note can be on
+  several canvases. Removing the card never deletes the note. If the note
+  is deleted from the tree, its card says "Note deleted".
+
+To **edit** a note card, double-click it, or select it and press `Return`
+/ `Enter`. The view goes to the card at 100 % and the note's own editor
+works inside it, with the text toolbar and everything a note can do. A
+note longer than its card scrolls inside it. `Esc`, or a click outside,
+leaves the card.
+
+To open the note in the page instead, select the card and press
+`Cmd+Return` / `Ctrl+Enter`, or choose **Open Note** in the menu.
+
+![A note card being edited on a canvas](images/mn3-canvas-note-card.png)
 
 ## Drawing
 
-The canvas toolbar holds the tools, each on a single key:
+Pick a drawing tool and draw on the sheet. Each stroke is a thing of its
+own on the canvas.
 
-| Tool | Key |
+- The **pen** uses the pen colour and a width from 1 to 64. Both are
+  remembered, and shared with the drawings you make on media.
+- Hold `Shift` to keep a line or arrow to the eight directions, and to
+  make a rectangle square or an oval round.
+- The **eraser** rubs: a pen line loses the part the eraser passes over
+  and the rest stays. A shape goes whole. One drag is one undo step.
+- `Esc` gives up the stroke you are drawing; pressed again, it puts the
+  tool down.
+- Hold `Space` to pan while a tool is armed.
+
+A stroke is not selected after you draw it, so the next one can follow.
+To change one later, switch to Select and click on its line. Then move it,
+delete it, or give it another colour or width with the toolbar.
+
+**Drawing on a card.** Ink drawn over a card stays the canvas's own: it
+floats above the card. To draw **on** a picture, a PDF page or a video
+frame, double-click the card first to enter it, then draw. That ink
+belongs to the picture or page, as it does in a note; on a video it is a
+review note on that frame, written beside the clip for QCView.
+
+## Selecting and Arranging
+
+| Action | How |
 |---|---|
-| Select / move | `V` |
-| Hand (pan) | `H` |
-| Page | `N` |
-| Text box | `T` |
-| Text, plain (no box) | `⇧T` |
-| Pen | `P` |
-| Rectangle | `R` |
-| Oval | `O` |
-| Line | `L` |
-| Arrow | `A` |
-| Eraser | `E` |
+| Select | Click a card. `Shift` + click adds or removes one |
+| Select several | Drag a marquee from the empty sheet |
+| Select everything | `Cmd+A` / `Ctrl+A` |
+| Move | Drag. `Shift` keeps the move to one axis |
+| Nudge | Arrow keys move by 1; with `Shift`, by 10 |
+| Resize | Drag a corner of the one selected card. A picture keeps its shape; `Shift` keeps any card's proportions |
+| Delete | `Delete` or `Backspace` |
+| Copy / cut / paste | `Cmd+C` / `Cmd+X` / `Cmd+V` (`Ctrl` on Windows) |
+| Duplicate | `Cmd+D` / `Ctrl+D` |
+| Bring to Front / Send to Back | `Cmd+]` / `Cmd+[` (`Ctrl+]` / `Ctrl+[`) |
+| Deselect | `Esc` |
 
-The three colour clips at the right end of the toolbar are **text**,
-**highlight** and **pen**; click one to open the palette for that layer.
-The **pen width** button opens a slider. With strokes selected, changing
-the width or the pen colour restyles them live. Strokes are canvas
-elements: select, move, duplicate and reorder them like anything else.
-`Esc` cancels a stroke in progress, then drops the tool, then clears the
-selection.
+**Snapping.** As you drag or resize, a card's edges and centre snap to
+those of the other cards in view, and a thin line shows where. Hold `Ctrl`
+to move freely.
 
-![Ink and shapes on the canvas](images/mn018.png) 
+**Align and distribute.** With two or more cards selected, right-click and
+choose **Align…**: **Align Left**, **Align Centre**, **Align Right**,
+**Align Top**, **Align Middle**, **Align Bottom**. With three or more,
+**Distribute Across** and **Distribute Down** space them evenly.
 
-Text boxes take the pen color as their fill with contrasting type; the
-plain text tool writes in the text color with no box. Both start at the
-body size; double-click a chip to edit it. A chip fits its text: the box
-grows as you type. Drag a side handle and the width stays where you put it,
-the text wraps there and the box grows down to hold it; double-click a side
-handle (or choose **Fit width to text**) to let it fit its text again.
+**Lock.** **Lock** in the menu fixes a card: it cannot be moved, resized
+or deleted, and a marquee passes over it. Right-click it and choose
+**Unlock** to free it.
 
-## Exporting the canvas
+Copied cards are pasted within minNotes, while it is running; they do not
+go to other applications.
 
-**Export ▸ Canvas as HTML…** writes one self-contained file: the canvas
-with pan and zoom, and a tab strip — click a page, a video or a PDF and it
-opens in a tab. **Canvas Poster (PNG)…** renders the zoomed-out view as an
-image. See [Export](export.md).
+## Frames
+
+A frame is a titled box that owns what is inside it. Move, copy, delete or
+restack a frame and its members go with it.
+
+- **Make one round a selection:** select the cards and press `Cmd+G` /
+  `Ctrl+G`, click the **Frame** button, or choose **Group** in the menu.
+  With one frame among the selected cards, the others join it.
+- **Make an empty one:** with nothing selected, click the **Frame** button
+  or press `F`, then click the sheet for a frame that hugs what you put in
+  it, or drag for a frame of that size.
+- **Put a card in, or take it out:** drag it. A card let go over a frame
+  joins it, and the frame lights up while you hold the card over it. A
+  card let go over the bare sheet leaves its frame. Cards dropped or
+  pasted in a frame join it too.
+- **Remove the frame, keep the cards:** `Shift+Cmd+G` / `Ctrl+Shift+G`, or
+  **Ungroup**.
+
+Take hold of a frame by its title or its edge. Inside it, a click is a
+click on the sheet. A frame cannot hold another frame.
+
+A frame **hugs** its members until you give it a size, by dragging a
+corner or by choosing a shape. From then on it keeps its size and clips
+what crosses its edge.
+
+The menu of a selected frame has:
+
+| Command | What it does |
+|---|---|
+| **Rename Frame** | Types the title. A double-click on the title does the same |
+| **Fit to Contents** | Makes a sized frame hug its members again |
+| **Shape…** | Gives the frame a shape: 16 : 9, 1 : 1, 9 : 16 or 4 : 3 |
+| **Tint…** | **No Tint**, or one of eight colours |
+
+![A frame with its menu](images/mn3-canvas-frame-menu.png)
+
+## The Context Menu
+
+Right-click a card, or the sheet, for the canvas's menu. The card under
+the pointer is selected first. The menu holds **Cut**, **Copy**,
+**Paste**, **Duplicate**, **Delete**; **Bring to Front**, **Send to
+Back**; the frame commands; **Align…**, **Lock** / **Unlock**;
+**Previous Page**, **Next Page**, **Open File**, **Reveal in Finder** /
+**Show in Explorer**; **Add Note…**, **Open Note**, **Promote to Note**;
+**Select All** and **Fit Everything**. Rows that do not apply to the
+selection are dimmed.
+
+## Exporting a Canvas
+
+With a canvas open, **Export > as HTML…** writes the canvas as one page
+you can pan and zoom in a browser, and **Export > Canvas Poster (PNG)…**
+writes it as a picture. See [Export](export.md).
+
+## Sharing and Older Files
+
+When someone else has saved the collection while you worked, a canvas is
+merged card by card at your next save: what only one of you touched is
+kept from that side, and for a card you both changed, the later change
+wins.
+
+Canvases made in minNotes 2 are not imported.

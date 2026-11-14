@@ -6,68 +6,72 @@ nav_order: 16
 
 # Licenses & Credits
 
+## minNotes
+
 minNotes is free software under the
-[GNU GPL-3.0-or-later](https://github.com/cbkow/minNotes/blob/main/LICENSE).
-It ships with the third-party material below. The full license texts live in
-[`LICENSES/`](https://github.com/cbkow/minNotes/tree/main/LICENSES) in the
-source repository and inside the app (`Contents/Resources/Licenses` on macOS,
-the `Licenses` folder beside the executable on Windows).
+[GNU General Public License, version 3](https://github.com/cbkow/minNotes/blob/main/LICENSE).
+You may use it, share it and change it under that licence's terms. It comes
+with no warranty.
 
-| Component | Role | License |
-|---|---|---|
-| Qt 6 | application framework | LGPL-3.0 |
-| FFmpeg | video decoding | LGPL-2.1+ |
-| KSyntaxHighlighting | code block colouring | MIT |
-| ink-stroke-modeler | stroke smoothing | Apache-2.0 |
-| SoundTouch | constant-pitch review speeds | LGPL-2.1 |
-| miniz | package (.mnpkg) zip backend | MIT |
-| stb_image | Radiance HDR previews | MIT |
-| psd_sdk | Photoshop PSD / PSB previews | BSD-2-Clause |
-| SQLite | note storage | public domain |
-| Sparkle | updates (macOS) | MIT |
-| WinSparkle | updates (Windows installer builds up to 2.0.5) | MIT |
-| Phosphor Icons | icons | MIT |
-| Geist / Geist Mono | the app's typefaces: chrome, body and headings (Geist), code (Geist Mono) | SIL OFL 1.1 |
-| Aspekta | typeface, bundled (the previous document sans) | SIL OFL 1.1 |
-| PT Serif | typeface, bundled (the previous body serif) | SIL OFL 1.1 |
-| Inter | typeface, bundled (the previous chrome sans) | SIL OFL 1.1 |
-| JetBrains Mono | typeface, bundled (the previous code mono) | SIL OFL 1.1 |
-| Lora | typeface, bundled (an alternative serif) | SIL OFL 1.1 |
-| Hunspell 1.7.3 | spelling engine | LGPL-2.1 (of its MPL 1.1 / GPL 2.0 / LGPL 2.1 tri-license) |
-| SCOWL word lists (2026.02.25) | the US + UK dictionary | SCOWL notice (below) |
-| LanguageTool English rules (v6.8) | grammar rule data | LGPL-2.1+ |
+The source of minNotes 3 is in the
+[minplatform repository](https://github.com/cbkow/minplatform) (`apps/mn` and
+the crates beside it). The source of minNotes 2 is on the
+[`2.x` branch](https://github.com/cbkow/minNotes/tree/2.x) of the minNotes
+repository.
 
-## Spelling and grammar
+## The full texts are in the application
 
-**Hunspell** — Copyright (C) 2002–2022 Németh László and the Hunspell
-contributors. Compiled into minNotes as a static library; minNotes as a whole
-is distributed under the GPL, which the LGPL permits.
-[hunspell.github.io](https://hunspell.github.io/)
+minNotes ships with a page of third-party notices: every component below and
+every Rust crate built into the application, each with the full text of its
+licence. On macOS, choose **minNotes > Licenses…** to open it.
 
-**SCOWL (Spell Checker Oriented Word Lists)** — the dictionary is the union of
-SCOWL's `en_US` and `en_GB-ise` Hunspell dictionaries. Its notice, reproduced
-as the license requires:
+That page is generated for each release from what is built into it, so where
+it and this page differ, the page in the application is the one that is
+right.
 
-> Copyright 2000–2026 by Kevin Atkinson
->
-> Permission to use, copy, modify, distribute, and sell any part of SCOWLv2,
-> or word lists created from it, is hereby granted without fee, provided that
-> the above copyright notice appears in all copies and that both the above
-> copyright notice and this notice appear in supporting documentation. Kevin
-> Atkinson makes no representations about the suitability of this database
-> for any purpose. It is provided "as is" without express or implied
-> warranty.
->
-> The affix file is a heavily modified version of the original english.aff
-> file released as part of Geoff Kuenning's Ispell, Copyright 1993 Geoff
-> Kuenning, covered by his BSD license.
+## Third-party components
 
-SCOWL draws on 12dicts and ENABLE2K (public domain, with special credit to
-Alan Beale) and on data from the Corpus of Contemporary American English.
-[wordlist.aspell.net](https://wordlist.aspell.net/)
+| Component | What it does in minNotes | Licence | Platform |
+|---|---|---|---|
+| [FFmpeg](https://ffmpeg.org/) | Reads video and sound; as a program beside the application, makes the videos of a web folder | GPL-3.0-or-later (as built) | macOS, Windows |
+| [dav1d](https://code.videolan.org/videolan/dav1d) | An AV1 decoder, built into FFmpeg | BSD-2-Clause | macOS |
+| [SRT](https://github.com/Haivision/srt) | Built into FFmpeg, unmodified | MPL-2.0 | macOS |
+| [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) | Built into FFmpeg, for SRT | Apache-2.0 | macOS |
+| [OpenEXR](https://openexr.com/) | Reads EXR pictures | BSD-3-Clause | macOS, Windows |
+| [Imath](https://imath.readthedocs.io/) | Used by OpenEXR | BSD-3-Clause | macOS, Windows |
+| [libdeflate](https://github.com/ebiggers/libdeflate) | Used by OpenEXR | MIT | macOS, Windows |
+| [OpenJPH](https://github.com/aous72/OpenJPH) | Used by OpenEXR | BSD-2-Clause | macOS, Windows |
+| [Zstandard](https://facebook.github.io/zstd/) | Used by OpenEXR | BSD-3-Clause | macOS, Windows |
+| [zlib](https://zlib.net/) | Compression | Zlib | macOS, Windows |
+| [libjpeg-turbo](https://libjpeg-turbo.org/) | A JPEG library | IJG, BSD-3-Clause and Zlib | macOS, Windows |
+| [LibTIFF](https://libtiff.gitlab.io/libtiff/) | A TIFF library | libtiff | macOS, Windows |
+| [XZ Utils (liblzma)](https://tukaani.org/xz/) | Compression | 0BSD | Windows |
+| [bzip2](https://sourceware.org/bzip2/) | Compression | bzip2-1.0.6 | Windows |
+| [libspng](https://libspng.org/) | A PNG library | BSD-2-Clause | Windows |
+| [Sparkle](https://sparkle-project.org/) | The updater | MIT, with bundled components under their own terms | macOS |
+| [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler) | Compiles shaders for Direct3D | NCSA (the LLVM release licence) and MIT | Windows |
+| [Microsoft Visual C++ Runtime](https://visualstudio.microsoft.com/license-terms/) | Runtime libraries, redistributed unmodified | Microsoft Software License Terms | Windows |
+| [minColor](https://github.com/cbkow/minplatform), after OpenDRT by Jed Smith and AgX by Troy Sobotka | The colour stage for HDR and linear video | GPL-3.0 | macOS, Windows |
+| [Geist and Geist Mono](https://vercel.com/font) | The typefaces of the interface, of notes and of code | SIL Open Font License 1.1 | macOS, Windows |
+| [Phosphor Icons](https://phosphoricons.com/) | The icons | MIT | macOS, Windows |
 
-**LanguageTool** — the grammar checker interprets the subset of LanguageTool's
-English `grammar.xml` that needs no part-of-speech tagger, about 1,700 rules.
-Copyright (C) 2001–2026 Daniel Naber, Marcin Miłkowski and the LanguageTool
-contributors, LGPL-2.1-or-later. Rule data only: no LanguageTool code is part
-of minNotes. [languagetool.org](https://languagetool.org)
+libjpeg-turbo: this software is based in part on the work of the Independent
+JPEG Group.
+
+The Windows build of FFmpeg has more libraries built into it than the macOS
+build. They are listed one by one, with their licences, in the notices of the
+Windows application.
+
+## Rust crates
+
+minNotes is written in Rust and builds in several hundred open-source crates,
+among them the ones that store a collection (SQLite, through a crate), draw
+the window, read PDFs and write the exports. Their names, versions and
+licence texts are in the application's notices page. A release is not built
+if a crate carries a licence outside the accepted list.
+
+## Shared with QCView
+
+The notes and drawings you make on a video are kept in the format of
+[QCView](https://qcview.com), beside the video, so the two applications read
+each other's review notes.

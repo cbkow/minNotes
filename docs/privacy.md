@@ -6,35 +6,85 @@ nav_order: 15
 
 # Privacy
 
-minNotes runs entirely on your machine.
+minNotes works on your machine and on the storage you choose. It has no
+accounts, and it sends no usage data, statistics or crash reports.
 
-- **No accounts, no telemetry, no analytics.** The app never phones home
-  about you or your files.
-- **Your files are plain files.** A file is a standard SQLite database on
-  your disk or share; its media sits in an ordinary folder beside it.
-  Nothing is uploaded anywhere.
-- **Network access** is limited to things you can see: on macOS, the
-  update check (Sparkle fetching the appcast from `minnotes.app`);
-  downloading an image when you paste a remote image URL; and — when you
-  drop or type a link on the canvas — one request to that page for its
-  title and icon. Nothing is fetched again until you ask for a refresh.
-- **On Windows, the Microsoft Store** installs and updates minNotes; the app
-  itself makes no update requests there. The Store's own handling is covered
-  by Microsoft's privacy statement.
-- **Spelling and grammar checking run fully on your machine.** The
-  dictionary and the rule set ship inside the app; no text ever leaves it.
-- **What stays on your machine:** your preferences, a custom dictionary
-  of words you added, and temporary working copies of the files you have
-  open, kept in the app's own data folder. A Windows Store install keeps it
-  in the app's private storage, which uninstalling removes; a folder left
-  by the old Windows installer stays until you delete it
-  (`%APPDATA%\minNotes`).
-- **Exports are yours.** HTML, Markdown, Word, PDF, canvas and package
-  exports are written to the location you choose and shared only by you.
-  A browser viewing an HTML export remembers its own view settings
-  (readable width, checked tasks) in that browser alone.
+## What minNotes sends
 
-minNotes is free software — the complete source is at
-[github.com/cbkow/minNotes](https://github.com/cbkow/minNotes) under
-GPL-3.0-or-later, so all of the above is verifiable. Questions:
-[open an issue](https://github.com/cbkow/minNotes/issues).
+minNotes uses the network for two things.
+
+**The update check (macOS).** Once a day, and when you choose
+**minNotes > Check for Updates…**, minNotes reads the update feed at
+`https://minnotes.app/appcast.xml`. It sends no profile of your system with
+the request. When you accept an update, it is downloaded from the address the
+feed names. On Windows the Microsoft Store installs and updates minNotes, and
+minNotes makes no update requests of its own.
+
+**Pictures named by a web address.** When you paste or import content that
+names a picture on the web (a web page, formatted text from a browser, a
+Markdown file with a picture's address), minNotes fetches that picture when
+the block is first shown and keeps a copy with the collection. After that the
+note uses the copy. The request goes to the address in your content and
+identifies the application only as "minNotes".
+
+Nothing else is fetched. A link in a note is a link: it is opened by your
+browser when you follow it, and minNotes does not load the page behind it for
+a title or a preview.
+
+## Your text and the system's writing tools
+
+minNotes has no spelling or grammar checker of its own. Instead, on macOS, it
+shows the text of the open note to the system through the accessibility
+interface, as one text field. This is what lets a writing tool you have
+installed, such as Grammarly, and assistive software such as a screen reader,
+read the note and place corrections in it.
+
+minNotes does not send your text anywhere. A tool that reads it this way may:
+what such a tool does with the text is set by that tool and its maker.
+
+## What is kept on the machine
+
+Besides the collections you save where you choose, minNotes keeps these on
+the machine you work on:
+
+| What | macOS | Windows |
+|---|---|---|
+| Your work since the last **Save**, for each open collection, and work left by a crash | `~/Library/Application Support/minNotes/sessions` | `sessions` in the `minNotes` folder of the application's local data (`%LOCALAPPDATA%`) |
+| Settings: the list of recent collections, the player's loop, speed and volume, the pen's colour and width, the two export options, your [path mappings](packages.md) | `~/Library/Application Support/minNotes` | The same `minNotes` folder |
+| Previews of pictures that are costly to read (Photoshop, SVG, HEIC and camera RAW files), up to 5 GB; the ones used longest ago go first | `~/Library/Caches/minNotes/previews` | `previews` in the same `minNotes` folder |
+
+The list of recent collections and the path mappings hold file paths. None of
+these files leave the machine.
+
+## What is in a collection
+
+A collection is one `.mnd` file, with a `minNotes Media` folder beside it for
+the files kept with it. Videos, PDFs and other files you add are referenced
+where they are, by their path, unless you collect them. See
+[Media & Drawing](media.md) and [Collect Media & Packages](packages.md).
+
+Anyone you give a collection to can read those paths, and the names of your
+drives and folders with them.
+
+## What is in an export
+
+Exports are written where you choose and shared only by you.
+
+- **File paths.** With **Export > Include File Paths** ticked (it is ticked
+  to begin with), an export states the full path of each referenced video,
+  PDF and file. Untick it before exporting for someone who should not see
+  them.
+- **Video.** The videos of a [web folder](web-folder.md) are made on your
+  machine by the FFmpeg that comes with minNotes. Nothing is uploaded.
+- **A web folder's password.** A password seals the pages, the list of notes
+  and the search text; the media files are not sealed, only given names that
+  cannot be guessed, so anyone who has a media file's address can open it
+  without the password. There is no way to recover a forgotten password. See
+  [Web Folder](web-folder.md).
+
+## Checking this yourself
+
+minNotes is free software. The source of minNotes 3 is in the
+[minplatform repository](https://github.com/cbkow/minplatform) (`apps/mn`),
+under the GNU General Public License, so everything on this page can be
+checked. Questions: [open an issue](https://github.com/cbkow/minNotes/issues).

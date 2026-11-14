@@ -1,102 +1,173 @@
 ---
-title: Tables & Kanban
+title: Tables
 permalink: /tables/
 nav_order: 7
 ---
 
-# Tables & Kanban
+# Tables
 
-A table is rows of cells, and every cell holds blocks — text with
-formatting, images, video, lists. Insert one from the toolbar's **Insert
-block** flyout or the block menu (**Insert table below**), paste
-tab-separated text (a spreadsheet selection pastes straight in), or
-import a CSV, spreadsheet, or HTML table. A table wider than the page runs
-past its right edge and the page scrolls sideways rather than squeezing.
+A table is a block of rows and columns. A cell holds ordinary blocks: text
+with formatting, lists, pictures. A column can also be given a kind: a
+choice with coloured options, a three-state check, or a timecode at a frame
+rate.
 
-![A table with the grip handles showing](images/mn011.png)
+![The Schedule table, with the handles of the caret's row and column](images/mn3-table-schedule.png)
 
-## The header row
+## Making a table
 
-The header row is the table's spine: column widths, alignment, and
-types live there, and the rows beneath it are the body until the next
-non-table block. Right-click a header cell for the **Table** menu —
-**Add a header row**, **Remove a header row**, **Unassign header** (the
-rows become plain side-by-side blocks), **Delete table**. Any split row
-can become a table the other way round: **Assign as header**.
+- Press the toolbar's **Table** button. A table of three rows and three
+  columns goes in after the caret's block, its first row a header, with the
+  caret in the first cell.
+- Or paste rows copied from a spreadsheet (see "Pasting from a spreadsheet"
+  below).
+- Or import a file that holds tables; see [Import](import.md).
 
-## Columns
+A table can sit at the top level of a note or inside a column. A cell does
+not take another table, or columns.
 
-Right-click any cell for the **Column** menu:
+## Typing and moving
 
-| Column type | What it does |
+| Key | Does |
 |---|---|
-| Text | The default — any blocks |
-| Choice | Single-select options with colours (edit the set via **Edit options…**) |
-| Checkmark | Tri-state task per cell: to-do / doing / done (`Space` cycles it) |
-| Timecode | Frame counts and timecodes snap to the column's frame rate when you leave the cell; sorts by frames |
+| `Tab` | The next cell. Past the last cell, a new row is added |
+| `Shift+Tab` | The cell before |
+| `Enter` | A new paragraph in the same cell |
+| `Cmd+Enter` / `Ctrl+Enter` | A new row below the caret's row |
+| Arrow keys | Move through the text and on to the neighbouring cell |
+| `Up` in the first row / `Down` in the last | When the table is the first or last block of the note, a paragraph is made above or below it and the caret goes there |
 
-The same menu inserts, moves, duplicates, aligns, and deletes columns,
-and sorts the body by a column. Drag a column border to set its width;
-the strip past the last column adds one to every row. Header cells stay
-text whatever the column's type.
+That last row is the way out of a table that starts or ends a note: keep
+pressing `Up` or `Down` and you arrive in a new paragraph outside it.
 
-## Rows
+## Rows and columns
 
-Right-click for the **Row** menu — insert above or below, move,
-duplicate, delete. `Enter` moves down the column; on the last row it
-adds one, and `Enter` in an empty last row steps out of the table.
-`⌘Enter` inserts a row below the caret's. `Tab` moves to the next cell
-and adds a row past the last one.
+The handles belong to the table the caret is in; nothing appears as the
+pointer moves. With the caret in a cell you see:
 
-## Selection
+- a **row handle** to the left of the caret's row,
+- a **column handle** on the table's top edge over the caret's column,
+- a strip **under** the table that adds a row at the end,
+- a strip **beside** the table that adds a column at the end.
 
-- **Click** a cell to edit it; **drag** across cells for a rectangle;
-  `Shift+Click` extends it.
-- **Grip handles** appear when you hover just above a column or left of
-  a row — click to select the whole column or row, `Shift+Click` for a
-  span, `⌘Click` to add or remove one. Drag a column grip to reorder
-  columns; rows reorder by their rail handle like any block.
-- `⌘A` climbs: the block, its cell, the table, the page.
-- `Esc` steps back down: a selected row becomes the whole table, then
-  the caret lands below it.
+Click a handle to select the whole row or column and open its menu.
+`Shift`-click a handle to extend the selection to that row or column
+(without a menu).
 
-## Bulk Operations
+![The column menu of the Status column](images/mn3-table-column-menu.png)
 
-Right-click inside a grip selection for a focused menu:
+**The row menu**
 
-![The bulk selection menu](images/mn012.png)
+- **Insert Row Above**, **Insert Row Below**
+- **Move Row Up**, **Move Row Down**, **Duplicate Row**
+- **First Row Is a Header** / **No Header Row**
+- **Delete Row**
 
-- **Clear contents** / **Delete** for the selected rows or columns (a
-  selection that includes the header deletes the table)
-- **Align** and **column type** changes across every selected column
-- Palette colours apply to the whole selection
-- `Backspace` clears a grip selection's contents; `⌘C` copies it as
-  cells, tab-separated text, and an HTML table
+**The column menu**
 
-Every bulk operation is a **single undo**. Deleting rows or columns is
-menu-only, on purpose.
+- **Insert Column Left**, **Insert Column Right**
+- **Move Column Left**, **Move Column Right**, **Duplicate Column**
+- **Align Left**, **Align Centre**, **Align Right**
+- **Automatic Width**
+- **Text Column**, **Choice Column**, **Check Column**, **Timecode Column**
+  (and, by kind, **Edit Options…** or the frame rates)
+- **Delete Column**
 
-## Pasting
+### Widths
 
-Tab-separated text pasted outside a table becomes a new one. Inside a
-table it fills cells from the caret, growing the table as needed. Cells
-copied with their header row paste by matching column names; the cell
-menu's **Paste into cells** fills by position instead.
+Drag a column's right border to give it a width. **Automatic Width** in the
+column menu sizes it to its content again.
 
-## Tables full-window
+A table wider than its place scrolls sideways inside its own block, with a
+scroll bar of its own; the page does not move. Scroll it with a trackpad's
+sideways swipe or `Shift` and the wheel.
 
-Every table can open on its own: pick it from the path bar's page menu,
-or **Open in tab** on the block menu. The frame has a **Table / Board**
-toggle and a **Filter rows…** field: rows with no cell matching the text
-fold away, and the count shows what's left. The filter is a view — copy,
-export, and undo see every row — and clears when you leave. The path
-bar's last segment switches between the page's tables, videos and PDFs.
+### The header row
 
-## Board View
+A table's first row can be a header, and a table may have none. Switch with
+**First Row Is a Header** / **No Header Row** in the row menu.
 
-Any choice or checkmark column can become a **kanban board**: right-click
-the column → **View as board**, or the toggle on the table's frame. Cards
-are the table's rows; drag a card between lanes to change its value (and
-reorder). Double-click a card to jump back to its cell.
+## Column kinds
 
-![Board view](images/mn013.png)
+Every column starts as a text column. Choose another kind from the column
+menu.
+
+| Kind | What a cell holds |
+|---|---|
+| **Text Column** | Any blocks |
+| **Choice Column** | One option from the column's list, shown as a coloured chip |
+| **Check Column** | A box with three states: to do, doing, done |
+| **Timecode Column** | A timecode at the column's frame rate |
+
+Changing a column's kind asks first when cells would lose content, and says
+how many: a cell that holds more than one line of plain text is reduced to
+one line. Changing to a text column never asks.
+
+### Choice
+
+![The picker of a choice cell in the Status column](images/mn3-table-choice-picker.png)
+
+- Click a choice cell, or press `Space` or `Enter` in it, to open its
+  picker. Typing a letter opens the picker with that letter in its field.
+- The field filters the options. `Enter` on a name that does not exist adds
+  it as a new option, in the next colour.
+- **Clear** empties the cell; so does `Backspace` or `Delete` in the cell.
+- **Edit options…** (also **Edit Options…** in the column menu) opens the
+  column's list: rename, recolour, reorder, remove and add options. **Done**
+  applies the whole edit as one undo step; **Cancel** drops it. Removing an
+  option clears the cells that had it.
+- Text pasted into a choice cell takes the option of that name, or adds a
+  new one.
+
+### Check
+
+Click the box, or press `Space` or `Enter` in the cell, to go to the next
+state: to do, doing, done, and round again. An empty cell counts as to do.
+
+### Timecode
+
+- Type a timecode (`01:02:15:04`) or a bare number, which is read as frames.
+  It is written out as a timecode when you leave the cell or press `Enter`.
+- Set the column's frame rate in the column menu: 23.976, 24, 25, 29.97, 30
+  or 60 fps. A new timecode column is 24 fps. 29.97 is written as drop-frame.
+- Text that does not read as a timecode is kept and shown dimmed.
+
+## Selecting cells
+
+- Drag from one cell to another, or hold `Shift` and press an arrow key past
+  a cell's edge, to select a rectangle of cells. Inside one cell a selection
+  is ordinary text.
+- Click a row or column handle to select the whole row or column.
+
+With cells selected:
+
+| Key | Does |
+|---|---|
+| `Delete` or `Backspace` | Empties the selected cells. With whole rows or whole columns selected, removes them; with every row selected, removes the table |
+| `Cmd+C` / `Ctrl+C` | Copies the cells |
+| `Cmd+X` / `Ctrl+X` | Copies the cells and empties them |
+| `Esc` | Lets the selection go |
+
+Copied cells go to the clipboard as a small table (with their formatting,
+chips and pictures) and as the tab-separated text a spreadsheet reads.
+
+## Pasting from a spreadsheet
+
+- **Outside a table**, rows copied from a spreadsheet paste as a new table.
+- **Inside a table**, cells copied from a spreadsheet or from minNotes fill
+  the table from the caret's cell rightwards and downwards. Rows are added
+  as needed; columns are never added. What does not fit is left out, and the
+  footer says how many columns were left out.
+- A column with a kind takes the value of the pasted text: a choice column
+  picks the option of that name or gains a new one.
+
+## Deleting a table
+
+Select all of the table's rows and press `Delete`: with every row selected,
+the table itself is removed.
+
+## Limits
+
+- Imported tables are capped at 10,000 cells. When a file holds a larger
+  table, **File ▸ Import…** asks: **First Rows** imports the rows that fit,
+  **Attach File** adds the file as a chip instead, **Cancel** stops.
+- There is no sorting and no row filter.

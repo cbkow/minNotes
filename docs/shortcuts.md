@@ -6,135 +6,210 @@ nav_order: 14
 
 # Keyboard Shortcuts
 
-macOS uses **⌘** (Command); on Windows use **Ctrl** in its place. **⇧** is
-Shift, **⌥** is Alt/Option. The same list is in the app under Help ▸ Keyboard
-Shortcuts (⌘/).
+Each table gives the key on macOS and on Windows. A dash (—) means there is
+no key for that action on that system; use the menu, the toolbar or the
+context menu. Keys shown without a modifier (such as `V` or `Space`) work
+only in the place the table is about.
 
-## Files
+## Collection and notes
 
-| Action | Shortcut |
-|---|---|
-| New file | ⌘N |
-| Open… | ⌘O |
-| Save | ⌘S |
-| Save As… | ⌘⇧S |
-| Close file | ⌘W |
-| Find in file (Edit ▸ Find in File…: pages, cards, PDFs, video notes) | ⌘F |
-| Walk the hits · jump · close | ↑ / ↓ · Return · Esc |
-| The User Guide (Help ▸ User Guide: the manual as a canvas, a frame per section) — on its Keyboard Shortcuts page | ⌘/ |
+| Action | macOS | Windows |
+|---|---|---|
+| New collection | `Option+Cmd+N` | `Ctrl+Alt+N` |
+| Open a collection | `Cmd+O` | `Ctrl+O` |
+| Save | `Cmd+S` | `Ctrl+S` |
+| Save As | `Shift+Cmd+S` | `Ctrl+Shift+S` |
+| Close the collection | `Cmd+W` | `Ctrl+W` |
+| Quit | `Cmd+Q` | `Ctrl+Q` |
+| New note | `Cmd+N` | `Ctrl+N` |
+| New folder | `Shift+Cmd+N` | `Ctrl+Shift+N` |
+| Search the collection (the sidebar's field) | `Shift+Cmd+F` | `Ctrl+Shift+F` |
 
-## View
+### In the sidebar's tree
 
-| Action | Shortcut |
-|---|---|
-| Zoom in / out (the page, a PDF, or the canvas — whichever is in front) | ⌘+ / ⌘− |
-| Zoom to 100% | ⌘0 |
-| In a page: toggle Full Width · on the canvas: fit everything | ⌘1 |
-| Always on Top — the window above every other app's (the toolbar's pin) | ⌥⌘T |
-| Back / Forward through the views you visited (canvas, page, frame, file) — also the chevrons left of the path and the mouse's back / forward buttons | ⌥⌘← / ⌥⌘→ |
-| Zoom about the pointer | ⌘-wheel, or pinch |
-| Pan the canvas with the hand | hold Space and drag |
-| Pan anywhere | middle-button drag |
+Click a row first, so that the tree has the keys.
 
-## Canvas
+| Action | macOS | Windows |
+|---|---|---|
+| Move the selection (a note opens as it is reached) | `Up` / `Down` | `Up` / `Down` |
+| Fold a folder, or go to the row's folder | `Left` | `Left` |
+| Unfold a folder | `Right` | `Right` |
+| Rename the selected row | `Enter` | `Enter` |
+| Delete the selected row (asks first) | `Delete` or `Backspace` | `Delete` or `Backspace` |
+| Give the keys back to the note | `Esc` | `Esc` |
+| While renaming: keep the name / leave it as it was | `Enter` / `Esc` | `Enter` / `Esc` |
+| In the search field: open the first result / empty the field | `Enter` / `Esc` | `Enter` / `Esc` |
 
-| Action | Shortcut |
-|---|---|
-| Select / Hand / Page / Frame tools | V / H / N / F |
-| Group the selection in a frame (with one frame selected: add the rest to it) · Ungroup | ⌘G · ⌘⇧G |
-| Drag an element INTO a frame (it lights) or OUT of its frame — the plain drag only moves | ⌘ held at the release |
-| Text box · plain text | T · ⇧T |
-| Pen / Rectangle / Oval / Line / Arrow / Eraser | P / R / O / L / A / E |
-| Open the selected element — the page view, the studio, the PDF view, an image's lightbox | double-click · Return · the open glyph |
-| Preview the selected image, video, PDF or audio in the lightbox (‹ › or ← / → step through them; PageUp / PageDown page a PDF) | Space or Return (Space or Esc closes) |
-| Cancel a stroke → drop the tool → clear the selection | Esc (repeat) |
-| Delete the selection | Delete / Backspace |
-| Add / remove one from the selection | ⇧Click |
-| Select several (marquee) | drag on empty canvas |
-| Paste files, an image, text or a link as cards | ⌘V |
-| Page a selected PDF | PageUp / PageDown |
-| Step the selection forward / back one layer | ⌘] / ⌘[ |
-| Bring to front / send to back | ⌥⌘] / ⌥⌘[ |
+## Window
 
-## PDF View (full-window)
+| Action | macOS | Windows |
+|---|---|---|
+| Show or hide the sidebar | `Cmd+1` | `Ctrl+1` |
+| Show or hide the toolbar | `Cmd+2` | — |
+| Show or hide the footer | `Cmd+3` | — |
+| In a dialog: its first button (Cancel, where there is one) | `Esc` | `Esc` |
+| Close an open menu or palette | `Esc` | `Esc` |
 
-| Action | Shortcut |
-|---|---|
-| Pen / Rectangle / Oval / Line / Arrow / Eraser (strokes stay on that page) | P / R / O / L / A / E |
-| Back to the pointer | V |
-| Scroll with the hand while a tool is armed | hold Space and drag |
-| Undo / redo a stroke | ⌘Z / ⌘⇧Z |
-| Drop the tool → back to the canvas | Esc (repeat) |
+## Text formatting
 
-## Editing
+| Action | macOS | Windows |
+|---|---|---|
+| Bold | `Cmd+B` | `Ctrl+B` |
+| Italic | `Cmd+I` | `Ctrl+I` |
+| Underline | `Cmd+U` | `Ctrl+U` |
+| Strikethrough | `Shift+Cmd+X` | `Ctrl+Shift+X` |
+| Inline code | `Cmd+E` | `Ctrl+E` |
+| Highlight with the last background colour | `Shift+Cmd+H` | `Ctrl+Shift+H` |
+| Clear formatting | `Cmd+\` | `Ctrl+\` |
+| Link editor | `Cmd+K` | `Ctrl+K` |
+| Open a link | `Cmd`-click | `Ctrl`-click |
+| In the link editor: keep / give up / other field | `Enter` / `Esc` / `Tab` | `Enter` / `Esc` / `Tab` |
+| Insert a choice chip | `Option+Cmd+C` | `Ctrl+Alt+C` |
+| Open the picker of the chip just before the caret | `Option+Down` | `Alt+Down` |
+| Indent / outdent list items | `Tab` / `Shift+Tab` | `Tab` / `Shift+Tab` |
 
-| Action | Shortcut |
-|---|---|
-| Undo (the page's or the canvas's history) | ⌘Z |
-| Redo | ⌘⇧Z or ⌘Y |
-| Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
-| Copy as Markdown | ⌘⇧C |
-| Insert a choice chip (To do / Doing / Done) | ⌥⌘C |
-| Indent / outdent a list item | Tab / ⇧Tab, or ⌘] / ⌘[ |
-| Next / previous lane (in a split row) | Tab / ⇧Tab |
-| New line in a code block (Enter on a blank last line exits) | ⇧Enter |
-| Step out of the page to the canvas (nothing selected) | Esc |
+The Markdown patterns that convert as you type (`# `, `- `, `[] `, ```` ``` ````,
+`**bold**` and the rest) are listed in [Editing](editing.md).
 
-## Inline Formatting
+## Editing and the caret
 
-| Action | Shortcut |
-|---|---|
-| Bold | ⌘B |
-| Italic | ⌘I |
-| Underline | ⌘U |
-| Strikethrough | ⌘⇧X |
-| Inline code | ⌘E |
-| Link | ⌘K |
-| Highlight (toggle the armed colour) | ⌘⇧H |
-| Clear formatting | ⌘\ |
+| Action | macOS | Windows |
+|---|---|---|
+| Undo | `Cmd+Z` | `Ctrl+Z` |
+| Redo | `Shift+Cmd+Z` | `Ctrl+Shift+Z` |
+| Cut / Copy / Paste | `Cmd+X` / `Cmd+C` / `Cmd+V` | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` |
+| Paste and Match Style | `Shift+Cmd+V` | `Ctrl+Shift+V` |
+| Copy as Markdown | `Shift+Cmd+C` | — |
+| Select all | `Cmd+A` | `Ctrl+A` |
+| Select a word | Double-click | Double-click |
+| Extend the selection | `Shift` with a click or a movement key | `Shift` with a click or a movement key |
+| By word | `Option+Left` / `Option+Right` | `Alt+Left` / `Alt+Right` |
+| Start / end of the line | `Cmd+Left` / `Cmd+Right`, or `Home` / `End` | `Home` / `End` |
+| Start / end of the note | `Cmd+Up` / `Cmd+Down`, or `Cmd+Home` / `Cmd+End` | `Ctrl+Home` / `Ctrl+End` |
+| New line in a code block | `Enter` | `Enter` |
+
+## Blocks
+
+| Action | macOS | Windows |
+|---|---|---|
+| Select the caret's whole block | `Esc` | `Esc` |
+| With blocks selected: the block above / below | `Up` / `Down` | `Up` / `Down` |
+| With blocks selected: grow the selection | `Shift+Up` / `Shift+Down` | `Shift+Up` / `Shift+Down` |
+| With blocks selected: every top-level block | `Cmd+A` | `Ctrl+A` |
+| With blocks selected: back to the caret | `Enter` or `Esc` | `Enter` or `Esc` |
+| With blocks selected: remove them | `Backspace` or `Delete` | `Backspace` or `Delete` |
+| Duplicate the block or the selected blocks | `Cmd+D` | `Ctrl+D` |
+| Move the block or the selected blocks up / down | `Ctrl+Cmd+Up` / `Ctrl+Cmd+Down` | — |
+| Insert an empty block above / below | `Option+Cmd+Up` / `Option+Cmd+Down` | — |
+| While dragging blocks: cancel | `Esc` | `Esc` |
+| Dropping blocks on a note's row: copy instead of move | hold `Option` | hold `Alt` |
+| Leave columns from the top / foot of a column | `Up` / `Down` | `Up` / `Down` |
+| Remove an empty column | `Backspace` in its one empty paragraph | `Backspace` in its one empty paragraph |
 
 ## Tables
 
-| Action | Shortcut |
-|---|---|
-| Next / previous cell (adds a row past the last cell) | Tab / ⇧Tab |
-| Down the column (the last row adds one; an empty last row leaves the table) | Enter |
-| Insert a row below | ⌘Enter |
-| Cycle a checkmark cell | Space |
-| Select the block → its cell → the table → the page | ⌘A (repeat) |
-| Whole row or column (on a grip) | Click |
-| Span of rows or columns (on a grip) | ⇧Click |
-| Add / remove a row or column (on a grip) | ⌘Click |
-| Copy a grip selection as a table | ⌘C |
-| Clear a grip selection's contents | Backspace / Delete |
-| A selected row → the whole table → the caret below it | Esc |
+| Action | macOS | Windows |
+|---|---|---|
+| Next cell (past the last cell: a new row) | `Tab` | `Tab` |
+| Previous cell | `Shift+Tab` | `Shift+Tab` |
+| New paragraph in the cell | `Enter` | `Enter` |
+| New row below | `Cmd+Enter` | `Ctrl+Enter` |
+| Leave a table that starts / ends the note | `Up` in the first row / `Down` in the last | `Up` in the first row / `Down` in the last |
+| Select a rectangle of cells | `Shift` + arrow past a cell's edge, or drag | `Shift` + arrow past a cell's edge, or drag |
+| Extend a row or column selection | `Shift`-click a handle | `Shift`-click a handle |
+| Empty the selected cells (whole rows or columns: remove them) | `Delete` or `Backspace` | `Delete` or `Backspace` |
+| Copy / cut the selected cells | `Cmd+C` / `Cmd+X` | `Ctrl+C` / `Ctrl+X` |
+| Let a cell selection go | `Esc` | `Esc` |
+| Choice cell: open the picker | `Space` or `Enter`, or type a letter | `Space` or `Enter`, or type a letter |
+| Choice cell: clear | `Backspace` or `Delete` | `Backspace` or `Delete` |
+| Check cell: the next state | `Space` or `Enter` | `Space` or `Enter` |
+| Timecode cell: write as a timecode | `Enter` | `Enter` |
+| Scroll a wide table sideways | `Shift` + wheel | `Shift` + wheel |
 
-## Video (the studio, an inline video with the caret, or a selected card)
+## Find
 
-| Action | Shortcut |
-|---|---|
-| Play / pause (Space too, in the studio — elsewhere Space is the lightbox) | K, W or S |
-| Preview an inline video or image in the lightbox | Space (with the caret on it) |
-| Step a frame back / forward | ← / → (or Q / E) |
-| Rewind / fast-forward (hold) | J / L (or A / D) |
-| Jump to start / end | Home / End |
-| Cycle review speed (0.5×–2×) | R |
-| Reset speed to 1× | ⇧R |
-| Loop | V |
-| Mute | M |
-| Volume | ↑ / ↓ |
-| Timecode ↔ frames | click the counter |
+| Action | macOS | Windows |
+|---|---|---|
+| Find in this note | `Cmd+F` | `Ctrl+F` |
+| Next occurrence | `Enter` or `Cmd+G` | `Enter` or `Ctrl+G` |
+| Previous occurrence | `Shift+Enter` or `Shift+Cmd+G` | `Shift+Enter` or `Ctrl+Shift+G` |
+| Between the find and replace fields | `Tab` | `Tab` |
+| Replace the current occurrence | `Enter` in the replace field | `Enter` in the replace field |
+| Close the find bar | `Esc` | `Esc` |
 
-## In the Page (markdown-style)
+## Media and video
 
-Typed at the start of a block — see [Editing](editing.md):
+These keys act on a video while its block is the current one (the caret is
+on it, or it is the one selected block), or while its card is the one
+selected card on a canvas.
 
-| Type | Becomes |
-|---|---|
-| `# ` … `###### ` | Heading 1–6 |
-| `> ` | Quote |
-| `- ` / `* ` / `+ ` | Bullet list |
-| `1. ` | Numbered list |
-| `- [ ] ` / `- [/] ` / `- [x] ` | Task: to-do / doing / done |
-| ```` ``` ```` + `Enter` | Code block |
-| `---` + `Enter` | Divider |
+| Action | macOS | Windows |
+|---|---|---|
+| Play / pause | `Space`, `K`, `W` or `S` | `Space`, `K`, `W` or `S` |
+| One frame back / forward | `Left` or `Q` / `Right` or `E` | `Left` or `Q` / `Right` or `E` |
+| Shuttle back / forward while held | `J` or `A` / `L` or `D` | `J` or `A` / `L` or `D` |
+| First / last frame | `Home` / `End` | `Home` / `End` |
+| Loop on / off | `V` | `V` |
+| Next review speed | `R` | `R` |
+| Back to normal speed | `Shift+R` | `Shift+R` |
+| Mute | `M` | `M` |
+| Undo / redo a drawing on the video | `Cmd+Z` / `Shift+Cmd+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Remove the selected drawing (Select tool) | `Delete` or `Backspace` | `Delete` or `Backspace` |
+| Give up a stroke or a selection | `Esc` | `Esc` |
+
+In a note, `Up` and `Down` leave the video block.
+
+| Action | macOS | Windows |
+|---|---|---|
+| PDF block: select the text of the page shown | `Cmd+A` | `Ctrl+A` |
+| PDF block: copy the selected text | `Cmd+C` | `Ctrl+C` |
+| PDF block: let the selection go | `Esc` | `Esc` |
+
+## Drawing
+
+On a canvas, and on a picture or PDF block while it is the current block.
+Pressing a tool's key again puts the tool down.
+
+| Action | macOS | Windows |
+|---|---|---|
+| Select | `V` | `V` |
+| Pen | `P` | `P` |
+| Line | `L` | `L` |
+| Arrow | `A` | `A` |
+| Rectangle | `R` | `R` |
+| Oval | `O` | `O` |
+| Eraser | `E` | `E` |
+| Put the tool down / let a picked stroke go | `Esc` | `Esc` |
+| Remove the picked stroke | `Delete` or `Backspace` | `Delete` or `Backspace` |
+| Constrain a line or a shape | hold `Shift` | hold `Shift` |
+
+## Canvas
+
+| Action | macOS | Windows |
+|---|---|---|
+| Frame tool | `F` | `F` |
+| Pan | Wheel; hold `Space` and drag; middle-button drag | Wheel; hold `Space` and drag; middle-button drag |
+| Pan sideways | `Shift` + wheel | `Shift` + wheel |
+| Zoom about the pointer | `Cmd` + wheel, or pinch | `Ctrl` + wheel, or pinch |
+| Zoom in / out | `Cmd+=` / `Cmd+-` | `Ctrl+=` / `Ctrl+-` |
+| Fit everything | `Cmd+0` | `Ctrl+0` |
+| Zoom to 100% | `Shift+Cmd+1` | `Ctrl+Shift+1` |
+| Select all | `Cmd+A` | `Ctrl+A` |
+| Add to or take from the selection | `Shift`-click | `Shift`-click |
+| Cut / Copy / Paste | `Cmd+X` / `Cmd+C` / `Cmd+V` | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` |
+| Duplicate | `Cmd+D` | `Ctrl+D` |
+| Delete the selection | `Delete` or `Backspace` | `Delete` or `Backspace` |
+| Nudge by 1 / by 10 | Arrows / `Shift` + arrows | Arrows / `Shift` + arrows |
+| Keep a drag to one axis | hold `Shift` | hold `Shift` |
+| Switch snapping off while dragging | hold `Ctrl` | hold `Ctrl` |
+| Bring to front / send to back | `Cmd+]` / `Cmd+[` | `Ctrl+]` / `Ctrl+[` |
+| Group in a frame / ungroup | `Cmd+G` / `Shift+Cmd+G` | `Ctrl+G` / `Ctrl+Shift+G` |
+| Go to the selected card, enter a note card, edit a text card or a frame's title, open a link card | `Enter` | `Enter` |
+| Open the selected note card's note in the page | `Cmd+Enter` | `Ctrl+Enter` |
+| Leave a card; clear the selection or the tool | `Esc` | `Esc` |
+| Selected PDF card: previous / next page | `Option+Left` / `Option+Right` | `Alt+Left` / `Alt+Right` |
+| Selected video card: play / pause | `Space` (a tap) | `Space` (a tap) |
+| Undo / redo on the canvas | `Cmd+Z` / `Shift+Cmd+Z` | — |
+
+`Cmd+G` / `Ctrl+G` groups on a canvas and finds the next occurrence in a
+note; which one it does depends on what is open.
