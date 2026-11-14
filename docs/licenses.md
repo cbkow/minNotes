@@ -23,7 +23,8 @@ repository.
 
 minNotes ships with a page of third-party notices: every component below and
 every Rust crate built into the application, each with the full text of its
-licence. On macOS, choose **minNotes > Licenses…** to open it.
+licence. Choose **minNotes > Licenses…** on macOS, or **Help > Licenses…** on
+Windows, to open it.
 
 That page is generated for each release from what is built into it, so where
 it and this page differ, the page in the application is the one that is
