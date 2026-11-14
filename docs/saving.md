@@ -35,7 +35,9 @@ Three places tell you where the collection stands.
 ![A changed note marked with a dot in the tree, and the footer's readout](images/mn3-unsaved-dot-and-readout.png)
 
 - **The dot in the tree.** A note with changes that are not in the document
-  yet has a dot at the end of its row in the sidebar.
+  yet has a dot at the end of its row in the sidebar. Opening a note and
+  reading it does not mark it as changed; see
+  [Reading and Editing](collections.md#reading-and-editing).
 - **The footer's readout**, at the left of the footer:
 
   | Readout | Meaning |

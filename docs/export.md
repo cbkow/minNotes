@@ -9,8 +9,6 @@ nav_order: 11
 The **Export** menu writes the note or canvas you have open for other
 applications and other people.
 
-![The Export menu](images/mn3-export-menu.png)
-
 | Item | Keys | What it writes |
 |---|---|---|
 | **as HTML…** | | The open note, or the open canvas, as one file for a browser |

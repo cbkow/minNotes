@@ -10,6 +10,11 @@ A note is made of **blocks**: paragraphs, headings, list items, quotes, code
 blocks, dividers, tables, columns, pictures and other media. You type as in
 any text editor; the blocks are what you select, move and copy as wholes.
 
+To type, the window must be in **editing**. A collection you open starts in
+reading, where nothing can be typed and the toolbar is put away: press
+`Cmd+R` / `Ctrl+R`, or the book button in the footer, to edit. See
+[Reading and Editing](collections.md#reading-and-editing).
+
 Formatting has two ways in, and they give the same result: the toolbar and
 its keys, or Markdown typed as you go.
 
@@ -92,7 +97,10 @@ as Markdown, use **Edit ▸ Paste as Markdown**.
   it back into a paragraph.
 - The items directly below an item and deeper than it are its children: they
   travel with it when you move, copy or delete the item as a block.
-- A **task** has three states: to do, doing and done.
+- A **task** has three states: to do, doing and done. Click a task's box to
+  take it to the next state: to do, doing, done, and round again. The click
+  is one undo step and leaves the caret where it was; it also works in
+  reading. The typed markers above set the state as you make the task.
 
 ## Inline formatting
 
@@ -144,7 +152,7 @@ or makes a new link.
 - Paste an address over a selection to link the selection. An address you
   type (`https://…`, `www.…`) becomes a link at the space or `Enter` after it.
 - `Cmd`-click / `Ctrl`-click a link to open it. A plain click places the
-  caret.
+  caret. In reading, a plain click opens the link.
 - Right-click a link for **Open Link**, **Copy Link**, **Edit Link…** and
   **Remove Link**.
 - Links work in headings too; there are none in code blocks.
@@ -343,5 +351,7 @@ the note as ordinary typing.
 
 - The tool sees the note's text, whatever its blocks. It does not see the
   text inside a PDF.
+- The text is offered only while the window is in editing. In reading the
+  tool is shown nothing, so nothing is underlined.
 - What such a tool sends to its maker is that tool's matter. minNotes itself
   sends nothing; see [Privacy](privacy.md).

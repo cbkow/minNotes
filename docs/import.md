@@ -18,8 +18,6 @@ A file dropped on the **page** is not imported: it stays what a drop on
 the page always is, a picture or an attached file chip. See
 [Media & Files](media.md).
 
-![Files dragged over the sidebar, a folder's row outlined](images/mn3-import-sidebar-drop.png)
-
 ## What Happens
 
 Each file becomes one new note, named after the file without its

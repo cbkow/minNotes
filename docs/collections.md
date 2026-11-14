@@ -59,7 +59,8 @@ The three buttons at the top of the sidebar make new entries:
 | New folder | **File ▸ New Folder** | `Shift+Cmd+N` | `Ctrl+Shift+N` |
 
 A new entry goes beside the selected row, or inside it when the selected row
-is a folder. A new note opens ready to type. A new folder is called
+is a folder. A new note opens ready to type: making a note or a canvas puts
+the window in editing (see [Reading and Editing](#reading-and-editing)). A new folder is called
 "New folder" and opens its name for editing. A new canvas opens at once; see
 [The Canvas](canvas.md).
 
@@ -116,6 +117,32 @@ Two drags do end on the tree or start from it:
 - With a canvas open, drag a note's row onto the canvas to put the note
   there as a card (see [The Canvas](canvas.md)).
 
+### The User Guide
+
+This manual is inside the application, as a folder of pages named
+**User Guide** at the foot of the sidebar, after the collection's own tree.
+It is put away until you ask for it.
+
+| Command | macOS | Windows |
+|---|---|---|
+| **Help ▸ User Guide** | | |
+| **Help ▸ Keyboard Shortcuts** | `Cmd+/` | `Ctrl+/` |
+| **View ▸ Show / Hide the User Guide** | | |
+
+- **Help ▸ User Guide** shows the folder and opens its first page.
+  **Help ▸ Keyboard Shortcuts** opens the page of keys.
+- **View ▸ Show / Hide the User Guide** puts the folder away, or brings it
+  back. Whether it is shown is remembered on this machine.
+- Click a page's row to open it. A link from one page to another opens that
+  page.
+- The pages can only be read: nothing can be typed in them, and their rows
+  cannot be renamed, deleted, added to or dropped on.
+- The guide is not part of your collection. It is not saved into the
+  document, exported or packaged with it, and the sidebar's search does not
+  look in it.
+- The guide is shown beside a collection: with no collection open,
+  minNotes asks you to open or make one first.
+
 ## Searching the collection
 
 The field at the top of the sidebar searches every note of the collection.
@@ -161,8 +188,10 @@ as wholes.
   full list is in [Saving & Shared Storage](saving.md)). Short notices also
   appear here for a few seconds, such as "Moved 2 blocks to “Kickoff” — Undo
   takes them back".
-- At the right end: find in this note, undo, redo and Save. The Save button
-  is lit while something is not saved to the document yet.
+- At the right end: reading (the book), find in this note, undo, redo and
+  Save. The book is lit while the window is in reading; see
+  [Reading and Editing](#reading-and-editing). The Save button is lit while
+  something is not saved to the document yet.
 
 ### Hiding them
 
@@ -175,6 +204,54 @@ as wholes.
 **View ▸ Toolbar Over the Page / Across the Window** switches the toolbar
 between sitting over the page only, beside the sidebar (the default), and
 running across the whole window above the sidebar.
+
+## Reading and Editing
+
+The window is either in **reading** or in **editing**. Reading is for looking
+at a collection without changing it by accident; editing is for writing.
+
+- A collection that exists opens in reading. A collection you have just
+  made is in editing.
+- Making a note or a canvas puts the window in editing.
+- The choice is remembered for each collection on this machine: a
+  collection you left in editing opens in editing the next time.
+
+One switch serves the whole window:
+
+| Switch | macOS | Windows |
+|---|---|---|
+| The book button in the footer | | |
+| **View ▸ Reading Mode** | `Cmd+R` | `Ctrl+R` |
+
+The footer confirms with "Reading — the note cannot be changed" or
+"Editing".
+
+In reading:
+
+- There is no caret and nothing can be typed. The toolbar is put away.
+- Blocks show no grip, tables no handles, and a picture no outline or
+  resize corners.
+- You can still select and copy text, find in the note, search the
+  collection, export, play and scrub a video, turn a PDF's pages and use a
+  code block's copy button.
+- A plain click opens a link.
+- A click on a task's box still takes it to its next state (see
+  [Editing](editing.md)). This is the one change reading allows.
+- Writing notes on a video and drawing, on a video, a picture or a PDF
+  page, are off.
+- A canvas only pans and zooms: nothing on it is selected, moved, drawn or
+  entered.
+- A key that would change the note does nothing. The footer says
+  "Reading — press Cmd+R to edit" ("press Ctrl+R" on Windows). A file
+  dropped on the page gets the same answer.
+- The note's text is not offered to the desktop's writing tools, such as
+  Grammarly, so nothing is underlined on a page you are only reading.
+- A note that is only read is never marked as changed: the frame a video
+  was left on and the page a PDF shows are not written into the note while
+  reading.
+
+The sidebar is not part of reading: you can make, rename and delete
+entries there in either state.
 
 ## Files dropped on the sidebar
 

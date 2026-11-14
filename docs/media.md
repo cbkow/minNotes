@@ -53,7 +53,8 @@ temporary file:
 | A video, a PDF, any other file, a folder | A reference to the file where it is |
 
 `minNotes Media/` is an ordinary, visible folder next to the `.mnd` file.
-A new copy waits on your machine and is written there by the next **Save**.
+A new copy waits on your machine and is written there by the next **Save**
+(see [Saving & Shared Storage](saving.md)).
 If you move the collection by hand, move the folder with it.
 
 To bring every referenced file into that folder, so the collection can
@@ -78,7 +79,7 @@ label in the corner naming the format:
 When the original changes, the preview is rendered again by itself.
 
 A picture comes in at its own size, never wider than the page. To resize
-it, click it: the current picture gets an outline and a handle at each
+it, in editing, click it: the current picture gets an outline and a handle at each
 corner. Drag a corner. `Esc` during the drag gives it up. To go back,
 right-click the picture and choose **Original Size**.
 
@@ -95,7 +96,8 @@ When a picture cannot be shown, its box says why:
 A PDF block shows one page at a time. The strip under the page has the
 page number among the pages, with an arrow on each side: click the left
 half of the strip for the previous page, the right half for the next. The
-page a block shows is kept with the note.
+page a block shows is kept with the note, except in reading, where turning
+pages changes nothing in the note.
 
 Drag across the page to select text, then `Cmd+C` / `Ctrl+C` to copy it.
 With the PDF block current, `Cmd+A` / `Ctrl+A` selects the whole page's
@@ -113,7 +115,9 @@ to scrub on.
 - One video plays at a time. A playing video that scrolls out of view
   pauses.
 
-The block remembers the frame it stands on. Loop, speed, volume and mute
+The block remembers the frame it stands on (in reading, the frame is not
+written into the note, so playing a video does not mark the note as
+changed). Loop, speed, volume and mute
 are remembered between launches; when one of them is not as usual (a speed
 other than 1, muted, not looping) the strip says so at its right end.
 
@@ -181,11 +185,15 @@ shows the missing ones, each with a way to locate it. See
 
 When files are missing because the same volume has a different path on
 this machine (a share mounted as `/Volumes/projects` on macOS and `P:` on
-Windows), set the volume up once under **File > Path Mappings…**. Files
-on that volume are then recorded by volume, and found on both systems.
-See [Packages](packages.md).
+Windows), set the volume up under **File > Path Mappings…** on each
+machine, under the same name. Files on that volume are then recorded by
+the volume's name and their place on it, and found on every machine that
+has a volume of that name. See [Packages](packages.md).
 
 ## Drawing on Pictures and PDF Pages
+
+Drawing needs the window to be in editing; in reading the tools are put
+away. See [Reading and Editing](collections.md#reading-and-editing).
 
 Click a picture or a PDF block. While it is the current block, the toolbar
 shows the drawing tools in place of the text tools.
@@ -217,6 +225,11 @@ exports. The picture or PDF file itself is never changed.
 
 A review note belongs to **one frame** of a clip. It can hold a drawing,
 words, or both.
+
+Writing and drawing review notes need the window to be in editing
+(`Cmd+R` / `Ctrl+R`). In reading you can play and scrub the video and see
+its notes, not add or change them. See
+[Reading and Editing](collections.md#reading-and-editing).
 
 Click a video block. The toolbar now shows, in order: select, pen, line,
 arrow, rectangle, oval, eraser and **Write a note on this frame**; then
@@ -279,4 +292,5 @@ notes written there show up in minNotes. Anyone who has the clip and that
 folder has the notes.
 
 To leave a clip's notes out of an export, untick **Export > Include Video
-Notes**. See [Export](export.md).
+Notes**. See [Export](export.md). In a web folder a video plays in the
+browser with its notes; see [Web Folder](web-folder.md).

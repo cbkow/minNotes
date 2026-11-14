@@ -80,14 +80,19 @@ refers to into one place, or one file.
    written there at once.
 3. **Write.** **File > New Note** (`Cmd+N` / `Ctrl+N`) adds a note to the
    tree. Type; the toolbar over the page has the block kinds and the
-   formatting.
+   formatting. A collection you open later starts in reading: press
+   `Cmd+R` / `Ctrl+R` to edit. See
+   [Reading and Editing](collections.md#reading-and-editing).
 4. **Add media.** Drop a picture, a video, a PDF or any other file on the
    page, or use the toolbar's **Picture** and **File** buttons.
 5. **Save.** **File > Save** (`Cmd+S` / `Ctrl+S`) publishes your work to the
    document. Until then it is kept on your machine, and it is offered back
    after a crash.
 
-Keep the [Shortcuts](shortcuts.md) page close.
+Keep the [Shortcuts](shortcuts.md) page close. This manual is also inside
+the application: **Help > User Guide** shows it as a folder of pages at the
+foot of the sidebar, and `Cmd+/` / `Ctrl+/` opens its Keyboard Shortcuts
+page.
 
 minNotes is free software under the
 [GNU General Public License](https://github.com/cbkow/minNotes/blob/main/LICENSE);

@@ -24,6 +24,12 @@ Click a canvas's row to open it in the page's place. Each canvas remembers
 where you were looking. Until you move the view yourself, it follows the
 content and keeps everything in sight.
 
+To change a canvas, the window must be in editing. In reading a canvas
+only pans and zooms: a drag moves the view, and nothing is selected,
+moved, drawn or entered. Press `Cmd+R` / `Ctrl+R`, or the book button in
+the footer, to edit; a canvas you have just made is in editing. See
+[Reading and Editing](collections.md#reading-and-editing).
+
 A canvas has its own undo history: `Cmd+Z` / `Ctrl+Z` and `Shift+Cmd+Z` /
 `Ctrl+Shift+Z` step through what was done on this canvas.
 
@@ -215,8 +221,10 @@ choose **Align…**: **Align Left**, **Align Centre**, **Align Right**,
 or deleted, and a marquee passes over it. Right-click it and choose
 **Unlock** to free it.
 
-Copied cards are pasted within minNotes, while it is running; they do not
-go to other applications.
+Copied cards are pasted within minNotes, while it is running. Other
+applications get only the cards' words, or their files' names, as plain
+text. Paste follows the system's clipboard: once you copy something else,
+anywhere, `Cmd+V` / `Ctrl+V` pastes that and not the cards.
 
 ## Frames
 
@@ -274,7 +282,8 @@ writes it as a picture. See [Export](export.md).
 ## Sharing and Older Files
 
 When someone else has saved the collection while you worked, a canvas is
-merged card by card at your next save: what only one of you touched is
+merged card by card at your next save (see
+[Saving & Shared Storage](saving.md)): what only one of you touched is
 kept from that side, and for a card you both changed, the later change
 wins.
 

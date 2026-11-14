@@ -69,7 +69,9 @@ repository.
 | A file dropped on a page is imported | A dropped file is a picture or a file chip. Only **File > Import…**, or a drop on the sidebar, imports |
 | The hidden `.minnotes` folder for kept media | A visible folder, `minNotes Media`, beside the document |
 | A package opens read-only, straight from the archive | A package is unpacked to a folder when it is opened, and is then an ordinary collection. See [Collect Media & Packages](packages.md) |
-| The **Document** and **Help** menus | **File**, **Edit**, **Format**, **Export** and **View**. **Collect Media…** and **Path Mappings…** are in **File** |
+| The **Document** and **Help** menus | **File**, **Edit**, **Format**, **Export**, **View** and **Help**. **Collect Media…** and **Path Mappings…** are in **File** |
+| The User Guide, built as a canvas | A folder of pages that can only be read, at the foot of the sidebar, beside your collection and never part of it. It is put away until you choose **Help > User Guide**. See [Collections, Notes & Folders](collections.md#the-user-guide) |
+| A document opens ready to edit | A collection that exists opens in reading; `Cmd+R` / `Ctrl+R` switches to editing. See [Reading and Editing](collections.md#reading-and-editing) |
 | The export options dialog | Two ticked items in the **Export** menu: **Include File Paths** and **Include Video Notes** |
 
 ## What is new

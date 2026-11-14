@@ -47,6 +47,8 @@ Click a row first, so that the tree has the keys.
 | Show or hide the sidebar | `Cmd+1` | `Ctrl+1` |
 | Show or hide the toolbar | `Cmd+2` | — |
 | Show or hide the footer | `Cmd+3` | — |
+| Reading mode on / off | `Cmd+R` | `Ctrl+R` |
+| Open the User Guide's Keyboard Shortcuts page | `Cmd+/` | `Ctrl+/` |
 | In a dialog: its first button (Cancel, where there is one) | `Esc` | `Esc` |
 | Close an open menu or palette | `Esc` | `Esc` |
 
@@ -62,14 +64,19 @@ Click a row first, so that the tree has the keys.
 | Highlight with the last background colour | `Shift+Cmd+H` | `Ctrl+Shift+H` |
 | Clear formatting | `Cmd+\` | `Ctrl+\` |
 | Link editor | `Cmd+K` | `Ctrl+K` |
-| Open a link | `Cmd`-click | `Ctrl`-click |
+| Open a link | `Cmd`-click (in reading, a plain click) | `Ctrl`-click (in reading, a plain click) |
 | In the link editor: keep / give up / other field | `Enter` / `Esc` / `Tab` | `Enter` / `Esc` / `Tab` |
 | Insert a choice chip | `Option+Cmd+C` | `Ctrl+Alt+C` |
 | Open the picker of the chip just before the caret | `Option+Down` | `Alt+Down` |
 | Indent / outdent list items | `Tab` / `Shift+Tab` | `Tab` / `Shift+Tab` |
 
 The Markdown patterns that convert as you type (`# `, `- `, `[] `, ```` ``` ````,
-`**bold**` and the rest) are listed in [Editing](editing.md).
+`**bold**` and the rest) are listed in [Editing](editing.md). A task's state
+is also changed by a click on its box.
+
+In reading, a key that would change the note does nothing and the footer
+says "Reading — press Cmd+R to edit"; see
+[Reading and Editing](collections.md#reading-and-editing).
 
 ## Editing and the caret
 

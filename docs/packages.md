@@ -21,8 +21,8 @@ what to do when they do not:
 - **Collect Media** copies the linked files in beside the collection.
 - **Export Package** puts the collection and all its files into one file
   to hand over.
-- **Path Mappings** teach each machine where a shared volume is, so that
-  links work on macOS and Windows alike.
+- **Path Mappings** tell each machine where a shared volume is, by the
+  volume's name, so that links work on macOS and Windows alike.
 
 ## Collect Media
 
@@ -142,10 +142,11 @@ be `/Volumes/Projects/Tidewater/reel2.mov` on a Mac and
 those plain paths is a missing file on the other machine.
 
 A path mapping names the volume. A file added from a mapped volume is
-recorded by **the volume and its place on it**, not by this machine's
-path, and every machine that knows the volume finds it. See
-[Setting Up Another Machine](#setting-up-another-machine) for how a
-second machine comes to know it.
+recorded by **the volume's name and its place on it**, not by this
+machine's path: the reference says "the volume Projects, then this path".
+Each machine's own table says where Projects is, so every machine that
+has a volume of that name finds the file. See
+[Setting Up Another Machine](#setting-up-another-machine).
 
 Choose **File > Path Mappings…**.
 
@@ -155,7 +156,7 @@ Each row is one volume:
 
 | Field | What to enter |
 |---|---|
-| **Volume** | A name for you to read, such as `Projects` |
+| **Volume** | The volume's name, such as `Projects`. The name is what a reference carries: use the same name on every machine |
 | **Windows** | The volume's root on Windows, such as `P:\` or `\\server\share` |
 | **macOS** | Its root on macOS, such as `/Volumes/Projects` |
 | **Linux** | Its root on Linux, such as `/mnt/projects` |
@@ -165,6 +166,8 @@ Each row is one volume:
 - The folder button beside this system's root lets you **choose the
   folder** instead of typing it. If the row has no name yet, it takes
   the folder's.
+- A row left without a name is called by the last folder of its root
+  (`Projects` for `/Volumes/Projects`).
 - `Tab` and `Shift+Tab` move between the fields.
 - Fill in the roots of the other systems too, as far as you know them.
   The field that matters on this machine is the one for this system; a
@@ -189,6 +192,12 @@ place on it. The footer says how many, for example "Path mappings saved —
 3 references are now named by their volume". In the open note this is
 one step that you can undo.
 
+When you change a volume's name in the window, **Done** also renames it
+in the open collection's references, so they go on finding their files.
+Only the open collection is renamed. Other collections, and other
+machines' tables, still carry the old name, so settle the names before
+many references are made.
+
 The files themselves are not touched and nothing is copied. Only the way
 the collection names them changes.
 
@@ -205,21 +214,27 @@ kept in a file named `mappings.json` in minNotes' settings folder:
 - Windows: `%LOCALAPPDATA%\minNotes\mappings.json`
 
 The file is read when minNotes starts and written when you press
-**Done**.
+**Done**. It does not travel with a collection, and it does not need to:
+the roots are each machine's own, and the names are what machines share.
 
 ### Setting Up Another Machine
 
-A reference names its volume by an identifier that minNotes gives the row
-when you add it, not by the name you typed. A volume added by hand on a
-second machine is therefore a different volume, even under the same name,
-and references made on the first machine are not found through it.
+A volume is its name. A reference carries the name, and each machine
+looks the name up in its own table. Two machines agree about a volume
+when both have a row with the same name, letter for letter. No file has
+to be copied from one machine to the other.
 
 To give a second machine the same volumes:
 
-1. On the first machine, fill in the roots for every system in each row
-   and press **Done**.
-2. Quit minNotes on the second machine and copy the first machine's
-   `mappings.json` into its settings folder.
-3. Start minNotes there, open **File > Path Mappings…** and check the
-   root for that system in each row. The coverage hint shows whether it
-   is right.
+1. On the first machine, open **File > Path Mappings…** and note each
+   volume's name.
+2. On the second machine, open **File > Path Mappings…**, press **Add
+   Volume** for each one and type the same name.
+3. Enter the volume's root on that machine, or choose the folder with the
+   folder button. The roots are that machine's own and may differ from the
+   first machine's in every way.
+4. Press **Done**. With a collection open, the coverage hint under a row
+   shows whether its root covers that collection's plain-path references.
+
+A row whose name differs, even by one letter, is a different volume:
+references that carry the other name are not found through it.
