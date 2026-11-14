@@ -76,8 +76,8 @@ refers to into one place, or one file.
    [Coming from minNotes 2](from-2.md) first: minNotes 3 does not open its
    files.
 2. **Make a collection.** Choose **File > New Collection…**
-   (`Option+Cmd+N` / `Ctrl+Alt+N`) and say where it goes. The file is
-   written there at once.
+   (`Option+Cmd+N` / `Ctrl+Alt+N`). An untitled collection opens at once,
+   ready to type in; the first save asks where its file goes.
 3. **Write.** **File > New Note** (`Cmd+N` / `Ctrl+N`) adds a note to the
    tree. Type; the toolbar over the page has the block kinds and the
    formatting. A collection you open later starts in reading: press
