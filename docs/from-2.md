@@ -12,38 +12,55 @@ canvas with pages on it, but a **collection** of notes, folders and canvases
 in a sidebar.
 
 It installs over minNotes 2 (see [Installation & Updating](installation.md)).
-Read this page before you let it.
+Your old documents can be imported; read below what an import brings.
 
 ## Your minNotes 2 documents
 
-**minNotes 3 does not open documents made with minNotes 2, and it does not
-import them.** This covers their pages and their canvases, and documents
-from minNotes 1 as well. A package made by minNotes 2 holds such a document,
-so it is of no use to minNotes 3 either.
+minNotes 3 does not open a minNotes 2 document as it is, but it **imports
+its pages**. The old file is never changed, so you can import it again or
+keep using it in minNotes 2.
 
-When you try to open one, minNotes 3 says "This document was made with an
-earlier minNotes and can't be opened." and leaves the file as it is. Nothing
-is written into it.
+Open the old document the way you open any collection: double-click it,
+choose **File > Open…**, or drop it on the sidebar. minNotes 3 says the
+file was made with minNotes 2 and offers **Import**. A package made by
+minNotes 2 (`.mnpkg`) is offered the same way.
 
-Both generations use the extension `.mnd`, so the name of a file does not
-tell you which one made it.
+- A new, untitled collection opens with a folder named after the old file.
+  Each page is a note in it, in the old order, named as minNotes 2 named
+  the page: its first heading, or else its first line.
+- The first **Save** asks where the new collection goes. Give it a new
+  name, or save it in another folder: both generations use the extension
+  `.mnd`.
+- To add an old document's pages to a collection you already have open,
+  choose **File > Import…** and pick the old file.
 
-## What to do with old work
+When the import is done a message says what came and what did not.
 
-- **Keep the files.** They stay as they are, and minNotes 2 goes on reading
-  them. If you still need to work in them, keep a copy of minNotes 2 and do
-  not replace it yet.
-- **Bring the text across by export.** In minNotes 2, export a page as
-  Markdown, HTML or Word. In minNotes 3, open a collection and choose
-  **File > Import…**: each file becomes a new note. Check the note against
-  the original; an import carries text, formatting, tables and pictures, not
-  everything minNotes 2 could show. See [Import](import.md).
-- **Canvases do not come across.** A minNotes 2 canvas has no export that
-  minNotes 3 reads back as a canvas. Lay it out again on a
-  [canvas](canvas.md) in the new collection.
-- **Video notes are safe.** The notes and drawings on a video are kept in a
-  folder beside the video, in the format QCView uses, not in the minNotes
-  document. Add the same video to a note in minNotes 3 and they are there.
+### What comes across
+
+- Text with its formatting, headings, lists, tasks, quotes, code, dividers,
+  links, colours and choice chips.
+- Columns, and tables with their typed columns, widths and colours.
+- Pictures, videos, PDFs and file chips. A file minNotes 2 kept with the
+  document (in its hidden `.minnotes` folder, or inside a package) is
+  copied into the new collection's `minNotes Media` folder when you save.
+  A file referred to where it lies is referred to in the same place.
+- Drawings on a PDF. Video notes and drawings are not in the document at
+  all: they are in the folder beside the video and are there as before.
+
+### What does not
+
+- **Anything on the old canvas outside a page**: pictures, files, text
+  notes, drawings, frames and connectors placed directly on the canvas.
+  The message counts them. The canvas's layout is not imported either;
+  lay it out again on a [canvas](canvas.md) and drag the notes onto it.
+- Comments.
+- A file on a shared volume that minNotes 2 found through its own path
+  mappings shows as missing until you tell minNotes 3 where that volume is
+  on this machine: **File > Path Mappings…**. See
+  [Saving & Shared Storage](saving.md).
+- Documents from minNotes 1. Open them in minNotes 2 and save them there
+  first.
 
 The source code and the manual of minNotes 2 stay on the
 [`2.x` branch](https://github.com/cbkow/minNotes/tree/2.x) of the minNotes
@@ -62,8 +79,10 @@ repository.
 | The block rail down the right side | One handle in the left margin, beside the block the caret is in. See [Editing](editing.md) |
 | Blocks side by side in lanes | A **Columns** block |
 | The built-in spelling and grammar checker | Gone. The note's text is shown to the system instead, so a writing tool you have installed, such as Grammarly, can check it. See [Privacy](privacy.md) |
-| The board (kanban) view of a table, sorting, the row filter | Gone. See [Tables](tables.md) |
-| The video studio, the full-window PDF and table views, the lightbox | Gone. A video is played, noted and drawn on in its block; a PDF is paged and drawn on in its block. See [Media & Drawing](media.md) |
+| The board (kanban) view of a table | A table with a choice or a check column can be shown as a board in the note. See [Tables](tables.md) |
+| Sorting and the row filter of a table | Gone |
+| The video studio, the full-window table view | Gone. A video is played, noted and drawn on in its block |
+| The full-window PDF view, the lightbox | **Open PDF** and **Open Image** in the block's menu show a PDF or a picture large, over the window. See [Media & Drawing](media.md) |
 | Streams | Gone |
 | Evernote and Notion import, **Merge File Into This Page…** | Gone. See [Import](import.md) for what is read |
 | A file dropped on a page is imported | A dropped file is a picture or a file chip. Only **File > Import…**, or a drop on the sidebar, imports |

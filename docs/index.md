@@ -73,8 +73,8 @@ refers to into one place, or one file.
    Windows, get minNotes from the
    [Microsoft Store](https://apps.microsoft.com/detail/9P2S2W9TLL9D). See
    [Installation & Updating](installation.md). If you use minNotes 2, read
-   [Coming from minNotes 2](from-2.md) first: minNotes 3 does not open its
-   files.
+   [Coming from minNotes 2](from-2.md) first: minNotes 3 imports the pages
+   of its documents rather than opening them.
 2. **Make a collection.** Choose **File > New Collection…**
    (`Option+Cmd+N` / `Ctrl+Alt+N`). An untitled collection opens at once,
    ready to type in; the first save asks where its file goes.

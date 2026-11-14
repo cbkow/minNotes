@@ -41,8 +41,9 @@ minNotes 3 has the same name and the same identity as minNotes 2. Dragging it
 to Applications replaces minNotes 2, and a minNotes 2 that updates itself is
 offered minNotes 3 as its next version.
 
-**Note:** minNotes 3 does not open documents made with minNotes 2. Read
-[Coming from minNotes 2](from-2.md) before you replace it.
+**Note:** minNotes 3 imports the pages of a minNotes 2 document into a new
+collection rather than opening the document; some things are left behind.
+Read [Coming from minNotes 2](from-2.md) before you replace it.
 
 ## Windows
 

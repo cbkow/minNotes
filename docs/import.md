@@ -185,3 +185,10 @@ Inside a code block, a paste is always the text alone.
 **Paste as Markdown** is for Markdown source you copied as text, such as
 a snippet from a README. With **Paste** the same text would arrive as
 written, markers and all.
+
+## minNotes 2 documents
+
+**File > Import…** also takes a document or a package made by minNotes 2:
+its pages become notes in a folder named after the file. Opening such a
+file offers the same import into a new collection. See
+[Coming from minNotes 2](from-2.md) for what comes across.
