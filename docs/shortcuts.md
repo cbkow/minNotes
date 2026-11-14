@@ -6,7 +6,8 @@ nav_order: 14
 
 # Keyboard Shortcuts
 
-Each table gives the key on macOS and on Windows. A dash (—) means there is
+Each table gives the key on macOS and on Windows. On Windows every key a
+menu shows is also in the menu bar at the top of the window. A dash (—) means there is
 no key for that action on that system; use the menu, the toolbar or the
 context menu. Keys shown without a modifier (such as `V` or `Space`) work
 only in the place the table is about.
@@ -20,7 +21,7 @@ only in the place the table is about.
 | Save | `Cmd+S` | `Ctrl+S` |
 | Save As | `Shift+Cmd+S` | `Ctrl+Shift+S` |
 | Close the collection | `Cmd+W` | `Ctrl+W` |
-| Quit | `Cmd+Q` | `Ctrl+Q` |
+| Quit | `Cmd+Q` | `Ctrl+Q` or `Alt+F4` |
 | New note | `Cmd+N` | `Ctrl+N` |
 | New folder | `Shift+Cmd+N` | `Ctrl+Shift+N` |
 | Search the collection (the sidebar's field) | `Shift+Cmd+F` | `Ctrl+Shift+F` |
@@ -45,12 +46,16 @@ Click a row first, so that the tree has the keys.
 | Action | macOS | Windows |
 |---|---|---|
 | Show or hide the sidebar | `Cmd+1` | `Ctrl+1` |
-| Show or hide the toolbar | `Cmd+2` | — |
-| Show or hide the footer | `Cmd+3` | — |
+| Show or hide the toolbar | `Cmd+2` | `Ctrl+2` |
+| Show or hide the footer | `Cmd+3` | `Ctrl+3` |
+| Always on Top on / off | `Option+Cmd+T` | `Ctrl+Alt+T` |
 | Reading mode on / off | `Cmd+R` | `Ctrl+R` |
 | Open the User Guide's Keyboard Shortcuts page | `Cmd+/` | `Ctrl+/` |
 | In a dialog: its first button (Cancel, where there is one) | `Esc` | `Esc` |
 | Close an open menu or palette | `Esc` | `Esc` |
+| Give the keys to the menu bar | — | `Alt` or `F10` |
+| Open a menu by its letter (File, Edit, Format, Export, View, Help) | — | `Alt+F`, `Alt+E`, `Alt+O`, `Alt+X`, `Alt+V`, `Alt+H` |
+| In the menu bar: move / choose / step back | — | Arrows / `Enter` / `Esc` |
 
 ## Text formatting
 
@@ -86,11 +91,11 @@ says "Reading — press Cmd+R to edit"; see
 | Redo | `Shift+Cmd+Z` | `Ctrl+Shift+Z` |
 | Cut / Copy / Paste | `Cmd+X` / `Cmd+C` / `Cmd+V` | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` |
 | Paste and Match Style | `Shift+Cmd+V` | `Ctrl+Shift+V` |
-| Copy as Markdown | `Shift+Cmd+C` | — |
+| Copy as Markdown | `Shift+Cmd+C` | `Ctrl+Shift+C` |
 | Select all | `Cmd+A` | `Ctrl+A` |
 | Select a word | Double-click | Double-click |
 | Extend the selection | `Shift` with a click or a movement key | `Shift` with a click or a movement key |
-| By word | `Option+Left` / `Option+Right` | `Alt+Left` / `Alt+Right` |
+| By word | `Option+Left` / `Option+Right` | `Ctrl+Left` / `Ctrl+Right` |
 | Start / end of the line | `Cmd+Left` / `Cmd+Right`, or `Home` / `End` | `Home` / `End` |
 | Start / end of the note | `Cmd+Up` / `Cmd+Down`, or `Cmd+Home` / `Cmd+End` | `Ctrl+Home` / `Ctrl+End` |
 | New line in a code block | `Enter` | `Enter` |
@@ -106,8 +111,8 @@ says "Reading — press Cmd+R to edit"; see
 | With blocks selected: back to the caret | `Enter` or `Esc` | `Enter` or `Esc` |
 | With blocks selected: remove them | `Backspace` or `Delete` | `Backspace` or `Delete` |
 | Duplicate the block or the selected blocks | `Cmd+D` | `Ctrl+D` |
-| Move the block or the selected blocks up / down | `Ctrl+Cmd+Up` / `Ctrl+Cmd+Down` | — |
-| Insert an empty block above / below | `Option+Cmd+Up` / `Option+Cmd+Down` | — |
+| Move the block or the selected blocks up / down | `Ctrl+Cmd+Up` / `Ctrl+Cmd+Down` | `Alt+Shift+Up` / `Alt+Shift+Down` |
+| Insert an empty block above / below | `Option+Cmd+Up` / `Option+Cmd+Down` | `Ctrl+Alt+Up` / `Ctrl+Alt+Down` |
 | While dragging blocks: cancel | `Esc` | `Esc` |
 | Dropping blocks on a note's row: copy instead of move | hold `Option` | hold `Alt` |
 | Leave columns from the top / foot of a column | `Up` / `Down` | `Up` / `Down` |
@@ -216,7 +221,7 @@ Pressing a tool's key again puts the tool down.
 | Leave a card; clear the selection or the tool | `Esc` | `Esc` |
 | Selected PDF card: previous / next page | `Option+Left` / `Option+Right` | `Alt+Left` / `Alt+Right` |
 | Selected video card: play / pause | `Space` (a tap) | `Space` (a tap) |
-| Undo / redo on the canvas | `Cmd+Z` / `Shift+Cmd+Z` | — |
+| Undo / redo on the canvas | `Cmd+Z` / `Shift+Cmd+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
 
 `Cmd+G` / `Ctrl+G` groups on a canvas and finds the next occurrence in a
 note; which one it does depends on what is open.

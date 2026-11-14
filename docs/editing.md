@@ -85,7 +85,7 @@ Inside a line, on the closing marker:
 Not converted: an asterisk standing alone or between spaces (`2 * 3`), an
 underscore inside a word (`snake_case`), anything inside inline code or a
 code block, and anything pasted. To paste Markdown source and have it read
-as Markdown, use **Edit ▸ Paste as Markdown**.
+as Markdown, use **Edit > Paste as Markdown**.
 
 ## Lists and tasks
 
@@ -106,13 +106,13 @@ as Markdown, use **Edit ▸ Paste as Markdown**.
 
 | Format | Menu | macOS | Windows |
 |---|---|---|---|
-| Bold | **Format ▸ Bold** | `Cmd+B` | `Ctrl+B` |
-| Italic | **Format ▸ Italic** | `Cmd+I` | `Ctrl+I` |
-| Underline | **Format ▸ Underline** | `Cmd+U` | `Ctrl+U` |
-| Strikethrough | **Format ▸ Strikethrough** | `Shift+Cmd+X` | `Ctrl+Shift+X` |
-| Inline code | **Format ▸ Inline Code** | `Cmd+E` | `Ctrl+E` |
-| Highlight (the last background colour) | **Format ▸ Highlight** | `Shift+Cmd+H` | `Ctrl+Shift+H` |
-| Clear formatting | **Format ▸ Clear Formatting** | `Cmd+\` | `Ctrl+\` |
+| Bold | **Format > Bold** | `Cmd+B` | `Ctrl+B` |
+| Italic | **Format > Italic** | `Cmd+I` | `Ctrl+I` |
+| Underline | **Format > Underline** | `Cmd+U` | `Ctrl+U` |
+| Strikethrough | **Format > Strikethrough** | `Shift+Cmd+X` | `Ctrl+Shift+X` |
+| Inline code | **Format > Inline Code** | `Cmd+E` | `Ctrl+E` |
+| Highlight (the last background colour) | **Format > Highlight** | `Shift+Cmd+H` | `Ctrl+Shift+H` |
+| Clear formatting | **Format > Clear Formatting** | `Cmd+\` | `Ctrl+\` |
 
 With a selection, a format goes on over all of it, unless it already covers
 all of it; then it comes off. With only a caret, the format is armed for
@@ -262,10 +262,10 @@ pointer: nothing appears as you move the mouse.
 | **Paste** | `Cmd+V` | `Ctrl+V` |
 | **Duplicate** | `Cmd+D` | `Ctrl+D` |
 | **Delete** | `Backspace` | `Backspace` |
-| **Insert Block Above** | `Option+Cmd+Up` | |
-| **Insert Block Below** | `Option+Cmd+Down` | |
-| **Move Up** | `Ctrl+Cmd+Up` | |
-| **Move Down** | `Ctrl+Cmd+Down` | |
+| **Insert Block Above** | `Option+Cmd+Up` | `Ctrl+Alt+Up` |
+| **Insert Block Below** | `Option+Cmd+Down` | `Ctrl+Alt+Down` |
+| **Move Up** | `Ctrl+Cmd+Up` | `Alt+Shift+Up` |
+| **Move Down** | `Ctrl+Cmd+Down` | `Alt+Shift+Down` |
 | **Move to Note…** | | |
 | **Copy to Note…** | | |
 
@@ -291,15 +291,15 @@ a move back whole, as long as neither note has been edited since.
 
 - Copying writes formatted text as well as plain text, so headings, lists,
   tables, links and inline formatting reach other applications.
-- **Edit ▸ Paste** (`Cmd+V` / `Ctrl+V`) takes, in this order: blocks or text
+- **Edit > Paste** (`Cmd+V` / `Ctrl+V`) takes, in this order: blocks or text
   copied in minNotes, with their formatting; files copied in the Finder or
   Explorer (as if dropped); formatted text from another application, as
   blocks; a picture; plain text. In a code block only the text is pasted.
-- **Edit ▸ Paste and Match Style** (`Shift+Cmd+V` / `Ctrl+Shift+V`) pastes
+- **Edit > Paste and Match Style** (`Shift+Cmd+V` / `Ctrl+Shift+V`) pastes
   the text alone.
-- **Edit ▸ Paste as Markdown** reads the clipboard's text as Markdown source.
+- **Edit > Paste as Markdown** reads the clipboard's text as Markdown source.
 - A web address alone on the clipboard pastes as a link.
-- **Export ▸ Copy as Markdown** (`Shift+Cmd+C`) copies as Markdown; see
+- **Export > Copy as Markdown** (`Shift+Cmd+C`) copies as Markdown; see
   [Export](export.md).
 
 ## Find and replace in a note
@@ -331,7 +331,7 @@ To search every note of the collection, use the sidebar's field; see
 
 ## Undo and redo
 
-**Edit ▸ Undo** (`Cmd+Z` / `Ctrl+Z`) and **Edit ▸ Redo** (`Shift+Cmd+Z` /
+**Edit > Undo** (`Cmd+Z` / `Ctrl+Z`) and **Edit > Redo** (`Shift+Cmd+Z` /
 `Ctrl+Shift+Z`), also in the footer.
 
 - Each note has its own history, kept while the window is open. Going to

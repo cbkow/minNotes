@@ -168,6 +168,6 @@ the table itself is removed.
 ## Limits
 
 - Imported tables are capped at 10,000 cells. When a file holds a larger
-  table, **File ▸ Import…** asks: **First Rows** imports the rows that fit,
+  table, **File > Import…** asks: **First Rows** imports the rows that fit,
   **Attach File** adds the file as a chip instead, **Cancel** stops.
 - There is no sorting and no row filter.

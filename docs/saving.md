@@ -13,8 +13,8 @@ minNotes keeps two things apart:
   a second after you stop typing. Nothing you type is lost to a crash or a
   dropped network drive.
 - **Save publishes to the document.** The `.mnd` file itself, wherever it
-  lives, is written only when you ask: **File ▸ Save** (`Cmd+S` / `Ctrl+S`),
-  the Save button in the footer, or **File ▸ Save As…** (`Shift+Cmd+S` /
+  lives, is written only when you ask: **File > Save** (`Cmd+S` / `Ctrl+S`),
+  the Save button in the footer, or **File > Save As…** (`Shift+Cmd+S` /
   `Ctrl+Shift+S`).
 
 minNotes never works on the document where it lives. When you open a
@@ -148,7 +148,7 @@ are kept on this machine." The reasons:
 
 **Retry** tries again; **OK** leaves the work on this machine. The footer
 reads "Save failed — your changes are kept on this machine" until a save
-goes through. Reconnect the drive, or use **File ▸ Save As…** to put the
+goes through. Reconnect the drive, or use **File > Save As…** to put the
 collection somewhere else.
 
 ## Opening a document that is not there
@@ -176,13 +176,13 @@ are shown now.
 
 ## Save As
 
-**File ▸ Save As…** saves the collection at a new place, which becomes its
+**File > Save As…** saves the collection at a new place, which becomes its
 document from then on. The files kept in `minNotes Media` go along to the
 new folder.
 
 Files that the collection only refers to (videos, PDFs, files on a share)
 stay where they are. When there are any, the footer says so after the save:
-"Saved — 4 files are referenced outside the collection: File ▸ Collect
+"Saved — 4 files are referenced outside the collection: File > Collect
 Media… brings them in". See [Media & Files](media.md).
 
 ## Working on shared storage: good habits

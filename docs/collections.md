@@ -23,9 +23,9 @@ two buttons, **New Collection** and **Open**.
 
 | Command | macOS | Windows |
 |---|---|---|
-| **File ▸ New Collection…** | `Option+Cmd+N` | `Ctrl+Alt+N` |
-| **File ▸ Open…** | `Cmd+O` | `Ctrl+O` |
-| **File ▸ Close Collection** | `Cmd+W` | `Ctrl+W` |
+| **File > New Collection…** | `Option+Cmd+N` | `Ctrl+Alt+N` |
+| **File > Open…** | `Cmd+O` | `Ctrl+O` |
+| **File > Close Collection** | `Cmd+W` | `Ctrl+W` |
 
 - **New Collection…** asks where to put the file and writes it there at once,
   so the file exists from the start. It opens with one empty note. If you
@@ -33,7 +33,7 @@ two buttons, **New Collection** and **Open**.
   under a dated name (`name.replaced-….mnd`); it is not deleted.
 - **Open…** takes a collection (`.mnd`) or a package (`.mnpkg`). A package is
   unpacked to a folder first and the unpacked collection is opened.
-- **File ▸ Open Recent** lists the last ten collections you opened, with
+- **File > Open Recent** lists the last ten collections you opened, with
   **Clear Menu** at the end.
 
 ## The sidebar
@@ -54,9 +54,9 @@ The three buttons at the top of the sidebar make new entries:
 
 | Button | Menu | macOS | Windows |
 |---|---|---|---|
-| New note | **File ▸ New Note** | `Cmd+N` | `Ctrl+N` |
+| New note | **File > New Note** | `Cmd+N` | `Ctrl+N` |
 | New canvas | | | |
-| New folder | **File ▸ New Folder** | `Shift+Cmd+N` | `Ctrl+Shift+N` |
+| New folder | **File > New Folder** | `Shift+Cmd+N` | `Ctrl+Shift+N` |
 
 A new entry goes beside the selected row, or inside it when the selected row
 is a folder. A new note opens ready to type: making a note or a canvas puts
@@ -71,7 +71,7 @@ a note is called by its first line, and a note with no text shows as
 "Untitled". A canvas without a name also shows as "Untitled".
 
 To rename a row, double-click it, or select it and press `Enter`, or choose
-**Rename** from its context menu or **File ▸ Rename**. Type the name and
+**Rename** from its context menu or **File > Rename**. Type the name and
 press `Enter`; `Esc` leaves the name as it was. Clearing a note's name gives
 it back its first line.
 
@@ -125,13 +125,13 @@ It is put away until you ask for it.
 
 | Command | macOS | Windows |
 |---|---|---|
-| **Help ▸ User Guide** | | |
-| **Help ▸ Keyboard Shortcuts** | `Cmd+/` | `Ctrl+/` |
-| **View ▸ Show / Hide the User Guide** | | |
+| **Help > User Guide** | | |
+| **Help > Keyboard Shortcuts** | `Cmd+/` | `Ctrl+/` |
+| **View > Show / Hide the User Guide** | | |
 
-- **Help ▸ User Guide** shows the folder and opens its first page.
-  **Help ▸ Keyboard Shortcuts** opens the page of keys.
-- **View ▸ Show / Hide the User Guide** puts the folder away, or brings it
+- **Help > User Guide** shows the folder and opens its first page.
+  **Help > Keyboard Shortcuts** opens the page of keys.
+- **View > Show / Hide the User Guide** puts the folder away, or brings it
   back. Whether it is shown is remembered on this machine.
 - Click a page's row to open it. A link from one page to another opens that
   page.
@@ -197,11 +197,11 @@ as wholes.
 
 | Command | macOS | Windows |
 |---|---|---|
-| **View ▸ Sidebar** | `Cmd+1` | `Ctrl+1` |
-| **View ▸ Toolbar** | `Cmd+2` | |
-| **View ▸ Footer** | `Cmd+3` | |
+| **View > Sidebar** | `Cmd+1` | `Ctrl+1` |
+| **View > Toolbar** | `Cmd+2` | |
+| **View > Footer** | `Cmd+3` | |
 
-**View ▸ Toolbar Over the Page / Across the Window** switches the toolbar
+**View > Toolbar Over the Page / Across the Window** switches the toolbar
 between sitting over the page only, beside the sidebar (the default), and
 running across the whole window above the sidebar.
 
@@ -221,7 +221,7 @@ One switch serves the whole window:
 | Switch | macOS | Windows |
 |---|---|---|
 | The book button in the footer | | |
-| **View ▸ Reading Mode** | `Cmd+R` | `Ctrl+R` |
+| **View > Reading Mode** | `Cmd+R` | `Ctrl+R` |
 
 The footer confirms with "Reading — the note cannot be changed" or
 "Editing".
@@ -262,7 +262,7 @@ instead; see [Media & Files](media.md).)
 | What you drop | What happens |
 |---|---|
 | A collection (`.mnd`) or a package (`.mnpkg`) | It is opened, with the usual question about unsaved changes. Other files in the same drop are left |
-| Documents that **File ▸ Import…** reads (Markdown, HTML, Word and so on) | Each becomes a new note, as an import does; see [Import](import.md) |
+| Documents that **File > Import…** reads (Markdown, HTML, Word and so on) | Each becomes a new note, as an import does; see [Import](import.md) |
 | Any other files (pictures, videos, PDFs, anything else) | One new note, named for the first file, with the files in it as blocks |
 
 Where the new notes go depends on the row you drop on: into a folder, beside
