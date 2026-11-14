@@ -8,6 +8,26 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 3.0.1</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>3.0.1</sparkle:version>
+      <sparkle:shortVersionString>3.0.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+<ul>
+  <li>Fixed: the Path Mappings window could not be typed in when it was opened with no collection open.</li>
+  <li>Fixed (macOS): Paste, Copy, Cut and Select All now work in the Path Mappings fields and in the web folder's
+      password field.</li>
+</ul>
+      ]]></description>
+      <pubDate>Sat, 14 Nov 2026 16:30:58 -0500</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v3.0.1/minNotes-3.0.1-macOS.dmg"
+        sparkle:edSignature="qvplthjiNQ1P90RisMOW36Y9mavdV4dloLWzbd7K7N1X25bnS92y5/z7uucY/av89b3EZTGtV9PlmS/r5ApRDg=="
+        length="40195154"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 3.0.0</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>3.0.0</sparkle:version>
