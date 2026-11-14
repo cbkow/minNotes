@@ -22,7 +22,8 @@ nav_order: 2
 minNotes needs macOS 13.0 or later and a Mac with Apple silicon.
 
 The first window says "No collection is open" and has two buttons,
-**New Collection…** and **Open…**. [Collections, Notes & Folders](collections.md)
+**New Collection…** and **Open…**. You can also drop a collection, a
+package or any other file on it. [Collections, Notes & Folders](collections.md)
 goes on from there.
 
 ![The first window, with no collection open](images/mn3-first-window.png)
@@ -49,7 +50,16 @@ Read [Coming from minNotes 2](from-2.md) before you replace it.
 
 Install minNotes from the
 [Microsoft Store](https://apps.microsoft.com/detail/9P2S2W9TLL9D). The Store
-delivers the updates too; on Windows minNotes does not check for them itself.
+is the only place minNotes for Windows comes from: there is no separate
+installer to download. The Store delivers the updates too; on Windows
+minNotes does not check for them itself.
+
+If minNotes 2 is installed from the Store, minNotes 3 arrives as its
+update. Read [Coming from minNotes 2](from-2.md) first.
+
+On Windows the menus are a bar at the top of the window, with **Exit**
+under **File** and **Licenses…** under **Help**; see
+[The menu bar on Windows](collections.md#the-menu-bar-on-windows).
 
 ## Opening a collection from outside minNotes
 

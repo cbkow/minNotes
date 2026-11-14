@@ -9,7 +9,8 @@ nav_order: 7
 A table is a block of rows and columns. A cell holds ordinary blocks: text
 with formatting, lists, pictures. A column can also be given a kind: a
 choice with coloured options, a three-state check, or a timecode at a frame
-rate.
+rate. A table with a choice or a check column can also be shown as a
+**board**: its rows as cards, in a lane for each value.
 
 ![The Schedule table, with the handles of the caret's row and column](images/mn3-table-schedule.png)
 
@@ -70,6 +71,7 @@ Click a handle to select the whole row or column and open its menu.
 - **Automatic Width**
 - **Text Column**, **Choice Column**, **Check Column**, **Timecode Column**
   (and, by kind, **Edit Options…** or the frame rates)
+- **Show as Board**, in a choice or a check column
 - **Delete Column**
 
 ### Widths
@@ -127,9 +129,77 @@ state: to do, doing, done, and round again. An empty cell counts as to do.
 
 - Type a timecode (`01:02:15:04`) or a bare number, which is read as frames.
   It is written out as a timecode when you leave the cell or press `Enter`.
-- Set the column's frame rate in the column menu: 23.976, 24, 25, 29.97, 30
-  or 60 fps. A new timecode column is 24 fps. 29.97 is written as drop-frame.
+- Set the column's frame rate in the column menu: 23.976, 24, 25, 29.97, 30,
+  59.94 or 60 fps. A new timecode column is 24 fps. 29.97 is written as drop-frame.
 - Text that does not read as a timecode is kept and shown dimmed.
+
+## A table as a board
+
+A table that has a **choice** or a **check** column can be shown as a
+board. The rows become cards and stand in lanes, one lane for each value
+of that column. The table itself is not changed by this: a card is its
+row, and the board is another way to look at the same table.
+
+![The Schedule table shown as a board by its Status column](images/mn3-table-board.png)
+
+### Switching
+
+The views are switched in editing.
+
+- **To the board:** with the caret in the table, press **Show as Board**
+  at the table's top right corner. It groups by the caret's column when
+  that is a choice or a check column, and otherwise by the first column
+  that is one. Or open the menu of the column you want and choose
+  **Show as Board**.
+- **Back to the table:** press **Show as Table** at the right of the
+  board's bar.
+
+![The Show as Board button at the corner of the Schedule table](images/mn3-table-board-button.png)
+
+Which view a table has is saved with the note, so everyone who opens the
+collection sees it the same way. Switching is one undo step.
+
+In reading, a board can be looked at and scrolled, not changed: a press on
+a card, on "+" or on **Show as Table** does nothing, and the footer says
+"Reading — press Cmd+R to edit" ("press Ctrl+R" on Windows).
+
+### Lanes and cards
+
+The board's bar says what it is grouped by, for example
+"Board — by Status".
+
+- A **choice** column gives a lane for each of its options, in the
+  options' order. Rows with no option stand in a last lane, "No status",
+  which is shown only while it has cards.
+- A **check** column gives three lanes: "To do", "Doing" and "Done". A row
+  with an empty cell is in "To do".
+- A **card** is a row. Its title is the row's cell in the first text
+  column; a row with nothing there is called by its number, "Row 3". Under
+  the title are the row's other cells, a line each: a chip for a choice, a
+  box for a check, the first line of anything else. Empty cells are left
+  out.
+- When the row holds a picture, the first one is the card's cover. A row's
+  colour shows as an edge of its card.
+- The header row is not a card.
+
+### Working on the board
+
+| To | Do this |
+|---|---|
+| Move a card to another lane | Drag it there. The row takes that lane's value |
+| Put a card between two others | Drag it to the place: a line shows where it will land. The row moves in the table as well |
+| Add a card | Press "+" at the foot of a lane and type the title. `Enter` keeps it, `Esc` gives it up. The new row has the lane's value |
+| See a card's row in the table | Press the card twice in quick succession, or right-click it and choose **Show in Table**. The table comes back with the caret in that row |
+| Delete a card | Right-click it and choose **Delete Card**. The row is removed |
+
+Each of these is one undo step. To change anything else in a row (its
+other cells, the column's options), go back to the table: nothing can be
+typed into a card. The board has no keys of its own.
+
+A board wider than its place scrolls sideways as a wide table does: a
+trackpad's sideways swipe, or `Shift` and the wheel.
+
+The exports show the table, not the board.
 
 ## Selecting cells
 
@@ -171,3 +241,5 @@ the table itself is removed.
   table, **File > Import…** asks: **First Rows** imports the rows that fit,
   **Attach File** adds the file as a chip instead, **Cancel** stops.
 - There is no sorting and no row filter.
+- A board's lanes are not reordered or edited on the board: change the
+  column's options in the table (**Edit Options…**).

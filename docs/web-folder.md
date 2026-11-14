@@ -17,7 +17,9 @@ to your collection.
 
 ## Exporting
 
-Choose **Export > as Web Folder…**. A window opens over the page.
+Choose **Export > as Web Folder…**. A window opens over the page. (A new
+collection that is still untitled must be saved first: the footer says
+"Save the collection first — this is written beside its document".)
 
 ![The Export as Web Folder window](images/mn3-web-folder-window.png)
 

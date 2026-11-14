@@ -24,10 +24,20 @@ Click a canvas's row to open it in the page's place. Each canvas remembers
 where you were looking. Until you move the view yourself, it follows the
 content and keeps everything in sight.
 
-To change a canvas, the window must be in editing. In reading a canvas
-only pans and zooms: a drag moves the view, and nothing is selected,
-moved, drawn or entered. Press `Cmd+R` / `Ctrl+R`, or the book button in
-the footer, to edit; a canvas you have just made is in editing. See
+To change a canvas, the window must be in editing. In reading a drag
+moves the view, and nothing is moved, resized, drawn or entered. A click
+on a card still chooses it, so that you can use it:
+
+- a video card shows its strip and the row of its notes: play, scrub and
+  go to a note's frame with the pointer;
+- a PDF card's pages turn with `Option+Left` / `Option+Right`
+  (`Alt+Left` / `Alt+Right`) or **Previous Page** / **Next Page**; the
+  page shown is not a change to the canvas;
+- the card's menu keeps **Copy**, **Open File**, **Reveal in Finder** /
+  **Show in Explorer**, **Copy Path**, **Open PDF** and **Open Image**.
+
+Press `Cmd+R` / `Ctrl+R`, or the book button in the footer, to edit; a
+canvas you have just made is in editing. See
 [Reading and Editing](collections.md#reading-and-editing).
 
 A canvas has its own undo history: `Cmd+Z` / `Ctrl+Z` and `Shift+Cmd+Z` /
@@ -112,6 +122,10 @@ at it larger: the view goes to the card. `Esc` steps back to where you
 were (after a double-click, the first `Esc` leaves the card and the second
 returns the view).
 
+For the picture alone across the whole window, with zoom and the drawing
+tools, right-click the card and choose **Open Image**. See
+[The Large View](media.md#the-large-view).
+
 ### Videos
 
 Select a video card and a strip appears under it: play, the timecode, and
@@ -136,6 +150,11 @@ the way. Click the card's picture to bring them back and resize it.
 A PDF card shows one page. With the card selected, turn the page with
 `Option+Left` / `Option+Right` (`Alt+Left` / `Alt+Right` on Windows), or
 **Previous Page** / **Next Page** in the menu.
+
+**Open PDF** in the menu shows the whole PDF across the window: every
+page in a scrolling column, a strip of small pages, zoom, text you can
+select and copy, and find through all pages. See
+[The Large View](media.md#the-large-view).
 
 ### Files and Links
 
@@ -191,6 +210,10 @@ floats above the card. To draw **on** a picture, a PDF page or a video
 frame, double-click the card first to enter it, then draw. That ink
 belongs to the picture or page, as it does in a note; on a video it is a
 review note on that frame, written beside the clip for QCView.
+
+The same holds in the large view (**Open PDF**, **Open Image**): what you
+draw there is written to the card's picture or page, as one step of the
+canvas's undo history.
 
 ## Selecting and Arranging
 
@@ -268,8 +291,9 @@ Right-click a card, or the sheet, for the canvas's menu. The card under
 the pointer is selected first. The menu holds **Cut**, **Copy**,
 **Paste**, **Duplicate**, **Delete**; **Bring to Front**, **Send to
 Back**; the frame commands; **Align…**, **Lock** / **Unlock**;
-**Previous Page**, **Next Page**, **Open File**, **Reveal in Finder** /
-**Show in Explorer**; **Add Note…**, **Open Note**, **Promote to Note**;
+**Previous Page**, **Next Page**, **Open PDF**, **Open Image**, **Open
+File**, **Reveal in Finder** / **Show in Explorer**, **Copy Path**;
+**Add Note…**, **Open Note**, **Promote to Note**;
 **Select All** and **Fit Everything**. Rows that do not apply to the
 selection are dimmed.
 

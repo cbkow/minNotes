@@ -8,8 +8,9 @@ nav_order: 8
 
 A note can hold pictures, PDFs, videos and any other file. Each one is a
 block of the note, like a paragraph or a table. You look at media, play it,
-draw on it and write review notes on it **in the block itself**: there is no
-separate viewer to open.
+draw on it and write review notes on it **in the block itself**. When a PDF
+or a picture needs more room, **Open PDF** and **Open Image** show the same
+block across the whole window; see [The Large View](#the-large-view).
 
 ![Media blocks in a note](images/mn3-media-blocks.png)
 
@@ -103,6 +104,10 @@ Drag across the page to select text, then `Cmd+C` / `Ctrl+C` to copy it.
 With the PDF block current, `Cmd+A` / `Ctrl+A` selects the whole page's
 text. `Esc` lets the selection go.
 
+To read a PDF through, with every page in one scrolling column, choose
+**Open PDF** from its menu or press the page twice in quick succession; see
+[The Large View](#the-large-view).
+
 ## Video
 
 A video block shows a still of the clip with its length in the corner.
@@ -158,10 +163,12 @@ commands:
 
 | Command | On | What it does |
 |---|---|---|
+| **Open PDF** | PDFs | Shows the PDF across the window; see [The Large View](#the-large-view) |
+| **Open Image** | Pictures | Shows the picture across the window |
 | **Reveal in Finder** / **Show in Explorer** | Pictures, PDFs, videos, chips | Shows the file in its folder |
 | **Copy Path** | Pictures, PDFs, videos, chips | Copies the file's path |
 | **Open** | Chips | Opens the file in its own application |
-| **Locate File…** | Chips; a picture that is not found | Points the block at the file again |
+| **Locate File…** | Chips; a picture, a video or a PDF that is not found | Points the block at the file again |
 | **Original Size** | A resized picture | Removes the width you gave it |
 
 A picture pasted from the web that has not been fetched has no file, so it
@@ -174,10 +181,14 @@ has no such rows.
 A file that has moved, or is on a volume that is not connected, shows as
 **Not found** (a chip says **Missing**).
 
-For a picture or a chip, right-click it and choose **Locate File…**, then
-pick the file. When you relink one picture, the note's other missing
-pictures that have a file of their name in the same folder are linked
-with it, in the same undo step.
+Right-click the block and choose **Locate File…**, then pick the file.
+
+- A **video** or a **PDF** is pointed at the file where it is now and keeps
+  everything else: it is the same file, moved.
+- When you relink one **picture**, the note's other missing pictures that
+  have a file of their name in the same folder are linked with it, in the
+  same undo step.
+- A **chip** has **Locate File…** in its menu at all times.
 
 **File > Collect Media…** lists every file the collection refers to and
 shows the missing ones, each with a way to locate it. See
@@ -220,6 +231,94 @@ Each stroke is one undo step of the note.
 A drawing belongs to the picture, or to the PDF page it was drawn on. It
 scales with the block, turns with the page, and goes out with the note's
 exports. The picture or PDF file itself is never changed.
+
+## The Large View
+
+A PDF or a picture can be shown across the whole window, over the page and
+the sidebar. It is the same block, only larger: the same file and the same
+drawings, and nothing new is stored.
+
+![A PDF in the large view, with the strip of small pages](images/mn3-large-view-pdf.png)
+
+**To open it**
+
+- Right-click a PDF block and choose **Open PDF**, or a picture block and
+  choose **Open Image**.
+- Or press the PDF's page, or the picture, twice in quick succession, with
+  no drawing tool in hand.
+- On a canvas, select the card and choose **Open PDF** or **Open Image**
+  from the canvas's menu; see [The Canvas](canvas.md).
+
+**To leave it**, press `Esc` or the **Back** button at the left of the
+view's head. The note is where you left it.
+
+### Pages
+
+A PDF shows every page in one column that scrolls. The head names the file.
+
+- Scroll with the wheel or the trackpad, or with `Up` / `Down`,
+  `Page Up` / `Page Down`, `Space` / `Shift+Space` and `Home` / `End`.
+- A PDF of more than one page has a **strip of small pages** at the left,
+  each with its number. The page in view is marked and kept in sight. Click
+  a small page to go to it. The wheel over the strip moves the strip alone.
+- A picture is one page, shown whole at first.
+
+Leaving the view does not change the page the block shows in the note.
+
+### Zoom
+
+The head has, at its right, **Zoom out**, the percentage, **Zoom in** and
+**Fit**. At 100 % a PDF is at its paper size and a picture is pixel for
+pixel. The zoom goes from 5 % to 1600 %.
+
+| Action | macOS | Windows |
+|---|---|---|
+| A PDF: the view's width. A picture: the whole picture | `Cmd+0` | `Ctrl+0` |
+| The whole page in the view | `Cmd+9` | `Ctrl+9` |
+| Zoom in / out | `Cmd+=` / `Cmd+-` | `Ctrl+=` / `Ctrl+-` |
+| Zoom about the pointer | `Cmd` + wheel, or pinch | `Ctrl` + wheel, or pinch |
+| Scroll sideways, when the page is wider than the view | `Shift` + wheel, or a sideways swipe | `Shift` + wheel, or a sideways swipe |
+
+For a PDF, **Fit** switches between the view's width and the whole page.
+
+### Drawing
+
+In editing, the toolbar shows the drawing tools while the large view is
+open, with the same keys as in the note. Take a tool and draw: the stroke
+goes on **the page under the pointer**. Each stroke is one undo step.
+
+A drawing made here is the block's own. It is on the page in the note
+afterwards, and in the note's exports.
+
+`Esc` steps back one thing at a time: the stroke being drawn, a picked
+stroke, the tool in hand, and then the view itself.
+
+In reading the tools are away, as they are in the note.
+
+### Selecting and Finding Text
+
+With no tool in hand, and always in reading, a PDF's text can be selected.
+
+| Action | macOS | Windows |
+|---|---|---|
+| Select text | Drag across it, within one page | Drag across it, within one page |
+| Select the text of the page in view | `Cmd+A` | `Ctrl+A` |
+| Copy the selection | `Cmd+C` | `Ctrl+C` |
+| Find through every page | `Cmd+F` | `Ctrl+F` |
+| The next place found | `Enter` or `Cmd+G` | `Enter` or `Ctrl+G` |
+| The place before | `Shift+Enter` or `Shift+Cmd+G` | `Shift+Enter` or `Ctrl+Shift+G` |
+| Let the selection go; close the find field | `Esc` | `Esc` |
+
+`Cmd+F` / `Ctrl+F` opens a field in the head, "Find in this PDF…". The
+words are looked for through every page, without regard to capitals or to
+spaces. The places found are washed on their pages, the pages scroll to the
+one you are on, and the head counts them: "3 of 12", or "not found". In a
+long PDF it says "reading page 40 of 400" until the first place is found.
+
+Find in the large view is for PDFs; a picture has no text to find.
+
+While the large view is open, the keys are its own: nothing you type
+reaches the note under it. Save and the reading switch still work.
 
 ## Video Review Notes
 

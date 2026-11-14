@@ -6,13 +6,15 @@ nav_order: 10
 
 # Import
 
-An import turns a file from another application into a **note** of the
-open collection. There are two ways to import, and both need a collection
-to be open:
+An import turns a file from another application into a **note** of a
+collection. There are three ways to import:
 
 - **File > Import…** opens the system's file panel. Choose one file or
-  several.
-- Drop the files on the **sidebar**.
+  several. This needs a collection to be open.
+- Drop the files on the **sidebar** of the open collection.
+- With no collection open, drop the files on the **first window**. A new,
+  untitled collection is made for them; see
+  [Dropped on the First Window](#dropped-on-the-first-window).
 
 A file dropped on the **page** is not imported: it stays what a drop on
 the page always is, a picture or an attached file chip. See
@@ -146,6 +148,20 @@ Not everything dropped on the sidebar is a document to import.
 
 Documents and other files can be dropped together: the documents are
 imported, then the rest become their one note.
+
+## Dropped on the First Window
+
+The first window, the one that says "No collection is open", takes
+dropped files too; its second line ends "or drop a file here". The whole
+window is the target, and the sidebar's rules hold:
+
+- **A collection or a package** is opened. One made by minNotes 2 is
+  offered its import; see [minNotes 2 documents](#minnotes-2-documents).
+- **Documents** are imported, and **other files** become one note, in a
+  new **untitled** collection made for them. It has no file until you
+  save it: the footer reads "Untitled — not saved to a document yet" and
+  the first **File > Save** asks where it goes. See
+  [Saving & Shared Storage](saving.md#a-new-collection).
 
 ## Pasting
 

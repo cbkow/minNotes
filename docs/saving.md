@@ -28,6 +28,36 @@ sync folder: a slow or missing drive cannot stall your typing, and the
 document on the share is always either the old complete file or the new
 complete file, never a half-written one.
 
+## A new collection
+
+**File > New Collection…** (`Option+Cmd+N` / `Ctrl+Alt+N`) does not ask for
+a place first. An untitled collection opens at once and you can start
+writing. Until its first save it has no document: it lives in the same
+working copy on this machine that keeps every collection's unsaved work.
+
+- The footer reads "Untitled — not saved to a document yet".
+- **The first Save asks where the file goes**, with the panel **Save As…**
+  uses. From then on the collection has a document and **Save** publishes
+  to it.
+- Files you add are linked as ever. Pictures that are kept with the
+  collection wait on this machine and go into `minNotes Media` beside the
+  document at that first save.
+- **Closing or quitting** asks the usual question (below). **Save** leads
+  to the panel; leaving the panel without choosing a place gives up the
+  closing, and the collection stays open. **Don't Save** removes the
+  untitled collection. One that nothing was typed into closes without a
+  question.
+- **After a crash or a forced quit** the untitled collection is not lost.
+  The next time minNotes starts with nothing else to open, it is taken up
+  again as [recovered work](#recovered-work).
+- **File > Collect Media…**, **Export > Collection as Package…** and
+  **Export > as Web Folder…** write beside the document, so they wait for
+  one: the footer says "Save the collection first — this is written beside
+  its document".
+
+Starting minNotes does not make a collection by itself: the first window
+keeps its two buttons.
+
 ## What is saved and what is not
 
 Three places tell you where the collection stands.
@@ -43,6 +73,7 @@ Three places tell you where the collection stands.
   | Readout | Meaning |
   |---|---|
   | Saved | The document holds everything |
+  | Untitled — not saved to a document yet | A new collection that has no document yet; see [A new collection](#a-new-collection) |
   | 1 note changed — not saved to the document | Work is kept on this machine; the document does not have it yet. With more notes it reads "3 notes changed — not saved to the document" |
   | Changes not saved to the document | The same, for a change that belongs to no single note |
   | Saving… | A save is under way |
@@ -72,6 +103,9 @@ save them.
 - **Don't Save** gives the changes up. The working copy on this machine is
   removed and the document stays as it is.
 - **Cancel** goes back to the collection.
+
+For a collection that has no document yet the question reads **Save this
+new collection?**, and **Save** first asks where the file goes.
 
 ## When two people save the same collection
 
@@ -111,18 +145,21 @@ someone else's changes" and that is all.
 
 When paragraphs were changed by both of you, a dialog says so:
 
-![The dialog shown after a merge that kept paragraphs twice](images/mn3-dialog-merged.png)
-
 **The document was merged.** Someone else saved this document while you were
 working. Their changes have been merged with yours. 2 paragraph(s) were
 changed by both of you: both versions are kept, the second marked, for you to
 choose between.
 
 In the note, the second version of each such paragraph has a coloured bar in
-the left margin. Read the two, delete the one you do not want, and save
-again.
+the left margin. Read the two, then settle it from the block's menu:
+right-click either of the two versions, in editing.
 
-![A paragraph kept twice after a merge, the second version marked in the margin](images/mn3-conflict-mark.png)
+| Command | What it does |
+|---|---|
+| **Keep This Version** | Keeps the version you clicked and removes the other. One undo step |
+| **Keep Both** | Leaves both paragraphs and takes the mark away |
+
+Deleting one of the two by hand also clears the mark. Then save again.
 
 **Note:** after a merge the open note is replaced by the merged one, and its
 undo history starts over.
@@ -131,8 +168,6 @@ undo history starts over.
 
 If the document cannot be written, nothing is written at all, and a dialog
 says why:
-
-![The dialog shown when a save fails](images/mn3-dialog-save-failed.png)
 
 **Couldn't save “Tidewater.mnd”**, followed by the reason and "Your changes
 are kept on this machine." The reasons:
@@ -163,8 +198,6 @@ If minNotes was stopped without the question above being answered (a crash,
 a power cut, a forced quit), the working copy is still on this machine. The
 next time you open that collection the work is shown, with a dialog:
 
-![The dialog offering work recovered from an earlier session](images/mn3-dialog-recovered.png)
-
 **Unsaved changes were found.** “Tidewater.mnd” has changes on this machine
 that were never saved to the document. They are from an earlier session and
 are shown now.
@@ -172,7 +205,8 @@ are shown now.
 - **Continue with Them** keeps the changes. They are still not in the
   document until you save.
 - **Discard…** asks once more ("Discard these changes?" — this cannot be
-  undone), then removes them and opens the document as it is.
+  undone), then removes them and opens the document as it is. An untitled
+  collection has no document to go back to: discarding it closes it.
 
 ## Save As
 

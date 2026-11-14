@@ -33,6 +33,12 @@ moved or the volume is not connected.
 
 The window opens on a review. Nothing is copied yet.
 
+**Note:** Collect Media and Export Package write beside the collection's
+document, so a new collection that is still untitled must be saved first.
+Until it is, the footer answers "Save the collection first — this is
+written beside its document". See
+[A new collection](saving.md#a-new-collection).
+
 ![The Collect Media window: the list of files by kind](images/mn3-collect-media-review.png)
 
 - There is a row per file, under its kind: **Videos**, **PDFs**,

@@ -80,7 +80,7 @@ The Markdown patterns that convert as you type (`# `, `- `, `[] `, ```` ``` ````
 is also changed by a click on its box.
 
 In reading, a key that would change the note does nothing and the footer
-says "Reading — press Cmd+R to edit"; see
+says "Reading — press Cmd+R to edit" ("press Ctrl+R" on Windows); see
 [Reading and Editing](collections.md#reading-and-editing).
 
 ## Editing and the caret
@@ -136,7 +136,8 @@ says "Reading — press Cmd+R to edit"; see
 | Choice cell: clear | `Backspace` or `Delete` | `Backspace` or `Delete` |
 | Check cell: the next state | `Space` or `Enter` | `Space` or `Enter` |
 | Timecode cell: write as a timecode | `Enter` | `Enter` |
-| Scroll a wide table sideways | `Shift` + wheel | `Shift` + wheel |
+| Scroll a wide table or a board sideways | `Shift` + wheel | `Shift` + wheel |
+| Board: show a card's row in the table | Press the card twice | Press the card twice |
 
 ## Find
 
@@ -177,9 +178,36 @@ In a note, `Up` and `Down` leave the video block.
 | PDF block: copy the selected text | `Cmd+C` | `Ctrl+C` |
 | PDF block: let the selection go | `Esc` | `Esc` |
 
+## The large view of a PDF or a picture
+
+After **Open PDF** or **Open Image**; see
+[The Large View](media.md#the-large-view).
+
+| Action | macOS | Windows |
+|---|---|---|
+| Leave the view | `Esc` | `Esc` |
+| Scroll by a line | `Up` / `Down` | `Up` / `Down` |
+| Scroll by a view | `Page Up` / `Page Down`, or `Shift+Space` / `Space` | `Page Up` / `Page Down`, or `Shift+Space` / `Space` |
+| First / last page | `Home` / `End` | `Home` / `End` |
+| A PDF: fit the view's width. A picture: the whole picture | `Cmd+0` | `Ctrl+0` |
+| The whole page in the view | `Cmd+9` | `Ctrl+9` |
+| Zoom in / out | `Cmd+=` / `Cmd+-` | `Ctrl+=` / `Ctrl+-` |
+| Zoom about the pointer | `Cmd` + wheel, or pinch | `Ctrl` + wheel, or pinch |
+| Scroll sideways | `Shift` + wheel | `Shift` + wheel |
+| Select the text of the page in view | `Cmd+A` | `Ctrl+A` |
+| Copy the selected text | `Cmd+C` | `Ctrl+C` |
+| Find through every page of a PDF | `Cmd+F` | `Ctrl+F` |
+| Next place found | `Enter` or `Cmd+G` | `Enter` or `Ctrl+G` |
+| Place before | `Shift+Enter` or `Shift+Cmd+G` | `Shift+Enter` or `Ctrl+Shift+G` |
+| Let the selection go; close the find field | `Esc` | `Esc` |
+
+The drawing tools' keys below work here too, in editing. `Esc` then steps
+back one thing at a time: the stroke, a picked stroke, the tool, the view.
+
 ## Drawing
 
-On a canvas, and on a picture or PDF block while it is the current block.
+On a canvas, on a picture or PDF block while it is the current block, and
+in the large view of a PDF or a picture.
 Pressing a tool's key again puts the tool down.
 
 | Action | macOS | Windows |

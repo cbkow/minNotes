@@ -19,7 +19,10 @@ that are not saved to the document yet (see [Saving & Shared Storage](saving.md)
 ## Starting
 
 With no collection open the window reads "No collection is open" and offers
-two buttons, **New Collection** and **Open**.
+two buttons, **New Collection…** and **Open…**. The line under the heading
+names the keys and a third way in: "New Collection… (Ctrl+Alt+N), Open…
+(Ctrl+O), or drop a file here" (on macOS the keys are shown as symbols). See
+[Files dropped on the sidebar or the first window](#files-dropped-on-the-sidebar-or-the-first-window).
 
 | Command | macOS | Windows |
 |---|---|---|
@@ -27,10 +30,11 @@ two buttons, **New Collection** and **Open**.
 | **File > Open…** | `Cmd+O` | `Ctrl+O` |
 | **File > Close Collection** | `Cmd+W` | `Ctrl+W` |
 
-- **New Collection…** asks where to put the file and writes it there at once,
-  so the file exists from the start. It opens with one empty note. If you
-  choose the name of a file that is already there, that file is moved aside
-  under a dated name (`name.replaced-….mnd`); it is not deleted.
+- **New Collection…** asks nothing: an **untitled** collection opens at
+  once, in editing, with the caret in its one empty note. It has no file
+  yet. The footer reads "Untitled — not saved to a document yet" until the
+  first **Save**, which asks where the file goes. See
+  [A new collection](saving.md#a-new-collection).
 - **Open…** takes a collection (`.mnd`) or a package (`.mnpkg`). A package is
   unpacked to a folder first and the unpacked collection is opened.
 - **File > Open Recent** lists the last ten collections you opened, with
@@ -77,9 +81,9 @@ it back its first line.
 
 ### The context menu
 
-Right-click a row for **Rename**, **New Note**, **New Folder** and
-**Delete…**. Right-click the empty part of the tree for **New Note** and
-**New Folder**.
+Right-click a row for **Rename**, **New Note**, **New Canvas**,
+**New Folder** and **Delete…**. Right-click the empty part of the tree for
+**New Note**, **New Canvas** and **New Folder**.
 
 ![The context menu of a row in the sidebar](images/mn3-sidebar-context-menu.png)
 
@@ -104,13 +108,24 @@ Click a row and the tree takes the keys:
 | `Delete` or `Backspace` | Delete the selected row (asks first) |
 | `Esc` | Give the keys back to the note |
 
-### What dragging does
+### Moving rows
 
-Rows in the tree are not reordered or moved into folders by dragging. A new
-entry is put where the selection is, so select a folder before you make a
-note that belongs in it.
+Drag a row to put a note, a canvas or a folder somewhere else in the tree.
 
-Two drags do end on the tree or start from it:
+- **Between two rows:** a line shows where the row will land. Let go over
+  the upper half of a row to land before it, over the lower half to land
+  after it.
+- **Into a folder:** let go over the middle of the folder's row; the folder
+  lights up. The row goes inside it.
+- **Out to the top level:** let go below the last row, or beside a row that
+  is at the top level.
+
+A folder moves with everything in it. A folder cannot be dropped into
+itself or into something inside it, and nothing can be dropped into the
+User Guide. The new order is part of the collection: it reaches the
+document at the next **Save**.
+
+Two other drags end on the tree or start from it:
 
 - Drag blocks by their grip onto another note's row to move them to the end
   of that note (see [Editing](editing.md)).
@@ -121,7 +136,7 @@ Two drags do end on the tree or start from it:
 
 This manual is inside the application, as a folder of pages named
 **User Guide** at the foot of the sidebar, after the collection's own tree.
-It is put away until you ask for it.
+It is away at every start and comes when you ask for it.
 
 | Command | macOS | Windows |
 |---|---|---|
@@ -132,7 +147,9 @@ It is put away until you ask for it.
 - **Help > User Guide** shows the folder and opens its first page.
   **Help > Keyboard Shortcuts** opens the page of keys.
 - **View > Show / Hide the User Guide** puts the folder away, or brings it
-  back. Whether it is shown is remembered on this machine.
+  back.
+- Once shown, the folder stays until you hide it or quit minNotes. It is
+  not remembered: the next start has it away again.
 - Click a page's row to open it. A link from one page to another opens that
   page.
 - The pages can only be read: nothing can be typed in them, and their rows
@@ -188,30 +205,58 @@ as wholes.
   full list is in [Saving & Shared Storage](saving.md)). Short notices also
   appear here for a few seconds, such as "Moved 2 blocks to “Kickoff” — Undo
   takes them back".
-- At the right end: reading (the book), find in this note, undo, redo and
-  Save. The book is lit while the window is in reading; see
-  [Reading and Editing](#reading-and-editing). The Save button is lit while
-  something is not saved to the document yet.
+- At the right end: Always on Top (the pin), reading (the book), find in
+  this note, undo, redo and Save. The pin is lit while the window is kept
+  on top; see [Always on Top](#always-on-top). The book is lit while the
+  window is in reading; see [Reading and Editing](#reading-and-editing).
+  The Save button is lit while something is not saved to the document yet.
 
 ### Hiding them
 
 | Command | macOS | Windows |
 |---|---|---|
 | **View > Sidebar** | `Cmd+1` | `Ctrl+1` |
-| **View > Toolbar** | `Cmd+2` | |
-| **View > Footer** | `Cmd+3` | |
+| **View > Toolbar** | `Cmd+2` | `Ctrl+2` |
+| **View > Footer** | `Cmd+3` | `Ctrl+3` |
 
 **View > Toolbar Over the Page / Across the Window** switches the toolbar
 between sitting over the page only, beside the sidebar (the default), and
 running across the whole window above the sidebar.
+
+### Always on Top
+
+**View > Always on Top** keeps the minNotes window above the windows of
+other applications, for notes you want in sight while you work in another
+program. Choose it again to let the window go back among the others.
+
+| Switch | macOS | Windows |
+|---|---|---|
+| **View > Always on Top** | `Option+Cmd+T` | `Ctrl+Alt+T` |
+| The pin button in the footer | | |
+
+The menu item is ticked and the pin is lit while it is on. The choice is
+kept on this machine and holds the next time minNotes starts.
+
+### The menu bar on Windows
+
+On macOS the menus are in the system's menu bar. On Windows they are a bar
+at the top of the window: **File**, **Edit**, **Format**, **Export**,
+**View** and **Help**, with the same items and the same keys, `Ctrl` in
+the place of `Cmd`. What macOS keeps in its **minNotes** menu is there too:
+**Exit** at the foot of **File**, and **Licenses…** and the version under
+**Help**.
+
+To use the bar from the keyboard, tap `Alt` or press `F10`, or hold `Alt`
+and press a menu's letter; then the arrow keys, `Enter` and `Esc`. The
+letters are in [Keyboard Shortcuts](shortcuts.md#window).
 
 ## Reading and Editing
 
 The window is either in **reading** or in **editing**. Reading is for looking
 at a collection without changing it by accident; editing is for writing.
 
-- A collection that exists opens in reading. A collection you have just
-  made is in editing.
+- A collection that exists opens in reading. A new, untitled collection
+  is in editing.
 - Making a note or a canvas puts the window in editing.
 - The choice is remembered for each collection on this machine: a
   collection you left in editing opens in editing the next time.
@@ -239,8 +284,13 @@ In reading:
   [Editing](editing.md)). This is the one change reading allows.
 - Writing notes on a video and drawing, on a video, a picture or a PDF
   page, are off.
-- A canvas only pans and zooms: nothing on it is selected, moved, drawn or
-  entered.
+- On a canvas a drag moves the view and nothing is moved, drawn or
+  entered. A click still chooses a card, so that a video card can be
+  played and a PDF card's pages turned; see [The Canvas](canvas.md).
+- A table shown as a board can be looked at, not changed; see
+  [Tables](tables.md#a-table-as-a-board).
+- **Open PDF** and **Open Image** work, with text selection, copy and find
+  in a PDF; see [The Large View](media.md#the-large-view).
 - A key that would change the note does nothing. The footer says
   "Reading — press Cmd+R to edit" ("press Ctrl+R" on Windows). A file
   dropped on the page gets the same answer.
@@ -253,7 +303,7 @@ In reading:
 The sidebar is not part of reading: you can make, rename and delete
 entries there in either state.
 
-## Files dropped on the sidebar
+## Files dropped on the sidebar or the first window
 
 Dropping files on the sidebar brings them into the collection. (A file
 dropped on the page of a note becomes a picture or a file chip in that note
@@ -261,7 +311,7 @@ instead; see [Media & Files](media.md).)
 
 | What you drop | What happens |
 |---|---|
-| A collection (`.mnd`) or a package (`.mnpkg`) | It is opened, with the usual question about unsaved changes. Other files in the same drop are left |
+| A collection (`.mnd`) or a package (`.mnpkg`) | It is opened, with the usual question about unsaved changes. Other files in the same drop are left, and the footer says so. One made by minNotes 2 is offered its import; see [Coming from minNotes 2](from-2.md) |
 | Documents that **File > Import…** reads (Markdown, HTML, Word and so on) | Each becomes a new note, as an import does; see [Import](import.md) |
 | Any other files (pictures, videos, PDFs, anything else) | One new note, named for the first file, with the files in it as blocks |
 
@@ -269,3 +319,9 @@ Where the new notes go depends on the row you drop on: into a folder, beside
 a note or canvas, or at the top level when you drop on the empty part of the
 tree. The row is outlined while the files are over it. The footer says what
 was made, and the last note made is opened.
+
+**The first window.** With no collection open, the whole window takes a
+drop, by the same rules. A collection or a package opens. Documents and
+other files start a new, untitled collection and land in it: the documents
+as imported notes, the other files as one note. Save it when you want to
+keep it; see [A new collection](saving.md#a-new-collection).
