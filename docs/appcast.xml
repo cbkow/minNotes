@@ -8,6 +8,36 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 3.0.2</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>3.0.2</sparkle:version>
+      <sparkle:shortVersionString>3.0.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+<ul>
+  <li>New: a pen tool for paths. Click for corners, drag for curves, click the first point to close; Enter, Escape or a
+      right click ends a path. It is in the drawing tools of videos, pictures, PDF pages and canvases.</li>
+  <li>New: four path tools beside it: select points (with a box over empty ground), add a point, remove a point, and
+      turn a corner into a curve or back.</li>
+  <li>New: the arrow selects several drawings at once, with a box or with Shift. They move, are deleted and take a
+      colour or a width together.</li>
+  <li>A video note's text now stands in a bar under the video's controls, on two lines; point at it to read all of it.
+      The picture stays clear. The same on a selected video card of a canvas.</li>
+  <li>A clip stored on its side (a phone's) is shown upright: in the note, while it plays and in a web folder.</li>
+  <li>QCView's "Export to minNotes" and "Open in minNotes" are taken: a note is made of the clip, or of a stream's
+      notes.</li>
+  <li>Fixed: a collection could not be saved on LucidLink.</li>
+  <li>Fixed: freehand lines drawn fast could run past where the pen stopped, or look different in an export.</li>
+</ul>
+      ]]></description>
+      <pubDate>Wed, 18 Nov 2026 12:24:44 -0500</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v3.0.2/minNotes-3.0.2-macOS.dmg"
+        sparkle:edSignature="XrLAk+O23Hk9ZfLEst/G1ZNEr2GoxT0ahDQhGIGPqMh5hMJEBXE8o0OWyFe6v8xufxqPWFyfoxJbTgykZ2g/CQ=="
+        length="40280346"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 3.0.1</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>3.0.1</sparkle:version>
