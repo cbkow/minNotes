@@ -51,11 +51,13 @@ While a canvas is open the toolbar shows the canvas's tools:
 |---|---|---|
 | Select | `V` or `Esc` | Selects and moves things |
 | Pen | `P` | Draws freehand. A tablet's pressure varies the line |
+| Pen path | | A path point by point: click for a corner, drag for a curve; click the first point to close it, `Enter`, `Esc` or a right click ends it |
 | Line | `L` | A straight line |
 | Arrow | `A` | An arrow |
 | Rectangle | `R` | A rectangle |
 | Oval | `O` | An oval |
 | Eraser | `E` | Rubs out what it passes over |
+| Select points, Add a point, Remove a point, Corner or curve | | The four path tools, for the selected pen path: see [Drawing on Pictures and PDF Pages](media.md#drawing-on-pictures-and-pdf-pages) |
 | Pen colour | | The colour of new ink, or of the selected ink |
 | Thinner line / Thicker line | | The width of new ink, or of the selected ink |
 | Frame | `F` | Click for a frame that hugs what is put in it, drag for one with a size of its own |
@@ -139,8 +141,9 @@ view, or is seen from far out, stops.
 
 When the clip has review notes, the selected card shows the row of their
 small pictures under the strip. Click one to go to its frame; click it
-again to edit its words. The notes' marks are on the scrub line, and the
-note's drawing and words show over the picture on its frame.
+again to edit its words. The notes' marks are on the scrub line. On a
+note's frame its drawing shows over the picture, and its words in a bar
+under the strip, on two lines; point at the bar to read all of them.
 
 While you watch, scrub or draw, the card's outline and corners stay out of
 the way. Click the card's picture to bring them back and resize it.
@@ -195,8 +198,10 @@ own on the canvas.
   remembered, and shared with the drawings you make on media.
 - Hold `Shift` to keep a line or arrow to the eight directions, and to
   make a rectangle square or an oval round.
+- The **pen path** is drawn point by point. Select it and arm one of the
+  four path tools to move, add, remove or turn its points.
 - The **eraser** rubs: a pen line loses the part the eraser passes over
-  and the rest stays. A shape goes whole. One drag is one undo step.
+  and the rest stays. A shape or a pen path goes whole. One drag is one undo step.
 - `Esc` gives up the stroke you are drawing; pressed again, it puts the
   tool down.
 - Hold `Space` to pan while a tool is armed.

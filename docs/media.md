@@ -145,7 +145,9 @@ While a video block is current, the keyboard is the transport:
 
 minNotes plays the formats QCView plays, among them MOV, MP4, M4V, MXF,
 MKV, AVI and WebM. The playing video is shown through the same colour
-pipeline as in QCView, HDR included. A video at rest shows an SDR still.
+pipeline as in QCView, HDR included. A video at rest shows an SDR still. A clip stored
+on its side, as phones store them, is shown upright: at rest, while it
+plays and in a web folder.
 
 ## Other Files
 
@@ -213,13 +215,27 @@ shows the drawing tools in place of the text tools.
 
 | Tool | Key | What it does |
 |---|---|---|
-| Pick | `V` | Picks a stroke on its line: drag to move it, `Delete` to remove it |
+| Pick | `V` | Picks a stroke on its line: drag to move it, `Delete` to remove it. Drag a box over empty ground, or `Shift`-click, to pick several: they move, go and take a colour or a width together |
 | Pen | `P` | Draws freehand. A tablet's pressure varies the line |
+| Pen path | | A path point by point: click for a corner, drag for a curve; click the first point to close it, `Enter`, `Esc` or a right click ends it |
 | Line | `L` | A straight line |
 | Arrow | `A` | An arrow |
 | Rectangle | `R` | A rectangle |
 | Oval | `O` | An oval |
-| Eraser | `E` | Rubs out the part of a pen line it passes over; a shape goes whole |
+| Eraser | `E` | Rubs out the part of a pen line it passes over; a shape or a pen path goes whole |
+
+While the pen path is armed, or a path is picked, four more tools light up
+after the drawing tools:
+
+| Tool | What it does |
+|---|---|
+| Select points | Click a point to pick it (`Shift`-click for more), or drag a box over empty ground to pick several. Drag a point or one of its handles; `Delete` removes the picked points |
+| Add a point | Click on the path. The curve keeps its shape |
+| Remove a point | Click a point |
+| Corner or curve | Click a point to switch it between a corner and a curve; drag on it to pull out new handles |
+
+They work on the picked path. Hold `Alt` while dragging a handle to move it
+alone.
 
 After the tools come the **pen colour** and the **Thinner line** /
 **Thicker line** buttons. With a stroke picked, they change that stroke.
@@ -330,9 +346,11 @@ Writing and drawing review notes need the window to be in editing
 its notes, not add or change them. See
 [Reading and Editing](collections.md#reading-and-editing).
 
-Click a video block. The toolbar now shows, in order: select, pen, line,
-arrow, rectangle, oval, eraser and **Write a note on this frame**; then
-the pen colour, thinner and thicker; and at the right end **Mark the note
+Click a video block. The toolbar now shows, in order: select, pen, pen
+path, line, arrow, rectangle, oval, eraser and **Write a note on this
+frame**; then the four path tools (see
+[Drawing on Pictures and PDF Pages](#drawing-on-pictures-and-pdf-pages));
+then the pen colour, thinner and thicker; and at the right end **Mark the note
 addressed** and **Delete the note**.
 
 ![A video with its review notes](images/mn3-video-notes.png)
@@ -340,13 +358,16 @@ addressed** and **Delete the note**.
 ### Writing a Note
 
 1. Go to the frame: scrub, or step with `Left` / `Right`.
-2. Click **Write a note on this frame**. A field opens along the lower
-   edge of the picture.
+2. Click **Write a note on this frame**. A field opens in the bar under
+   the video's controls.
 3. Type, then press `Return` / `Enter` to keep the words. `Esc` gives them
    up.
 
-To change a note's words later, go to its frame and click the caption at
-the lower edge of the picture, or click the toolbar button again.
+To change a note's words later, go to its frame and click them in the bar
+under the controls, or click the toolbar button again.
+
+The bar shows a note's words on two lines. When there are more, point at
+the bar to read all of them. The picture itself stays clear.
 
 ### Drawing on a Frame
 
@@ -357,7 +378,8 @@ With a tool armed, a click on the picture draws instead of playing. Click
 the tool again to put it down.
 
 The select tool picks a drawing: drag to move it, drag its corners to
-scale it, `Delete` to remove it. `Cmd+Z` / `Ctrl+Z` and `Shift+Cmd+Z` /
+scale it, `Delete` to remove it. Drag a box over empty picture, or
+`Shift`-click, to pick several; they move and go together. `Cmd+Z` / `Ctrl+Z` and `Shift+Cmd+Z` /
 `Ctrl+Shift+Z` step through the clip's drawings. That history is the
 clip's own, apart from the note's.
 
@@ -389,6 +411,12 @@ clip, in a `.qcview` folder, in QCView's own format. Open the same clip in
 [QCView](https://qcview.com) and you see the same notes and drawings;
 notes written there show up in minNotes. Anyone who has the clip and that
 folder has the notes.
+
+QCView 3.0.3 and later can start this from its side: **Export to
+minNotes…** in its Notes panel asks for a place and minNotes makes a note
+there with the clip in it, and **Open in minNotes** on a live stream makes
+a note of the stream's captured notes. See
+[Installation](installation.md#opening-a-collection-from-outside-minnotes).
 
 To leave a clip's notes out of an export, untick **Export > Include Video
 Notes**. See [Export](export.md). In a web folder a video plays in the

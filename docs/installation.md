@@ -85,6 +85,16 @@ A package is not opened as it is. minNotes asks for a folder, unpacks the
 package into it and opens the unpacked collection. See
 [Collect Media & Packages](packages.md).
 
+[QCView](https://qcview.com) 3.0.3 and later hands minNotes two more things:
+
+- **Export to minNotes…** gives a place for a collection and a clip. minNotes
+  opens that collection, or makes it when nothing is there, adds a note with
+  the clip's name as its heading and the video under it, and saves.
+- **Open in minNotes** on a live stream gives the folder of the stream's
+  notes. minNotes makes a collection in that folder with one note: the
+  stream's name, then each captured note with its time, its picture and its
+  text.
+
 Anything else is refused with the notice "That is not a minNotes collection
 or package".
 
