@@ -8,6 +8,29 @@
     <language>en</language>
     <!-- @@APPCAST_INSERT@@ -->
     <item>
+      <title>Version 3.0.3</title>
+      <link>https://minnotes.app/</link>
+      <sparkle:version>3.0.3</sparkle:version>
+      <sparkle:shortVersionString>3.0.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+<ul>
+  <li>New: rewind and fast-forward buttons on a video's strip, either side of play, in a note and on a canvas. Hold one
+      to run through the clip, as J and L do.</li>
+  <li>A video's strip is easier to read: a lighter line to scrub on that runs to the end of the strip, the timecode in
+      the players' face, and in a note the strip and a video note's words now stand on a rounded plate.</li>
+  <li>A video card's strip on a canvas can be narrower, so it no longer sticks out so far from a small card.</li>
+  <li>Windows: on a screen that shows HDR, the window is no longer dim.</li>
+</ul>
+      ]]></description>
+      <pubDate>Thu, 26 Nov 2026 22:03:48 -0500</pubDate>
+      <enclosure
+        url="https://github.com/cbkow/minNotes/releases/download/v3.0.3/minNotes-3.0.3-macOS.dmg"
+        sparkle:edSignature="1w0q7Xo1mWCbx2Eadfgoin06LCSemPZnif9YdXkfgoRTfiG8cvdm2rjeGzZTa+rX15fwFYNQu7BFwncgWkOaAQ=="
+        length="40928650"
+        type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 3.0.2</title>
       <link>https://minnotes.app/</link>
       <sparkle:version>3.0.2</sparkle:version>
