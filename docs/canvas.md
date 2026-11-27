@@ -130,8 +130,8 @@ tools, right-click the card and choose **Open Image**. See
 
 ### Videos
 
-Select a video card and a strip appears under it: play, the timecode, and
-the line to scrub on. Press `Space` to play and pause, in the card, at any
+Select a video card and a strip appears under it: rewind, play and
+fast-forward, the timecode, and the line to scrub on. Press `Space` to play and pause, in the card, at any
 zoom. While one video card is selected, the keyboard is the same transport
 as in a note (the table is on [Media & Drawing](media.md#video)), and the
 drawing tools' letters wait until you deselect it.

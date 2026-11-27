@@ -111,12 +111,13 @@ To read a PDF through, with every page in one scrolling column, choose
 ## Video
 
 A video block shows a still of the clip with its length in the corner.
-Under it is a strip: a play button, the timecode of the frame, and a line
-to scrub on.
+Under it is a strip: rewind, play and fast-forward buttons, the timecode of
+the frame, and a line to scrub on.
 
 - Click the picture, or press `Space` with the block current, to play and
   pause.
 - Drag on the line to scrub.
+- Hold rewind or fast-forward to run through the clip, as `J` and `L` do.
 - One video plays at a time. A playing video that scrolls out of view
   pauses.
 
